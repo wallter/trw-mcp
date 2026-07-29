@@ -94,7 +94,7 @@ def _install_opencode_artifacts(
     try:
         from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
 
-        agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force)
+        agents_result = generate_agents_md(target_dir, render_minimal_protocol(), force=force, client_id="opencode")
         _extend_result(result, agents_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
         result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
@@ -213,7 +213,6 @@ def _install_cursor_cli_artifacts(
     Fail-open: each generator is wrapped in try/except so one failure doesn't
     abort the others.
     """
-    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
     from ._cursor_cli import (
         generate_cursor_cli_agents_md,
@@ -228,9 +227,46 @@ def _install_cursor_cli_artifacts(
     except Exception as exc:  # justified: fail-open, cli.json update is best-effort
         result.setdefault("warnings", []).append(f".cursor/cli.json generation skipped: {exc}")
 
+    # The documented rules mechanism. Cursor's CLI docs: "The CLI agent supports
+    # the same rules system as the editor. You can create rules in the
+    # .cursor/rules directory", and "The CLI also reads AGENTS.md and CLAUDE.md
+    # at the project root". TRW generated that rule file for cursor-ide only, so
+    # cursor-cli fell back to AGENTS.md — and the profile then described AGENTS.md
+    # as its "ONLY instruction carrier", which was TRW's own omission written up
+    # as a vendor limitation.
+    try:
+        from ._cursor import generate_cursor_rules_mdc
+        from ._cursor_cli import _cursor_cli_trw_section
+
+        rules_result = generate_cursor_rules_mdc(
+            target_dir,
+            _cursor_cli_trw_section(),
+            client_id="cursor-cli",
+            force=force,
+        )
+        _extend_result(result, rules_result, include_updated=True)
+    except Exception as exc:  # justified: fail-open, rule generation is best-effort
+        result.setdefault("warnings", []).append(f".cursor/rules (cursor-cli) generation skipped: {exc}")
+
     # FR04: AGENTS.md with TRW sentinel block
     try:
-        trw_section = render_agents_trw_section()
+        # PRD-CORE-240-FR06: AGENTS.md stays until `alwaysApply` is CONFIRMED for
+        # the CLI. Cursor documents "the same rules system as the editor", which
+        # implies the metadata carries over, but its CLI page does not say so
+        # outright — and "implies" is exactly the reasoning that shipped a copilot
+        # include no IDE could resolve. Until then the rule file is additive and
+        # AGENTS.md keeps the guarantee.
+        #
+        # It renders the LIGHT body: its
+        # profile declares ceremony_mode="light", and the sync path already picks
+        # render_minimal_protocol() on that basis (state/claude_md/_agents_md).
+        # This install path was passing the FULL section regardless, so a light
+        # client was carrying the heavy body — 105 lines where its own profile
+        # asks for the compact one. FRAMEWORK-CORE's floor still holds: the
+        # minimal body states the deliver gate and the rigid tool set verbatim.
+        from ._cursor_cli import _cursor_cli_trw_section
+
+        trw_section = _cursor_cli_trw_section()
         agents_result = generate_cursor_cli_agents_md(target_dir, trw_section, force=force)
         _extend_result(result, agents_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort
@@ -276,7 +312,7 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
         result.setdefault("warnings", []).append(f".codex/INSTRUCTIONS.md generation skipped: {exc}")
 
     try:
-        agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force)
+        agents_result = generate_agents_md(target_dir, render_codex_trw_section(), force=force, client_id="codex")
         _extend_result(result, agents_result, include_updated=True)
     except Exception as exc:  # justified: fail-open, AGENTS.md generation is best-effort
         result.setdefault("warnings", []).append(f"Codex AGENTS.md generation skipped: {exc}")

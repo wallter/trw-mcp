@@ -1,13 +1,13 @@
 # AI-Augmented Requirements Engineering Framework (AARE-F)
 
-**Version**: 3.2.0
-**Last Updated**: 2026-07-09
+**Version**: 3.2.1
+**Last Updated**: 2026-07-27
 **Purpose**: Project-agnostic framework for engineering requirements with AI assistance — truthful, verifiable, and aligned to current requirements-engineering standards.
 **Research Basis**: ISO/IEC/IEEE 29148:2018 (confirmed current in 2024 and marked for revision in 2026), INCOSE *Guide to Writing Requirements* v4 (2023), EARS (Mavin et al.), requirements-engineering V&V practice, and TRW's empirical findings (eval iterations and the PRD-audit corpus).
 
-> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v26.1_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
+> **Companion documents.** AARE-F defines *what a good requirement/PRD is and how to verify it*. [`FRAMEWORK.md`](FRAMEWORK.md) (`v26.2_TRW`) defines *how work is executed* (the 6-phase RESEARCH→PLAN→IMPLEMENT→VALIDATE→REVIEW→DELIVER model, gates, formations). They are complementary: AARE-F governs the **specification**; FRAMEWORK.md governs the **execution**. Neither restates the other. For how TRW operationalizes AARE-F day-to-day, see `docs/documentation/aare-f-overview.md` (TRW monorepo path — not present in standalone deployments).
 
-> **Operative summary (read this even under context pressure).** Verified closure is §6.2: risk-appropriate independent review + requirement-matched verification evidence + status truthfulness + recorded project-native validation. A delivery override may ship known risk, but it does not make the requirement verified. The validator score (§5) is a drafting aid, not a verdict (§0). The anti-patterns that actually ship defects are A1 (existence ≠ wiring), A3 (`implemented` over stubs), and A4 (self-review only) — check them at evidence design, status update, and reviewer assignment respectively (§7). A PRD without acceptance criteria and declared verification methods is not ready to implement (§9).
+> **Operative summary (read this even under context pressure).** Verified closure is §6.2: risk-appropriate independent review + requirement-matched verification evidence + status truthfulness + recorded project-native validation. A delivery override may ship known risk, but it does not make the requirement verified. The validator score (§5 of the full AARE-F reference) is a drafting aid, not a verdict (§0). The anti-patterns that actually ship defects are A1 (existence ≠ wiring), A3 (`implemented` over stubs), and A4 (self-review only) — check them at evidence design, status update, and reviewer assignment respectively (§7). A PRD without acceptance criteria and declared verification methods is not ready to implement (§9).
 
 ---
 
@@ -17,7 +17,7 @@ Read this before using any threshold or score below.
 
 **AARE-F is**: a discipline for writing requirements that are unambiguous, singular, verifiable, and traceable; storing them as versioned artifacts (PRDs); and verifying them with evidence rather than assertion. Its durable value is **structural**: a consistent artifact shape makes independent adversarial review tractable and makes requirement→implementation→verification traceability checkable.
 
-**AARE-F is NOT** a quality oracle. The validator's numeric score (Section 5) is a **drafting aid that surfaces missing structure** — it is **not** a predictor of implementation success, and a high score does **not** mean the work is correct. This is an evidence-based position, not modesty:
+**AARE-F is NOT** a quality oracle. The validator's numeric score (§5 of the full AARE-F reference) is a **drafting aid that surfaces missing structure** — it is **not** a predictor of implementation success, and a high score does **not** mean the work is correct. This is an evidence-based position, not modesty:
 
 - No controlled study (internal or published) shows that a higher PRD score predicts fewer defects or less rework. Sub-signals (completeness, low ambiguity, real traceability) track readiness better than the aggregate score.
 - Scores are **gameable** by surface formatting (more file references, more section headings, more prose) independent of implementation quality. The validator is hardened against the worst cases but cannot close the gap with text analysis alone.
@@ -182,7 +182,7 @@ automated impact analysis is not first-class. Treat those as partial, not live.
 > **Autonomous-loop oversight.** When requirements work runs inside unattended loops, human checkpoints degrade to theater unless escalation is structurally protected: a stop-recommendation overridden repeatedly MUST escalate on a channel the loop cannot disable, and cycle closure MUST be outcome-gated (a declared success criterion moved, or a documented rationale) rather than throughput-gated. A loop that can suppress its own diagnostics inverts the authority hierarchy (P3).
 
 #### C3: Risk-Based Rigor Scaling — [partial]
-**Purpose**: Scale effort and proof to consequence. Risk-scaled score thresholds, density floors, and dimension weights are live in the TRW validator (Section 8). The review/V&V assignments below are normative guidance; the current review tool does not enforce them from `risk_level`.
+**Purpose**: Scale effort and proof to consequence. Risk-scaled score thresholds, density floors, and dimension weights are live in the TRW validator (§8 of the full AARE-F reference). The review/V&V assignments below are normative guidance; the current review tool does not enforce them from `risk_level`.
 
 | Level | Documentation | Verification | Review |
 |-------|---------------|--------------|--------|
@@ -350,7 +350,7 @@ Higher risk raises the bar **and** shifts weight toward implementation-readiness
 ## 9. Getting Started in a New Project
 
 ### Minimum viable setup
-1. Copy `AARE-F-FRAMEWORK.md` (this file) and `FRAMEWORK.md` to the project.
+1. Copy the AARE-F and TRW framework documents to the project's `.trw/frameworks/` (`AARE-F-FRAMEWORK.md` and `FRAMEWORK.md`, or the `-CORE`/`-REFERENCE` views if the project prefers the split).
 2. Scaffold the requirements directory:
    ```
    docs/requirements-aare-f/
@@ -421,7 +421,7 @@ Keep mutable inventory out of this portable canon; source, Make targets, and the
 
 ## 11. Relationship to FRAMEWORK.md
 
-| | AARE-F (this doc) | FRAMEWORK.md (`v26.1_TRW`) |
+| | AARE-F (this doc) | FRAMEWORK.md (`v26.2_TRW`) |
 |---|---|---|
 | Governs | the **specification** (requirement/PRD quality, traceability, verification) | the **execution** (phases, gates, formations, persistence, learning) |
 | Key artifact | the PRD | the run (phases + checkpoints + evidence) |
@@ -440,7 +440,7 @@ Use them together: AARE-F says *what good looks like and how to prove it*; FRAME
 | Major revision | as needed | framework posture change |
 | On-trigger | as needed | regulatory change, audit finding, major incident |
 
-**Single-source rule**: this file ships from `trw-mcp/src/trw_mcp/data/aaref.md` and is deployed verbatim; source mirrors MUST stay byte-identical and the recorded framework version MUST match this header. `framework_canons.json` declares the authoring source and every tracked mirror; `scripts/check-aaref-sync.py` enforces that manifest and config-default version. Deployed runtime copies are checked separately by `scripts/check-framework-runtime.py` and the doctor integrity probe.
+**Single-source rule**: every AARE-F view compiles from one span-marked body, `trw-mcp/src/trw_mcp/data/aaref.source.md`. Edit that file and recompile — never edit a generated view. The combined view (`aaref.md` → `AARE-F-FRAMEWORK.md`) is byte-identical to its frozen baseline; the core and reference views carry a deterministic provenance footer. Tracked mirrors MUST stay byte-identical to the view they mirror, and the recorded framework version MUST match this header. `framework_canons.json` declares both the hand-editable body per view and the mirror source per artifact — those are different files and the manifest names each with the same key, so read the surrounding block, not the key alone. `scripts/check-aaref-sync.py` enforces that manifest and config-default version. Deployed runtime copies are checked separately by `scripts/check-framework-runtime.py` and the doctor integrity probe.
 
 ---
 

@@ -78,18 +78,17 @@ def test_no_client_resolved_raises_exit_2() -> None:
     assert "No dispatch client resolved" in str(exc.value)
 
 
-# --- gemini + enabled gates ---
+# --- enabled gates ---
 
 
-def test_gemini_rejected_before_enabled_check() -> None:
-    # gemini is not in enabled_clients either, but the EOL redirect must win.
+def test_unknown_client_rejected_exit_2() -> None:
+    # A client id that is not a dispatch target at all is rejected by the
+    # enabled-clients gate rather than resolving to something unexpected.
     cfg = _Cfg()
     with pytest.raises(DispatchResolutionError) as exc:
-        _resolve(cfg, client="gemini")
+        _resolve(cfg, client="not-a-real-cli")
     assert exc.value.exit_code == 2
-    msg = str(exc.value)
-    assert "EOL" in msg
-    assert "agy" in msg
+    assert "disabled" in str(exc.value)
 
 
 def test_disabled_client_rejected_exit_2() -> None:

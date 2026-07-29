@@ -277,11 +277,19 @@ def process_outcome_for_event(
         return []
 
 
+# Ledger UF-026: nudge->action reward application lives in its own sibling
+# (different correlation source, no recency window) and is re-exported here so
+# ``trw_mcp.scoring`` keeps one import point for outcome correlation.
+from trw_mcp.scoring._proximal_correlation import (  # noqa: E402
+    apply_proximal_rewards as apply_proximal_rewards,
+)
+
 __all__ = [
     "EVENT_ALIASES",
     "REWARD_MAP",
     "_find_session_start_ts",
     "_resolve_event_reward",
+    "apply_proximal_rewards",
     "compute_composite_outcome",
     "compute_initial_q_value",
     "correlate_recalls",

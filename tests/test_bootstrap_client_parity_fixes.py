@@ -4,8 +4,9 @@ FIX A: per-client stale bundled-artifact cleanup for codex/cursor/copilot.
 FIX B: codex agents/skills content-aware refresh (unmodified refreshed, edited kept).
 FIX C: SUPPORTED_IDES is the canonical client-ID source; integrations derive/validate.
 
-Retirement (2026-07-11): gemini + aider were retired. They are no longer in
-SUPPORTED_IDES; gemini/aider retain uninstall surfaces only (see test_uninstall).
+Retirement (2026-07-11): aider was retired. It is no longer in SUPPORTED_IDES
+and retains uninstall surfaces only (see test_uninstall). The gemini client was
+removed outright on 2026-07-24, uninstall surfaces included.
 """
 
 from __future__ import annotations
@@ -92,17 +93,18 @@ def test_stale_copilot_agents_removed(tmp_path: Path) -> None:
     assert (copilot / "trw-explorer.agent.md").exists()
 
 
-def test_stale_cleanup_leaves_retired_gemini_agents_untouched(tmp_path: Path) -> None:
-    # Retired: .gemini/agents is no longer a swept surface, so update-time stale
-    # cleanup must NOT touch existing .gemini/ files (uninstall handles cleanup).
-    gemini = tmp_path / ".gemini" / "agents"
-    gemini.mkdir(parents=True)
-    (gemini / "trw-gone.md").write_text("stale", encoding="utf-8")
+def test_stale_cleanup_leaves_unmanaged_client_dirs_untouched(tmp_path: Path) -> None:
+    # Stale cleanup sweeps only directories TRW actually provisions. A client
+    # directory TRW does not manage must never be swept, even when it holds a
+    # ``trw-`` prefixed file that looks like a TRW artifact.
+    unmanaged = tmp_path / ".someothertool" / "agents"
+    unmanaged.mkdir(parents=True)
+    (unmanaged / "trw-gone.md").write_text("stale", encoding="utf-8")
 
     result = _new_result()
     _remove_stale_client_artifacts(tmp_path, result)
 
-    assert (gemini / "trw-gone.md").exists()
+    assert (unmanaged / "trw-gone.md").exists()
 
 
 def test_stale_cleanup_dry_run_reports_without_deleting(tmp_path: Path) -> None:
@@ -227,7 +229,7 @@ def test_client_integrations_cover_supported_ides() -> None:
 
 
 def test_client_order_covers_supported_plus_retired_ides() -> None:
-    # catalog._CLIENT_ORDER retains retired ids (gemini/aider) so their uninstall
+    # catalog._CLIENT_ORDER retains retired ids (aider) so their uninstall
     # surfaces stay reachable, so it equals SUPPORTED_IDES plus the retired set.
     assert set(_CLIENT_ORDER) == set(SUPPORTED_IDES) | _RETIRED_CLIENTS
 

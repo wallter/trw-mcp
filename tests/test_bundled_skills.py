@@ -44,21 +44,6 @@ class TestSkillDefinitions:
             root_skills_dir / "trw-audit" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
-    def test_audit_nfr_example_does_not_duplicate_checklist_size(self) -> None:
-        """Projection examples must not carry a count that drifts from the checklist."""
-        import re
-
-        paths = [
-            _PKG_DATA / "skills" / "trw-audit" / "SKILL.md",
-            _PKG_DATA / "codex" / "skills" / "trw-audit" / "SKILL.md",
-            _PKG_DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md",
-            _MONOREPO_CLAUDE / "skills" / "trw-audit" / "SKILL.md",
-        ]
-        for path in paths:
-            if path.exists():
-                content = path.read_text(encoding="utf-8")
-                assert not re.search(r"all \d+ (?:NFR )?items", content), path
-
     def test_sprint_finish_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
         """Bundled sprint-finish skill stays byte-for-byte aligned with root source."""
         assert (skills_dir / "trw-sprint-finish" / "SKILL.md").read_text(encoding="utf-8") == (
@@ -71,11 +56,12 @@ class TestSkillDefinitions:
             root_skills_dir / "trw-reflect" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
-    def test_skill_variants_include_preflight_logging_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
-        """Root and bundled skill variants retain the pre-implementation checklist/self-review contract.
+    def test_skill_variants_carry_their_evidence_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
+        """Every skill variant states the evidence contract its phase owns.
 
-        Note: trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
-        Tests verify the checklist concept and self-review structure remain, not the removed tool call.
+        Note: ``trw_preflight_log`` was removed from the MCP tool surface, so the
+        audit variants assert prior-learning recall and the explicit refusal to
+        audit self-reports — not the retired preflight events, which nothing writes.
         """
         variant_paths = {
             "root_exec_plan": root_skills_dir / "trw-exec-plan" / "SKILL.md",
@@ -94,11 +80,16 @@ class TestSkillDefinitions:
         required_snippets = {
             "exec_plan": ["Pre-Implementation Checklist (PRD-QUAL-056-FR03)"],
             "self_review": ["never substitutes for the required independent/substantive review"],
+            # The preflight/self-review contract is retired (PRD-QUAL-056 FR03/FR05
+            # correction, 2026-07-24): its producer tool was removed in PRD-FIX-076,
+            # so the events are never written and the check recorded "missing" on
+            # every audit. The denylist that forbids reintroducing it moved to
+            # test_audit_protocol_contracts.py under PRD-QUAL-128-FR08, where it
+            # scans 18 surfaces (11 bundled agents + 7 skill projections) instead
+            # of the 4 skill variants this module used to cover.
             "audit": [
-                "Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`",
-                "preflight_verification:",
-                "self_review_alignment: matches|underreported|missing",
                 "prior_learning_verification:",
+                "Do **not** audit the implementer's self-report",
             ],
             "sprint_finish": [
                 "Call `trw_deliver()` as the last TRW action",

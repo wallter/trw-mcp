@@ -121,12 +121,28 @@ class TestFR02ServerInstructions:
         # Must include some reference to the workflow phases
         assert "plan" in instr or "implement" in instr or "verify" in instr
 
-    def test_fr02_instructions_include_empirical_value(self) -> None:
-        """AC06: Instructions include at least one empirical value statement."""
+    def test_fr02_instructions_state_why_the_first_call_matters(self) -> None:
+        """AC06, restated: the instructions must say what the caller GAINS.
+
+        The original form asserted a literal ``"30%"`` — an acceptance criterion
+        satisfied only by an unsourced number, which the root ``CLAUDE.md``
+        statistical-significance rule forbids and which FRAMEWORK-CORE says
+        belongs in the eval synthesis, never in prose. The instruction string
+        carried it while the live ``messages.yaml`` primary did not, so the two
+        made different empirical claims depending on which one loaded.
+
+        AC06's intent is that the instructions motivate the first call rather
+        than merely naming it. That is what is asserted now — a mechanism, which
+        transfers and cannot be wrong, instead of a magnitude nobody measured.
+        """
         from trw_mcp.server._app import _DEFAULT_INSTRUCTIONS
 
-        # Must reference measurable impact
-        assert "30%" in _DEFAULT_INSTRUCTIONS or "solve" in _DEFAULT_INSTRUCTIONS.lower()
+        instr = _DEFAULT_INSTRUCTIONS.lower()
+        assert "trw_session_start" in instr
+        assert any(
+            phrase in instr for phrase in ("already learned", "prior learnings", "instead of", "restores")
+        ), f"instructions must say what calling it gains the caller: {_DEFAULT_INSTRUCTIONS!r}"
+        assert "%" not in _DEFAULT_INSTRUCTIONS, "no unsourced percentage — see the docstring"
 
     def test_fr02_instructions_under_100_words(self) -> None:
         """AC07: Instructions stay under 100 words."""

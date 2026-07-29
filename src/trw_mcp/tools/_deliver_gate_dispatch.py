@@ -90,6 +90,12 @@ _GATE_TABLE: tuple[GateDescriptor, ...] = (
     GateDescriptor("review_scope_block", OverridePolicy.NO_ESCAPE, "review_scope_block", "review_scope_block"),
     GateDescriptor("review_block", OverridePolicy.STRUCTURED, "review_block", "review_block"),
     GateDescriptor("delivery_blocked", OverridePolicy.STRUCTURED, "delivery_blocked", "delivery_blocked"),
+    # PRD-SEC-013-FR07: open intent-contract violation — hard until dispositioned;
+    # STRUCTURED override = the same acceptable-failure record every hard gate honors,
+    # itself ledgered by the break-glass path.
+    GateDescriptor(
+        "intent_violation_block", OverridePolicy.STRUCTURED, "intent_violation_block", "intent_violation_block"
+    ),
     GateDescriptor("build_gate_warning", OverridePolicy.ADVISORY, "build_gate_warning", "build_gate_warning"),
 )
 
@@ -355,6 +361,23 @@ def _hard_block_override(
             results, errors, result_block_key=result_block_key, block_value=block_reason, error_message=str(error)
         )
         return True
+    # PRD-SEC-013-FR07: an accepted override of the intent-violation gate MUST be
+    # ledgered (success criterion 3) and clears the open-violation marker — the seam
+    # itself refuses when the reason is empty or the ledger write fails, so a
+    # refused ledgering re-imposes the block rather than silently allowing.
+    if gate_type == "intent_violation_block":
+        from trw_mcp.security.intent_contract.violations import record_gate_override
+
+        root = trw_dir.parent if trw_dir is not None else None
+        if not record_gate_override(root, session_id="", reason=unverified_reason):
+            _emit_block(
+                results,
+                errors,
+                result_block_key=result_block_key,
+                block_value=block_reason,
+                error_message="intent-violation override refused: the FR03 ledger record could not be written",
+            )
+            return True
     _log_gate_override(resolved_run, {"gate_type": gate_type, "block": block_reason})
     return False
 

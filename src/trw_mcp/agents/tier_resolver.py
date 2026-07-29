@@ -64,20 +64,22 @@ logger = structlog.get_logger(__name__)
 #: a known tier on any adapted client.
 KNOWN_TIERS: frozenset[str] = frozenset({"frontier", "balanced", "local-large", "local-small"})
 
-#: Recognised client-profile identifiers. Clients in this set but absent
-#: from :data:`_CLIENT_MAPS` are intentional passthrough (the harness
-#: accepts the tier vocabulary directly, or the adapter has not yet been
-#: written and we prefer to surface the tier at the destination).
+#: Recognised client-profile identifiers — the seven active profiles from
+#: ``docs/CLIENT-PROFILES.md``. Clients in this set but absent from
+#: :data:`_CLIENT_MAPS` are intentional passthrough (the harness accepts the
+#: tier vocabulary directly, or the adapter has not yet been written and we
+#: prefer to surface the tier at the destination). The retired ``aider``
+#: identifier is deliberately absent: it takes the unknown-client path and
+#: degrades to a safe default rather than receiving a raw tier token.
 KNOWN_CLIENTS: frozenset[str] = frozenset(
     {
+        "antigravity-cli",
         "claude-code",
-        "cursor-ide",
-        "cursor-cli",
-        "opencode",
         "codex",
         "copilot",
-        "gemini",
-        "aider",
+        "cursor-cli",
+        "cursor-ide",
+        "opencode",
     }
 )
 
@@ -188,6 +190,56 @@ def resolve_tier(tier: str, *, client: str) -> str:
 # field. A trailing comment (``# foo``) is preserved by anchoring on
 # ``\S+`` rather than the rest of the line.
 _MODEL_LINE_RE = re.compile(r"(?m)^(model:\s*)(\S+)(.*)$")
+
+#: ``{tool:trw_x}`` markers in bundled agent bodies. Bundled files stay
+#: profile-neutral; each install renders them for its own client.
+_TOOL_PLACEHOLDER_RE = re.compile(r"\{tool:(trw_\w+)\}")
+
+
+def render_agent_tool_names(text: str, *, client: str) -> str:
+    """Expand ``{tool:trw_X}`` placeholders for *client*'s tool namespace.
+
+    Bundled agents reference TRW tools through placeholders so one file can ship
+    to harnesses that namespace MCP tools differently (claude-code exposes
+    ``mcp__trw__trw_recall``; lighter profiles use the bare name). Without this
+    step the installed agent tells the model to call a literal
+    ``{tool:trw_recall}``, which is not a tool on any harness.
+
+    Args:
+        text: Full agent file content (frontmatter and body).
+        client: Client-profile identifier. Unknown identifiers resolve through
+            the profile registry's own fallback.
+
+    Returns:
+        *text* with every well-formed placeholder replaced by the rendered tool
+        name. Malformed placeholders are left literal for the message-layer
+        linter to surface.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+    from trw_mcp.prompts.messaging import render_tool_name
+
+    # An unrecognised harness gets bare tool names, the legacy-safe form the
+    # message layer uses for ``profile=None``. Inheriting claude-code's
+    # ``mcp__trw__`` prefix here would assert a namespace we cannot know the
+    # harness uses — the same defensive stance ``resolve_tier`` takes when it
+    # degrades an unknown client's model to ``inherit``.
+    profile = resolve_client_profile(client) if client in KNOWN_CLIENTS else None
+    return _TOOL_PLACEHOLDER_RE.sub(lambda m: render_tool_name(m.group(1), profile), text)
+
+
+def materialize_agent(text: str, *, client: str) -> str:
+    """Apply every bundle→installed transform for *client*, in order.
+
+    The single definition of "what an installed agent looks like". Both the
+    installer (``bootstrap/_install_one_agent``) and the update-path hash
+    comparison (``bootstrap/_version_manifest._render_agent``) call this; when
+    they each applied their own subset, an agent that was already up to date
+    reported as a pending update forever.
+
+    Raises:
+        ValueError: propagated from :func:`resolve_tier` for an unknown tier.
+    """
+    return rewrite_model_line(render_agent_tool_names(text, client=client), client=client)
 
 
 def rewrite_model_line(text: str, *, client: str) -> str:

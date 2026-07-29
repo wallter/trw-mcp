@@ -14,7 +14,7 @@ Transport resolution uses TRW_CLIENT_PROFILE + TRW_MCP_TRANSPORT env vars
 
 T2 tool-return payload construction is handled by the shared substrate
 ``channels/_tool_return_tiers.py::enrich_response()``, which is called
-directly from ``tools/before_edit_hint.py``, ``tools/entity_risk_map.py``,
+directly from ``tools/before_edit_hint.py``,
 and ``tools/codebase_risk_report.py``.  No per-client payload builder is
 needed here.
 

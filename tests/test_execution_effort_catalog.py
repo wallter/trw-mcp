@@ -23,6 +23,8 @@ class TestCatalogLookup:
         "model_id",
         [
             "claude-fable-5",
+            "claude-mythos-5",
+            "claude-opus-5",
             "claude-opus-4-8",
             "claude-opus-4-7",
             "claude-sonnet-5",
@@ -31,6 +33,45 @@ class TestCatalogLookup:
     def test_frontier_and_balanced_models_declare_xhigh_and_max(self, model_id: str) -> None:
         capabilities = lookup_model_effort_capabilities(model_id)
         assert capabilities == frozenset({"low", "medium", "high", "xhigh", "max"})
+
+    def test_opus_5_is_known_to_the_catalog(self) -> None:
+        # Regression guard for the 2026-07-26 gap: `claude-opus-5` shipped as
+        # the Claude Code in-harness model while the catalog still topped out
+        # at Opus 4.8, so the *running* model resolved to `None` (unknown) and
+        # every xhigh/max recommendation clamped instead of mapping.
+        assert lookup_model_effort_capabilities("claude-opus-5") is not None
+        # The 1M long-context variant is the same family.
+        assert lookup_model_effort_capabilities("claude-opus-5[1m]") == frozenset(
+            {"low", "medium", "high", "xhigh", "max"}
+        )
+        # Bedrock provider-prefixed form.
+        assert lookup_model_effort_capabilities("anthropic.claude-opus-5") == frozenset(
+            {"low", "medium", "high", "xhigh", "max"}
+        )
+        # Boundary discipline: Opus 5 must not swallow the 4.x family.
+        assert lookup_model_effort_capabilities("claude-opus-4-6") == frozenset({"low", "medium", "high", "max"})
+
+    def test_family_match_survives_non_string_keys(self) -> None:
+        """A user-supplied pricing table can contain non-string keys.
+
+        ``TRWConfig.pricing_table_path`` lets an operator point at their own
+        YAML, where a bare ``2026:`` or ``on:`` key parses as int/bool. Those
+        would raise ``TypeError`` in ``len()``/``startswith``, and the caller's
+        fail-open would then drop the whole telemetry event rather than just
+        the price — worse than the $0.00 this matcher exists to prevent.
+        """
+        from trw_mcp.models.config import match_model_family
+
+        keys = ["claude-opus-5", 2026, True, None]
+        assert match_model_family("claude-opus-5", keys) == "claude-opus-5"
+        assert match_model_family("something-else", keys) is None
+
+    def test_sonnet_4_5_declares_no_effort_support(self) -> None:
+        # Sonnet 4.5 *errors* on the effort parameter (same as Haiku 4.5), so
+        # it must resolve to an empty set (-> `unsupported`), never to the
+        # safe base, which would wrongly report low/medium/high as mapped.
+        assert lookup_model_effort_capabilities("claude-sonnet-4-5") == frozenset()
+        assert lookup_model_effort_capabilities("claude-sonnet-4-5-20250929") == frozenset()
 
     @pytest.mark.parametrize("model_id", ["claude-opus-4-6", "claude-sonnet-4-6"])
     def test_previous_generation_models_lack_xhigh(self, model_id: str) -> None:
@@ -86,6 +127,26 @@ class TestAdapterWithActiveModel:
         assert decision.status == "mapped"
         assert decision.harness_value == "xhigh"
         assert ANTHROPIC_MODEL_CATALOG_VERSION in decision.adapter_id
+
+    def test_xhigh_maps_on_opus_5(self) -> None:
+        # The end-to-end consequence of the catalog gap: before Opus 5 was
+        # listed, this decision came back `clamped`/`high` under the safe base.
+        decision = resolve_effort_adapter(
+            client_id="claude-code",
+            recommended_effort="xhigh",
+            active_model="claude-opus-5",
+        )
+        assert decision.status == "mapped"
+        assert decision.harness_value == "xhigh"
+
+    def test_sonnet_4_5_is_unsupported_never_clamped(self) -> None:
+        decision = resolve_effort_adapter(
+            client_id="claude-code",
+            recommended_effort="medium",
+            active_model="claude-sonnet-4-5",
+        )
+        assert decision.status == "unsupported"
+        assert decision.harness_value is None
 
     def test_max_maps_on_fable(self) -> None:
         decision = resolve_effort_adapter(

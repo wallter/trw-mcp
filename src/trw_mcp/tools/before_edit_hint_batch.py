@@ -125,14 +125,10 @@ def register_before_edit_hint_batch_tools(server: FastMCP) -> None:
         repo_root: str | None = None,
         cache_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Return c735+c743 BeforeYouEditBatch for the current SHA.
+        """Return before-edit hints for every file in the sidecar, at once.
 
-        Use when an agent is planning a multi-file edit and needs batched
-        before-edit hints from a persisted trw-distill sidecar.
-
-        Tier-gated (paid tiers only — see trw_before_edit_hint for the
-        free-tier learnings counterpart). Returns
-        ``BeforeEditHintBatchResult.model_dump()``. NEVER raises.
+        Use when: planning a multi-file edit (trw_before_edit_hint covers
+        one file). Paid tiers only. Never raises.
         """
         result = compute_before_edit_hint_batch(
             repo_root=repo_root,

@@ -8,11 +8,10 @@ Migration notes:
 - The bare ``cursor`` profile ID was removed in Sprint 91. Use ``cursor-ide``
   for interactive Cursor IDE or ``cursor-cli`` for headless ``cursor-agent``
   CI runs.
-- ``gemini`` and ``aider`` were retired 2026-07-11 (Google deprecated the
-  Gemini CLI; aider never had an adapter). ``resolve_client_profile`` still
-  accepts both — they resolve to the claude-code fallback with a single
-  ``client_profile_retired`` warning so no tool crashes on a stale
-  ``target_platforms: [gemini]`` config.
+- ``aider`` was retired 2026-07-11 (it never had an adapter).
+  ``resolve_client_profile`` still accepts it — it resolves to the claude-code
+  fallback with a single ``client_profile_retired`` warning so no tool crashes
+  on a stale ``target_platforms: [aider]`` config.
 """
 
 from __future__ import annotations
@@ -76,6 +75,7 @@ def _light_profile(
     default_model_tier: ModelTier = "local-small",
     nudge_enabled: bool = False,
     on_transition: str = "require_reconnect",
+    writes_shared_agents_md: bool = True,
 ) -> ClientProfile:
     """Construct a light-mode profile with eval-calibrated defaults.
 
@@ -86,7 +86,21 @@ def _light_profile(
     return ClientProfile(
         client_id=client_id,
         display_name=display_name,
-        write_targets=WriteTargets(agents_md=True, instruction_path=instruction_path),
+        # PRD-CORE-240-FR04, resolved per client by operator decision 2026-07-28.
+        #
+        # opencode: WITHDRAWN (writes_shared_agents_md=False). It owns
+        # .opencode/INSTRUCTIONS.md and, since the FR05 fix, that file is actually
+        # referenced from opencode.json's `instructions` array. PRD-CORE-074's
+        # mandate predates that fix, when AGENTS.md was opencode's only carrier.
+        #
+        # codex: RETAINED. Its capability appendix (PRD-CORE-218-FR06) has nowhere
+        # else to go. model_instructions_file is single-valued and points at
+        # .codex/INSTRUCTIONS.md, which PRD-QUAL-113-FR03 caps at 2,025 bytes (the
+        # appendix measures 5,043). project_doc_fallback_filenames is not a third
+        # slot: per official Codex docs it lists filenames checked only WHEN
+        # AGENTS.md IS ABSENT, so a file registered there is read conditionally at
+        # best. Freeing codex's AGENTS.md requires raising the QUAL-113 cap.
+        write_targets=WriteTargets(agents_md=writes_shared_agents_md, instruction_path=instruction_path),
         instruction_max_lines=200,
         context_window_tokens=32_000,
         ceremony_mode="light",
@@ -96,7 +110,6 @@ def _light_profile(
         scoring_weights=_LIGHT_SCORING,
         default_model_tier=default_model_tier,
         hooks_enabled=False,
-        agents_md_enabled=True,
         include_framework_ref=False,
         include_delegation=False,
         # Surface control (PRD-CORE-125)
@@ -133,7 +146,12 @@ _PROFILES: dict[str, ClientProfile] = {
         # `.trw/INSTRUCTIONS.md`.
         instruction_import_syntax="at_path",
     ),
-    "opencode": _light_profile("opencode", "OpenCode", ".opencode/INSTRUCTIONS.md"),
+    "opencode": _light_profile(
+        "opencode",
+        "OpenCode",
+        ".opencode/INSTRUCTIONS.md",
+        writes_shared_agents_md=False,  # PRD-CORE-240-FR04 (operator decision)
+    ),
     "cursor-ide": ClientProfile(
         client_id="cursor-ide",
         display_name="Cursor IDE",
@@ -150,7 +168,6 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=True,
-        agents_md_enabled=True,
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
@@ -162,9 +179,22 @@ _PROFILES: dict[str, ClientProfile] = {
     "cursor-cli": ClientProfile(
         client_id="cursor-cli",
         display_name="Cursor CLI",
+        # AGENTS.md is this client's instruction carrier -- see PRD-CORE-242 and
+        # PRD-CORE-240-FR03. It was described here as its ONLY carrier, which is
+        # false and was TRW's own omission stated as a vendor limitation: Cursor
+        # documents that "the CLI agent supports the same rules system as the
+        # editor" (`.cursor/rules`) and that "the CLI also reads AGENTS.md and
+        # CLAUDE.md at the project root". TRW simply generated the rule file for
+        # cursor-ide only. It now generates it for cursor-cli too.
+        #
+        # `claude_md` stays False deliberately, and it is NOT a claim that the CLI
+        # ignores CLAUDE.md -- it does read it. The flag governs whether TRW WRITES
+        # there, and a second copy of the protocol in a third file is what this
+        # work removes. Do not "correct" it to True on the strength of the reader
+        # list alone.
+        # Source: cursor.com/docs/cli/using
         write_targets=WriteTargets(
             agents_md=True,
-            agents_md_primary=True,
             cli_config=True,
             instruction_path="AGENTS.md",
         ),
@@ -191,7 +221,6 @@ _PROFILES: dict[str, ClientProfile] = {
         default_model_tier="balanced",
         response_format="json",
         hooks_enabled=True,
-        agents_md_enabled=True,
         include_framework_ref=False,
         include_delegation=False,
         nudge_enabled=True,
@@ -211,6 +240,32 @@ _PROFILES: dict[str, ClientProfile] = {
     "copilot": ClientProfile(
         client_id="copilot",
         display_name="GitHub Copilot CLI",
+        # "none" — and the reason is a SURFACE split, not an absence.
+        #
+        # This was briefly set to `at_path_repo_relative` on the strength of the
+        # Copilot *CLI* docs, which do document `@relpath` includes. But this one
+        # profile serves both surfaces: it also writes `.vscode/mcp.json`, and
+        # `docs/CLIENT-PROFILES.md` describes it as covering GitHub Copilot
+        # generally. GitHub's repository-instructions docs and VS Code's own
+        # custom-instructions docs describe NO file-inclusion syntax for
+        # `.github/copilot-instructions.md` — only inline Markdown, with links
+        # being references a human follows rather than content that is pulled in.
+        #
+        # So an `@` line there is a dangling literal for every Copilot Chat user:
+        # a file that exists, parses, reports success and carries nothing. That
+        # is strictly worse than the injection it replaced (P5), which is exactly
+        # what PRD-CORE-240 exists to prevent — so the block stays inline in the
+        # always-on file, which IS "automatically included in every chat request".
+        #
+        # The include-free way to externalize this is
+        # `.github/instructions/*.instructions.md` with `applyTo: "**"` ("Use `**`
+        # to apply to all files"), a TRW-owned file Copilot loads itself — the
+        # same config-registered shape opencode and codex use. TRW already writes
+        # that directory, so it is a small addition rather than new machinery.
+        # Sources: docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+        #          code.visualstudio.com/docs/copilot/customization/custom-instructions
+        #          docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions (CLI only)
+        instruction_import_syntax="none",
         write_targets=WriteTargets(
             claude_md=False,
             agents_md=True,
@@ -247,7 +302,6 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),
         response_format="yaml",
         hooks_enabled=True,  # AG-03 confirmed 2026-05-28: hooks.json PreToolUse schema verified
-        agents_md_enabled=True,
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
@@ -257,11 +311,10 @@ _PROFILES: dict[str, ClientProfile] = {
     ),
 }
 
-# Retired client identifiers (2026-07-11): Google deprecated the Gemini CLI in
-# favor of Antigravity CLI; aider never had a TRW adapter. They resolve to the
-# claude-code fallback with a single ``client_profile_retired`` warning so a
-# stale ``target_platforms: [gemini]`` config never crashes a tool.
-_RETIRED_PROFILES: frozenset[str] = frozenset({"gemini", "aider"})
+# Retired client identifiers (2026-07-11): aider never had a TRW adapter. It
+# resolves to the claude-code fallback with a single ``client_profile_retired``
+# warning so a stale ``target_platforms: [aider]`` config never crashes a tool.
+_RETIRED_PROFILES: frozenset[str] = frozenset({"aider"})
 
 
 def resolve_client_profile(
@@ -271,8 +324,8 @@ def resolve_client_profile(
     """Resolve a built-in profile, optionally adjusted for model tier.
 
     Unknown client_ids fall back to claude-code with a warning (F04/FR04).
-    Retired client_ids (``gemini``, ``aider``) fall back to claude-code with a
-    single ``client_profile_retired`` warning so no tool crashes on a stale
+    Retired client_ids (``aider``) fall back to claude-code with a single
+    ``client_profile_retired`` warning so no tool crashes on a stale
     ``target_platforms`` entry. Model tier adjustments return a NEW profile via
     model_copy (F06).
     """
@@ -285,13 +338,8 @@ def resolve_client_profile(
                 fallback="claude-code",
                 message=(
                     f"The '{client_id}' client profile was retired 2026-07-11 "
-                    "and resolves to the claude-code fallback. "
-                    + (
-                        "Configure 'antigravity-cli' as the Gemini CLI successor "
-                        if client_id == "gemini"
-                        else "Pick a supported client profile "
-                    )
-                    + "and update your target_platforms configuration."
+                    "and resolves to the claude-code fallback. Pick a supported "
+                    "client profile and update your target_platforms configuration."
                 ),
             )
         elif client_id == "cursor":

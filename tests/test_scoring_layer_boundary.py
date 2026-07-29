@@ -122,43 +122,58 @@ class TestIoBoundaryModule:
 
 @pytest.mark.unit
 class TestBackwardCompatReExports:
-    """Functions moved to _io_boundary are still importable from _correlation."""
+    """Functions moved to _io_boundary are still importable from _correlation.
+
+    These assert IDENTITY against the defining module, not ``callable()``. A
+    re-export contract is "the same object reachable from both names"; a
+    ``callable()`` check also passes when someone re-adds a stale inline copy at
+    the old name, which is the exact drift a back-compat guard exists to catch.
+    """
 
     def test_find_session_start_ts_from_correlation(self) -> None:
         """_find_session_start_ts re-exported from _correlation."""
         from trw_mcp.scoring._correlation import _find_session_start_ts
+        from trw_mcp.scoring._io_boundary import (
+            _find_session_start_ts as _defining,
+        )
 
-        assert callable(_find_session_start_ts)
+        assert _find_session_start_ts is _defining
 
     def test_default_lookup_entry_from_correlation(self) -> None:
         """_default_lookup_entry re-exported from _correlation."""
         from trw_mcp.scoring._correlation import _default_lookup_entry
+        from trw_mcp.scoring._io_boundary import _default_lookup_entry as _defining
 
-        assert callable(_default_lookup_entry)
+        assert _default_lookup_entry is _defining
 
     def test_batch_sync_from_correlation(self) -> None:
         """_batch_sync_to_sqlite re-exported from _correlation."""
         from trw_mcp.scoring._correlation import _batch_sync_to_sqlite
+        from trw_mcp.scoring._io_boundary import _batch_sync_to_sqlite as _defining
 
-        assert callable(_batch_sync_to_sqlite)
+        assert _batch_sync_to_sqlite is _defining
 
     def test_sync_from_correlation(self) -> None:
         """_sync_to_sqlite re-exported from _correlation."""
         from trw_mcp.scoring._correlation import _sync_to_sqlite
+        from trw_mcp.scoring._io_boundary import _sync_to_sqlite as _defining
 
-        assert callable(_sync_to_sqlite)
+        assert _sync_to_sqlite is _defining
 
     def test_load_entries_from_distribution(self) -> None:
         """_load_entries_from_dir re-exported from _distribution."""
         from trw_mcp.scoring._distribution import _load_entries_from_dir
+        from trw_mcp.scoring._io_boundary import _load_entries_from_dir as _defining
 
-        assert callable(_load_entries_from_dir)
+        assert _load_entries_from_dir is _defining
 
     def test_lookup_alias_from_correlation(self) -> None:
         """_lookup_learning_entry backward-compat alias still works."""
         from trw_mcp.scoring._correlation import _lookup_learning_entry
+        from trw_mcp.scoring._io_boundary import _default_lookup_entry
 
-        assert callable(_lookup_learning_entry)
+        # The alias must resolve to the same implementation, not a second copy.
+        assert _lookup_learning_entry is _default_lookup_entry
 
 
 # ---------------------------------------------------------------------------
@@ -246,16 +261,21 @@ class TestCorrelationWindowSize:
         assert line_count < 350, f"_recall_window.py is {line_count} lines, should be < 350"
 
     def test_correlate_recalls_from_recall_window(self) -> None:
-        """correlate_recalls is importable from its new home module."""
+        """correlate_recalls lives in _recall_window, not in the facade."""
         from trw_mcp.scoring._recall_window import correlate_recalls
 
-        assert callable(correlate_recalls)
+        assert correlate_recalls.__module__ == "trw_mcp.scoring._recall_window"
 
     def test_correlate_recalls_reexported_from_correlation(self) -> None:
-        """correlate_recalls stays importable from the _correlation facade."""
-        from trw_mcp.scoring._correlation import correlate_recalls
+        """correlate_recalls stays reachable from the _correlation facade.
 
-        assert callable(correlate_recalls)
+        Identity, not ``callable()``: the split only holds if the facade name
+        resolves to the extracted implementation rather than a leftover copy.
+        """
+        from trw_mcp.scoring._correlation import correlate_recalls
+        from trw_mcp.scoring._recall_window import correlate_recalls as _defining
+
+        assert correlate_recalls is _defining
 
 
 @pytest.mark.unit

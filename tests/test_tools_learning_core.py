@@ -20,17 +20,20 @@ class TestToolDocstrings:
         tools = _get_tools()
         doc = tools["trw_learn"].fn.__doc__ or ""
 
-        # Quality-gate guidance present (phrasing condensed to satisfy the
-        # PRD-CORE-125 200-word tool-description gate; the intent -- record only
-        # behavior-changing learnings, routine observations degrade recall -- is
-        # unchanged).
-        assert "Record only learnings that" in doc
+        # Quality-gate guidance present. Phrasing was condensed twice: first for
+        # the PRD-CORE-125 200-word gate, then for the tool-DEFINITION token
+        # budget (a docstring is billed in every client's system prompt, so the
+        # multi-line "Recommended:" / "Advanced (auto-detected if omitted):"
+        # headers were folded into prose). The intent asserted here is unchanged:
+        # record only behavior-changing learnings, routine observations hurt
+        # recall, and the required vs. auto-detected field tiers are stated.
         assert "Routine observations" in doc
-        assert "degrade recall quality" in doc
-        # Field tiers still documented.
+        assert "dilute recall" in doc
         assert "Required:" in doc
-        assert "Recommended:" in doc
-        assert "Advanced (auto-detected if omitted):" in doc
+        assert "auto-detect when omitted" in doc
+        # Write-tier vocabulary (scope) still callable from the docstring alone.
+        assert "scope" in doc
+        assert "user store" in doc
 
     def test_trw_instructions_sync_docstring_matches_post_093_behavior(self) -> None:
         tools = _get_tools()

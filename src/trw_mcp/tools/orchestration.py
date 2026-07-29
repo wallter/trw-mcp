@@ -36,6 +36,7 @@ from trw_mcp.tools._orchestration_helpers import (
     _log_init_events,
     _scan_init_artifacts,
 )
+from trw_mcp.tools._orchestration_init_advanced import parse_init_advanced
 from trw_mcp.tools._orchestration_lifecycle import (
     _apply_ceremony_status,
 )
@@ -86,32 +87,42 @@ def register_orchestration_tools(server: FastMCP) -> None:
         ctx: Context | None = None,
         task_name: str = "",
         objective: str = "",
-        config_overrides: dict[str, str] | None = None,
         prd_scope: list[str] | None = None,
         run_type: str = "implementation",
         task_type: str | None = None,
-        task_root: str | None = None,
-        wave_manifest: list[dict[str, object]] | None = None,
-        complexity_signals: dict[str, object] | None = None,
-        artifacts: list[str] | None = None,
         complexity_hint: Literal["EASY", "STANDARD", "HARD"] | None = None,
-        protected: bool = False,
-        planning_mode: str | None = None,
+        advanced: dict[str, object] | str | None = None,
     ) -> dict[str, str]:
         """Create a run directory and register it as the active run.
 
-        Use when:
-        - Starting a new task, sprint, or investigation that needs persistent TRW state.
-        - You need run metadata, framework assets, and active-run pinning before work begins.
+        Use when starting a task, sprint, or investigation that needs persistent
+        TRW state: run metadata, events, framework assets, and active-run pinning.
 
-        Bootstraps state, run metadata, events, framework assets, optional
-        wave/artifact metadata, and a trace/profile-aware task_profile.
+        Input: task_name (required; [A-Za-z0-9][A-Za-z0-9_-]*, max 128 chars),
+        plus optional objective and prd_scope for context; complexity_hint
+        accepts EASY, STANDARD or HARD.
 
-        Input: task_name plus optional objective, config_overrides, task_root,
-        wave_manifest, complexity signals, artifacts, and protection flag.
+        Output: run_id, run_path, trw_dir, phase, status, resolved task_type and
+        complexity class.
 
-        Output: dict with run_id, run_path, task_dir, phase, and status fields.
+        Args:
+            advanced: rarely-needed settings, as an object (or JSON object
+                string). Accepted keys: artifacts, complexity_signals,
+                config_overrides, planning_mode, protected, task_root,
+                wave_manifest. An unknown key is rejected, never ignored.
         """
+
+        # ``advanced`` collapses seven rare flat parameters into one schema entry
+        # (see _orchestration_init_advanced for the byte-identical-keys and
+        # refuse-don't-ignore rules). Parsed FIRST so a malformed bag fails before
+        # any directory is created.
+        adv = parse_init_advanced(advanced)
+        config_overrides = adv.config_overrides
+        task_root = adv.task_root
+        wave_manifest = adv.wave_manifest
+        complexity_signals = adv.complexity_signals
+        protected = adv.protected
+        planning_mode = adv.planning_mode
 
         # Input validation (PRD-QUAL-042-FR01). ``task_name`` defaults to "" only
         # so FastMCP can inject ``ctx`` first (PRD-CORE-141 FR03); empty is rejected.
@@ -212,7 +223,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         task_profile = prof.task_profile
         detection = prof.detection
 
-        resolved_artifacts = [str(p) for p in (artifacts or [])]
+        resolved_artifacts = list(adv.artifacts)
         run_state = RunState(
             run_id=run_id,
             task=task_name,
@@ -335,19 +346,13 @@ def register_orchestration_tools(server: FastMCP) -> None:
         ctx: Context | None = None,
         run_path: str | None = None,
     ) -> TrwStatusDict:
-        """Report the active run's phase, wave progress, shard state, and last activity.
+        """Report the active run's phase, progress, and last activity.
 
-        Use when:
-        - Resuming after context compaction or a session restart.
-        - Deciding whether to checkpoint, advance phase, or re-delegate a wave.
+        Use when resuming, or deciding whether to checkpoint, advance phase, or
+        re-delegate a wave. run_path is auto-detected from the session pin.
 
-        Input:
-        - run_path: path to the run directory. Auto-detects from pin if None.
-
-        Output: TrwStatusDict with fields
-        {run_id, task, phase, status, confidence, framework, event_count,
-         reflection, waves?, wave_progress?, wave_status?, reversions,
-         last_activity_ts?, hours_since_activity?, stale_count}.
+        Output: phase, status, confidence, event/reversion counts, wave and shard
+        progress, and staleness.
         """
         reader = FileStateReader()
         # PRD-CORE-141 FR03/FR05: ctx-aware resolve_run_path suppresses the
@@ -411,17 +416,22 @@ def register_orchestration_tools(server: FastMCP) -> None:
         message: str = "",
         shard_id: str | None = None,
         wave_id: str | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, object]:
         """Append a progress snapshot so work survives context compaction.
 
-        Use when:
-        - You complete a milestone or before context compaction/interruption.
-        - After each meaningful work batch so another agent can resume safely.
+        Use when you complete a milestone, or after each work batch so another
+        agent can resume. message is required — it is the resume point, and a
+        blank one writes nothing and returns recorded=false. Pass run_path when
+        your session has no pinned run: a delegated agent passes the directory
+        it was dispatched with; with no run resolvable nothing is written and
+        recorded is false.
 
-        Input: optional run_path plus required message. Optional shard_id and
-        wave_id annotate delegated or wave-aware progress.
+        Output: recorded, status, timestamp, message metadata; reason + remedy
+        when recorded is false.
 
-        Output: dict with status, run_path, checkpoint path, and message metadata.
+        Args:
+            shard_id: annotates progress from a delegated shard.
+            wave_id: annotates progress within a wave.
         """
 
         result = execute_checkpoint(
@@ -433,10 +443,16 @@ def register_orchestration_tools(server: FastMCP) -> None:
         )
 
         _apply_ceremony_status(
-            cast("dict[str, object]", result),
+            result,
             tool_name="CHECKPOINT",
             debug_event="checkpoint_nudge_injection_skipped",
-            mark_checkpoint_first=True,
+            # NFR04: ceremony progress must not claim a checkpoint that was
+            # never persisted — the deliver gate and nudges read that counter.
+            mark_checkpoint_first=result.get("recorded") is True,
+            # Same source of truth for the PROSE: without this the nudge layer
+            # defaults to tool_success=True and can attach "Progress saved." to
+            # the very response that says recorded=False (CONSTITUTION §1).
+            tool_success=result.get("recorded") is True,
         )
 
         return result

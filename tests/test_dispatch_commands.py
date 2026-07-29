@@ -121,10 +121,10 @@ def test_prompt_is_a_single_token_never_split() -> None:
     assert nasty in argv
 
 
-def test_gemini_is_not_a_supported_client() -> None:
-    assert "gemini" not in SUPPORTED_CLIENTS
+def test_unknown_client_is_not_a_supported_client() -> None:
+    assert "not-a-real-cli" not in SUPPORTED_CLIENTS
     with pytest.raises(Exception):
-        DispatchRequest(client="gemini", prompt="x")  # type: ignore[arg-type]
+        DispatchRequest(client="not-a-real-cli", prompt="x")  # type: ignore[arg-type]
 
 
 # --- read_only enforcement matrix (P1-1) --------------------------------------

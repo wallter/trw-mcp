@@ -134,16 +134,32 @@ def _apply_ceremony_status(
     debug_event: str,
     trw_dir: Path | None = None,
     mark_checkpoint_first: bool = False,
+    tool_success: bool = True,
 ) -> None:
-    """Apply orchestration ceremony status wiring without bloating the facade module."""
+    """Apply orchestration ceremony status wiring without bloating the facade module.
+
+    ``tool_name`` ("INIT"/"STATUS"/"CHECKPOINT") is threaded into the reactive
+    nudge context so the context pool and per-tool reactive messages stay live.
+
+    ``tool_success`` carries whether the tool actually did what its reactive
+    message would claim. It must be threaded, never defaulted, by any caller
+    with a soft-failure branch: ``trw_checkpoint`` returns ``recorded: False``
+    without raising, and the default ``True`` let the reactive checkpoint
+    message assert "Progress saved." on a call that persisted nothing.
+    """
     try:
         from trw_mcp.state._paths import resolve_trw_dir
         from trw_mcp.state.ceremony_progress import mark_checkpoint
-        from trw_mcp.tools._ceremony_status import append_ceremony_status
+        from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
         resolved_trw_dir = trw_dir or resolve_trw_dir()
         if mark_checkpoint_first:
             mark_checkpoint(resolved_trw_dir)
-        append_ceremony_status(result, resolved_trw_dir)
+        append_ceremony_status_for_tool(
+            result,
+            resolved_trw_dir,
+            tool_name=tool_name,
+            tool_success=tool_success,
+        )
     except Exception:  # justified: fail-open, ceremony status must not break orchestration tools
         logger.debug(debug_event, exc_info=True)

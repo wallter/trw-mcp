@@ -31,6 +31,7 @@ from typing import cast
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import SessionStartResultDict
+from trw_mcp.tools._ceremony_runtime_helpers import _no_active_run_hint
 from trw_mcp.tools._recall_projection import strip_internal_response_fields
 from trw_mcp.tools._session_start_trim import (
     estimate_payload_tokens,
@@ -39,6 +40,14 @@ from trw_mcp.tools._session_start_trim import (
 
 # Post-campaign measurements (2026-07-12, real stdio): session_start ~966 tok,
 # recall (25 entries, 8000 budget) ~7.7k tok. Ceilings = measurement + slack.
+#
+# 2026-07-24 correction (UF-052): the session_start fixture below had OMITTED the
+# unconditionally-emitted connection_fingerprint block, so the ~966 figure
+# understated what agents actually receive. With the block present and the
+# zero-match query_advisory populated, the honest compact measurement is
+# ~1038 tok (~1134 if connection_fingerprint were not reduced in compact mode).
+# The ceiling is unchanged — the fixture got more truthful, not the payload
+# bigger.
 SESSION_START_CEILING_TOKENS = 1300
 RECALL_ENTRY_CEILING_TOKENS = 450  # per projected entry with rich content
 
@@ -80,8 +89,11 @@ def _representative_session_start_payload() -> dict[str, object]:
         "auto_recall_deferred": {"reason": "session_start_compacted", "detail": "optional"},
         "ceremony_status_deferred": {"reason": "session_start_compacted", "detail": "optional"},
         "run": {"active_run": None, "status": "no_active_run"},
-        "hint": "No active run for this session. Call trw_init() to create a new run, "
-        "or call trw_adopt_run(run_path=...) to resume an existing run.",
+        # Built from the live production builder rather than a copied literal:
+        # the previous hard-coded copy had already drifted from the shipped
+        # string, so the tripwire was measuring a payload nobody receives.
+        # PRD-CORE-233 FR03 added the run_path= remedy here (~+15 tok).
+        "hint": _no_active_run_hint([{"run_path": "/x", "pin_key": "k"}]),
         "candidate_runs": [
             {
                 "run_path": f"/home/user/project/.trw/runs/some-task/2026071{i}T000000Z-abcdef{i}",
@@ -91,6 +103,29 @@ def _representative_session_start_payload() -> dict[str, object]:
             }
             for i in range(3)
         ],
+        # PRD-CORE-215 FR01 block, emitted unconditionally by
+        # finalize_session_start. Omitting it here let the tripwire certify a
+        # payload ~124 tokens smaller than agents actually receive (UF-052).
+        # Keep it byte-shaped like build_connection_fingerprint() output.
+        "connection_fingerprint": {
+            "protocol_version": "2",
+            "build_identity": "0.63.0",
+            "project_identity": "trw-framework",
+            "connection_nonce": "d" * 32,
+            "result_schema": "trw.session_start.v1",
+            "transport": "stdio",
+            "owner_status_capability": True,
+            "request_identity_capability": True,
+            "process_fingerprint_digest": "e" * 64,
+            "loaded_module_digest": "f" * 64,
+        },
+        "query_advisory": (
+            "Focused recall matched 0 entries: the vector index was not initialized in this "
+            "process (session_start never triggers a model load), so only all-token keyword "
+            "matching ran -- a multi-word natural-language query cannot match that way. The "
+            "learnings returned are the impact-ranked baseline, NOT query matches. Call "
+            "trw_recall(query=...) for full hybrid BM25+vector search."
+        ),
         "surface_snapshot_id": "a" * 64,
         "resolved_profile": {"ceremony_tier": "COMPREHENSIVE"},
         "profile_layers_applied": ["defaults"],
@@ -116,6 +151,47 @@ def test_session_start_compact_payload_stays_under_ceiling() -> None:
         f"compact trw_session_start payload is ~{tokens} tokens "
         f"(ceiling {SESSION_START_CEILING_TOKENS}). {_BLOAT_GUIDANCE}"
     )
+
+
+def test_session_start_fixture_includes_connection_fingerprint() -> None:
+    """UF-052 regression: the tripwire fixture must carry every block that the
+    session-start finalizer emits unconditionally, or it certifies a payload
+    smaller than agents receive. connection_fingerprint is written by
+    ``finalize_session_start`` on EVERY call, so it belongs in the fixture."""
+    from trw_mcp.tools._connection_fingerprint import build_connection_fingerprint
+
+    fixture_block = _representative_session_start_payload()["connection_fingerprint"]
+    assert isinstance(fixture_block, dict)
+    assert set(fixture_block) == set(build_connection_fingerprint()), (
+        "fixture connection_fingerprint has drifted from the emitted block — "
+        "the measured payload no longer matches what agents receive."
+    )
+
+
+def test_compact_mode_reduces_connection_fingerprint_to_non_constant_fields() -> None:
+    """Compact mode keeps only the two fields that vary and that a caller can
+    act on. The eight constants/derivables/opaque digests cost ~96 tokens on
+    every session for zero decision value."""
+    fixture = cast("SessionStartResultDict", _representative_session_start_payload())
+    unreduced = estimate_payload_tokens(fixture["connection_fingerprint"])
+
+    payload = trim_session_start_payload(fixture, verbose=False)
+    block = payload["connection_fingerprint"]
+    assert isinstance(block, dict)
+    assert set(block) == {"build_identity", "connection_nonce"}
+    assert estimate_payload_tokens(block) < unreduced
+
+
+def test_verbose_mode_preserves_full_connection_fingerprint() -> None:
+    """verbose=True stays the full-audit path — the tamper digests required by
+    PRD-INFRA-164 FR07/NFR04 must remain reachable."""
+    fixture = cast("SessionStartResultDict", _representative_session_start_payload())
+    payload = trim_session_start_payload(fixture, verbose=True)
+    block = payload["connection_fingerprint"]
+    assert isinstance(block, dict)
+    assert "loaded_module_digest" in block
+    assert "process_fingerprint_digest" in block
+    assert "transport" in block
 
 
 def test_recall_projected_entry_stays_under_ceiling() -> None:

@@ -27,16 +27,23 @@ logger = structlog.get_logger(__name__)
 # Module-level caches and compiled regexes
 # ---------------------------------------------------------------------------
 
+#: Snapshot of the LAST successfully loaded template, NOT a read-through cache.
+#: ``_load_template_body`` deliberately re-reads and re-validates the file on
+#: every call — a swapped or corrupted template must fail closed rather than be
+#: served from memory (pinned by ``test_creator_does_not_reuse_cached_template_
+#: after_source_changes``). These globals exist so ``trw_prd_create`` can stamp
+#: the version it just parsed; the "cache" naming is retained only because tests
+#: and re-exports reference these names.
 _CACHED_TEMPLATE_BODY: str | None = None
 _CACHED_TEMPLATE_VERSION: str | None = None
 
 
 def reset_template_cache() -> None:
-    """Reset the cached PRD template body and version.
+    """Clear the last-loaded template snapshot.
 
-    Call this to force a fresh load from ``data/prd_template.md`` on the
-    next ``_load_template_body()`` invocation.  Useful in tests and when
-    switching between projects with different template files.
+    This does NOT change whether the next ``_load_template_body()`` re-reads the
+    file — it always does. It clears the recorded version so a test can assert
+    that a failed load leaves no stale version behind.
     """
     global _CACHED_TEMPLATE_BODY, _CACHED_TEMPLATE_VERSION
     _CACHED_TEMPLATE_BODY = None
@@ -54,10 +61,14 @@ _SLO_KW_RE = re.compile(r"\b(slo|latency|availability|throughput)\b", re.IGNOREC
 
 
 def _load_template_body() -> str:
-    """Load PRD template body from data/prd_template.md, cached.
+    """Load and RE-VALIDATE the PRD template body from data/prd_template.md.
 
-    Strips YAML frontmatter (everything between the first ``---`` pair)
-    and caches both the body and the extracted template version.
+    Every call re-reads the file and re-checks that it is the canonical v3.2
+    template before stripping frontmatter, so a template that is swapped or
+    truncated mid-process fails closed instead of being served from an earlier
+    load. The parsed body/version are recorded in the module snapshot for the
+    caller's ``template_version`` stamp — that snapshot is never read back as a
+    substitute for the file.
 
     Returns:
         Template body as a string (markdown after frontmatter).
@@ -94,6 +105,24 @@ def _load_template_body() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _aaref_version() -> str:
+    """The AARE-F version in force, read from config rather than copied.
+
+    The template used to carry a hardcoded ``v3.2.0`` in its research-basis
+    footer, so every PRD generated after AARE-F moved stamped a version that no
+    longer existed -- provenance that silently became fiction. Resolving it here
+    keeps the stamp honest for new PRDs while leaving already-authored ones
+    correctly showing the version they were actually written against.
+    """
+    from trw_mcp.models.config import get_config
+
+    try:
+        version = str(get_config().aaref_version).strip()
+    except Exception:  # pragma: no cover - config unavailable in a bare template render
+        return "unknown"
+    return version or "unknown"
+
+
 def _substitute_template(
     body: str,
     prd_id: str,
@@ -127,6 +156,7 @@ def _substitute_template(
     result = result.replace("{CAT}", category)
     result = result.replace("{SEQ}", seq_str)
     result = result.replace("{Title}", title)
+    result = result.replace("{AAREF_VERSION}", _aaref_version())
 
     # Set dynamic Quick Reference values
     result = result.replace(

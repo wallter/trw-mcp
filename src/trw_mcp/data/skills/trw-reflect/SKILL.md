@@ -52,6 +52,26 @@ routed item (treat `recorded-only` rows as unimplemented):
 
 Never claim recurrence without citing the prior ledger entry (NFR04).
 
+**Concurrent-instance check (before you treat anything as yours to route).** A
+ledger whose identity differs from yours and whose mtime falls inside this
+session's window was written by an instance still working. Its rows are not
+your recurrences — they are someone's live queue. For each of your findings
+that matches one:
+
+- Do **not** route it. A second PRD for the same friction is the exact
+  duplication this step exists to prevent, and it costs two implementations
+  and a reconciliation.
+- Record it under "Recurring (deduped)" pointing at their ledger, and say
+  plainly that the item is owned elsewhere.
+- If your session produced **sharper evidence** than theirs (a count they
+  estimated, a log breakdown, a live reproduction, a counter-example that
+  narrows their claim), route it as `evidence-contributed`: state the evidence
+  and where it belongs. Their dedup may have run degraded — mine did not, and
+  that asymmetry is worth passing on rather than re-deriving.
+
+Identity comparison is on the ledger's recorded run/session id, never on the
+filename slug: same-day filenames collide across instances by construction.
+
 Tally the open `recorded-only` + `deferred` items with
 `python3 scripts/count-reflection-debt.py` when present. Otherwise count ledger
 status cells, report the method, and list free-form ledgers you could not parse. Include the count in your
@@ -122,14 +142,25 @@ Convert grounded findings into improvement opportunities. Each row MUST have:
 | Evidence | the signal citation(s) from Step 1 |
 | Impact | H / M / L (recurrence-escalated per Step 0) |
 | Effort | H / M / L |
-| Proposed route | quick-fix / PRD / learning / backlog (see Step 4) |
+| Proposed route | quick-fix / PRD / learning / backlog / evidence-contributed (see Step 4) |
 
 Then **dedup** before presenting:
 
 - `trw_recall(query=<topic>)` — if an existing learning already covers it, the
   opportunity becomes recurrence evidence on that learning, not a new row.
+  A recalled learning can also *reframe* a finding rather than dedup it: check
+  whether an existing verification claim covers a narrower case than its wording
+  suggests (a test that verified a server-side answer, say, while the client-side
+  behaviour it implies was never exercised). That reframing usually belongs in
+  the eventual PRD as the reason the existing guard did not catch the defect.
 - Grep `docs/documentation/improvement-backlog.md` when it exists; a missing file means no backlog match. Matches
   move to a "recurring" section with a pointer to the existing entry only after approval in Step 4.
+- **Read the `Claim` cell of every matching backlog row.** `open` is yours to
+  take. `claimed:<identity> <date>` by another instance, or a `PRD-<CAT>-<NNN>`
+  reference, means the item has an owner — treat it as Step 0's concurrent-instance
+  case, not as a free row. A claim whose instance demonstrably ended without
+  shipping may be reclaimed; say so explicitly in the ledger rather than
+  overwriting it silently.
 
 Respect the depth cap by dropping the rows with the lowest impact-to-effort
 ratio (score H=3/M=2/L=1; rank by impact ÷ effort). State that rows were
@@ -160,6 +191,15 @@ header. The ledger IS the deliverable; the next reflection treats
 
 ## Step 4: Route and implement
 
+**Claim before you route.** Whatever the channel, the backlog row's `Claim`
+cell is set in the SAME edit that files the PRD or starts the fix — never
+after. A claim written afterwards does not prevent the collision it exists to
+prevent, because the window that matters is while you are working. Use
+`claimed:<identity-short> <YYYY-MM-DD>` while in flight, then the `PRD-<CAT>-<NNN>`
+or `shipped:<sha>` that supersedes it. The vocabulary is documented at the top
+of `docs/documentation/improvement-backlog.md`; if that file has no `Claim`
+column yet, add it with its protocol as part of this routing.
+
 Route each approved opportunity to exactly one channel:
 
 1. **quick-fix** — small, reversible, ≤ ~15 min (typo-class doc fix, missing
@@ -179,7 +219,13 @@ Route each approved opportunity to exactly one channel:
    A ledger-only pointer is insufficient; the ledger cites the PRD ID, and the PRD stands alone.
 3. **learning** — durable gotcha/pattern: `trw_learn(summary, detail, tags,
    impact)` with the evidence citation in the detail.
-4. **backlog** — valuable but not now: append to
+4. **evidence-contributed** — the item is owned by a concurrent instance
+   (Step 0) and your session holds sharper evidence than theirs. Do not file
+   anything of your own: state the evidence, name the ledger/PRD it belongs to,
+   and surface it to the operator so it reaches that owner. This route exists
+   because the alternative — re-deriving it later, or filing a duplicate — is
+   how two instances end up implementing the same fix twice.
+5. **backlog** — valuable but not now: append to
    `docs/documentation/improvement-backlog.md` (create with a one-line header
    if missing) with date + evidence pointer.
 
@@ -201,9 +247,11 @@ Prior ledgers checked: <filenames found, or "first reflection">
 <one line per signal source actually read, with paths>
 
 ## Opportunities
-| # | Category | Evidence | Impact | Effort | Route | Approval | Status |
-<Status enum: shipped | recorded-only | deferred | rejected — plus a pointer
-(commit, learning ID, backlog line, PRD ID) when shipped>
+| # | Category | Evidence | Impact | Effort | Route | Approval | Status | Claim |
+<Status enum: shipped | recorded-only | deferred | rejected | owned-elsewhere —
+plus a pointer (commit, learning ID, backlog line, PRD ID) when shipped.
+Claim: the value written to the backlog row, so the ledger and the backlog
+cannot disagree about who holds an item.>
 
 ## Recurring (deduped)
 <pointers to existing learnings/backlog entries that matched; recurred-escalated

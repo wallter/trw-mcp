@@ -68,7 +68,14 @@ def test_client_profile_env_written(tmp_path: Path) -> None:
 
 
 def test_manifest_entries_written(tmp_path: Path) -> None:
-    """FR27: Six opencode channel entries in manifest.yaml after install."""
+    """FR27: Five opencode channel entries in manifest.yaml after install.
+
+    PRD-CORE-239 FR01 removed opencode-agents-md-segment, the AGENTS.md marker
+    block — opencode was the only client whose segment was written directly by
+    its installer, so this is a real behaviour change and not just a manifest
+    edit. The remaining five are asserted as an exact set rather than
+    `issubset` so a reintroduced entry fails here.
+    """
     from trw_mcp.bootstrap._opencode_distill_channels import (
         bootstrap_channel_manifest,
     )
@@ -83,15 +90,13 @@ def test_manifest_entries_written(tmp_path: Path) -> None:
     manifest = load(manifest_path)
 
     opencode_ids = {e.id for e in manifest.channels if e.client == "opencode"}
-    expected = {
-        "opencode-agents-md-segment",
+    assert opencode_ids == {
         "opencode-custom-cmd-before-edit",
         "opencode-custom-cmd-hotspots",
         "opencode-custom-cmd-conventions",
         "opencode-tool-return-enrichment",
         "opencode-explorer-agent",
     }
-    assert expected.issubset(opencode_ids), f"Missing: {expected - opencode_ids}"
 
 
 def test_manifest_entries_have_correct_default_tier() -> None:
@@ -167,7 +172,14 @@ def test_manifest_all_or_nothing_on_validation_error(tmp_path: Path) -> None:
 
 
 def test_manifest_merge_preserves_existing_entries(tmp_path: Path) -> None:
-    """FR30: Merging opencode entries preserves existing cursor/codex entries."""
+    """FR30: Merging opencode entries preserves existing cursor/codex entries.
+
+    PRD-CORE-239 FR01: the pre-planted foreign entry was
+    `codex-agents-md-hotspots` and the added-entry assertion named
+    `opencode-agents-md-segment`; both channels are removed. The foreign entry
+    is now a surviving codex channel so a deleted id is not kept alive here,
+    and the added-entry assertion names a channel the bootstrap really merges.
+    """
     from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
     from trw_mcp.channels._manifest_loader import (
         auto_recreate_empty,
@@ -188,10 +200,10 @@ def test_manifest_merge_preserves_existing_entries(tmp_path: Path) -> None:
     auto_recreate_empty(manifest_path)
     existing_manifest = manifest_load(manifest_path)
     existing_entry = ChannelEntry(
-        id="codex-agents-md-hotspots",
+        id="codex-posttooluse-telemetry",
         client="codex",
-        surface=ChannelSurface.CODEX_AGENTS_MD_SEGMENT,
-        telemetry_tag="codex_agents_md_hotspots",
+        surface=ChannelSurface.INSTRUCTION_FILE_SEGMENT,
+        telemetry_tag="codex_posttooluse_telemetry",
     )
     existing_manifest.channels.append(existing_entry)
     existing_manifest.generated_at = now_utc_iso8601()
@@ -202,8 +214,8 @@ def test_manifest_merge_preserves_existing_entries(tmp_path: Path) -> None:
 
     merged = manifest_load(manifest_path)
     ids = {e.id for e in merged.channels}
-    assert "codex-agents-md-hotspots" in ids, "Existing entry should be preserved"
-    assert "opencode-agents-md-segment" in ids, "New opencode entry should be added"
+    assert "codex-posttooluse-telemetry" in ids, "Existing entry should be preserved"
+    assert "opencode-explorer-agent" in ids, "New opencode entry should be added"
 
 
 # ---------------------------------------------------------------------------

@@ -250,3 +250,109 @@ def test_dry_run_changed_reports_would_merge_without_writing(tmp_path: Path) -> 
     assert any("would merge" in u and str(dest) in u for u in result["updated"])
     # Dry-run must not touch the file.
     assert "TRW_NEW_FLAG" not in dest.read_text(encoding="utf-8")
+
+
+# ── PRD-SEC-013 FR09: per-entry hook merge ─────────────────────────────────
+
+
+def _bundled_with_intent_hooks(path: Path) -> Path:
+    """The post-PRD-SEC-013 bundled template: PreToolUse carries two entries."""
+    src = path / "bundled" / "settings.json"
+    _write(
+        src,
+        json.dumps(
+            {
+                "env": {"ENABLE_TOOL_SEARCH": "true"},
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "mcp__trw__trw_deliver",
+                            "hooks": [{"type": "command", "command": "sh pre-tool-deliver-gate.sh"}],
+                        },
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [{"type": "command", "command": "sh pre-tool-intent-guard.sh"}],
+                        },
+                    ],
+                    "PostToolUse": [
+                        {
+                            "matcher": "Write|Edit|MultiEdit",
+                            "hooks": [{"type": "command", "command": "sh post-tool-intent-check.sh"}],
+                        }
+                    ],
+                },
+            }
+        ),
+    )
+    return src
+
+
+def test_merge_preserves_unrelated_existing_pretooluse_entries(tmp_path: Path) -> None:
+    """FR09 evidence artifact: a whole-event setdefault dropped the bundled list."""
+    src = _bundled_with_intent_hooks(tmp_path)
+    dest = tmp_path / "proj" / ".claude" / "settings.json"
+    existing_entry = {
+        "matcher": "Bash",
+        "hooks": [{"type": "command", "command": "sh pre-tool-distill-hint.sh"}],
+    }
+    _write(dest, json.dumps({"hooks": {"PreToolUse": [existing_entry]}}))
+
+    _merge_settings_json(src, dest, _new_result())
+
+    merged = json.loads(dest.read_text(encoding="utf-8"))
+    commands = [entry["hooks"][0]["command"] for entry in merged["hooks"]["PreToolUse"]]
+    # The pre-existing CC-03 entry survives verbatim, in order...
+    assert commands[0] == "sh pre-tool-distill-hint.sh"
+    # ...and BOTH bundled entries reach the project.
+    assert "sh pre-tool-deliver-gate.sh" in commands
+    assert "sh pre-tool-intent-guard.sh" in commands
+    # The bundled PostToolUse event (absent before) is copied wholesale.
+    assert merged["hooks"]["PostToolUse"][0]["hooks"][0]["command"] == "sh post-tool-intent-check.sh"
+
+
+def test_hook_merge_is_idempotent(tmp_path: Path) -> None:
+    src = _bundled_with_intent_hooks(tmp_path)
+    dest = tmp_path / "proj" / ".claude" / "settings.json"
+    _write(dest, json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"command": "sh other.sh"}]}]}}))
+
+    _merge_settings_json(src, dest, _new_result())
+    first = json.loads(dest.read_text(encoding="utf-8"))
+    _merge_settings_json(src, dest, _new_result())
+    second = json.loads(dest.read_text(encoding="utf-8"))
+
+    assert first == second
+    commands = [entry["hooks"][0]["command"] for entry in second["hooks"]["PreToolUse"]]
+    assert len(commands) == len(set(commands)) == 3
+
+
+def test_existing_entry_with_the_same_command_is_never_duplicated_or_rewritten(tmp_path: Path) -> None:
+    """Identity is the hook command: a user's custom matcher/timeout is preserved."""
+    src = _bundled_with_intent_hooks(tmp_path)
+    dest = tmp_path / "proj" / ".claude" / "settings.json"
+    customized = {
+        "matcher": "Write",
+        "hooks": [{"type": "command", "command": "sh pre-tool-intent-guard.sh", "timeout": 9000}],
+    }
+    _write(dest, json.dumps({"hooks": {"PreToolUse": [customized]}}))
+
+    _merge_settings_json(src, dest, _new_result())
+
+    merged = json.loads(dest.read_text(encoding="utf-8"))
+    guard_entries = [
+        entry
+        for entry in merged["hooks"]["PreToolUse"]
+        if entry["hooks"][0]["command"] == "sh pre-tool-intent-guard.sh"
+    ]
+    assert guard_entries == [customized]
+
+
+def test_non_list_existing_hook_event_is_replaced_by_the_bundled_list(tmp_path: Path) -> None:
+    src = _bundled_with_intent_hooks(tmp_path)
+    dest = tmp_path / "proj" / ".claude" / "settings.json"
+    _write(dest, json.dumps({"hooks": {"PreToolUse": "not-a-list"}}))
+
+    _merge_settings_json(src, dest, _new_result())
+
+    merged = json.loads(dest.read_text(encoding="utf-8"))
+    assert isinstance(merged["hooks"]["PreToolUse"], list)
+    assert len(merged["hooks"]["PreToolUse"]) == 2

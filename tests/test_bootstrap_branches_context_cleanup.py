@@ -32,12 +32,23 @@ class TestContextCleanupEdgeCases:
         assert result["cleaned"] == []
 
     def test_cleanup_skips_symlinks(self, tmp_path: Path) -> None:
-        """Symlink in context dir is NOT deleted."""
+        """Symlink in context dir is NOT deleted, even when its name is transient.
+
+        The symlink must be named something `_TRANSIENT_PATTERNS` matches, or
+        this test proves nothing. It used to be `stale_link.yaml`, which after
+        PRD-FIX-120 inverted the predicate matches no pattern — so the loop hit
+        `if not _is_transient_context_artifact(name): continue` and never
+        reached the `stat.S_ISREG` guard at all. Deleting that guard outright
+        left the test green, while PRD-FIX-120 NFR01 cited it as the evidence
+        that the symlink defence was unchanged. `velocity.yaml` is on the
+        transient list, so S_ISREG is now the only thing standing between this
+        link and `unlink()`.
+        """
         context = tmp_path / ".trw" / "context"
         context.mkdir(parents=True)
         real_file = tmp_path / "real_data.txt"
         real_file.write_text("important data", encoding="utf-8")
-        symlink = context / "stale_link.yaml"
+        symlink = context / "velocity.yaml"
         symlink.symlink_to(real_file)
 
         result: dict[str, list[str]] = {"cleaned": [], "errors": []}
@@ -63,7 +74,7 @@ class TestContextCleanupEdgeCases:
         stale.write_text("stale", encoding="utf-8")
 
         result: dict[str, list[str]] = {"cleaned": [], "errors": []}
-        with patch("trw_mcp.bootstrap._version_migration.os.unlink", side_effect=OSError("permission denied")):
+        with patch("trw_mcp.bootstrap._version_migration_context.os.unlink", side_effect=OSError("permission denied")):
             _cleanup_context_transients(tmp_path, result)
 
         assert len(result["errors"]) == 1
@@ -92,7 +103,7 @@ class TestContextCleanupEdgeCases:
         context.mkdir(parents=True)
         result: dict[str, list[str]] = {"cleaned": [], "errors": [], "warnings": []}
 
-        with patch("trw_mcp.bootstrap._version_migration.os.listdir", side_effect=OSError("read failed")):
+        with patch("trw_mcp.bootstrap._version_migration_context.os.listdir", side_effect=OSError("read failed")):
             _cleanup_context_transients(tmp_path, result)
 
         assert result["cleaned"] == []

@@ -65,8 +65,15 @@ def _trw_mcp_server_entry() -> dict[str, object]:
     rather than the machine-absolute ``sys.executable`` (PRD-SEC-006, audit
     installer-client-12): committing a build-machine interpreter path into a
     project's ``.mcp.json`` breaks the config on every other machine and leaks
-    a host-specific path. The default ``--debug`` flag is dropped — verbose
-    logging is opt-in, not a baked-in default.
+    a host-specific path.
+
+    ``args`` is empty, and as of 2026-07-27 that is true of EVERY client
+    bootstrap profile — codex, cursor, and opencode used to bake in ``--debug``
+    while this generic entry did not, so the same install logged different
+    things depending on which client spawned the server. A client profile tunes
+    surface density, never protocol, and log verbosity is protocol. Verbose
+    logging is opted into portably via ``.trw/config.yaml`` ``debug: true``
+    (or ``TRW_LOG_LEVEL``) — see ``_logging.configure_logging``.
     """
     if shutil.which("trw-mcp"):
         return {"command": "trw-mcp", "args": []}
@@ -347,20 +354,19 @@ SUPPORTED_IDES = [
     "antigravity-cli",
 ]
 
-# Retired client identifiers (2026-07-11). ``gemini`` — Google deprecated the
-# Gemini CLI in favor of Antigravity CLI; ``aider`` — never had a TRW client
+# Retired client identifiers (2026-07-11). ``aider`` never had a TRW client
 # adapter. Retired IDs are no longer installable (absent from SUPPORTED_IDES)
 # but are still RECOGNIZED (not "unknown"): ``--ide`` selection and target
 # resolution surface a 'retired' message with a migration hint instead of a
-# generic rejection, and existing ``.gemini/`` installs remain uninstallable
-# via ``trw-mcp uninstall`` forever (see client_profiles/catalog.py).
+# generic rejection, and existing ``.aider.conf.yml`` installs remain
+# uninstallable via ``trw-mcp uninstall`` forever (see client_profiles/catalog.py).
+# Recognized-but-not-installable client ids. Kept in sync with
+# ``server/_cli_argparse_project.py::_RETIRED_IDE_HINTS`` — both exist so a
+# withdrawn id produces a message naming its successor rather than a bare
+# "unknown value".
 _RETIRED_IDES: dict[str, str] = {
-    "gemini": (
-        "Gemini CLI was deprecated by Google; configure antigravity-cli instead "
-        "(trw-mcp update-project . --ide antigravity-cli). Existing .gemini/ files are "
-        "left untouched — run trw-mcp uninstall to remove them on demand."
-    ),
     "aider": "aider never had a TRW client adapter.",
+    "gemini": "the Gemini CLI profile was removed on 2026-07-24; use antigravity-cli.",
 }
 
 

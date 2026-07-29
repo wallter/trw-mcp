@@ -2,7 +2,7 @@
 # PRD Metadata (LLM-Parseable)
 # Authoring source: trw-mcp/src/trw_mcp/data/prd_template.md. Root/eval copies
 # are deployment mirrors and are byte-identical under the template parity test.
-# Research basis: AARE-F Framework v3.2.0
+# Research basis: AARE-F Framework {AAREF_VERSION}
 # AARE-F Components: C1 (Traceability), C2 (Governance), C7 (Req-as-Code)
 # Findings: F2 (LLM-parseable), F3 (confidence), F7 (metrics), F19 (traceability), F24 (implementation completeness)
 
@@ -513,5 +513,5 @@ Before submitting this PRD for review, verify:
 ---
 
 *Template version: 3.2 (AARE-F 3.2 verification-contract and implementation-readiness hardening)*
-*Research basis: AARE-F Framework v3.2.0*
+*Research basis: AARE-F Framework {AAREF_VERSION}*
 *Prompts: docs/requirements-aare-f/prompts/prd-creation.md*

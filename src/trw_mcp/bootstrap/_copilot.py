@@ -19,6 +19,24 @@ from typing import cast
 
 import structlog
 
+# Mirrored-artifact generators (.github/instructions, /agents, /skills) live in
+# _copilot_artifacts (350-eLOC gate). Re-exported so ``from ._copilot import ...``
+# keeps working for _init_project_ide.py, _ide_targets.py,
+# _version_migration_clients.py, bootstrap/__init__.py, and the test modules that
+# import through this facade.
+from ._copilot_artifacts import _COPILOT_AGENT_TEMPLATES as _COPILOT_AGENT_TEMPLATES
+from ._copilot_artifacts import _COPILOT_AGENTS_DIR as _COPILOT_AGENTS_DIR
+from ._copilot_artifacts import _COPILOT_INSTRUCTIONS_DIR as _COPILOT_INSTRUCTIONS_DIR
+from ._copilot_artifacts import _COPILOT_SKILLS_DIR as _COPILOT_SKILLS_DIR
+from ._copilot_artifacts import _PATH_SCOPED_TEMPLATES as _PATH_SCOPED_TEMPLATES
+from ._copilot_artifacts import _copilot_data_dir as _copilot_data_dir
+from ._copilot_artifacts import _copilot_skills_source_dir as _copilot_skills_source_dir
+from ._copilot_artifacts import copilot_agent_contents as copilot_agent_contents
+from ._copilot_artifacts import copilot_path_instruction_contents as copilot_path_instruction_contents
+from ._copilot_artifacts import copilot_skill_contents as copilot_skill_contents
+from ._copilot_artifacts import generate_copilot_agents as generate_copilot_agents
+from ._copilot_artifacts import generate_copilot_path_instructions as generate_copilot_path_instructions
+from ._copilot_artifacts import install_copilot_skills as install_copilot_skills
 from ._copilot_models import (
     CopilotHookCommand,
     CopilotHookConfig,
@@ -44,9 +62,6 @@ _COPILOT_INSTRUCTIONS_PATH = ".github/copilot-instructions.md"
 _COPILOT_HOOKS_PATH = ".github/hooks/hooks.json"
 _COPILOT_ADAPTER_SCRIPT_NAME = "trw-copilot-adapter.sh"
 _COPILOT_ADAPTER_INSTALL_PATH = f".github/hooks/{_COPILOT_ADAPTER_SCRIPT_NAME}"
-_COPILOT_AGENTS_DIR = ".github/agents"
-_COPILOT_SKILLS_DIR = ".github/skills"
-_COPILOT_INSTRUCTIONS_DIR = ".github/instructions"
 
 # ---------------------------------------------------------------------------
 # Marker constants (prefixed to avoid confusion with _opencode.py markers)
@@ -55,6 +70,12 @@ _COPILOT_INSTRUCTIONS_DIR = ".github/instructions"
 _COPILOT_TRW_START_MARKER = "<!-- trw:copilot:start -->"
 _COPILOT_TRW_END_MARKER = "<!-- trw:copilot:end -->"
 _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
+
+#: Copilot's own externalization sidecar. Deliberately NOT the shared
+#: ``.trw/INSTRUCTIONS.md``: that file holds the Claude Code block, and a
+#: project with both clients installed would have each overwrite the other's
+#: content while both instruction files still reported success.
+_COPILOT_SIDECAR_RELPATH = ".trw/COPILOT-INSTRUCTIONS.md"
 
 
 # ---------------------------------------------------------------------------
@@ -75,18 +96,6 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Data directory helpers
 # ---------------------------------------------------------------------------
-
-
-def _copilot_data_dir() -> Path:
-    """Return the bundled Copilot-specific data root."""
-    from ._utils import _DATA_DIR
-
-    return _DATA_DIR / "copilot"
-
-
-def _copilot_skills_source_dir() -> Path:
-    """Return the bundled Copilot-specific skills root."""
-    return _copilot_data_dir() / "skills"
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +164,16 @@ def generate_copilot_instructions(
     Delegates to the shared ``write_instruction_file_with_merge`` helper.
     """
     result = _new_result()
+    target_path = target_dir / _COPILOT_INSTRUCTIONS_PATH
+    rendered = _copilot_instructions_content()
+
+    if _externalize_copilot_block(target_path, target_dir, rendered, result, force=force):
+        return result
+
     write_instruction_file_with_merge(
-        target_path=target_dir / _COPILOT_INSTRUCTIONS_PATH,
+        target_path=target_path,
         rel_path=_COPILOT_INSTRUCTIONS_PATH,
-        trw_section=_copilot_instructions_content(),
+        trw_section=rendered,
         start_marker=_COPILOT_TRW_START_MARKER,
         end_marker=_COPILOT_TRW_END_MARKER,
         force=force,
@@ -167,64 +182,92 @@ def generate_copilot_instructions(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Path-scoped instructions
-# ---------------------------------------------------------------------------
-
-_PATH_SCOPED_TEMPLATES: dict[str, PathScopedTemplate] = {
-    "python-testing.instructions.md": {
-        "applyTo": "**/*test*.py,**/tests/**/*.py",
-        "content": """# Python Testing Guidelines
-
-- Use pytest as the test framework
-- Follow `test_*.py` naming convention
-- Add type annotations to test functions
-- Use fixtures for shared setup
-- Meet the project-configured coverage gate; if none exists, report measured coverage without inventing a percentage
-""",
-    },
-    "typescript-react.instructions.md": {
-        "applyTo": "**/*.tsx,**/*.ts",
-        "content": """# TypeScript/React Guidelines
-
-- Use PascalCase for React components
-- Use camelCase for functions and hooks
-- Colocate tests as `*.test.ts` or `*.test.tsx`
-- Use ESLint + Prettier formatting
-""",
-    },
-}
-
-
-def generate_copilot_path_instructions(
-    target_dir: Path,
+def _externalize_copilot_block(
+    target_path: Path,
+    project_root: Path,
+    rendered: str,
+    result: dict[str, list[str]],
     *,
     force: bool = False,
-) -> dict[str, list[str]]:
-    """Generate ``.github/instructions/*.instructions.md`` path-scoped files."""
-    result = _new_result()
-    instructions_dir = target_dir / _COPILOT_INSTRUCTIONS_DIR
-    instructions_dir.mkdir(parents=True, exist_ok=True)
+) -> bool:
+    """Replace copilot's inline block with an ``@``-include. ``True`` when handled.
 
-    for filename, template in _PATH_SCOPED_TEMPLATES.items():
-        path = instructions_dir / filename
-        existed = path.exists()
-        if existed and not force:
-            result["preserved"].append(f"{_COPILOT_INSTRUCTIONS_DIR}/{filename}")
-            continue
+    **Resolution base — verified, not assumed.** GitHub documents the reference as
+    repo-relative without saying whether it resolves from the repository root or
+    the containing directory, and those differ for a file under ``.github/``.
+    Emitting on a guess would produce an instruction file that parses and carries
+    nothing. Read out of the shipped Copilot CLI bundle
+    (``@github/copilot-linux-x64/app.js``): the repository case calls
+    ``hut(root, root, "repository", "")`` -> ``repoResolveInstructionImports(
+    content, filePath, root)``. The base is the REPOSITORY ROOT, so a
+    repo-relative sidecar path resolves correctly from
+    ``.github/copilot-instructions.md``. (The home-level branch passes
+    ``dirname(path)`` — different base, but TRW never writes there.)
 
-        content = f"""---
-applyTo: "{template["applyTo"]}"
----
-{template["content"]}"""
+    Copilot's OWN marker pair is threaded through, because the uninstall registry
+    and ``doctor`` both key on ``trw:copilot:start/end``; emitting the carrier's
+    generic pair here would orphan the block from both.
 
-        try:
-            path.write_text(content, encoding="utf-8")
-            _record_write(result, f"{_COPILOT_INSTRUCTIONS_DIR}/{filename}", existed=existed)
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {path}: {exc}")
+    Declines to the inline path (returning ``False``) whenever externalization is
+    off, the profile declares no import syntax, or the carrier raises — inline
+    always works, a dangling include does not. ``force`` still replaces wholesale,
+    and an unchanged re-run reports ``preserved`` rather than ``updated``.
+    """
+    from trw_mcp.models.config import get_config
+    from trw_mcp.models.config._profiles import resolve_client_profile
+    from trw_mcp.state.claude_md._instruction_carrier import IMPORT_CAPABLE_SYNTAXES, CarrierMode, apply_carrier
 
-    return result
+    config = get_config()
+    if config.instruction_externalize == "off":
+        return False
+
+    # Decline BEFORE touching the file. `apply_carrier` writes whichever mode it
+    # resolves to, so calling it for an include-incapable client wrote the file
+    # via the INLINE path and only then failed the mode check below. The restore
+    # is a no-op when the file did not exist, so it stayed on disk — and the
+    # inline writer that runs next saw a pre-existing identical file and
+    # reported "preserved" for a file this installer had just created. Wrong
+    # bookkeeping about our own writes is a truthfulness defect, not cosmetic.
+    if resolve_client_profile("copilot").instruction_import_syntax not in IMPORT_CAPABLE_SYNTAXES:
+        return False
+
+    before = target_path.read_text(encoding="utf-8") if target_path.is_file() else None
+    if force and target_path.is_file():
+        target_path.write_text("", encoding="utf-8")
+
+    profile = resolve_client_profile("copilot")
+    try:
+        outcome = apply_carrier(
+            target_path,
+            rendered,
+            profile.instruction_max_lines,
+            import_syntax=profile.instruction_import_syntax,
+            externalize=config.instruction_externalize,
+            scope="root",
+            external_filename=_COPILOT_SIDECAR_RELPATH,
+            project_root=project_root,
+            markers=(_COPILOT_TRW_START_MARKER, _COPILOT_TRW_END_MARKER),
+        )
+    except Exception:  # justified: fail-open — bootstrap must never break on carrier failure
+        logger.warning("copilot_externalize_failed", target=str(target_path), exc_info=True)
+        if before is not None:
+            target_path.write_text(before, encoding="utf-8")
+        return False
+
+    if outcome.mode is not CarrierMode.IMPORT:
+        if before is not None:
+            target_path.write_text(before, encoding="utf-8")
+        return False
+
+    after = target_path.read_text(encoding="utf-8") if target_path.is_file() else None
+    if before is None:
+        key = "created"
+    elif before == after:
+        key = "preserved"
+    else:
+        key = "updated"
+    result.setdefault(key, []).append(_COPILOT_INSTRUCTIONS_PATH)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -408,176 +451,5 @@ def generate_copilot_hooks(
         _record_write(result, _COPILOT_HOOKS_PATH, existed=existed)
     except OSError as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Agents generation — .agent.md format
-# ---------------------------------------------------------------------------
-
-_COPILOT_AGENT_TEMPLATES: dict[str, str] = {
-    "trw-explorer.agent.md": """---
-name: trw-explorer
-description: "Read-only codebase explorer for gathering evidence before edits."
-tools:
-  - read
-  - glob
-  - grep
-  - web
-mcp-servers:
-  - trw
----
-
-Stay in exploration mode.
-Trace the real execution path, cite files and symbols, and avoid proposing fixes unless asked.
-Prefer fast search and targeted reads over broad scans.
-
-Use `trw_recall(query)` to check if the topic has been investigated before.
-""",
-    "trw-implementer.agent.md": """---
-name: trw-implementer
-description: "Implementation-focused agent for bounded code changes."
-tools:
-  - read
-  - edit
-  - execute
-  - glob
-  - grep
-mcp-servers:
-  - trw
----
-
-Own the requested fix or feature slice.
-Make the smallest defensible change, keep unrelated files untouched, and validate the behavior you changed.
-
-Use `trw_checkpoint(message)` after each working milestone.
-Run tests after each change — fix failures before moving on.
-""",
-    "trw-reviewer.agent.md": """---
-name: trw-reviewer
-description: "Read-only reviewer focused on correctness, regressions, security, and missing tests."
-tools:
-  - read
-  - glob
-  - grep
-  - web
-mcp-servers:
-  - trw
----
-
-Review like an owner.
-Lead with concrete findings, prioritize correctness and missing tests, and avoid style-only feedback unless it hides a real defect.
-
-Use `trw_learn(summary, detail)` to record any patterns or gotchas discovered.
-""",
-    "trw-docs-researcher.agent.md": """---
-name: trw-docs-researcher
-description: "Documentation specialist that researches APIs and runtime behavior."
-tools:
-  - read
-  - glob
-  - grep
-  - web
-mcp-servers:
-  - trw
----
-
-Use web search and configured MCP servers to confirm APIs, options, and version-specific behavior.
-Return concise answers with links or exact references when available.
-Do not make code changes.
-""",
-}
-
-
-def generate_copilot_agents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-) -> dict[str, list[str]]:
-    """Generate ``.github/agents/*.agent.md``."""
-    result = _new_result()
-    agents_dir = target_dir / _COPILOT_AGENTS_DIR
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    for filename, content in _COPILOT_AGENT_TEMPLATES.items():
-        path = agents_dir / filename
-        existed = path.exists()
-
-        if existed and not force:
-            result["preserved"].append(f"{_COPILOT_AGENTS_DIR}/{filename}")
-            continue
-
-        try:
-            path.write_text(content, encoding="utf-8")
-            _record_write(result, f"{_COPILOT_AGENTS_DIR}/{filename}", existed=existed)
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {path}: {exc}")
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Skills installation
-# ---------------------------------------------------------------------------
-
-
-def install_copilot_skills(
-    target_dir: Path,
-    *,
-    force: bool = False,
-) -> dict[str, list[str]]:
-    """Install TRW bundled skills into ``.github/skills/`` for Copilot.
-
-    Copilot discovers skills at ``.github/skills/*/SKILL.md`` (and also
-    ``.claude/skills/`` for cross-compatibility). Bundled skills are
-    validated before installation.
-    """
-    from ._init_project import _validate_skill
-
-    result = _new_result()
-    skills_source = _copilot_skills_source_dir()
-    if not skills_source.is_dir():
-        # Fall back to shared Claude Code skills if no Copilot-specific ones
-        from ._utils import _DATA_DIR
-
-        skills_source = _DATA_DIR / "skills"
-
-    if not skills_source.is_dir():
-        return result
-
-    dest_root = target_dir / _COPILOT_SKILLS_DIR
-    dest_root.mkdir(parents=True, exist_ok=True)
-
-    for skill_dir in sorted(skills_source.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        is_valid, reason = _validate_skill(skill_dir)
-        if not is_valid:
-            logger.warning("copilot_skill_validation_failed", skill=skill_dir.name, reason=reason)
-            continue
-
-        dest_skill = dest_root / skill_dir.name
-        dest_skill.mkdir(parents=True, exist_ok=True)
-        for skill_file in sorted(skill_dir.iterdir()):
-            if not skill_file.is_file():
-                continue
-            dest = dest_skill / skill_file.name
-            rel_path = f"{_COPILOT_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
-            existed = dest.exists()
-
-            if existed and not force:
-                # Update content but track as updated (not overwrite)
-                try:
-                    shutil.copy2(skill_file, dest)
-                    result["updated"].append(rel_path)
-                except OSError as exc:
-                    result["errors"].append(f"Failed to copy {skill_file} -> {dest}: {exc}")
-            else:
-                try:
-                    shutil.copy2(skill_file, dest)
-                    result["created"].append(rel_path)
-                except OSError as exc:
-                    result["errors"].append(f"Failed to copy {skill_file} -> {dest}: {exc}")
 
     return result

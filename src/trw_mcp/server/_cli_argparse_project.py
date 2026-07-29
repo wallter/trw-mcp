@@ -13,16 +13,19 @@ __all__ = ["add_project_subcommands"]
 _IDE_CHOICES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "antigravity-cli", "all"]
 
 # Retired client identifiers (2026-07-11): recognized at the CLI so ``--ide
-# gemini`` reports a 'retired' message with a migration hint instead of a
-# generic "invalid choice" (retired != unknown). Google deprecated the Gemini
-# CLI; aider never had a TRW adapter.
+# aider`` reports a 'retired' message with a migration hint instead of a
+# generic "invalid choice" (retired != unknown). aider never had a TRW adapter.
+# Client ids that are recognized but no longer installable. Kept so the error
+# names the successor instead of degrading to argparse's bare "invalid choice"
+# — a user who types a withdrawn id knows the name, so telling them only that it
+# is unknown is strictly less information than they arrived with.
 _RETIRED_IDE_HINTS: dict[str, str] = {
-    "gemini": (
-        "Gemini CLI was deprecated by Google — configure antigravity-cli instead "
-        "(--ide antigravity-cli). Existing .gemini/ files are left in place; run "
-        "'trw-mcp uninstall' to remove them on demand."
-    ),
-    "aider": "aider never had a TRW client adapter.",
+    "aider": "aider never had a TRW client adapter. Existing .aider.conf.yml and "
+    ".aider/instructions.md can still be cleaned with 'trw-mcp uninstall'.",
+    "gemini": "the Gemini CLI profile was removed on 2026-07-24 after Google "
+    "deprecated Gemini CLI in favour of Antigravity CLI. Use --ide antigravity-cli. "
+    "Note the removal took the uninstall surfaces with it: any leftover .gemini/ "
+    "files must be deleted by hand.",
 }
 
 
@@ -35,7 +38,7 @@ def _ide_choice(value: str) -> str:
     genuinely unknown id).
     """
     if value in _RETIRED_IDE_HINTS:
-        raise argparse.ArgumentTypeError(f"'{value}' support has been retired. {_RETIRED_IDE_HINTS[value]}")
+        raise argparse.ArgumentTypeError(f"'{value}' is no longer a supported client: {_RETIRED_IDE_HINTS[value]}")
     return value
 
 

@@ -35,6 +35,7 @@ from trw_mcp.models.config._fields_sync import _SyncFields
 from trw_mcp.models.config._fields_telemetry import _TelemetryFields
 from trw_mcp.models.config._fields_tools import _ToolsFields
 from trw_mcp.models.config._fields_trust import _TrustFields
+from trw_mcp.models.config._fields_verification import _VerificationFields
 
 
 class _TRWConfigFields(
@@ -57,6 +58,7 @@ class _TRWConfigFields(
     _PhaseExposureFields,
     _ProfileFields,
     _ScoutFields,
+    _VerificationFields,
     BaseSettings,
 ):
     """All TRW configuration fields.

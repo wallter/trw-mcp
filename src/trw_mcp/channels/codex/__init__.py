@@ -1,29 +1,21 @@
-"""Codex distill channels — AGENTS.md segment + PostToolUse hook.
+"""Codex distill channels — the PostToolUse telemetry hook.
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Two active channels consuming PRD-DIST-2400 substrate:
-- codex-agents-md-hotspots  (instruction_file_segment, T1 default)
-- codex-posttooluse-telemetry (hook_script, status: active)
+One active channel: `codex-posttooluse-telemetry` (hook_script). It is
+distill-FREE — it emits telemetry and imports nothing from the proprietary
+package, which is why PRD-CORE-239 §3b preserved it while removing its former
+sibling `codex-agents-md-hotspots` (an AGENTS.md instruction segment that never
+rendered).
 
-T2 tool-return enrichment is delivered by the shared enrich_response /
-_tool_return_tiers substrate path (client_tier=T2 resolved from
-TRW_CLIENT_PROFILE env var) — there is no codex-specific per-client
-builder. See channels/_tool_return_tiers.py.
+T2 tool-return enrichment is delivered by the shared `enrich_response` /
+`_tool_return_tiers` substrate path, not by a codex-specific builder.
 
-PRD-DIST-2402.
+PRD-DIST-2402's telemetry half survives; its segment half does not.
 """
 
 from __future__ import annotations
 
-from trw_mcp.channels.codex._agents_hotspots import (
-    build_codex_channel_entry as build_codex_channel_entry,
-)
-from trw_mcp.channels.codex._agents_hotspots import (
-    render_and_inject as render_and_inject,
-)
+from trw_mcp.channels.codex._post_tool_use_telemetry import install_hook_script
 
-__all__ = [
-    "build_codex_channel_entry",
-    "render_and_inject",
-]
+__all__ = ["install_hook_script"]

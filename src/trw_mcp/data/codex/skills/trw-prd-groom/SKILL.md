@@ -76,7 +76,7 @@ Format assertions as:
 - `grep_absent: "APIRouter()" in "src/app/routers/**/*.py"`
 ```
 
-Only suggest assertions for ~30% of FRs — most requirements are not grep/glob-verifiable.
+Suggest assertions for a minority of FRs only — most requirements are not grep/glob-verifiable.
 
 ## Constraints
 

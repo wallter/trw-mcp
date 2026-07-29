@@ -134,6 +134,9 @@ fi
 
 _hint_output=$(
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
+    TRW_CC04_HINTS_DIR="$_hints_dir" \
+    TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
+    TRW_CC04_FILE_PATH="$_file_path" \
     timeout 2.5 "$_py" -c "
 import sys, json
 try:
@@ -173,7 +176,40 @@ try:
             distill_status=result.distill_status,
         )
     print(output)
-except Exception as e:
+except Exception:
+    # The provisional record written above says 'timeout_fallback' because it
+    # is written BEFORE this bounded subprocess starts. Reaching this handler
+    # means the subprocess RAN and RAISED — a broken venv ImportError, a
+    # version-skew AttributeError, a real bug — which has nothing to do with
+    # the 2.5s budget. Leaving the provisional record in place mixes those
+    # events into the timeout count, so an operator debugging a low hit rate
+    # tunes the timeout for a defect that is not about timing.
+    #
+    # Deliberately stdlib-only and self-contained: the import that just failed
+    # must not be a precondition for recording that it failed. Untrusted hook
+    # fields arrive via the environment, never interpolated into source.
+    try:
+        import datetime, json, os, pathlib, re
+        _tuid = os.environ.get('TRW_CC04_TOOL_USE_ID', '')
+        if _tuid and re.fullmatch(r'[A-Za-z0-9_.-]+', _tuid):
+            _dir = pathlib.Path(os.environ['TRW_CC04_HINTS_DIR'])
+            _dir.mkdir(parents=True, exist_ok=True)
+            (_dir / (_tuid + '.json')).write_text(json.dumps({
+                'ts': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+                'file_path': os.environ.get('TRW_CC04_FILE_PATH', ''),
+                'tier': 'T0',
+                'hint_emitted': True,
+                'tokens_emitted': 9,
+                'distill_status': 'exception_fallback',
+                'tool_use_id': _tuid,
+                'outcome_captured': False,
+                'was_edited': None,
+                'edit_survived': None,
+                'test_outcome': 'unknown',
+                'hint_acknowledged': None,
+            }), encoding='utf-8')
+    except Exception:
+        pass
     print('[TRW] Distill intelligence available — run trw_before_edit_hint for details.')
 " 2>/dev/null
 ) || {
@@ -181,6 +217,18 @@ except Exception as e:
     _format_t0_beacon
     exit 0
 }
+
+# --- CC-01 background snapshot refresh (PRD-CORE-231 FR01) ---
+# _write_distill_snapshot_bg() has been defined in lib-distill-hint.sh since
+# PRD-DIST-2405 but had ZERO call sites — the CC-01 memory-snapshot refresh
+# never fired. Trigger it only after a real T2 result: a T1/T0 fallback carries
+# no new distill intelligence worth snapshotting. Backgrounded and fail-silent,
+# so it cannot add latency to (or fail) the PreToolUse call.
+case "$_hint_output" in
+    *"[TRW Distill Hint — T2]"*)
+        _write_distill_snapshot_bg 2>/dev/null || true
+        ;;
+esac
 
 # --- Output cap enforcement (FR32: 9500 char soft limit) ---
 if [ -n "$_hint_output" ]; then

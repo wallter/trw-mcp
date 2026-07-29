@@ -27,9 +27,22 @@ memory — patterns, gotchas, and project knowledge accumulate across sessions.
 | Tool | When | Why |
 |------|------|-----|
 | `trw_session_start()` | First action | Loads prior learnings |
-| `trw_learn(summary, detail)` | On discoveries | **CRITICAL: Only record actual insights, patterns, or gotchas.** NEVER record "task completed", "PRD groomed", or routine status updates. If you didn't learn a new technical pattern or find a non-obvious mistake to avoid, do NOT use this tool. |
+| `trw_learn(summary, detail)` | On errors, discoveries, or gotchas | Saves a non-obvious pattern or mistake so no future agent repeats it — this is how institutional knowledge grows. Routine status ("task completed", "PRD groomed") is not a learning; a session that genuinely produced none is a valid result. |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
 | `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or a structured acceptable-failure record |
+
+### Deliver Gate
+
+Do NOT call `trw_deliver` unless at least one of:
+- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
+  acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
+  `expiry_iso`, **or**
+- (c) an authorized operator/config override is recorded with technical rationale.
+
+A review-verdict label or free-text reason alone is not an acceptable-failure record.
+For task types `coding`, `rca`, `eval` the gate blocks by default. Docs, research,
+planning, and unknown types remain advisory.
 
 ### MCP Tools
 

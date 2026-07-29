@@ -127,4 +127,39 @@ def read_recent_events(events_path: Path, max_events: int = 200) -> list[dict[st
     return events
 
 
-__all__ = ["ProximalSignal", "detect_proximal_signals", "read_recent_events"]
+def read_proximal_event_window(
+    trw_dir: Path,
+    resolved_run: Path | None,
+    max_events: int = 200,
+) -> list[dict[str, object]]:
+    """Merge, by timestamp, the two streams a proximal scan needs.
+
+    Ledger UF-026 (second half): ``nudge_shown`` is written ONLY to
+    ``{trw_dir}/context/session-events.jsonl``
+    (``_ceremony_progress_state._emit_nudge_shown_event``), while every event in
+    ``_TEST_EVENTS`` is written ONLY to the pinned run's ``meta/events.jsonl``
+    (``build/_registration._log_build_event``). :func:`detect_proximal_signals`
+    keys on *adjacency within one list*, so scanning either stream alone can
+    never observe a nudge->action pair — measured on this repo: 0 ``nudge_shown``
+    rows in any run's ``meta/events.jsonl`` written since 2026-04, and 0
+    ``build_check_complete`` rows in ``session-events.jsonl`` ever. The detector
+    therefore returned ``[]`` in production no matter how many nudges fired, and
+    bridging its output to Q-learning without this merge would have wired a
+    permanently-empty signal.
+
+    Both streams stamp an ISO-8601 ``ts``, so a lexicographic sort restores true
+    interleaved order. Fail-open via :func:`read_recent_events`.
+    """
+    events = read_recent_events(trw_dir / "context" / "session-events.jsonl", max_events)
+    if resolved_run is not None:
+        events += read_recent_events(resolved_run / "meta" / "events.jsonl", max_events)
+    events.sort(key=lambda event: str(event.get("ts", "")))
+    return events[-max_events:]
+
+
+__all__ = [
+    "ProximalSignal",
+    "detect_proximal_signals",
+    "read_proximal_event_window",
+    "read_recent_events",
+]

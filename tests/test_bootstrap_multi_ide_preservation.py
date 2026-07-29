@@ -17,8 +17,8 @@ from ._bootstrap_test_support import patch_update_project_internals
 class TestUpdateProjectMultiIDE:
     """FR15: Update-project supports multiple IDEs (PRD-CORE-074)."""
 
-    def test_fr15_update_opencode_also_creates_agents_md(self, tmp_path: Path) -> None:
-        """update_project with opencode detected also creates/updates AGENTS.md."""
+    def test_fr15_update_opencode_writes_no_ceremony_block(self, tmp_path: Path) -> None:
+        """update_project with opencode detected must not inject into AGENTS.md."""
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
@@ -27,9 +27,13 @@ class TestUpdateProjectMultiIDE:
         with patch_update_project_internals():
             result = update_project(tmp_path)
 
-        assert (tmp_path / "AGENTS.md").exists()
-        content = (tmp_path / "AGENTS.md").read_text()
-        assert "<!-- trw:start -->" in content
+        # PRD-CORE-240-FR04 (operator decision 2026-07-28): opencode no longer
+        # receives the shared AGENTS.md. It owns .opencode/INSTRUCTIONS.md, which
+        # opencode.json's `instructions` array now actually references.
+        agents_md = tmp_path / "AGENTS.md"
+        if agents_md.exists():
+            assert "<!-- trw:start -->" not in agents_md.read_text()
+        assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").is_file()
 
     def test_fr15_update_opencode_preserves_user_modified_command(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()

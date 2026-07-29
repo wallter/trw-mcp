@@ -98,7 +98,8 @@ class TestRetiredBetaConfigSurface:
         assert not hasattr(TRWConfig(), "agent" + "_teams_enabled")
 
     @pytest.mark.parametrize(
-        "client_id", ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "gemini", "aider"]
+        "client_id",
+        ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli", "aider"],
     )
     def test_profiles_have_no_retired_flag(self, client_id: str) -> None:
         profile = resolve_client_profile(client_id)

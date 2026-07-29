@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, TypeAlias, TypeGuard
 
 import structlog
 
@@ -17,6 +16,33 @@ from trw_mcp.state.claude_md._agents_md_size_gate import (
 )
 from trw_mcp.state.claude_md._agents_md_size_gate import (
     resolve_instruction_size_gate_mode as _resolve_size_gate_mode_impl,
+)
+from trw_mcp.state.claude_md._instruction_clients import (
+    _INSTRUCTION_SYNC_GENERATORS as _INSTRUCTION_SYNC_GENERATORS,
+)
+from trw_mcp.state.claude_md._instruction_clients import INSTRUCTION_SYNC_CLIENT_IDS, INSTRUCTION_SYNC_EXCLUSIONS
+from trw_mcp.state.claude_md._instruction_clients import InstructionClientId as InstructionClientId
+from trw_mcp.state.claude_md._instruction_clients import InstructionGeneratorResult as InstructionGeneratorResult
+from trw_mcp.state.claude_md._instruction_clients import InstructionSyncGenerator as InstructionSyncGenerator
+from trw_mcp.state.claude_md._instruction_clients import (
+    _managed_manifest_hashes as _managed_manifest_hashes,
+)
+from trw_mcp.state.claude_md._instruction_clients import is_instruction_sync_client as _is_instruction_sync_client
+
+# Surface-claim + orphan-cleanup helpers live in _orphan_strip (350-eLOC gate).
+# Re-exported so `from ._agents_md import ...` keeps working for the carrier,
+# bootstrap, and the test modules that import through this facade.
+from trw_mcp.state.claude_md._orphan_strip import (
+    _any_client_writes_agents_md as _any_client_writes_agents_md,
+)
+from trw_mcp.state.claude_md._orphan_strip import (
+    _any_client_writes_claude_md as _any_client_writes_claude_md,
+)
+from trw_mcp.state.claude_md._orphan_strip import (
+    _strip_trw_section as _strip_trw_section,
+)
+from trw_mcp.state.claude_md._orphan_strip import (
+    strip_orphaned_claude_md_block as strip_orphaned_claude_md_block,
 )
 from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
@@ -30,11 +56,11 @@ from trw_mcp.state.claude_md._review_md import recall_learnings as _default_reca
 logger = structlog.get_logger(__name__)
 
 RecallFn = Callable[..., list[dict[str, object]]]
-InstructionClientId: TypeAlias = Literal["opencode", "codex", "copilot"]
-InstructionGeneratorResult: TypeAlias = dict[str, list[str]]
-InstructionSyncGenerator: TypeAlias = Callable[[Path, bool], InstructionGeneratorResult]
 
-_INSTRUCTION_SYNC_CLIENT_IDS: tuple[InstructionClientId, ...] = ("opencode", "codex", "copilot")
+# The sync-client registry lives in ``_instruction_clients`` (see its docstring
+# for why it is one readable unit). Re-exported here so importers keep this facade.
+_INSTRUCTION_SYNC_CLIENT_IDS = INSTRUCTION_SYNC_CLIENT_IDS
+_INSTRUCTION_SYNC_EXCLUSIONS = INSTRUCTION_SYNC_EXCLUSIONS
 
 
 def detect_ide(target_dir: Path) -> list[str]:
@@ -70,11 +96,6 @@ class WriteTargetDecision:
     instruction_targets: tuple[InstructionFileTarget, ...]
 
 
-def _is_instruction_sync_client(client_id: str) -> TypeGuard[InstructionClientId]:
-    """Return whether the client has a real instruction-file generator."""
-    return client_id in _INSTRUCTION_SYNC_CLIENT_IDS
-
-
 def _instruction_target_from_profile(client_id: InstructionClientId) -> InstructionFileTarget:
     """Build a typed instruction target from the client profile."""
     from trw_mcp.models.config._profiles import resolve_client_profile
@@ -84,55 +105,6 @@ def _instruction_target_from_profile(client_id: InstructionClientId) -> Instruct
         client_id=client_id,
         instruction_path=profile.write_targets.instruction_path,
     )
-
-
-def _detect_opencode_model_family(project_root: Path) -> str:
-    """Read ``opencode.json`` and return the detected OpenCode model family."""
-    from trw_mcp.bootstrap._opencode import detect_model_family
-
-    opencode_json_path = project_root / "opencode.json"
-    if not opencode_json_path.exists():
-        return "generic"
-
-    try:
-        import json
-
-        opencode_data = json.loads(opencode_json_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return "generic"
-    return detect_model_family(opencode_data)
-
-
-def _generate_opencode_instruction_target(project_root: Path, force: bool = False) -> InstructionGeneratorResult:
-    """Generate the OpenCode instruction file."""
-    from trw_mcp.bootstrap._opencode import generate_opencode_instructions
-
-    return generate_opencode_instructions(
-        project_root,
-        _detect_opencode_model_family(project_root),
-        force=force,
-    )
-
-
-def _generate_codex_instruction_target(project_root: Path, force: bool = False) -> InstructionGeneratorResult:
-    """Generate the Codex instruction file."""
-    from trw_mcp.bootstrap._opencode import generate_codex_instructions
-
-    return generate_codex_instructions(project_root, force=force)
-
-
-def _generate_copilot_instruction_target(project_root: Path, force: bool = False) -> InstructionGeneratorResult:
-    """Generate the Copilot instruction file."""
-    from trw_mcp.bootstrap._copilot import generate_copilot_instructions
-
-    return generate_copilot_instructions(project_root, force=force)
-
-
-_INSTRUCTION_SYNC_GENERATORS: dict[InstructionClientId, InstructionSyncGenerator] = {
-    "opencode": _generate_opencode_instruction_target,
-    "codex": _generate_codex_instruction_target,
-    "copilot": _generate_copilot_instruction_target,
-}
 
 
 def _instruction_targets_from_clients(client_ids: Iterable[str]) -> tuple[InstructionFileTarget, ...]:
@@ -154,6 +126,31 @@ def _instruction_targets_for_detected_ides(detected_ides: list[str]) -> tuple[In
     return _instruction_targets_from_clients(detected_ides)
 
 
+def _recorded_or_detected_ides(project_root: Path) -> tuple[list[str], bool]:
+    """Return this project's clients, and whether they came from the record.
+
+    The flag is the point. A recorded, evidence-backed list is the project's own
+    selection; a detected one is whatever is on the developer's PATH, since
+    ``detect_ide`` reports cursor-ide from ``shutil.which("cursor")``. Callers
+    that decide what to WRITE must know which they hold — returning the list
+    alone let the caller apply a detection-only carve-out to a recorded list,
+    which put the CLAUDE.md block back on the next sync for a project that had
+    just had it removed.
+
+    Thin indirection over the bootstrap helper so this module keeps one import
+    point and tests can patch ``detect_ide`` on this facade as before.
+    """
+    try:
+        from trw_mcp.bootstrap._template_claude_md import _recorded_targets
+
+        recorded = _recorded_targets(project_root)
+        if recorded:
+            return recorded, True
+    except Exception:  # justified: an unreadable record must fall back, not fail
+        logger.debug("recorded_targets_unreadable", project_root=str(project_root), exc_info=True)
+    return detect_ide(project_root), False
+
+
 def _determine_write_target_decision(
     client: str,
     config: TRWConfig,
@@ -166,11 +163,31 @@ def _determine_write_target_decision(
     root_scope = scope == "root"
 
     if client == "auto":
-        detected_ides = detect_ide(project_root)
+        # The RECORD first, detection only as fallback. Detection reports
+        # claude-code for any project containing `.claude/`, which TRW creates
+        # for EVERY client (hooks and skills are universal artifacts) — so
+        # `trw_instructions_sync()` with its default client="auto", the call the
+        # behavioral protocol tells agents to make at DELIVER, re-derived "this
+        # is a Claude Code project" from our own scaffolding and reinjected the
+        # CLAUDE.md block into codex and opencode projects.
+        detected_ides, from_record = _recorded_or_detected_ides(project_root)
         instruction_targets = _instruction_targets_for_detected_ides(detected_ides) if root_scope else ()
+        # PRD-CORE-240-FR04: the profile check is ANDed onto the old condition,
+        # never substituted for it. Deriving purely from profiles looks cleaner
+        # but WIDENS the write: `detect_ide` reports cursor-ide from
+        # `shutil.which("cursor")` — a machine-global signal — so on any box with
+        # Cursor installed, every project would gain an AGENTS.md it never asked
+        # for. Requiring both keeps this strictly narrower than before, which is
+        # all FR04 needs: a withdrawn client now fails the profile check even
+        # though it still has an instruction target.
         return WriteTargetDecision(
-            write_claude="claude-code" in detected_ides or not detected_ides or (detected_ides == ["cursor-ide"]),
-            write_agents=config.agents_md_enabled and root_scope and bool(instruction_targets),
+            write_claude=_any_client_writes_claude_md(detected_ides, from_record=from_record),
+            write_agents=(
+                config.agents_md_enabled
+                and root_scope
+                and bool(instruction_targets)
+                and _any_client_writes_agents_md(detected_ides)
+            ),
             instruction_targets=instruction_targets,
         )
 
@@ -313,9 +330,16 @@ def _sync_instruction_file_target(
     project_root: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> tuple[bool, str | None]:
-    """Create or refresh the concrete instruction file for one target."""
-    result = _INSTRUCTION_SYNC_GENERATORS[target.client_id](project_root, force)
+    """Create or refresh the concrete instruction file for one target.
+
+    *manifest_hashes* is the content-hash baseline describing TRW's last write.
+    It must be captured before any TRW write in the current flow; see
+    :func:`_managed_manifest_hashes` for why an on-disk read is not a valid
+    substitute inside ``update-project``.
+    """
+    result = _INSTRUCTION_SYNC_GENERATORS[target.client_id](project_root, force, manifest_hashes)
 
     if result.get("errors"):
         logger.warning(
@@ -366,37 +390,17 @@ def _sync_instruction_file_if_needed(
 def _sync_instruction_targets(
     project_root: Path,
     instruction_targets: tuple[InstructionFileTarget, ...],
+    manifest_hashes: dict[str, str] | None = None,
 ) -> tuple[bool, str | None, list[str]]:
     """Sync all requested instruction files and return stable result metadata."""
     synced_paths: list[str] = []
     for target in instruction_targets:
-        synced, path = _sync_instruction_file_target(target, project_root)
+        synced, path = _sync_instruction_file_target(target, project_root, manifest_hashes=manifest_hashes)
         if synced and path is not None:
             synced_paths.append(path)
 
     primary_path = synced_paths[0] if synced_paths else None
     return bool(synced_paths), primary_path, synced_paths
-
-
-def _strip_trw_section(content: str) -> tuple[bool, str]:
-    """Remove the TRW auto-generated block and its auto-comment from AGENTS.md."""
-    start_idx = content.find(TRW_MARKER_START)
-    end_idx = content.find(TRW_MARKER_END)
-    if start_idx == -1 or end_idx == -1:
-        return False, content
-
-    remove_start = start_idx
-    auto_comment_idx = content.rfind(TRW_AUTO_COMMENT, 0, start_idx)
-    if auto_comment_idx != -1:
-        between = content[auto_comment_idx + len(TRW_AUTO_COMMENT) : start_idx]
-        if between.strip() == "":
-            remove_start = auto_comment_idx
-
-    remove_end = end_idx + len(TRW_MARKER_END)
-    while remove_end < len(content) and content[remove_end] == "\n":
-        remove_end += 1
-
-    return True, content[:remove_start] + content[remove_end:]
 
 
 def _migrate_trw_content_from_agents_md(
@@ -412,8 +416,15 @@ def _migrate_trw_content_from_agents_md(
         return False, ""
 
     content = agents_path.read_text(encoding="utf-8")
-    start_idx = content.find(TRW_MARKER_START)
-    end_idx = content.find(TRW_MARKER_END)
+    # Line-anchored even though this path is currently unreachable: a substring
+    # marker scan is the shape that destroyed 705 ROADMAP lines, and dead code
+    # carrying it is a loaded gun for whoever rewires it.
+    from trw_mcp.bootstrap._file_ops import find_marker_line_span
+
+    _start_span = find_marker_line_span(content, TRW_MARKER_START, anchor="start")
+    _end_span = find_marker_line_span(content, TRW_MARKER_END, anchor="end")
+    start_idx = -1 if _start_span is None else _start_span[0]
+    end_idx = -1 if _end_span is None else _end_span[0]
     if start_idx == -1 or end_idx == -1:
         return False, ""
 

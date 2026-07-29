@@ -15,15 +15,39 @@ from trw_mcp.cli.auth import (
 )
 
 
+def _write_credentials(config_path: Path, key: str) -> Path:
+    """Seed the SEC-005 credential store beside *config_path*.
+
+    `device_auth_status` reads the bearer credential ONLY from
+    `credentials.yaml` (`cli/auth.py:285` via `credentials_path_for`);
+    `a4ca4382c2` dropped the `config.yaml` fallback deliberately, so a key
+    written only to `config.yaml` is dead for authentication.
+    """
+    creds = config_path.parent / "credentials.yaml"
+    creds.write_text(f'platform_api_key: "{key}"\n', encoding="utf-8")
+    return creds
+
+
 @pytest.fixture
 def config_file(tmp_path: Path) -> Path:
-    """Return a temporary config file with a synthetic API key fixture."""
+    """Return a temp config plus credential store holding a synthetic API key.
+
+    Models the real post-SEC-005 layout AND the legacy residue: the live key is
+    in the ignored 0600 `credentials.yaml`, while `config.yaml` still carries a
+    stale tracked `platform_api_key` of the kind `device_auth_logout` must blank
+    (`cli/_auth_config.py:41-47` clears both stores).
+
+    Seeding only `config.yaml` — as this fixture did until 2026-07-26 — made
+    `TestDeviceAuthStatus` assert that a credential in the git-tracked file
+    still authenticates, which is precisely the behavior SEC-005 removed.
+    """
     cfg = tmp_path / ".trw" / "config.yaml"
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(
         'installation_id: "test"\nplatform_api_key: "trw_dk_existing123"\n',
         encoding="utf-8",
     )
+    _write_credentials(cfg, "trw_dk_existing123")
     return cfg
 
 
@@ -147,10 +171,13 @@ class TestRunAuthLoginPersistence:
         """Verify device_auth_status returns saved org_name and user_email."""
         cfg = tmp_path / ".trw" / "config.yaml"
         cfg.parent.mkdir(parents=True, exist_ok=True)
+        # Non-secret metadata in config.yaml; the bearer credential in the
+        # SEC-005 store, which is the only place `device_auth_status` reads it.
         cfg.write_text(
-            'platform_api_key: "trw_dk_test123"\nplatform_org_name: "acme-corp"\nplatform_user_email: "dev@acme.com"\n',
+            'platform_org_name: "acme-corp"\nplatform_user_email: "dev@acme.com"\n',
             encoding="utf-8",
         )
+        _write_credentials(cfg, "trw_dk_test123")
         status = device_auth_status(cfg, "https://api.example.com")
         assert status["authenticated"] is True
         assert status["org_name"] == "acme-corp"

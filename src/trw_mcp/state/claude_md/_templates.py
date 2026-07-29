@@ -1,14 +1,17 @@
-"""CLAUDE.md template rendering — data-driven section builders and constants.
+"""CLAUDE.md ceremony-table data — the tool list and its truncation caps.
 
-.. deprecated:: 0.37.0
-    PRD-CORE-093: ``render_categorized_learnings``, ``render_architecture``,
-    ``render_patterns``, ``render_adherence``, ``render_conventions`` are
-    deprecated. Learning promotion into CLAUDE.md is removed.
+Consumed by ``_renderer.py`` to build the behavioral-protocol table.
+
+PRD-CORE-093 removed learning promotion into CLAUDE.md: ``trw_session_start``
+already delivers task-relevant learnings through focused hybrid recall, so
+re-rendering them into the instruction file cost ~1,800 tokens per message and
+— because ``trw_deliver`` re-synced after every delivery — rotated the section
+and invalidated the prompt cache. The five ``render_*`` functions that built it
+were deprecated in 0.37.0 and are now deleted; nothing in ``src/`` called them.
 """
 
 from __future__ import annotations
 
-import warnings
 from typing import NamedTuple
 
 # Named caps for list truncation (not user-tunable)
@@ -86,7 +89,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "PLAN",
         "trw_prd_create",
         "When defining requirements for a new feature or fix",
-        "Structured requirements prevent the ambiguity that causes 50% of implementation rework",
+        "Ambiguous requirements are the cheapest defect to fix in spec and the most expensive in code",
         "trw_prd_create(input_text='...')",
     ),
     CeremonyTool(
@@ -100,7 +103,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "VALIDATE",
         "trw_build_check",
         "After implementation and before delivery",
-        "Catches failures before delivery \u2014 bugs found late cascade into 2x rework cost",
+        "Catches failures before delivery \u2014 a failure found after delivery cascades into multi-file rework",
         "trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>')",
     ),
     CeremonyTool(
@@ -126,181 +129,3 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     ),
 ]
 
-
-_ARCH_SKIP_KEYS = frozenset({"notes"})
-_CONV_SKIP_KEYS = frozenset({"notes", "test_patterns"})
-
-_ADHERENCE_TAGS = frozenset(
-    {
-        "compliance",
-        "process",
-        "framework",
-        "self-audit",
-        "behavioral-mandate",
-    }
-)
-_ADHERENCE_KEYWORDS = ("must", "should", "call ", "never", "always")
-_ADHERENCE_MAX_ENTRIES = 8
-_ADHERENCE_MIN_LENGTH = 20
-
-
-def _render_context_section(
-    heading: str,
-    data: dict[str, object],
-    skip_keys: frozenset[str],
-) -> str:
-    """Render a context data dict as a markdown section with bullet items.
-
-    Args:
-        heading: Section heading (e.g. "Architecture", "Conventions").
-        data: Key-value data from a context YAML file.
-        skip_keys: Keys to exclude from the output.
-
-    Returns:
-        Markdown string or empty string if no data.
-    """
-    if not data:
-        return ""
-    lines: list[str] = [f"### {heading}"]
-    for key, val in data.items():
-        if val and key not in skip_keys:
-            lines.append(f"- {key}: {val}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def render_architecture(arch_data: dict[str, object]) -> str:
-    """Render architecture context to markdown.
-
-    .. deprecated:: 0.37.0
-        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
-    """
-    warnings.warn("render_architecture is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
-    return _render_context_section("Architecture", arch_data, _ARCH_SKIP_KEYS)
-
-
-def render_conventions(conv_data: dict[str, object]) -> str:
-    """Render conventions context to markdown.
-
-    .. deprecated:: 0.37.0
-        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
-    """
-    warnings.warn("render_conventions is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
-    return _render_context_section("Conventions", conv_data, _CONV_SKIP_KEYS)
-
-
-def render_categorized_learnings(
-    high_impact: list[dict[str, object]],
-) -> str:
-    """Render high-impact learnings categorized by tag type.
-
-    .. deprecated:: 0.37.0
-        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
-    """
-    warnings.warn("render_categorized_learnings is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
-    if not high_impact:
-        return ""
-    categories: dict[str, list[str]] = {
-        "Architecture": [],
-        "Known Limitations": [],
-        "Gotchas": [],
-        "Key Learnings": [],
-    }
-    tag_to_category = {
-        "architecture": "Architecture",
-        "framework": "Architecture",
-        "v17": "Architecture",
-        "limitation": "Known Limitations",
-        "improvement": "Known Limitations",
-        "missing-tool": "Known Limitations",
-        "gotcha": "Gotchas",
-        "bug": "Gotchas",
-        "configuration": "Gotchas",
-    }
-    for learning in high_impact[:CLAUDEMD_LEARNING_CAP]:
-        summary = str(learning.get("summary", ""))
-        tags = learning.get("tags", [])
-        tag_list = tags if isinstance(tags, list) else []
-        placed = False
-        for tag in tag_list:
-            cat = tag_to_category.get(str(tag))
-            if cat:
-                categories[cat].append(summary)
-                placed = True
-                break
-        if not placed:
-            categories["Key Learnings"].append(summary)
-
-    lines: list[str] = []
-    for cat_name, entries in categories.items():
-        if entries:
-            lines.append(f"### {cat_name}")
-            lines.extend(f"- {entry}" for entry in entries)
-            lines.append("")
-    if lines:
-        return "\n".join(lines) + "\n"
-    return ""
-
-
-def render_patterns(patterns: list[dict[str, object]]) -> str:
-    """Render discovered patterns to markdown.
-
-    .. deprecated:: 0.37.0
-        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
-    """
-    warnings.warn("render_patterns is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
-    if not patterns:
-        return ""
-    lines: list[str] = ["### Discovered Patterns"]
-    for pattern in patterns[:CLAUDEMD_PATTERN_CAP]:
-        name = pattern.get("name", "")
-        desc = pattern.get("description", "")
-        lines.append(f"- **{name}**: {desc}")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
-def render_adherence(high_impact: list[dict[str, object]]) -> str:
-    """Render framework adherence directives from compliance learnings.
-
-    .. deprecated:: 0.37.0
-        PRD-CORE-093: Learning promotion removed from CLAUDE.md.
-    """
-    warnings.warn("render_adherence is deprecated (PRD-CORE-093)", DeprecationWarning, stacklevel=2)
-    adherence_entries: list[str] = []
-    for learning in high_impact:
-        tags = learning.get("tags", [])
-        tag_set = {str(t) for t in tags} if isinstance(tags, list) else set()
-        if not (tag_set & _ADHERENCE_TAGS):
-            continue
-
-        # behavioral-mandate entries promote summary directly
-        if "behavioral-mandate" in tag_set:
-            summary = str(learning.get("summary", ""))
-            if len(summary) > _ADHERENCE_MIN_LENGTH:
-                adherence_entries.append(summary)
-            continue
-
-        detail = str(learning.get("detail", ""))
-        for sentence in detail.split(". "):
-            lower = sentence.lower()
-            if any(kw in lower for kw in _ADHERENCE_KEYWORDS):
-                clean = sentence.strip().rstrip(".")
-                if len(clean) > _ADHERENCE_MIN_LENGTH:
-                    adherence_entries.append(clean)
-
-    if not adherence_entries:
-        return ""
-
-    # Deduplicate by prefix, capped at max entries
-    lines: list[str] = ["### Framework Adherence"]
-    seen: set[str] = set()
-    for entry in adherence_entries:
-        if len(seen) >= _ADHERENCE_MAX_ENTRIES:
-            break
-        key = entry[:60].lower()
-        if key not in seen:
-            lines.append(f"- {entry}")
-            seen.add(key)
-    lines.append("")
-    return "\n".join(lines) + "\n"

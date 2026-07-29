@@ -49,7 +49,7 @@ _FALLBACK_TOOL_LIFECYCLE = """# TRW Tool Lifecycle
 
 Delegate to focused helpers when the harness supports it and file ownership is clear. When it does not, run the same shards sequentially. Delegation is an optimization — the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
 
-## Deliver Gate (v26.1)
+## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
 - (a) `trw_build_check` returned `build_check_result=pass`, **or**
@@ -166,6 +166,14 @@ def render_codex_instructions() -> str:
     PRD-QUAL-104 FR03: appends the non-negotiable session-start + deliver-gate
     block (bundled-source derived) so the Codex protocol carrier states the
     gate verbatim regardless of ceremony/deliver-gate config.
+
+    Deliberately does NOT carry the client-integration appendix (transport-loss
+    retry + resolved capability listing). Relocating it here to free the shared
+    AGENTS.md — PRD-CORE-240-FR04 — takes this file from 2,019 to 5,043 bytes
+    against the 2,025-byte cap that PRD-QUAL-113-FR03 sets, and that PRD's design
+    is explicit: "Codex deltas stay small; AGENTS.md owns generic workflow".
+    The appendix stays in AGENTS.md; see the FR04 note in
+    ``models/config/_profiles.py::_light_profile``.
     """
     return (
         "# Codex TRW Instructions\n"

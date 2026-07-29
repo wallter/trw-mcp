@@ -109,6 +109,47 @@ def _build_gate_ready(events: list[dict[str, object]]) -> bool:
     return not _build_evidence_is_stale(events)
 
 
+def _build_gate_would_block(run_path: Path | None, missing_build: bool) -> bool:
+    """True when ``trw_deliver`` would HARD-BLOCK on the missing build (F4 parity).
+
+    ``build_gate_ready=False`` means "no fresh passing build evidence"; it does
+    NOT mean delivery blocks. ``_deliver_gate_mode.resolve_deliver_gate_decision``
+    is the single predicate that decides that, and it says no for
+    ``deliver_gate_mode=advisory`` and — under the shipped ``block_coding``
+    default — for every task type outside coding/rca/eval. A docs or research run
+    with no build check delivers successfully today, so reporting it as BLOCKED
+    is the same over-claim the review half of this summary already fixed: it
+    drives an agent into a build-check-then-retry cycle the gate never demanded.
+
+    Reuses the deliver-path predicate rather than restating the rule, so the
+    preview cannot drift from enforcement. The per-task-type override map is
+    honored here for the same reason. Fail-open on any error: an undeterminable
+    task type resolves to ``unknown``, which the deliver gate itself treats as
+    advisory, so the preview says advisory too.
+    """
+    if not missing_build:
+        return False
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._deliver_gate_mode import resolve_deliver_gate_decision
+
+        task_type = "unknown"
+        if run_path is not None:
+            run_yaml = run_path / "meta" / "run.yaml"
+            if run_yaml.is_file():
+                run_data = FileStateReader().read_yaml(run_yaml)
+                if isinstance(run_data, dict):
+                    task_type = str(run_data.get("task_type", "unknown")) or "unknown"
+        config = get_config()
+        overrides = config.deliver_gate_task_type_overrides or {}
+        mode = str(overrides.get(task_type, config.deliver_gate_mode))
+        return resolve_deliver_gate_decision(mode=mode, task_type=task_type, build_check_missing=True)
+    except Exception:  # justified: fail-open — preview must never raise or spurious-block
+        logger.debug("build_gate_block_preview_failed", exc_info=True)
+        return False
+
+
 def _review_gate_ready(state: CeremonyState) -> bool:
     """True when review was called and the verdict is not a hard block (FR02).
 
@@ -127,6 +168,8 @@ def _summarize_deliver_gate(
     build_ready: bool,
     review_ready: bool,
     review_would_block: bool,
+    *,
+    build_would_block: bool | None = None,
 ) -> str:
     """Render the single highest-priority blocking action, mirroring enforcement.
 
@@ -134,13 +177,23 @@ def _summarize_deliver_gate(
     cannot meaningfully deliver regardless of review, so a missing build is
     surfaced ahead of a missing review.
 
-    F4 enforcement parity (round-2 transport e2e): the summary must report
-    ``BLOCKED: review`` ONLY when ``trw_deliver`` would actually HARD-BLOCK on
-    the review gate (``review_would_block`` — verdict=block / scope rule / block
-    mode). When a review simply was not recorded but deliver would still SUCCEED
-    (warn-mode, sub-STANDARD complexity), the summary must NOT claim BLOCKED —
-    that over-claim drove a false deliver-then-retry cycle. Instead it reports
-    READY with an advisory mention so the missing review is still visible.
+    F4 enforcement parity (round-2 transport e2e): the summary reports BLOCKED
+    ONLY where ``trw_deliver`` would actually HARD-BLOCK. That test applies to
+    BOTH gates:
+
+    - review — ``review_would_block`` (verdict=block / scope rule / block mode).
+    - build — ``build_would_block`` (:func:`_build_gate_would_block`). Under the
+      shipped ``deliver_gate_mode=block_coding`` a missing build blocks only
+      coding/rca/eval; docs/research/planning/unknown deliver successfully, so
+      claiming BLOCKED for them is the same over-claim.
+
+    In both cases the unenforced-but-missing evidence is still surfaced, as an
+    advisory rather than a block, so nothing is hidden — only the CONSEQUENCE is
+    corrected.
+
+    ``build_would_block=None`` preserves the pre-parity reading (missing build ==
+    blocked) for the direct unit callers that predate this argument; the
+    production path in :func:`compute_deliver_gate_status` always supplies it.
 
     Note: the summary reflects the gate posture WITHOUT the ``trw_deliver``
     ``allow_unverified=True`` override applied. An agent may still deliver a
@@ -148,14 +201,20 @@ def _summarize_deliver_gate(
     structured acceptable-failure record in ``unverified_reason``;
     the summary describes the unforced state, not a hard prohibition.
     """
-    if not build_ready:
+    build_blocks = (not build_ready) if build_would_block is None else build_would_block
+    if build_blocks:
         return "BLOCKED: no passing build check — run trw_build_check()"
     if review_would_block:
         return "BLOCKED: review required — run trw_review()"
+    advisories = []
+    if not build_ready:
+        advisories.append("no passing build check — run trw_build_check()")
     if not review_ready:
-        # Deliver would SUCCEED (review not enforced here), but no review was
-        # recorded — surface it as an advisory, not a block.
-        return "READY (advisory: no review recorded — run trw_review())"
+        advisories.append("no review recorded — run trw_review()")
+    if advisories:
+        # Deliver would SUCCEED, but evidence is missing — surface it as an
+        # advisory so it stays visible without asserting a gate that will not fire.
+        return f"READY (advisory: {'; '.join(advisories)})"
     return "READY"
 
 
@@ -185,10 +244,16 @@ def compute_deliver_gate_status(
     build_ready = _build_gate_ready(events)
     review_ready = _review_gate_ready(state)
     review_would_block = _review_gate_would_block(run_path, events)
+    build_would_block = _build_gate_would_block(run_path, missing_build=not build_ready)
     return {
         "build_gate_ready": build_ready,
         "review_gate_ready": review_ready,
-        "deliver_gate_summary": _summarize_deliver_gate(build_ready, review_ready, review_would_block),
+        "deliver_gate_summary": _summarize_deliver_gate(
+            build_ready,
+            review_ready,
+            review_would_block,
+            build_would_block=build_would_block,
+        ),
     }
 
 

@@ -18,10 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-# The set of coding-agent CLIs the dispatch layer can launch. Gemini CLI was
-# EOL'd 2026-06-18 and is intentionally absent — callers asking for it are
-# redirected to ``agy`` (Antigravity CLI). Keep this in lock-step with
-# ``SUPPORTED_CLIENTS`` in ``_commands.py``.
+# The set of coding-agent CLIs the dispatch layer can launch. Keep this in
+# lock-step with ``SUPPORTED_CLIENTS`` in ``_commands.py``.
 DispatchClient = Literal["claude", "codex", "agy", "opencode"]
 
 # Single source of truth for the supported client ids — the runtime tuple form of

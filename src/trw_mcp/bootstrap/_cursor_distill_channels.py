@@ -1,6 +1,6 @@
 """Cursor IDE + cursor-cli distill channel bootstrap — install entry-point.
 
-Installs all five Cursor distill channel artifacts at ``init-project``
+Installs the remaining Cursor distill channel artifacts at ``init-project``
 and ``update-project`` time. Called from ``bootstrap/_init_project_ide.py``
 and ``bootstrap/_ide_targets.py``.
 
@@ -13,6 +13,10 @@ T0 stub MDC files are written via MdcEmitter.bootstrap_stubs() which handles
 gitignore management for the hotspot pattern (CUR-02).
 
 PRD-DIST-2401 FR41-FR43.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
@@ -80,17 +84,17 @@ def install_cursor_distill_channels(
     """
     result = _new_result()
 
-    # 1. Bootstrap T0 stub MDC files via MdcEmitter (CUR-01, CUR-03)
-    try:
-        from trw_mcp.channels.cursor import MdcEmitter
-
-        emitter = MdcEmitter(target_dir)
-        stubs_result = emitter.bootstrap_stubs()
-        for rel in stubs_result.get("created", []):
-            result["created"].append(str(rel))
-    except Exception as exc:  # justified: fail-open, MDC stubs are best-effort
-        log.warning("cursor_mdc_stubs_failed", error=str(exc), outcome="warning")
-        result["errors"].append(f"Cursor MDC stub install failed: {exc}")
+    # 1. PRD-CORE-239: T0 stub MDC files are NO LONGER WRITTEN.
+    #    `render_presence_beacon_mdc` hardcoded the rule description to
+    #    "TRW distill data available — quota exceeded, use
+    #    trw_codebase_risk_report() for full analysis" — text Cursor surfaces to
+    #    the agent as the rule's summary. For a T0 stub that is false twice
+    #    over: no data exists, and no quota was ever hit. It shipped on every
+    #    `init-project` for every Cursor project regardless of licence.
+    #    The CUR MDC channels never rendered real content in production
+    #    (wiring gate: NEVER_FIRED, ledger UF-010). Cursor keeps the
+    #    cursor-mcp-tool-return and cursor-pretooluse-hint surfaces, which
+    #    reach the free MCP tools.
 
     # 2. Bootstrap channel manifest (five CUR channel entries)
     try:

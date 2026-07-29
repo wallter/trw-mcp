@@ -24,6 +24,16 @@ from trw_mcp.bootstrap._file_ops import _new_result
 
 logger = structlog.get_logger(__name__)
 
+#: Project-relative paths of the per-client instruction files generated here.
+#:
+#: Both files are rendered WHOLE by TRW (no user-content marker block), so TRW
+#: is their sole writer and they are TRW-owned artifacts, not shared files.
+#: ``client_profiles/catalog.py`` imports these so the uninstall manifest can
+#: never drift from the writer — a renamed target renames the uninstall surface
+#: with it.
+OPENCODE_INSTRUCTIONS_REL = Path(".opencode") / "INSTRUCTIONS.md"
+CODEX_INSTRUCTIONS_REL = Path(".codex") / "INSTRUCTIONS.md"
+
 
 def _generate_instructions_file(
     target_dir: Path,
@@ -35,7 +45,7 @@ def _generate_instructions_file(
     log_event: str,
 ) -> dict[str, list[str]]:
     """Write one managed client instruction file without changing user content policy."""
-    from trw_mcp.bootstrap._opencode import _is_user_modified
+    from trw_mcp.bootstrap._managed_client_artifacts import artifact_user_edited
 
     result = _new_result()
     instructions_path = target_dir / relative_path
@@ -48,7 +58,7 @@ def _generate_instructions_file(
 
     content = render_content()
     existed = instructions_path.exists()
-    if not force and _is_user_modified(instructions_path, rel_path, manifest_hashes):
+    if not force and artifact_user_edited(instructions_path, rel_path, content.encode("utf-8"), manifest_hashes):
         result["preserved"].append(rel_path)
         return result
     if existed and not force and instructions_path.read_text(encoding="utf-8").strip() == content.strip():
@@ -116,7 +126,7 @@ def generate_opencode_instructions(
 
     return _generate_instructions_file(
         target_dir,
-        relative_path=Path(".opencode") / "INSTRUCTIONS.md",
+        relative_path=OPENCODE_INSTRUCTIONS_REL,
         render_content=lambda: render_opencode_instructions(model_family),
         force=force,
         manifest_hashes=manifest_hashes,
@@ -145,7 +155,7 @@ def generate_codex_instructions(
 
     return _generate_instructions_file(
         target_dir,
-        relative_path=Path(".codex") / "INSTRUCTIONS.md",
+        relative_path=CODEX_INSTRUCTIONS_REL,
         render_content=render_codex_instructions,
         force=force,
         manifest_hashes=manifest_hashes,

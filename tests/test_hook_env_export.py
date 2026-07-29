@@ -70,12 +70,12 @@ def test_rewrite_after_profile_change_reflects_new_values(tmp_path: Path) -> Non
 
 def test_retired_profile_cannot_leak_stale_identity_into_hook_env(tmp_path: Path) -> None:
     """FR04: sanitized profile resolution precedes hook policy persistence."""
-    profile = resolve_client_profile("gemini")
+    profile = resolve_client_profile("aider")
     written = _write_hook_env_file(tmp_path / ".trw", profile)
     content = _read(written)
 
     assert profile.client_id == "claude-code"
-    assert "Google Gemini" not in content
+    assert "Aider" not in content
     assert "TRW_CLIENT_DISPLAY_NAME='Claude Code'" in content
 
 

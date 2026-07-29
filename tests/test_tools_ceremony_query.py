@@ -121,6 +121,86 @@ class TestSessionStartWithQuery:
         assert ids.count("L-shared") == 1
         assert ids.index("L-focus") < ids.index("L-base")
 
+    def test_zero_focused_matches_emits_explanatory_advisory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A focused query that matches nothing still returns the baseline, which
+        is impact-ranked and query-INDEPENDENT. Without an advisory, ``query_matched:
+        0`` is unexplained and the agent reads the baseline as query hits."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        def _fake_recall(
+            _trw_d: Any,
+            *,
+            query: str = "*",
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            tags: Any = None,
+            status: Any = None,
+            allow_cold_embedding_init: bool = True,
+        ) -> list[dict[str, object]]:
+            if query == "*":
+                return [{"id": "L-base001", "summary": "Unrelated baseline", "impact": 0.95}]
+            return []
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_fake_recall),
+        ):
+            result = tools["trw_session_start"].fn(query="framework rewrite simplification core surface")
+
+        assert int(str(result["query_matched"])) == 0
+        # The misleading state the advisory exists to explain: learnings present,
+        # none of them query matches.
+        assert result["learnings"]
+        advisory = str(result["query_advisory"])
+        assert "0 entries" in advisory
+        assert "trw_recall" in advisory
+        # Survives compact mode (the default) — it must not be trimmed away.
+        assert result["compact"] is True
+
+    def test_nonzero_focused_matches_omit_advisory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The advisory carries no signal when the query matched — token-budget
+        rule: advisory fields are omitted rather than emitted empty."""
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        (trw_dir / "context").mkdir(parents=True)
+
+        def _fake_recall(
+            _trw_d: Any,
+            *,
+            query: str = "*",
+            min_impact: float = 0.0,
+            max_results: int = 25,
+            compact: bool = False,
+            tags: Any = None,
+            status: Any = None,
+            allow_cold_embedding_init: bool = True,
+        ) -> list[dict[str, object]]:
+            return [{"id": "L-hit001", "summary": "A real hit", "impact": 0.6}]
+
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+            patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=_fake_recall),
+        ):
+            result = tools["trw_session_start"].fn(query="auth")
+
+        assert int(str(result["query_matched"])) >= 1
+        assert "query_advisory" not in result
+
     def test_query_recall_failure_falls_back(
         self,
         tmp_path: Path,
@@ -195,3 +275,53 @@ class TestSessionStartWithQuery:
         assert len(all_queries) >= 1
         has_user_tokens = any("JWT" in query or "validation" in query for query in all_queries)
         assert has_user_tokens, f"Expected user tokens in recall queries: {all_queries}"
+
+
+@pytest.mark.unit
+class TestFocusedRecallZeroMatchAdvisory:
+    """The advisory must report what the recall ACTUALLY ran, not a guess."""
+
+    def test_uninitialized_index_advisory_points_at_trw_recall(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from trw_mcp.state.recall_factories import focused_recall_zero_match_advisory
+
+        monkeypatch.setattr(
+            "trw_mcp.state._memory_connection.get_initialized_embedder",
+            lambda: None,
+        )
+        advisory = focused_recall_zero_match_advisory()
+        assert "not initialized" in advisory
+        assert "trw_recall(query=...)" in advisory
+
+    def test_initialized_index_advisory_says_hybrid_ran(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from trw_mcp.state.recall_factories import focused_recall_zero_match_advisory
+
+        monkeypatch.setattr(
+            "trw_mcp.state._memory_connection.get_initialized_embedder",
+            lambda: object(),
+        )
+        advisory = focused_recall_zero_match_advisory()
+        assert "hybrid search" in advisory
+        assert "not initialized" not in advisory
+
+    def test_probe_failure_falls_back_to_conservative_wording(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fail-open: a broken probe must not raise inside session_start, and the
+        conservative reading (re-run via trw_recall) is the safe default."""
+        from trw_mcp.state.recall_factories import focused_recall_zero_match_advisory
+
+        def _boom() -> object:
+            raise RuntimeError("probe down")
+
+        monkeypatch.setattr(
+            "trw_mcp.state._memory_connection.get_initialized_embedder",
+            _boom,
+        )
+        assert "trw_recall(query=...)" in focused_recall_zero_match_advisory()

@@ -91,39 +91,17 @@ def test_nudge_selection_cache_based(tmp_path: Path) -> None:
     assert result["nudge_content"] == "Retry the failed queue workers before closing the run."
 
 
-def test_learning_injection_messenger_live_branch(tmp_path: Path) -> None:
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "context").mkdir(parents=True)
-    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: learning_injection\n", encoding="utf-8")
+def test_retired_learning_injection_symbols_are_absent() -> None:
+    """PRD-CORE-241-FR08: neither retired entry point is importable any more."""
+    import trw_mcp.state._ceremony_nudge_selectors as selectors
+    import trw_mcp.state.ceremony_nudge as facade
 
-    with (
-        patch(
-            "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
-            return_value=("Injected learning nudge", "L-test123", "foo.py"),
-        ),
-    ):
-        result = append_ceremony_status({"status": "ok"}, trw_dir)
-
-    assert result["nudge_content"] == "Injected learning nudge"
-
-
-def test_learning_injection_messenger_dedups_and_records_impression(tmp_path: Path) -> None:
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "context").mkdir(parents=True)
-    (trw_dir / "config.yaml").write_text("nudge_enabled: true\nnudge_messenger: learning_injection\n", encoding="utf-8")
-
-    with patch(
-        "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
-        return_value=("Injected learning nudge", "L-test123", "foo.py"),
-    ):
-        first = append_ceremony_status({"status": "ok"}, trw_dir)
-        second = append_ceremony_status({"status": "ok"}, trw_dir)
-
-    assert first["nudge_content"] == "Injected learning nudge"
-    assert second["nudge_content"] != "Injected learning nudge"
-    events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
-    assert events.count('"event":"nudge_shown"') == 2
-    assert events.count('"learning_ids":["L-test123"]') == 1
+    assert not hasattr(selectors, "select_learning_injection_content")
+    assert not hasattr(facade, "select_learning_injection_content")
+    assert not hasattr(facade, "compute_nudge_learning_injection")
+    # The shared candidate selector the contextual arms depend on stays.
+    assert hasattr(selectors, "_select_learning_injection_candidate")
+    assert hasattr(facade, "select_contextual_nudge_content")
 
 
 def test_contextual_messenger_live_branch(tmp_path: Path) -> None:
@@ -199,7 +177,12 @@ def test_contextual_action_messenger_records_synthetic_impression_and_counts(tmp
         append_ceremony_status({"status": "ok"}, trw_dir)
 
     state = read_ceremony_state(trw_dir)
-    assert state.nudge_counts.get("session_start") == 1
+    # Ledger UF-023: a reactive nudge with neither a build failure nor a P0
+    # finding names no ceremony step, so it is counted as an EMISSION but not
+    # against a step. Pre-fix this landed on "session_start" purely because
+    # _highest_priority_pending_step happened to return it at read time.
+    assert state.nudge_counts == {}
+    assert state.pool_nudge_counts.get("context") == 1
     assert len(state.nudge_history) == 1
     events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")
     assert events.count('"event":"nudge_shown"') == 1
@@ -219,7 +202,10 @@ def test_standard_workflow_pool_records_synthetic_impression_and_counts(tmp_path
 
     assert result["nudge_content"] == "Workflow nudge"
     state = read_ceremony_state(trw_dir)
-    assert state.nudge_counts.get("session_start") == 1
+    # Ledger UF-023: workflow-pool messages are phase-keyed prose that names no
+    # ceremony step (load_pool_message("workflow", phase_hint=state.phase)), so
+    # the emission ledger records it and the per-step ledger correctly does not.
+    assert state.nudge_counts == {}
     assert state.pool_nudge_counts.get("workflow") == 1
     assert len(state.nudge_history) == 1
     events = (trw_dir / "context" / "session-events.jsonl").read_text(encoding="utf-8")

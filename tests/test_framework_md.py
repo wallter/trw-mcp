@@ -229,7 +229,7 @@ class TestFrameworkPortability:
 
     def test_header_declares_model_agnostic_policy(self) -> None:
         content = _framework_content()
-        assert "v26.1_TRW" in content
+        assert "v26.2_TRW" in content
         assert "MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK" in content
         assert "Model policy: capability-based" in content
 

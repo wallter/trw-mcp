@@ -57,6 +57,10 @@ class AutoMaintenanceDict(TypedDict, total=False):
     wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
     wal_checkpoint_deferred: dict[str, object]
     auto_upgrade_check_deferred: dict[str, object]
+    # Learn write-ahead-journal recovery: only present when a prior interrupted
+    # session left accepted-but-unstored learnings to replay (omit-when-empty).
+    pending_learns_replayed: dict[str, object]
+    pending_learns_deferred: dict[str, object]
 
 
 class DeliveryGatesDict(TypedDict, total=False):
@@ -84,6 +88,8 @@ class DeliveryGatesDict(TypedDict, total=False):
     # PRD-CORE-184-FR03: task-type-aware deliver gate mode.
     delivery_blocked: str
     missing_gate: str
+    # PRD-SEC-013-FR07: open intent-contract violation blocks delivery until dispositioned.
+    intent_violation_block: str
     blocked_task_type: str
 
 
@@ -298,10 +304,12 @@ class SessionRecallExtrasDict(TypedDict, total=False):
 
     Keys present on the focused-query path: ``query``, ``query_matched``,
     ``total_available``.  Only ``total_available`` is always populated.
+    ``query_advisory`` appears only when a focused recall matched zero entries.
     """
 
     query: str
     query_matched: int
+    query_advisory: str
     total_available: int
     response_compacted: bool
     side_effects_deferred: dict[str, object]

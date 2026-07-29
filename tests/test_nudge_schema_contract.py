@@ -5,6 +5,7 @@ eval consumers:
 - ceremony-state.json persisted fields
 - surface_tracking.jsonl line shape
 - nudge_shown JSONL event shape
+- nudge-analysis.json artifact schema versioning (PRD-QUAL-127 NFR04)
 
 Dual-enforcement: a downstream eval consumer asserts the same shapes so
 breakage is caught from whichever side changes first. See PRD-CORE-146 NFR03.
@@ -240,3 +241,126 @@ def test_live_record_nudge_shown_emits_canonical_event(tmp_path: Path) -> None:
     # eval consumers of the data.* block (NFR03 — no public rename).
     assert event["learning_id"] == "L-test-001"
     assert event["phase"] == "validate"
+
+
+# ===========================================================================
+# nudge-analysis.json artifact versioning (PRD-QUAL-127 FR05 / NFR04)
+# ===========================================================================
+
+
+def _v1_artifact() -> dict[str, object]:
+    """The frozen schema-v1 ``.trw/context/nudge-analysis.json`` shape."""
+    return _load_json(_FIXTURE_DIR / "nudge-analysis.v1.json")
+
+
+def _v1_style_total_nudges(artifact: dict[str, object]) -> int:
+    """What a v1 consumer computes when handed ``artifact``.
+
+    Deliberately written the way a v1 reader was written: ``.get`` with a
+    default, unknown keys ignored, ``total_nudges`` trusted as total nudge
+    *volume*. Used to demonstrate what silently changed.
+    """
+    raw = artifact.get("total_nudges", 0)
+    return int(raw) if isinstance(raw, (int, float)) else 0
+
+
+def test_nudge_analysis_v1_fixture_pins_pre_narrowing_semantics() -> None:
+    """v1 held the identity ``total_nudges == sum(nudge_counts_by_step)``.
+
+    Captured from this repo on 2026-07-24 (PRD-QUAL-127 §Evidence). That
+    identity is what a v1 consumer relies on to read total nudge volume out of
+    a single field; schema v2 breaks it, which is why the version had to move.
+    """
+    v1 = _v1_artifact()
+    assert v1["schema_version"] == 1
+    counts = v1["nudge_counts_by_step"]
+    assert isinstance(counts, dict) and counts
+    assert _v1_style_total_nudges(v1) == sum(counts.values()) == 3041
+    assert "total_emissions" not in v1, "v1 predates the per-pool emission ledger"
+    assert "emissions_by_pool" not in v1
+
+
+def test_nudge_analysis_schema_version_is_2() -> None:
+    """FR05: the emitted artifact declares v2, distinguishable from the v1 fixture.
+
+    Without this the ``total_nudges`` narrowing is undetectable: the artifact
+    keeps the same key with the same type and a different meaning.
+    """
+    from trw_mcp.state.nudge_analysis import (
+        _ARTIFACT_SCHEMA_VERSION,
+        NudgeAnalysis,
+        analysis_artifact_dict,
+    )
+
+    assert _ARTIFACT_SCHEMA_VERSION == 2
+    emitted = analysis_artifact_dict(NudgeAnalysis())
+    assert emitted["schema_version"] == 2
+    assert emitted["schema_version"] != _v1_artifact()["schema_version"]
+
+
+def test_nudge_analysis_v2_is_additive_over_v1(tmp_path: Path) -> None:
+    """NFR04: no v1 key removed or retyped, so a v1 reader still parses v2.
+
+    Goes through the real writer (``persist_nudge_analysis``) rather than
+    asserting on the dataclass, because the artifact on disk is the contract.
+    """
+    from trw_mcp.state.nudge_analysis import NudgeAnalysis, persist_nudge_analysis
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    written = persist_nudge_analysis(
+        trw_dir,
+        NudgeAnalysis(
+            generated_at="2026-07-25T00:00:00+00:00",
+            session_id="s-additive",
+            phase="validate",
+            applicable=True,
+            total_nudges=0,
+            total_emissions=3,
+            emissions_by_pool={"workflow": 3},
+        ),
+    )
+    assert written is not None
+    v2 = _load_json(written)
+    v1 = _v1_artifact()
+
+    dropped = set(v1) - set(v2)
+    assert not dropped, f"v2 dropped v1 keys {dropped} — the change is not additive"
+    for key, v1_value in v1.items():
+        if key == "schema_version":
+            continue
+        assert type(v2[key]) is type(v1_value), f"{key} was retyped between v1 and v2"
+    assert set(v2) - set(v1) == {"total_emissions", "emissions_by_pool"}
+
+
+def test_v1_consumer_reading_v2_recovers_volume_from_the_additive_fields(tmp_path: Path) -> None:
+    """The narrowing is silent to a v1 reader; the true volume must still be there.
+
+    A session that emitted 3 nudges, none of them step-targeted, reads
+    ``total_nudges == 0`` to a v1 consumer — a 3-to-0 discontinuity trw-mcp
+    cannot stop downstream. What it guarantees instead: the honest volume is
+    present in the SAME artifact, and ``schema_version`` says the number
+    changed meaning so the consumer can branch on it.
+    """
+    from trw_mcp.state.nudge_analysis import NudgeAnalysis, persist_nudge_analysis
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    written = persist_nudge_analysis(
+        trw_dir,
+        NudgeAnalysis(
+            applicable=True,
+            total_nudges=0,
+            total_emissions=3,
+            emissions_by_pool={"workflow": 2, "learnings": 1},
+        ),
+    )
+    assert written is not None
+    v2 = _load_json(written)
+
+    assert _v1_style_total_nudges(v2) == 0, "the v1 field is the one that silently zeroed"
+    assert v2["total_emissions"] == 3
+    by_pool = v2["emissions_by_pool"]
+    assert isinstance(by_pool, dict)
+    assert sum(by_pool.values()) == 3
+    assert v2["schema_version"] != _v1_artifact()["schema_version"]

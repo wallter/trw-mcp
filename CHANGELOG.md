@@ -2,7 +2,881 @@
 
 All notable changes to the TRW MCP server package.
 
-## [Unreleased]
+## [1.0.0] — 2026-07-28
+
+**Why 1.0.0 and not 0.67.0.** This is the first release that breaks the
+**tool-call contract** — the surface every consumer's agent actually invokes.
+The project's own precedent for breaking on a minor (0.57.0, 0.58.0) does not
+transfer: those removed *config keys*, and 0.57.0's note says plainly that
+"unknown keys are ignored". An unknown *tool argument* raises. SemVer's FAQ is
+also explicit that a package whose maintainers are worrying about backwards
+compatibility should already be 1.0.0, and 1.0.0 gives consumers exactly one
+meaningful pin (`trw-mcp<1.0`) where `~=0.66` would not have protected them.
+
+Recorded so it can be argued with: the counter-case is that most callers are
+agents reading the live schema each session and will never emit a removed
+argument, so the realistic blast radius is smaller than "public API break"
+implies. That is in PRD-CORE-234 OQ-2. If the operator prefers 0.67.0, this is a
+one-line revert — the CHANGELOG content stands either way.
+
+**A second contract break landed in this same major, after that was written.**
+PRD-CORE-239 FR01 removes the registered tool `trw_channel_render` (50 → 49) and
+the whole template/injection channel surface — see *Removed* below. That is a
+tool-surface removal, not just an argument change, so it belongs in a major and
+needs no further increment on top of 1.0.0; recorded here explicitly so the
+version decision is stated rather than inferred from the entry list.
+
+**For whoever tags this release — no action required, notice only.** FR01 moved
+the generated inventory counts after the rationale above was authored:
+registered tools 50 → 49 (public stays 46; `trw_channel_render` was
+operator-only), and the trw-mcp test count and inventory total both fell with
+the deleted test files. `make inventory-check` passes and the runtime registry,
+`build/inventory.json` and every markdown sentinel agree, so nothing is
+inconsistent and nothing is blocked. The numbers simply differ from what they
+were when this section was written, and a tagger comparing against an earlier
+draft should expect that.
+
+### Removed
+
+- **BREAKING — `trw_entity_risk_map` is removed** (registered tools 49 → 48;
+  `DEFECT-LEDGER` UF-011 closed). Unlike `trw_channel_render` this one was
+  **public** — in the `code_risk` pack, not operator-only — and advertised to
+  every calling LLM as "Map per-entity risk across a repository".
+
+  It could never return data to anyone. The producer does not exist even in
+  concept: `entity-risk-map` is registered nowhere in trw-distill's CLI, and a
+  case-insensitive search for `entity.risk` across the whole
+  package returns zero. The tool answered `sidecar_missing` forever, for licensed and
+  unlicensed callers alike.
+
+  Its one agent-facing consumer was broken three ways, visible only to a
+  licensed user since the opencode explorer is entitlement-gated: it called the
+  tool with `file_path=`, which is not a parameter, and read `importers`,
+  `inferred_tests` and `co_change_neighbors`, none of which the tool returns.
+  Every one of those fields already comes back on `distill_hint` from
+  `trw_before_edit_hint`, which that same mode already calls — so the fix was
+  deleting the step, not replacing it.
+
+  One removal closed two ledger entries: `EntityRiskScorePayload` was the single
+  mirror the schema-parity guard could not cover (a producerless sidecar has no
+  source class to compare against), so the guard now covers 6 of 6 and its
+  `PARTIAL_GUARD` finding stopped firing. The wiring baseline drops from 4
+  acknowledged entries to 2.
+
+  **Migration**: callers get an unknown-tool error instead of a permanent
+  `sidecar_missing`. Nothing that worked stops working.
+- **41 `TRWConfig` fields with no production reader** (PRD-QUAL-131-FR01), and
+  with them 41 `TRW_*` environment variables and 41 rows of the
+  `trw-mcp config-reference` table. Each was typed, described, settable in
+  `.trw/config.yaml`, advertised as a working control, and read by nothing. They
+  form eight complete prefix clusters — every member unread — which is the
+  signal that each described a subsystem that does not exist rather than a knob
+  that fell out of use. A repository search for `technical_debt`, `DebtRegistry`,
+  `debt_registry` and `TechDebt` across `src/trw_mcp`, with `nudge` (85 files) as
+  the non-vacuity control, returned hits in exactly two files: the declaration
+  and its admission registry.
+
+  `debt_actionable_threshold`, `debt_auto_promote_threshold`,
+  `debt_budget_critical_ratio`, `debt_budget_high_ratio`,
+  `debt_decay_assessment_rate`, `debt_decay_base_score`, `debt_decay_daily_rate`,
+  `debt_default_wave_size`, `debt_id_prefix`, `debt_initial_decay_score`,
+  `debt_registry_filename`, `findings_dir`, `findings_entries_dir`,
+  `findings_registry_file`, `gate_architecture_score_penalty`,
+  `gate_critic_overhead_multiplier`, `gate_tokens_per_1k_chars`,
+  `grooming_max_iterations`, `grooming_partial_density_threshold`,
+  `grooming_placeholder_density_threshold`, `grooming_research_scope`,
+  `grooming_target_completeness`, `phase_cap_deliver`, `phase_cap_implement`,
+  `phase_cap_plan`, `phase_cap_research`, `phase_cap_review`,
+  `phase_cap_validate`, `simplifier_backup_dir`,
+  `simplifier_verification_timeout_secs`, `simplifier_wave_size`,
+  `sprint_code_simplifier_wave_size`, `sprint_commit_pattern`,
+  `sprint_integration_branch_pattern`, `velocity_alert_min_runs`,
+  `velocity_alert_r_squared_min`, `velocity_confounder_jump_ratio`,
+  `velocity_effective_q_threshold`, `velocity_history_max_entries`,
+  `velocity_sign_test_alpha`, `velocity_stable_threshold`.
+
+  The six `phase_cap_*` fields were a duplicate encoding: the live values are the
+  defaults on `PhaseTimeCaps` in `models/config/_sub_models.py`, which never
+  projected from them. None of the 41 is security-relevant — no name or
+  description references authentication, credentials, permissions, sandboxing, or
+  network egress — and a search across the two corpora the consumer gate cannot
+  see (`src/trw_mcp/data` and `scripts/`) returned nothing for any of them.
+
+  **Your config keeps parsing.** `TRWConfig` stays `extra="ignore"`, so a stale
+  key is not an error. It is no longer silent either: the loader now names it
+  (see *Added*). Code doing direct attribute access on a removed field raises
+  `AttributeError` — that is the loud half and it is intended.
+
+- **`WriteTargets.agents_md_primary` and `strip_orphaned_agents_md_block`**
+  (PRD-QUAL-131-FR06), both with zero production call sites, both census-verified
+  against a live control. The fact `agents_md_primary` encoded — AGENTS.md is
+  cursor-cli's only carrier — is real and stays, documented in PRD-CORE-242 and
+  carried by `instruction_path`; a boolean nothing reads does not enforce it.
+  `strip_orphaned_agents_md_block` shipped with a commit message claiming
+  "Verified: opencode-only detection strips and is idempotent", a property of a
+  function nothing calls. Its sibling `strip_orphaned_claude_md_block` **is**
+  called, from `bootstrap/_template_updater.py` and `bootstrap/_init_project.py`,
+  and is untouched.
+
+- **Nine decorative `ChannelEntry` fields.** `emit_on_ttl_skip`,
+  `emit_on_conflict_skip`, `emit_on_lock_skip`, `session_correlation`,
+  `operator_tier_override_key`, `client_version_min`, `sidecar_schema`,
+  `sidecar_path` and `distill_record_types` were authored per channel across
+  every client manifest with genuine variation — some channels set them true,
+  others false — and read by **no production code**. 242 field instances removed
+  from seven manifests. `operator_tier_override_key` was the one with real user
+  cost: `CHANNEL-ARCHITECTURE.md` documented it as an operator-facing tier
+  override, so an operator who followed that instruction got silence.
+
+  `ChannelEntry` is `extra="forbid"`, so the model and the manifests had to move
+  together. The loader's alias migrations for two of them would otherwise have
+  renamed a legacy key onto a field that no longer exists, raising on any
+  manifest a previous version wrote; it now **drops** retired keys, so old
+  manifests keep loading.
+
+- **`channels/copilot/_posttool_correlate.py`** (617 LOC with its tests). It
+  hardcoded `channel_id: "copilot-instructions-distill"` — removed above — and
+  had no importer anywhere. Its ten tests passed only because they synthesised
+  the very push events they then correlated, so they could never fail for the
+  reason they existed.
+
+
+- **BREAKING — the trw-distill template/injection channel surface is gone**
+  (PRD-CORE-239 FR01). Twelve channels that would have written distill-derived
+  content into `CLAUDE.md`, `AGENTS.md`, `ANTIGRAVITY.md`, `.cursor/rules/*.mdc`
+  and `.github/copilot-instructions.md` are removed, along with
+  `trw_channel_render` (registered tools 50 → 49) and ~6,000 LOC of renderers.
+  Canonical manifest entries go 29 → 17.
+
+  They never rendered for anyone. `trw_channel_render` was the sole dispatcher
+  and passed `_placeholder_content` unconditionally, so an entitled operator
+  received byte-identical output to a free-tier caller: `# {channel_id} —
+  placeholder content for tier {t}`. Six manifest entries carried
+  `status: active` the whole time.
+
+  The surviving integration is the MCP tool path — `trw_before_edit_hint`,
+  `trw_before_edit_hint_batch`, `trw_codebase_risk_report`,
+  `trw_cross_repo_ordering` — plus the distill-free telemetry and hint hooks and
+  the three explorer subagents, which are **licence-gated rather than deleted**
+  so a licensed user still gets them.
+
+  Scope was set by behaviour, not by the manifest's `surface` field: that field
+  is documentation and was wrong for 9 of 27 entries, including one that would
+  have swept a working distill-free telemetry hook into the removal. Two shared
+  helpers under client-named directories survived that an earlier audit had
+  marked exclusive — `claude_code/_hook_helpers.py`, imported directly by the
+  Copilot and Cursor hint hooks, and `opencode/_shared_lock.py`, which guards
+  the base ceremony `AGENTS.md` write in the retained installer.
+
+  Verification is the wiring gate rather than a test count: it now passes with
+  no NEW findings, because the six `NEVER_FIRED` acknowledgements were deleted
+  rather than re-baselined. `DEFECT-LEDGER` UF-010 is closed.
+
+  Retired with it: the `instruction-drift-gate` / `instruction-drift-report`
+  targets (their checkable set was exactly two entries, both removed here, so
+  they would have reported "0 checked" forever) and
+  `check-channels-ip-boundary` (it grepped `channels/` for `trw_distill`
+  imports and matched zero files *before* any removal — it had never failed,
+  because the real defect class writes command strings, not imports).
+
+  **Migration**: no action for most users. Existing marker blocks left by a
+  prior version are still stripped by `trw-mcp uninstall` via the
+  `trw:distill:start/end` pair in `MARKER_REGISTRY`. Only opencode's segment
+  was ever actually written, and it stops being refreshed.
+
+
+- **`nudge_messenger: learning_injection` removed — BREAKING for any project that set it.**
+  The value is no longer a member of the accepted set, so a `.trw/config.yaml` carrying
+  `nudge_messenger: learning_injection` now **fails config validation on load** instead of
+  being accepted. It is rejected rather than ignored deliberately: a silently-dropped key
+  would leave the operator believing an arm was running that no longer exists.
+
+  **Migration: change the value to `contextual`.** That is not a downgrade — the contextual
+  selector is a strict superset of the removed one. Both call the same candidate selector and
+  surface the same recalled learning; `contextual` additionally emits the `NEXT:` action line
+  that the removed renderer dropped.
+
+  Grounds for removal are measured, not inferred. The iter-22 campaign ran this arm as one
+  cell of an A/B design at n=30 per cell and it scored **50.0% against 66.7% for plain
+  `trw-full`** (p=0.1527, above the significance threshold required for a promotion verdict),
+  with knowledge coverage falling from 75.2 to 70.0; the campaign row reads
+  "REJECTED — not promoted". The 2026-04-27 root-cause investigation localised the failure to
+  the missing action line, and the `contextual` messengers shipped that fix. No client profile
+  ever selected the arm — `client_profiles/catalog.py` hardcodes `standard` and
+  `nudge_messenger` is not a `ClientProfile` field — so for every default install this
+  removal is observationally inert.
+
+  Two internal symbols go with it: `state._ceremony_nudge_selectors.select_learning_injection_content`
+  (and its `state.ceremony_nudge` re-export) and `state.ceremony_nudge.compute_nudge_learning_injection`,
+  which already had zero call sites in the package.
+
+  Deliberately **not** removed, despite sharing the name: the private
+  `_select_learning_injection_candidate` (the shared candidate selector all eight contextual
+  messengers call), the entire `state/learning_injection.py` module (`infer_domain_tags` serves
+  those messengers, `recall_learnings` serves the learnings collector), and the unrelated
+  `agents_md_learning_injection` config flag. (PRD-CORE-241 FR07/FR08/FR09.)
+
+- **`learning_injection_preview_chars` removed** — declared in `_fields_memory.py`, plumbed
+  through `TRWConfig` into `RecallConfig.injection_preview_chars`, and read by nothing. The
+  repo's own ratchet had already flagged it: it sat in
+  `.trw/compliance/config-field-consumers-baseline.json`, whose header states an entry there
+  "is more likely real debt than not" and that the set "may only shrink". It now does.
+  (PRD-CORE-241 FR-config.)
+
+- **The five deprecated CLAUDE.md `render_*` functions are deleted** — finishing a removal
+  PRD-CORE-093 approved and marked `done`, but which was never completed in code.
+  `render_architecture`, `render_conventions`, `render_categorized_learnings`,
+  `render_patterns`, and `render_adherence` had carried `.. deprecated:: 0.37.0` since that
+  release, along with their private helpers (`_render_context_section`, `_ARCH_SKIP_KEYS`,
+  `_CONV_SKIP_KEYS`, `_ADHERENCE_*`).
+
+  PRD-CORE-093's finding was that learning promotion into CLAUDE.md is redundant:
+  `trw_session_start` already delivers task-relevant learnings through focused hybrid recall,
+  so re-rendering them into the instruction file cost ~1,800 tokens per message — and because
+  `trw_deliver` re-synced after every delivery, it rotated the section and invalidated the
+  prompt cache, resetting the next batch's input cost from cached to uncached.
+
+  Verified before deleting: **zero call sites in `src/`**. The only consumers were tests
+  written to exercise the deprecated functions themselves. (One apparent `render_conventions`
+  caller was a false positive — `render_conventions_t0`/`_t1` in the cursor MDC emitter is an
+  unrelated namespace that a substring grep matches.) The public re-exports are dropped from
+  `state/claude_md/__init__.py`.
+
+  Live symbols in the same module are untouched: `CeremonyTool`, `PHASE_DESCRIPTIONS`,
+  `CEREMONY_TOOLS`, and the three `*_CAP` constants still feed `_renderer.py`'s
+  behavioral-protocol table.
+
+  Test surface trimmed rather than deleted — both affected files carried unrelated live tests
+  that were kept: `TestLoadClaudeMdTemplateInlineFallback` covers a live function, and only the
+  two `render_adherence` cases were removed from `test_tools_learning_protocol.py`.
+
+  Net −478 lines across source and tests.
+
+### Added
+- **A config key that does nothing now says so** (PRD-QUAL-131-FR04). `TRWConfig`
+  is `extra="ignore"`, so a key it does not define was dropped without a word —
+  and `TRW_CONFIG_STRICT=1` did not help, because its fail-closed branch lives
+  inside an `except` that `extra="ignore"` never enters. Loading `.trw/config.yaml`
+  now emits one warning per unrecognised key, to the log and to stderr, saying
+  whether the key was retired and what replaced it.
+
+  It prints the key name and **never the value**: config keys and
+  credential-adjacent values share this file, and a user may hold a secret under
+  a key that has since been retired. It fires at most once per key per process,
+  so the machine-defaults file merging under the project file does not
+  double-report. A config whose keys are all defined emits nothing — a false
+  positive here costs more trust than a missing warning.
+
+  This is a warning, not a rejection. Moving to `extra="forbid"` would break
+  every user holding a stale key at once and is deferred until there is a release
+  of warning data behind the decision.
+
+### Fixed
+- **Your hand edits survived the first `update-project` and were destroyed by the
+  second.** The preservation fix above stopped the *writers* from overwriting a
+  user-edited artifact. It did not stop the *recorder*: after preserving your
+  file, `_write_manifest` recorded a hash of **your** bytes into the map that
+  answers "what did TRW last write?". On the next run TRW compared the file
+  against your own hash, concluded it was unedited, and overwrote it. Preserved
+  once, laundered, then destroyed — and the second run reported `modified: []`,
+  so it was silent as well as destructive.
+
+  Seven surfaces were affected — `.claude/hooks`, `.claude/skills`,
+  `.claude/agents`, `.opencode/skills`, `.opencode/INSTRUCTIONS.md`,
+  `.codex/INSTRUCTIONS.md`, `.codex/agents`. The two that were already immune
+  (`.github/skills`, `.cursor/skills`) were exactly the two whose recorder had a
+  decline branch, with no exceptions — which is what identified the mechanism.
+  All recorders now route through one shared predicate and **omit** the entry for
+  a user-edited artifact rather than recording a wrong one.
+
+  **A one-time loss is possible on upgrade, and is disclosed rather than
+  discovered.** If a previous version already laundered one of your files — the
+  manifest holds a hash equal to your current content — that state is
+  indistinguishable from a legitimate TRW write by content alone. Such a file
+  will be overwritten **once**, on the first run after upgrading, and correctly
+  preserved from then on. If you have hand-edited any of the seven surfaces
+  above, copy those files aside before your first post-upgrade
+  `update-project`. Editing them again after the upgrade is enough to make them
+  permanently safe.
+
+  The fix carries a subtlety worth stating, because getting it wrong would have
+  been worse than the bug: the recorder must compare against **the same
+  framework baseline its writer uses**, not simply the bundled bytes.
+  `.claude/agents/*.md` are tier-resolved at write time (`model: frontier` →
+  `model: opus`), so both renderings are legitimately TRW's. Treating only one as
+  canonical would have made every healthy agent look user-edited, dropped its
+  manifest entry, and frozen every agent file permanently at the next bundle
+  bump — with every preservation test still green. A registry of manifest
+  recorders with an AST guard now fails the build if a fourth recorder is added
+  that does not go through the shared predicate, because this defect's root cause
+  was a fix applied to two of three writers.
+
+  `AGENTS.md` is deliberately **no longer recorded**. It is marker-merged — TRW
+  owns one block and you own the rest — so a whole-file ownership hash was
+  meaningless, and nothing read it. Leaving it would have kept a hash of your
+  prose in a map labelled "what TRW wrote".
+
+- **Two follow-on defects in that same fix, both found by an independent review
+  of it rather than by its author.** The first: the guard meant to stop the
+  defect recurring checked recorder *names*, not the *keys* they contribute, so
+  an unguarded producer merged into an existing recorder passed all three of its
+  layers while laundering a file. A fourth, runtime layer now forces the
+  user-edit predicate to answer "edited" for everything and asserts every
+  recorder then returns nothing — any surviving key is a key that never consulted
+  the predicate. It proves the predicate was *consulted*, not that its answer was
+  *obeyed*, and that limit is written down rather than implied.
+
+  The second was a regression the fix itself introduced: enumerating codex
+  artifacts from the bundle rather than the filesystem meant a file dropped from
+  a *kept* skill directory stayed on disk but lost its manifest entry — and was
+  then treated as your edit and frozen, never refreshing when upstream re-added
+  it. Cleanup now sweeps files inside kept directories, applied to all three
+  directory surfaces rather than only the one that reported it. **Deletion
+  requires positive proof TRW wrote the file** (a manifest entry *and* matching
+  content): no entry means you created it, a changed hash means you edited it,
+  and both are preserved.
+
+- **`trw_before_edit_hint` said your analysis data was stale when it had never
+  looked.** When `git rev-parse HEAD` failed — an unborn HEAD in a freshly
+  scaffolded repo, or git unavailable — it reported `stale_sha`, which means "a
+  sidecar exists but for a different commit". No sidecar had been consulted at
+  all. Four sibling tools already used a shared resolver that reports
+  `no_git_sha` for exactly this; the tool that resolver was *extracted from* had
+  never been migrated. It is now, deleting the duplicated resolution logic with
+  it. `distill_status` gains `no_git_sha` and `no_repo_root` and loses a member
+  that was never produced. This status is written into durable telemetry on every
+  edit, so the old behaviour also inflated every "how often is our sidecar
+  stale?" answer with events that were a different problem entirely.
+
+- **A truncated cross-repo sidecar validated cleanly and read as "aggregated
+  across zero repos".** Two model pairs mirroring trw-distill types were not
+  registered with the schema-parity checker; registering them surfaced ten live
+  drifts, including two fields the source *requires* that the mirror had given
+  defaults. The parity check now covers six of seven pairs, and the seventh — the
+  one with no counterpart to compare against — is a declared exclusion with a
+  test asserting it is still a real discovered mirror, so the waiver cannot
+  outlive its subject.
+
+- **A crashed pre-edit hook was recorded as a timeout.** The Claude Code hook
+  writes a provisional `timeout_fallback` before invoking its subprocess and
+  overwrites it on success, but its exception handler never wrote at all — so a
+  broken virtualenv or a version-skewed install left a durable record blaming the
+  2.5s budget. Genuine exceptions now record `exception_fallback`. An operator
+  tuning the timeout for what was actually an `ImportError` was tuning the wrong
+  knob.
+
+- **The new "this config key does nothing" warning fired on two keys that work.**
+  `platform_org_name` and `platform_user_email` are written by `trw-mcp auth
+  login` and read back to render auth status; they simply are not `TRWConfig`
+  fields. `.trw/config.yaml` is not `TRWConfig`'s private file, and "not a field"
+  is a different question from "does nothing". Keys owned by another subsystem
+  are now declared with their owner and read site, so the exemption is checkable
+  rather than a silent suppression. A warning that fires on working keys teaches
+  you to ignore the next one, which may be about a genuinely dead knob.
+
+- **Uninstall left a live TRW rule behind on antigravity-cli.** Install writes
+  `.agents/rules/trw-ceremony.md`; no uninstall surface covered it. Registered as
+  the file rather than the directory — `.agents/rules/` is Antigravity's
+  documented workspace-rules folder and holds your own rules too, which are
+  preserved.
+
+- **A review that recorded no verdict displayed as one that had concluded.**
+  `ceremony_status` rendered an empty verdict via `or 'recorded'` — the calmest
+  available word — printed directly beside a live `p0=N` count. Alarming number,
+  reassuring label. It now renders `verdict_unrecorded`, and the absence is
+  persisted in ceremony state rather than only fixed at the point of display, so
+  every consumer of `review_verdict` sees a distinguishable value. No live review
+  path could reach this today; it was defensive code that silently agreed with a
+  broken caller.
+
+- **`update-project` destroyed hand edits to your agents, skills and instruction
+  files on three of the seven client profiles.** Copilot, cursor and
+  antigravity-cli wrote their mirrored artifacts unconditionally. The clearest
+  form of it was in `_copilot.py`, where the preservation branch and the
+  overwrite branch were **the same two lines** — a `shutil.copy2` either way —
+  with only the label in the returned result differing: your edited skill was
+  reported under `updated`, having been overwritten. So an upgrade silently
+  discarded your work *and* told you it had preserved it. The mirror-image bug
+  sat in the copilot agents, copilot path-instructions and antigravity agents
+  generators.
+
+  Both directions are the same question — *is this file TRW's own last write, or
+  yours?* — so both are now answered by one shared predicate
+  (`bootstrap/_managed_client_artifacts.py::artifact_user_edited`), consulted by
+  every managed-artifact writer including `_opencode.py`'s private guard, which
+  had checked only the manifest and so missed edits to artifacts installed before
+  manifest tracking existed. `_write_manifest` records a hash only for artifacts
+  that are **not** user-edited; recording a preserved edit would have laundered it
+  into TRW ownership and licensed the next run to overwrite it.
+
+  Attribution proof, since a preservation test that passes when preservation is
+  removed is worth nothing: with `artifact_user_edited` stubbed to `False`, 10
+  tests go red including the two-update end-to-end case; stubbed to `True`, the
+  overwrite tests go red. Two tests were also renamed because their names
+  promised what they did not assert.
+
+- **The deliver gate was missing from the instruction surface of the two clients
+  with the largest and the newest install bases.** `trw-mcp doctor` reported
+  `FAIL — deliver-gate statement absent from TRW block in: CLAUDE.md` on a fresh
+  claude-code install. Doctor was right. The `CLAUDE.md` scaffold in
+  `_config_templates.py` was a hand-maintained copy of the protocol that had
+  never contained the gate, so the flagship client shipped without it — inline
+  before externalization, and in the `.trw/INSTRUCTIONS.md` sidecar after, since
+  the sidecar is built from that block. `render_deliver_gate_statement()` already
+  existed in the shared renderer; the scaffold simply never called it. It does
+  now, so it cannot drift again. `CLAUDE.md` stays 22 lines (the gate lands in
+  the sidecar, which is the point of externalizing); the sidecar goes 59 → 77.
+
+  **antigravity-cli had no gate text anywhere** — a whole-tree grep across a
+  fresh install returned zero files containing the phrase. `ANTIGRAVITY.md`
+  carried a paraphrase in a table cell ("persists session work only after
+  `trw_build_check()` evidence or a structured acceptable-failure record") which
+  is true but is not the rule: it omits the third evidence path and the sentence
+  that closes the loophole — *a review-verdict label or free-text reason alone is
+  not an acceptable-failure record*. An agent reading only the paraphrase could
+  reasonably conclude a review verdict qualifies. It now receives the verbatim
+  CONSTITUTION §1.a form every other client gets. This is the VISION Principle 9
+  line: client profiles tune surface **density**, never **protocol**, and the
+  deliver gate is the framework's central truthfulness mechanism — a client given
+  a softer statement of it has been given a different framework.
+
+  With cursor-ide's rule source (below), that is **three** protocol surfaces built
+  from a hand-written copy instead of the shared renderer, and every one of them
+  had silently dropped something. The pattern is the finding.
+
+- **`copilot-mcp-tool-return` claimed a dormancy gate that did not exist**
+  (`DEFECT-LEDGER` UF-050). Its `activation_gate` named
+  `C3_vscode_mcp_configured`, an identifier present in no source, so the
+  channel's "I am intentionally inactive" claim could not be checked. It now
+  names `generate_vscode_mcp_config` — the function that actually writes
+  `.vscode/mcp.json`, which is what the channel's own description always meant.
+  The wiring gate verifies the identifier exists, and then correctly reported
+  its own baseline acknowledgement as stale.
+
+
+- **`trw_entity_risk_map` told every caller to run a command that has never
+  existed.** Its remediation on `sidecar_missing` / `sidecar_malformed` was
+  `trw-distill self-improve entity-risk-map --repo . --persist-sidecar`.
+  Enumerating the 51 registered `@self_improve_group.command` names across
+  trw-distill's CLI yields `before-edit` and `risk-report` — the real producers
+  behind `trw_before_edit_hint` and `trw_codebase_risk_report` — and nothing for
+  entity-risk-map; `DEFECT-LEDGER` UF-011 records the same absence from the
+  producer side. This was sharper than the unlicensed-artifact defect below:
+  there a licensed user's command worked, here the advice could not succeed at
+  any tier, and it was the *paying* caller who received it because the free tier
+  is deliberately kept silent. The shared substrate had no way to express "there
+  is nothing to run" — `cli_remediation` was typed `str` and always rendered
+  `Run: …` — so it is now `str | None` with an explicit no-producer action. The
+  new guard is structural: it derives every `trw-distill self-improve` command
+  trw-mcp advertises (via AST over non-docstring string literals) and every
+  command trw-distill registers, and requires a subset relation.
+
+- **`trw_channel_stats` reported a never-run subsystem as healthy.** It returned
+  `status="ok"` with `channels=[]` whenever the telemetry log was empty, which
+  reads as "we looked and there is nothing to throttle" rather than "there was
+  nothing to look at". Empty now reports `no_activity`.
+
+- **Unlicensed projects were handed paid `trw-distill` artifacts.** `trw-distill`
+  is proprietary, but the install path had no availability check *anywhere* — a
+  repo-wide grep for `distill_installed` / `find_spec("trw_distill")` across
+  `bootstrap/` and `channels/` returned zero hits. Every client installer planted
+  distill-dependent artifacts into every project regardless of licence: Copilot
+  instructions telling the user to run `trw-distill self-improve risk-report`
+  (which yields `command not found`), Cursor `.mdc` stubs whose description read
+  *"TRW distill data available — quota exceeded"* (false twice over — no data
+  exists and no quota was hit), and three copies of an explorer subagent that
+  cannot function without the package. New `bootstrap/_distill_entitlement.py`
+  fronts the decision; it delegates to `check_tier_for_feature` — the runtime's
+  single definition of entitlement, which grants on either an importable
+  `trw_distill` **or** a valid expiry-bearing `.trw/entitlements.yaml` sentinel,
+  so the install surface and the runtime surface cannot disagree about who is
+  entitled — and fails **closed**,
+  because withholding from a licensed user is a recoverable annoyance while
+  planting a paid-tool instruction in an unlicensed user's version control is
+  not. Gate, do not delete: licensed installs still receive the full surface. The
+  regression guard is structural rather than a list of the four files fixed — the
+  defect was an entire subsystem with no check, so a name-list test would pass
+  while a fifth was added. (PRD-CORE-239 FR01c/FR02.)
+
+- **`update-project` deleted the trust registry, the deliver-override audit trail
+  and the security event stream.** `_cleanup_context_transients` swept
+  `.trw/context/` deny-by-default: anything not named in an 11-entry
+  hand-maintained allowlist was unlinked. Nothing bound that list to the code
+  that writes there, so it rotted — 11 of ~27 production-managed filenames were
+  covered. Destroyed on every upgrade: `trust-registry.yaml` (MCP trust-boundary
+  decisions), `deliver-override-audit.jsonl` (the record of every
+  truthfulness-gate override), the `events-*.jsonl` stream that
+  `trw_mcp_security_status` and the anomaly detector read, plus
+  `ceremony-overrides.yaml`, `file_ownership.yaml` and `session-events.jsonl`.
+  None are reconstructable, and date-stamped names like `events-2026-07-27.jsonl`
+  could never have been covered by an exact-name allowlist at all — that family
+  was guaranteed destroyed by the design, not by an oversight in maintaining it.
+  PRD-FIX-031 had asked for both an allowlist covering all context files *and*
+  three transient glob patterns, but phrased its predicate as an OR, so "not in
+  the allowlist" deleted everything unlisted on its own and the globs never
+  changed an outcome — decoration inside a checked-off requirement. The predicate
+  is now inverted to what that PRD's own user story asked for ("history and
+  session state are never lost"): delete what is *known* transient, preserve
+  everything else, so an unrecognised file — a user's note, or state written by a
+  newer TRW than the installer — is left alone. (PRD-FIX-120.)
+
+- **Channel correlation reported a fabricated 0.0% and demoted tiers on it.**
+  `OUTCOME_EVENT_TYPES` (`edit_correlated`, `subagent_outcome`,
+  `snapshot_written`) has never had a producer — those literals appear only in
+  the vocabulary that declares them and the set that consumes them. So
+  `correlate()` returned `raw_rate=0.0` for every channel in every project since
+  the module was written, and `trw_channel_stats` / `channel-doctor stats`
+  rendered it as "0.0%", which reads as *we measured, and the answer is none*.
+  The cost was not only cosmetic: `_throttle._evaluate` coerced the missing rate
+  to `0.0`, so any channel past `min_n` scored below threshold and returned
+  `THROTTLE_DOWN` — tiers were demoted on a number no input had ever produced.
+  `correlate()` now distinguishes "no outcome was recorded in this channel's
+  sessions" (unmeasured, `raw_rate=None`, rendered `n/a`) from "outcome events
+  that did not join" (a real zero). Measurability is decided **per (channel,
+  client)**, not per log: deciding it globally would let one channel's outcome
+  event vouch for every other channel and hand them back the fabricated zero.
+  The throttle treats unmeasured as `INSUFFICIENT_DATA` — including on its error
+  path, which had returned `HOLD` with a `0.0` rate, rendering a crashed
+  evaluation as a healthy channel — and
+  paired tests pin both directions so the guard cannot silently disable
+  throttling. This follows the idiom the same package already used twice —
+  `_ttl.py`'s `ttl_unknown` and `ThrottleVerdict.INSUFFICIENT_DATA`.
+
+- **`update-project` silently destroyed hand-edited instruction files.** A user's
+  own `.codex/INSTRUCTIONS.md` or `.opencode/INSTRUCTIONS.md` was overwritten with
+  generated content and the run reported success. Root cause: `_write_manifest`
+  re-recorded the manifest from current on-disk content *before* the preservation
+  guard ran, so the user's edit became the "TRW last wrote this" baseline; the
+  guard compared the edit against itself, concluded "unmodified", and clobbered.
+  The pre-write baseline is now threaded into the sync. Verified in both
+  directions — a user-edited file is preserved AND a stale TRW-owned file is
+  still refreshed, because a fix that merely freezes the file would pass the
+  preservation test while breaking updates.
+
+- **`trw_review` could record two P0 findings as an empty passing review with the
+  delivery gate open.** Three independent defects on that path: `handle_auto_mode`
+  stamped `confidence: 0.0` onto findings that omitted it and then filtered
+  everything below threshold 80 (the commit that introduced this was titled "fail
+  closed on non-evidence reviews" — it failed *open*, because `substantive` is
+  computed before the filter); `handle_cross_model_mode` never emitted
+  `critical_count`, the field the delivery gate reads, so `verdict: block` with two
+  criticals did not block; and a verdictless payload minted an *authoritative*
+  PASS receipt. Discarded findings are now surfaced in the response rather than a
+  log line.
+
+- **`trw_build_check` reported a `duration_secs` it never measured** — a hardcoded
+  `0.0` presented as fact for a tool that executes nothing and owns no clock. Now
+  derived from `command_results` timestamps or omitted. Its `command_results`
+  parser also accused callers of contradicting themselves when the real fault was
+  a key-name mismatch, and defaulted a missing `exit_code` to 1 = failed, silently
+  inverting a green run.
+
+- **The PRD default-path-proof gate never checked that the proof existed.** It
+  validated only that `receipt` and `removal_assertion` were non-empty strings, so
+  PRDs went on asserting `functionality_level: live` against receipts naming
+  deleted test files. That is how five tool removals passed a gate whose whole
+  purpose was to stop them.
+
+- **`crash.log` had never recorded a real crash.** 96 of 96 entries across two
+  copies were `RuntimeError: test boom`, written by a test that omitted the
+  `Path.cwd` patch its own sibling three lines below has.
+
+- **Tests were writing fixture data into a production telemetry log.** 8,131 of
+  8,148 events carried `duration_ms: 42`. Cause: `enqueue()` spawns a flush thread
+  and registers an `atexit` drain, neither stopped at teardown, so writes landed
+  after `monkeypatch` reverted. The path-isolation harness now rebinds resolvers
+  permanently rather than enumerating 9 of the 24 modules that bind them.
+
+- **Six tools shipped no output contract**, and `trw_dispatch_status` shipped a
+  false one — it claimed `result` is set once terminal, but a *cancelled* job is
+  terminal and returned `result: None` forever, so an agent following the contract
+  polled indefinitely.
+
+
+- **Writing the TRW block could delete user content around a marker mentioned in prose.** `merge_trw_section` — the writer `trw_instructions_sync` and `trw_deliver` use for CLAUDE.md and AGENTS.md — located the section with `existing.index(TRW_MARKER_START)`, a substring scan returning the **first** occurrence anywhere in the file. An instruction file that merely *mentioned* a marker, in prose, backticks, or a fenced block, lost every line between that mention and the real block, and the write reported success. Reproduced: a CLAUDE.md reading ``Prose mentioning `<!-- trw:start -->` inline should be ignored.`` was truncated mid-sentence. This is the shape that destroyed 705 lines of ROADMAP.md in 2026-06 and that the repo's own marker-matching rule exists to forbid — the rule had been applied to the bootstrap copy, and **three siblings kept the bug** (`_opencode.py` via `content.find`, `_cursor_cli.py` via `partition`, and the truncation helper). All four now delegate to one line-anchored implementation (`replace_marker_region` / `has_marker` in `bootstrap/_file_ops.py`), so a future copy cannot silently miss the fix.
+
+- **`update-project` reverted CLAUDE.md externalization on every run.** `_run_claude_md_sync` returned early whenever `ANTHROPIC_API_KEY` was unset — the normal case for a Claude Code *subscription* user — while the carrier-unaware writer always ran. The command reported success with the warning buried in `result["warnings"]`, and the repo dogfooding this shipped an orphaned `.trw/INSTRUCTIONS.md` beside a CLAUDE.md carrying 61 lines of inline block and zero import directives. The guard was vestigial: nothing under `state/claude_md` reaches an LLM (`dispatch_for_profile` does `del reader, llm`; `_build_sync_result` hardcodes `llm_used: False`), so it gated a pure file-I/O write on an unrelated credential. Its remediation text also named the wrong tool — `trw_session_start()` does not run the sync.
+
+- **`doctor` failed the projects that were correctly configured.** The `instruction_surface` check scanned the literal text between the markers for the deliver-gate sentence. Under the IMPORT carrier that region is one `@`-import line and the sentence lives in the sidecar, so every correctly-externalized project — the shipped default for claude-code — was told its instruction surface was broken. Identical content, IMPORT gave FAIL and inline gave PASS. The pre-existing pointer exemption could not cover it: that fires only when the *whole file* is import directives, and a real CLAUDE.md carries user prose. The gate now resolves the import before asserting, without weakening — a dangling import still fails, and an import resolving outside the project is refused rather than followed.
+
+- **`doctor` could not see two of the instruction surfaces it is supposed to check.** `_INSTRUCTION_FILES` was hand-maintained and had drifted to five entries against a canonical registry of six, so `ANTIGRAVITY.md` was never inspected and an antigravity-cli project with a broken surface reported PASS. The set is now derived from `client_profiles.catalog` with a companion exclusion map naming the one deliberate omission and its reason, plus a totality test — so the next client added cannot be skipped silently.
+
+- **`trw_instructions_sync` could never reach antigravity-cli's instruction file.** The generator table named three of the seven client profiles with no exclusion set and no totality test, and a profile absent from it takes the same code path as "nothing to do". `generate_antigravity_instructions` existed and worked but was reachable only from install-time bootstrap, so `ANTIGRAVITY.md` was written once at install and never refreshed by the call the protocol mandates at delivery. Every profile is now either driven or listed as excluded with a reason, asserted total against the profile registry.
+
+- **The combined framework view was write-protected into staleness.** `generated_outputs()` emitted the compact core, the reference, and the obligation inventory — not the combined view. The `frozen_baseline_digest` that guards combined content is compared against freshly *compiled* bytes and never against the file, so nothing closed the loop: `--write` regenerated everything except `framework.md`/`aaref.md`, `--check` only diffs what `--write` writes, and `check-aaref-sync.py` compared mirrors against the stale file and found them consistent. Three green checks over a combined view that no longer matched its own source, with three tracked mirrors — including `.trw/frameworks/FRAMEWORK.md`, the file agents load at session start — projecting the previous generation. Any legitimate content edit to either canon would have silently stranded the most-read view and reported success. Combined is now a generated output like the others; the freeze is unweakened because `compile_registry_canon` still raises on baseline drift before a byte is written.
+
+- **The compact cores described a document nobody reads.** `FRAMEWORK.md` and `AARE-F-FRAMEWORK.md` are compiler output; the root instruction file points agents at the *cores*, and five statements in them were inherited from the combined view and false there. `FRAMEWORK-CORE.md` opened its adherence section with "This document (`.trw/frameworks/FRAMEWORK.md`)" — sending a reader out of the file they were standing in — advertised "4 formations" while the formations span is reference-only, and used `{RUN_ROOT}` six times with its `<variables>` definition reference-only, leaving the entire persistence table addressing an undefined symbol. `AARE-F-CORE.md` claimed to ship "verbatim" from a file it is not compiled from, told readers to copy "`AARE-F-FRAMEWORK.md` (this file)", and pointed three times at sections (§5, §8) it does not contain — one of them inside the operative summary that exists to be read under context pressure. Fixed in the span sources. Formations is the first use of `dest=core_stub`, a compiler mechanism that had shipped with zero uses precisely because the span-coverage test made "no core_stub spans exist" an unstated precondition.
+
+- **`framework_canons.json` used one field name for two different files.** On an `artifact`, `authoring_source` names the mirror source — which for framework/aaref is *generated* output; on a `compiled_canon` it names the hand-editable span-marked body. Both correct in context, but a reader looking for "the file I edit" finds the artifact entry first, and `check-aaref-sync.py` then printed "(authoring source)" on drift, so the tooling confirmed the wrong answer. It had already misled a consumer into pointing a document-refinement workflow at build output. Every human-readable label now says "mirror source" and names the real editable body; the values are unchanged because the artifact value is load-bearing for mirror sync.
+
+- **The tool-docstring lint was Potemkin — it read source, not what clients receive.** FastMCP's docstring parser routes the `Args:` block into per-parameter schema descriptions and **discards everything after it** from the tool description. PRD-QUAL-074's FR06 and FR10 lints AST-walk the source docstring, so they passed for tools whose only `Output:` line sat below `Args:` — where no calling agent ever sees it. A gate that cannot fail for the defect it exists to catch. Measured at the pre-campaign commit: **eight** tools (`trw_dispatch`, `trw_dispatch_status`, `trw_skill_discovery`, `trw_request_tool_access`, `trw_channel_stats`, `trw_code_index_update_tool`, `trw_agent_work_evidence`, `trw_validate_agent_work_evidence`) shipped an output contract that existed only in source. The definition trim incidentally moved all eight above `Args:`, so the count is zero today — which is precisely why the assertion needs to exist before that luck runs out. Two new tests assert the same requirements against the real `list_tools()` description.
+
+- **`trw_build_check` reported a duration it never measured.** The tool built its `BuildStatus` with a hardcoded `duration_secs=0.0` and echoed that literal into both the response and the `build_check_complete` event on every call. It reads as a measurement — "we timed it, and it took no time" — and never was one: `trw_build_check` executes nothing by design, so it has no clock. Deleting the field would have been the easy fix and the wrong one, because typed `command_results` carry `started_at`/`completed_at`, from which a real wall-clock span is derivable (earliest start to latest completion, the honest figure when commands overlap). It is now derived when that evidence exists and **omitted** — never `0.0` — when the evidence is absent, half-reported, unparseable, mixed offset-aware/naive, or negative from clock skew.
+
+- **`trw_pre_compact_checkpoint`'s documented output named a vocabulary the code never returned.** It advertised `status: "written"|"skipped"|"error"` and a `compact_state_path` key; the code returns `"success"|"skipped"|"failed"` and `compact_instructions_path`.
+
+- **Uninstalling TRW deleted the user's other MCP servers.** `.mcp.json` was registered as a plain wholesale-delete uninstall surface — but it is a *merged* config, as the installer's own docstring says: it merges the `trw` key "while preserving all other user-configured servers". So `trw-mcp uninstall` removed every unrelated server configured there. The correct handling already existed and was already applied to the two sibling maps: `.cursor/mcp.json` and `.antigravitycli/settings.json` both carry `merged_config=True, config_shape="mcp-server-map"` with comments reading "never delete wholesale". The root map — the one `claude-code` actually reads — was the one that missed it. The tests could not have caught it: both wrote `.mcp.json` as `{}`, a file with nothing to lose, and one asserted the file **was** deleted, encoding the defect as the expected behaviour. That assertion is inverted with the reason stated inline, and two real tests replace it. Visible change: an empty `.mcp.json` now survives uninstall, which is the right trade against destroying servers TRW does not own. A TRW-only map is emptied rather than deleted, matching the stripper's documented contract that only hook-group files remove themselves.
+
+- **Three distill channels documented as "Live" are not wired, and a capture rate was published for a mechanism that has never emitted an event.** CC-04 is documented as appending `edit_correlated` events keyed on `tool_use_id`; there are **0** such events across 4,126 records, no emitter anywhere in the source, and the hook never reads `tool_use_id` at all. CC-01's snapshot file and `MEMORY.md` pointer do not exist and CLAUDE.md carries no CC-02 markers — the channel bootstrap performs exactly three steps, none of which touch either. Separately, the provider docs published a per-client correction-factor table whose `claude-code` row read `0.85 — captures nearly all agent edits`: a precise numeric rate for that same non-emitting mechanism, with no N, no interval and no derivation, and the other six numbers no better. They are not inert — the correlator divides observed rates by them. The status table now carries an evidence column naming the check that establishes each row, the CC-04 design is retained but marked unimplemented, and the factors are relabelled as unvalidated priors in both the document and the constant. No numbers were invented to replace them. The 2026-06-16 spike had already established the CC-04 gap; the 2026-07-10 restructure did not reconcile it.
+
+- **Every internal LLM call was recorded as free, and Opus cost was over-reported threefold.** The cost estimator did an exact-key lookup against a table of bare aliases — so `claude-haiku-4-5-20251001`, which is precisely what the LLM client stamps for its own *default* model, matched nothing and priced at $0.00. Not "unknown": free. The same miss hit Bedrock's provider prefixes and the `[1m]` long-context rendering. Lookup now matches by model family, reusing the matcher the capability catalog already had for this exact problem rather than growing a second copy. Two more defects in the same table: the `claude-opus-4-7` row carried $15/$75 per MTok — Claude Opus 4.1's rates — against a real $5/$25, and the entire current model generation had no rows at all, so every Claude-5-family call also estimated at zero. An unpriced model still estimates zero, because there is no honest alternative, but now says so once per distinct id instead of silently. The `defaults:` block is gone; nothing ever read it.
+
+- **The model actually running Claude Code was unknown to the catalog built to describe it.** The trusted Anthropic capability catalog (PRD-CORE-209) exists so that, given a trusted active-model identity, the effort adapter can stop clamping values the model genuinely accepts. It knew Fable 5, Mythos 5, Sonnet 5, and Opus 4.8 back to 4.5 — and not `claude-opus-5`, the in-harness model. A lookup returned `None`, the adapter fell through to its conservative safe base, and every `xhigh`/`max` recommendation clamped to `high` on the one model the table was there to serve. Opus 5 and Mythos 5 are now listed. Sonnet 4.5 is listed too, as an explicitly empty set rather than an omission: like Haiku 4.5 it *errors* on the effort parameter, so silence was not neutral — it resolved to the safe base and reported `low`/`medium`/`high` as mapped for a model that rejects them outright. The catalog version is now date-precise; the previous month-granular string could not distinguish two entry changes inside one month, quietly violating the file's own rule that a change to the entries must change the decision identity.
+
+- **The internal LLM aliases were two generations stale, and bumping them alone would have broken them.** `_MODEL_MAP` still pinned `frontier`/`opus` to Opus 4.7 and `balanced`/`sonnet` to Sonnet 4.6 — a follow-up recorded in the 2026-07-10 hardening audit and never executed. The reason it could not ship as a one-line edit is the interesting part: the current generation runs **adaptive thinking when the `thinking` parameter is omitted**, where 4.7 and 4.6 ran none, and `max_tokens` caps thinking and response text *together*. Against the hardcoded 1024 ceiling this client carried, a thinking model could spend the entire budget reasoning and return a truncated answer or nothing — and since `ask()` degrades to `None`, that failure would have been indistinguishable from "the SDK isn't installed". The ceiling is now a named 4096 constant, which costs nothing when unused because it caps rather than spends. The second coupling: with effort unset the API default is `high`, turning every call on a deliberately fast/low-cost helper into a deep reasoning request. It now asks for `low` — but only where the model declares support, resolved through the capability catalog above instead of a second model table. That gate is load-bearing rather than defensive: effort is an API **error** on Haiku 4.5, which is this client's own default model, so an unconditional parameter would have broken every default internal call. Unknown and future models take the same omit path. Explicitly pinned older model IDs still pass through untouched.
+
+- **`trw_review` no longer silently discards findings written in TRW's own severity vocabulary.** The accept-list held `critical|error|high|warning|medium|info|low` — and none of the `P0`/`P1`/`P2` levels that `audit-framework.md`, the `trw-auditor` agent, and every audit report actually emit. Every such finding was rejected, and rejection only writes a log line, so an eight-finding audit handoff recorded as an **empty** review: `substantive: false`, zero findings, delivery gate still open, and nothing in the response naming the offending field. Reproduced live: the identical payload recorded 0 findings with `P1`/`P2` and 9 with `high`/`medium`. The cause was two independently hand-maintained lists — one deciding "is this label accepted?", the other "what does it mean?" — that simply disagreed. They are now one table with the accept-set derived from it, so a label can never be acceptable with no meaning or carry a meaning it is not accepted under. `P0`/`P1` map to critical, `P2` to warning, `P3` to info, following the audit protocol's own rule that PASS requires zero P0 **and** zero P1, and matching the pre-existing `high → critical` mapping. A parity test reads the shipped protocol document rather than a copied list, so the two surfaces cannot drift apart again.
+
+- **The post-compaction gate no longer destroys the evidence it was protecting.** The gate exists to stop an agent *acting* on stale context after a compaction. It also blocked `trw_checkpoint`, `trw_learn` and `trw_build_check` — which do not act, but record what already happened, from caller-supplied content a stale framework cannot corrupt. Gating them bought no context integrity and destroyed evidence that cannot be reconstructed: measured across three delegated sub-agents in one session, a delegated VALIDATE completed with **no recorded `trw_build_check`** and a checkpoint reporting `recorded: false`. Those three tools are now exempt. Everything else stays gated, including `trw_recall` (it shapes the next decision) and `trw_deliver` (a terminal act), and the bounded escape still backstops them. Alongside it, the block message named only `trw_session_start` — a tool ten of eleven bundled agents do not hold. Logs showed blocks arriving in exact *pairs* against a bound of two: a compliant delegate read an impossible instruction, retried once, and stopped one call short of the escape hatch built for it. The message now names a remedy a delegate can actually perform.
+
+- **A checkpoint that was not recorded no longer congratulates you for saving progress.** `trw_checkpoint` called without a resolvable run correctly reports `recorded: false` and writes nothing, but the advisory line attached to that same response was still composed as though the call had succeeded — so a caller could be told "Progress saved." by the very response that says nothing was saved. This closes the known limitation disclosed in 0.65.0. The advisory layer now receives the call's real outcome instead of assuming success, and stays silent when a tool did not do what its message would claim; the one message that exists *to* describe a failure — the build-check "revert to plan" advice — is unaffected. The same correction fixes a second case found alongside it: a delivery that failed could still be summarised as "Session complete."
+
+### Changed
+- **`--debug` no longer ships in any generated client config.** Codex, Cursor and
+  opencode baked it in; Claude Code did not. `.trw/config.yaml`'s `debug` key is
+  now the single verbosity toggle, resolved inside `configure_logging` so it holds
+  for every entry point rather than one caller that happened to OR it in. Removing
+  it also exposed a latent bug: `_toml_value` chose its inline-table branch with
+  `all(isinstance(item, dict) for item in value)` — vacuously true for `[]` —
+  which would have made **every** generated `.codex/config.toml` unparseable.
+
+- **Five ceremony tools now carry `"anthropic/alwaysLoad": true`.** Under tool-search
+  deferral only names load at session start, so an agent had to spend a ToolSearch
+  round-trip to discover `trw_session_start` — the tool the protocol says to call
+  first. Server `instructions` rewritten as a routing map, 1,393 chars against the
+  2KB client truncation.
+
+- **Tool descriptions gained retrieval keywords back.** Under deferral the
+  description *is* the BM25 index, so the earlier 40% trim had removed terms an
+  agent would search for. Measured mis-route: a search for "delegat" matched
+  `trw_recall`, `trw_status` and `trw_checkpoint` — and not `trw_dispatch`.
+
+
+- **OpenCode's instructions file is now actually referenced.** `merge_opencode_json` documented that it never overwrites your `instructions` array — and it never did — but it never *added* to it either. Only the fresh-install branch seeded the entry, so **any project that already had an `opencode.json` before installing TRW got `.opencode/INSTRUCTIONS.md` written and loaded by nobody**, with every surface reporting success. The merge now appends the TRW artifact exactly once, preserving each of your entries at its original index, and a re-run appends nothing. Appending is safe because that array is multi-valued; codex's `model_instructions_file` is single-valued and is deliberately **not** repointed, since doing so would silently drop your own `AGENTS.md`.
+
+- **The instruction carrier now takes an explicit marker pair, so a client keeps its own sentinels.** `merge_trw_section`, `render_import_region`, `_truncate_with_markers`, `_extract_marker_inner` and `classify_instruction_file` were all hardcoded to the generic `trw:start`/`trw:end` pair. Any client with its own vocabulary — Copilot's `trw:copilot:start/end`, which the uninstall registry and `doctor` key on — could not be externalized without orphaning its block from both. All five now accept an explicit pair defaulting to the generic one, so every existing caller is byte-identical.
+
+  The classifier mattered most: without it a re-run strips the *wrong* marker region, reads the file as a bare pointer, and silently falls back to inline — externalization would have quietly undone itself on every subsequent run.
+
+  **GitHub Copilot CLI's profile is corrected** to declare its include capability (`at_path_repo_relative` — it rejects absolute and `~`-rooted paths, unlike Claude Code). TRW does not yet emit that include: PRD-QUAL-104-FR03 requires the per-client instruction files to state the deliver gate verbatim, and externalizing moves that text into a sidecar. That invariant deliberately does not cover CLAUDE.md, which is why Claude Code externalizes and the per-client carriers do not.
+
+- **The clients that cannot resolve an include are now a declared decision, not an omission.** `INCLUDE_INCAPABLE_CLIENTS` names cursor-cli, cursor-ide and antigravity-cli with the evidence for each — including that cursor-ide's `.mdc` `@file` is documented but confirmed non-functional by Cursor staff, unfixed through 2026-07 — plus a re-check trigger. A totality test asserts the set equals the profiles that actually resolve to inline, so a client can only be excluded deliberately. That test earned its place immediately: it is what caught the stale Copilot declaration above.
+
+- **GitHub Copilot CLI and OpenCode no longer receive injected framework text.** Copilot's `.github/copilot-instructions.md` now carries a single `@.trw/COPILOT-INSTRUCTIONS.md` include (its own sidecar, so a project with Claude Code installed too does not have the two overwrite each other). OpenCode stops receiving the shared `AGENTS.md` entirely — it owns `.opencode/INSTRUCTIONS.md`, and that file is now actually referenced from `opencode.json`'s `instructions` array.
+
+  Both required amending a requirement, not just code. `PRD-QUAL-104-FR03` required the deliver gate *literally* in each per-client file; it now accepts an **eagerly-resolved** include, because such an include is exactly the "other channel into the gate" whose absence was the original rationale. The gate must still be **reachable** — verification resolves the import before asserting, so a dangling include fails where a raw substring check could not tell it from success. Clients with no working include (cursor-cli, cursor-ide, antigravity-cli) still carry the text literally. `PRD-CORE-074`'s mandate to write opencode's `AGENTS.md` is withdrawn; it predated the fix that made opencode's own file loadable.
+
+  **Codex is unchanged**, and the reason is a reachability fact: it has only two reliably-read slots. `model_instructions_file` is single-valued and points at `.codex/INSTRUCTIONS.md`, which is capped at 2,025 bytes (its capability appendix measures 5,043), and `project_doc_fallback_filenames` lists files consulted only *when AGENTS.md is absent*. Freeing codex's AGENTS.md requires raising that cap.
+
+- **Antigravity and Cursor CLI now get their protocol where the vendor documents reading it.** `ANTIGRAVITY.md` appears in no Antigravity primary source — its rules documentation names `~/.gemini/GEMINI.md` globally and `.agents/rules/` per workspace, and nothing else — so TRW was writing to a filename the vendor never documents loading. The workspace rule is now written as well (and checked against Antigravity's documented 12,000-character rule limit, since a silent truncation would drop the deliver gate off the end). `ANTIGRAVITY.md` is still written, in case some undocumented path does read it.
+
+  Cursor CLI's profile described `AGENTS.md` as its *only* carrier. That was TRW's own omission: Cursor documents that the CLI *"supports the same rules system as the editor"*, and TRW was generating `.cursor/rules/trw-ceremony.mdc` for the IDE only. Cursor CLI now gets it too. Both files are TRW-owned, so this is a generated artifact rather than injection into a file you authored.
+
+- **Copilot's instruction file no longer emits an `@`-include it cannot resolve.** The include was added on the strength of GitHub's Copilot **CLI** docs, which do document `@relpath`. But one TRW profile serves both surfaces — it also writes `.vscode/mcp.json` — and neither GitHub's repository-instructions page nor VS Code's custom-instructions page describes any file-inclusion syntax for `.github/copilot-instructions.md`; Markdown links are references a human follows, not content pulled into the prompt. So Copilot Chat users were getting a 5-line file whose body was the literal text `@.trw/COPILOT-INSTRUCTIONS.md` — a file that exists, parses, reports success and carries nothing, which is worse than the injection it replaced. The protocol is inline again in that always-on file (GitHub: "automatically included in every chat request"), the orphaned sidecar is gone, and the include-free route for a future change is `.github/instructions/*.instructions.md` with `applyTo: "**"`.
+
+  Also fixed while there: the installer reported `preserved` for a `.github/copilot-instructions.md` it had just created, because the carrier wrote the file before the capability check that rejected it.
+
+- **Cursor IDE's always-applied rule was missing the deliver gate.** `.cursor/rules/trw-ceremony.mdc` is `alwaysApply: true`, so Cursor loads it eagerly and it *is* that client's protocol carrier — but it was built by slicing the TRW block out of the `CLAUDE.md` scaffold template instead of the shared renderer, making cursor-ide the one client whose protocol came from a hardcoded second copy. That copy omitted the deliver-gate statement every other client's carrier states. It now comes from the shared renderer (115 → 159 lines), so cursor-ide gets the same protocol as everyone else.
+
+- **TRW no longer writes its protocol into `CLAUDE.md` for clients that do not read it.** Only Claude Code declares `CLAUDE.md`. The MCP sync path already honoured that; the installer did not, and injected the full block for every client — so a Codex project carried a *third* copy of the framework text, after its `AGENTS.md` and `.codex/INSTRUCTIONS.md`, in a file none of its clients load. That copy then froze in place while the surfaces those clients do read moved on. **`CLAUDE.md` drops from 80 lines to 17** (the scaffold, no TRW block) for codex, opencode, copilot, cursor-cli, and antigravity-cli; Claude Code is unchanged and cursor-ide keeps its documented fallback. An existing project's stale block is removed on upgrade — only between the TRW markers.
+
+  Two things had to change for that decision to *stay* made. `update-project` held two more unconditional writers, so it re-injected on the next run what the installer had just declined. And client detection cannot answer "who reads this file?" after an install: TRW writes `.claude/` (agents, hooks, skills) and `.cursor/` into every project whatever the client, so a Codex-only project reports Claude Code from then on. **The installer now records the clients you actually selected** (`target_platforms`, which only `update-project` used to write), and that record outranks what is on disk.
+
+- **Withdrawing a surface now removes what was already written to it, and the block that cannot be externalised is half the size.** Two gaps closed in the same area:
+
+  Stopping a write is not the same as cleaning up. A project installed before OpenCode's `AGENTS.md` was withdrawn kept its injected block permanently — TRW simply stopped refreshing it, so the text froze, stopped tracking the framework, and nothing would ever remove it. Stale protocol text that still looks current is worse than the injection was. It is now stripped, but only when no installed client still claims that file, so codex and cursor-cli keep theirs; only the TRW-marked region is touched. (A related fix: the auto-detection path computed "write AGENTS.md" from *whether any client was detected* rather than from the per-client setting, so the withdrawal had no effect on the path `update-project` actually takes.)
+
+  cursor-cli cannot resolve an include, so its `AGENTS.md` must carry the text — which makes keeping it small the obligation. It was receiving the **full** section despite being a light-ceremony client: **105 lines → 48**. The deliver gate and session-start mandate stay verbatim; for a client with no other channel, the instruction file is the protocol carrier.
+
+- **`trw-mcp doctor` now tells you whether your instruction files still carry injected framework text.** A project installed before externalization shipped is sitting on that text with no way to know. The new `instruction_carrier` check reports each surface as *referencing* (its TRW block is a single `@`-import), *inline*, or carrying no TRW block — and a legacy-only project warns with the command that converts it. Inline is reported, never failed: it is correct for the clients that cannot resolve an include, and failing it would train you to ignore the check.
+
+  Detection reads the **live file**, never an installer state file. `installer-meta.yaml` is documented as history-only, `installed-version.json` is a reload nudge, and `managed-artifacts.yaml` tracks bundled-artifact hashes — keying off any of them would report a project as migrated because an installer once said so rather than because its file actually carries an include. A half-written marker region reports *inline*, never *referencing*.
+
+  Conversion itself needs no new command: `trw-mcp update-project .` migrates an existing inline install, preserving your own content byte-for-byte, and a second run is a no-op.
+
+- **A fresh install now *references* the TRW protocol instead of injecting it into your CLAUDE.md.** PRD-CORE-203 built a carrier that externalizes the auto-generated block to `.trw/INSTRUCTIONS.md` and leaves a single `@.trw/INSTRUCTIONS.md` import in its place, but only the MCP sync path ever used it. `bootstrap` kept a private inline-only writer, so `init-project` always produced a fully injected file while `update-project` externalized — the two entry points disagreed about the same file, and which shape a project ended up in depended on entry order. Both now resolve the same carrier. Measured on a fresh install: **CLAUDE.md drops from 81 lines to 22**, carrying exactly one line of TRW-authored content, with the protocol in the referenced sidecar.
+
+  **This is not a context-token saving, and is not claimed as one.** Claude Code resolves `@` imports eagerly — its own documentation states imported files load at launch — so an include costs what inlining cost; measured here the sidecar is slightly *larger* (~1,119 tokens vs ~864). The value is that TRW stops writing framework prose into a file it does not own, there is one source of truth instead of divergent renderings, and uninstall removes one line rather than a 60-line region.
+
+  **What you may notice**: a tool or script that greps your `CLAUDE.md` for protocol text (`trw_session_start`, the deliver-gate sentence) will no longer find it inline — follow the `@` import, or read `.trw/INSTRUCTIONS.md`. Set `instruction_externalize: off` in `.trw/config.yaml` to keep the previous inline behaviour. Clients without a working in-file include (cursor-cli, cursor-ide, antigravity-cli) are unaffected and keep an inline block; see the per-client capability matrix in PRD-CORE-240.
+
+- **Tool definitions cost 41% fewer tokens.** A tool *response* is paid once per call and can be trimmed at runtime; a tool *definition* — description plus parameter JSON Schema — is paid unconditionally in the system prompt of every session of every client, before the agent acts, and cannot be trimmed at all. The 2026-07-12 campaign governed responses and never measured this surface, which had drifted accordingly: result-TypedDict field inventories, compaction internals, resilience notes, PRD identifiers, and worked examples that only restated the schema. All 50 registered tools went from **62,794 to 37,120 chars (~15.7k → ~9.3k tokens)**; the default 12-tool preset from **23,628 to 14,461 (~5.9k → ~3.6k)**. Docstring-only — no signature, default, type, or logic changed. Every semantic constraint a caller must obey survived: `trw_deliver` still names all four acceptable-failure record fields and the free-text rejection rule, `trw_build_check` still states it executes nothing and that `tests_passed` has no default guess, `trw_review` still distinguishes its four modes and the never-self-mintable independence claim, `trw_recall` still says project entries are always included and a user-only query is not expressible. Mechanism and provenance prose moved into source comments rather than being deleted. A new tripwire (`tests/test_tool_definition_budget.py`) budgets prose and parameter-signature separately, because they have different fixes — prose bloat is a writing defect, signature bloat is an API-design defect. `trw_learn`'s 24 arguments cost 1,821 chars of schema with a completely empty docstring, so it and `trw_learn_update` now dominate the surface; cutting further requires an API change, which the signature ceiling makes visible rather than papering over.
+
+- **`SessionStart` stopped restating a protocol that is already in the system prompt.** On resume, compaction, and clear the hook printed `.trw/context/behavioral_protocol.md` in full — the same protocol `trw_instructions_sync` renders into the client instruction file, which lives in the system prompt and survives all three events. PRD-CORE-120-FR01 fixed exactly this for the `startup` branch and never covered the other three. Emissions: resume **5,791 → 593 bytes**, compact **6,214 → 1,034**, clear **6,040 → 842** — roughly 1.3k tokens per event, and compaction can fire many times in one session. A project whose instruction file does not carry the protocol still receives it in full: the nudge is deduplicated, not removed. The compaction branch also claimed a full `FRAMEWORK-CORE.md` re-read "costs ~500 tokens" (it is ~8k) and mandated a full re-read — stricter than that document's own FRAMEWORK ADHERENCE rule, which asks for the execution summary plus the phase/gate sections in play.
+
+- **`trw_init`, `trw_status` and `trw_session_start` no longer ship fields no caller reads.** Five identity stamps (`surface_snapshot_id`, `profile_snapshot_id`, `session_override_hash`, `profile_layers_applied`, `first_session_emitted`) are dropped from the compact payload — three are 64-hex digests, all are opaque provenance with no caller action, and every internal consumer runs before the trim, so no telemetry is lost. `trw_profile_explain` remains the tool for the full audit shape and `verbose=True` still returns everything. The `model_tier` compatibility alias is gone from responses: it duplicated `capability_tier` byte-for-byte on every call and nothing read it (persisted run state is still *read* under the old key). `review_mandate_advisory` is one actionable clause instead of three sentences.
+
+### BREAKING
+- **Rarely-set tool arguments moved into structured parameters; five argument names removed outright.** (PRD-CORE-234-FR01/FR03/FR04/FR05/FR09.) A tool *definition* — description plus parameter JSON Schema — is paid unconditionally in the system prompt of every session of every client. After the description trim below, the remaining cost was signature-forced: `trw_learn` alone spent 1,821 chars of schema on 24 arguments with a completely empty docstring, and no amount of editing moves that. Aggregate parameter-schema floor across all registered tools: **20,324 → 17,481 chars**.
+
+  **Migration — bag keys are byte-identical to the flat names they replace, so every move is mechanical:**
+
+  | Tool | Was | Now |
+  |---|---|---|
+  | `trw_learn` | 24 flat arguments | 10. `summary`, `detail`, `tags`, `impact`, `evidence`, `type`, `confidence`, `scope`, `source_type` stay flat; the rest move into `metadata={...}` |
+  | `trw_learn_update` | 20 flat | 10. `learning_id`, `summary`, `detail`, `status`, `impact`, `tags`, `feedback`, `supersedes`, `reverify_anchors` stay flat; the rest move into `fields={...}` |
+  | `trw_init` | 13 flat | 7. `task_name`, `objective`, `prd_scope`, `complexity_hint`, `task_type`, `run_type` stay flat; `config_overrides`, `wave_manifest`, `artifacts`, `protected`, `planning_mode`, `complexity_signals`, `task_root` move into `advanced={...}` |
+  | `trw_review` | 10 flat | 7. `reviewer_source`, `reviewer_receipt_id`, `reviewer_run_id`, `reviewer_session_id` move into `reviewer_identity={...}` |
+
+  **Removed, not relocated** — these accepted an argument and did nothing with it, which is worse than rejecting it: `trw_recall(shard_id=)` was forwarded and never read, so a caller scoping a recall silently received the whole corpus and believed it was scoped. `trw_learn(run_path=)` was only debug-logged. `trw_learn`'s `team_origin` and `expires` were wired to storage and never round-tripped in this project's 9,240-entry store; `shard_id` was accepted and dropped outright — a caller who passed it got no scoping and no error. That store is the largest sample available, **not a census of consumers**: read it as "never round-tripped in this corpus", not as proof no caller anywhere passed them.
+
+  **Unknown bag keys are rejected with the accepted-key list, never ignored.** A typo fails loudly rather than silently dropping the field; silent acceptance inside the bag would have relocated the defect rather than fixing it. The bags are dict-typed, not Pydantic models, deliberately: a model parameter emits `$defs`, which is spec-legal and Anthropic-API-legal but breaks real clients — openai/codex#3152 collapsed a Pydantic param to `{"request": string}`, **invisible to the model**; google-gemini/gemini-cli#13142 failed tool discovery outright; Claude Desktop and Bedrock AgentCore both closed the bug as not planned.
+
+  **Trade-off, stated because it is material and measured.** A dict-typed bag is
+  **ineligible for constrained decoding**: OpenAI strict mode requires
+  `additionalProperties: false` and Anthropic's strict tool use is
+  grammar-constrained sampling, so a free-form object cannot participate in
+  either. Constrained decoding is the only schema-adherence mechanism with a
+  measured ~100% rate (against ~35.9% prompt-only). The closest measured
+  evidence on removing schema information is TSCG (arXiv 2605.04107, n=60/cell,
+  Holm-Bonferroni over 107 comparisons), which puts information removal at
+  **−7.0 to −8.9pp on small models** once format effects are controlled for —
+  and this change is on the information-removal side of that line. No benchmark
+  isolates the exact substitution made here, so this is an unfalsified bet, not
+  a validated optimization.
+
+  We accept it **for rarely-set knobs only** — the routinely-set arguments of
+  every collapsed tool stay flat and typed. The docstring key list and the
+  fail-loud unknown-key rejection are therefore load-bearing parts of the API
+  contract, not documentation, and are pinned by contract tests that read the
+  served definition rather than the source. Full analysis:
+  the internal schema-practice analysis (2026-07-28).
+
+  **Who this affects. Agents that read the schema fresh each session adapt automatically. Programmatic callers passing a moved argument as a keyword will raise `unexpected_keyword_argument`, and callers passing a removed one will raise the same — deliberately, so the break is visible rather than silent. Bundled skills, agent definitions, and framework prose that named the flat forms have been updated in the same release.
+
+## [0.66.0] — 2026-07-25
+
+### Fixed
+
+- **The Stop hook no longer tells you that you failed to deliver when you did.** In a session with no pinned run, the deliver check looked for an event type (`trw_deliver_complete`) that is only ever written into a *pinned* run's log. Unpinned deliveries land in the session log under a different shape entirely, so the reminder could never be satisfied — observed live as six consecutive false reminders after two successful `trw_deliver` calls. It now also matches the shape an unpinned delivery actually writes, reusing the existing 240-minute recency bound rather than inventing a laxer one. A session that genuinely has not delivered is still reminded.
+- **Hooks no longer attribute another instance's work to your session.** Every hook resolved "the active run" by picking the most recent run directory in the repository, with no ownership check. When several agents work in one repo — routine here — that hands your session a stranger's run: a foreign event count, a foreign phase, and a ceremony tier read from someone else's task. Hooks now resolve the run *your* session owns, via a single primitive that establishes ownership from session identity and never from recency, and that rejects a pin pointing outside the project. A session owning no run now says so plainly instead of borrowing one. **Scope, precisely:** all nine run-resolving hooks are migrated *for clients that publish a session identifier* — today that is `claude-code` only. Codex publishes none (verified across four running servers), and `cursor-cli`, `cursor-ide`, `copilot`, `opencode` and `antigravity-cli` are unmeasured and assumed to publish none; on those clients the hooks retain the previous newest-run-wins fallback and nothing has changed yet. Separately, `user-prompt-submit.sh` still infers phase by recency — it calls a library helper that resolves the run internally — so a foreign instance's phase can still reach the prompt on every turn. That one is tracked and not yet fixed. A test pins the migrated list so it can only shrink.
+- **The boot banner no longer contradicts the tool.** The SessionStart hook printed a ceremony tier taken from whichever run happened to be newest, which could directly contradict the tier `trw_session_start` resolved for your actual session. There is now one authority.
+- **Context-aware nudges work again.** A rename on 2026-04-10 dropped the line that built the nudge context, so for three and a half months every call passed `None`: the context-reactive message pool could never produce content, and the build-failure, P0 and scope-creep prompts were unreachable. Roughly 600 lines of tested behaviour were dormant. Every nudge test kept passing throughout, which is why nobody noticed — so the fix ships with a structural guard that fails on the *shape* of the change rather than on behaviour.
+- **Nudge counts describe what the nudge actually said.** Counting attributed each nudge to whichever ceremony step was most overdue at the time, and silently fell back to `session_start` when nothing was pending — so 2,963 of 3,041 recorded nudges carried that label as an accounting artifact rather than a real distribution. `trw_build_check` and `trw_deliver` also never recorded a nudge at all, and two of the four message pools never emitted a telemetry event, so timing and variant data covered a subset that could not be joined to the totals.
+- **A nudge outcome can finally move a score.** The correlator that detects "a nudge fired, then the agent acted" ran on every delivery and assigned its result to a reporting field, where nothing read it. It now reaches the outcome path.
+- **`/trw-audit` no longer reports a process gap that cannot not exist.** The auditor was told to check the event log for two self-review events whose writer lost its last caller in April, so every audit run reported them missing. Both the check and the unwritable events are retired; the prompt-level self-review is untouched. A self-reported "I ran my checklist" flag is caller-controlled and was never evidence.
+- **A zero-result focused recall now explains itself.** `trw_session_start` runs its focused recall before the vector index is warm — always, because it is by construction the first call in a fresh process — so a natural-language query fell back to a match-every-token keyword search, usually returned nothing, and silently degraded to a generic high-impact list. It now tells you that happened and points at `trw_recall` for a full hybrid search. The docstring claiming the list is "most relevant" is corrected to "most impactful", which is what it always was.
+
+### Added
+
+- **`make check` now fails when a feature is built but never connected.** A new wiring gate asks whether the artifact a contract promises actually exists — a declared instruction-file marker, a sidecar, a guard's coverage — rather than whether code is reachable. It runs in under five seconds, ships enforcing rather than advisory, and verifies its own invocation so it cannot quietly stop running. On its first pass it found a channel declaring an activation gate that exists nowhere in the source.
+
+### Changed
+
+- **Two whole config feature designs, and six dead switches, are gone.** A nine-field multi-judge debate gate and a four-field wave-adaptation cluster had validated ranges, sane defaults and section headers, and no implementing code anywhere. Six kill-switch booleans sat beside working features without gating anything. Also removed: a 447-line dashboard aggregator orphaned when its tool was deleted in April, a stranded retrieval module duplicating one that lives in `trw-memory`, and two client-profile flags that were dead namesakes of a genuinely live setting.
+- **`trw_session_start` returns less noise.** A ten-field connection fingerprint — eight of them literal constants, none read by any hook, skill or agent — moved behind `verbose=True`, cutting roughly a tenth of the default payload. The token-budget test that was supposed to catch this had omitted the block from its own fixture; it no longer does.
+
+
+## [0.65.1] — 2026-07-25
+
+Hardening of the intent-contract control point (PRD-SEC-013). Much of this work was already present
+in the 0.65.0 cut but undocumented there, because it landed from a concurrent session; it is
+recorded here in full rather than split across two entries.
+
+### Fixed
+
+- **A check that could not run reported itself as a violated claim.** The falsifier runner treated *any* non-zero exit as "this `must_not_happen` claim was violated", so a pytest collection error, a missing dependency, or a renamed test told the operator their defense had been removed. That is a false block in a design whose own gate bounds false blocks at 5%, and a misleading one — it points the reader at the wrong problem entirely. Pytest's unevaluable exits now classify as `INFRA_ERROR` ("the check did not run"), still fail closed, and are counted in a telemetry bucket deliberately excluded from the false-block denominator. Found by writing the first end-to-end test of this feature: the scratch fixture hit a collection error and was duly reported as a violation.
+
+- **Twelve ways to disarm an enrolled control point, closed over three probe rounds.** An adversarial probe found bypasses; they were fixed; a second probe aimed *at those fixes* returned NO-GO with six more; a third pass over the enablement path and the environment resolution found five further. Closed: a working-tree `git rm -f` of the enrollment marker reading as "never enrolled" (durability was anchored to the git index, which the attacker writes — now to HEAD); `chmod 000` on the shared hook library, which both hooks sourced with `|| exit 0` *before* checking enrollment; a **tampered library that parses cleanly** but redefines a function the hook calls, so an `exit 0` inside it aborted the hook's own shell and the blanket EXIT trap turned that into a silent allow — the write that installed it waved through by the hook it had just disabled; deleting or corrupting the violation marker to clear a block; symlink aliases and hardlinks escaping a directory anchor; `.trw/.gitignore` hiding the override ledger from the very control meant to protect it; `HOOKS_ENABLED` / `TRW_HOOKS_ENABLED`, read from a gitignored and therefore attacker-writable file; `security.intent.enabled`, which short-circuited *before* enrollment resolved, so an uncommitted edit to the tracked config disarmed an enrolled project where the weaken-detector could never see it; a **sabotaged `git`** — a two-line stub in any writable PATH directory — collapsing the HEAD and index checks; and a pre-push control that returned "allow" when `git rev-parse` failed, contradicting its own docstring.
+
+  All twelve are the same root cause in different costumes: **inability to verify something was being treated as evidence about it, and the fallback was always the permissive answer.** The fix that matters is the principle — `never_enrolled` must now be *positively established*, and an exit the hook did not decide is no longer an allow. One remaining permissive path (an unrecognized payload shape) was left permissive **on purpose** and documented as such, because it is not agent-reachable and failing closed there would block every edit on any client whose payload differs.
+
+- **`enroll` reported success on a project where nothing could ever fire.** Enrollment digests the hooks at `.claude/hooks/`; absent files digested as `<absent>` and were recorded as the expected state, so enrolling a project with no hooks installed printed `enrolled:` and reported `current` while no control point existed. It now refuses, names the files it looked for, and offers `--allow-missing-hooks` for deliberate pre-enrollment. `status` distinguishes `current` from `current (NO HOOKS INSTALLED)`.
+
+- **A fail-closed warning claimed a fact it could not know.** Under a sabotaged git the unsuppressible warning asserted "the marker is still tracked by git. This project is enrolled" — when git had never answered — and sent the operator to `git checkout` a marker that may never have existed. The same defect as all the others, relocated from the decision into the explanation. The two fail-closed reasons are now separate messages, and the undeterminable one says so and points at PATH.
+
+### Added
+
+- **The first end-to-end test of the control point**, driving the shipped shell hooks through `sh` with real stdin and the real delivery gate: block, refuse, break-glass, ledger, and clearing a violation by restoring the code. Mutation-verified — with the enforcement removed it fails, so it cannot pass vacuously.
+- **An operator enablement runbook** ([`intent-contract-enablement.md`](../docs/documentation/operational-knowledge/intent-contract-enablement.md)) — install, enroll, verify, break-glass, disable, with the limits stated plainly. Every command in it was executed before it was written down.
+
+### Changed
+
+- Three mechanical duplications inside `intent_contract` extracted behind single implementations: the atomic-write-plus-advisory-lock skeleton shared by the three state files, the `--root` argument parser, and the enrollment-gate preamble shared by all four entry points. Behavior-preserving; the concurrency test was re-verified non-vacuous by disabling the lock and confirming it fails.
+
+### Known limitations
+
+**Correction (same day, after a fourth independent review returned BLOCK).** This section originally said the control "ships inert and opt-in … so no existing user is exposed". **That was wrong**, and the error is worth stating plainly because it is the exact failure mode the rest of this entry is about — a safety property asserted with more confidence than the evidence supported.
+
+Inert-by-default does **not** hold under ordinary conditions. `git_can_answer` treats "`.git` present but `git rev-parse` fails" as grounds to stay armed, and four states reach that with **no attacker involved**: a `.git` FILE pointing at a missing gitdir (a pruned worktree or deinit'd submodule), a partially-completed clone, a syntax error in the user's global `~/.gitconfig`, and git's dubious-ownership refusal (common under Docker/CI bind mounts and sudo-created clones). A project that never enrolled then **blocks on every edit**, at all four control points — and the hooks are registered unconditionally for every installed project. Three further one-line disarms were also found, all of the same shape: the shared hook library is sourced into the deciding shell, so a tampered library can set the hook's own enrollment variable, pre-set its decision flag, or shadow the command that runs the check. A fourth: the pre-commit weaken detector silently allows when git cannot answer — the exact sibling of a bug fixed elsewhere in this same round.
+
+Those four were fixed and re-verified (24/24 on the lead's adversarial harness, up from 18/24, each fix carrying a test proven to fail when that fix alone is reverted). **A fifth probe, aimed at those fixes, then found seven more — and two of them were created by the fix round itself.** No published release was ever affected: PyPI carries 0.62.0, and 0.64.0/0.65.0 were never published.
+
+The two self-inflicted ones matter most, because they are the clearest evidence about this design:
+
+- The new enrollment-evidence writer used a plain `write_text` with no symlink protection, **in the same module that already ships a nofollow reader for exactly that threat** — giving arbitrary file creation outside the repository, triggered by an ordinary edit, by `enrollment status`, and by the installer.
+- The self-heal that repairs that evidence file could be induced to mint it from an unvalidated planted marker, permanently arming a project **that never enrolled** — reproducing the precise harm the fix had been written to prevent, now from a single file with no un-arm path.
+
+The other five: a tampered shared library can disarm the control by refusing to *return* rather than by writing anything (one appended line — the library still runs synchronously in the hook's foreground at two unbounded sites); the "a check that could not run is not one that passed" fix stopped one query short, so a git stub that fails only a blob read still produces a silent allow; a ~1 ms window at hook start where a signal yields exit 0; the evidence check is presence-only and the shell and Python halves disagree on directories and symlinks, leaving the hooks inert while the tool reports protection; and a root-resolution issue scoped to clients that do not set `CLAUDE_PROJECT_DIR`.
+
+**All seven are fixed** (landed after this version was cut, so the code ships from 0.66.0 onward), independently re-verified at 24/24 on the lead's adversarial harness with all bystander controls green, and each fix proven by single-fix revert (9/9). Two were fixed by *removing* the vulnerable shape rather than bounding it: the shared-library probe was deleted outright once it turned out its output was never used for a decision, and a proposed result cache was rejected because a cached "git answered yes" is precisely the stale permissive answer this control exists to refuse.
+
+**One finding was escalated rather than patched, and it is the most important sentence in this entry.** In a project that *never enrolled*, `touch .trw/intent-enrollment-evidence.yaml` — creating an empty file — causes every `Write`/`Edit` to be refused (verified: `pre=0 post=0` before, `pre=2 post=2` after). The signal that makes the control inert under a broken git must be a plain file, and a plain file in the agent's write domain is forgeable. A content check moves the bar from `touch` to one more word; requiring the file be git-tracked reinstates the regression that blocked every never-enrolled user; an HMAC needs a key this trust model does not have. **You can have "inert under a broken git" or "unforgeable enrollment signal", not both.** The failure is now at least loud and reversible (unsuppressible warning naming the file, plus `enrollment unenroll`).
+
+What changed, since two of the fixes are structural rather than patches:
+
+- **A durable, git-free enrollment signal.** `.trw/intent-enrollment-evidence.yaml` is written at enrollment and checked by a plain filesystem test *before* git is consulted at all, so a project that never enrolled is recognised as such without git having to answer. It never inspects git's error text, so dubious-ownership is covered by construction rather than by matching messages. It lives outside `.trw/contracts` and is a C9-protected path. **Residual, chosen deliberately and pinned by a test:** deleting the evidence *and* the marker *and* silencing git is a disarm — three acts, one of which is a committed C9 finding. That was judged smaller and less certain than blocking every write for every never-enrolled user with a typo in their gitconfig.
+- **The shared hook library no longer enters the deciding shell.** It runs only inside subshells, and the one timing helper it provided is inlined. A structural test scans for the pattern (quote-aware, with its own non-vacuity control) so a fifth variant of "tampered library rewrites the hook's decision" cannot ship.
+- **Catchable signals now map to block when enrolled.** SIGKILL and client-side timeout kills remain uncoverable, and the headers now say so instead of claiming otherwise. Client hook timeouts were raised (2s→3s, 6s→10s) so the internal budget binds first.
+
+### The convergence question, stated plainly
+
+**Five consecutive adversarial rounds have each found new defects in the previous round's fixes.** Round 5 additionally showed the fixes can introduce vulnerabilities *worse* than the ones they close. That is no longer a run of bad luck; it is information about the design. Three properties keep generating the same failures: the hooks are POSIX shell that sources shared code in the process that makes the decision; enrollment state is inferred from filesystem artifacts an attacker can shape; and "is this project protected?" is answered by presence checks that two different languages evaluate differently.
+
+Until a round completes without new findings, treat every claim about this control's strength as provisional — including this entry's. It ships opt-in and inert, so the cost of being wrong falls on nobody who has not enrolled, and that is the only reason it ships at all.
+
+The rest stands: this is **not hardened**. Five review rounds have now each found real defects in the previous round's fixes, which makes the honest prior that more exist. Enrollment verification is Claude Code-only (`.claude/hooks` is hardcoded), so on other clients tamper detection is vacuous — tracked in the improvement backlog. Treat this as a control that raises cost and produces evidence, not one that stops a determined adversary with shell access.
+
+## [0.65.0] — 2026-07-25
+
+### Added
+
+- **`trw-mcp learn-drain` — recover learnings that were accepted but never stored.** When a `trw_learn` call is interrupted (a timeout, a crash, a disconnected server), the learning is written to a durable pending record and replayed automatically on a later session start. On a busy machine that automatic replay could be postponed indefinitely, leaving accepted learnings on disk but absent from recall. This command flushes them on demand and reports exactly what was recovered, what was retried, and what was held back. It is safe to re-run: replaying an already-stored learning collapses into the existing entry rather than duplicating it.
+
+### Fixed
+
+- **Learnings you record now reliably become recallable, instead of queueing forever on a busy machine.** The automatic recovery sweep was skipped whenever other TRW processes were writing — a sensible guard, but on a machine running several agents the condition was almost always true, so the sweep effectively never ran. Accepted learnings accumulated as pending records: never lost, but never searchable either. Recovery now always makes progress — it takes a small batch even under load, and a record that has waited past a configurable age is recovered regardless. Both limits are configurable (`learn_journal_drain_min_batch`, `learn_journal_pending_max_age_hours`), and a completed sweep is now logged, so you can see recovery happening instead of inferring it.
+- **A recovered learning is no longer rejected for using a documented category name.** `trw_learn` accepts friendly aliases for a learning's `type` (for example `gotcha`) and maps them to a stored category. The recovery path skipped that mapping, so any pending record using an alias failed on every attempt and could never be recovered — it stayed pending indefinitely while appearing to be waiting its turn. Recovery now applies exactly the same mapping as a normal call.
+- **`trw_checkpoint` no longer fails with advice you cannot act on.** Called without an active run, it raised an error suggesting `trw_init()` or `trw_adopt_run()` — neither of which a helper agent is given. It now returns a clear result marked as *not recorded*, the framework's own progress count is no longer advanced for a checkpoint that was not written, and the message names the remedy the caller can actually use: pass `run_path=` explicitly. Helper-agent instructions state the same precondition, so the requirement is visible before the failure rather than after it.
+
+  > **Known limitation in this release** (found by an adversarial audit after the fix landed): the *advisory line* attached to the response is still generated as though the call succeeded, so a not-recorded checkpoint can be accompanied by encouraging text such as "Progress saved." The machine-readable fields are correct and safe to rely on — `recorded` is `false` and `status` is `not_recorded` — and nothing is written to disk. Only the human-facing prose can mislead. A fix is in progress; until it ships, trust the fields rather than the message. **Resolved after this release** — see the Unreleased section.
+
+## [0.64.0] — 2026-07-24
+
+### Changed
+
+- **`/trw-reflect` no longer files a duplicate of work another session is already doing.** When several instances work a repository at once, two of them can reflect within hours, find the same friction, and each open a requirement for it — which costs two implementations and a reconciliation. The skill now checks, before routing anything, whether a reflection ledger written by a *different* instance inside the same window already covers the finding; if so the item is recorded as owned elsewhere instead of re-routed. Instance identity is compared on the recorded run id rather than the ledger filename, because same-day filenames collide between instances by construction. Deduplication also reads the improvement backlog's new `Claim` column, so a row someone is actively working is no longer mistaken for a free one, and a claim is now written in the same edit that starts the work rather than after it — a claim recorded afterwards cannot prevent the collision it exists to prevent. A new `evidence-contributed` route covers the case where your session holds sharper evidence than the instance that owns the item: the evidence is surfaced to that owner instead of becoming a second filing.
+
+- **The tool list a bundled agent declares is now the tool list it gets.** Six agents — the lead, tester, adversarial auditor, requirement writer, requirement reviewer and traceability checker — declared their allowlist under `allowedTools`, which is not a sub-agent frontmatter field (it is a CLI flag / SDK option). The harness discarded the allowlist and granted every inherited tool minus the denials, so agents documented as narrowly scoped ran far wider than their own definitions claimed. They now use `tools:`, and a lint fails any future agent that declares a key the harness ignores or grants an MCP tool that does not exist.
+- **Installed agents no longer tell the model to call a tool that does not exist.** Bundled agents reference TRW tools through `{tool:trw_x}` placeholders so one file can ship to harnesses that namespace MCP tools differently. Installation resolved the model tier but never rendered those placeholders, so every installed agent carried instructions like "Call `{tool:trw_recall}`" verbatim. Placeholders are now rendered for the target client at install (`mcp__trw__trw_recall` for Claude Code, the bare name for lighter profiles), and the installer and the update-path comparison share one materializer so the two can no longer disagree about what an installed agent looks like.
+- **Read-only agents stopped being told to do things they have no tool for.** The reviewer, auditor and researcher were instructed to write report files, message a lead, and mark tasks complete — none of which any of them can do. Each now returns its report as its final message, which is how a sub-agent actually hands work back. The tester also shed a coordination protocol that referenced a retired scratch layout, a four-way shard launch it had no delegation tool for, and Python-only test constraints (`conftest.py` fixtures, `asyncio_mode`, structlog) that shipped to every project regardless of language.
+- **The auditor's evidence framework now ships with it.** `trw-auditor` opened every audit by reading `docs/documentation/audit-framework.md` — a file that existed only in the TRW monorepo and was never packaged, so every installed auditor lost its evidence-tier rubric, 11-item NFR checklist, root-cause taxonomy and verdict criteria at step one. The framework now ships inside the `trw-audit` skill for every client.
+- **`/trw-audit` runs as the read-only auditor and no longer checks for events nothing writes.** The skill forked to a general-purpose agent, so an audit advertised as read-only ran with full write access; it now runs as `trw-auditor` (Edit and Write denied), whose grant gained `trw_prd_validate` and `trw_review` for the two steps that need them. It also required `events.jsonl` to contain `pre_implementation_checklist_complete` and `pre_audit_self_review`, whose producer was removed in an earlier release — so every audit recorded that check as "missing". A check that always fires teaches agents to discount audit findings; it is gone, in the skill and in all of its client projections.
+- **Unsourced claims are out of the shipped prompts.** Agent instructions cited internal sprint anecdotes and unattributed statistics ("Sprint 29: 4 P0 …", "70% of sprint defects", "P1s cost 10x in production") that a reader in another repository cannot verify. Each is replaced by the reason the rule holds.
+
+### Added
+
+- **A learning that goes stale now stays visibly stale.** Assertion re-verification already ran during `trw_recall`, but its verdict lived only in memory: the entry was flagged `stale` for that one call and silently reverted to looking healthy on the next session, so a learning whose code had moved on kept being served as if it were current. The verdict is now persisted on the record itself (additive schema migration — existing databases upgrade in place, and a database written by an older version still loads), a scheduled `maintain verify` sweep re-checks entries outside the recall path, and the accompanying `post-commit` hook runs that sweep after each commit so staleness is caught within a day rather than whenever someone happens to recall the entry.
+- **Anchors are re-verified when it matters, not only when they were written.** `trw_recall` and `trw_learn_update(reverify_anchors=True)` now re-run anchor validity against the current tree, so a learning whose anchored file was renamed or deleted reports `anchor_lost` instead of quietly presenting a stale anchor as valid.
+- **Agent-instruction drift is now visible in `make check`.** A new `instruction-drift-report` target re-derives what each managed instruction-file segment *should* contain and names every channel whose committed content has drifted, with the exact one-command fix. It runs report-only for now — the blocking `instruction-drift-gate` target ships alongside it and turns on once the last placeholder-rendering channel is fixed, so the gate never fails the build for a defect it cannot fix.
+- **A new intent-contract security layer (`trw_mcp.security.intent_contract`) makes "this must never happen" enforceable rather than advisory.** A project can declare `must_not_happen` claims — anchored to real code, backed by structured falsifiers (a pytest node id or an allowlisted argv, never a shell string) — and the layer refuses to let them be quietly disarmed: a pre-write hook blocks edits that touch a claim's protected anchors; a post-edit check runs the claim's falsifier against the actual resulting file and records an open violation that blocks delivery until it is fixed or explicitly overridden; a signed-commit check treats weakening a claim (deleting it, downgrading its authority or enforcement channel, emptying or editing its falsifiers, narrowing its anchors, moving the contract, or flipping the feature off in config) as a change that must be signed; every override is written to a hash-chained, checkpoint-anchored ledger; and an enrollment marker distinguishes "this project never opted in" (clean no-op) from "this project opted in and the controls have gone missing" (fail closed). The layer is inert until a project enrolls, so nothing changes for existing installs.
+
+### Fixed
+
+- **`trw-mcp update-project` now actually installs new bundled hooks into projects that already have hooks.** The settings merge used a "keep whatever is already there" rule per hook event, so any project with an existing `PreToolUse` entry silently kept its old list forever — every newly bundled `PreToolUse` hook was dropped on upgrade, with no error and no diff. Hook groups now merge per entry by stable identity, so new hooks arrive and your own custom entries are preserved.
+- **Learning assertions were never actually being written back — a defect live since the feature shipped.** The write-back path passed a serialized JSON string where the storage layer required validated model instances, so every attempt raised internally and was swallowed at debug level; three existing tests asserted the *shape* of the call and passed for months against a shape the real backend rejects. Assertion updates now persist, and the tests assert the real round trip through a genuine backend.
+- **Helper agents no longer lose every TRW tool for the rest of the session after a context compaction.** The post-compaction reminder — which asks you to run `trw_session_start()` before continuing — was applied to *every* session the server knew about, not just the one whose context was compacted. A helper agent cannot run `trw_session_start` (it is not in a helper's tool list), so once that reminder was applied to it, every one of its TRW calls was refused with `session_start_required` and it had no way to clear it: recording a learning, recalling prior context, and reporting build results all failed for the remainder of the server's life. The reminder is now scoped to the sessions that existed when the compaction happened; a helper started afterwards has no prior context to reload and is left alone. The original safeguard is unchanged — the session that actually compacted is still held until it reloads.
+
+## [0.63.0] — 2026-07-21
+
+### Fixed
+
+- **A fresh install into a non-git directory now deploys the full framework instead of a silent half-install.** Installing into a directory that was not a git repository left `.trw/config.yaml` written but the framework bodies (`.trw/frameworks/FRAMEWORK-CORE.md`, `AARE-F-CORE.md`, `AARE-F-REFERENCE.md`, `VERSION.yaml`, `DEPLOYMENT.json`) missing — the MCP server connected and looked healthy, but the methodology the tools implement was absent. The framework-body deploy no longer gates on the git-repo check (it is idempotent and git-independent), so `install = usable framework` even in a non-git target. As defense-in-depth, the installer now runs `trw-mcp doctor` at the end with its output visible (no longer redirected to `/dev/null`) and prints a loud warning naming any missing bodies plus the one command to fix them (`git init && trw-mcp init-project .`) instead of printing a green success line over a broken install.
+- **`curl … | bash` now installs successfully on an externally-managed Python (PEP 668) even without pipx — the default macOS + Homebrew setup.** Previously, if the system Python refused `pip install` (PEP 668), `--user` was also blocked, and pipx was not installed, the one-line installer dead-ended with only manual instructions. It now automatically falls back to a dedicated isolated virtualenv (`python3 -m venv`, which PEP 668 never blocks), and — if even that is unavailable (e.g. a Debian base without the `python3-venv` package) — to `uv`. The installer exposes the freshly-installed `trw-mcp` on `~/.local/bin` via a small launcher shim and adds it to your PATH.
+- **The installer no longer reports a version it did not actually install.** `.trw/installed-version.json` now records the version of the `trw-mcp` your tools will actually run (the one PATH resolves), not merely the version the installer intended to install. When an older `trw-mcp` earlier on your PATH shadows the fresh install, the installer now warns loudly — naming the shadowing binary and the exact fix (`pip uninstall trw-mcp` in its environment, or a PATH reorder) — instead of stamping a marker that lies and prompting a `/mcp` reload that cannot help.
+- **Your learnings are no longer lost when `trw_learn` is slow or the session ends mid-write.** A `trw_learn` call that took longer than the client's tool timeout was moved to the background; if the session then exited, the learning was never written to disk and vanished with no error — the discovery was simply gone. Accepted learnings are now written to a durable pending record *before* the slow deduplication and storage work begins, and any record that did not finish is automatically replayed (exactly once, with duplicates collapsed) on a later `trw_session_start`. A learning you record is now kept even if the server is interrupted, times out, or crashes mid-call.
+- **`trw_deliver` can no longer become permanently blocked.** An internal queue that coordinates concurrent deliveries retained entries for work that had already finished or been abandoned. Once enough accumulated, the queue hit its cap and *every* subsequent `trw_deliver` in that project failed with "deferred FIFO queue is full" — with no way to recover short of manual database surgery. Finished and abandoned entries are now released as soon as their work completes, plus a self-healing sweep clears any that were stranded, so the queue cannot silently fill up. Work that is genuinely still running is never dropped.
+- **No more false "you haven't run `trw_deliver()`" reminders in sessions without an active run.** When a session had no run of its own, the Stop-hook reminder attributed *another* concurrently-running session's activity to it and kept nagging even though delivery had already succeeded. A successful delivery now records a session-scoped marker regardless of run state, and the reminder resolves the session's own run before deciding — so it stops warning about work that was already delivered, and stops reporting another session's event counts as yours.
 
 ## [0.62.0] — 2026-07-20
 
@@ -14,8 +888,8 @@ All notable changes to the TRW MCP server package.
 
 ### Fixed
 
-- **`trw_before_edit_hint` (and the other sidecar tools) now unlock the trw-distill sidecar when trw-distill is installed — no more "Acquire team/pro/enterprise tier" on every edit for an entitled install.** The distill-sidecar feature was gated ONLY on a self-signed `.trw/entitlements.yaml` sentinel that the installer never writes, so a fully-entitled `--with-proprietary` install (trw-distill wheels present) still resolved `tier="free"` and was nagged to buy a tier. The installed trw-distill package is now treated as proof of entitlement (`importlib.util.find_spec` — no import, so the public/proprietary IP boundary holds) and opens the gate, self-healing existing installs. The entitlement-sentinel path (`trw-mcp tier issue`) is preserved.
-- **No token waste when trw-distill is not installed.** When neither trw-distill nor a sentinel is present the sidecar tools return `distill_action=null` instead of a paid-tier remediation, so they don't burn caller tokens on every edit for a feature not opted into; the learnings half still returns.
+- **`trw_before_edit_hint` (and the other sidecar tools) now unlock the code-intelligence sidecar when its provider is installed — no more "Acquire team/pro/enterprise tier" on every edit for an entitled install.** The sidecar feature was gated ONLY on a self-signed `.trw/entitlements.yaml` sentinel that the installer never writes, so a fully-entitled `--with-proprietary` install (provider wheels present) still resolved `tier="free"` and was nagged to buy a tier. The installed provider package is now treated as proof of entitlement (`importlib.util.find_spec` — no import, so the public/proprietary IP boundary holds) and opens the gate, self-healing existing installs. The entitlement-sentinel path (`trw-mcp tier issue`) is preserved.
+- **No token waste when the sidecar provider is absent.** When neither the provider nor a sentinel is present the sidecar tools return `distill_action=null` instead of a paid-tier remediation, so they don't burn caller tokens on every edit for a feature not opted into; the learnings half still returns.
 - **`trw-mcp tier show` accepts `--trw-dir`** (parity with `tier status`).
 
 ## [0.60.0] — 2026-07-19

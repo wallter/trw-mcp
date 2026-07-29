@@ -62,7 +62,6 @@ _AGENT_TOOLS = [
     "mcp_trw_trw_recall",
     "mcp_trw_trw_before_edit_hint",
     "mcp_trw_trw_codebase_risk_report",
-    "mcp_trw_trw_entity_risk_map",
     "mcp_trw_trw_code_search",
 ]
 
@@ -149,6 +148,12 @@ def _conventions_section(conventions: list[Any], count: int = 3) -> str:
     return "\n".join(lines)
 
 
+# PRD-CORE-239 FR01 removed the `channel-render` subcommand. This provenance
+# header is written into `.antigravitycli/agents/trw-distill-explorer.md`, a
+# permanent file in a LICENSED user's repo — the gate opens for them — so a dead
+# command here fails for the paying caller and nobody else. That is the same
+# asymmetry the `trw_entity_risk_map` fix names. Nothing reads
+# `ChannelEntry.regenerate_cmd`, so no test could have caught it.
 def _build_agent_content(
     *,
     tier: str,
@@ -202,7 +207,7 @@ channel_id: {AG02_CHANNEL_ID}
 sha: {sidecar_sha}
 ts: {generated_at}
 tier: {tier}
-regenerate: trw-mcp channel-render --channel {AG02_CHANNEL_ID}
+regenerate: trw-mcp init-project --client antigravity-cli
 -->
 
 ## Distill Intelligence — Codebase Hotspots ({tier})
@@ -210,8 +215,9 @@ regenerate: trw-mcp channel-render --channel {AG02_CHANNEL_ID}
 Stay in **read-only** exploration mode. Do NOT edit files, run tests,
 or call mutation tools. Surface risk data and evidence only.
 
-Before reading any file, call `mcp_trw_trw_entity_risk_map` to identify
-risky callers and downstream dependencies.
+Before reading any file, call `mcp_trw_trw_before_edit_hint` — its
+`distill_hint` carries the importers, inferred tests and co-change neighbours
+you need for risky callers and downstream dependencies.
 
 ### Top Hotspot Files
 

@@ -28,8 +28,6 @@ _SUPPORTED_IDES = [
     "opencode",
     "codex",
     "copilot",
-    "gemini",
-    "aider",
     "antigravity-cli",
 ]
 
@@ -93,24 +91,24 @@ class TestFreshInstallWithBashBootstrap:
     """
 
     def test_prompts_when_clients_detected_in_project(self, tmp_path: Path) -> None:
-        """Pre-existing GEMINI.md must NOT auto-select gemini silently."""
+        """A pre-existing client config must NOT auto-select that client silently."""
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("platform_api_key: trw_dk_x\n")
-        # User had GEMINI.md from prior tooling — but no prior TRW install.
-        (tmp_path / "GEMINI.md").write_text("# my gemini config\n")
+        # User had .cursor/ from prior tooling — but no prior TRW install.
+        (tmp_path / ".cursor").mkdir()
 
         result, is_update = _resolve_client_targets(
             target_dir=tmp_path,
             detected_clis=["claude-code"],
-            detected_ides=["gemini"],
+            detected_ides=["cursor-ide"],
             prior_targets=[],
             interactive=True,
             ide_override=None,
-            prompt_choice=["claude-code", "gemini"],
+            prompt_choice=["claude-code", "cursor-ide"],
         )
 
         assert is_update is False, "no installer-meta.yaml ⇒ first-time install"
-        assert result == ["claude-code", "gemini"], "user's prompt choice is honored"
+        assert result == ["claude-code", "cursor-ide"], "user's prompt choice is honored"
 
     def test_prompts_even_when_only_trw_dir_exists(self, tmp_path: Path) -> None:
         """``.trw/`` from bash bootstrap must not be mistaken for prior install."""
@@ -135,8 +133,8 @@ class TestFreshInstallWithBashBootstrap:
 
         result, _ = _resolve_client_targets(
             target_dir=tmp_path,
-            detected_clis=["gemini"],
-            detected_ides=["gemini"],
+            detected_clis=["cursor-ide"],
+            detected_ides=["cursor-ide"],
             prior_targets=[],
             interactive=True,
             ide_override=None,
@@ -155,7 +153,7 @@ class TestRealPriorInstall:
 
         result, is_update = _resolve_client_targets(
             target_dir=tmp_path,
-            detected_clis=["claude-code", "gemini"],
+            detected_clis=["claude-code", "cursor-ide"],
             detected_ides=["claude-code"],
             prior_targets=["claude-code"],
             interactive=True,
@@ -215,14 +213,14 @@ class TestHeadlessMode:
         result, is_update = _resolve_client_targets(
             target_dir=tmp_path,
             detected_clis=["claude-code"],
-            detected_ides=["gemini"],
+            detected_ides=["cursor-ide"],
             prior_targets=[],
             interactive=False,
             ide_override=None,
         )
 
         assert is_update is False, "headless first install"
-        assert result == ["gemini", "claude-code"]
+        assert result == ["cursor-ide", "claude-code"]
 
     def test_headless_first_install_default_when_nothing_detected(self, tmp_path: Path) -> None:
         (tmp_path / ".trw").mkdir()
@@ -250,7 +248,7 @@ class TestExplicitIDEFlag:
         result, _ = _resolve_client_targets(
             target_dir=tmp_path,
             detected_clis=["claude-code"],
-            detected_ides=["gemini"],
+            detected_ides=["cursor-ide"],
             prior_targets=["codex"],
             interactive=interactive,
             ide_override=["copilot"],
@@ -292,6 +290,37 @@ class TestInstallerTemplateAntigravityContract:
             "install-trw.template.py _IDE_META is missing an 'antigravity-cli' entry. "
             "The interactive menu will show a blank or raise KeyError for antigravity-cli."
         )
+
+    @pytest.mark.unit
+    def test_installed_version_marker_records_resolved_not_intended(self) -> None:
+        """Truthful marker (installer-client bug 2026-07-21): the installer must
+        stamp ``.trw/installed-version.json`` with the PATH-RESOLVED trw-mcp
+        version (what the MCP client actually runs), not the blind intended
+        ``TRW_VERSION``. Stamping the intended version when a stale install
+        shadows PATH produces a marker that lies and makes the runtime advise a
+        ``/mcp`` reload that cannot help."""
+        text = self._TEMPLATE.read_text(encoding="utf-8")
+        assert "def _resolve_path_trw_mcp_version" in text, (
+            "installer must resolve the PATH trw-mcp version to write an honest marker"
+        )
+        # The sentinel write must use the resolved marker_version, never a bare
+        # {"version": TRW_VERSION ...} that ignores a shadowing install.
+        assert '"version": marker_version' in text, (
+            "installed-version.json must record the resolved marker_version, not TRW_VERSION"
+        )
+        assert 'json.dumps({"version": TRW_VERSION' not in text, (
+            "installed-version.json must NOT blindly stamp the intended TRW_VERSION"
+        )
+
+    @pytest.mark.unit
+    def test_installer_warns_on_stale_shadow_mismatch(self) -> None:
+        """When the resolved trw-mcp differs from the freshly-installed version,
+        the installer must LOUDLY warn about the shadow (not silently mask it)."""
+        text = self._TEMPLATE.read_text(encoding="utf-8")
+        assert "resolved_version and resolved_version != TRW_VERSION" in text, (
+            "installer must detect a PATH-shadow mismatch"
+        )
+        assert "shadowing" in text.lower(), "installer must name the shadow condition to the user"
 
     @pytest.mark.unit
     def test_interactive_determination_honors_controlling_tty(self) -> None:

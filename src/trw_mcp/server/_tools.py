@@ -56,7 +56,6 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     from trw_mcp.tools.build import register_build_tools
     from trw_mcp.tools.ceremony import register_ceremony_tools
     from trw_mcp.tools.ceremony_feedback import register_ceremony_feedback_tools
-    from trw_mcp.tools.channel_render import register_channel_render_tools
     from trw_mcp.tools.channel_stats import register_channel_stats_tools
     from trw_mcp.tools.checkpoint import register_checkpoint_tools
     from trw_mcp.tools.code_index import register_code_index_tools
@@ -65,7 +64,6 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
     from trw_mcp.tools.delivery_ops import register_delivery_tools
     from trw_mcp.tools.dispatch import register_dispatch_tools
-    from trw_mcp.tools.entity_risk_map import register_entity_risk_map_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
     from trw_mcp.tools.learning import register_learning_tools
     from trw_mcp.tools.mcp_security_status import register_mcp_security_status
@@ -115,7 +113,6 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         # PRD-CORE-172: local indexed lexical/symbol code search
         register_code_search_tools,
         # PRD-CORE-167: public entity-risk sidecar consumer
-        register_entity_risk_map_tools,
         # PRD-CORE-168: privacy-safe canonical agent work evidence export
         register_agent_work_evidence_tools,
         # PRD-CORE-170: read-only skill manifest discovery helper
@@ -124,7 +121,6 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         # (PII redaction added in-place per PRD-INFRA-132 FR04a)
         register_submit_feedback_tools,
         # PRD-DIST-2400 FR17: channel manifest render MCP tool
-        register_channel_render_tools,
         # PRD-DIST-2400 §meta-tune: channel correlation + throttle stats MCP tool
         register_channel_stats_tools,
         # PRD-FIX-COMPOUNDING-6 FR02: unified compounding-pipeline health probe
@@ -203,6 +199,12 @@ def _register_tools() -> None:
     # manifest (advisory at boot; hard assertion in the acceptance test).
     _assert_manifest_parity()
 
+    # Mark the ceremony floor always-loaded so a deferring client (Claude Code
+    # defers every MCP schema by default) does not make the agent pay a
+    # ToolSearch round-trip before it can call trw_session_start. Must run AFTER
+    # registration: it mutates the registered tool singletons.
+    _apply_always_load_meta()
+
     # PRD-CORE-218 FR03/FR04: the production tool-exposure authority is now the
     # kernel/pack resolver enforced by SurfaceAuthorityMiddleware (masking at the
     # middleware layer so pack tools stay registered + grantable). The former
@@ -228,6 +230,21 @@ def _register_tools() -> None:
     # callable we can resolve — silently skipping if the FastMCP version
     # does not expose a rewrap point.
     _apply_security_consult_wrapping()
+
+
+def _apply_always_load_meta() -> None:
+    """Apply the deferral opt-out to the ceremony floor (fail-open at boot).
+
+    See ``server/_always_load.py`` for which tools qualify and why the set is
+    capped at five. Failure here costs a ToolSearch round-trip, never a boot.
+    """
+    try:
+        from trw_mcp.server._always_load import apply_always_load_meta
+
+        applied = _run_async(apply_always_load_meta(mcp))
+        logger.debug("always_load_meta_applied", tools=list(applied))
+    except Exception:  # justified: fail-open, deferral metadata is an optimization
+        logger.info("always_load_meta_failed", reason="deferral opt-out not applied")
 
 
 def _apply_security_consult_wrapping() -> None:

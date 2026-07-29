@@ -62,8 +62,18 @@ def test_read_only_test_strategy_does_not_mutate_build_gate_state() -> None:
 
 
 def test_copilot_testing_instruction_uses_project_coverage_policy() -> None:
-    """Generated Copilot path guidance must not impose a framework percentage."""
-    content = (PACKAGE / "bootstrap" / "_copilot.py").read_text(encoding="utf-8")
+    """Generated Copilot path guidance must not impose a framework percentage.
+
+    Asserts on the RENDERED bytes the installer writes rather than on the source
+    text of whichever module currently holds the template. The source-file form
+    of this check silently stopped covering anything when the templates moved to
+    ``bootstrap/_copilot_artifacts.py``.
+    """
+    from trw_mcp.bootstrap._copilot import copilot_path_instruction_contents
+
+    rendered = copilot_path_instruction_contents()
+    assert rendered, "no path-scoped instruction files rendered"
+    content = "\n".join(payload.decode("utf-8") for payload in rendered.values())
     assert "Target 90%+ coverage" not in content
     assert "project-configured coverage gate" in content
     assert "without inventing a percentage" in content

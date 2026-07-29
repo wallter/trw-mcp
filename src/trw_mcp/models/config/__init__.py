@@ -27,12 +27,14 @@ from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._model_capabilities import (
     ANTHROPIC_MODEL_CATALOG_VERSION,
     lookup_model_effort_capabilities,
+    match_model_family,
 )
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
     DispatchConfig,
+    IntentContractConfig,
     MemoryConfig,
     OrchestrationConfig,
     PathsConfig,
@@ -48,6 +50,7 @@ from trw_mcp.models.config._surface_config import (
     RecallConfig,
     SurfaceConfig,
 )
+from trw_mcp.models.config._unread_fields import unread_config_fields
 
 __all__ = [
     "ANTHROPIC_MODEL_CATALOG_VERSION",
@@ -58,6 +61,7 @@ __all__ = [
     "ClientProfile",
     "DispatchConfig",
     "EffortAdapterDecision",
+    "IntentContractConfig",
     "LegacyModelTier",
     "MemoryConfig",
     "ModelTier",
@@ -79,8 +83,10 @@ __all__ = [
     "_reset_config",
     "get_config",
     "lookup_model_effort_capabilities",
+    "match_model_family",
     "normalize_capability_tier",
     "reload_config",
     "resolve_client_profile",
     "resolve_effort_adapter",
+    "unread_config_fields",
 ]

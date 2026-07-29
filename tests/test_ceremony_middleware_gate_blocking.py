@@ -14,11 +14,13 @@ from tests._test_ceremony_middleware_gate_support import (
     FakeMessage,
     FakeMiddlewareContext,
     FakeToolResult,
+    _clean_state,  # noqa: F401  # autouse: resets middleware module state per test
     _seed_compaction_marker,
     _text,
     middleware,  # noqa: F401
     session_ctx,  # noqa: F401
 )
+from trw_mcp.middleware import ceremony as ceremony_module
 from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active, reset_state
 
 
@@ -27,11 +29,19 @@ class TestCompactionGate:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_compaction_gate_blocks_checkpoint(
+    async def test_compaction_gate_blocks_a_decision_shaping_tool(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
-        """trw_checkpoint called without session_start returns error dict."""
-        tool_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
+        """A decision-shaping trw_* tool without session_start returns the error dict.
+
+        Probes ``trw_recall`` rather than ``trw_checkpoint``. Checkpoint used to
+        be this module's canonical gated probe, but it is now exempt
+        (``EVIDENCE_RECORDING_TOOLS``) — so probing it here would have asserted
+        the gate's scope using a tool outside that scope. ``trw_recall`` is the
+        right probe on the merits: it SHAPES what the agent does next, which is
+        precisely what a stale-context caller must not do.
+        """
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="recall ok")])
         call_count = 0
         _seed_compaction_marker(tmp_path)
 
@@ -41,7 +51,7 @@ class TestCompactionGate:
             return tool_result
 
         ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_checkpoint"),
+            message=FakeMessage(name="trw_recall"),
             fastmcp_context=session_ctx,
         )
         with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
@@ -54,7 +64,7 @@ class TestCompactionGate:
         assert "trw_session_start()" in first.text
         assert out.structured_content is not None
         assert out.structured_content["error"] == "session_start_required"
-        assert out.structured_content["tool_attempted"] == "trw_checkpoint"
+        assert out.structured_content["tool_attempted"] == "trw_recall"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -62,7 +72,7 @@ class TestCompactionGate:
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
         """The hard gate is driven by the pre_compact_state.json marker on disk."""
-        tool_result = FakeToolResult(content=[TextContent(type="text", text="checkpoint ok")])
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="recall ok")])
         trw_dir = _seed_compaction_marker(tmp_path)
         call_count = 0
 
@@ -72,7 +82,7 @@ class TestCompactionGate:
             return tool_result
 
         ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_checkpoint"),
+            message=FakeMessage(name="trw_recall"),
             fastmcp_context=session_ctx,
         )
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
@@ -168,19 +178,37 @@ class TestCompactionGate:
     async def test_gate_blocks_multiple_trw_tools(
         self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
     ) -> None:
-        """Various trw_* tools should all be blocked when session not started."""
+        """Every trw_* tool is in the gate's scope — but the gate is BOUNDED.
+
+        Originally this asserted all nine tools stay blocked forever. Audit C-5
+        showed that unbounded form is a deadlock: under stdio, ``ctx.session_id``
+        is shared by a parent agent and every sub-agent it spawns, and ten of
+        eleven bundled agents have no ``trw_session_start`` to clear the gate
+        with — so "blocked until session_start" meant "blocked for the life of
+        the server" for those callers.
+
+        The gate now hard-blocks the first ``_COMPACTION_GATE_MAX_BLOCKS`` calls
+        (the guarantee: a capable agent is stopped and told exactly what to do)
+        and then degrades to advisory, since repeated blocks with no intervening
+        session_start are evidence the caller *cannot* satisfy it. This test
+        pins both halves: no tool escapes scope, and no caller is trapped.
+        """
         _seed_compaction_marker(tmp_path)
+        # Evidence-recording tools are deliberately absent: they are exempt from
+        # the gate entirely (EVIDENCE_RECORDING_TOOLS), and their exemption is
+        # asserted by TestEvidenceRecordingToolsAreExempt below. Listing them
+        # here would have made this test claim gate scope it no longer has.
         blocked_tools = [
-            "trw_checkpoint",
-            "trw_learn",
             "trw_deliver",
-            "trw_build_check",
             "trw_status",
             "trw_prd_create",
             "trw_prd_validate",
             "trw_init",
             "trw_recall",
         ]
+        assert not (set(blocked_tools) & ceremony_module.EVIDENCE_RECORDING_TOOLS), (
+            "this test's probes must all be inside the gate's scope"
+        )
 
         for tool_name in blocked_tools:
             call_count = 0
@@ -198,11 +226,25 @@ class TestCompactionGate:
             with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
                 out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
-            assert call_count == 0, f"{tool_name} should be blocked"
-            assert out.structured_content is not None
-            assert out.structured_content["error"] == "session_start_required", (
-                f"{tool_name} should return session_start_required error"
-            )
+            attempt = blocked_tools.index(tool_name) + 1
+            if attempt <= ceremony_module._COMPACTION_GATE_MAX_BLOCKS:
+                assert call_count == 0, f"{tool_name} (attempt {attempt}) should be hard-blocked"
+                assert out.structured_content is not None
+                assert out.structured_content["error"] == "session_start_required", (
+                    f"{tool_name} should return session_start_required error"
+                )
+            else:
+                # Past the bound: the tool runs, but the recovery instruction is
+                # still prepended — the nudge is never removed, only de-fanged.
+                assert call_count == 1, f"{tool_name} (attempt {attempt}) must not be trapped past the bound"
+                assert out.structured_content is None
+                assert "trw_session_start" in getattr(out.content[0], "text", ""), (
+                    "the recovery instruction must survive degradation"
+                )
+
+        # The obligation itself outlives the degradation: the on-disk marker is
+        # deliberately left for a caller that CAN discharge it.
+        assert (tmp_path / ".trw" / "context" / "pre_compact_state.json").exists()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -240,7 +282,7 @@ class TestCompactionGate:
             return tool_result
 
         ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_learn"),
+            message=FakeMessage(name="trw_status"),
             fastmcp_context=session_ctx,
         )
         with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
@@ -250,4 +292,124 @@ class TestCompactionGate:
         error_data = out.structured_content
         assert error_data["error"] == "session_start_required"
         assert "trw_session_start()" in error_data["message"]
-        assert error_data["tool_attempted"] == "trw_learn"
+        assert error_data["tool_attempted"] == "trw_status"
+
+
+class TestEvidenceRecordingToolsAreExempt:
+    """The gate must never block a tool whose only job is recording evidence.
+
+    Operator-approved 2026-07-26, closing the decision audit C-5 deferred. The
+    gate stops an agent ACTING on stale post-compaction context; these tools do
+    not act, they record what already happened, and their content comes from the
+    caller. Blocking them buys no context integrity and destroys evidence that
+    cannot be reconstructed — measured: a delegated VALIDATE completed with no
+    recorded ``trw_build_check`` and a checkpoint reporting ``recorded: false``.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    @pytest.mark.parametrize("tool_name", sorted(ceremony_module.EVIDENCE_RECORDING_TOOLS))
+    async def test_evidence_tool_executes_while_the_gate_is_armed(
+        self,
+        middleware: CeremonyMiddleware,
+        session_ctx: FakeContext,
+        tmp_path: Path,
+        tool_name: str,
+    ) -> None:
+        """The exempt tool reaches call_next on the FIRST call, with the gate armed."""
+        _seed_compaction_marker(tmp_path)
+        call_count = 0
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="recorded")])
+
+        async def call_next(_ctx: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            return tool_result
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name=tool_name),
+            fastmcp_context=session_ctx,
+        )
+        with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
+            out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert call_count == 1, f"{tool_name} must not be blocked — evidence loss is unrecoverable"
+        assert out.structured_content is None or out.structured_content.get("error") != "session_start_required"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_exemption_does_not_consume_the_bounded_escape(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """An exempt call must not count toward the block budget of gated tools.
+
+        If exempt calls incremented the counter, a delegate recording three
+        pieces of evidence would silently exhaust the bound and de-fang the gate
+        for the genuinely gated tools that follow.
+        """
+        _seed_compaction_marker(tmp_path)
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return tool_result
+
+        with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
+            for tool_name in sorted(ceremony_module.EVIDENCE_RECORDING_TOOLS):
+                ctx = FakeMiddlewareContext(message=FakeMessage(name=tool_name), fastmcp_context=session_ctx)
+                await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+            gated = FakeMiddlewareContext(message=FakeMessage(name="trw_recall"), fastmcp_context=session_ctx)
+            out = await middleware.on_call_tool(gated, call_next)  # type: ignore[arg-type]
+
+        assert out.structured_content is not None
+        assert out.structured_content["error"] == "session_start_required", (
+            "the first gated call after exempt calls must still be hard-blocked"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_exemption_leaves_the_recovery_obligation_on_disk(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """Recording evidence never discharges the post-compaction obligation."""
+        trw_dir = _seed_compaction_marker(tmp_path)
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return tool_result
+
+        ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_build_check"), fastmcp_context=session_ctx)
+        with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
+            await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert (trw_dir / "context" / "pre_compact_state.json").exists()
+        assert not is_session_active("test-session-gate")
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_block_message_names_a_remedy_a_delegate_can_perform(
+        self, middleware: CeremonyMiddleware, session_ctx: FakeContext, tmp_path: Path
+    ) -> None:
+        """The block text must be actionable by a caller lacking trw_session_start.
+
+        Ten of eleven bundled agents hold no ``trw_session_start``. The original
+        message named only that tool, so a compliant delegate read an impossible
+        instruction and stopped — observed 2026-07-26 with blocks arriving in
+        exact pairs against a bound of 2, one call short of the escape hatch
+        built for it.
+        """
+        _seed_compaction_marker(tmp_path)
+        tool_result = FakeToolResult(content=[TextContent(type="text", text="ok")])
+
+        async def call_next(_ctx: Any) -> Any:
+            return tool_result
+
+        ctx = FakeMiddlewareContext(message=FakeMessage(name="trw_recall"), fastmcp_context=session_ctx)
+        with patch("trw_mcp.middleware.ceremony._is_compaction_gate_required", return_value=True):
+            out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        assert out.structured_content is not None
+        message = str(out.structured_content["message"])
+        assert "trw_session_start()" in message, "the capable-caller remedy must survive"
+        assert "retry" in message.lower(), "a delegate must be told retrying clears the gate"
+        assert "dispatcher" in message.lower(), "recovery ownership must be named"

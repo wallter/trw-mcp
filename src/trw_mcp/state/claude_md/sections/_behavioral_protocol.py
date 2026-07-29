@@ -56,9 +56,11 @@ def render_imperative_opener() -> str:
         "after milestones, and close with `trw_deliver()` so your discoveries "
         "persist for future agents.\n"
         "\n"
-        "**Delegation**: use focused helpers when the harness supports it and "
-        "file ownership is clear. When it does not, run the same shards "
-        "sequentially. Delegation is an optimization, not a dependency.\n"
+        "**Delegation**: delegate only for work that is genuinely independent "
+        "and parallelizable, with disjoint file ownership. Not for work you "
+        "could finish in a handful of tool calls, and not to verify your own "
+        "work. If one helper suffices, use one. Delegation is an "
+        "optimization, not a dependency.\n"
         "\n"
     )
 

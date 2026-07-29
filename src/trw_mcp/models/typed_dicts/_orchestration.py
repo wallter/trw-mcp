@@ -145,9 +145,11 @@ class TrwStatusDict(TypedDict, total=False):
     framework: str
     # PRD-CORE-184-FR05: task-type regime surfaced for observability.
     task_type: str
-    # Canonical task/model policy. ``model_tier`` is a compatibility alias.
+    # Canonical task/model policy. The legacy ``model_tier`` output alias was
+    # removed 2026-07-27 — it duplicated capability_tier byte-for-byte on
+    # every response and no caller read it. Persisted run state is still
+    # read under the old key; see _task_profile_observability.
     capability_tier: str
-    model_tier: str
     recommended_effort: str
     effort_source: str
     effort_adapter_status: str

@@ -40,6 +40,32 @@ DYNAMIC_CHECK_GROUPS: tuple[str, ...] = (
 )
 
 
+def _resolve_wiring_mode(scaled_config: TRWConfig, frontmatter: dict[str, object]) -> str:
+    """Resolve the wiring-gate mode for ONE PRD (PRD-CORE-231-FR04).
+
+    A category-keyed override is consulted before the repo-wide
+    ``wiring_gate_mode``, so ``block`` can be piloted on a single category
+    instead of flipping the entire catalogue at once. Both sides of the lookup
+    are upper-cased, so ``core`` and ``CORE`` cannot register as distinct
+    entries. An empty override dict reproduces pre-FR04 behavior exactly.
+    """
+    global_mode = str(getattr(scaled_config, "wiring_gate_mode", "warn") or "warn")
+    overrides = getattr(scaled_config, "wiring_gate_mode_overrides", None)
+    if not isinstance(overrides, dict) or not overrides:
+        return global_mode
+
+    category = str(frontmatter.get("category", "") or "").strip().upper()
+    if not category:
+        return global_mode
+
+    for key, mode in overrides.items():
+        if str(key).strip().upper() == category:
+            resolved = str(mode or "").strip() or global_mode
+            logger.debug("wiring_gate_mode_override_applied", category=category, mode=resolved)
+            return resolved
+    return global_mode
+
+
 def refresh_dynamic_prd_validation(
     base_result: ValidationResultV2,
     content: str,
@@ -213,7 +239,7 @@ def refresh_dynamic_prd_validation(
         try:
             from trw_mcp.state.validation._prd_scoring_wiring import check_wiring_gate
 
-            wiring_mode = str(getattr(scaled_config, "wiring_gate_mode", "warn") or "warn")
+            wiring_mode = _resolve_wiring_mode(scaled_config, frontmatter)
             wiring_warnings, wiring_failures = check_wiring_gate(
                 content,
                 frontmatter,

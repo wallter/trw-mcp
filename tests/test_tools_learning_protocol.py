@@ -9,7 +9,6 @@ import pytest
 from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
-    render_adherence,
     render_agents_trw_section,
     render_behavioral_protocol,
     render_ceremony_quick_ref,
@@ -353,43 +352,7 @@ class TestBehavioralProtocol:
         directive_lines = [line for line in result.strip().split("\n") if line.startswith("- ")]
         assert len(directive_lines) == 12
 
-    def test_render_adherence_includes_behavioral_mandate_tag(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """behavioral-mandate tag is recognized by _render_adherence."""
-        entries = [
-            {
-                "summary": "Execute trw_recall at every session start",
-                "detail": "Ensures prior learnings are loaded",
-                "tags": ["behavioral-mandate", "framework"],
-                "impact": 0.9,
-            },
-        ]
-        with pytest.warns(DeprecationWarning, match="render_adherence is deprecated"):
-            result = render_adherence(entries)
-        assert "Framework Adherence" in result
-        assert "Execute trw_recall at every session start" in result
 
-    def test_render_adherence_behavioral_mandate_uses_summary(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """behavioral-mandate entries promote summary, not detail sentences."""
-        entries = [
-            {
-                "summary": "Always execute trw_reflect after implementation",
-                "detail": "This is a short detail without must/should keywords.",
-                "tags": ["behavioral-mandate"],
-                "impact": 0.9,
-            },
-        ]
-        with pytest.warns(DeprecationWarning, match="render_adherence is deprecated"):
-            result = render_adherence(entries)
-        # Summary should appear (promoted directly)
-        assert "Always execute trw_reflect after implementation" in result
-        # Detail should NOT appear (no sentence extraction for behavioral-mandate)
-        assert "short detail" not in result
 
     def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Full trw_claude_md_sync includes compact behavioral protocol (CORE-093)."""

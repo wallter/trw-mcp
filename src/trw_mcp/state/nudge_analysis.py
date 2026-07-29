@@ -44,7 +44,27 @@ from trw_mcp.state._ceremony_progress_state import (
 
 logger = structlog.get_logger(__name__)
 
-_ARTIFACT_SCHEMA_VERSION = 1
+# Artifact schema version. v1 -> v2 (commit 93b3778e32, versioned 2026-07-25):
+# ``total_nudges`` NARROWED from "every nudge emission" to "emissions that target
+# a ceremony step", and the honest total-volume figure moved to the additive
+# ``total_emissions`` / ``emissions_by_pool`` pair.
+#
+# No v1 key was removed or retyped, so a v1 reader that ignores unknown keys
+# still parses a v2 artifact. The frozen v1 shape lives in
+# ``tests/fixtures/nudge_contract/nudge-analysis.v1.json`` and the additive-only
+# guarantee is pinned by
+# ``tests/test_nudge_schema_contract.py::test_nudge_analysis_v2_is_additive_over_v1``
+# (PRD-QUAL-127 NFR04).
+#
+# But a v1 reader that treats ``total_nudges`` as *emission volume* now reads
+# ~zero on a live repo, where >99% of emissions target no ceremony step. That
+# silent numeric discontinuity is exactly what a version field exists to make
+# detectable, so the bump is mandatory even though the shape is additive.
+#
+# RESERVED: PRD-QUAL-127 FR05 specifies "schema_version increments to 2" for its
+# scope-labelling + false_fire_rate work. Version 2 is spent here; that work must
+# land as version 3.
+_ARTIFACT_SCHEMA_VERSION = 2
 _ARTIFACT_REL_PATH = ("context", "nudge-analysis.json")
 
 # A step nudged at least this many times but never completed is flagged as
@@ -71,7 +91,15 @@ class NudgeAnalysis:
     session_id: str = ""
     phase: str = ""
     applicable: bool = False
+    # ``total_nudges`` counts only nudges that TARGET a ceremony step, because
+    # responsiveness/resistance are per-step notions. Ledger UF-023/UF-024: it
+    # used to count every emission by fabricating a step label for the ones that
+    # named none, which is why the live distribution read 97% "session_start".
+    # ``total_emissions`` is the honest total-volume figure, sourced from the
+    # per-pool ledger that every emitting branch now writes.
     total_nudges: int = 0
+    total_emissions: int = 0
+    emissions_by_pool: dict[str, int] = field(default_factory=dict)
     nudged_step_count: int = 0
     nudge_counts_by_step: dict[str, int] = field(default_factory=dict)
     nudge_step_completed: dict[str, bool] = field(default_factory=dict)
@@ -235,7 +263,12 @@ def compute_nudge_analysis(
     result.nudge_counts_by_step = dict(nudged_steps)
     result.total_nudges = sum(nudged_steps.values())
     result.nudged_step_count = len(nudged_steps)
-    result.applicable = result.total_nudges > 0
+    result.emissions_by_pool = {pool: n for pool, n in state.pool_nudge_counts.items() if n > 0}
+    result.total_emissions = sum(result.emissions_by_pool.values())
+    # A session whose only nudges were learning/workflow content still HAPPENED;
+    # gating on step-targeted nudges alone would make the artifact claim nothing
+    # fired. Applicability follows either ledger.
+    result.applicable = result.total_nudges > 0 or result.total_emissions > 0
 
     for step in nudged_steps:
         completed = _step_done_at_all(step, state)
@@ -285,16 +318,23 @@ def analysis_summary(result: NudgeAnalysis) -> dict[str, object]:
     """
     if not result.applicable:
         return {"applicable": False}
-    return {
+    summary: dict[str, object] = {
         "applicable": result.applicable,
         "total_nudges": result.total_nudges,
-        "responsiveness": result.nudge_responsiveness,
         "recall_pull_rate": result.recall_pull_rate,
         "resistance_steps": sorted(result.resistance_by_step),
         "resistance_flagged": [str(flag.get("step")) for flag in result.resistance_flags],
         "timing_validity_rate": result.timing.validity_rate,
         "variant_breakdown": dict(result.variant_breakdown),
     }
+    # Responsiveness is undefined when no nudge targeted a ceremony step —
+    # reporting the 0.0 default would read as "the agent ignored every nudge"
+    # when in fact none asked for a ceremony action.
+    if result.nudged_step_count:
+        summary["responsiveness"] = result.nudge_responsiveness
+    if result.total_emissions != result.total_nudges:
+        summary["total_emissions"] = result.total_emissions
+    return summary
 
 
 def persist_nudge_analysis(trw_dir: Path, result: NudgeAnalysis) -> Path | None:

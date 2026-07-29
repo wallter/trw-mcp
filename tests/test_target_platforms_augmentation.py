@@ -302,39 +302,25 @@ class TestObservability:
 
 @pytest.mark.integration
 class TestRetiredIdentifierMigration:
-    """Retired ids (gemini/aider — 2026-07-11) are DROPPED with a warning, not
+    """Retired ids (aider — 2026-07-11) are DROPPED with a warning, not
     migrated to a replacement (the on-disk artifacts differ)."""
 
-    def test_gemini_dropped_from_existing_list_with_warning(self, tmp_path: Path) -> None:
+    def test_aider_dropped_from_existing_list_with_warning(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
 
-        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "gemini", "opencode"])
+        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "aider", "opencode"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
         # Pure migration of the existing list (no new ide_targets).
         _update_config_target_platforms(tmp_path, [], result)
 
         platforms = _read_platforms(cfg)
-        assert "gemini" not in platforms
+        assert "aider" not in platforms
         assert platforms == ["claude-code", "opencode"]
         assert str(cfg) in result["updated"]
-        warnings = result.get("warnings", [])
-        assert any("gemini support retired" in w for w in warnings)
-        # The retired id must NOT be silently rewritten to antigravity-cli.
-        assert "antigravity-cli" not in platforms
-
-    def test_aider_dropped_from_existing_list_with_warning(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
-
-        cfg = _seed_config(tmp_path, target_platforms=["claude-code", "aider"])
-        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
-
-        _update_config_target_platforms(tmp_path, [], result)
-
-        platforms = _read_platforms(cfg)
-        assert platforms == ["claude-code"]
-        assert str(cfg) in result["updated"]
         assert any("aider support retired" in w for w in result.get("warnings", []))
+        # The retired id must NOT be silently rewritten to another client.
+        assert "antigravity-cli" not in platforms
 
     def test_retired_id_in_ide_targets_not_appended(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._ide_targets import _update_config_target_platforms
@@ -342,8 +328,8 @@ class TestRetiredIdentifierMigration:
         cfg = _seed_config(tmp_path, target_platforms=["claude-code"])
         result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": []}
 
-        _update_config_target_platforms(tmp_path, ["gemini"], result)
+        _update_config_target_platforms(tmp_path, ["aider"], result)
 
         platforms = _read_platforms(cfg)
         assert platforms == ["claude-code"]
-        assert "gemini" not in platforms
+        assert "aider" not in platforms

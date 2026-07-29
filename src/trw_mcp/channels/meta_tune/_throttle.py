@@ -33,6 +33,7 @@ __all__ = [
     "ThrottleVerdict",
     "apply_throttle",
     "evaluate_throttle",
+    "throttle_stats_for",
 ]
 
 # ---------------------------------------------------------------------------
@@ -88,7 +89,8 @@ class ThrottleDecision(BaseModel):
     channel_id: str
     client: str
     verdict: ThrottleVerdict
-    adjusted_rate: float
+    #: None when no correlation rate was measurable (see _correlator).
+    adjusted_rate: float | None
     threshold: float
     n_events: int
     min_n: int
@@ -98,6 +100,23 @@ class ThrottleDecision(BaseModel):
 # ---------------------------------------------------------------------------
 # evaluate_throttle
 # ---------------------------------------------------------------------------
+
+
+def throttle_stats_for(entry: object) -> dict[str, Any]:
+    """Build the stat dict `evaluate_throttle` expects, from a stats row.
+
+    One builder, two callers: `_stats.compute_channel_stats` and
+    `cli/channel_doctor._run_throttle` each hand-rolled this dict, and the CLI's
+    copy omitted `outcome_unmeasured`. That was harmless only because
+    `_evaluate` also guards on `raw_adj is None` — the two sites agreed by a
+    second guard rather than by derivation, which is the shape that drifts the
+    moment either guard moves.
+    """
+    return {
+        "adjusted_rate": getattr(entry, "adjusted_rate", None),
+        "total_pushes": getattr(entry, "total_pushes", 0),
+        "outcome_unmeasured": getattr(entry, "outcome_unmeasured", False),
+    }
 
 
 def evaluate_throttle(
@@ -125,11 +144,17 @@ def evaluate_throttle(
             error=str(exc),
             outcome="evaluate_error",
         )
+        # INSUFFICIENT_DATA / None, not HOLD / 0.0. A crashed evaluation knows
+        # nothing, and reporting it as a measured 0.0 rate reproduces — one
+        # function above — the fabricated zero the rest of this module was just
+        # fixed to stop emitting. It also mattered downstream: `_stats.py`
+        # copies `verdict.value` into `throttle_status`, so HOLD rendered a
+        # crashed evaluation as a healthy "ok" channel.
         return ThrottleDecision(
             channel_id=channel_id,
             client=client,
-            verdict=ThrottleVerdict.HOLD,
-            adjusted_rate=0.0,
+            verdict=ThrottleVerdict.INSUFFICIENT_DATA,
+            adjusted_rate=None,
             threshold=0.0,
             n_events=0,
             min_n=DEFAULT_THROTTLE_MIN_N,
@@ -154,8 +179,28 @@ def _evaluate(
     if min_n_override is not None:
         min_n = min_n_override
 
-    adj = float(stats.get("adjusted_rate", 0.0))
+    raw_adj = stats.get("adjusted_rate")
     n = int(stats.get("total_pushes", 0))
+
+    # An unmeasurable rate must never become a throttle action. Before this
+    # guard, `float(None-or-missing) -> 0.0` meant any channel past min_n
+    # scored adj=0.0 < threshold and was demoted -- on a correlation rate that
+    # no code has ever produced an input for. INSUFFICIENT_DATA is the verdict
+    # this enum already carries for "not enough to decide on"; not knowing at
+    # all is the strongest case for it.
+    if bool(stats.get("outcome_unmeasured", False)) or raw_adj is None:
+        return ThrottleDecision(
+            channel_id=channel_id,
+            client=client,
+            verdict=ThrottleVerdict.INSUFFICIENT_DATA,
+            adjusted_rate=None,
+            threshold=threshold,
+            n_events=n,
+            min_n=min_n,
+            reason="no outcome events in log; correlation rate is unmeasured, not zero",
+        )
+
+    adj = float(raw_adj)
 
     if n < min_n:
         return ThrottleDecision(

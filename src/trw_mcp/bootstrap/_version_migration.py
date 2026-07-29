@@ -9,10 +9,7 @@ Handles:
 
 from __future__ import annotations
 
-import os
 import shutil
-import stat
-from contextlib import ExitStack
 from pathlib import Path
 
 import structlog
@@ -20,32 +17,6 @@ import structlog
 from ._utils import _result_action_key
 
 logger = structlog.get_logger(__name__)
-
-_SUPPORTS_PINNED_CONTEXT_CLEANUP = (
-    bool(getattr(os, "O_DIRECTORY", 0))
-    and bool(getattr(os, "O_NOFOLLOW", 0))
-    and os.open in os.supports_dir_fd
-    and os.stat in os.supports_dir_fd
-    and os.unlink in os.supports_dir_fd
-    and os.listdir in os.supports_fd
-)
-
-# Files in .trw/context/ that are always preserved during cleanup.
-_CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "analytics.yaml",
-        "behavioral_protocol.md",
-        "behavioral_protocol.yaml",
-        "build-status.yaml",
-        "ceremony-feedback.yaml",
-        "ceremony-state.json",
-        "injected_learning_ids.txt",
-        "last_ups_phase",
-        "messages.yaml",
-        "pre_compact_state.json",
-        "hooks-reference.yaml",
-    }
-)
 
 # PRD-FIX-032: Maps old non-prefixed skill/agent names to their trw- successors.
 # Used by _migrate_prefix_predecessors() to remove stale predecessors during
@@ -115,6 +86,9 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
 }
 
 
+# Context-cleanup policy extracted to _version_migration_context (PRD-FIX-120,
+# 350-eLOC gate). Re-exported here so _update_project.py, bootstrap/__init__.py,
+# and existing tests keep a single import point.
 # Manifest read/hash helpers extracted to _version_manifest (PRD-DIST-243 batch 14).
 # Re-exported here for backward compatibility with callers that import via
 # this facade (_update_project.py, bootstrap/__init__.py, test modules).
@@ -130,6 +104,21 @@ from trw_mcp.bootstrap._version_manifest import (
 from trw_mcp.bootstrap._version_manifest import (
     _read_manifest as _read_manifest,
 )
+from trw_mcp.bootstrap._version_migration_context import (
+    _CONTEXT_ALLOWLIST as _CONTEXT_ALLOWLIST,
+)
+from trw_mcp.bootstrap._version_migration_context import (
+    _SUPPORTS_PINNED_CONTEXT_CLEANUP as _SUPPORTS_PINNED_CONTEXT_CLEANUP,
+)
+from trw_mcp.bootstrap._version_migration_context import (
+    _TRANSIENT_PATTERNS as _TRANSIENT_PATTERNS,
+)
+from trw_mcp.bootstrap._version_migration_context import (
+    _cleanup_context_transients as _cleanup_context_transients,
+)
+from trw_mcp.bootstrap._version_migration_context import (
+    _is_transient_context_artifact as _is_transient_context_artifact,
+)
 
 
 def _write_manifest(
@@ -144,8 +133,17 @@ def _write_manifest(
     TRW-managed artifacts from user-created custom ones.
 
     PRD-FIX-068-FR04: Manifest version 2 includes SHA256 content hashes.
+
+    PRD-FIX-121-FR01/FR05: ``content_hashes`` is built by the declared recorder
+    registry in ``_manifest_recorders.py`` and by nothing else. Every recorder is
+    handed the PRE-run manifest and declines to record an artifact the user has
+    edited, so a preserved edit is never laundered into TRW's ownership baseline
+    and overwritten on the following update. Inlining a fourth key producer here
+    is what the FR05 totality test exists to catch — add it to the registry.
     """
+    from ._manifest_recorders import collect_manifest_content_hashes
     from ._template_updater import _get_bundled_names, _get_custom_names
+    from ._version_manifest import _manifest_content_hashes
 
     bundled = _get_bundled_names(data_dir)
     custom = _get_custom_names(target_dir, data_dir)
@@ -153,10 +151,8 @@ def _write_manifest(
     # are not permanently protected as false-custom entries.
     predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
-    content_hashes = _compute_content_hashes(target_dir, bundled)
-    # FIX B: also record codex agent/skill hashes so the next update can do a
-    # content-aware refresh (unmodified → refresh, user-edited → preserve).
-    content_hashes.update(_codex_manifest_hashes(target_dir))
+    prev_hashes = _manifest_content_hashes(_read_manifest(target_dir))
+    content_hashes = collect_manifest_content_hashes(target_dir, prev_hashes, data_dir)
     manifest = {
         "version": 2,
         "skills": bundled["skills"],
@@ -197,79 +193,6 @@ def _write_manifest(
 # ---------------------------------------------------------------------------
 # Context cleanup
 # ---------------------------------------------------------------------------
-
-
-def _cleanup_context_transients(
-    target_dir: Path,
-    result: dict[str, list[str]],
-    dry_run: bool = False,
-) -> None:
-    """Remove transient artifacts from .trw/context/ during update-project.
-
-    Preserves files in ``_CONTEXT_ALLOWLIST``.  Deletes everything else that
-    is a regular file (not a directory, not a symlink).
-
-    Args:
-        target_dir: Root of the target git repository.
-        result: Mutable result dict -- cleaned paths appended to ``result["cleaned"]``.
-        dry_run: When ``True``, report what would be removed without deleting.
-    """
-    context_dir = target_dir / ".trw" / "context"
-    if not _SUPPORTS_PINNED_CONTEXT_CLEANUP:
-        result.setdefault("warnings", []).append(
-            f"Skipped context cleanup because this platform cannot safely pin {context_dir}"
-        )
-        return
-
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    cleaned: list[str] = []
-    with ExitStack() as opened_dirs:
-        try:
-            root_fd = os.open(target_dir, directory_flags)
-            opened_dirs.callback(os.close, root_fd)
-            trw_fd = os.open(".trw", directory_flags, dir_fd=root_fd)
-            opened_dirs.callback(os.close, trw_fd)
-            context_fd = os.open("context", directory_flags, dir_fd=trw_fd)
-            opened_dirs.callback(os.close, context_fd)
-        except FileNotFoundError:
-            return
-        except OSError as exc:
-            result.setdefault("warnings", []).append(f"Skipped unsafe context cleanup for {context_dir}: {exc}")
-            return
-
-        try:
-            entry_names = sorted(os.listdir(context_fd))
-        except OSError as exc:
-            result.setdefault("warnings", []).append(f"Skipped unreadable context cleanup for {context_dir}: {exc}")
-            return
-
-        for name in entry_names:
-            if name in _CONTEXT_ALLOWLIST:
-                continue
-            try:
-                entry_stat = os.stat(name, dir_fd=context_fd, follow_symlinks=False)
-            except OSError as exc:
-                result["errors"].append(f"Failed to inspect {context_dir / name}: {exc}")
-                continue
-            if not stat.S_ISREG(entry_stat.st_mode):
-                continue
-            path = context_dir / name
-            if dry_run:
-                result["cleaned"].append(f"would remove: {path}")
-                continue
-            try:
-                os.unlink(name, dir_fd=context_fd)
-                result["cleaned"].append(str(path))
-                cleaned.append(name)
-            except OSError as exc:
-                result["errors"].append(f"Failed to remove {path}: {exc}")
-
-    logger.info(
-        "context_cleanup",
-        target=str(target_dir),
-        cleaned_count=len(cleaned),
-        dry_run=dry_run,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +408,7 @@ def _cleanup_stale_artifacts(
     dry_run: bool,
     *,
     cleanup_context: bool = True,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Remove stale and transient artifacts after a framework update.
 
@@ -504,6 +428,9 @@ def _cleanup_stale_artifacts(
         data_dir: Optional override for the bundled data directory; passed
             through to ``_remove_stale_artifacts``.
         dry_run: When ``True``, report what would change without deleting files.
+        manifest_hashes: The PRE-run manifest content hashes, threaded from
+            ``update_project``. Pass 2's file-granular sweep uses them as proof
+            of TRW authorship before deleting anything inside a kept skill dir.
     """
     # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
     _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
@@ -517,7 +444,7 @@ def _cleanup_stale_artifacts(
     # FIX A: sweep codex/cursor/copilot mirror dirs for dropped bundled
     # artifacts (trw- prefixed names no longer in the current bundle). Runs the
     # same dry_run-aware "would remove:" reporting as the .claude/.opencode pass.
-    _remove_stale_client_artifacts(target_dir, result, dry_run=dry_run)
+    _remove_stale_client_artifacts(target_dir, result, dry_run=dry_run, manifest_hashes=manifest_hashes)
 
     # Context cleanup can run post-transaction so a failed update never
     # deletes live session state that rollback deliberately does not snapshot.

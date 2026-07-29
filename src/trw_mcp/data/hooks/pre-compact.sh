@@ -29,8 +29,38 @@ fi
 
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 
-# Find active run
-_run_dir=$(find_active_run) || true
+# --- Find THIS SESSION'S OWN run (PRD-FIX-118 FR03) ------------------------
+# This snapshot is what post-compact.sh and session-start.sh replay back into the
+# model as "RECOVERED RUN / RECOVERED PHASE" after compaction. Snapshotting the
+# newest run therefore does not just mislabel a field: it tells a freshly
+# compacted agent to resume inside a parallel instance's run, at that run's phase,
+# quoting that run's checkpoint text.
+#
+# What "unowned" means HERE: still write the snapshot, with the run-scoped fields
+# EMPTY. The hook has real non-run-scoped duties (clearing the injected-learning
+# dedup file, recording the compaction trigger, arming the recovery marker that
+# middleware/ceremony.py keys on existence), and both readers already degrade
+# correctly on an empty run_path ("No active run found in pre-compaction
+# snapshot"). Skipping the write would disarm recovery entirely.
+_session_id=""
+if command -v jq >/dev/null 2>&1; then
+  _session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
+fi
+if [ -z "$_session_id" ]; then
+  _session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+fi
+_session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""
+
+_run_dir=""
+_ownership="unowned"
+if [ -n "$_session_id" ]; then
+  _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""
+  [ -n "$_run_dir" ] && _ownership="owned"
+else
+  # Identity unknown — legacy newest-wins, correct for a single-instance install.
+  _ownership="identity-unknown"
+  _run_dir=$(find_active_run) || _run_dir=""
+fi
 
 _run_path=""
 _phase=""
@@ -95,12 +125,13 @@ if command -v jq >/dev/null 2>&1; then
     --arg wave_manifest "$_wave_manifest" \
     --argjson active_tasks "${_active_tasks:-0}" \
     --arg pending_decisions "$_pending_decisions" \
-    '{ts: $ts, trigger: $trigger, run_path: $run_path, phase: $phase, events_logged: $event_count, last_checkpoint: $last_checkpoint, wave_manifest: $wave_manifest, active_tasks: $active_tasks, pending_decisions: $pending_decisions}' \
+    --arg ownership "$_ownership" \
+    '{ts: $ts, trigger: $trigger, run_path: $run_path, phase: $phase, events_logged: $event_count, last_checkpoint: $last_checkpoint, wave_manifest: $wave_manifest, active_tasks: $active_tasks, pending_decisions: $pending_decisions, ownership: $ownership}' \
     > "$_state_file" 2>/dev/null
 else
   # Fallback: minimal JSON (no user-controlled strings to avoid injection)
-  printf '{"ts":"%s","trigger":"%s","run_path":"%s","phase":"%s","events_logged":%s}\n' \
-    "$_ts" "$_trigger" "$_run_path" "$_phase" "${_event_count:-0}" \
+  printf '{"ts":"%s","trigger":"%s","run_path":"%s","phase":"%s","events_logged":%s,"ownership":"%s"}\n' \
+    "$_ts" "$_trigger" "$_run_path" "$_phase" "${_event_count:-0}" "$_ownership" \
     > "$_state_file" 2>/dev/null
 fi
 

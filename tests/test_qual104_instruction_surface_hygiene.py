@@ -213,6 +213,34 @@ class TestBundledSurfaceLoader:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_instruction_text(root: Path, rel: str) -> str:
+    """Return an instruction file's text with its ``@``-imports resolved.
+
+    PRD-QUAL-104-FR03 was amended by operator decision (2026-07-28): an
+    EAGERLY-RESOLVED ``@``-include satisfies "states the gate verbatim". FR03's
+    original rationale was that the instruction file is the protocol carrier "for
+    a client that has no other channel into the gate" — an eager include IS such a
+    channel, and did not exist when the requirement was written. Both Claude
+    Code's ``@path`` and Copilot CLI's ``@relpath`` load at session start, so the
+    gate text reaches the model either way.
+
+    What did NOT change: the gate must still be *reachable*. Resolving the import
+    is a stricter check than a raw read — a dangling include contributes nothing
+    here, so the assertion fails, which a raw substring check could not tell apart
+    from success.
+    """
+    target = root / rel
+    text = target.read_text(encoding="utf-8")
+    parts = [text]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("@") and len(stripped.split()) == 1:
+            imported = root / stripped[1:]
+            if imported.is_file():
+                parts.append(imported.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 class TestLightClientGateInjection:
     """Every light-client instruction file carries the gate + session-start."""
 
@@ -236,7 +264,7 @@ class TestLightClientGateInjection:
         from trw_mcp.bootstrap._copilot import generate_copilot_instructions
 
         generate_copilot_instructions(tmp_path, force=True)
-        body = (tmp_path / ".github" / "copilot-instructions.md").read_text(encoding="utf-8")
+        body = _resolve_instruction_text(tmp_path, ".github/copilot-instructions.md")
         assert _DELIVER_GATE_PHRASE in body
         assert _SESSION_START_PHRASE in body
 
@@ -264,7 +292,7 @@ class TestLightClientGateInjection:
                 ".codex/INSTRUCTIONS.md",
                 ".github/copilot-instructions.md",
             ):
-                body = (tmp_path / rel).read_text(encoding="utf-8")
+                body = _resolve_instruction_text(tmp_path, rel)
                 assert _DELIVER_GATE_PHRASE in body, f"gate text suppressed in {rel}"
         finally:
             reload_config(None)
@@ -584,7 +612,7 @@ def test_marker_hash_helper_is_stable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_framework_md(root: Path, version_line: str = "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK") -> None:
+def _write_framework_md(root: Path, version_line: str = "v26.2_TRW — MODEL-AGNOSTIC FRAMEWORK") -> None:
     """Write a fake canonical FRAMEWORK.md under <root>/.trw/frameworks/."""
     fw = root / ".trw" / "frameworks"
     fw.mkdir(parents=True, exist_ok=True)
@@ -679,19 +707,19 @@ class TestVersionDrift:
     """version_drift: a vN[.M]_TRW / TRW vN[.M] token disagreeing with canon."""
 
     def test_stale_version_flagged_with_correct_version(self, tmp_path: Path) -> None:
-        """v25_TRW token while canonical is v26.1 -> version_drift."""
+        """v25_TRW token while canonical is v26.2 -> version_drift."""
         (tmp_path / "AGENTS.md").write_text("This follows the v25_TRW protocol.\n", encoding="utf-8")
-        _write_framework_md(tmp_path, "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK")
+        _write_framework_md(tmp_path, "v26.2_TRW — MODEL-AGNOSTIC FRAMEWORK")
         proc = _run_lint("--strict", cwd=tmp_path)
         assert proc.returncode == 1, proc.stdout
         assert "version_drift" in proc.stdout, proc.stdout
         assert "v25_TRW" in proc.stdout
-        assert "v26.1" in proc.stdout
+        assert "v26.2" in proc.stdout
 
     def test_matching_version_clean(self, tmp_path: Path) -> None:
-        """A v26.1_TRW token matching canonical v26.1 is not flagged."""
-        (tmp_path / "AGENTS.md").write_text("This follows the v26.1_TRW protocol.\n", encoding="utf-8")
-        _write_framework_md(tmp_path, "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK")
+        """A v26.2_TRW token matching canonical v26.2 is not flagged."""
+        (tmp_path / "AGENTS.md").write_text("This follows the v26.2_TRW protocol.\n", encoding="utf-8")
+        _write_framework_md(tmp_path, "v26.2_TRW — MODEL-AGNOSTIC FRAMEWORK")
         proc = _run_lint("--strict", cwd=tmp_path)
         assert "version_drift" not in proc.stdout, proc.stdout
 
@@ -708,7 +736,7 @@ class TestVersionDrift:
     def test_trw_v_prose_form_flagged(self, tmp_path: Path) -> None:
         """The 'TRW v25' prose form is also detected (case-insensitive)."""
         (tmp_path / "CLAUDE.md").write_text("Built on TRW v25 conventions.\n", encoding="utf-8")
-        _write_framework_md(tmp_path, "v26.1_TRW — MODEL-AGNOSTIC FRAMEWORK")
+        _write_framework_md(tmp_path, "v26.2_TRW — MODEL-AGNOSTIC FRAMEWORK")
         proc = _run_lint("--strict", cwd=tmp_path)
         assert "version_drift" in proc.stdout, proc.stdout
 

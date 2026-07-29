@@ -46,6 +46,13 @@ def _toml_value(value: object) -> str:
     if isinstance(value, int | float):
         return str(value)
     if isinstance(value, list):
+        # Empty list FIRST: ``all(...)`` over an empty sequence is vacuously
+        # True, which used to route [] into the inline-table branch below and
+        # emit the invalid TOML ``[\n  ,\n]``. Latent until the trw entry's
+        # ``args`` became empty (2026-07-27 --debug removal), at which point
+        # every generated .codex/config.toml failed to parse.
+        if not value:
+            return "[]"
         if all(isinstance(item, dict) for item in value):
             inline_tables: list[str] = []
             for item in value:

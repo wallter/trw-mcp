@@ -25,11 +25,12 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
+BUNDLED_AGENTS_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 
 _VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high"})
 # Dev-repo-only agents installed by channel bootstrap (e.g. trw-distill channels),
-# not part of the 12 bundled-mirror set. They still receive hygiene checks via the
-# parametrized tests, but are excluded from the bundled-count sanity assertion.
+# not part of the bundled-mirror set. They still receive hygiene checks via the
+# parametrized tests, but are excluded from the mirror-parity assertion.
 _DEV_ONLY_AGENTS: frozenset[str] = frozenset({"trw-distill-explorer.md", "trw-distill-sonnet-judge.md"})
 _PRESCRIPTIVE_LINE_START_RE = re.compile(r"^(MUST|CRITICAL|RIGID):", re.MULTILINE)
 
@@ -122,7 +123,8 @@ def test_no_prescriptive_line_starts(agent_path: Path) -> None:
     body = _agent_body(agent_path)
     matches = _PRESCRIPTIVE_LINE_START_RE.findall(body)
     assert not matches, (
-        f"{agent_path.name}: prescriptive line-starts remain {matches!r}; soften per OPUS-4-8-BEST-PRACTICES.md §2"
+        f"{agent_path.name}: prescriptive line-starts remain {matches!r}; soften per "
+        "docs/documentation/prompting/OPUS-5-BEST-PRACTICES.md §3"
     )
 
 
@@ -160,6 +162,64 @@ def test_never_always_survivors_budget() -> None:
     )
 
 
+def test_review_agents_do_not_suppress_findings() -> None:
+    """Coverage-first inversion (OPUS-5-BEST-PRACTICES.md §6).
+
+    A review-shaped agent told to "only report high-severity issues", to
+    "suppress" findings below a confidence floor, or to prefer "quality over
+    quantity" is followed literally: the model investigates just as deeply and
+    then declines to report what it judges below the bar, so measured recall
+    falls. Filtering belongs downstream of the reviewer, not inside it.
+
+    Guards the three review-shaped agents plus the shared audit protocol, which
+    is where a reinstated floor would do the most damage.
+    """
+    targets = [
+        AGENTS_DIR / "trw-reviewer.md",
+        AGENTS_DIR / "trw-auditor.md",
+        AGENTS_DIR / "trw-adversarial-auditor.md",
+        REPO_ROOT / ".claude" / "skills" / "trw-audit" / "SKILL.md",
+    ]
+    missing = [p for p in targets if not p.exists()]
+    assert not missing, f"review surfaces missing (non-vacuity guard): {[str(p) for p in missing]}"
+
+    banned = (
+        "only report high-severity",
+        "only report the high-severity",
+        "suppress all findings",
+        "do not report",
+        "quality over quantity",
+        "be conservative",
+    )
+    offenders: dict[str, list[str]] = {}
+    for path in targets:
+        lowered = path.read_text(encoding="utf-8").lower()
+        hits = [phrase for phrase in banned if phrase in lowered]
+        if hits:
+            offenders[path.name] = hits
+    assert not offenders, (
+        f"suppression instructions reinstated: {offenders!r}. Report every finding with a "
+        "confidence and severity label and let a downstream filter rank them "
+        "(OPUS-5-BEST-PRACTICES.md §6)."
+    )
+
+
+def test_reviewer_states_the_coverage_contract() -> None:
+    """The positive half of §6: the reviewer must ask for coverage explicitly.
+
+    Absence of suppression language is not the same as presence of a coverage
+    instruction — without this the previous test would pass on an agent that
+    simply says nothing about reporting breadth.
+    """
+    body = _agent_body(AGENTS_DIR / "trw-reviewer.md").lower()
+    assert "report every issue you find" in body, (
+        "trw-reviewer.md lost its coverage-first instruction (OPUS-5-BEST-PRACTICES.md §6)"
+    )
+    assert "do not filter for importance or confidence at this stage" in body, (
+        "trw-reviewer.md lost the downstream-filtering clause (OPUS-5-BEST-PRACTICES.md §6)"
+    )
+
+
 def test_auditors_reference_shared_doc() -> None:
     """FR06: both auditor files cite ``audit-framework.md`` in the first 30 body lines.
 
@@ -179,10 +239,17 @@ def test_auditors_reference_shared_doc() -> None:
         )
 
 
-def test_agents_dir_has_expected_count() -> None:
-    """Sanity: the 12 bundled-mirror agents are present (dev-only channel agents excluded)."""
-    bundled_mirror = [p for p in _agent_files() if p.name not in _DEV_ONLY_AGENTS]
-    assert len(bundled_mirror) == 12, (
-        f"expected 12 bundled-mirror agents in {AGENTS_DIR}, found {len(bundled_mirror)} "
-        f"(dev-only excluded: {sorted(_DEV_ONLY_AGENTS)}; total files: {len(_agent_files())})"
+def test_agents_dir_mirrors_the_bundled_set() -> None:
+    """Every bundled agent has a mirror copy, and the mirror adds nothing unexpected.
+
+    Derived from the bundled directory rather than a hardcoded count: a literal
+    went stale the moment an agent was retired (``trw-code-simplifier``, commit
+    ``0ea46a6e34``) and failed for every later change that touched this tree.
+    """
+    bundled = {p.name for p in sorted(BUNDLED_AGENTS_DIR.glob("*.md"))}
+    assert bundled, f"no bundled agents found in {BUNDLED_AGENTS_DIR}"
+    mirrored = {p.name for p in _agent_files()} - _DEV_ONLY_AGENTS
+    assert mirrored == bundled, (
+        f"mirror drift: only in {AGENTS_DIR}: {sorted(mirrored - bundled)}; "
+        f"only in {BUNDLED_AGENTS_DIR}: {sorted(bundled - mirrored)} — run scripts/sync-agents.py"
     )

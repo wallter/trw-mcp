@@ -27,8 +27,14 @@ def test_cursor_skills_mirror_fresh_write(tmp_path: Path) -> None:
 
 
 @pytest.mark.integration
-def test_cursor_skills_mirror_preserves_user_skills(tmp_path: Path) -> None:
-    """generate_cursor_skills_mirror does NOT remove user skills outside the list."""
+def test_cursor_skills_mirror_preserves_skills_outside_the_mirrored_set(tmp_path: Path) -> None:
+    """A user skill NOT in ``skill_names`` is never touched.
+
+    Renamed from ``..._preserves_user_skills``: it only ever covered a skill
+    OUTSIDE the mirrored set, which the mirror loop never visits. The destructive
+    path — a hand edit INSIDE a mirrored skill dir — is
+    ``test_cursor_skills_mirror_preserves_user_edit_inside_mirrored_skill``.
+    """
     from trw_mcp.bootstrap._cursor import generate_cursor_skills_mirror
 
     user_skill = tmp_path / ".cursor" / "skills" / "my-custom-skill"
@@ -43,6 +49,56 @@ def test_cursor_skills_mirror_preserves_user_skills(tmp_path: Path) -> None:
 
     assert (user_skill / "SKILL.md").is_file()
     assert (user_skill / "SKILL.md").read_text() == "my custom skill"
+
+
+@pytest.mark.integration
+def test_cursor_skills_mirror_preserves_user_edit_inside_mirrored_skill(tmp_path: Path) -> None:
+    """A hand edit INSIDE a mirrored skill dir survives a re-run (CONSTITUTION HB-2).
+
+    The unconditional ``copytree(..., dirs_exist_ok=True)`` this replaces
+    destroyed it on every ``update-project``.
+    """
+    from trw_mcp.bootstrap._cursor import generate_cursor_skills_mirror
+
+    source_dir = tmp_path / "fake_skills"
+    (source_dir / "trw-deliver").mkdir(parents=True)
+    (source_dir / "trw-deliver" / "SKILL.md").write_text("# trw-deliver", encoding="utf-8")
+
+    generate_cursor_skills_mirror(tmp_path, ["trw-deliver"], source_dir=source_dir)
+    edited = tmp_path / ".cursor" / "skills" / "trw-deliver" / "SKILL.md"
+    edited.write_text("# my hand-edited deliver skill", encoding="utf-8")
+
+    result = generate_cursor_skills_mirror(tmp_path, ["trw-deliver"], source_dir=source_dir)
+
+    assert edited.read_text(encoding="utf-8") == "# my hand-edited deliver skill"
+    assert ".cursor/skills/trw-deliver" in result.get("preserved", [])
+
+
+@pytest.mark.integration
+def test_cursor_skills_mirror_refreshes_untouched_file_when_bundle_changes(tmp_path: Path) -> None:
+    """The other direction: a stale-but-untouched mirrored file still refreshes."""
+    import hashlib
+
+    from trw_mcp.bootstrap._cursor import generate_cursor_skills_mirror
+
+    source_dir = tmp_path / "fake_skills"
+    (source_dir / "trw-deliver").mkdir(parents=True)
+    (source_dir / "trw-deliver" / "SKILL.md").write_text("# trw-deliver v2", encoding="utf-8")
+
+    dest = tmp_path / ".cursor" / "skills" / "trw-deliver" / "SKILL.md"
+    dest.parent.mkdir(parents=True)
+    stale = "# trw-deliver v1"
+    dest.write_text(stale, encoding="utf-8")
+    manifest_hashes = {
+        ".cursor/skills/trw-deliver/SKILL.md": hashlib.sha256(stale.encode("utf-8")).hexdigest(),
+    }
+
+    result = generate_cursor_skills_mirror(
+        tmp_path, ["trw-deliver"], source_dir=source_dir, manifest_hashes=manifest_hashes
+    )
+
+    assert dest.read_text(encoding="utf-8") == "# trw-deliver v2"
+    assert ".cursor/skills/trw-deliver" in result.get("updated", [])
 
 
 @pytest.mark.integration

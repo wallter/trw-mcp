@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from packaging.specifiers import SpecifierSet
 
 import trw_mcp
 
@@ -77,21 +78,59 @@ def test_uv_lock_version_matches_pyproject() -> None:
     assert _lock_package("trw-mcp")["version"] == _pyproject_version()
 
 
-def test_uv_lock_tracks_current_memory_and_sqlite_deps() -> None:
-    """Lock must include the current trw-memory floor and Linux pysqlite wheel."""
-    mcp_package = _lock_package("trw-mcp")
-    metadata = mcp_package["metadata"]
+def _pyproject_specifier(package: str) -> str:
+    """Return the version specifier pyproject.toml declares for *package*.
+
+    Derived, never hardcoded: a literal expectation goes stale on every bump and
+    then fails for a reason unrelated to the invariant it is supposed to guard.
+    """
+    for raw in _pyproject()["project"]["dependencies"]:
+        requirement = str(raw)
+        name, _, specifier = requirement.partition(">=")
+        if name.strip().split(";")[0].strip() == package:
+            return f">={specifier.strip()}"
+    raise AssertionError(f"{package} is not a declared runtime dependency")
+
+
+def test_uv_lock_dependency_specifiers_match_pyproject() -> None:
+    """uv.lock must record the SAME trw-memory floor pyproject declares.
+
+    This is the invariant that protects users, not a cosmetic sync: the lock is
+    what an install resolves from, so a lock whose floor lags pyproject silently
+    hands every user a package older than the code requires — a symbol added in
+    the newer version then degrades or raises at runtime with nothing failing at
+    install time. (Observed 2026-07-24: `verification_status` shipped in
+    trw-memory while consumers still resolved a release without it.)
+
+    Expectations are DERIVED from pyproject, so this test stays correct across
+    version bumps and fails only when the lock genuinely drifts. When it fails:
+    publish the new trw-memory, then re-run `uv lock` in trw-mcp — in that order,
+    since the lock resolves trw-memory from the PyPI registry and cannot pin a
+    version that is not published yet.
+    """
+    metadata = _lock_package("trw-mcp")["metadata"]
     assert isinstance(metadata, dict)
     requirements = metadata["requires-dist"]
     assert isinstance(requirements, list)
 
-    memory_deps = [dep for dep in requirements if isinstance(dep, dict) and dep.get("name") == "trw-memory"]
-    assert memory_deps == [{"name": "trw-memory", "specifier": ">=0.9.0,<1.0.0"}]
-    assert _lock_package("trw-memory")["version"] == "0.9.0"
+    declared = _pyproject_specifier("trw-memory")
+    locked = [dep for dep in requirements if isinstance(dep, dict) and dep.get("name") == "trw-memory"]
+    assert len(locked) == 1, f"expected exactly one trw-memory requirement, got {locked}"
+    assert locked[0].get("specifier") == declared, (
+        f"uv.lock records trw-memory{locked[0].get('specifier')} but pyproject declares "
+        f"trw-memory{declared}. Publish trw-memory first, then re-run `uv lock`."
+    )
+
+    # The resolved version must actually satisfy the declared floor — a matching
+    # specifier string with a stale resolved version is the same user-facing bug.
+    resolved = str(_lock_package("trw-memory")["version"])
+    assert SpecifierSet(declared).contains(resolved), (
+        f"uv.lock resolved trw-memory=={resolved}, which does not satisfy {declared}"
+    )
 
     sqlite_deps = [dep for dep in requirements if isinstance(dep, dict) and dep.get("name") == "pysqlite3-binary"]
     assert sqlite_deps == [{"name": "pysqlite3-binary", "marker": "sys_platform == 'linux'", "specifier": ">=0.5.4"}]
-    assert _lock_package("pysqlite3-binary")["version"] == "0.5.4.post2"
+    assert SpecifierSet(">=0.5.4").contains(str(_lock_package("pysqlite3-binary")["version"]))
 
 
 def test_pyproject_declares_core_runtime_direct_dependencies() -> None:

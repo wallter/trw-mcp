@@ -166,7 +166,7 @@ def test_agent_file_has_placeholder(fname: str) -> None:
 
 
 def test_agent_frontmatter_mcp_prefix_preserved() -> None:
-    """PRD-FIX-078 FR04: frontmatter `allowedTools:` lines must remain literal
+    """PRD-FIX-078 FR04: frontmatter `tools:` entries must remain literal
     mcp__trw__ strings — claude-code parses them directly."""
     text = (_AGENTS_DIR / "trw-lead.md").read_text()
     assert "mcp__trw__trw_" in text

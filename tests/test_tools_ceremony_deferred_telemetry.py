@@ -368,10 +368,9 @@ class TestStepTelemetryTornEvents:
         ``FileStateReader.read_jsonl`` raised ``StateError`` on the first
         malformed line, and ``_run_step`` records any step exception as a failed
         step — so a single torn concurrent append wiped the entire telemetry
-        emission (tool count, ceremony score, and the session_summary write that
-        feeds trw_quality_dashboard). The resilient reader skips just the torn
-        line, so the surrounding intact events are still counted (regression
-        guard).
+        emission (tool count, ceremony score, and the persisted session_summary).
+        The resilient reader skips just the torn line, so the surrounding intact
+        events are still counted (regression guard).
         """
         from unittest.mock import MagicMock
 

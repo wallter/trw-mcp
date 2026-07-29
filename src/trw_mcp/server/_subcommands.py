@@ -37,11 +37,17 @@ from trw_mcp.server._subcommands_doctor import (
     _run_doctor as _run_doctor,
 )
 from trw_mcp.server._subcommands_gc import _run_gc as _run_gc
+from trw_mcp.server._subcommands_learn_drain import (
+    _run_learn_drain as _run_learn_drain,
+)
 from trw_mcp.server._subcommands_lifecycle import (
     _run_auth as _run_auth,
 )
 from trw_mcp.server._subcommands_lifecycle import (
     _run_uninstall as _run_uninstall,
+)
+from trw_mcp.server._subcommands_maintain import (
+    _run_maintain_verify as _run_maintain_verify,
 )
 from trw_mcp.server._subcommands_misc import (
     _run_config_reference as _run_config_reference,
@@ -384,6 +390,8 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "check-instructions": _run_check_instructions,
     "doctor": _run_doctor,
     "gc": _run_gc,
+    "maintain-verify": _run_maintain_verify,
+    "learn-drain": _run_learn_drain,
     "channel-doctor": _run_channel_doctor,
     "session-changelog": _run_session_changelog,
     "tendencies": _run_tendencies,

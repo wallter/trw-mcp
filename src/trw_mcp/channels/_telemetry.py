@@ -79,6 +79,11 @@ VALID_EVENT_TYPES: frozenset[str] = frozenset(
         "subagent_outcome",
         "throttle_applied",
         "throttle_cleared",
+        # --- PRD-CORE-231-FR01: edit-time hint delivery measurement ---
+        # Emitted whenever an ELIGIBLE edit resolves a hint tier, so the >=90%
+        # T2 delivery gate can be measured from durable telemetry rather than
+        # the 24h-TTL context directory the CC-03 hook writes.
+        "hint_delivered",
         # --- Distinct renderer skip/error events (HIGH-1 fix) ---
         # channel_conflict is now reserved for write-conflict (human edit detected).
         # Lock-skip and internal errors get their own event types so meta-tune

@@ -96,6 +96,12 @@ def _governing_files(project_root: Path, prd_ids: tuple[str, ...]) -> tuple[tupl
     return tuple(paths), digest
 
 
+def _realized_roles(review_data: dict[str, object]) -> tuple[str, ...]:
+    """Reviewer roles the artifact actually attests to, from its own stamp."""
+    roles_raw = review_data.get("reviewer_roles_run", [])
+    return tuple(str(role) for role in roles_raw) if isinstance(roles_raw, list) else ()
+
+
 def _requirements_for_artifact(
     review_data: dict[str, object],
 ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -104,15 +110,16 @@ def _requirements_for_artifact(
     substantive = review_data.get("substantive") is True
     if mode == "auto":
         required = _AUTO_RUBRICS
-        roles_raw = review_data.get("reviewer_roles_run", [])
-        realized_roles = tuple(str(role) for role in roles_raw) if isinstance(roles_raw, list) else ()
+        # A non-substantive auto artifact realizes NOTHING, exactly like the
+        # manual and cross_model branches below. Auto was the sole branch that
+        # carried its realized roles through a degraded analysis.
+        realized_roles = _realized_roles(review_data) if substantive else ()
         return required, required, realized_roles, realized_roles
     if mode == "cross_model":
         if str(review_data.get("review_family_coverage", "")) == "cross_family":
             realized = _CROSS_MODEL_RUBRICS if substantive else ()
             return _CROSS_MODEL_RUBRICS, _CROSS_MODEL_RUBRICS, realized, realized
-        roles_raw = review_data.get("reviewer_roles_run", [])
-        realized_roles = tuple(str(role) for role in roles_raw) if isinstance(roles_raw, list) else ()
+        realized_roles = _realized_roles(review_data) if substantive else ()
         return _AUTO_RUBRICS, _AUTO_RUBRICS, realized_roles, realized_roles
     realized = _MANUAL_RUBRICS if substantive else ()
     realized_roles = _MANUAL_ROLES if substantive else ()
@@ -198,7 +205,15 @@ def record_review_receipt(
                 or review_data.get("non_substantive_reason")
                 or "review_not_substantive"
             )
-        verdict = ReviewVerdict(str(review_data.get("verdict", "pass")))
+        raw_verdict = str(review_data.get("verdict", "")).strip()
+        if not raw_verdict:
+            # A receipt is authoritative evidence. Defaulting an absent verdict to
+            # "pass" minted a PASS receipt for a review that never stated an
+            # outcome — a gate reading it could not tell the two apart. No verdict
+            # means no receipt, the same direction every other failure here takes.
+            logger.warning("review_receipt_verdict_missing", run=str(run_path), review_plan_id=plan_id)
+            return ReviewReceiptWriteResult(plan_id=plan_id, reason_code="review_verdict_missing")
+        verdict = ReviewVerdict(raw_verdict)
         receipt = ReviewReceipt(
             receipt_id=receipt_id,
             review_id=str(review_data.get("review_id", "")),

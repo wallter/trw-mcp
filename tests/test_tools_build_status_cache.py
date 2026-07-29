@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from tests._tools_build_support import _write_build_cache  # noqa: F401
+from trw_mcp.dispatch._normalize import _strip_ansi
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.tools.build import cache_build_status
 
@@ -24,7 +24,10 @@ class TestBuildStatusModel:
         assert status.failure_count == 0
         assert status.failures == []
         assert status.scope == "full"
-        assert status.duration_secs == 0.0
+        # None, not 0.0: trw_build_check executes nothing and has no clock,
+        # so an unmeasured duration must be distinguishable from an instant
+        # one. See models/build.py::duration_secs.
+        assert status.duration_secs is None
 
     def test_full_status(self) -> None:
         status = BuildStatus(
@@ -56,7 +59,12 @@ class TestBuildStatusModel:
 
 
 class TestStripAnsi:
-    """Tests for ANSI escape code stripping."""
+    """Tests for ANSI escape code stripping.
+
+    ``_strip_ansi`` was not removed by PRD-CORE-098 — it MOVED to
+    ``dispatch/_normalize.py``. This class kept importing it from the deleted
+    subprocess module, which is part of why the whole file was skipping.
+    """
 
     def test_plain_text(self) -> None:
         assert _strip_ansi("hello world") == "hello world"

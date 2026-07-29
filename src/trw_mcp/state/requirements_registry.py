@@ -11,6 +11,11 @@ can never supply an epoch: the sole writer stamps dates from its injected
 trusted UTC clock, and every reconciliation consumes the latest committed
 ledger head. Ambient wall-clock changes after ledger commit alter no
 canonical registry bytes (NFR01).
+
+This module is the public facade. The ledger substrate lives in
+``state/_scheduling_ledger.py`` and the WIP activation gate in
+``state/_registry_activation.py``; both are re-exported here so every existing
+import path keeps working.
 """
 
 from __future__ import annotations
@@ -33,138 +38,53 @@ from trw_mcp.models.requirements import (
     RequirementRegistryEntry,
     SchedulingAction,
 )
+from trw_mcp.state._registry_activation import ActivationDecision, ActivationRefusedError, evaluate_activation
+from trw_mcp.state._scheduling_ledger import (
+    ANCHOR_FILENAME,
+    GENESIS_DIGEST,
+    LEDGER_FILENAME,
+    SchedulingLedgerError,
+    _write_anchor,
+    action_digest,
+    derive_evaluation_epoch,
+    ledger_head_digest,
+    load_ledger,
+    verify_ledger_head_anchor,
+)
 from trw_mcp.state.persistence import lock_for_rmw
 from trw_mcp.state.prd_utils import parse_frontmatter
+
+__all__ = [
+    "ANCHOR_FILENAME",
+    "GENESIS_DIGEST",
+    "LEDGER_FILENAME",
+    "REGISTRY_FILENAME",
+    "REGISTRY_SCHEMA",
+    "ActivationDecision",
+    "ActivationRefusedError",
+    "RegistryBuildResult",
+    "RegistryWriter",
+    "SchedulingLedgerError",
+    "action_digest",
+    "build_registry",
+    "derive_evaluation_epoch",
+    "evaluate_activation",
+    "ledger_head_digest",
+    "load_ledger",
+    "persist_registry",
+    "verify_ledger_head_anchor",
+]
 
 logger = structlog.get_logger(__name__)
 
 REGISTRY_SCHEMA = "requirements-registry/v1"
-LEDGER_FILENAME = "scheduling-ledger.jsonl"
 REGISTRY_FILENAME = "requirements-registry.json"
-GENESIS_DIGEST = "genesis"
 
 # Lifecycle statuses with no executable work remaining. Everything else is an
 # executable-registry member (includes non-canonical open aliases).
 _TERMINAL_STATUSES = frozenset({"done", "implemented", "merged", "deprecated", "delivered", "complete"})
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
-
-
-class SchedulingLedgerError(RuntimeError):
-    """Typed ledger failure — fork, gap, stale head, rollback, or tamper."""
-
-
-class ActivationRefusedError(RuntimeError):
-    """WIP-limit refusal (PRD-QUAL-121-FR04): carries the occupied slots."""
-
-    def __init__(self, reason: str, occupied_slots: list[str]) -> None:
-        super().__init__(reason)
-        self.occupied_slots = occupied_slots
-
-
-ANCHOR_FILENAME = "ledger-head.json"
-
-
-def _anchor_path(ledger_path: Path) -> Path:
-    return ledger_path.parent / ANCHOR_FILENAME
-
-
-def _read_anchor(ledger_path: Path) -> tuple[int, str] | None:
-    """Return the last committed (sequence, head_digest) anchor, if any."""
-    anchor = _anchor_path(ledger_path)
-    if not anchor.exists():
-        return None
-    try:
-        data = json.loads(anchor.read_text(encoding="utf-8"))
-        return int(data["sequence"]), str(data["head_digest"])
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise SchedulingLedgerError(f"ledger head anchor unreadable: {exc}") from exc
-
-
-def _write_anchor(ledger_path: Path, sequence: int, head_digest: str) -> None:
-    _anchor_path(ledger_path).write_text(
-        json.dumps({"sequence": sequence, "head_digest": head_digest}, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def verify_ledger_head_anchor(ledger_path: Path, actions: list[SchedulingAction]) -> None:
-    """Anti-rollback anchor check (PRD-QUAL-121 §Authorized Scheduling Ledger).
-
-    Prefix-chain verification alone cannot detect a truncated ledger (a valid
-    prefix) or an in-place rewrite of the TAIL action (nothing chains atop it).
-    The writer records the committed (sequence, head digest) beside the ledger
-    after every append; any ledger whose length or head diverges from the
-    anchor is an older/rolled-back/tampered head and MUST reconcile as
-    ``stale_scheduling_head``. Threat model: operator error and concurrent
-    races — a filesystem-level adversary who can forge both files is out of
-    scope (the ledger has no signing key by design).
-    """
-    anchor = _read_anchor(ledger_path)
-    if anchor is None:
-        if actions:
-            raise SchedulingLedgerError("ledger has actions but no committed head anchor")
-        return
-    sequence, head = anchor
-    if len(actions) != sequence or ledger_head_digest(actions) != head:
-        raise SchedulingLedgerError(
-            f"ledger head diverges from committed anchor (anchor seq={sequence}, ledger seq={len(actions)}): "
-            "older, rolled-back, or tail-tampered head"
-        )
-
-
-def action_digest(action: SchedulingAction) -> str:
-    """Content digest binding an action into the hash chain."""
-    payload = json.dumps(action.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def load_ledger(ledger_path: Path) -> list[SchedulingAction]:
-    """Load and chain-verify the scheduling ledger (typed failure on tamper).
-
-    Verifies sequence continuity (1..n) and that each action's
-    ``previous_action_digest`` equals the digest of its predecessor.
-    """
-    if not ledger_path.exists():
-        return []
-    actions: list[SchedulingAction] = []
-    previous_digest = GENESIS_DIGEST
-    for line_no, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), start=1):
-        if not line.strip():
-            continue
-        try:
-            action = SchedulingAction.model_validate(json.loads(line))
-        except Exception as exc:  # justified: boundary — malformed ledger is a typed failure
-            raise SchedulingLedgerError(f"ledger line {line_no} does not parse: {exc}") from exc
-        if action.sequence != len(actions) + 1:
-            raise SchedulingLedgerError(
-                f"ledger sequence gap or fork at line {line_no}: expected {len(actions) + 1}, got {action.sequence}"
-            )
-        if action.previous_action_digest != previous_digest:
-            raise SchedulingLedgerError(
-                f"ledger chain break at sequence {action.sequence}: stale or forked previous digest"
-            )
-        previous_digest = action_digest(action)
-        actions.append(action)
-    return actions
-
-
-def ledger_head_digest(actions: list[SchedulingAction]) -> str:
-    return action_digest(actions[-1]) if actions else GENESIS_DIGEST
-
-
-def derive_evaluation_epoch(actions: list[SchedulingAction]) -> EvaluationEpoch:
-    """EvaluationEpoch = (sequence, effective_utc_date, ledger_head_digest) of the
-    latest authorized ``advance_evaluation_epoch`` at the committed head."""
-    head = ledger_head_digest(actions)
-    for action in reversed(actions):
-        if action.kind == "advance_evaluation_epoch":
-            return EvaluationEpoch(
-                sequence=action.sequence,
-                effective_utc_date=action.effective_utc_date,
-                ledger_head_digest=head,
-            )
-    return EvaluationEpoch(sequence=0, effective_utc_date="1970-01-01", ledger_head_digest=head)
 
 
 class RegistryWriter:
@@ -430,70 +350,6 @@ def build_registry(
         expired=expired,
         limits=effective_limits,
     )
-
-
-@dataclass(slots=True)
-class ActivationDecision:
-    """Typed WIP-activation outcome — failures name the occupied slots."""
-
-    allowed: bool
-    reason: str
-    occupied_slots: list[str] = field(default_factory=list)
-
-
-def evaluate_activation(registry: RegistryBuildResult, prd_id: str) -> ActivationDecision:
-    """Check nested WIP limits for activating ``prd_id`` (PRD-QUAL-121-FR04)."""
-    if registry.status != "ok":
-        return ActivationDecision(False, f"registry unknown: {registry.status}")
-    candidate = next((entry for entry in registry.entries if entry.prd_id == prd_id), None)
-    if candidate is None:
-        return ActivationDecision(False, f"{prd_id} is not in the executable registry")
-
-    limits = registry.limits
-    wip_states = {ExecutionState.ACTIVE.value, ExecutionState.BLOCKED_EXTERNAL.value}
-    wip = [entry for entry in registry.entries if str(entry.execution_state) in wip_states]
-
-    def _ids(items: list[RequirementRegistryEntry]) -> list[str]:
-        return sorted(entry.prd_id for entry in items)
-
-    if str(candidate.execution_state) == ExecutionState.BLOCKED_EXTERNAL.value:
-        owner_blocked = [
-            entry
-            for entry in wip
-            if entry.owner == candidate.owner
-            and str(entry.execution_state) == ExecutionState.BLOCKED_EXTERNAL.value
-            and entry.prd_id != prd_id
-        ]
-        if len(owner_blocked) >= limits.blocked_external_exception_max:
-            return ActivationDecision(
-                False,
-                f"blocked-external exception limit {limits.blocked_external_exception_max} "
-                f"for owner {candidate.owner} is occupied",
-                _ids(owner_blocked),
-            )
-
-    p0 = [entry for entry in wip if entry.priority == "P0" and entry.prd_id != prd_id]
-    p0_p1 = [entry for entry in wip if entry.priority in ("P0", "P1") and entry.prd_id != prd_id]
-    checks: list[tuple[bool, list[RequirementRegistryEntry], str, int]] = [
-        (candidate.priority == "P0", p0, "global P0 active", limits.global_p0_active_max),
-        (candidate.priority in ("P0", "P1"), p0_p1, "global P0/P1 active", limits.global_p0_p1_active_max),
-        (
-            candidate.priority == "P0",
-            [entry for entry in p0 if entry.owner == candidate.owner],
-            f"per-owner P0 active ({candidate.owner})",
-            limits.per_owner_p0_active_max,
-        ),
-        (
-            candidate.priority in ("P0", "P1"),
-            [entry for entry in p0_p1 if entry.owner == candidate.owner],
-            f"per-owner P0/P1 active ({candidate.owner})",
-            limits.per_owner_p0_p1_active_max,
-        ),
-    ]
-    for applies, occupied, label, maximum in checks:
-        if applies and len(occupied) >= maximum:
-            return ActivationDecision(False, f"{label} limit {maximum} is occupied", _ids(occupied))
-    return ActivationDecision(True, "activation permitted within limits")
 
 
 def persist_registry(registry: RegistryBuildResult, registry_dir: Path) -> Path:

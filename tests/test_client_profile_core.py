@@ -235,10 +235,16 @@ def test_claude_code_profile_writes_claude_md() -> None:
 
 
 @pytest.mark.unit
-def test_opencode_profile_writes_agents_md() -> None:
-    """opencode profile has write_targets.agents_md=True."""
+def test_opencode_profile_writes_no_shared_agents_md() -> None:
+    """PRD-CORE-240-FR04: opencode contributes zero TRW bytes to the shared AGENTS.md.
+
+    It owns .opencode/INSTRUCTIONS.md and, since the FR05 fix, that file is
+    referenced from opencode.json's `instructions` array — so the shared file
+    was injection into a user-owned file no client needed.
+    """
     profile = resolve_client_profile("opencode")
-    assert profile.write_targets.agents_md is True
+    assert profile.write_targets.agents_md is False
+    assert profile.write_targets.instruction_path == ".opencode/INSTRUCTIONS.md"
     assert profile.write_targets.claude_md is False
     assert profile.write_targets.cursor_rules is False
 
@@ -386,5 +392,4 @@ def test_light_profile_values_are_correct() -> None:
     assert profile.include_framework_ref is False
     assert not hasattr(profile, "include_agent" + "_teams")
     assert profile.include_delegation is False
-    assert profile.agents_md_enabled is True
     assert profile.mandatory_phases == ["implement", "deliver"]

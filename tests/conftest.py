@@ -40,8 +40,15 @@ for _path in (str(_TRW_MEMORY_SRC), str(_TRW_MCP_SRC)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+from tests import _path_isolation
 from trw_mcp.models.config import TRWConfig, _reset_config
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+
+# Install the `.trw` path stand-ins before any test module is imported, so even
+# collection-time resolution lands in a scratch dir rather than the real repo.
+# The per-test `_isolate_trw_dir` fixture re-runs the sweep (cheap, idempotent)
+# to pick up modules imported since, and aims it at that test's tmp_path.
+_path_isolation.install()
 
 # Capture structlog's pristine global config at conftest import time. The root
 # conftest is imported by pytest BEFORE any test module — and before any module
@@ -394,6 +401,28 @@ def _restore_sys_path() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_client_session_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the host client's session-identity variables (PRD-FIX-118 FR01).
+
+    ``resolve_pin_key`` layer 2b reads the launching client's own session
+    variable (e.g. ``CLAUDE_CODE_SESSION_ID``) so the MCP server and a shell hook
+    key ``.trw/runtime/pins.json`` on the same string. That variable is present
+    in the environment of any test run started FROM such a client, and absent in
+    CI — which would make every pin-precedence assertion machine-dependent, and
+    would silently collapse a two-client isolation fixture onto one real key.
+
+    Cleared for every test so identity is something a test opts INTO
+    (``monkeypatch.setenv`` after this fixture, or an explicit subprocess env),
+    never something the developer's terminal supplies. ``monkeypatch`` restores
+    the real values at teardown.
+    """
+    from trw_mcp.client_profiles.session_identity import known_session_id_env_vars
+
+    for name in known_session_id_env_vars():
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_config_singleton() -> Iterator[None]:
     """Reset TRWConfig singleton for test isolation."""
     _reset_config()
@@ -661,65 +690,27 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     """Redirect all resolve_trw_dir() and resolve_project_root() calls to tmp dirs.
 
     Prevents test runs from writing ceremony-feedback.yaml, tool-telemetry.jsonl,
-    and analytics.yaml to the real project's .trw/ directory (PRD-FIX-050-FR01/FR02).
+    pipeline-events.jsonl, and analytics.yaml to the real project's .trw/
+    directory (PRD-FIX-050-FR01/FR02).
 
-    Patches both the source module (_paths) and all late-import consumers in tools/.
-    The _step_ceremony_feedback function uses `import trw_mcp.tools.ceremony as _cer;
-    _cer.resolve_trw_dir()` — this patch covers that code path via ceremony module.
+    This used to hand-enumerate the consumer modules to patch. That list covered
+    9 of the 24 modules that bind a resolver at import time, and
+    ``trw_mcp.telemetry.pipeline`` was one of the 15 it missed — which is how the
+    suite wrote thousands of synthetic events into the real
+    ``.trw/logs/pipeline-events.jsonl`` that ``trw-eval`` reads for RCA scoring.
+    A list that must be extended by hand for every new module is not a safety
+    net, so isolation now goes through ``tests/_path_isolation``: a permanent
+    stand-in resolver plus a ``sys.modules`` sweep that needs no maintenance and
+    survives the monkeypatch teardown that leaked-thread writes used to exploit.
+    See that module's docstring for the full rationale, and
+    ``tests/test_trw_dir_isolation_guard.py`` for the runtime guard.
     """
-    test_root = tmp_path
-    test_trw_dir = test_root / ".trw"
+    _path_isolation.set_current_root(tmp_path)
+    _path_isolation.install()
 
-    def _fake_trw_dir() -> Path:
-        return test_trw_dir
-
-    def _fake_project_root() -> Path:
-        return test_root
-
-    # Patch source module
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", _fake_trw_dir)
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", _fake_project_root)
-
-    # Patch late-import consumers in tools/ (critical for _step_ceremony_feedback)
-    monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", _fake_trw_dir)
-    try:
-        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", _fake_project_root)
-    except AttributeError:
-        pass  # ceremony doesn't import resolve_project_root
-
-    # Also patch tools/learning and tools/requirements to stay consistent
-    try:
-        monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", _fake_trw_dir)
-    except AttributeError:
-        pass  # Not yet imported
-    try:
-        monkeypatch.setattr("trw_mcp.tools.requirements.resolve_project_root", _fake_project_root)
-    except AttributeError:
-        pass  # Not yet imported
-
-    # Patch tools/orchestration — it does `from _paths import resolve_project_root`
-    # at module level. If orchestration is first imported while _paths is already
-    # patched, the from-import captures the fake into orchestration.__dict__.
-    # On teardown only _paths is restored, leaving orchestration with a stale fake.
-    # Patching explicitly here ensures each test gets the correct tmp_path closure.
-    try:
-        monkeypatch.setattr("trw_mcp.tools.orchestration.resolve_project_root", _fake_project_root)
-    except AttributeError:
-        pass  # Not yet imported
-
-    # Patch state/recall_tracking — resolve_trw_dir is a module-level import
-    # so record_recall writes to the wrong directory without this patch.
-    try:
-        monkeypatch.setattr("trw_mcp.state.recall_tracking.resolve_trw_dir", _fake_trw_dir)
-    except AttributeError:
-        pass  # Not yet imported
-
-    # Patch tools/telemetry — resolve_trw_dir and find_active_run are
-    # module-level imports that suffer the same stale-closure problem.
-    try:
-        monkeypatch.setattr("trw_mcp.tools.telemetry.resolve_trw_dir", _fake_trw_dir)
-    except AttributeError:
-        pass  # Not yet imported
+    # Not a path resolver, so it is not covered by the sweep: tools/telemetry
+    # binds find_active_run at import and a real scan would walk the tmp tree
+    # (and cache a stale run dir) on every test.
     try:
         monkeypatch.setattr(
             "trw_mcp.tools.telemetry.find_active_run",
@@ -727,26 +718,6 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
         )
     except AttributeError:
         pass  # Not yet imported
-
-    # Patch resources/ modules — they import resolve_project_root at module level,
-    # so the bound reference must be updated each test to point to the current tmp_path.
-    try:
-        monkeypatch.setattr("trw_mcp.resources.config.resolve_project_root", _fake_project_root)
-    except AttributeError:
-        pass  # Not yet imported
-    try:
-        monkeypatch.setattr("trw_mcp.resources.run_state.resolve_project_root", _fake_project_root)
-    except AttributeError:
-        pass  # Not yet imported
-
-    # The claude_md sync path (profile dispatcher + section renderers) resolves
-    # its write target via LATE lookup through ``_paths.resolve_project_root`` /
-    # ``_paths.resolve_trw_dir`` (read at call time, not bound at import). The
-    # source-module patches above therefore already redirect every claude_md
-    # write to the tmp project root — no claude_md-specific binding patch is
-    # needed. (Historically those bindings were captured at import and a sync
-    # silently regrew the auto-gen block in the REAL repo CLAUDE.md; the
-    # production late-resolve refactor closed that gap.)
 
     yield
 

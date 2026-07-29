@@ -102,7 +102,16 @@ def test_channel_entry_minimal() -> None:
 
 
 def test_channel_entry_all_required_fields() -> None:
-    """FR01: ChannelEntry accepts all 38 fields."""
+    """ChannelEntry accepts every field it still declares.
+
+    Was "all 38 fields". PRD-CORE-239 removed nine that were authored per
+    channel across every client manifest with real variation and read by NO
+    production code: the four emit_on_*/session_correlation flags, the
+    tier-override key (which CHANNEL-ARCHITECTURE.md documented to operators as
+    a working override), client_version_min, sidecar_schema, sidecar_path and
+    distill_record_types. The count in this docstring is deliberately not
+    restated as a number — it drifted once already.
+    """
     entry = ChannelEntry(
         id="cc-01-memory",
         client="claude-code",
@@ -114,9 +123,7 @@ def test_channel_entry_all_required_fields() -> None:
         write_strategy="MARKER_REPLACE",
         tier_default="T2",
         tier_min="T0",
-        operator_tier_override_key="TIER_OVERRIDE",
         markers={"start": "<!-- trw:start -->", "end": "<!-- trw:end -->"},
-        distill_record_types=["hotspot", "convention"],
         ttl_commits=10,
         ttl_days=7,
         quota_total_bytes=4096,
@@ -127,16 +134,9 @@ def test_channel_entry_all_required_fields() -> None:
         human_edit_detection="SHA256_SEGMENT",
         description="Distill memory snapshot",
         regenerate_cmd="trw-mcp channel-render cc-01-memory",
-        client_version_min="1.0.0",
         mdc_description=None,
         mdc_globs=None,
         mdc_always_apply=False,
-        session_correlation=True,
-        emit_on_ttl_skip=True,
-        emit_on_conflict_skip=True,
-        emit_on_lock_skip=True,
-        sidecar_schema="risk-report-sidecar/v0",
-        sidecar_path=".trw/distill/sidecar.json",
         hook_schema_confirmed_at=None,
         activation_gate=None,
         tags=["memory", "distill"],

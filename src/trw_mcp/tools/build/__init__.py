@@ -11,6 +11,9 @@ Internal modules:
   _core                 — caching utilities
   _failure_attribution  — heuristic "mine vs pre-existing" failure triage (FR1)
   _registration         — MCP tool registration (result reporter API)
+  _build_check_helpers  — pure result assembly: input validation, typed-result
+                          reconciliation, coverage threshold, duration derivation
+  _q_learning_dispatch  — deferred Q-learning outcome correlation (PRD-FIX-088 FR01)
 """
 
 from __future__ import annotations

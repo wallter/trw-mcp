@@ -168,6 +168,25 @@ def _report_preserved_files(
             result["preserved"].append(str(dest))
 
 
+def _hook_entry_identity(entry: object) -> str:
+    """Stable identity for one settings.json hook entry (PRD-SEC-013 FR09).
+
+    The hook command(s) are the identity — each hook script path is unique in
+    this repo's convention, so a matcher rename never duplicates an entry and two
+    different scripts never collide. Non-object entries fall back to their JSON
+    form so a hand-edited settings file still merges deterministically.
+    """
+    if not isinstance(entry, dict):
+        return json.dumps(entry, sort_keys=True)
+    hooks = entry.get("hooks")
+    commands = (
+        [str(hook.get("command", "")) for hook in hooks if isinstance(hook, dict)] if isinstance(hooks, list) else []
+    )
+    if commands:
+        return "|".join(sorted(commands))
+    return json.dumps(entry, sort_keys=True)
+
+
 def _merge_settings_json(
     src: Path,
     dest: Path,
@@ -226,12 +245,29 @@ def _merge_settings_json(
             existing_env.setdefault(key, value)
         existing["env"] = existing_env
 
-    # Merge hooks: add missing hook event types, preserve existing
+    # Merge hooks per ENTRY, not per event (PRD-SEC-013 FR09). The previous
+    # ``existing_hooks.setdefault(hook_event, hook_list)`` only inserted when the
+    # EVENT KEY was entirely absent, so any project that already had, say, one
+    # PreToolUse entry silently lost the whole bundled PreToolUse list — including
+    # newly bundled hooks. Identity is the entry's hook command(s), which are
+    # unique per hook script in this repo's convention; the merge is additive and
+    # idempotent, and never rewrites or reorders an existing entry.
     bundled_hooks = bundled.get("hooks", {})
     existing_hooks = existing.get("hooks", {})
     if isinstance(bundled_hooks, dict) and isinstance(existing_hooks, dict):
         for hook_event, hook_list in bundled_hooks.items():
-            existing_hooks.setdefault(hook_event, hook_list)
+            existing_list = existing_hooks.get(hook_event)
+            if not isinstance(existing_list, list):
+                existing_hooks[hook_event] = hook_list
+                continue
+            if not isinstance(hook_list, list):
+                continue
+            known = {_hook_entry_identity(entry) for entry in existing_list}
+            for entry in hook_list:
+                identity = _hook_entry_identity(entry)
+                if identity not in known:
+                    existing_list.append(entry)
+                    known.add(identity)
         existing["hooks"] = existing_hooks
 
     # No-op detection (aligns with _update_or_report's _files_identical): when
@@ -319,6 +355,35 @@ def _update_hooks(
                     make_executable=True,
                     on_progress=on_progress,
                 )
+    if not dry_run:
+        _rebless_intent_hook_digest(target_dir, result)
+
+
+def _rebless_intent_hook_digest(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Re-bless the PRD-SEC-013 enrollment marker's HOOK half after a vendor resync.
+
+    Without this, shipping a new bundled hook bricks every enrolled project:
+    ``expected_hook_digest`` covers the intent hooks and the shared lib they
+    source, so the marker reads ``stale``, both control points fail closed, and
+    every Edit/Write is blocked though the user did nothing. The installer is the
+    only component that can tell "the vendor just wrote these exact bytes" from
+    "someone tampered with them", so the re-bless belongs here and nowhere else.
+
+    Only the hook half moves. ``refresh_hook_digest`` leaves the contract digest
+    alone and never mints a marker, so an unenrolled project stays inert and a
+    contract edit still fails closed until an operator re-enrolls.
+
+    Fail-open: a re-bless problem is a warning, never an aborted update.
+    """
+    try:
+        from trw_mcp.security.intent_contract.enrollment import refresh_hook_digest
+
+        if refresh_hook_digest(target_dir):
+            result.setdefault("updated", []).append(str(target_dir / ".trw/contracts/enrollment.yaml"))
+            logger.info("intent_enrollment_hook_digest_refreshed", path=str(target_dir))
+    except Exception as exc:  # justified: fail-open, an update must never abort here
+        logger.warning("intent_enrollment_refresh_failed", error=str(exc))
+        result.setdefault("warnings", []).append(f"intent-contract enrollment hook digest not refreshed: {exc}")
 
 
 def _update_skills(
@@ -484,13 +549,54 @@ def _update_mcp_config(
         else:
             result["created"].append(f"would create: {claude_md_path}")
     else:
-        if claude_md_path.exists():
-            _update_claude_md_trw_section(claude_md_path, result)
+        from trw_mcp.state.claude_md._orphan_strip import strip_orphaned_claude_md_block
+
+        from ._template_claude_md import _recorded_or_detected_targets, claude_md_is_claimed
+
+        # Recorded, NOT resolved: `resolve_ide_targets` falls through to
+        # detection, which reports claude-code for every project TRW has ever
+        # installed into (we create `.claude/` ourselves). Passing it here
+        # would answer "who reads this file?" with our own artifacts.
+        ide_targets = _recorded_or_detected_targets(target_dir)
+        if not claude_md_is_claimed(target_dir):
+            # Only clients that declare CLAUDE.md get the block. Without this
+            # the update path re-injected it on every run into projects whose
+            # clients never read the file, undoing the install-path decision —
+            # and the re-injected copy then froze in place while the surfaces
+            # those clients DO read moved on. The scaffold is still written
+            # (it is a project doc); only TRW's block is withheld.
+            existed = claude_md_path.exists()
+            try:
+                if not existed:
+                    claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                removed = strip_orphaned_claude_md_block(target_dir, ide_targets)
+            except OSError as exc:
+                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+            else:
+                if not existed:
+                    result["created"].append(str(claude_md_path))
+                    if on_progress:
+                        on_progress("Created", str(claude_md_path))
+                elif removed:
+                    result["updated"].append(str(claude_md_path))
+        elif claude_md_path.exists():
+            _update_claude_md_trw_section(claude_md_path, result, target_dir)
             if on_progress and str(claude_md_path) in result.get("updated", []):
                 on_progress("Updated", str(claude_md_path))
         else:
             try:
                 claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                # Scaffold first, then resolve the carrier, so a newly-created
+                # file lands in the same shape an existing project converges to.
+                # A create path that skipped the carrier is how the two entry
+                # points came to disagree about the same file.
+                # Carrier bookkeeping goes to a scratch dict only to avoid
+                # double-reporting a file already counted as "created" — its
+                # ERRORS are merged back, since discarding a failed carrier write
+                # while still reporting a clean create misrepresents the result.
+                carrier_result: dict[str, list[str]] = {"updated": [], "preserved": [], "errors": []}
+                _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir)
+                result.setdefault("errors", []).extend(carrier_result["errors"])
                 result["created"].append(str(claude_md_path))
                 if on_progress:
                     on_progress("Created", str(claude_md_path))

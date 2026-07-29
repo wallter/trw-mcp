@@ -48,7 +48,10 @@ class InstructionFileClassification:
     import_targets: tuple[str, ...] = ()
 
 
-def _strip_marker_region(lines: list[str]) -> list[str]:
+def _strip_marker_region(
+    lines: list[str],
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> list[str]:
     """Return *lines* with the TRW marker region removed (line-anchored).
 
     Drops the ``<!-- trw:start -->``..``<!-- trw:end -->`` span and any
@@ -57,18 +60,19 @@ def _strip_marker_region(lines: list[str]) -> list[str]:
     block is ignored — never a substring match (the 705-line ROADMAP corruption
     lesson).
     """
+    marker_start, marker_end = markers
     out: list[str] = []
     in_region = False
     for line in lines:
         stripped = line.strip()
-        if not in_region and stripped == TRW_MARKER_START:
+        if not in_region and stripped == marker_start:
             in_region = True
             # Drop the auto-comment + blank lines that precede the start marker.
             while out and out[-1].strip() in (TRW_AUTO_COMMENT, ""):
                 out.pop()
             continue
         if in_region:
-            if stripped == TRW_MARKER_END:
+            if stripped == marker_end:
                 in_region = False
             continue
         out.append(line)
@@ -84,7 +88,10 @@ def _is_skippable(stripped: str) -> bool:
     return bool(re.match(r"^#{1,6}\s+\S", stripped))
 
 
-def classify_instruction_file(path: Path) -> InstructionFileClassification:
+def classify_instruction_file(
+    path: Path,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> InstructionFileClassification:
     """Classify an instruction file as EMPTY, POINTER, or CONTENT (FR03, NFR04).
 
     Pure: reads only *path*, performs no writes and no network access. After
@@ -98,7 +105,7 @@ def classify_instruction_file(path: Path) -> InstructionFileClassification:
     except (OSError, UnicodeDecodeError):
         return InstructionFileClassification(InstructionFileClass.EMPTY)
 
-    substantive = _strip_marker_region(text.splitlines())
+    substantive = _strip_marker_region(text.splitlines(), markers)
     targets: list[str] = []
     saw_substantive = False
     for line in substantive:

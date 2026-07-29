@@ -10,7 +10,7 @@ Artifacts written:
   - .vscode/mcp.json                           (C3 json_key_merge)
   - .github/hooks/trw-copilot-distill-hint.sh  (C5 preToolUse hint hook)
   - .github/hooks/lib-copilot-distill-hint.sh  (C5 shared hook library)
-  - .trw/channels/manifest.yaml               (five copilot channel entries merged)
+  - .trw/channels/manifest.yaml               (three copilot channel entries merged)
 
 C4 (copilot-mcp-tool-return) is a pull channel — no file written.
 
@@ -24,6 +24,10 @@ boundary only through the distill-unaware ``compute_before_edit_hint`` sidecar
 reader.
 
 PRD-DIST-2406 FR41-FR43; PRD-DIST-2459 FR-5.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
@@ -57,15 +61,6 @@ _C5_HOOK_NAMES: tuple[str, ...] = (
     "trw-copilot-distill-hint.sh",
     "lib-copilot-distill-hint.sh",
 )
-
-# C2 stub content for path-scoped instructions (T0 presence beacon)
-_C2_STUB_CONTENT = """\
----
-applyTo: '**'
----
-<!-- TRW distill path-instructions — run `trw-distill self-improve risk-report` to populate -->
-"""
-
 
 # ---------------------------------------------------------------------------
 # Manifest bootstrap
@@ -158,21 +153,15 @@ def install_copilot_distill_channels(
         log.warning("copilot_vscode_mcp_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"Copilot .vscode/mcp.json install failed: {exc}")
 
-    # 2. C2: .github/instructions/trw-distill-hotspots.instructions.md (T0 stub)
-    try:
-        instructions_dir = target_dir / ".github" / "instructions"
-        instructions_dir.mkdir(parents=True, exist_ok=True)
-        c2_path = instructions_dir / "trw-distill-hotspots.instructions.md"
-        rel = ".github/instructions/trw-distill-hotspots.instructions.md"
-        if c2_path.exists() and not force:
-            result["preserved"].append(rel)
-        else:
-            existed = c2_path.exists()
-            c2_path.write_text(_C2_STUB_CONTENT, encoding="utf-8")
-            result["updated" if existed else "created"].append(rel)
-    except Exception as exc:  # justified: fail-open, path instructions are best-effort
-        log.warning("copilot_c2_stub_failed", error=str(exc), outcome="warning")
-        result["errors"].append(f"Copilot C2 path instructions install failed: {exc}")
+    # 2. PRD-CORE-239: the C2 path-instructions stub is NO LONGER WRITTEN.
+    #    It planted `run `trw-distill self-improve risk-report`` into
+    #    .github/instructions/ for EVERY Copilot project, including the
+    #    overwhelming majority whose owners do not license trw-distill — they
+    #    were handed an instruction that yields "command not found". The
+    #    channel it seeded (copilot-instructions-distill) never rendered once
+    #    in production (wiring gate: NEVER_FIRED, ledger UF-010), so nothing of
+    #    value is lost. Copilot users keep the .vscode/mcp.json config above and
+    #    the C5 hint hooks below, both of which reach the free MCP tools.
 
     # 3. C5: install preToolUse distill-hint hook scripts to .github/hooks/
     #    (PRD-DIST-2459 FR-5). Chained by trw-copilot-adapter.sh after the
@@ -184,7 +173,7 @@ def install_copilot_distill_channels(
             log.warning("copilot_c5_hook_install_failed", hook=hook_name, error=str(exc), outcome="warning")
             result["errors"].append(f"Copilot C5 hook {hook_name} install failed: {exc}")
 
-    # 4. Bootstrap channel manifest (five copilot channel entries)
+    # 4. Bootstrap channel manifest (three copilot channel entries)
     try:
         bootstrap_copilot_channel_manifest(target_dir)
     except ManifestValidationError as exc:

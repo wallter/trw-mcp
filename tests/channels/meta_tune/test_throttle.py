@@ -364,3 +364,57 @@ def test_apply_throttle_pydantic_validation_preserved(tmp_path: Path) -> None:
     # Confirm no __dict__ bypass: model_copy produces a new model with correct
     # field values visible through the normal Pydantic attribute access
     assert ch.model_fields_set is not None  # Pydantic v2 attribute present on proper model
+
+
+class TestUnmeasuredNeverThrottles:
+    """A rate nobody could measure must not demote a channel's tier.
+
+    `_evaluate` read `float(stats.get("adjusted_rate", 0.0))`, so an absent or
+    None rate became 0.0. Any channel past `min_n` then scored
+    `adj=0.0 < threshold` and returned THROTTLE_DOWN. Since no code has ever
+    emitted an OUTCOME_EVENT_TYPES event, that rate was never measurable for
+    any channel — meaning every throttle-down verdict past min_n was drawn
+    from a number that no input had ever produced.
+
+    `INSUFFICIENT_DATA` is the verdict this enum already carries for "not
+    enough to decide on"; not knowing at all is the strongest case for it.
+    """
+
+    def test_unmeasured_outcome_yields_insufficient_data_not_throttle_down(
+        self,
+    ) -> None:
+        from trw_mcp.channels.meta_tune._throttle import (
+            ThrottleVerdict,
+            evaluate_throttle,
+        )
+
+        decision = evaluate_throttle(
+            "cc-01",
+            "claude-code",
+            # n well past any min_n, so the pre-existing insufficient-data
+            # guard cannot be what saves us here.
+            {"adjusted_rate": None, "total_pushes": 500, "outcome_unmeasured": True},
+        )
+
+        assert decision.verdict is ThrottleVerdict.INSUFFICIENT_DATA
+        assert decision.adjusted_rate is None
+        assert "unmeasured, not zero" in decision.reason
+
+    def test_a_measured_low_rate_still_throttles_down(self) -> None:
+        """The guard must not disable throttling for real measurements.
+
+        If this went green while the case above also went green for the wrong
+        reason, the fix would have quietly turned the throttle off entirely.
+        """
+        from trw_mcp.channels.meta_tune._throttle import (
+            ThrottleVerdict,
+            evaluate_throttle,
+        )
+
+        decision = evaluate_throttle(
+            "cc-01",
+            "claude-code",
+            {"adjusted_rate": 0.01, "total_pushes": 500, "outcome_unmeasured": False},
+        )
+
+        assert decision.verdict is ThrottleVerdict.THROTTLE_DOWN

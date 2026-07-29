@@ -50,27 +50,48 @@ def _record_write(result: dict[str, list[str]], rel_path: str, *, existed: bool)
         result.setdefault("created", []).append(rel_path)
 
 
+def agent_template_contents(agents_dir: str, templates: Mapping[str, str]) -> dict[str, bytes]:
+    """Render a client's agent templates as ``{repo-relative path: bytes}``.
+
+    Single source of truth shared by :func:`write_agent_templates` and the
+    managed-artifact manifest sweep, so the guard and the baseline recorder can
+    never key on different paths.
+    """
+    return {f"{agents_dir}/{filename}": content.encode("utf-8") for filename, content in templates.items()}
+
+
 def write_agent_templates(
     target_dir: Path,
     *,
     agents_dir: str,
     templates: Mapping[str, str],
     force: bool,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
-    """Write one client's managed agent templates without touching user files."""
+    """Write one client's managed agent templates without touching user files.
+
+    Content-aware (CONSTITUTION HB-2): an on-disk agent that matches the bundled
+    template or TRW's recorded last write is refreshed; one that diverges from
+    both is a user edit and is preserved. The previous ``existed and not force``
+    short-circuit preserved user edits but also froze TRW-owned agents at their
+    first-installed content, so upstream fixes never reached an installed
+    project.
+    """
+    from ._managed_client_artifacts import artifact_user_edited
+
     result = _new_result()
     target_agents_dir = target_dir / agents_dir
     target_agents_dir.mkdir(parents=True, exist_ok=True)
 
-    for filename, content in templates.items():
-        path = target_agents_dir / filename
+    for rel_path, incoming in agent_template_contents(agents_dir, templates).items():
+        path = target_dir / rel_path
         existed = path.exists()
-        rel_path = f"{agents_dir}/{filename}"
-        if existed and not force:
+        if existed and not force and artifact_user_edited(path, rel_path, incoming, manifest_hashes):
+            logger.info("client_agent_user_modified", path=rel_path)
             result["preserved"].append(rel_path)
             continue
         try:
-            path.write_text(content, encoding="utf-8")
+            path.write_bytes(incoming)
             _record_write(result, rel_path, existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {path}: {exc}")
@@ -150,8 +171,9 @@ def read_settings_for_merge(
 ) -> dict[str, object] | None:
     """Read a JSON *settings* file for an in-place ``mcpServers`` merge.
 
-    The shared seam behind the Gemini and Antigravity CLI settings readers,
-    which duplicated this read/backup/recover policy verbatim and — critically —
+    The shared seam behind the Antigravity CLI settings reader (originally
+    extracted from two readers that duplicated this read/backup/recover policy
+    verbatim) which — critically —
     caught only ``OSError`` on the read. A non-UTF-8 ``settings.json`` therefore
     escaped as an uncaught ``UnicodeDecodeError`` (a ``ValueError`` subclass,
     *not* an ``OSError``) and crashed bootstrap.
@@ -303,10 +325,19 @@ def _write_hook_env_file(trw_dir: Path, profile: ClientProfile) -> Path:
     init (``NUDGE_ENABLED``), and which client-identity tokens to expose
     (``TRW_CLIENT_DISPLAY_NAME`` / ``TRW_CLIENT_CONFIG_DIR``).
 
+    PRD-FIX-118 FR01 appends a ``TRW_SESSION_ID`` stanza sourced from the
+    client's own session variable (see
+    :mod:`trw_mcp.client_profiles.session_identity`). The stanza is static text
+    evaluated at source time, so this file remains session-independent and
+    idempotent while hooks still resolve the *live* session identity -- the same
+    string ``resolve_pin_key`` keys ``.trw/runtime/pins.json`` on.
+
     Idempotent: safe to rewrite on every sync. Permissions are 0644
     (world-readable; hooks only need read access). Creates ``runtime/`` if
     missing.
     """
+    from trw_mcp.client_profiles.session_identity import render_hook_env_session_block
+
     runtime_dir = trw_dir / "runtime"
     runtime_dir.mkdir(parents=True, exist_ok=True)
     path = runtime_dir / "hook-env.sh"
@@ -324,6 +355,7 @@ def _write_hook_env_file(trw_dir: Path, profile: ClientProfile) -> Path:
         f"export NUDGE_ENABLED={shlex.quote(nudge_flag)}\n"
         f"export TRW_CLIENT_DISPLAY_NAME={shlex.quote(profile.display_name)}\n"
         f"export TRW_CLIENT_CONFIG_DIR={shlex.quote(profile.config_dir)}\n"
+        + render_hook_env_session_block(profile.client_id)
     )
     path.write_text(content, encoding="utf-8")
     os.chmod(path, 0o644)
@@ -413,7 +445,7 @@ def smart_merge_marker_section(
     Replaces (or appends) the block delimited by *start_marker* / *end_marker*
     while preserving every byte of user content outside the markers. Designed
     to be safe against pre-existing files written by users or other tools
-    (the common case for ``GEMINI.md``, ``.github/copilot-instructions.md``,
+    (the common case for ``AGENTS.md``, ``.github/copilot-instructions.md``,
     and similar shared-namespace artifacts).
 
     Behavior:
@@ -430,7 +462,7 @@ def smart_merge_marker_section(
     Args:
         existing: Current file contents (may be empty / arbitrary user prose).
         trw_section: Replacement section, including both markers.
-        start_marker: Opening sentinel (e.g. ``"<!-- trw:gemini:start -->"``).
+        start_marker: Opening sentinel (e.g. ``"<!-- trw:copilot:start -->"``).
         end_marker: Closing sentinel.
 
     Returns:
@@ -462,7 +494,7 @@ def write_instruction_file_with_merge(
     """Idempotently write or merge a TRW-managed instruction file.
 
     Encapsulates the read/merge/write/short-circuit pattern used identically
-    by every per-client instruction-file generator (Gemini, Copilot, Codex,
+    by every per-client instruction-file generator (Copilot, Codex,
     OpenCode). On idempotent writes (no diff vs. disk), records the path
     under ``preserved`` so callers can report it without a redundant
     filesystem write.
@@ -490,3 +522,105 @@ def write_instruction_file_with_merge(
         _record_write(result, rel_path, existed=existed)
     except OSError as exc:
         result.setdefault("errors", []).append(f"Failed to write {target_path}: {exc}")
+
+
+def replace_marker_region(
+    content: str,
+    *,
+    start: str,
+    end: str,
+    new_block: str,
+    header: str | None = None,
+) -> str | None:
+    """Replace a line-anchored ``start``..``end`` region with *new_block*.
+
+    Returns ``None`` when the region is absent (or inverted), so the caller can
+    choose its own no-region behaviour — append, prepend, or report malformed.
+
+    One implementation for a duty that had three divergent copies, each doing its
+    own substring scan and each therefore carrying the same data-loss bug: a
+    document that merely *mentioned* a marker in prose or backticks had
+    everything between that mention and the real block deleted. Matching is
+    delegated to :func:`find_marker_line_span`, so the fix cannot be lost again
+    by a copy that was never hardened.
+
+    *header*, when given, is absorbed into the replaced span only when it is the
+    first non-blank line above the start marker. The looser "last occurrence
+    anywhere above" rule would swallow every user line between a quoted
+    auto-comment and the real block.
+
+    **Ambiguity is refused, not guessed.** If the document contains more than one
+    line-anchored start or end marker, this returns ``None``. Line anchoring alone
+    does not make a marker unambiguous: an indented mention (``    <!-- trw:start
+    -->``) is textually a whole line, so *any* rule that picks one of several
+    candidates can pick the wrong one and delete everything to the next end
+    marker — the 705-line ROADMAP shape. With two candidates there is no evidence
+    for which is the real block, and a writer with no evidence must not write.
+    The caller then appends or reports malformed; both are recoverable, a
+    destructive guess is not.
+    """
+    starts = _marker_line_indices(content, start)
+    ends = _marker_line_indices(content, end)
+    if len(starts) != 1 or len(ends) != 1:
+        return None
+
+    start_span, end_span = starts[0], ends[0]
+    if end_span[1] <= start_span[0]:
+        return None
+
+    replace_start = start_span[0]
+    if header:
+        replace_start = _absorb_header_above(content, start_span[0], header)
+    return content[:replace_start] + new_block + content[end_span[1] :]
+
+
+def _marker_line_indices(content: str, marker: str) -> list[tuple[int, int]]:
+    """Return the character spans of every WHOLE-LINE occurrence of *marker*.
+
+    Whole line means the line's stripped content equals the marker exactly, so a
+    marker quoted mid-sentence or inside backticks is not a delimiter. Returning
+    *all* of them (rather than the first) is what lets the caller detect an
+    ambiguous document instead of silently binding to the wrong one.
+    """
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped == marker:
+            begin = offset + line.index(marker)
+            spans.append((begin, begin + len(marker)))
+        offset += len(line)
+    return spans
+
+
+def _absorb_header_above(content: str, start_offset: int, header: str) -> int:
+    """Return the offset where the block begins, including an adjacent *header*.
+
+    Walks up from the start marker over blank lines only: the header counts as
+    part of the block when it is the first non-blank line above, and anything
+    else stops the walk. Mirrors ``_parser._block_cut_index`` so both appenders
+    agree on where a TRW block starts.
+    """
+    before = content[:start_offset]
+    lines = before.splitlines(keepends=True)
+    idx = len(lines) - 1
+    while idx >= 0 and not lines[idx].strip():
+        idx -= 1
+    if idx >= 0 and lines[idx].strip() == header:
+        return sum(len(line) for line in lines[:idx])
+    return start_offset
+
+
+def has_marker(content: str, *markers_with_anchor: tuple[str, str]) -> bool:
+    """Return whether ANY of the given ``(marker, anchor)`` pairs occurs as a whole line.
+
+    Lets a caller tell "no section at all" (append) from "half a section, or an
+    ambiguous one" (malformed — report it) without re-deriving marker matching.
+    Uses the same whole-line rule as :func:`replace_marker_region`, so the two can
+    never classify the same document differently — a disagreement there turns a
+    reported fault into a silently appended duplicate block.
+
+    The ``anchor`` element is accepted for call-site readability and is not used:
+    a whole-line match is symmetric.
+    """
+    return any(_marker_line_indices(content, marker) for marker, _anchor in markers_with_anchor)

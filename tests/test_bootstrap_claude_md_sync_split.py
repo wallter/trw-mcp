@@ -265,5 +265,87 @@ class TestClaudeMdSyncTimeoutFix:
 
         _run_claude_md_sync(fake_git_repo, result, timeout=5)
 
-        assert any("skipped" in w for w in result["warnings"])
+        # Assert the *specific* handler message, not a bare "skipped" substring:
+        # the retired no-API-key guard also emitted a warning containing
+        # "skipped", so the loose form passed without ever reaching _broken_sync.
+        assert any("CLAUDE.md sync skipped" in w for w in result["warnings"])
+        assert result["errors"] == []
+
+
+class TestSyncRunsWithoutApiKey:
+    """The CLAUDE.md carrier decision is pure file I/O and must not need auth.
+
+    Regression guard for the defect where ``_run_claude_md_sync`` returned early
+    whenever ``ANTHROPIC_API_KEY`` was unset. A Claude Code *subscription* user
+    has no such key, so on that (normal) path ``update-project`` ran only the
+    carrier-unaware writer and silently reverted CLAUDE.md externalization on
+    every run, reporting success with a buried warning.
+
+    Nothing under ``state/claude_md/`` calls an LLM -- ``dispatch_for_profile``
+    does ``del reader, llm`` and ``_build_sync_result`` hardcodes
+    ``llm_used: False`` -- so the guard gated a deterministic write on an
+    unrelated credential.
+    """
+
+    def test_sync_externalizes_claude_md_when_no_api_key_present(
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With no API key, the sync still runs and externalizes the TRW block."""
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        init_project(fake_git_repo)
+        claude_md = fake_git_repo / "CLAUDE.md"
+        # init_project leaves an inline block; that is the pre-migration state.
+        assert "<!-- trw:start -->" in claude_md.read_text(encoding="utf-8")
+
+        result: dict[str, list[str]] = {
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
+        }
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=30)
+
+        content = claude_md.read_text(encoding="utf-8")
+        import_lines = [ln for ln in content.splitlines() if ln.strip().startswith("@")]
+
+        assert import_lines, (
+            "sync must externalize the TRW block to an @-import when no API key is "
+            f"set; CLAUDE.md still carries no import directive. warnings={result['warnings']}"
+        )
+        assert import_lines[0].strip() == "@.trw/INSTRUCTIONS.md"
+        sidecar = fake_git_repo / ".trw" / "INSTRUCTIONS.md"
+        assert sidecar.exists(), "the @-import target must exist (no dangling import)"
+        assert sidecar.read_text(encoding="utf-8").strip(), "sidecar must not be empty"
+
+    def test_no_api_key_does_not_emit_a_skip_warning(
+        self,
+        fake_git_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The absence of an API key is no longer reported as a skipped sync."""
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        init_project(fake_git_repo)
+
+        result: dict[str, list[str]] = {
+            "updated": [],
+            "created": [],
+            "preserved": [],
+            "errors": [],
+            "warnings": [],
+        }
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=30)
+
+        assert not any("ANTHROPIC_API_KEY" in w for w in result["warnings"]), (
+            f"no-API-key must not gate the sync; warnings={result['warnings']}"
+        )
         assert result["errors"] == []

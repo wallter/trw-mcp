@@ -18,6 +18,34 @@ from trw_mcp.bootstrap._file_ops import smart_merge_marker_section
 from ._copilot_test_support import fake_git_repo  # noqa: F401
 
 
+def resolve_copilot_instructions(root: Path) -> str:
+    """Return copilot's instruction text with its ``@``-import resolved.
+
+    The TRW block reaches `.github/copilot-instructions.md` through a carrier
+    (PRD-CORE-240-FR03): either INLINE between the copilot markers, or
+    externalized to a `.trw/` sidecar with a single `@<relpath>` import left in
+    its place. Assertions about protocol content must hold under both, so they
+    run against the resolved text.
+
+    Stronger than the raw read it replaces: a dangling import contributes
+    nothing here, so the protocol assertion fails — which is correct, and is a
+    failure a raw read could not distinguish from success.
+
+    Resolution is repo-root-relative, matching what the shipped Copilot CLI
+    bundle does for the repository case.
+    """
+    text = (root / _COPILOT_INSTRUCTIONS_PATH).read_text(encoding="utf-8")
+    parts = [text]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("@") and len(stripped.split()) == 1:
+            target = root / stripped[1:]
+            if target.is_file():
+                parts.append(target.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
+
 def _merge(existing: str, trw_content: str) -> str:
     """Exercise the live production merge path with the Copilot markers.
 
@@ -51,7 +79,8 @@ class TestCopilotInstructions:
 
     def test_instructions_contains_ceremony_protocol(self, fake_git_repo: Path) -> None:
         generate_copilot_instructions(fake_git_repo)
-        content = (fake_git_repo / _COPILOT_INSTRUCTIONS_PATH).read_text()
+        # Protocol reachable through the carrier (inline, or a resolved @-import).
+        content = resolve_copilot_instructions(fake_git_repo)
         assert "TRW Framework Integration" in content
         assert "Session Protocol" in content
         assert "trw_session_start" in content
@@ -73,11 +102,13 @@ class TestCopilotInstructions:
         assert not result["errors"]
 
         content = instructions_path.read_text()
+        resolved = resolve_copilot_instructions(fake_git_repo)
         assert "My Custom Instructions" in content
         assert "Do NOT delete this." in content
         assert "My Other Section" in content
         assert "Keep this too." in content
-        assert "TRW Framework Integration" in content
+        # Protocol reachable via the carrier; user content stays in the file itself.
+        assert "TRW Framework Integration" in resolved
         assert "old content here" not in content
 
     def test_instructions_fresh_file_when_no_markers(self, fake_git_repo: Path) -> None:
@@ -107,7 +138,7 @@ class TestCopilotInstructions:
         content = instructions_path.read_text()
         assert "I will be overwritten" not in content
         assert _COPILOT_TRW_START_MARKER in content
-        assert "TRW Framework Integration" in content
+        assert "TRW Framework Integration" in resolve_copilot_instructions(fake_git_repo)
 
     def test_instructions_updated_when_existing(self, fake_git_repo: Path) -> None:
         """Re-running on existing file marks it as updated, not created."""

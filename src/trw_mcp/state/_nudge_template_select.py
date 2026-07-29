@@ -19,6 +19,15 @@ from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
 
 logger = structlog.get_logger(__name__)
 
+# Tools whose reactive message renders its OWN failure branch and therefore
+# still has something truthful to say when the call did not succeed:
+# ``_build_check_message`` returns the "Build failed -> revert to PLAN" text,
+# which is the single most valuable reactive nudge in the set. Every other
+# branch below asserts the tool's action completed ("Progress saved.",
+# "Session complete.", "Learning persisted.", "Run bootstrapped.") and MUST
+# stay silent on a call that did not do it.
+_FAILURE_AWARE_TOOLS: frozenset[str] = frozenset({ToolName.BUILD_CHECK})
+
 
 def _select_nudge_template(step: str, state: CeremonyState, available_learnings: int) -> str:
     """Return the raw (pre-substitution) template for ``step`` at current urgency.
@@ -213,7 +222,9 @@ def _context_reactive_message(
 ) -> str | None:
     """Select context-reactive nudge message based on tool result.
 
-    Returns None for unknown tool_name (triggers fallback to static messages).
+    Returns None for an unknown ``tool_name`` (triggers fallback to static
+    messages) and for a call that did not succeed, unless the tool is in
+    :data:`_FAILURE_AWARE_TOOLS`.
     FR06: urgency scales language from informational to directive.
 
     Args:
@@ -239,6 +250,16 @@ def _context_reactive_message(
     )
 
     tool = context.tool_name
+
+    # Truthfulness gate (CONSTITUTION §1). ``trw_checkpoint`` degrades softly:
+    # with no resolvable run it returns ``recorded: False`` and writes nothing,
+    # yet the same response is decorated by this layer. Keyed on the caller's
+    # observed outcome, never on the response text, so a new soft-failure branch
+    # is covered the moment its call site threads ``tool_success``.
+    if not context.tool_success and tool not in _FAILURE_AWARE_TOOLS:
+        logger.debug("context_reactive_message_suppressed", tool_name=tool, reason="tool_did_not_succeed")
+        return None
+
     if tool == ToolName.BUILD_CHECK:
         return _build_check_message(context, urgency)
     if tool == ToolName.REVIEW:

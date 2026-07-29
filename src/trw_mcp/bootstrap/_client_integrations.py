@@ -61,11 +61,11 @@ def _update_cursor(
     target_dir: Path,
     result: dict[str, list[str]],
     ide_override: str | None,
-    _: dict[str, str] | None,
+    manifest_hashes: dict[str, str] | None,
 ) -> None:
     from ._update_project import _update_cursor_artifacts
 
-    _update_cursor_artifacts(target_dir, result, ide_override=ide_override)
+    _update_cursor_artifacts(target_dir, result, ide_override=ide_override, manifest_hashes=manifest_hashes)
 
 
 def _install_codex(target_dir: Path, force: bool, result: dict[str, list[str]], _: list[str] | None) -> None:
@@ -144,9 +144,8 @@ CLIENT_INTEGRATIONS: tuple[ClientIntegration, ...] = (
 # entry is either covered by a ``platform_ids`` binding or in this set, so a
 # newly-added client can never silently no-op.
 #
-# ``gemini`` and ``aider`` were retired 2026-07-11 (Gemini CLI deprecated by
-# Google; aider never had an adapter). They are no longer in ``SUPPORTED_IDES``,
-# so they are neither dispatched nor excluded here.
+# ``aider`` was retired 2026-07-11 (it never had an adapter). It is no longer in
+# ``SUPPORTED_IDES``, so it is neither dispatched nor excluded here.
 # ---------------------------------------------------------------------------
 _INTEGRATION_EXCLUDED_IDES: frozenset[str] = frozenset({"claude-code"})
 

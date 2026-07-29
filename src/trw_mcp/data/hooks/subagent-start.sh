@@ -16,7 +16,35 @@ init_hook_timer
 _payload=$(cat) || exit 0
 
 _project_root="$(get_repo_root)" || true
-_run_dir=$(find_active_run) || true
+
+# --- Resolve THIS SESSION'S OWN run (PRD-FIX-118 FR03) ---------------------
+# Everything this hook prints is injected verbatim into a fresh subagent's
+# context. Resolved by recency it hands the subagent a parallel instance's run
+# path and phase — and the phase then selects which checklist to inject, so the
+# subagent is coached for a phase it is not in and may write into a foreign run.
+# A subagent shell inherits its parent's session id, so a subagent of a pinned
+# session resolves the SAME run.
+#
+# What "unowned" means HERE: print the protocol reminders (recall / learn /
+# checkpoint) and omit ONLY the run-derived lines. Those reminders are not
+# run-scoped and are the hook's actual reason to exist, so the injection keeps
+# working; it just stops asserting foreign state (FR04).
+_ss_session_id=""
+if command -v jq >/dev/null 2>&1; then
+  _ss_session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
+fi
+if [ -z "$_ss_session_id" ]; then
+  _ss_session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+fi
+_ss_session_id=$(trw_pin_key "$_ss_session_id" 2>/dev/null) || _ss_session_id=""
+
+_run_dir=""
+if [ -n "$_ss_session_id" ]; then
+  _run_dir=$(resolve_owned_run "$_ss_session_id" 2>/dev/null) || _run_dir=""
+else
+  # Identity unknown — legacy newest-wins for single-instance clients.
+  _run_dir=$(find_active_run) || _run_dir=""
+fi
 _phase=""
 
 echo "TRW SUB-AGENT CONTEXT:"
@@ -37,13 +65,8 @@ fi
 case "$_phase" in
   implement*)
     echo ""
-    echo "BEFORE COMPLETING YOUR WORK — self-review checklist:"
-    echo "  1. Re-read your assigned PRD FRs — verify EVERY requirement is implemented"
-    echo "  2. Check integration — new code must be imported and called from existing code"
-    echo "  3. Review your diff for DRY/KISS/SOLID quality"
-    echo "  4. Run project-native validation, then record observed counts/status with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)"
-    echo "  5. Write a completion summary in trw_checkpoint: FRs implemented, tests, integration points"
-    echo "Doing this self-review now saves the project a full rework pass later."
+    echo "Integration is part of done: new code must be imported and called from existing code."
+    echo "Record validation with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope), then trw_checkpoint your result — FRs implemented, tests, integration points."
     ;;
   validate*)
     echo ""

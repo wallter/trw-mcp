@@ -1,6 +1,6 @@
 """Antigravity CLI distill channel bootstrap — install entry-point.
 
-Installs all four Antigravity distill channel artifacts at ``init-project``
+Installs the remaining Antigravity distill channel artifacts at ``init-project``
 and ``update-project`` time. Called from ``bootstrap/_init_project_ide.py``
 and ``bootstrap/_ide_targets.py``.
 
@@ -8,7 +8,7 @@ Artifacts written:
   - .antigravitycli/agents/trw-distill-explorer.md              (AG-02 T1 stub)
   - .antigravitycli/hooks.json                                   (AG-03 PreToolUse hook entry)
   - .antigravitycli/hooks/trw_before_edit_telemetry.py           (AG-03 hook script)
-  - .trw/channels/manifest.yaml                                  (four AG channel entries merged)
+  - .trw/channels/manifest.yaml                                  (three AG channel entries merged)
 
 AG-01 ANTIGRAVITY.md segment is a runtime channel managed by
 ``render_antigravity_distill_segment()`` — no stub file is written at install.
@@ -18,6 +18,10 @@ AG-03 before-edit hook empirically confirmed 2026-05-28 (agy v1.0.2):
 AG-04 is a telemetry pull channel — no file written.
 
 PRD-DIST-2404 FR41-FR43.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from trw_mcp.bootstrap._file_ops import _new_result
 from trw_mcp.channels._manifest_loader import ManifestValidationError
 
 log = structlog.get_logger(__name__)
+
 
 __all__ = [
     "bootstrap_antigravity_channel_manifest",
@@ -84,21 +89,30 @@ def install_antigravity_distill_channels(
     """
     result = _new_result()
 
-    # 1. Install AG-02 explorer subagent (.antigravitycli/agents/trw-distill-explorer.md)
+    # 1. Install AG-02 explorer subagent (.antigravitycli/agents/trw-distill-explorer.md).
+    #    PRD-CORE-239: licence-gated — sibling of cc-05 and the opencode
+    #    explorer. All three install an agent that cannot work without the
+    #    proprietary package; gating one and not the others would have been a
+    #    subset defect inside the fix.
     try:
+        from trw_mcp.bootstrap._distill_entitlement import distill_artifacts_entitled
         from trw_mcp.channels.antigravity import generate_distill_explorer_agent
 
-        agent_result = generate_distill_explorer_agent(
-            repo_root=target_dir,
-            sidecar_data=None,
-            sidecar_sha=None,
-        )
-        rel = ".antigravitycli/agents/trw-distill-explorer.md"
-        status = getattr(agent_result, "status", None)
-        if status == "skipped":
-            result["preserved"].append(rel)
-        else:
-            result["created"].append(rel)
+        # A plain guard, not an exception: routing the skip through the
+        # fail-open handler below would log "AG-02 subagent install failed",
+        # which is false — nothing failed, the project is simply unlicensed.
+        if distill_artifacts_entitled(artifact="ag-02-distill-explorer", repo_root=target_dir):
+            agent_result = generate_distill_explorer_agent(
+                repo_root=target_dir,
+                sidecar_data=None,
+                sidecar_sha=None,
+            )
+            rel = ".antigravitycli/agents/trw-distill-explorer.md"
+            status = getattr(agent_result, "status", None)
+            if status == "skipped":
+                result["preserved"].append(rel)
+            else:
+                result["created"].append(rel)
     except Exception as exc:  # justified: fail-open, subagent is best-effort
         log.warning("ag02_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"AG-02 subagent install failed: {exc}")

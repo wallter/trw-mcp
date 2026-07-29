@@ -121,8 +121,6 @@ _SUPPORTED_IDES = [
     "opencode",
     "codex",
     "copilot",
-    "gemini",
-    "aider",
     "antigravity-cli",
 ]
 

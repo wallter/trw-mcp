@@ -13,9 +13,14 @@ rebuilt from the POST-FIX-076 39-tool surface (none of the four removed tools
 reads ``build/inventory.json`` at test time so a newly-registered tool forces a
 policy update via CI failure.
 
-``RIGID_TOOLS`` (session_start / deliver / build_check) are the never-hidden
-invariant: they live in the Safe Set so they are visible in every phase even if
-a profile's ``allowed_tools_by_phase`` omits them.
+``RIGID_TOOLS`` (session_start / deliver / build_check / review) are the
+never-hidden invariant. The mechanism is the ``| RIGID_TOOLS`` union applied
+wherever a visible set is computed — ``from_resolved_allowlist`` at build time
+and both middleware paths at point of use — NOT membership of the Safe Set.
+``_DEFAULT_SAFE_SET`` happens to list the same names and a test keeps that
+overlap honest in the add direction, but a profile supplying its own
+``safe_set`` is still covered, because the union runs regardless of how the
+policy object was constructed.
 """
 
 from __future__ import annotations
@@ -29,8 +34,15 @@ _PHASES: tuple[str, ...] = ("RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW
 
 #: Tools that MUST be exposed in EVERY phase regardless of policy (the
 #: never-hide invariant). A broken or over-tight policy can never lock a
-#: session out of starting, validating, or delivering.
-RIGID_TOOLS: frozenset[str] = frozenset({"trw_session_start", "trw_deliver", "trw_build_check"})
+#: session out of starting, validating, reviewing, or delivering.
+#:
+#: ``trw_review`` joined on the SAME argument that admitted ``trw_build_check``
+#: (PRD-FIX-119 FR01): a bounded surface must never hide the remedy a delivery
+#: gate demands. ``review_scope_block`` (``tools/_delivery_helpers``) is a
+#: NO_ESCAPE hard block whose only remedy is ``trw_review``, and ``trw_review``
+#: is additionally the ONLY writer of ``Phase.REVIEW`` — so hiding it made
+#: REVIEW unreachable from IMPLEMENT under ``phase_exposure_enabled`` (FR07).
+RIGID_TOOLS: frozenset[str] = frozenset({"trw_session_start", "trw_deliver", "trw_build_check", "trw_review"})
 
 #: The Safe Set (ALL_PHASES): lifecycle, status, recall, help, and read-only
 #: code-intelligence tools that are phase-agnostic. Includes the rigid tools.
@@ -57,13 +69,18 @@ _DEFAULT_SAFE_SET: frozenset[str] = frozenset(
         # Rigid (also session-lifecycle gates, but listed for VALIDATE/DELIVER)
         "trw_build_check",
         "trw_deliver",
+        # Rigid (PRD-FIX-119 FR01): the NO_ESCAPE ``review_scope_block`` remedy
+        # and the only writer of Phase.REVIEW — never hidden by a phase or a
+        # bounded task surface. Kept in the REVIEW bucket below as well so
+        # reverting the RIGID_TOOLS membership alone restores exactly the
+        # pre-FIX-119 behavior (rollback safety), not a narrower one.
+        "trw_review",
         # Read-only code / risk / event intelligence (safe to read any phase)
         "trw_before_edit_hint",
         "trw_before_edit_hint_batch",
         "trw_code_search",
         "trw_code_symbol",
         "trw_codebase_risk_report",
-        "trw_entity_risk_map",
         "trw_query_events",
         "trw_surface_classify",
         "trw_surface_diff",

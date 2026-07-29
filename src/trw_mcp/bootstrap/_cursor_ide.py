@@ -236,34 +236,14 @@ _IDE_HOOK_SCRIPTS: list[str] = [
 # ---------------------------------------------------------------------------
 
 
-def generate_cursor_ide_subagents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-) -> BootstrapFileResult:
-    """Generate .cursor/agents/trw-*.md subagent definitions (FR03).
+def cursor_ide_agent_contents() -> dict[str, bytes]:
+    """Bundled ``.cursor/agents/trw-*.md`` content, keyed by repo-relative path.
 
-    Each file has YAML frontmatter (name, description, model, readonly,
-    is_background) followed by the body content from bundled templates in
-    data/cursor_ide/agents/<name>.md.
-
-    TRW-prefixed agents are always written (idempotent overwrite).
-    User-authored agents in .cursor/agents/ outside the ``trw-`` prefix
-    are preserved.
-
-    Args:
-        target_dir: Root of the target git repository.
-        force: Ignored — TRW agents are always refreshed. Parameter kept
-            for API symmetry with other generators.
-
-    Returns:
-        Dict with 'created'/'updated'/'preserved' lists.
+    Single source of truth shared by :func:`generate_cursor_ide_subagents` and
+    the managed-artifact manifest sweep.
     """
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    agents_dir = target_dir / ".cursor" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
     template_pkg = _pkg_files("trw_mcp").joinpath("data/cursor_ide/agents")
+    contents: dict[str, bytes] = {}
 
     for name, description in _TRW_SUBAGENTS:
         template_path = template_pkg.joinpath(f"{name}.md")
@@ -288,48 +268,72 @@ def generate_cursor_ide_subagents(
             f"is_background: {str(is_background).lower()}\n"
             "---\n\n"
         )
-        content = frontmatter + body
+        contents[f".cursor/agents/{name}.md"] = (frontmatter + body).encode("utf-8")
 
-        target = agents_dir / f"{name}.md"
+    return contents
+
+
+def generate_cursor_ide_subagents(
+    target_dir: Path,
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> BootstrapFileResult:
+    """Generate .cursor/agents/trw-*.md subagent definitions (FR03).
+
+    Each file has YAML frontmatter (name, description, model, readonly,
+    is_background) followed by the body content from bundled templates in
+    data/cursor_ide/agents/<name>.md.
+
+    Content-aware (CONSTITUTION HB-2): a TRW agent matching the bundled content
+    or TRW's recorded last write is refreshed; a user-edited one is preserved.
+    These files used to be written unconditionally, so a hand edit was destroyed
+    on every update. User-authored agents in .cursor/agents/ outside the
+    ``trw-`` prefix were and remain untouched.
+
+    Args:
+        target_dir: Root of the target git repository.
+        force: When True, rewrite TRW agents even if user-edited — the
+            documented escape hatch for discarding local edits.
+        manifest_hashes: ``content_hashes`` from the manifest as it stood BEFORE
+            this run, used to recognise TRW's own previous write.
+
+    Returns:
+        Dict with 'created'/'updated'/'preserved' lists.
+    """
+    from ._managed_client_artifacts import artifact_user_edited
+
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    agents_dir = target_dir / ".cursor" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+
+    for rel, incoming in cursor_ide_agent_contents().items():
+        target = target_dir / rel
         existed = target.exists()
-        target.write_text(content, encoding="utf-8")
-
-        rel = f".cursor/agents/{name}.md"
+        if existed and not force and artifact_user_edited(target, rel, incoming, manifest_hashes):
+            logger.info("cursor_ide_agent_user_modified", path=rel)
+            result["preserved"].append(rel)
+            continue
+        target.write_bytes(incoming)
         (result["updated"] if existed else result["created"]).append(rel)
 
     logger.info(
         "generate_cursor_ide_subagents",
         created=len(result["created"]),
         updated=len(result["updated"]),
+        preserved=len(result["preserved"]),
     )
     return result
 
 
-def generate_cursor_ide_commands(
-    target_dir: Path,
-    *,
-    force: bool = False,
-) -> BootstrapFileResult:
-    """Generate .cursor/commands/trw-*.md slash command wrappers (FR05).
+def cursor_ide_command_contents() -> dict[str, bytes]:
+    """Bundled ``.cursor/commands/trw-*.md`` content, keyed by repo-relative path.
 
-    Each command file is generated from a bundled template in
-    data/cursor_ide/commands/<name>.md when present; falls back to an
-    inline body.  User-authored commands in .cursor/commands/ outside
-    the ``trw-`` prefix are preserved.
-
-    Args:
-        target_dir: Root of the target git repository.
-        force: Ignored — TRW commands are always refreshed. Parameter kept
-            for API symmetry.
-
-    Returns:
-        Dict with 'created'/'updated'/'preserved' lists.
+    Single source of truth shared by :func:`generate_cursor_ide_commands` and
+    the managed-artifact manifest sweep.
     """
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    commands_dir = target_dir / ".cursor" / "commands"
-    commands_dir.mkdir(parents=True, exist_ok=True)
-
     template_pkg = _pkg_files("trw_mcp").joinpath("data/cursor_ide/commands")
+    contents: dict[str, bytes] = {}
 
     for cmd_name, description in _TRW_COMMANDS:
         # Try bundled template first
@@ -349,19 +353,71 @@ def generate_cursor_ide_commands(
             )
             logger.warning("cursor_ide_command_template_missing", name=cmd_name)
 
-        target = commands_dir / f"{cmd_name}.md"
-        existed = target.exists()
-        target.write_text(content, encoding="utf-8")
+        contents[f".cursor/commands/{cmd_name}.md"] = content.encode("utf-8")
 
-        rel = f".cursor/commands/{cmd_name}.md"
+    return contents
+
+
+def generate_cursor_ide_commands(
+    target_dir: Path,
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> BootstrapFileResult:
+    """Generate .cursor/commands/trw-*.md slash command wrappers (FR05).
+
+    Each command file is generated from a bundled template in
+    data/cursor_ide/commands/<name>.md when present; falls back to an
+    inline body.  User-authored commands in .cursor/commands/ outside
+    the ``trw-`` prefix are preserved.
+
+    Content-aware (CONSTITUTION HB-2): a TRW command matching the bundled
+    content or TRW's recorded last write is refreshed; a user-edited one is
+    preserved. These files used to be written unconditionally.
+
+    Args:
+        target_dir: Root of the target git repository.
+        force: When True, rewrite TRW commands even if user-edited.
+        manifest_hashes: ``content_hashes`` from the manifest as it stood BEFORE
+            this run, used to recognise TRW's own previous write.
+
+    Returns:
+        Dict with 'created'/'updated'/'preserved' lists.
+    """
+    from ._managed_client_artifacts import artifact_user_edited
+
+    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
+    commands_dir = target_dir / ".cursor" / "commands"
+    commands_dir.mkdir(parents=True, exist_ok=True)
+
+    for rel, incoming in cursor_ide_command_contents().items():
+        target = target_dir / rel
+        existed = target.exists()
+        if existed and not force and artifact_user_edited(target, rel, incoming, manifest_hashes):
+            logger.info("cursor_ide_command_user_modified", path=rel)
+            result["preserved"].append(rel)
+            continue
+        target.write_bytes(incoming)
         (result["updated"] if existed else result["created"]).append(rel)
 
     logger.info(
         "generate_cursor_ide_commands",
         created=len(result["created"]),
         updated=len(result["updated"]),
+        preserved=len(result["preserved"]),
     )
     return result
+
+
+def cursor_ide_skill_contents(source_skills_dir: Path | None = None) -> dict[str, bytes]:
+    """Bundled ``.cursor/skills/**`` content for the IDE curated skill list.
+
+    Single source of truth shared by :func:`generate_cursor_ide_skills` (via
+    ``generate_cursor_skills_mirror``) and the managed-artifact manifest sweep.
+    """
+    from ._cursor import cursor_skill_mirror_contents
+
+    return cursor_skill_mirror_contents(_IDE_CURATED_SKILLS, source_skills_dir)
 
 
 def generate_cursor_ide_skills(
@@ -369,6 +425,7 @@ def generate_cursor_ide_skills(
     source_skills_dir: Path | None = None,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
     """Mirror curated TRW skills into .cursor/skills/<name>/ (FR04).
 
@@ -393,6 +450,7 @@ def generate_cursor_ide_skills(
         _IDE_CURATED_SKILLS,
         source_skills_dir,
         force=force,
+        manifest_hashes=manifest_hashes,
     )
 
 

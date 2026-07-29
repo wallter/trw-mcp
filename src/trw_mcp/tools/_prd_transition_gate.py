@@ -20,12 +20,26 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from trw_mcp.models.config import TRWConfig
     from trw_mcp.models.gate_decision import EffectiveCompletionDecision
     from trw_mcp.models.requirements import ActivationGate
 
 import structlog
 
 from trw_mcp.state.persistence import FileStateReader
+
+# FR05 default-path-proof validation lives in the sibling module (it also
+# resolves the files a proof names); re-exported so callers/tests keep one
+# import point.
+from trw_mcp.tools._prd_proof_paths import (
+    DEFAULT_PATH_PROOF_FILE_MISSING as DEFAULT_PATH_PROOF_FILE_MISSING,
+)
+from trw_mcp.tools._prd_proof_paths import (
+    MISSING_DEFAULT_PATH_PROOF as MISSING_DEFAULT_PATH_PROOF,
+)
+from trw_mcp.tools._prd_proof_paths import (
+    default_path_proof_blocking as default_path_proof_blocking,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -49,12 +63,14 @@ MISSING_BUILD = "build_evidence"
 MISSING_REVIEW_RECEIPT = "independent_review_receipt"
 # PRD-QUAL-119-FR03: rollout vocabulary is never completion.
 ROLLOUT_NOT_DEFAULT = "rollout_not_default"
-# PRD-QUAL-119-FR05: a live claim needs a content-bound default-path receipt
-# plus a superseded-path removal assertion; unit/substrate tests alone fail.
-MISSING_DEFAULT_PATH_PROOF = "default_path_proof_missing"
 # Advisory-only tokens (surfaced as warnings, NEVER hard-block — NFR02).
 ADVISORY_UNKNOWN_RECEIPT = "review_receipt_provenance_unknown"
 ADVISORY_ASSERTED_RECEIPT = "review_receipt_asserted_not_verifiable"
+# A detected transition whose coherence could not be evaluated at all (missing
+# or unreadable PRD, resolver fault). Fail-open keeps it non-blocking, but it
+# MUST NOT be silent: dropping the PRD from every result map made an
+# unevaluated transition indistinguishable from a coherent one.
+ADVISORY_NOT_EVALUATED = "coherence_not_evaluated"
 
 # Rollout states that are NOT normal default activation (PRD-QUAL-119-FR03).
 _NON_DEFAULT_ROLLOUT_STATES = frozenset({"observe", "warn", "shadow", "canary", "canary-only", "disabled"})
@@ -69,27 +85,6 @@ def rollout_blocking(frontmatter: dict[str, object]) -> list[str]:
     """
     rollout = str(frontmatter.get("rollout_state", "")).strip().lower()
     return [ROLLOUT_NOT_DEFAULT] if rollout in _NON_DEFAULT_ROLLOUT_STATES else []
-
-
-def default_path_proof_blocking(frontmatter: dict[str, object], level: str) -> list[str]:
-    """FR05: a ``live`` claim requires a content-bound default-path receipt.
-
-    The ``default_path_proof`` frontmatter block must carry a non-empty
-    ``receipt``, a ``source_digest`` binding the proof to current content
-    (sha256:…), and a ``removal_assertion`` naming the superseded-path absence
-    proof. Unit or substrate tests alone never satisfy this.
-    """
-    if level != "live":
-        return []
-    proof = frontmatter.get("default_path_proof")
-    if not isinstance(proof, dict):
-        return [MISSING_DEFAULT_PATH_PROOF]
-    receipt = str(proof.get("receipt", "")).strip()
-    digest = str(proof.get("source_digest", "")).strip()
-    removal = str(proof.get("removal_assertion", "")).strip()
-    if receipt and removal and digest.startswith("sha256:"):
-        return []
-    return [MISSING_DEFAULT_PATH_PROOF]
 
 
 @dataclass(frozen=True)
@@ -429,17 +424,24 @@ def _read_run_yaml(run_path: Path, reader: FileStateReader) -> dict[str, object]
     return data if isinstance(data, dict) else {}
 
 
-def _gate_mode_blocks_task(config: object, task_type: str) -> bool:
+def _gate_mode_blocks_task(config: TRWConfig, task_type: str) -> bool:
     """True when deliver_gate_mode resolves to a block posture for this task_type.
 
     Reuses the ``_BUILD_ARTIFACT_TASK_TYPES`` classification (coding/rca/eval) and
     the per-task-type override map so the acceptance-integrity gate is scoped
     identically to the build gate — docs/research/planning/unknown never block.
+
+    ``deliver_gate_mode`` is read straight off the config, matching
+    ``_orchestration_gate_scan``. It used to come through
+    ``getattr(config, "deliver_gate_mode", "advisory")``, whose fallback
+    contradicted the field's real default of ``block_coding``: any config object
+    that failed to expose the attribute silently downgraded this gate to
+    never-block. A gate must not carry a second, weaker copy of a policy default.
     """
     from trw_mcp.tools._deliver_gate_mode import _BUILD_ARTIFACT_TASK_TYPES
 
-    overrides = getattr(config, "deliver_gate_task_type_overrides", None) or {}
-    mode = str(overrides.get(task_type, getattr(config, "deliver_gate_mode", "advisory")))
+    overrides = config.deliver_gate_task_type_overrides or {}
+    mode = str(overrides.get(task_type, config.deliver_gate_mode))
     return mode in {"block_coding", "block_all"} and task_type in _BUILD_ARTIFACT_TASK_TYPES
 
 
@@ -512,7 +514,10 @@ def evaluate_transition_gate(run_path: Path) -> TransitionGateOutcome:
     reader = FileStateReader()
     try:
         config = get_config()
-        gate_mode = str(getattr(config, "prd_transition_gate", "warn"))
+        # Read directly, not via getattr(..., "warn"): the field's declared
+        # default is "block", so the old fallback was a second, weaker copy of
+        # the policy that would silently downgrade the gate to warn-only.
+        gate_mode = str(config.prd_transition_gate)
         run_data = _read_run_yaml(run_path, reader)
         task_type = str(run_data.get("task_type", "unknown")) or "unknown"
         if not _gate_mode_blocks_task(config, task_type):
@@ -529,8 +534,10 @@ def evaluate_transition_gate(run_path: Path) -> TransitionGateOutcome:
         for prd_id in prd_ids:
             try:
                 report = evaluate_prd_coherence(prd_id, run_path, reader, gate_mode=gate_mode)
-            except Exception:  # justified: per-PRD coherence failure degrades to no-finding (NFR02)
+            except Exception:  # justified: fail-open on coherence faults, but never silently (NFR02)
                 logger.warning("acceptance_integrity_coherence_degraded", prd_id=prd_id, exc_info=True)
+                advisory_by_prd[prd_id] = [ADVISORY_NOT_EVALUATED]
+                decision_outcomes[prd_id] = "unknown"
                 continue
             if report.blocking:
                 blocking_by_prd[prd_id] = report.blocking

@@ -51,7 +51,7 @@ class TestUpdateAddsAssertions:
 
         update_fn(
             learning_id="L-test1",
-            assertions=SAMPLE_ASSERTIONS,
+            fields={"assertions": SAMPLE_ASSERTIONS},
         )
 
         saved = captured["assertions"]
@@ -82,7 +82,7 @@ class TestUpdateReplacesAssertions:
 
         update_fn(
             learning_id="L-test2",
-            assertions=REPLACEMENT_ASSERTIONS,
+            fields={"assertions": REPLACEMENT_ASSERTIONS},
         )
 
         saved = captured["assertions"]
@@ -119,7 +119,7 @@ class TestUpdateReplacesAssertions:
 
         update_fn(
             learning_id="L-test2",
-            assertions=REPLACEMENT_ASSERTIONS,
+            fields={"assertions": REPLACEMENT_ASSERTIONS},
         )
 
         updated = FileStateReader().read_yaml(entry_path)
@@ -153,7 +153,7 @@ class TestDeleteAssertionsWithEmptyList:
 
         update_fn(
             learning_id="L-test3",
-            assertions=[],
+            fields={"assertions": []},
         )
 
         assert captured["assertions"] == []

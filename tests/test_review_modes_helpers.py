@@ -6,6 +6,8 @@ import subprocess
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from tests._review_modes_support import _make_config
 from trw_mcp.tools._review_helpers import (
     REVIEWER_ROLES,
@@ -55,23 +57,17 @@ class TestNormalizeSeverity:
 
 
 class TestInvokeCrossModelReview:
-    """_invoke_cross_model_review is an integration stub."""
+    """_invoke_cross_model_review is the (unwired) provider integration seam."""
 
-    def test_empty_diff_returns_empty_list(self) -> None:
-        config = _make_config()
-        result = _invoke_cross_model_review("", config)
-        assert result == []
+    @pytest.mark.parametrize("diff", ["", "+ some diff content\n- removed line"])
+    def test_no_transport_wired_returns_none_not_empty_list(self, diff: str) -> None:
+        """None means "nothing was contacted" — distinct from "provider said nothing".
 
-    def test_non_empty_diff_returns_empty_list(self) -> None:
-        """Stub returns empty list until provider is configured."""
-        config = _make_config()
-        result = _invoke_cross_model_review("+ some diff content\n- removed line", config)
-        assert result == []
-
-    def test_returns_list_type(self) -> None:
-        config = _make_config()
-        result = _invoke_cross_model_review("diff content", config)
-        assert isinstance(result, list)
+        Returning ``[]`` here made handle_cross_model_mode report
+        ``provider_returned_empty``, blaming a configured provider TRW never
+        called. The caller maps None to ``provider_integration_absent``.
+        """
+        assert _invoke_cross_model_review(diff, _make_config()) is None
 
 
 class TestRunMultiReviewerAnalysis:
@@ -82,10 +78,20 @@ class TestRunMultiReviewerAnalysis:
         result = _run_multi_reviewer_analysis("", config)
         assert result["findings"] == []
 
-    def test_empty_diff_lists_reviewer_roles(self) -> None:
-        config = _make_config()
-        result = _run_multi_reviewer_analysis("", config)
-        assert result["reviewer_roles_run"] == list(REVIEWER_ROLES)
+    def test_empty_diff_claims_no_reviewer_roles(self) -> None:
+        """A scan that ran nothing must not claim the full role list.
+
+        This previously reported all six roles for a TODO/FIXME grep, and that
+        claim was persisted verbatim as the receipt's realized_reviewer_roles.
+        """
+        result = _run_multi_reviewer_analysis("", _make_config())
+        assert result["reviewer_roles_run"] == []
+
+    def test_marker_scan_claims_only_the_role_it_actually_ran(self) -> None:
+        diff = "+++ b/foo.py\n+ # TODO: fix this later\n"
+        result = _run_multi_reviewer_analysis(diff, _make_config())
+        assert result["reviewer_roles_run"] == ["style"]
+        assert set(result["reviewer_roles_run"]).issubset(set(REVIEWER_ROLES))
 
     def test_empty_diff_has_no_errors(self) -> None:
         config = _make_config()
@@ -162,10 +168,29 @@ class TestRunMultiReviewerAnalysis:
         findings = result["findings"]
         assert all(finding["reviewer_role"] == "style" for finding in findings)
 
-    def test_returns_dict_type(self) -> None:
+    def test_result_carries_every_key_handle_auto_mode_reads(self) -> None:
+        """The five keys the auto-mode handler consumes must all be present.
+
+        Replaces an ``isinstance(result, dict)`` check, which an empty ``{}``
+        would satisfy — and an empty dict is exactly the failure that matters
+        here: ``handle_auto_mode`` reads ``auto_analysis_limited`` with a
+        ``False`` default, so a result missing that key would be treated as a
+        SUBSTANTIVE review instead of a limited pattern scan.
+        """
         config = _make_config()
+
         result = _run_multi_reviewer_analysis("some diff", config)
-        assert isinstance(result, dict)
+
+        assert set(result) >= {
+            "reviewer_roles_run",
+            "reviewer_errors",
+            "findings",
+            "auto_analysis_limited",
+            "limited_reason",
+        }
+        # The pattern scan is never substantive, and it says so in the payload.
+        assert result["auto_analysis_limited"] is True
+        assert result["limited_reason"]
 
 
 class TestComputeVerdict:

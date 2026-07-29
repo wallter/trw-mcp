@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-24T21:14:02.118374+00:00",
+  "session_id": "0ada69f4546144f393ec7effd0ecbf88",
+  "phase": "validate",
+  "applicable": true,
+  "total_nudges": 3041,
+  "nudged_step_count": 2,
+  "nudge_counts_by_step": {
+    "session_start": 2963,
+    "build_check": 78
+  },
+  "nudge_step_completed": {
+    "session_start": true,
+    "build_check": true
+  },
+  "responded_step_count": 2,
+  "nudge_responsiveness": 1.0,
+  "resistance_by_step": {},
+  "resistance_flags": [],
+  "resistance_threshold": 3,
+  "recall_pull_rate": 0.0,
+  "recall_nudge_count": 0,
+  "timing": {
+    "timely_count": 0,
+    "untimely_count": 0,
+    "unknown_count": 0,
+    "validity_rate": 0.0
+  },
+  "variant_breakdown": {}
+}

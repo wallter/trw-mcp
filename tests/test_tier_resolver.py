@@ -54,7 +54,7 @@ class TestResolveTier:
 
     @pytest.mark.parametrize(
         "client",
-        ["opencode", "codex", "copilot", "cursor-cli", "gemini", "aider"],
+        ["opencode", "codex", "copilot", "cursor-cli", "antigravity-cli"],
     )
     def test_resolve_passthrough_for_unadapted_clients(self, client: str) -> None:
         """Clients without an adapter map but in KNOWN_CLIENTS fall through

@@ -93,8 +93,37 @@ def _run_validate(args: argparse.Namespace, channels_dir: Path) -> None:
     print(f"OK: manifest valid ({n} channel{'s' if n != 1 else ''})")
 
 
+def _resolve_lock_path(project_dir: Path, raw: str) -> Path:
+    """Put a manifest ``lock_file`` on the same footing as a globbed candidate.
+
+    Manifests store REPO-RELATIVE paths (`.trw/channels/<id>.lock` — see every
+    bundled `manifest-*.yaml`), while the scan globs absolute paths out of
+    `project_dir / ".trw/channels"`. Comparing the two sets directly only
+    matched because `--project-dir` defaults to `"."`, which makes both sides
+    relative by accident.
+
+    With any other `--project-dir` the intersection was EMPTY, so every lock
+    registered by a live channel was reclassified orphaned and unlinked past
+    `--max-age-hours`. That is a data-loss path against locks held by a writer
+    mid-render, and it was reachable by the ordinary operator invocation
+    `trw-mcp channel-doctor clean --project-dir /path/to/repo --apply`.
+
+    Resolving both sides against the project directory makes the comparison
+    hold for absolute and relative manifest values alike.
+    """
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = project_dir / candidate
+    return candidate.resolve()
+
+
 def _run_scan(args: argparse.Namespace, channels_dir: Path) -> None:
     """List orphaned locks and stale state files."""
+    # channels_dir is always `<project_dir>/.trw/channels` (see run_channel_doctor),
+    # so the project root is its grandparent. Manifest lock_file values are
+    # repo-relative and must be resolved against it — see _resolve_lock_path.
+    project_dir = channels_dir.parent.parent
+
     max_age_hours: int = getattr(args, "max_age_hours", _DEFAULT_MAX_AGE_HOURS)
     dry_run: bool = getattr(args, "dry_run", True)
     max_age_secs = max_age_hours * 3600
@@ -110,7 +139,7 @@ def _run_scan(args: argparse.Namespace, channels_dir: Path) -> None:
             manifest = load(manifest_path)
             for entry in manifest.channels:
                 if entry.lock_file:
-                    active_lock_paths.add(Path(entry.lock_file))
+                    active_lock_paths.add(_resolve_lock_path(project_dir, entry.lock_file))
 
     orphaned_locks: list[Path] = []
     stale_states: list[Path] = []
@@ -118,7 +147,7 @@ def _run_scan(args: argparse.Namespace, channels_dir: Path) -> None:
     if channels_dir.exists():
         for candidate in channels_dir.rglob(f"*{_LOCK_SUFFIX}"):
             # Orphaned = lock path NOT in manifest's active lock_file set.
-            if candidate not in active_lock_paths:
+            if candidate.resolve() not in active_lock_paths:
                 try:
                     age = now - candidate.stat().st_mtime
                     if age > max_age_secs:
@@ -154,6 +183,11 @@ def _run_scan(args: argparse.Namespace, channels_dir: Path) -> None:
 
 def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
     """Remove orphaned lock files older than --max-age-hours."""
+    # channels_dir is always `<project_dir>/.trw/channels` (see run_channel_doctor),
+    # so the project root is its grandparent. Manifest lock_file values are
+    # repo-relative and must be resolved against it — see _resolve_lock_path.
+    project_dir = channels_dir.parent.parent
+
     max_age_hours: int = getattr(args, "max_age_hours", _DEFAULT_MAX_AGE_HOURS)
     dry_run: bool = getattr(args, "dry_run", False)
     max_age_secs = max_age_hours * 3600
@@ -171,7 +205,7 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
             for entry in manifest.channels:
                 status_val: str = entry.status.value if hasattr(entry.status, "value") else str(entry.status)
                 if entry.lock_file:
-                    lp = Path(entry.lock_file)
+                    lp = _resolve_lock_path(project_dir, entry.lock_file)
                     if status_val in {"disabled", "deprecated"}:
                         disabled_lock_paths.add(lp)
                     else:
@@ -184,10 +218,11 @@ def _run_clean(args: argparse.Namespace, channels_dir: Path) -> None:
         for candidate in list(channels_dir.rglob(f"*{_LOCK_SUFFIX}")):
             should_remove = False
             # Remove if for disabled/deprecated channel.
-            if candidate in disabled_lock_paths:
+            resolved = candidate.resolve()
+            if resolved in disabled_lock_paths:
                 should_remove = True
             # Remove if orphaned (not in manifest) AND older than max_age.
-            elif candidate not in active_lock_paths:
+            elif resolved not in active_lock_paths:
                 try:
                     age = now - candidate.stat().st_mtime
                     if age > max_age_secs:
@@ -271,6 +306,7 @@ def _run_throttle(args: argparse.Namespace, project_dir: Path) -> None:
             ThrottleVerdict,
             apply_throttle,
             evaluate_throttle,
+            throttle_stats_for,
         )
 
         report = compute_channel_stats(
@@ -287,11 +323,9 @@ def _run_throttle(args: argparse.Namespace, project_dir: Path) -> None:
         held: list[str] = []
 
         for entry in report.channels:
-            stat_dict = {
-                "adjusted_rate": entry.adjusted_rate,
-                "total_pushes": entry.total_pushes,
-            }
-            decision = evaluate_throttle(entry.channel_id, entry.client, stat_dict)
+            decision = evaluate_throttle(
+                entry.channel_id, entry.client, throttle_stats_for(entry)
+            )
             label = f"{entry.client}:{entry.channel_id}"
 
             if decision.verdict in (

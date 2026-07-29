@@ -151,7 +151,9 @@ def test_get_trw_mcp_entry_cursor_uses_binary_when_on_path() -> None:
         entry = _get_trw_mcp_entry_cursor()
 
     assert entry["command"] == "trw-mcp"
-    assert "--debug" in entry.get("args", [])
+    # No --debug: every client profile emits the same args. Verbose logging is
+    # opted into via .trw/config.yaml debug:true.
+    assert entry.get("args", []) == []
 
 
 @pytest.mark.unit

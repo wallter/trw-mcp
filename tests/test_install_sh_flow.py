@@ -266,3 +266,216 @@ def test_repo_init_failure_suppresses_framework_success_step(tmp_path: Path) -> 
     output = result.stdout + result.stderr
     assert "Project init failed" in output, output
     assert "Framework installed (skills, agents, hooks, config)" not in output, output
+
+
+# ── PEP 668 with NO pipx → managed-venv rung (the ehrendavis macOS+Homebrew case) ──
+#
+# Reported install bug (2026-07-21): `curl … | bash` on macOS with Homebrew
+# Python 3.13 dead-ended — pip is externally managed (PEP 668), `--user` is also
+# blocked, and pipx is NOT installed, so the ladder fell straight through to the
+# fail branch. The fix adds a stdlib-`venv` rung that installs trw-mcp into a
+# dedicated venv (PEP 668 never applies inside a venv) and symlinks the console
+# script onto ~/.local/bin. This harness reproduces that environment (no pipx on
+# PATH; `python3 -m pip install` refused; `python3 -m venv` emulated) and proves
+# the venv rung FIRES, resolves trw-mcp, and the bootstrap exits cleanly.
+
+# python3 stub: refuses every pip install (PEP 668) AND the `-m trw_mcp.server`
+# fallback, but emulates `-m venv DIR` by materializing a venv `bin/python` whose
+# `-m pip install … trw-mcp` writes a working `trw-mcp` console script into the
+# venv bin — exactly what `_install_via_managed_venv` then exposes on PATH.
+_PYTHON3_PEP668_VENV_STUB = r"""#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *'print(f"'*)                         echo "3.12" ;;
+  *'print(sys.version_info.major)'*)    echo "3" ;;
+  *'print(sys.version_info.minor)'*)    echo "12" ;;
+  *"-m venv "*)
+    d="${args##*-m venv }"; d="${d%% *}"
+    mkdir -p "$d/bin"
+    cat > "$d/bin/python" <<'VENVPY'
+#!/usr/bin/env bash
+case "$*" in
+  *"-m pip install"*trw-mcp*)
+    bindir="$(dirname "$0")"
+    cat > "$bindir/trw-mcp" <<'TRWMCP'
+#!/usr/bin/env bash
+echo "trw-mcp $*" >> "$TRW_TEST_MARKERS/trw_mcp_calls"
+exit 0
+TRWMCP
+    chmod +x "$bindir/trw-mcp"
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+VENVPY
+    chmod +x "$d/bin/python"
+    exit 0 ;;
+  *"-m pip install"*)                   exit 1 ;;   # externally managed (PEP 668)
+  *"-m pip"*)                           exit 1 ;;
+  *"-m trw_mcp.server"*)                exit 1 ;;   # force PATH-resolved trw-mcp
+  *)                                    exit 0 ;;
+esac
+exit 0
+"""
+
+
+def test_served_bootstrap_pep668_no_pipx_uses_managed_venv(tmp_path: Path) -> None:
+    """The reported macOS+Homebrew dead-end: PEP 668 pip AND no pipx. The
+    managed-venv rung must fire, install trw-mcp, put it on PATH, and succeed —
+    NOT fall through to the fail branch."""
+    stub_bin = tmp_path / "bin"
+    markers = tmp_path / "markers"
+    project = tmp_path / "project"
+    home = tmp_path / "home"
+    for d in (stub_bin, markers, project, home):
+        d.mkdir(parents=True)
+
+    _write_stub(stub_bin / "python3", _PYTHON3_PEP668_VENV_STUB)
+    _write_stub(stub_bin / "curl", _CURL_STUB)
+    # Deliberately NO pipx and NO uv stub — reproduce the reported environment.
+    (project / ".git").mkdir()
+
+    env = {
+        "PATH": f"{stub_bin}:/usr/bin:/bin",  # pipx/uv absent from all of these
+        "HOME": str(home),
+        "TRW_TEST_MARKERS": str(markers),
+        "TRW_ALLOW_SYSTEM_PYTHON": "false",  # destructive rung stays disabled
+        "TERM": "dumb",
+    }
+    result = subprocess.run(
+        ["bash", str(_SERVED_BOOTSTRAP), "--allow-unauthenticated"],
+        cwd=str(project),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    output = result.stdout + result.stderr
+
+    # 1. The venv rung fired (not the fail branch, not pipx which is absent).
+    assert "isolated venv" in output, f"managed-venv rung did not fire.\n--- output ---\n{output}"
+    assert "externally managed" not in output.lower() or "isolated venv" in output, output
+
+    # 2. trw-mcp resolved on PATH — the venv console script lived ONLY under the
+    #    venv/~/.local/bin, so its resolution proves _expose_trw_bin worked.
+    assert (markers / "trw_mcp_calls").is_file(), (
+        f"trw-mcp never resolved — the managed venv bin was NOT added to PATH.\n--- output ---\n{output}"
+    )
+    assert "init-project" in (markers / "trw_mcp_calls").read_text(encoding="utf-8")
+
+    # 3. Clean success — no dead-end.
+    assert result.returncode == 0, f"bootstrap dead-ended instead of using the venv.\n--- output ---\n{output}"
+    assert "Open-source package installed" in output, output
+
+
+@pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP], ids=["served", "repo"])
+def test_both_bootstraps_carry_venv_and_uv_pep668_rungs(bootstrap: Path) -> None:
+    """Source guard: both copies must keep the isolated-install fallback ladder
+    (managed venv + uv) so a future edit can't silently regress PEP 668
+    resilience back to the pipx-only dead-end. Complements the behavioral test
+    above (which can only exercise the served copy end-to-end)."""
+    text = bootstrap.read_text(encoding="utf-8")
+    assert "_install_via_managed_venv" in text, f"{bootstrap} lost the managed-venv PEP 668 rung"
+    assert "_install_via_uv" in text, f"{bootstrap} lost the uv deepest-fallback rung"
+    assert "python3 -m venv" not in text or "-m venv" in text  # venv is actually invoked
+    # The two copies must stay in lockstep on the helper set (DRY guard).
+    assert "_expose_trw_bin" in text and "TRW_TOOL_VENV" in text, bootstrap
+    # Option A polish (agy 2nd-opinion): launcher shim + post-install shadow guard.
+    assert "_verify_no_stale_shadow" in text, f"{bootstrap} lost the stale-shadow guard"
+    assert "TRW launcher shim" in text, f"{bootstrap} lost the launcher-shim exposure"
+
+
+# ── Option A: a stale shadow winning PATH must be DETECTED and warned about ──
+#
+# python3 stub: PEP 668 (refuses pip) + emulates a venv whose python reports a
+# FRESH version (9.9.9) for importlib.metadata and whose pip-install materializes
+# a venv trw-mcp. Paired with an OLD trw-mcp shadow placed EARLIER on PATH than
+# ~/.local/bin, so `command -v trw-mcp` resolves the stale one and the installer
+# must warn (never silently leave the machine shadowed).
+_PYTHON3_VENV_FRESH_STUB = r"""#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *'print(f"'*)                         echo "3.12" ;;
+  *'print(sys.version_info.major)'*)    echo "3" ;;
+  *'print(sys.version_info.minor)'*)    echo "12" ;;
+  *"-m venv "*)
+    d="${args##*-m venv }"; d="${d%% *}"
+    mkdir -p "$d/bin"
+    cat > "$d/bin/python" <<'VENVPY'
+#!/usr/bin/env bash
+case "$*" in
+  *"importlib.metadata"*) echo "9.9.9" ;;
+  *"-m pip install"*trw-mcp*)
+    bindir="$(dirname "$0")"
+    cat > "$bindir/trw-mcp" <<'TRWMCP'
+#!/usr/bin/env bash
+[ "$1" = "--version" ] && { echo "trw-mcp 9.9.9"; exit 0; }
+echo "trw-mcp $*" >> "$TRW_TEST_MARKERS/trw_mcp_calls"
+exit 0
+TRWMCP
+    chmod +x "$bindir/trw-mcp"
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+VENVPY
+    chmod +x "$d/bin/python"
+    exit 0 ;;
+  *"importlib.metadata"*)               echo "" ;;
+  *"-m pip install"*)                   exit 1 ;;
+  *"-m pip"*)                           exit 1 ;;
+  *"-m trw_mcp.server"*)                exit 1 ;;
+  *)                                    exit 0 ;;
+esac
+exit 0
+"""
+
+# Old trw-mcp shadow placed earlier on PATH — reports a stale version.
+_TRW_MCP_OLD_SHADOW_STUB = r"""#!/usr/bin/env bash
+[ "$1" = "--version" ] && { echo "trw-mcp 0.0.1"; exit 0; }
+echo "trw-mcp $*" >> "$TRW_TEST_MARKERS/trw_mcp_calls"
+exit 0
+"""
+
+
+def test_served_bootstrap_warns_when_stale_shadow_wins_path(tmp_path: Path) -> None:
+    """Option A guard: a fresh install (9.9.9) with a stale trw-mcp (0.0.1)
+    earlier on PATH than ~/.local/bin must produce a loud, specific warning —
+    never a silent shadowed machine — and still exit cleanly."""
+    stub_bin = tmp_path / "bin"
+    markers = tmp_path / "markers"
+    project = tmp_path / "project"
+    home = tmp_path / "home"
+    localbin = home / ".local" / "bin"
+    for d in (stub_bin, markers, project, localbin):
+        d.mkdir(parents=True)
+
+    _write_stub(stub_bin / "python3", _PYTHON3_VENV_FRESH_STUB)
+    _write_stub(stub_bin / "curl", _CURL_STUB)
+    # Stale shadow lives in stub_bin, which precedes ~/.local/bin in PATH below.
+    _write_stub(stub_bin / "trw-mcp", _TRW_MCP_OLD_SHADOW_STUB)
+    (project / ".git").mkdir()
+
+    env = {
+        # stub_bin (0.0.1 shadow) BEFORE ~/.local/bin (fresh 9.9.9 shim) — the
+        # shadow wins, exactly the reported class of bug.
+        "PATH": f"{stub_bin}:{localbin}:/usr/bin:/bin",
+        "HOME": str(home),
+        "TRW_TEST_MARKERS": str(markers),
+        "TRW_ALLOW_SYSTEM_PYTHON": "false",
+        "TERM": "dumb",
+    }
+    result = subprocess.run(
+        ["bash", str(_SERVED_BOOTSTRAP), "--allow-unauthenticated"],
+        cwd=str(project),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    output = result.stdout + result.stderr
+
+    assert "stale trw-mcp is first on your PATH" in output, f"the shadow guard did not fire.\n--- output ---\n{output}"
+    assert "0.0.1" in output and "9.9.9" in output, output
+    assert "pip uninstall trw-mcp" in output, output  # exact remediation given
+    assert result.returncode == 0, output

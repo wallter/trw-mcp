@@ -8,7 +8,8 @@ PRD-IMPROVE-MCP-04:
   default. The full payload (entire learnings list + embed_health +
   assertion_health + sync_health + step_durations_ms + auto_recalled) is large
   and is returned on *every* session. This caps the learnings list to the
-  top-K most relevant, collapses the low-signal diagnostic sub-blocks into a
+  top-K most impactful, reduces the ``connection_fingerprint`` block to its
+  non-constant fields, collapses the low-signal diagnostic sub-blocks into a
   one-line ``health_summary``, and records an approximate
   ``payload_token_estimate`` so the reduction is measurable. Load-bearing
   fields (run/pin recovery, errors, framework_reminder, advisories) are NEVER
@@ -62,12 +63,51 @@ LOAD_BEARING_KEYS = (
     "hint",
     "candidate_runs",
     "timestamp",
+    # Emitted only on a zero-match focused recall; it is the only thing that
+    # explains that the returned learnings are NOT query matches.
+    "query_advisory",
 )
+
+# Compact-mode projection of the PRD-CORE-215 FR01 connection fingerprint.
+# FR01 requires the block on every session_start, so it is reduced rather than
+# dropped. Eight of its ten fields are literal constants or caller-derivable
+# (protocol_version, result_schema, transport, owner_status_capability,
+# request_identity_capability, project_identity) or opaque 64-char digests with
+# no documented caller action (process_fingerprint_digest, loaded_module_digest)
+# — ~124 tokens on every call for zero decision value. The two kept fields are
+# the only ones that vary and that a caller can act on: build_identity (which
+# server version answered) and connection_nonce (which stdio process). The full
+# ten-field block, including the tamper digests, is preserved under verbose=True.
+_FINGERPRINT_COMPACT_FIELDS = ("build_identity", "connection_nonce")
 
 # A ``*_deferred`` block is folded in compact mode only when its keys are a
 # subset of this known advisory shape — anything richer stays untouched so a
 # block carrying real payload can never be silently summarized away.
 _DEFERRED_SHAPE_KEYS = frozenset({"reason", "writer_pids", "writer_count", "threshold", "defer_reason", "detail"})
+
+# Identity/provenance stamps dropped outright in compact mode — not folded into
+# health_summary, because they carry no health signal to summarize.
+#
+# Each is an opaque digest or an internal telemetry flag with no caller action:
+# there is nothing an agent can do differently on seeing one, and none is an
+# input to any other tool. They are all consumed INTERNALLY before this trim
+# runs (step_log_session_event stamps the run's own bootstrap event with
+# surface_snapshot_id during run_steps; step_first_session_marker writes its own
+# idempotence flag file), so dropping them at the response boundary costs no
+# telemetry. ~90 tokens on the single most frequently called tool in the
+# roster — every session, plus every post-compaction resume.
+#
+# The full profile-resolution audit shape, including both snapshot ids and the
+# layer chain, is what trw_profile_explain exists to serve. verbose=True keeps
+# them here too.
+# trw:intentional diagnostics with no caller action — response-boundary only.
+_COMPACT_DROP_KEYS = (
+    "surface_snapshot_id",
+    "profile_snapshot_id",
+    "session_override_hash",
+    "profile_layers_applied",
+    "first_session_emitted",
+)
 
 # ``# trw:intentional <reason>`` (Python/shell/YAML ``#``) or
 # ``// trw:intentional <reason>`` (TS/JS/C-family). The reason is everything
@@ -161,6 +201,21 @@ def _fold_deferred_blocks(results: SessionStartResultDict) -> None:
             results["deferred_writer_count"] = max(writer_counts)
 
 
+def _compact_connection_fingerprint(results: SessionStartResultDict) -> None:
+    """Reduce the FR01 connection fingerprint to its non-constant fields.
+
+    Mutates *results* in place. A missing or non-dict block is left untouched,
+    and a block that carries none of the kept fields is left as-is (fail-safe:
+    never replace a fingerprint with an empty dict).
+    """
+    block = results.get("connection_fingerprint")
+    if not isinstance(block, dict):
+        return
+    reduced = {field: block[field] for field in _FINGERPRINT_COMPACT_FIELDS if field in block}
+    if reduced:
+        results["connection_fingerprint"] = reduced
+
+
 def trim_session_start_payload(
     results: SessionStartResultDict,
     *,
@@ -171,13 +226,20 @@ def trim_session_start_payload(
 
     FR1. In compact mode (``verbose=False``):
 
-    - The learnings list is capped to the top-K most relevant entries (recall
-      already returns them in relevance/impact order, so slicing preserves the
-      highest-signal items). ``learnings_count`` is set to the *kept* count and
-      ``learnings_omitted`` records how many were dropped ("N more").
+    - The learnings list is capped to the top-K most IMPACTFUL entries (recall
+      returns them in impact order, so slicing keeps the highest-impact items —
+      not necessarily the ones most relevant to a focused query).
+      ``learnings_count`` is set to the *kept* count and ``learnings_omitted``
+      records how many were dropped ("N more").
+    - The ``connection_fingerprint`` block is reduced to its two non-constant
+      fields (PRD-CORE-215 FR01 requires the block, not every field).
     - The low-signal diagnostic sub-blocks (embed_health, assertion_health,
       sync_health, step_durations_ms) are removed and summarized into a
       one-line ``health_summary``.
+    - The identity/provenance stamps in ``_COMPACT_DROP_KEYS`` (snapshot ids,
+      the session override hash, the profile layer chain, the first-session
+      flag) are dropped outright — they carry no health signal to summarize and
+      no caller action, and are consumed internally before this runs.
     - A ``payload_token_estimate`` is added so the reduction is measurable.
     - ``compact`` is set to ``True``.
 
@@ -217,6 +279,11 @@ def trim_session_start_payload(
         # null origins. The dedicated trw_profile_explain tool serves the full
         # audit shape; compact session_start drops the table.
         results.pop("profile_explanation", None)
+
+        for key in _COMPACT_DROP_KEYS:
+            results.pop(key, None)  # type: ignore[misc]
+
+        _compact_connection_fingerprint(results)
 
         _fold_deferred_blocks(results)
 

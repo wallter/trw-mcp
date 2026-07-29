@@ -6,15 +6,75 @@
 # know which table was in effect.
 #
 # Rates are USD per 1K tokens, matching Anthropic's public pricing page.
+# Conventions across every row: cache_write = 1.25x input (5-minute TTL),
+# cache_read = 0.1x input.
+#
+# Keys are bare model aliases. The lookup normalises the incoming id
+# before matching (telemetry/tool_call_timing.py::_usd_cost_estimate), so
+# a dated snapshot, a `[1m]` long-context rendering, a Vertex `@`-pin, and
+# Bedrock's `anthropic.` / `us.anthropic.` prefixes all resolve to their
+# family's row. Do NOT add spelling variants as separate keys.
+#
+# A model absent from this table estimates at $0.00 and logs
+# `pricing_model_unknown` once per distinct id. Add the row rather than
+# leaving a real cost reported as free.
 
-version: "2026-04-23"
+version: "2026-07-26"
 
 models:
+  # --- Frontier tier -------------------------------------------------
+  claude-fable-5:
+    input_per_1k: 0.010
+    output_per_1k: 0.050
+    cache_write_per_1k: 0.0125
+    cache_read_per_1k: 0.001
+
+  # Same capabilities, pricing and API surface as Fable 5; Project
+  # Glasswing distribution only.
+  claude-mythos-5:
+    input_per_1k: 0.010
+    output_per_1k: 0.050
+    cache_write_per_1k: 0.0125
+    cache_read_per_1k: 0.001
+
+  # --- Opus tier ($5/$25 per MTok across the whole line) --------------
+  claude-opus-5:
+    input_per_1k: 0.005
+    output_per_1k: 0.025
+    cache_write_per_1k: 0.00625
+    cache_read_per_1k: 0.0005
+
+  claude-opus-4-8:
+    input_per_1k: 0.005
+    output_per_1k: 0.025
+    cache_write_per_1k: 0.00625
+    cache_read_per_1k: 0.0005
+
+  # Corrected 2026-07-26: this row previously carried 0.015/0.075
+  # ($15/$75 per MTok) — Claude Opus 4.1's rates, not 4.7's — and so
+  # over-reported every Opus cost estimate by 3x.
   claude-opus-4-7:
-    input_per_1k: 0.015
-    output_per_1k: 0.075
-    cache_write_per_1k: 0.01875
-    cache_read_per_1k: 0.0015
+    input_per_1k: 0.005
+    output_per_1k: 0.025
+    cache_write_per_1k: 0.00625
+    cache_read_per_1k: 0.0005
+
+  claude-opus-4-6:
+    input_per_1k: 0.005
+    output_per_1k: 0.025
+    cache_write_per_1k: 0.00625
+    cache_read_per_1k: 0.0005
+
+  # --- Sonnet tier ---------------------------------------------------
+  # Standard rates. Sonnet 5 carries introductory pricing of $2/$10 per
+  # MTok through 2026-08-31; this table has no time dimension, so it
+  # states the durable rate — over-reporting slightly until then rather
+  # than under-reporting from 2026-09-01 onward.
+  claude-sonnet-5:
+    input_per_1k: 0.003
+    output_per_1k: 0.015
+    cache_write_per_1k: 0.00375
+    cache_read_per_1k: 0.0003
 
   claude-sonnet-4-6:
     input_per_1k: 0.003
@@ -22,15 +82,32 @@ models:
     cache_write_per_1k: 0.00375
     cache_read_per_1k: 0.0003
 
+  # --- Haiku tier ----------------------------------------------------
+  # Corrected 2026-07-26: previously 0.0008/0.004 ($0.80/$4.00 per MTok).
   claude-haiku-4-5:
-    input_per_1k: 0.0008
-    output_per_1k: 0.004
-    cache_write_per_1k: 0.001
-    cache_read_per_1k: 0.00008
+    input_per_1k: 0.001
+    output_per_1k: 0.005
+    cache_write_per_1k: 0.00125
+    cache_read_per_1k: 0.0001
 
-# Tool calls do not consume model tokens directly, but they are rolled
-# up into session-level CLEAR cost when the surrounding LLM call carries
-# its own token counts. When neither is available, estimates default to 0.
-defaults:
-  unknown_model_input_per_1k: 0.0
-  unknown_model_output_per_1k: 0.0
+  # --- Still-active earlier generations ------------------------------
+  # Present so a call on one of these is priced rather than silently
+  # estimated at $0.00. Opus 4.1 in particular is 3x the rest of the
+  # Opus line and retires 2026-08-05.
+  claude-opus-4-5:
+    input_per_1k: 0.005
+    output_per_1k: 0.025
+    cache_write_per_1k: 0.00625
+    cache_read_per_1k: 0.0005
+
+  claude-sonnet-4-5:
+    input_per_1k: 0.003
+    output_per_1k: 0.015
+    cache_write_per_1k: 0.00375
+    cache_read_per_1k: 0.0003
+
+  claude-opus-4-1:
+    input_per_1k: 0.015
+    output_per_1k: 0.075
+    cache_write_per_1k: 0.01875
+    cache_read_per_1k: 0.0015

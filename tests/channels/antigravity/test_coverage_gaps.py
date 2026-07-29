@@ -16,115 +16,15 @@ from unittest.mock import patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# _antigravity_md_segment.py coverage gaps
+# PRD-CORE-239 FR01: the eight `_antigravity_md_segment.py` coverage-gap tests
+# that lived here were deleted with their subject. That module rendered the
+# AG-01 ANTIGRAVITY.md distill segment (`ag-01-antigravity-md-distill`), which
+# FR01 removed along with the module itself, so `_format_convention`,
+# `_t1_content`, `_assert_no_template_vars`, `_yaml_safe_cell` and
+# `render_antigravity_distill_segment` no longer exist to test. They were
+# removed rather than rewritten because nothing inherited their behaviour —
+# AG-01's renderer has no successor.
 # ---------------------------------------------------------------------------
-
-
-def test_format_convention_dict_text_key() -> None:
-    """_format_convention handles dict convention with 'text' key."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import _format_convention
-
-    result = _format_convention({"text": "Use Pydantic v2 for validation"})
-    assert result == "- Use Pydantic v2 for validation"
-
-
-def test_format_convention_dict_description_key() -> None:
-    """_format_convention falls back to 'description' key when 'text' absent."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import _format_convention
-
-    result = _format_convention({"description": "Always write tests first"})
-    assert result == "- Always write tests first"
-
-
-def test_t1_content_empty_hotspots_fallback(tmp_path: Path) -> None:
-    """_t1_content with empty hotspots list emits placeholder row (line 172)."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import render_antigravity_distill_segment
-
-    sidecar: dict[str, Any] = {
-        "schema_version": "risk-report-sidecar/v0",
-        "hotspots": [],
-        "conventions": ["Use type hints everywhere"],
-    }
-    result = render_antigravity_distill_segment(
-        repo_root=tmp_path,
-        sidecar_data=sidecar,
-        sidecar_sha="sha_empty_hotspots",
-        force=True,
-    )
-    assert result.status == "written"
-    content = (tmp_path / "ANTIGRAVITY.md").read_text()
-    assert "_No hotspot data yet_" in content
-
-
-def test_t1_content_empty_conventions_fallback(tmp_path: Path) -> None:
-    """_t1_content with empty conventions list emits placeholder (line 179)."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import render_antigravity_distill_segment
-
-    sidecar: dict[str, Any] = {
-        "schema_version": "risk-report-sidecar/v0",
-        "hotspots": [{"file": "src/main.py", "risk_score": 0.8, "churn": 10, "caller_count": 5}],
-        "conventions": [],
-    }
-    result = render_antigravity_distill_segment(
-        repo_root=tmp_path,
-        sidecar_data=sidecar,
-        sidecar_sha="sha_empty_convs",
-        force=True,
-    )
-    assert result.status == "written"
-    content = (tmp_path / "ANTIGRAVITY.md").read_text()
-    assert "_No convention data yet._" in content
-
-
-def test_assert_no_template_vars_raises_on_sentinel() -> None:
-    """_assert_no_template_vars raises ValueError when sentinel found (line 226)."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import _assert_no_template_vars
-
-    with pytest.raises(ValueError, match="Unsubstituted template variable"):
-        _assert_no_template_vars("content with {{ variable }}", "test context")
-
-
-def test_assert_no_template_vars_passes_clean_content() -> None:
-    """_assert_no_template_vars does not raise on clean content."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import _assert_no_template_vars
-
-    # Should not raise — clean content
-    _assert_no_template_vars("clean content with no template vars", "test context")
-
-
-def test_render_segment_returns_error_on_template_vars_in_content(tmp_path: Path) -> None:
-    """render_antigravity_distill_segment returns error status when content_for_tier emits {{ }}."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import (
-        render_antigravity_distill_segment,
-    )
-
-    # Patch _content_for_tier_factory to return a function that emits template vars.
-    def bad_content_fn(tier: str) -> str:
-        return "content with {{ bad_variable }} here"
-
-    with patch(
-        "trw_mcp.channels.antigravity._antigravity_md_segment._content_for_tier_factory",
-        return_value=bad_content_fn,
-    ):
-        result = render_antigravity_distill_segment(
-            repo_root=tmp_path,
-            sidecar_data={"hotspots": [], "conventions": []},
-            sidecar_sha="sha_bad",
-            force=True,
-        )
-
-    assert result.status == "error"
-    assert result.error is not None
-    assert "Unsubstituted template variable" in result.error
-
-
-def test_yaml_safe_cell_bare_float_quoted() -> None:
-    """_yaml_safe_cell backtick-quotes bare floats to prevent YAML parse issues."""
-    from trw_mcp.channels.antigravity._antigravity_md_segment import _yaml_safe_cell
-
-    assert _yaml_safe_cell("1.0") == "`1.0`"
-    assert _yaml_safe_cell("0.0") == "`0.0`"
-    assert _yaml_safe_cell("3.14") == "`3.14`"
 
 
 # ---------------------------------------------------------------------------
@@ -329,10 +229,19 @@ def test_install_ag02_exception_goes_to_errors(tmp_path: Path) -> None:
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
     from trw_mcp.bootstrap._antigravity_distill_channels import install_antigravity_distill_channels
 
-    # Patch at the point where the bootstrap imports (via deferred import in the function body)
-    with patch(
-        "trw_mcp.channels.antigravity.generate_distill_explorer_agent",
-        side_effect=RuntimeError("Unexpected subagent error"),
+    # PRD-CORE-239: AG-02 is licence-gated, so the gate must be OPEN for the
+    # generator to be reached at all — otherwise this asserts nothing, because
+    # a skipped artifact raises nothing. The subject here is still fail-open
+    # behaviour, not the gate.
+    with (
+        patch(
+            "trw_mcp.tools._sidecar_substrate.distill_installed",
+            return_value=True,
+        ),
+        patch(
+            "trw_mcp.channels.antigravity.generate_distill_explorer_agent",
+            side_effect=RuntimeError("Unexpected subagent error"),
+        ),
     ):
         result = install_antigravity_distill_channels(tmp_path)
 
@@ -412,8 +321,13 @@ def test_bootstrap_manifest_validation_error_on_bad_data(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_manifest_yaml_loads_and_has_four_channels() -> None:
-    """FR16: manifest-antigravity.yaml loads with four channel entries."""
+def test_manifest_yaml_loads_and_has_three_channels() -> None:
+    """FR16: manifest-antigravity.yaml loads with three channel entries.
+
+    PRD-CORE-239 FR01 removed ag-01-antigravity-md-distill (the ANTIGRAVITY.md
+    instruction-file segment), taking the bundled manifest from four entries
+    to three. The count is pinned at the real new number, not relaxed.
+    """
     import yaml
 
     manifest_path = (
@@ -431,13 +345,13 @@ def test_manifest_yaml_loads_and_has_four_channels() -> None:
         data = yaml.safe_load(fh)
 
     channels = data.get("channels", [])
-    assert len(channels) == 4, f"Expected 4 channel entries, got {len(channels)}"
+    assert len(channels) == 3, f"Expected 3 channel entries, got {len(channels)}"
 
-    ids = [c["id"] for c in channels]
-    assert "ag-01-antigravity-md-distill" in ids
-    assert "ag-02-distill-explorer-subagent" in ids
-    assert "ag-03-before-edit-hook" in ids
-    assert "ag-04-tool-return-enrichment" in ids
+    assert {c["id"] for c in channels} == {
+        "ag-02-distill-explorer-subagent",
+        "ag-03-before-edit-hook",
+        "ag-04-tool-return-enrichment",
+    }
 
 
 def test_manifest_ag03_status_is_aspirational() -> None:

@@ -34,7 +34,10 @@ class TestAntigravityCliAgents:
         assert not result["errors"]
         agents_dir = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR
         agent_files = list(agents_dir.glob("trw-*.md"))
-        assert len(agent_files) == 4
+        # Derived from the template registry the generator writes from.
+        from trw_mcp.bootstrap._antigravity_cli import _ANTIGRAVITY_AGENT_TEMPLATES
+
+        assert len(agent_files) == len(_ANTIGRAVITY_AGENT_TEMPLATES)
 
     def test_expected_agents_exist(self, fake_git_repo: Path) -> None:
         """All four TRW agents must be generated."""

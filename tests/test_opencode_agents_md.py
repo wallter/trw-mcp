@@ -40,10 +40,16 @@ def test_public_sync_writes_opencode_agents_md_without_claude_literal(tmp_path) 
 
     result = _run_sync(tmp_path, client="opencode")
 
+    # PRD-CORE-240-FR04: the leak assertion is unchanged in intent; what changed is
+    # WHICH file opencode reads. It owns .opencode/INSTRUCTIONS.md now, and the shared
+    # AGENTS.md is left entirely alone.
     agents_md = tmp_path / "AGENTS.md"
-    assert result["agents_md_synced"] is True
-    assert result["agents_md_path"] == str(agents_md)
-    content = agents_md.read_text(encoding="utf-8")
+    assert result["agents_md_synced"] is False
+    assert not agents_md.exists()
+
+    owned = tmp_path / ".opencode" / "INSTRUCTIONS.md"
+    assert owned.is_file()
+    content = owned.read_text(encoding="utf-8")
     assert "Claude Code" not in content
     hook_env = (tmp_path / ".trw" / "runtime" / "hook-env.sh").read_text(encoding="utf-8")
     assert "HOOKS_ENABLED=false" in hook_env

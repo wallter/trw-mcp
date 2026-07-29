@@ -109,7 +109,10 @@ def build_ceremony_status_line(state: CeremonyState) -> str:
     if state.build_check_result:
         parts.append(f"build={state.build_check_result}")
     if state.review_called:
-        review_part = f"review={state.review_verdict or 'recorded'}"
+        # A substantive review with no verdict must not render as a completed one.
+        # `or 'recorded'` turned an empty verdict into the calmest possible word,
+        # and it printed beside a live p0 count — alarming number, reassuring label.
+        review_part = f"review={state.review_verdict or 'verdict_unrecorded'}"
         if state.review_p0_count:
             review_part = f"{review_part} p0={state.review_p0_count}"
         parts.append(review_part)
@@ -171,17 +174,15 @@ def append_ceremony_status(
                 logger.debug("ceremony_nudge_pressure_check_failed", exc_info=True)
 
         from trw_mcp.state._ceremony_progress_state import (
-            increment_nudge_count,
             increment_tool_call_counter,
             is_nudge_eligible,
-            record_nudge_shown,
             record_pool_ignore,
-            record_pool_nudge,
         )
-        from trw_mcp.state.ceremony_nudge import (
-            _highest_priority_pending_step,
-            compute_nudge_minimal,
-            select_learning_injection_content,
+        from trw_mcp.state.ceremony_nudge import compute_nudge_minimal
+        from trw_mcp.tools._ceremony_nudge_emission import (
+            account_nudge_emission,
+            attach_reversion_prompt,
+            record_emitted_nudge,
         )
 
         # Increment tool call counter for cooldown tracking (PRD-CORE-134)
@@ -191,53 +192,43 @@ def append_ceremony_status(
         except Exception:  # justified: fail-open, cooldown tracking must not block ceremony status rendering
             logger.debug("ceremony_status_tool_counter_skipped", exc_info=True)
 
+        # Ledger UF-041: phase-reversion prompting reaches a response. Placed
+        # before messenger dispatch because two of the three messenger branches
+        # below return early — a per-branch write would be reachable on one path.
+        attach_reversion_prompt(response, context=context, state=state)
+
         messenger = cfg.effective_nudge_messenger
         client_id = str(getattr(cfg.client_profile, "client_id", ""))
-
-        def _pending_nudge_step() -> str:
-            return _highest_priority_pending_step(state) or "session_start"
 
         def _record_emitted_nudge(
             *,
             messenger_name: str,
             pool_name: str,
             learning_id: str | None,
+            target_file: str | None = None,
         ) -> str:
-            step = _pending_nudge_step()
-            try:
-                increment_nudge_count(effective_dir, step)
-            except Exception:  # justified: fail-open, count tracking must not block response decoration
-                logger.debug("increment_nudge_count_failed", exc_info=True)
-
-            effective_learning_id = learning_id or _synthetic_nudge_learning_id(
+            """Account + log one emission (ledger UF-023 attribution, UF-024 telemetry)."""
+            return record_emitted_nudge(
+                effective_dir,
+                state=state,
+                cfg=cfg,
                 messenger=messenger_name,
                 pool=pool_name,
-                step=step,
+                client_id=client_id,
+                learning_id=learning_id,
+                target_file=target_file,
+                context=context,
             )
-            try:
-                record_nudge_shown(effective_dir, effective_learning_id, state.phase, turn=state.tool_call_counter)
-            except Exception:  # justified: fail-open
-                logger.debug("record_nudge_shown_failed", exc_info=True)
-
-            with suppress(Exception):  # justified: fail-open per NFR02
-                logger.info(
-                    "nudge_shown",
-                    pool=pool_name,
-                    messenger=messenger_name,
-                    learning_id=effective_learning_id,
-                    phase=state.phase,
-                    client_id=client_id,
-                    turn=state.tool_call_counter,
-                )
-            return effective_learning_id
 
         if messenger == "minimal":
             try:
-                # The minimal messenger skips pool-based dispatch entirely —
-                # it produces a compressed single-line nudge focused on the
-                # highest-priority pending ceremony step. available_learnings
-                # is cosmetic here (only used when pending == "session_start")
-                # so pass 0 and let compute_nudge_minimal render its default.
+                # The minimal messenger skips pool-based dispatch entirely — it
+                # produces a compressed single-line nudge from its OWN two-branch
+                # ladder (session_start -> deliver -> status line only), NOT from
+                # _highest_priority_pending_step; ``resolve_nudge_target_step``
+                # mirrors that ladder so attribution matches the rendered text.
+                # available_learnings is cosmetic here (only used when the ladder
+                # lands on session_start) so pass 0 and let it render its default.
                 minimal_content = compute_nudge_minimal(state, available_learnings=0)
                 if minimal_content:
                     response["nudge_content"] = minimal_content
@@ -255,61 +246,9 @@ def append_ceremony_status(
                 logger.debug("minimal_messenger_failed", exc_info=True)
             return response
 
-        if messenger == "learning_injection":
-            try:
-                injected_content, learning_id, target_file = select_learning_injection_content(
-                    state,
-                    effective_dir,
-                    skip_phase_duplicates=True,
-                )
-                if learning_id and not is_nudge_eligible(state, learning_id, state.phase):
-                    with suppress(Exception):  # justified: fail-open per NFR02
-                        structlog.get_logger(__name__).debug(
-                            "nudge_skipped",
-                            reason="phase_dedup",
-                            pool="learning_injection",
-                            learning_id=learning_id,
-                            client_id=str(getattr(cfg.client_profile, "client_id", "")),
-                        )
-                    injected_content = None
-                if injected_content:
-                    response["nudge_content"] = injected_content
-                    effective_learning_id = _record_emitted_nudge(
-                        messenger_name="learning_injection",
-                        pool_name="learning_injection",
-                        learning_id=learning_id,
-                    )
-                    if learning_id:
-                        _emit_nudge_surface_event(
-                            effective_dir,
-                            cfg=cfg,
-                            state=state,
-                            messenger=messenger,
-                            client_id=client_id,
-                            learning_id=learning_id,
-                            target_file=target_file,
-                            pending_step=_pending_nudge_step(),
-                        )
-                    else:
-                        _ = effective_learning_id
-                    logger.debug(
-                        "nudge_messenger_selected",
-                        messenger="learning_injection",
-                        content_chars=len(injected_content),
-                    )
-                else:
-                    minimal_content = compute_nudge_minimal(state, available_learnings=0)
-                    if minimal_content:
-                        response["nudge_content"] = minimal_content
-                        _record_emitted_nudge(
-                            messenger_name="learning_injection",
-                            pool_name="minimal",
-                            learning_id=None,
-                        )
-            except Exception:  # justified: fail-open, never break ceremony status
-                logger.debug("learning_injection_messenger_failed", exc_info=True)
-            return response
-
+        # PRD-CORE-241-FR07: the "learning_injection" messenger branch was
+        # removed here. It is now rejected by config validation; "contextual"
+        # renders the same candidate plus the NEXT action line it dropped.
         if messenger in {
             "contextual",
             "contextual_action",
@@ -343,18 +282,8 @@ def append_ceremony_status(
                         messenger_name=messenger,
                         pool_name="context",
                         learning_id=learning_id,
+                        target_file=target_file,
                     )
-                    if learning_id:
-                        _emit_nudge_surface_event(
-                            effective_dir,
-                            cfg=cfg,
-                            state=state,
-                            messenger=messenger,
-                            client_id=client_id,
-                            learning_id=learning_id,
-                            target_file=target_file,
-                            pending_step=_pending_nudge_step(),
-                        )
                     logger.debug(
                         "nudge_messenger_selected",
                         messenger=messenger,
@@ -386,17 +315,16 @@ def append_ceremony_status(
         if nudge_content:
             response["nudge_content"] = nudge_content
             if pool == "learnings":
-                try:
-                    increment_nudge_count(effective_dir, _pending_nudge_step())
-                except Exception:  # justified: fail-open, count tracking must not block response decoration
-                    logger.debug("increment_nudge_count_failed", exc_info=True)
+                # ``_try_learning_nudge_content`` already recorded the impression,
+                # the nudge_shown log, and the surface event against the REAL
+                # learning id — only the two counters are still owed here.
+                account_nudge_emission(effective_dir, state=state, pool=pool, context=context)
             else:
                 _record_emitted_nudge(
                     messenger_name="standard",
                     pool_name=pool,
                     learning_id=None,
                 )
-            record_pool_nudge(effective_dir, pool)
         else:
             # If a pool was selected but failed to produce content, record as ignore
             # so it enters cooldown and we try a different pool next time.

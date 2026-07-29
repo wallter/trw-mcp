@@ -39,17 +39,59 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
 
 _MODEL_MAP: dict[str, str] = {
     "fast": "claude-haiku-4-5-20251001",
-    "balanced": "claude-sonnet-4-6",
-    "frontier": "claude-opus-4-7",
+    "balanced": "claude-sonnet-5",
+    "frontier": "claude-opus-5",
     "haiku": "claude-haiku-4-5-20251001",
-    "sonnet": "claude-sonnet-4-6",
-    "opus": "claude-opus-4-7",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
 }
+
+#: Output-token ceiling for a single internal augmentation call.
+#:
+#: This is a cap on *thinking plus response text combined*, not a spend — an
+#: unused ceiling costs nothing. It is deliberately larger than a short answer
+#: needs because the current Anthropic generation (Opus 5, Sonnet 5, Fable 5)
+#: runs adaptive thinking when the ``thinking`` parameter is omitted, whereas
+#: the generation this client was originally written against (Opus 4.7,
+#: Sonnet 4.6) did not. Under the previous 1024 ceiling a thinking model could
+#: spend the entire budget reasoning and return a truncated answer or none at
+#: all — a silent quality failure, since ``ask`` degrades to ``None``.
+_MAX_OUTPUT_TOKENS = 4096
+
+#: Effort level requested for internal augmentation calls, when the resolved
+#: model declares support for it.
+#:
+#: ``LLMClient`` exists for short, single-turn, cost-sensitive augmentation
+#: (its default model is Haiku). Left unset, the API default is ``high``, which
+#: on a thinking-by-default model turns every internal call into a deep
+#: reasoning request. ``low`` keeps this client's documented cost posture
+#: intact across the model bump.
+_INTERNAL_EFFORT = "low"
 
 
 def _resolve_model(alias: str) -> str:
     """Resolve a short model alias to a full model ID."""
     return _MODEL_MAP.get(alias, alias)
+
+
+def _effort_for(model_id: str) -> str | None:
+    """Return the effort level to request for *model_id*, or ``None`` to omit.
+
+    Delegates to the trusted model-capability catalog (PRD-CORE-209) rather
+    than carrying a second model table. Sending ``effort`` to a model that does
+    not accept it is an API error, not a no-op — Haiku 4.5, this client's own
+    default model, is exactly such a model. The catalog distinguishes the three
+    cases that matter here: a declared-supported set, an empty set (the model
+    rejects the parameter), and ``None`` (unknown model). Only the first sets
+    the parameter, so an unrecognised or future model is never sent a request
+    shape that could fail.
+    """
+    from trw_mcp.models.config import lookup_model_effort_capabilities
+
+    declared = lookup_model_effort_capabilities(model_id)
+    if declared and _INTERNAL_EFFORT in declared:
+        return _INTERNAL_EFFORT
+    return None
 
 
 class LLMClient:
@@ -136,9 +178,13 @@ class LLMClient:
         try:
             kwargs: dict[str, Any] = {
                 "model": resolved_model,
-                "max_tokens": 1024,
+                "max_tokens": _MAX_OUTPUT_TOKENS,
                 "messages": [{"role": "user", "content": prompt}],
             }
+
+            effort = _effort_for(resolved_model)
+            if effort is not None:
+                kwargs["output_config"] = {"effort": effort}
 
             effective_system = system or self._system_prompt
             if effective_system:
@@ -174,16 +220,29 @@ class LLMClient:
                 return str(response.content[0].text) if hasattr(response.content[0], "text") else None
             return None
 
-        except Exception:  # justified: boundary, external Anthropic API can raise arbitrary errors
+        except Exception as exc:  # justified: boundary, external Anthropic API can raise arbitrary errors
             latency_ms = (time.monotonic() - start) * 1000
             self._append_usage_record(resolved_model, 0, 0, latency_ms, success=False)
             from trw_mcp.telemetry.anonymizer import strip_pii
 
-            logger.warning(
-                "llm_call_failed",
-                prompt_preview=strip_pii(prompt[:80]),
-                exc_info=True,
-            )
+            # A retired or mistyped model id is a 404, and folding it into the
+            # generic warning makes it indistinguishable from "the SDK isn't
+            # installed" — both surface to the caller as a bare None. Model ids
+            # are a maintained table (_MODEL_MAP) that goes stale on every
+            # Anthropic release, so this is the failure most likely to be
+            # introduced by an edit and the least likely to be noticed.
+            if type(exc).__name__ == "NotFoundError":
+                logger.warning(
+                    "llm_model_unknown",
+                    model=resolved_model,
+                    remedy="model id was rejected by the API — check _MODEL_MAP against the current Anthropic roster",
+                )
+            else:
+                logger.warning(
+                    "llm_call_failed",
+                    prompt_preview=strip_pii(prompt[:80]),
+                    exc_info=True,
+                )
             return None
 
     async def _ask_ollama(

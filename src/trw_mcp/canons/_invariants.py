@@ -10,7 +10,7 @@ promotion, so a "shorter but weaker" core (US-004) cannot ship.
 
 ``FORBIDDEN_CORE_PATTERNS`` is the NFR05 portability scan: the core must stay
 client-, provider-, model-, language-, and VCS-neutral. Adapter *filenames*
-(``GEMINI.md``, ``.codex/``) are permitted path syntax, so the scan targets
+(``AGENTS.md``, ``.codex/``) are permitted path syntax, so the scan targets
 concrete model-version / fixed-context-window / single-language-build mandates,
 never bare vendor words.
 

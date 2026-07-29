@@ -1,18 +1,22 @@
-"""Shared support for split build tool tests."""
+"""Shared support for build tool tests.
+
+``_write_build_cache`` writes the ``build-status.yaml`` projection that the
+phase gate reads. It has no dependency on the subprocess runner.
+
+PRD-CORE-098 removed ``trw_mcp.tools.build._subprocess`` and this module carried
+an ``importorskip`` on it. Because the skip fires at IMPORT time of the helper,
+it silently disabled every test in every file that imported the helper — 18
+live tests of ``state/validation.py::_check_build_status`` and the
+``check_phase_exit`` build wiring among them, none of which touch a subprocess.
+The obsolete consumers have been deleted instead, so the guard is gone.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from trw_mcp.state.persistence import FileStateWriter
-
-pytest.importorskip(
-    "trw_mcp.tools.build._subprocess",
-    reason="PRD-CORE-098: subprocess modules removed — old tests obsolete",
-)
 
 
 def _write_build_cache(

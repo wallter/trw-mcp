@@ -19,12 +19,6 @@ from fastmcp import Context, FastMCP
 from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools._review_helpers import (
-    PRE_AUDIT_SELF_REVIEW_EVENT as PRE_AUDIT_SELF_REVIEW_EVENT,
-)
-from trw_mcp.tools._review_helpers import (
-    PRE_IMPLEMENTATION_CHECKLIST_EVENT as PRE_IMPLEMENTATION_CHECKLIST_EVENT,
-)
-from trw_mcp.tools._review_helpers import (
     REVIEWER_ROLES as REVIEWER_ROLES,
 )
 from trw_mcp.tools._review_helpers import (
@@ -35,12 +29,6 @@ from trw_mcp.tools._review_helpers import (
 )
 from trw_mcp.tools._review_helpers import (
     _invoke_cross_model_review as _invoke_cross_model_review,
-)
-from trw_mcp.tools._review_helpers import (
-    _load_preflight_checks as _load_preflight_checks,
-)
-from trw_mcp.tools._review_helpers import (
-    _log_preflight_events as _log_preflight_events,
 )
 from trw_mcp.tools._review_helpers import (
     _normalize_severity as _normalize_severity,
@@ -73,63 +61,42 @@ def _register_review_tool(server: FastMCP) -> None:
         mode: str | None = None,
         reviewer_findings: list[dict[str, object]] | None = None,
         prd_ids: list[str] | None = None,
-        reviewer_source: str | None = None,
-        reviewer_receipt_id: str | None = None,
-        reviewer_run_id: str | None = None,
-        reviewer_session_id: str | None = None,
+        reviewer_identity: dict[str, object] | str = "",
         review_completed: bool = False,
     ) -> dict[str, object]:
-        """Compute a structured code-review verdict and persist a review.yaml artifact.
+        """Compute a pass/warn/block review verdict and persist review.yaml.
 
-        Use when:
-        - Gating a PR or delivery and you need a pass/warn/block verdict with receipts.
-        - You have pre-collected findings from a reviewer subagent (auto mode).
-        - You want to detect spec-vs-code drift between a PRD and git diff (reconcile).
+        Use when gating a PR/delivery for a verdict with receipts.
 
-        Modes:
-        - manual: caller passes ``findings=[...]`` directly. An empty manual
-          invocation is persisted but marked non-substantive and does not
-          satisfy REVIEW readiness.
-        - auto: multi-reviewer analysis with confidence filtering.
-        - cross_model: route diff to an external model family.
-        - reconcile: compare PRD FRs against git diff.
+        Modes: manual (default, findings=[...]; empty is non-substantive
+        unless review_completed=True), auto (reviewer_findings), cross_model,
+        reconcile (prd_ids vs diff; not code-quality). severity accepts
+        critical|error|high|P0|P1|warning|medium|P2|info|low|P3. Findings that
+        fail validation come back in rejected_findings, and findings filtered
+        below the confidence threshold in suppressed_findings — never dropped.
 
-        Input:
-        - findings: list[{category, severity, description}] — triggers manual mode.
-        - run_path: explicit run directory; auto-detected when None.
-        - mode: explicit mode override; auto-detected when None.
-        - reviewer_findings: pre-collected findings from subagent layer (auto).
-        - prd_ids: explicit PRD IDs; reconcile mode auto-discovers when None.
-        - reviewer_source: PRD-CORE-213-FR01 provenance override — one of
-          self|subagent|cross_model|operator. When None the source is derived
-          honestly from the effective mode (manual->self, auto->subagent,
-          cross_model->cross_model). ``operator`` requires reviewer_receipt_id.
-        - reviewer_receipt_id: operator sign-off token (required when
-          reviewer_source='operator').
-        - reviewer_run_id / reviewer_session_id: OQ-001 — the reviewing agent's
-          own run/session identity. Verified against framework-recorded state
-          (run.yaml under .trw/runs + the .trw/runtime/pins.json pin store);
-          a verified distinct identity classifies the review ``independent``,
-          an unverifiable claim falls back to the delivering run's identity
-          (``asserted_independent`` at best). Never self-mintable.
-        - review_completed: explicit manual-review completion assertion. This
-          permits a fully covered zero-finding manual review to be substantive;
-          an empty invocation remains non-substantive when false.
+        Output: verdict, findings_count, review_path, substantive.
 
-        Output: dict with fields
-        {verdict: "pass"|"warn"|"block", findings_count: int, categories: dict,
-         review_path: str, run_id: str, mode: str, substantive: bool}.
-
-        Example:
-            trw_review(findings=[{"category":"security","severity":"high","description":"..."}])
-            → {"verdict": "block", "findings_count": 1, "review_path": ".../review.yaml",
-               "mode": "manual"}
+        Args:
+            findings: list of {category, severity, description}; passing this selects manual mode.
+            reviewer_identity: accepts ONLY these four keys: reviewer_source
+                (self|subagent|cross_model|operator), reviewer_receipt_id,
+                reviewer_run_id, reviewer_session_id. Any other key is rejected;
+                reviewer_source=operator requires a non-empty reviewer_receipt_id.
+                run/session ids are verified against recorded state and are
+                never self-mintable.
         """
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._review_auto import handle_auto_mode, handle_cross_model_mode
         from trw_mcp.tools._review_manual import handle_manual_mode, handle_reconcile_mode
+        from trw_mcp.tools._review_provenance import parse_reviewer_identity
 
         config = get_config()
+        claim = parse_reviewer_identity(reviewer_identity)
+        reviewer_source = claim.reviewer_source
+        reviewer_receipt_id = claim.reviewer_receipt_id
+        reviewer_run_id = claim.reviewer_run_id
+        reviewer_session_id = claim.reviewer_session_id
 
         # Mode detection:
         # - mode="reconcile" explicitly set -> reconcile (check first)
@@ -251,12 +218,17 @@ def _register_review_tool(server: FastMCP) -> None:
             response["reviewer_identity_verified"] = verified_reviewer_identity is not None
 
         # A spec-reconciliation report is useful evidence, but it is not a
-        # code-quality review. Manual/auto handlers stamp their own substantive
-        # status; other actual review modes remain substantive by default.
+        # code-quality review. Every real mode handler stamps its own
+        # ``substantive`` bit (and _persist_review_artifact can clear it when the
+        # typed receipt fails under enforce mode), so the default below is only
+        # reached if a handler stopped stamping it. It defaults to FALSE: this bit
+        # is what unlocks the delivery review gate, so an unstamped response must
+        # read as "no substantive evidence", never as "substantive because nobody
+        # said otherwise". Defaulting True made a silent producer bug open the gate.
         if effective_mode == "reconcile":
             response["substantive"] = False
             response["non_substantive_reason"] = "spec reconciliation is not a code-quality review"
-        substantive = bool(response.get("substantive", True))
+        substantive = bool(response.get("substantive", False))
 
         _review_verdict = str(response.get("verdict", ""))
         _review_score = response.get("total_score", response.get("score", None))
@@ -284,7 +256,7 @@ def _register_review_tool(server: FastMCP) -> None:
         try:
             from trw_mcp.state._paths import resolve_trw_dir
             from trw_mcp.state.ceremony_progress import mark_review
-            from trw_mcp.tools._ceremony_status import append_ceremony_status
+            from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
             trw_dir = resolve_trw_dir()
             verdict = str(response.get("verdict", ""))
@@ -300,7 +272,15 @@ def _register_review_tool(server: FastMCP) -> None:
                 verdict = "pass"
 
             mark_review(trw_dir, verdict=verdict, p0_count=p0_count, substantive=substantive)
-            append_ceremony_status(response, trw_dir)
+            # P0 count/verdict drive the context-pool bypass and the reactive
+            # "P0 findings detected" message (PRD-CORE-084 FR03/FR05).
+            append_ceremony_status_for_tool(
+                response,
+                trw_dir,
+                tool_name="review",
+                review_verdict=verdict,
+                review_p0_count=p0_count,
+            )
         except Exception:  # justified: fail-open, status decoration must not block review
             logger.debug("review_ceremony_status_skipped", exc_info=True)  # justified: fail-open
 

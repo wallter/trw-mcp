@@ -1,14 +1,17 @@
 """Learning-injection candidate selectors — extracted from ceremony_nudge.py for module-size compliance.
 
 Belongs to the ``ceremony_nudge.py`` facade. Re-exported there for back-compat
-with `_ceremony_status.py` which imports `select_contextual_nudge_content` and
-`select_learning_injection_content` via the parent.
+with `_ceremony_status.py` which imports `select_contextual_nudge_content`
+via the parent.
 
-Four helpers:
+Three helpers:
 - ``_select_learning_injection_candidate`` — pick a learning entry by repo recall
 - ``_contextual_next_step_message`` — action-line composer for contextual nudge
 - ``select_contextual_nudge_content`` — public: return (content, learning_id, target_file)
-- ``select_learning_injection_content`` — public: same shape, learning-injection branch
+
+The candidate selector keeps its historical name but serves the live
+contextual path only; the ``learning_injection`` messenger it was named for
+was retired by PRD-CORE-241-FR07.
 """
 
 from __future__ import annotations
@@ -199,49 +202,4 @@ def select_contextual_nudge_content(
         return clipped, learning_id, target_label
     except Exception:  # justified: fail-open -- recall issues must not break ceremony status
         logger.debug("select_contextual_nudge_content_failed", exc_info=True)
-        return None, None, None
-
-
-def select_learning_injection_content(
-    state: CeremonyState,
-    trw_dir: Path,
-    *,
-    skip_phase_duplicates: bool = False,
-) -> tuple[str | None, str | None, str | None]:
-    """Return rendered content, learning id, and target file for the injection branch."""
-    from trw_mcp.state._nudge_status_lines import _build_minimal_status_line
-    from trw_mcp.state.ceremony_nudge import _MINIMAL_HEADER
-
-    try:
-        selected_learning, target_label = _select_learning_injection_candidate(
-            state,
-            trw_dir,
-            skip_phase_duplicates=skip_phase_duplicates,
-        )
-        if selected_learning is None:
-            return None, None, target_label
-
-        learning_id = str(selected_learning.get("id", "")).strip()
-        summary = str(selected_learning.get("summary", "")).strip()
-        clipped_summary = summary[:120] + ("..." if len(summary) > 120 else "")
-        score_raw = selected_learning.get("score", selected_learning.get("similarity", 0.0))
-        score = float(score_raw) if isinstance(score_raw, (int, float)) else 0.0
-        status_line = _build_minimal_status_line(state)
-        message = (
-            f"{_MINIMAL_HEADER}\n"
-            f"{status_line}\n"
-            f"[!] Past learning ({score:.0%} match) on {target_label}: "
-            f"{clipped_summary}. Source: {learning_id}.\n"
-            "Consider before next edit."
-        )
-        logger.info(
-            "learning_injection_match",
-            learning_id=learning_id,
-            score=round(score, 4),
-            target_file=target_label or "",
-        )
-        rendered = message if len(message) <= 400 else message[:397] + "..."
-        return rendered, learning_id, target_label
-    except Exception:  # justified: fail-open -- recall issues must not break ceremony status
-        logger.debug("select_learning_injection_content_failed", exc_info=True)
         return None, None, None

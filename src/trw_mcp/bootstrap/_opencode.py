@@ -6,7 +6,6 @@ FR16: opencode.json Smart Merge (PRD-CORE-074)
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -23,7 +22,7 @@ from trw_mcp.models.typed_dicts._opencode import (
     OpencodeTemplateDict,
 )
 
-from ._file_ops import _new_result
+from ._file_ops import _new_result, has_marker, replace_marker_region
 from ._opencode_instructions import (
     detect_model_family as detect_model_family,
 )
@@ -40,6 +39,11 @@ logger = structlog.get_logger(__name__)
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
+
+#: The TRW-owned instruction file opencode must be told to load. Single source
+#: for both the fresh-install seed and the merge path, so the two cannot drift
+#: into referencing different files (PRD-CORE-240-FR05).
+_OPENCODE_INSTRUCTIONS_ENTRY = ".opencode/INSTRUCTIONS.md"
 
 _DEFAULT_PERMISSIONS: dict[str, str] = {"bash": "ask", "write": "ask", "edit": "ask"}
 
@@ -60,11 +64,15 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
 
     Uses local stdio transport (one trw-mcp process per instance).
     Falls back to absolute Python path if trw-mcp not on PATH.
+
+    No ``--debug``: log verbosity is protocol, not per-client surface density,
+    so every profile now generates the same command. Verbose logging is opted
+    into portably via ``.trw/config.yaml`` ``debug: true``.
     """
     if shutil.which("trw-mcp"):
-        command: list[str] = ["trw-mcp", "--debug"]
+        command: list[str] = ["trw-mcp"]
     else:
-        command = [sys.executable, "-m", "trw_mcp.server", "--debug"]
+        command = [sys.executable, "-m", "trw_mcp.server"]
 
     return {
         "type": "local",
@@ -201,13 +209,13 @@ def _read_existing_opencode_config(
     return cast("OpencodeConfig", parsed)
 
 
-def _is_user_modified(dest: Path, key: str, manifest_hashes: dict[str, str] | None) -> bool:
-    if not manifest_hashes or key not in manifest_hashes or not dest.is_file():
-        return False
-    try:
-        return manifest_hashes[key] != hashlib.sha256(dest.read_bytes()).hexdigest()
-    except OSError:
-        return False
+# opencode's private ``_is_user_modified`` was deleted in favour of the shared
+# ``_managed_client_artifacts.artifact_user_edited``. It consulted only the
+# manifest, so it answered "not modified" — i.e. overwrite — whenever
+# ``manifest_hashes`` was ``None`` or missing the key. A corrupt, absent, or
+# pre-content-hash ``managed-artifacts.yaml`` therefore cost the user their edits
+# silently: "we could not check" degrading to the reassuring answer. The shared
+# guard falls back to the incoming bundled bytes as a framework baseline instead.
 
 
 def _copy_file(
@@ -225,13 +233,21 @@ def _copy_file(
         result["errors"].append(f"Failed to create directory {dest.parent}: {exc}")
         return
 
-    if _is_user_modified(dest, rel_path, manifest_hashes):
+    try:
+        incoming = src.read_bytes()
+    except OSError as exc:
+        result["errors"].append(f"Failed to read {src}: {exc}")
+        return
+
+    from ._managed_client_artifacts import artifact_user_edited
+
+    if not force and artifact_user_edited(dest, rel_path, incoming, manifest_hashes):
         result["preserved"].append(rel_path)
         return
 
     try:
         existed = dest.exists()
-        if existed and not force and dest.read_text(encoding="utf-8") == src.read_text(encoding="utf-8"):
+        if existed and not force and dest.read_bytes() == incoming:
             result["preserved"].append(rel_path)
             return
         shutil.copy2(src, dest)
@@ -365,7 +381,9 @@ def merge_opencode_json(
     Rules:
     - Add/update "trw" entry under "mcp" without removing other servers.
     - Add "permission" defaults only if "permission" key doesn't exist.
-    - NEVER overwrite user's "model", "small_model", "agent", "instructions".
+    - NEVER overwrite user's "model", "small_model", "agent".
+    - APPEND the TRW instructions artifact to "instructions", preserving every
+      user entry at its original index (PRD-CORE-240-FR05).
     - Preserve all other keys.
     """
     # Start from existing config via unpacking — preserves all user keys
@@ -381,7 +399,32 @@ def merge_opencode_json(
     if "permission" not in result:
         result["permission"] = dict(_DEFAULT_PERMISSIONS)
 
+    result["instructions"] = _merge_instructions(result.get("instructions"))
+
     return result
+
+
+def _merge_instructions(existing: list[str] | None) -> list[str]:
+    """Return the user's ``instructions`` array with the TRW artifact appended once.
+
+    OpenCode has no in-file include syntax; ``opencode.json``'s ``instructions``
+    array is how a file gets loaded. TRW writes ``.opencode/INSTRUCTIONS.md``
+    unconditionally, but only the FRESH-INSTALL branch ever seeded the array —
+    this merge path documented that it "never overwrites the user's instructions
+    key" and, correctly, never did, but it never *added* to it either. So for any
+    project that had an ``opencode.json`` before TRW was installed, the
+    instructions file was written and referenced by nothing: a file loaded by
+    nobody, with every surface reporting success (PRD-CORE-240-FR05).
+
+    Appending is safe precisely because the array is multi-valued — unlike
+    codex's single-valued ``model_instructions_file``, which is why that client
+    is deliberately NOT repointed. User entries keep their original order and
+    index; the TRW entry goes last; a re-run appends nothing.
+    """
+    entries = list(existing) if existing else []
+    if _OPENCODE_INSTRUCTIONS_ENTRY not in entries:
+        entries.append(_OPENCODE_INSTRUCTIONS_ENTRY)
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +466,7 @@ def generate_opencode_config(
         # Fresh install: write full template with .opencode/INSTRUCTIONS.md
         template: OpencodeTemplateDict = {
             "$schema": "https://opencode.ai/config.json",
-            "instructions": [".opencode/INSTRUCTIONS.md"],
+            "instructions": [_OPENCODE_INSTRUCTIONS_ENTRY],
             "permission": dict(_DEFAULT_PERMISSIONS),
             "tools": {"trw*": True},
             "mcp": {"trw": trw_entry},
@@ -447,13 +490,38 @@ def generate_opencode_config(
 # ---------------------------------------------------------------------------
 
 
+def _writes_shared_agents_md(client_id: str) -> bool:
+    """Return whether *client_id*'s profile declares the shared AGENTS.md.
+
+    Derived from the profile registry rather than a literal list here, so a
+    client whose tier changes is respected automatically. An unresolvable client
+    is treated as writing (the pre-existing behaviour) rather than silently
+    dropping a surface.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    try:
+        return bool(resolve_client_profile(client_id).write_targets.agents_md)
+    except Exception:  # justified: an unknown client keeps the prior write behaviour
+        return True
+
+
 def generate_agents_md(
     target_dir: Path,
     trw_section: str,
     *,
     force: bool = False,
+    client_id: str = "",
 ) -> dict[str, list[str]]:
     """Generate or update AGENTS.md with TRW auto-generated section.
+
+    Writes nothing when *client_id*'s profile declares
+    ``write_targets.agents_md=False`` (PRD-CORE-240-FR04). opencode and codex
+    each own a whole TRW-authored instruction file wired through their own
+    config, so writing the shared AGENTS.md on top was injection into a
+    user-owned file that no client reads. The gate lives HERE rather than at the
+    four call sites so a fifth caller cannot reintroduce the write by omission;
+    the profile is the authority, not a literal in this module.
 
     Uses same <!-- trw:start --> / <!-- trw:end --> markers as CLAUDE.md.
     If file exists, replaces only the section between markers.
@@ -464,6 +532,10 @@ def generate_agents_md(
     Fail-open: if the lock cannot be acquired, returns a skipped indication.
     """
     result = _new_result()
+
+    if client_id and not _writes_shared_agents_md(client_id):
+        logger.debug("generate_agents_md_profile_declines", client=client_id)
+        return result
 
     # Acquire shared AGENTS.md lock (OC-B1 / PRD-DIST-2403 FR05)
     try:
@@ -481,22 +553,19 @@ def generate_agents_md(
 
         if agents_md_path.exists() and not force:
             content = agents_md_path.read_text(encoding="utf-8")
-            start_idx = content.find(_TRW_START_MARKER)
-            end_idx = content.find(_TRW_END_MARKER)
+            # Shared line-anchored replacer — never a raw substring scan.
+            markers = ((_TRW_START_MARKER, "start"), (_TRW_END_MARKER, "end"))
+            updated = replace_marker_region(
+                content, start=_TRW_START_MARKER, end=_TRW_END_MARKER, new_block=new_block, header=_TRW_HEADER
+            )
 
-            if start_idx != -1 and end_idx != -1:
-                # Replace existing TRW section, preserve surrounding content
-                end_pos = end_idx + len(_TRW_END_MARKER)
-                # Capture optional header line before trw:start
-                header_idx = content.rfind(_TRW_HEADER, 0, start_idx)
-                replace_start = header_idx if header_idx != -1 else start_idx
-                updated = content[:replace_start] + new_block + content[end_pos:]
+            if updated is not None:
                 try:
                     agents_md_path.write_text(updated, encoding="utf-8")
                     result["updated"].append(str(agents_md_path.name))
                 except OSError as exc:
                     result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
-            elif start_idx == -1 and end_idx == -1:
+            elif not has_marker(content, *markers):  # no section at all -> append
                 # No TRW section yet — append it
                 if not content.endswith("\n"):
                     content += "\n"

@@ -116,22 +116,9 @@ def register_probe_tools(server: FastMCP) -> None:
         run_id: str = "unknown",
         planning_mode: str = _DEFAULT_MODE,
     ) -> dict[str, Any]:
-        """Run a bounded, sandboxed experiment to resolve a disputed plan assumption.
-
-        Use when, during the PLAN phase, two plan branches disagree on a
-        load-bearing, empirically resolvable claim a rubric cannot adjudicate
-        (e.g. "this parser handles a 50MB JSONL stream without OOM"). The
-        ``command`` runs inside the shared SAFE-001 sandbox (subprocess +
-        seccomp + no-network default), bounded by ``timeout_s`` and
-        ``memory_mb``, and a typed ``ProbeResult`` with ``verdict`` in
-        {supports, refutes, inconclusive} comes back.
-
-        Budget is enforced per ``planning_mode`` (DIRECT=0, DUAL_DRAFT=1,
-        TRIANGULATED=2, TRIANGULATED_WITH_PROBE=3); exhaustion returns a typed
-        budget error. Identical probes within a run are served from cache.
-
-        Returns: dict serialization of ``ProbeResult`` (or a typed error dict
-        on validation failure / budget exhaustion / feature-flag disabled).
+        """Run a sandboxed experiment to resolve a disputed plan assumption.
+        Use when two PLAN branches disagree on a checkable claim. Budget
+        enforced per planning_mode; see trw_probe_budget_status.
         """
         # FR-06 / §9 Phase 1: gated OFF by default at the tool layer — the tool
         # stays registered (stable surface) but inert until the operator opts
@@ -203,12 +190,10 @@ def register_probe_tools(server: FastMCP) -> None:
         run_id: str = "unknown",
         planning_mode: str = _DEFAULT_MODE,
     ) -> dict[str, Any]:
-        """Report live probe budget usage for a session (read-only, FR-10).
-
-        Use when you need to detect runaway probe usage before it becomes
-        cost/latency creep. Returns ``{used, remaining, total, planning_mode,
-        by_hypothesis_id, by_mode}`` consistent with emitted ProbeEvents in
-        the same run. Read-only — never mutates budget state.
+        """Report live trw_probe budget usage for a session. Use when
+        deciding whether another trw_probe call would exhaust the budget.
+        Read-only — never creates or mutates state, even for an unknown
+        run_id.
         """
         _consult("trw_probe_budget_status", {"run_id": run_id})
         # FR-10 read-only: never create run state from a status query.

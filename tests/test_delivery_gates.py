@@ -591,6 +591,10 @@ def test_qual_120_f7_partial_transition_never_projects_complete(
         "  removal_assertion: tests/t.py::absent\n---\n# sparse\n",
         encoding="utf-8",
     )
+    # The FR05 proof gate now resolves the paths a default_path_proof names,
+    # so the fixture must materialize the file it claims as its receipt.
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "t.py").touch()
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
 
     result = _do_auto_progress(run_dir)
@@ -625,6 +629,10 @@ def test_qual_120_happy_path_complete_manifest(tmp_path: Path, monkeypatch: pyte
         "  removal_assertion: tests/t.py::absent\n---\n# body\n",
         encoding="utf-8",
     )
+    # The FR05 proof gate now resolves the paths a default_path_proof names,
+    # so the fixture must materialize the file it claims as its receipt.
+    (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "tests" / "t.py").touch()
     (run_dir / "meta" / "events.jsonl").write_text(
         json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
         encoding="utf-8",

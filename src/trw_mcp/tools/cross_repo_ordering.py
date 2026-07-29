@@ -37,29 +37,40 @@ _TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
 
 
 class PerRepoResultPayload(BaseModel):
-    """Mirror of trw-distill PerRepoResult (c745)."""
+    """Mirror of trw-distill PerRepoResult (c745).
+
+    Constraints mirror the trw-distill source; parity-checked by
+    scripts/check-schema-mirror-parity.py (PRD-INFRA-134 FR-05).
+    """
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    repo_label: str
+    repo_label: str = Field(min_length=1)
     comparison: RiskOrderingComparisonPayload
 
 
 class CrossRepoOrderingAggregatePayload(BaseModel):
-    """Mirror of trw-distill CrossRepoOrderingAggregate (c745)."""
+    """Mirror of trw-distill CrossRepoOrderingAggregate (c745).
+
+    Constraints mirror the trw-distill source; parity-checked by
+    scripts/check-schema-mirror-parity.py (PRD-INFRA-134 FR-05). ``per_repo``
+    and ``overlap_status_counts`` are REQUIRED because the source requires
+    them: a defaulted empty collection here would let a truncated sidecar read
+    as "aggregated across zero repos" instead of failing as malformed.
+    """
 
     model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
-    n_repos: int
-    per_repo: list[PerRepoResultPayload] = Field(default_factory=list)
-    mean_jaccard: float | None = None
-    median_jaccard: float | None = None
-    stdev_jaccard: float | None = None
-    mean_tau_b: float | None = None
-    median_tau_b: float | None = None
-    stdev_tau_b: float | None = None
-    n_tau_defined: int = 0
-    overlap_status_counts: dict[str, int] = Field(default_factory=dict)
+    n_repos: int = Field(ge=0)
+    per_repo: list[PerRepoResultPayload]
+    mean_jaccard: float | None = Field(default=None, ge=0.0, le=1.0)
+    median_jaccard: float | None = Field(default=None, ge=0.0, le=1.0)
+    stdev_jaccard: float | None = Field(default=None, ge=0.0)
+    mean_tau_b: float | None = Field(default=None, ge=-1.0, le=1.0)
+    median_tau_b: float | None = Field(default=None, ge=-1.0, le=1.0)
+    stdev_tau_b: float | None = Field(default=None, ge=0.0)
+    n_tau_defined: int = Field(default=0, ge=0)
+    overlap_status_counts: dict[str, int]
     summary_verdict: Literal[
         "consistent_overlap",
         "mixed",
@@ -223,15 +234,13 @@ def register_cross_repo_ordering_tools(server: FastMCP) -> None:
         sidecar_path: str | None = None,
         sidecar_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Return the latest c745 CrossRepoOrderingAggregate.
+        """Return the latest structural-risk ordering comparison across repos.
 
-        Use when comparing structural-risk ordering consistency across
-        multiple repositories from a persisted aggregate sidecar.
+        Use when: comparing risk ordering across multiple repos. Sidecar
+        keyed by sorted repo names, not git HEAD. Tier-gated.
 
-        Sidecar SHA derived from sorted-repo-names (NOT git HEAD), so
-        operator passes sidecar_path/sidecar_dir or the tool searches
-        the repo-default location for the most-recent aggregate.
-        Tier-gated. NEVER raises.
+        Args:
+            sidecar_path: explicit sidecar file; else newest default is used.
         """
         result = compute_cross_repo_ordering(
             repo_root=repo_root,

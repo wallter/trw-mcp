@@ -82,9 +82,61 @@ class TestUsdCostEstimate:
         assert _usd_cost_estimate(model_id=None, input_tokens=1000, output_tokens=1000) == 0.0
 
     def test_opus_4_7_rate(self) -> None:
-        # opus: $0.015/1K in, $0.075/1K out → 1000+1000 = 0.015 + 0.075 = 0.090
+        # Corrected 2026-07-26: the whole Opus line is $5/$25 per MTok, i.e.
+        # $0.005/1K in and $0.025/1K out → 1000+1000 = 0.030. The table
+        # previously carried Opus 4.1's $15/$75, over-reporting Opus by 3x.
         usd = _usd_cost_estimate(model_id="claude-opus-4-7", input_tokens=1000, output_tokens=1000)
+        assert usd == pytest.approx(0.030, abs=1e-6)
+
+    def test_opus_4_1_keeps_its_higher_rate(self) -> None:
+        # Guards the correction above from being "fixed" back: Opus 4.1
+        # genuinely is $15/$75, which is why mistaking it for 4.7 mattered.
+        usd = _usd_cost_estimate(model_id="claude-opus-4-1", input_tokens=1000, output_tokens=1000)
         assert usd == pytest.approx(0.090, abs=1e-6)
+
+    def test_dated_snapshot_id_is_priced(self) -> None:
+        """The exact id ``clients/llm.py`` stamps for its default model.
+
+        Under the previous exact-key lookup this returned 0.0 — every default
+        internal LLM call in TRW was recorded as free.
+        """
+        dated = _usd_cost_estimate(model_id="claude-haiku-4-5-20251001", input_tokens=1000, output_tokens=1000)
+        assert dated > 0.0
+        bare = _usd_cost_estimate(model_id="claude-haiku-4-5", input_tokens=1000, output_tokens=1000)
+        assert dated == pytest.approx(bare, abs=1e-9)
+
+    def test_provider_prefixed_and_long_context_ids_are_priced(self) -> None:
+        """Bedrock, region-prefixed Bedrock, and the Claude Code ``[1m]`` rendering."""
+        expected = _usd_cost_estimate(model_id="claude-opus-5", input_tokens=1000, output_tokens=1000)
+        assert expected > 0.0
+        for spelling in (
+            "anthropic.claude-opus-5",
+            "us.anthropic.claude-opus-5",
+            "claude-opus-5[1m]",
+            "Claude-Opus-5",
+        ):
+            assert _usd_cost_estimate(model_id=spelling, input_tokens=1000, output_tokens=1000) == pytest.approx(
+                expected, abs=1e-9
+            )
+
+    def test_current_generation_is_priced_not_free(self) -> None:
+        """Every model TRW can currently route to must have a row.
+
+        The table had no Claude-5-family entries at all, so those calls
+        estimated at $0.00 — a real cost reported as free.
+        """
+        for model_id in (
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-fable-5",
+            "claude-mythos-5",
+            "claude-opus-4-8",
+        ):
+            usd = _usd_cost_estimate(model_id=model_id, input_tokens=1000, output_tokens=1000)
+            assert usd > 0.0, f"{model_id} is priced at zero"
+
+    def test_near_miss_id_does_not_inherit_a_shorter_family(self) -> None:
+        assert _usd_cost_estimate(model_id="claude-opus-4-80", input_tokens=1000, output_tokens=1000) == 0.0
 
 
 class TestWrapTool:

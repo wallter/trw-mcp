@@ -112,15 +112,13 @@ def register_knowledge_tools(server: FastMCP) -> None:
         edge_types: list[str] | None = None,
         limit: int = _DEFAULT_RELATED_LIMIT,
     ) -> GraphRelatedResult:
-        """Find active learnings connected to a learning in the knowledge graph.
+        """Find active learnings connected to one via the knowledge graph.
 
-        Use when:
-        - A recalled learning looks useful and you want its supporting,
-          conflicting, co-anchored, or semantically related neighbours.
-        - You need bounded graph context without broadening the recall query.
+        Use when: a recalled learning looks useful and you want related
+        neighbours. Depth capped at 3 hops; unknown IDs return found=false.
 
-        Traversal is restricted to the root learning's namespace and depth is
-        capped at three hops. Unknown IDs return ``found=false``.
+        Args:
+            edge_types: restrict traversal to these edge types; None = all.
         """
         return graph_related(learning_id, depth=depth, edge_types=edge_types, limit=limit)
 

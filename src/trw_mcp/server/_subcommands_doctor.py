@@ -29,6 +29,7 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.config._profiles import _PROFILES
+from trw_mcp.server._subcommands_uninstall_config import _MANAGED_BLOCK_MARKERS as _BLOCK_MARKERS
 
 # FR-07: consume the canonical deliver-gate phrase — never hardcode/duplicate it.
 from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
@@ -37,23 +38,46 @@ logger = structlog.get_logger(__name__)
 
 DoctorStatus = Literal["PASS", "WARN", "FAIL", "SKIP"]
 
-# TRW-managed instruction surfaces scanned for the deliver-gate statement (FR-07).
-_INSTRUCTION_FILES: tuple[str, ...] = (
-    "CLAUDE.md",
-    "AGENTS.md",
-    "GEMINI.md",
-    ".codex/INSTRUCTIONS.md",
-    ".opencode/INSTRUCTIONS.md",
-    ".github/copilot-instructions.md",
-)
+# Instruction surfaces deliberately NOT scanned for the deliver-gate statement.
+# An exclusion set is the mechanism, not documentation: without one, a surface
+# added to the canonical registry is silently skipped here and the omission is
+# indistinguishable from "nothing to check" (wiring-defect pattern P11).
+_GATE_SCAN_EXCLUSIONS: dict[str, str] = {
+    # Cursor rule files carry frontmatter-scoped guidance, not the ceremony block;
+    # the deliver gate reaches cursor clients through AGENTS.md.
+    ".cursor/rules/trw-ceremony.mdc": "rule file, not a ceremony-block carrier",
+}
+
+
+def _instruction_surfaces() -> tuple[str, ...]:
+    """Derive the scanned instruction surfaces from the canonical registry.
+
+    This list used to be hand-maintained here and had drifted: it named five
+    files while the registry carried six, so ``ANTIGRAVITY.md`` was never
+    inspected and an antigravity-cli project with a broken instruction surface
+    reported PASS. Deriving removes the drift by construction — a client added to
+    the registry is scanned here, or it appears in ``_GATE_SCAN_EXCLUSIONS`` with
+    a stated reason. Nothing can be omitted silently.
+    """
+    from trw_mcp.client_profiles.catalog import (
+        _ROOT_INSTRUCTION_SURFACES,
+        _generated_instruction_relpaths,
+    )
+
+    relpaths = {relpath for _flag, relpath in _ROOT_INSTRUCTION_SURFACES}
+    relpaths |= set(_generated_instruction_relpaths())
+    return tuple(sorted(relpaths - set(_GATE_SCAN_EXCLUSIONS)))
 
 # Whole-block markers that delimit a TRW auto-generated section.
-_BLOCK_MARKERS: tuple[tuple[str, str], ...] = (
-    ("<!-- trw:start -->", "<!-- trw:end -->"),
-    ("<!-- trw:gemini:start -->", "<!-- trw:gemini:end -->"),
-    ("<!-- trw:copilot:start -->", "<!-- trw:copilot:end -->"),
-    ("<!-- trw:antigravity:start -->", "<!-- trw:antigravity:end -->"),
-)
+#
+# Shared with uninstall (imported at the top of this module) rather than
+# hand-copied. This table previously carried three pairs against the eleven TRW
+# actually writes, so `doctor` could not see a distill, memory, codex,
+# cursor-MDC, git-shim or uppercase-AGENTS block — it reported those surfaces as
+# carrying no TRW section, which is indistinguishable from a clean project.
+# Uninstall had the identical 3-pair copy and the identical blindness; the two
+# are now one derivation, so the next channel that adds a marker is covered here
+# for free.
 
 
 @dataclass(frozen=True)
@@ -196,6 +220,124 @@ def _extract_trw_block(content: str) -> str | None:
     return None
 
 
+def _resolve_block_imports(path: Path, block: str) -> str:
+    """Return *block* with any ``@<relpath>`` import directives resolved inline.
+
+    Under the PRD-CORE-203 IMPORT carrier the marker region holds a single
+    ``@.trw/INSTRUCTIONS.md`` line and the ceremony text lives in the sidecar.
+    Asserting the deliver-gate phrase against the raw block therefore reported
+    FAIL for a *correctly* externalized project — the shipped default for
+    claude-code, since ``instruction_externalize`` defaults to ``auto``. Doctor
+    told users their instruction surface was broken precisely when it was right.
+
+    The existing POINTER exemption above cannot cover this: it fires only when
+    the WHOLE file is import directives, and a real CLAUDE.md carries user prose
+    (CONTENT). This resolves imports found *inside the block* instead.
+
+    Single-hop and relative to the containing file's directory, matching Claude
+    Code's documented semantics. An unresolvable import contributes nothing, so a
+    dangling reference still fails the gate — which is the correct outcome.
+    """
+    resolved = [block]
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("@") or len(stripped.split()) != 1:
+            continue
+        candidate = (path.parent / stripped[1:]).resolve()
+        try:
+            candidate.relative_to(path.parent.resolve())
+        except ValueError:
+            continue  # never follow an import escaping the project directory
+        if candidate.is_file():
+            try:
+                resolved.append(candidate.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError):
+                continue
+    return "\n".join(resolved)
+
+
+CarrierState = Literal["migrated", "legacy_inline", "absent"]
+
+
+def classify_carrier_state(path: Path) -> CarrierState:
+    """Classify one instruction file as migrated / legacy_inline / absent.
+
+    PRD-CORE-240-FR07. Detection is a read of the LIVE FILE, never a state file.
+    Three installer state files are explicitly unfit as an "already migrated"
+    flag and none is opened here: ``.trw/installer-meta.yaml`` is documented as
+    history-only and "never a current runtime authority"
+    (``server/_version_status_layers.py``, PRD-INFRA-164 D-26);
+    ``.trw/installed-version.json`` is a reload nudge; ``.trw/managed-artifacts.yaml``
+    tracks bundled-artifact content hashes, which is the wrong shape. Keying off
+    any of them would report a project as migrated because an installer once
+    said so, rather than because its file actually carries an include.
+
+    - ``absent``        — no TRW-managed block in the file (or no file).
+    - ``migrated``      — the block's only substantive line is an ``@`` import.
+    - ``legacy_inline`` — anything else, INCLUDING a malformed region. A
+      half-written block is reported as legacy, never as migrated: "we could not
+      tell" must not resolve to the reassuring answer.
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "absent"
+
+    block = _extract_trw_block(content)
+    if block is None:
+        return "absent"
+
+    substantive = [
+        line.strip()
+        for line in block.splitlines()
+        if line.strip() and not line.strip().startswith("<!--")
+    ]
+    if substantive and all(ln.startswith("@") and len(ln.split()) == 1 for ln in substantive):
+        return "migrated"
+    return "legacy_inline"
+
+
+def _check_instruction_carrier_state(target: Path, _config: TRWConfig) -> CheckResult:
+    """Report per-surface carrier state so a stale install is visible (FR07).
+
+    Advisory by design: an inline block is correct for the clients that cannot
+    resolve an include, so ``legacy_inline`` is reported, never failed. What this
+    check exists to prevent is the opposite of a false alarm — a project silently
+    sitting on injected text with nothing surfacing that it could be converted.
+    """
+    states: dict[str, CarrierState] = {}
+    for rel in _instruction_surfaces():
+        path = target / rel
+        if not path.is_file():
+            continue
+        states[rel] = classify_carrier_state(path)
+
+    if not states:
+        return CheckResult("instruction_carrier", "SKIP", "no instruction surface present yet.")
+
+    migrated = sorted(r for r, st in states.items() if st == "migrated")
+    legacy = sorted(r for r, st in states.items() if st == "legacy_inline")
+    absent = sorted(r for r, st in states.items() if st == "absent")
+
+    parts: list[str] = []
+    if migrated:
+        parts.append(f"{len(migrated)} referencing ({', '.join(migrated)})")
+    if legacy:
+        parts.append(f"{len(legacy)} inline ({', '.join(legacy)})")
+    if absent:
+        parts.append(f"{len(absent)} with no TRW block ({', '.join(absent)})")
+    detail = "; ".join(parts)
+
+    if legacy and not migrated:
+        return CheckResult(
+            "instruction_carrier",
+            "WARN",
+            f"{detail}. Run 'trw-mcp update-project .' to convert any surface whose client "
+            "supports an in-file include.",
+        )
+    return CheckResult("instruction_carrier", "PASS", detail + ".")
+
+
 def _check_instruction_gate(target: Path, _config: TRWConfig) -> CheckResult:
     from trw_mcp.state.claude_md._instruction_carrier import (
         InstructionFileClass,
@@ -205,7 +347,7 @@ def _check_instruction_gate(target: Path, _config: TRWConfig) -> CheckResult:
     present: list[str] = []
     missing_gate: list[str] = []
     pointers: list[str] = []  # PRD-CORE-203 FR07: single-source pointers left un-clobbered
-    for rel in _INSTRUCTION_FILES:
+    for rel in _instruction_surfaces():
         path = target / rel
         if not path.is_file():
             continue
@@ -226,7 +368,7 @@ def _check_instruction_gate(target: Path, _config: TRWConfig) -> CheckResult:
         block = _extract_trw_block(content)
         if block is None:
             continue  # no TRW-managed block in this surface — nothing to assert.
-        if DELIVER_GATE_PHRASE not in block:
+        if DELIVER_GATE_PHRASE not in _resolve_block_imports(path, block):
             missing_gate.append(rel)
 
     if not present:
@@ -432,6 +574,7 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("mcp_import", "_check_mcp_import"),
     ("profile", "_check_profile"),
     ("instruction_surface", "_check_instruction_gate"),
+    ("instruction_carrier", "_check_instruction_carrier_state"),
     ("trw_dir", "_check_trw_dir"),
     ("framework_integrity", "_check_framework_integrity"),
     ("memory_backend", "_check_memory_backend"),

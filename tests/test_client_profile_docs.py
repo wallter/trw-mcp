@@ -171,7 +171,7 @@ def test_execution_profile_axes_and_adapter_matrix_are_provider_neutral() -> Non
     assert "`COMPREHENSIVE` | `high` | `task_complexity`" in section
     assert "never auto-selects `xhigh` or `max`" in section
     assert "provisional input key `reasoning_effort`" in section
-    assert "Status also exposes `model_tier` as a compatibility" in section
+    assert "The `model_tier` compatibility projection was" in section
     assert "not emit an `applied_effort` claim" in section
     assert "Codex" in section
     assert "Claude Code" in section

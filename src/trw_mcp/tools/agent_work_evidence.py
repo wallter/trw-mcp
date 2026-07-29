@@ -28,19 +28,17 @@ def register_agent_work_evidence_tools(server: FastMCP) -> None:
         include_events: bool = False,
         include_schema: bool = False,
     ) -> dict[str, object]:
-        """Export canonical privacy-safe AgentWorkEvidence for a TRW run.
+        """Export one schema-valid, privacy-safe work record for a TRW run.
 
-        Use when a judge, eval harness, reviewer, or knowledge-graph importer
-        needs one schema-valid work record instead of scraping run internals.
+        Use when: a judge, eval harness, or graph importer needs this
+        instead of scraping run internals.
+
+        Output: evidence (the work record), schema when asked; error + status on failure.
 
         Args:
-            ctx: Optional FastMCP context used to resolve the active run pin.
-            run_path: Optional explicit run directory.
-            include_events: Include safe event references without payload bodies.
-            include_schema: Include the JSON Schema for AgentWorkEvidence v1.
-
-        Returns:
-            {"evidence": {...}, "schema"?: {...}} or {"status": "failed", "error": str}
+            run_path: defaults to the active run pin.
+            include_events: include event references, no payload bodies.
+            include_schema: also return the v1 JSON Schema.
         """
         try:
             resolved_path = resolve_run_path(run_path, context=_build_call_context(ctx))
@@ -56,16 +54,12 @@ def register_agent_work_evidence_tools(server: FastMCP) -> None:
     @server.tool(output_schema=None)
     @log_tool_call
     def trw_validate_agent_work_evidence(data: dict[str, object]) -> dict[str, object]:
-        """Validate an AgentWorkEvidence candidate and return structured errors.
+        """Validate an AgentWorkEvidence JSON candidate before ingestion.
 
-        Use when an external producer or fixture needs schema validation before
-        evidence is accepted by a judge or graph-ingestion pipeline.
+        Use when: a producer needs schema validation before a judge or
+        graph pipeline accepts the evidence.
 
-        Args:
-            data: Candidate AgentWorkEvidence JSON object.
-
-        Returns:
-            {"valid": bool, "errors": list[...]}
+        Output: valid (bool) and errors, each with a field path, type, and message.
         """
         result = validate_agent_work_evidence(data)
         return cast("dict[str, object]", result.model_dump(mode="json"))

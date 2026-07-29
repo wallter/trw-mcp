@@ -35,7 +35,7 @@ def _fixture(
 ) -> Path:
     (tmp_path / ".trw").mkdir()
     (tmp_path / ".trw/config.yaml").write_text(
-        "framework_version: v26.1_TRW\naaref_version: v3.2.0\n",
+        "framework_version: v26.2_TRW\naaref_version: v3.2.0\n",
         encoding="utf-8",
     )
     (tmp_path / "surface.md").write_text(body, encoding="utf-8")
@@ -81,7 +81,7 @@ def test_historical_record_rejects_blind_replacement(checker: ModuleType, tmp_pa
     manifest = _fixture(
         tmp_path,
         usage="historical_record",
-        body="released as v26.1_TRW",
+        body="released as v26.2_TRW",
         selector="framework_version",
         expected_value="v25_TRW",
         rationale="2026-06-10 release record",
@@ -104,7 +104,7 @@ def test_current_default_must_match_selected_config_value(checker: ModuleType, t
         body="Framework v25_TRW",
     )
     errors = checker.check(tmp_path, manifest)
-    assert "surface.md: current_default does not contain framework_version=v26.1_TRW" in errors
+    assert "surface.md: current_default does not contain framework_version=v26.2_TRW" in errors
     assert "surface.md: current_default contains stale versions v25_TRW" in errors
 
 

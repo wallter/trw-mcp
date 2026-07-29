@@ -1,4 +1,4 @@
-"""Focused source/deployment integrity coverage for FRAMEWORK v26.1."""
+"""Focused source/deployment integrity coverage for FRAMEWORK v26.2."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from trw_mcp.bootstrap._template_updater import _ALWAYS_UPDATE
 from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime
 from trw_mcp.server._doctor_framework_integrity import check_framework_integrity
 
-FRAMEWORK_VERSION = "v26.1_TRW"
+FRAMEWORK_VERSION = "v26.2_TRW"
 AAREF_VERSION = "v3.2.0"
-FRAMEWORK_SOURCE = "v26.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n"
+FRAMEWORK_SOURCE = "v26.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n"
 AAREF_SOURCE = "# AARE-F\n\n**Version**: 3.2.0\n"
 
 
@@ -85,11 +85,11 @@ def test_explicit_repair_preserves_unrelated_config_and_regenerates_runtime(tmp_
     )
 
     assert report.ok, report.errors
-    assert config.read_text(encoding="utf-8") == "framework_version: v26.1_TRW\nkeep_me: true\n"
+    assert config.read_text(encoding="utf-8") == "framework_version: v26.2_TRW\nkeep_me: true\n"
     assert (tmp_path / ".trw/frameworks/FRAMEWORK.md").read_text(encoding="utf-8") == FRAMEWORK_SOURCE
     assert (tmp_path / ".trw/frameworks/AARE-F-FRAMEWORK.md").read_text(encoding="utf-8") == AAREF_SOURCE
     stamp = (tmp_path / ".trw/frameworks/VERSION.yaml").read_text(encoding="utf-8")
-    assert "framework_version: v26.1_TRW" in stamp
+    assert "framework_version: v26.2_TRW" in stamp
     assert "aaref_version: v3.2.0" in stamp
     assert "trw_mcp_version: 9.9.9" in stamp
 

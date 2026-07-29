@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 from trw_mcp.state._nudge_state import (
     CeremonyState,
@@ -79,7 +80,7 @@ class TestRecordNudgeShownEmitsSessionEvent:
         record_nudge_shown(trw_dir, "L-wire-002", "VALIDATE", turn=7, surface_type="phase_transition")
 
         events = _read_events_jsonl(trw_dir / "context" / "session-events.jsonl")
-        assert events[0]["data"]["surface_type"] == "phase_transition"
+        assert cast("dict[str, Any]", events[0]["data"])["surface_type"] == "phase_transition"
 
     def test_multiple_nudges_append(self, tmp_path: Path) -> None:
         """Repeated record_nudge_shown calls append, do not overwrite."""
@@ -155,9 +156,9 @@ class TestDeliverNudgeSummary:
         assert evt["event"] == "trw_deliver_complete"
         assert "nudge_summary" in evt
         ns = evt["nudge_summary"]
-        assert ns["session_start"] == 3
-        assert ns["checkpoint"] == 2
-        assert ns["deliver"] == 1
+        assert cast("dict[str, Any]", ns)["session_start"] == 3
+        assert cast("dict[str, Any]", ns)["checkpoint"] == 2
+        assert cast("dict[str, Any]", ns)["deliver"] == 1
 
     def test_deliver_event_empty_nudge_summary(self, tmp_path: Path) -> None:
         """When CeremonyState has empty nudge_counts, nudge_summary is {}."""
@@ -170,6 +171,44 @@ class TestDeliverNudgeSummary:
         cs = read_ceremony_state(trw_dir)
         nudge_summary = dict(cs.nudge_counts)
         assert nudge_summary == {}
+
+    def test_deliver_event_includes_pool_nudge_counts(self, tmp_path: Path) -> None:
+        """The event must carry total emission volume, not only step-targeted counts.
+
+        ``nudge_counts`` narrowed to nudges that target a ceremony step
+        (nudge-analysis schema v2). On a live repo that ledger is ~empty, so an
+        event carrying only ``nudge_summary`` reports zero nudges for a session
+        that emitted thousands. ``pool_nudge_counts`` is the per-emission ledger
+        every pool writes, and is what a consumer sums for volume.
+
+        Exercises the production ``_log_deliver_event`` rather than
+        reconstructing the payload, so a regression in the producer is caught.
+        """
+        from trw_mcp.tools._ceremony_deliver_tool import _log_deliver_event
+
+        trw_dir = _setup_trw_dir(tmp_path)
+        write_ceremony_state(
+            trw_dir,
+            CeremonyState(
+                session_started=True,
+                deliver_called=True,
+                # The live condition: every emission was learning/workflow
+                # content that named no ceremony step.
+                nudge_counts={},
+                pool_nudge_counts={"learnings": 12, "workflow": 7},
+            ),
+        )
+        run_dir = trw_dir / "runs" / "test-run"
+        (run_dir / "meta").mkdir(parents=True)
+
+        _log_deliver_event(trw_dir, run_dir, {}, [], "launched", 0.5, "sess-pool")
+
+        events = _read_events_jsonl(run_dir / "meta" / "events.jsonl")
+        assert len(events) == 1
+        evt = events[0]
+        assert evt["event"] == "trw_deliver_complete"
+        assert evt["nudge_summary"] == {}, "step-targeted ledger is empty in this scenario"
+        assert evt["pool_nudge_counts"] == {"learnings": 12, "workflow": 7}
 
     def test_nudge_summary_read_from_ceremony_state(self, tmp_path: Path) -> None:
         """nudge_counts round-trips correctly through CeremonyState."""
@@ -194,11 +233,13 @@ class TestStructlogNudgeTelemetry:
     """FR06: structlog INFO nudge_shown; FR07: structlog DEBUG nudge_skipped."""
 
     def test_nudge_shown_info_emitted_all_paths(self, tmp_path: Path) -> None:
-        """FR06: learning_injection messenger emits nudge_shown INFO with required fields.
+        """FR06: the contextual messenger emits nudge_shown INFO with required fields.
 
-        Drives the learning_injection messenger path end-to-end through
+        Drives the contextual messenger path end-to-end through
         append_ceremony_status and asserts the structlog INFO event is
         captured with pool/messenger/learning_id/phase/client_id/turn.
+        (Drove the ``learning_injection`` branch until PRD-CORE-241-FR07
+        retired it; both branches share the emission recorder.)
         """
         import structlog
 
@@ -207,14 +248,14 @@ class TestStructlogNudgeTelemetry:
 
         trw_dir = _setup_trw_dir(tmp_path)
 
-        # Pre-populate a ceremony state that forces the learning_injection
-        # messenger to fire on a real learning.
+        # Pre-populate a ceremony state that forces the contextual messenger
+        # to fire on a real learning.
         state = CeremonyState(session_started=True, phase="implement")
         write_ceremony_state(trw_dir, state)
 
-        # Write workspace config selecting learning_injection messenger.
+        # Write workspace config selecting the contextual messenger.
         (trw_dir / "config.yaml").write_text(
-            "nudge_messenger: learning_injection\nnudge_enabled: true\n",
+            "nudge_messenger: contextual\nnudge_enabled: true\n",
             encoding="utf-8",
         )
 

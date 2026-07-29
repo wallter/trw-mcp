@@ -21,15 +21,22 @@ if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
     )
 
 _ROOT = Path(__file__).resolve().parent.parent
+#: Every live copy of the hook / settings file. The vendored
+#: `trw-eval/trw-mcp-local/` copies were dropped here because that whole tree
+#: was deliberately deleted in `a77650f238` ("delete stale vendored
+#: trw-mcp-local (342 files, trw-mcp 0.39.2)") — stale references, not missing
+#: artifacts.
+#:
+#: Deliberately NOT filtered with `if path.exists()`: every copy listed here
+#: MUST be present, and skipping absent ones would turn a deleted hook into a
+#: silent pass. If a third distribution copy is reintroduced, add it here.
 _HOOK_PATHS = (
     _ROOT.parent / ".claude" / "hooks" / "user-prompt-submit.sh",
     _ROOT / "src" / "trw_mcp" / "data" / "hooks" / "user-prompt-submit.sh",
-    _ROOT.parent / "trw-eval" / "trw-mcp-local" / "src" / "trw_mcp" / "data" / "hooks" / "user-prompt-submit.sh",
 )
 _SETTINGS_PATHS = (
     _ROOT.parent / ".claude" / "settings.json",
     _ROOT / "src" / "trw_mcp" / "data" / "settings.json",
-    _ROOT.parent / "trw-eval" / "trw-mcp-local" / "src" / "trw_mcp" / "data" / "settings.json",
 )
 
 
@@ -142,8 +149,12 @@ def test_user_prompt_submit_hook_reads_prompt_field() -> None:
 
 
 def test_user_prompt_submit_hook_copies_stay_in_sync() -> None:
-    contents = [hook_path.read_text(encoding="utf-8") for hook_path in _HOOK_PATHS]
-    assert contents[0] == contents[1] == contents[2]
+    # Arity-independent: adding or retiring a distribution copy must not require
+    # editing this assertion, but the guard must never degrade into a
+    # single-copy no-op, hence the explicit >= 2 floor.
+    assert len(_HOOK_PATHS) >= 2, "parity guard needs at least two copies to compare"
+    contents = {hook_path.read_text(encoding="utf-8") for hook_path in _HOOK_PATHS}
+    assert len(contents) == 1, f"user-prompt-submit.sh copies diverged: {[p.as_posix() for p in _HOOK_PATHS]}"
 
 
 def test_user_prompt_submit_hook_done_phase_is_silent(tmp_path: Path) -> None:

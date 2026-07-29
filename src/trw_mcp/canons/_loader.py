@@ -34,6 +34,23 @@ from trw_mcp.canons._models import (
 SUPPORTED_SCHEMA_VERSION: Final[int] = 2
 MAX_MANIFEST_BYTES: Final[int] = 256 * 1024
 
+# ``authoring_source`` MEANS TWO DIFFERENT THINGS in this manifest, and the
+# shared name has already misled a consumer.
+#
+#   artifacts[].authoring_source        -> the file ``tracked_mirrors`` are copied
+#                                          FROM. For framework/aaref that is the
+#                                          GENERATED combined output.
+#   compiled_canons[].authoring_source  -> the hand-editable body carrying the
+#                                          ``trw:span`` markers (``*.source.md``).
+#
+# To change canon CONTENT, edit the compiled_canons path and recompile. Editing
+# the artifacts path edits build output — the next compile reverts it, or it
+# fails ``check_generation`` against the frozen baseline digest, and neither
+# failure names the real cause. The refine-canon-doc workflow pointed its
+# framework and aaref presets at the generated files for exactly this reason.
+#
+# The manifest schema rejects unknown fields, so this note lives here rather
+# than in the JSON.
 _ARTIFACT_FIELDS: Final[frozenset[str]] = frozenset(
     {
         "id",

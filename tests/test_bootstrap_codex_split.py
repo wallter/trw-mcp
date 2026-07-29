@@ -307,7 +307,9 @@ class TestCodexBootstrap:
         assert ".codex/config.toml" in result["created"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
         assert config["mcp_servers"]["trw"]["command"] == ".venv/bin/trw-mcp"
-        assert config["mcp_servers"]["trw"]["args"] == ["--debug"]
+        # No --debug: log verbosity is protocol, not per-client surface density.
+        # See tests/test_bootstrap_debug_flag_parity.py.
+        assert config["mcp_servers"]["trw"]["args"] == []
         assert "url" not in config["mcp_servers"]["trw"]
 
     def test_codex_config_replaces_direct_trw_http_url_with_stdio_entry(self, tmp_path: Path) -> None:
@@ -331,7 +333,7 @@ enabled = true
         assert trw_server["enabled"] is True
         assert "url" not in trw_server
         assert trw_server["command"]
-        assert trw_server["args"] == ["--debug"]
+        assert trw_server["args"] == []
 
     def test_codex_config_smart_merge_existing_file(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"

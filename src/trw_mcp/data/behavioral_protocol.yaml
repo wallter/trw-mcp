@@ -5,7 +5,7 @@
 # PRD-FIX-078: Tool references use {tool:trw_X} placeholders — renderer expands
 # them per-profile so claude-code sees mcp__trw__trw_X while opencode sees bare.
 directives:
-  - "Your primary role is orchestration — for non-trivial tasks, use focused helpers when the active harness supports them; otherwise run the same shards sequentially. Focused context, shard self-review, and strategic oversight matter more than any specific client feature."
+  - "Delegate only when a task is genuinely independent and parallelizable — a wide multi-file investigation, or shards with disjoint file ownership. Do not delegate work you could finish in a handful of tool calls, and do not delegate verification of your own work. If one helper suffices, use one. When the harness cannot delegate, run the same shards sequentially: delegation is an optimization, and focused context with explicit ownership is the part that matters."
   - "`{tool:trw_session_start}(query='your task domain')` loads your prior learnings and recovers any active run — pass a query string for focused hybrid recall of domain-relevant learnings, or omit for default high-impact recall"
   - "`{tool:trw_status}()` shows your current phase, completed work, and next steps — call it when resuming so you pick up where you left off instead of redoing work"
   - "`{tool:trw_init}(task_name)` creates your run directory and event log — call it for new tasks so checkpoints and progress tracking work"

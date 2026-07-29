@@ -197,8 +197,7 @@ def test_trw_review_tool_records_verified_reviewer_identity(
     result = tools["trw_review"].fn(
         findings=[{"category": "quality", "severity": "info", "description": "audit finding"}],
         run_path=str(delivering_run),
-        reviewer_source="subagent",
-        reviewer_run_id="run-reviewer",
+        reviewer_identity={"reviewer_source": "subagent", "reviewer_run_id": "run-reviewer"},
     )
     assert result["reviewer_identity_verified"] is True
     review_data = reader.read_yaml(delivering_run / "meta" / "review.yaml")
@@ -221,8 +220,7 @@ def test_trw_review_tool_fabricated_identity_stays_asserted(
     result = tools["trw_review"].fn(
         findings=[{"category": "quality", "severity": "info", "description": "audit finding"}],
         run_path=str(delivering_run),
-        reviewer_source="subagent",
-        reviewer_run_id="run-fabricated",
+        reviewer_identity={"reviewer_source": "subagent", "reviewer_run_id": "run-fabricated"},
     )
     assert result["reviewer_identity_verified"] is False
     review_data = reader.read_yaml(delivering_run / "meta" / "review.yaml")

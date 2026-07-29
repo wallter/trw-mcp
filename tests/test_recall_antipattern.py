@@ -257,16 +257,21 @@ class TestAntipatternAlertFailOpen:
         config = _make_config()
         reader = FileStateReader()
 
-        # Must not raise
+        # Must not raise — and must return the entry UNMODIFIED. `isinstance(
+        # learnings, list)` also held when the entry was swallowed, which is the
+        # failure this class exists to catch: a fail-open path that quietly
+        # drops the caller's data is not fail-open, it is silent loss.
         learnings, _, _ = perform_session_recalls(
             trw_dir=tmp_path,
             query="model system adapter",
             config=config,
             reader=reader,
         )
-        assert isinstance(learnings, list)
+        assert learnings == [bad_learning]
 
-    def test_missing_id_field_does_not_raise(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing_id_field_is_dropped_not_raised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         bad_learning: dict[str, object] = {"summary": "facade pattern", "impact": 0.5}
@@ -283,11 +288,16 @@ class TestAntipatternAlertFailOpen:
         config = _make_config()
         reader = FileStateReader()
 
-        # Must not raise
-        learnings, _, _ = perform_session_recalls(
+        # Must not raise. The honest outcome is NOT "unmodified results": the
+        # focused-recall dedup loop keys on ``entry["id"]``, so an id-less entry
+        # is dropped. Pinned explicitly, together with the counter that keeps
+        # the drop visible (``query_matched`` still reports the match), so the
+        # gap between "matched" and "returned" cannot silently widen.
+        learnings, _, extras = perform_session_recalls(
             trw_dir=tmp_path,
             query="model system",
             config=config,
             reader=reader,
         )
-        assert isinstance(learnings, list)
+        assert learnings == []
+        assert extras["query_matched"] == 1

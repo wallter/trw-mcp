@@ -33,8 +33,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_MAX_REASON_CHARS = 500
-_MAX_EVIDENCE_REF_CHARS = 1024
 _TAKEOVER = "takeover_pending"
 _RECONCILE_APPLIED = "reconcile_applied"
 _RECONCILE_NOT_APPLIED = "reconcile_not_applied"
@@ -70,39 +68,22 @@ def register_delivery_tools(server: FastMCP) -> None:
         delivery_id: str = "",
         verbose: bool = False,
     ) -> dict[str, object]:
-        """Read a delivery operation's crash-safe status without any mutation.
+        """Read a delivery operation's crash-safe status, read-only.
 
-        Use when a ``trw_deliver`` response timed out or the process restarted and
-        you need to know whether the delivery ran — without re-running it.
-
-        Mechanically read-only (PRD-CORE-208 FR05): opens the operation store
-        ``mode=ro``, and never invokes delivery, claims/refreshes a lease,
-        reconciles, sweeps retention, or creates a missing database. Never exposes
-        the recovery capability, its hash, the full request digest, or absolute
-        paths.
-
-        Input:
-        - delivery_id: the caller UUIDv7 supplied to ``trw_deliver``.
-        - verbose: when ``True``, return the full 46-entry step census (each with
-          its static ``replay_class``) for FR05 audits. The default compact
-          response enumerates only steps that have run and adds
-          ``steps_total``/``steps_started``/``steps_succeeded`` counts — the
-          durable journal truth is complete either way.
-
-        Output: a projection dict with a stable ``result`` — ``ok`` (operation
-        state/revision, critical/deferred summary, per-step replay class, queue
-        disposition, recovery eligibility), ``not_found_store``, ``not_found_id``,
-        ``invalid_id``, ``tombstone``, ``corrupt_store``,
-        ``unsupported_schema``, or ``legacy_wal_migration_required``. Every
-        response also carries an ``envelope`` — the PRD-CORE-215 FR02
-        :class:`ToolResultEnvelope` projection of the same state — added
-        alongside the legacy shape (the legacy keys remain authoritative for
-        existing readers; the envelope is the typed common surface).
+        Use when trw_deliver timed out or the process restarted, to check
+        whether it ran. Needs the delivery_id trw_deliver returned.
         """
+        # PRD-CORE-208 FR05: this projection never exposes the recovery
+        # capability, its hash, the full request digest, or absolute paths —
+        # only project_status()'s already-redacted shape reaches the caller.
+        projection: dict[str, object]
         try:
             projection = _coordinator().project_status(delivery_id, verbose=verbose)
         except Exception:  # justified: read-only tool must never raise into the client
             logger.debug("delivery_status_failed", exc_info=True)
+            # Annotated above rather than inferred: without it the fallback
+            # literal narrows to dict[str, str] and the envelope assignment
+            # below becomes a type error on the failure path only.
             projection = {"result": "error", "reason_code": "status_unavailable"}
         projection["envelope"] = status_envelope(projection, request_id=delivery_id).model_dump(mode="json")
         return projection
@@ -124,34 +105,29 @@ def register_delivery_tools(server: FastMCP) -> None:
         effect_id: str = "",
         evidence_ref: str = "",
     ) -> dict[str, object]:
-        """Authorized recovery of a stale/crashed delivery operation (FR04).
+        """Recover a stale/crashed delivery. Use when a lease is stale or
+        its process crashed — not for routine checks (trw_delivery_status).
+        Requires the delivery_id AND capability_token trw_deliver returned
+        (the recovery secret) plus exact expected_revision.
 
-        Use when a delivery lease is stale or a delivery process crashed
-        mid-operation and ownership must be reclaimed or started effects
-        reconciled — never for a routine status check (use ``trw_delivery_status``).
-
-        Separate from status so a harmless query never gains recovery authority
-        (§6.5). A NON_REPLAYABLE started effect (trust increment, external send,
-        destructive purge) is NEVER blindly replayed — crash reconciliation marks
-        it ``indeterminate``.
-
-        Input:
-        - delivery_id: the caller UUIDv7 to recover.
-        - action: ``takeover_pending``, ``reconcile_applied``,
-          ``reconcile_not_applied``, ``request_cancel``, or ``run_compensation``.
-        - capability_token / expected_revision / reason: required for every
-          mutation (constant-time capability check and exact revision match).
-        - new_owner / new_pid: the taking-over owner identity.
-        - effect_id / evidence_ref: required for reconciliation/compensation.
-
-        Output: a dict with the recovery ``status`` (e.g. ``ok``,
-        ``unauthorized``, ``lease_not_stale``, ``stale_revision``, ``live_owner``,
-        ``not_found``) plus reconciled/indeterminate effect ids.
+        Args: action in {takeover_pending, reconcile_applied,
+        reconcile_not_applied, request_cancel, run_compensation}.
         """
         if action not in _SUPPORTED_ACTIONS:
             return {"result": "unsupported_action", "action": action, "supported": list(_SUPPORTED_ACTIONS)}
-        if len(reason) > _MAX_REASON_CHARS:
-            return {"result": "invalid_reason", "reason_code": "oversize_reason"}
+        # One source of truth for both caps (DeliveryLimits), pre-checked here so
+        # an oversize input names ITS OWN reason. The local 500/1024 copies this
+        # replaces were a DRY hazard, and the evidence_ref one was never read at
+        # all: an oversize evidence_ref fell through to the journal, raised, and
+        # came back as the generic "recover_unavailable" — an input error
+        # reported as an infrastructure failure.
+        from trw_mcp.tools._delivery_recovery import enforce_reason_bounds
+        from trw_mcp.tools._delivery_request import DeliveryRequestError
+
+        try:
+            enforce_reason_bounds(reason, evidence_ref)
+        except DeliveryRequestError as err:
+            return {"result": "invalid_request", "reason_code": err.code}
         try:
             coord = _coordinator()
             if action == _TAKEOVER:

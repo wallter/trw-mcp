@@ -54,7 +54,9 @@ from trw_mcp.tools._delivery_recovery import (
     apply_crash_recovery_locked,
     authorize_takeover_locked,
     process_alive,
+    reap_orphaned_queue_links,
     run_maintenance,
+    terminal_queue_state,
 )
 from trw_mcp.tools._delivery_request import (
     DeliveryRequestError,
@@ -149,7 +151,7 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
             except DeliveryRequestError as exc:
                 return ClaimResult(status=ClaimStatus.REJECTED, reason_code=exc.code, effect_calls=0)
 
-            run_maintenance(self.store, conn, effective_now)
+            run_maintenance(self.store, conn, effective_now, self._stale_lease_ms)
             return commit_claim(
                 self.store,
                 conn,
@@ -262,6 +264,10 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
                         }
                     ),
                 )
+                if cancelled:
+                    # A step that completes the last effect of a cancellation retires
+                    # the deferred link with the operation (FR06).
+                    self.store.update_queue_state(conn, operation_id, QueueState.CANCELLED)
             return step
         finally:
             conn.close()
@@ -285,6 +291,10 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
                     }
                 )
                 self.store.replace_operation(conn, updated)
+                if terminal:
+                    # Retire the owning op's deferred link so a completed operation
+                    # never leaves a QUEUED link counting against the FIFO depth (FR06).
+                    self.store.update_queue_state(conn, operation_id, terminal_queue_state(state))
             return updated
         finally:
             conn.close()
@@ -301,6 +311,10 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
         try:
             now = self._now_ms()
             with self.store.immediate(conn):
+                # Self-heal before the depth guard: retire orphaned QUEUED links no
+                # live process will drain, so a leak of terminal/abandoned links can
+                # never permanently wedge the queue (FR06). Live work is never dropped.
+                reap_orphaned_queue_links(self.store, conn, now, self._stale_lease_ms)
                 active = [
                     link
                     for link in self.store.get_queue(conn)
@@ -393,7 +407,9 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
         """Explicit retention/compaction path (never inside status). Returns counts."""
         conn = self.store.connect()
         try:
-            return run_maintenance(self.store, conn, max(self._now_ms(), self.store.get_high_water(conn)))
+            return run_maintenance(
+                self.store, conn, max(self._now_ms(), self.store.get_high_water(conn)), self._stale_lease_ms
+            )
         finally:
             conn.close()
 

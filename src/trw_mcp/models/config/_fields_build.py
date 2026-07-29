@@ -25,29 +25,11 @@ from trw_mcp.models.config._defaults import (
 class _BuildFields:
     """Build domain mixin — mixed into _TRWConfigFields via MI."""
 
-    # -- Adaptive gates --
-
-    gate_default_type: str = "FULL"
-    gate_strategy: str = "hybrid"
-    gate_early_stop_confidence: float = 0.85
-    gate_max_rounds: int = 5
-    gate_convergence_epsilon: float = 0.05
-    gate_escalation_enabled: bool = True
-    gate_max_total_judges: int = 13
-    gate_tokens_per_vote: int = 2000
-    gate_debate_context_multiplier: float = 1.5
-    gate_critic_overhead_multiplier: float = 2.0
-    gate_tokens_per_1k_chars: int = 500
-    gate_architecture_score_penalty: float = 0.1
-
-    # -- Code simplifier --
-
-    auto_simplify_enabled: bool = False
-    simplifier_wave_size: int = 10
-    sprint_code_simplifier_wave_size: int = 10
-    sprint_commit_pattern: str = "feat(sprint{num}): Track {track}"
-    simplifier_verification_timeout_secs: int = 120
-    simplifier_backup_dir: str = ".trw/simplifier-backups"
+    # The "Adaptive gates" (gate_*) and "Code simplifier" (simplifier_* /
+    # sprint_*) sections were removed 2026-07-28 (PRD-QUAL-131-FR01): 8 typed,
+    # documented, user-settable fields with no production reader anywhere in
+    # trw_mcp, and no adaptive-gate or code-simplifier subsystem for them to
+    # configure. See trw-mcp/CHANGELOG.md for the full removed-key list.
 
     # -- Build verification --
 
@@ -172,20 +154,16 @@ class _BuildFields:
     cross_model_review_enabled: bool = False
     cross_model_provider: str = "gemini-2.5-pro"
     cross_model_review_timeout_secs: int = 30
-    cross_model_review_block_on_critical: bool = True
     review_confidence_threshold: int = 80
     # PRD-QUAL-110-FR03: the dependency-audit config flags were removed — they
     # advertised a gate with NO implementation anywhere in the package source
     # (the only references were dead, non-collecting test files). TRWConfig sets
     # ``extra="ignore"``, so an old config that still carries the removed key
     # loads gracefully rather than erroring (RISK-003).
-    comment_check_enabled: bool = True
-    api_fuzz_enabled: bool = False
     api_fuzz_base_url: str = "http://localhost:8000"
     api_fuzz_level: str = "strict"
     api_fuzz_timeout_secs: int = 120
 
     # -- LLM augmentation --
 
-    llm_enabled: bool = True
     llm_default_model: str = "haiku"

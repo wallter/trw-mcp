@@ -15,6 +15,7 @@ from tests._test_ceremony_middleware_gate_support import (
     FakeMiddlewareContext,
     FakeRequestContext,
     FakeToolResult,
+    _clean_state,  # noqa: F401  # autouse: resets middleware module state per test
     _seed_compaction_marker,
     _text,
     middleware,  # noqa: F401
@@ -49,7 +50,7 @@ class TestCompactionGate:
             return checkpoint_result
 
         blocked_ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_checkpoint"),
+            message=FakeMessage(name="trw_recall"),
             fastmcp_context=session_b,
         )
         start_ctx = FakeMiddlewareContext(
@@ -101,7 +102,7 @@ class TestCompactionGate:
             fastmcp_context=session_a,
         )
         checkpoint_b_ctx = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_checkpoint"),
+            message=FakeMessage(name="trw_recall"),
             fastmcp_context=session_b,
         )
 
@@ -148,7 +149,7 @@ class TestCompactionGate:
         await middleware.on_call_tool(ctx1, call_next)  # type: ignore[arg-type]
 
         ctx2 = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_learn"),
+            message=FakeMessage(name="trw_recall"),
             fastmcp_context=session_ctx,
         )
         out2 = await middleware.on_call_tool(ctx2, call_next)  # type: ignore[arg-type]
@@ -156,7 +157,7 @@ class TestCompactionGate:
         assert len(out2.content) == 1
 
         ctx3 = FakeMiddlewareContext(
-            message=FakeMessage(name="trw_build_check"),
+            message=FakeMessage(name="trw_recall"),
             fastmcp_context=session_ctx,
         )
         out3 = await middleware.on_call_tool(ctx3, call_next)  # type: ignore[arg-type]

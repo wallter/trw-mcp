@@ -226,7 +226,12 @@ def _install_hooks(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
 ) -> None:
-    """Copy bundled hook scripts to ``.claude/hooks/``."""
+    """Copy bundled hook scripts to ``.claude/hooks/`` and install git hooks.
+
+    ``.claude/hooks/`` is the Claude Code TOOL-LIFECYCLE surface — it has no
+    ``post-commit`` event — so the git-hook family is installed separately into
+    ``.git/hooks/`` (PRD-CORE-231 FR01/FR02).
+    """
     hooks_source = _DATA_DIR / "hooks"
     if hooks_source.is_dir():
         for hook_file in sorted(hooks_source.iterdir()):
@@ -238,6 +243,41 @@ def _install_hooks(
                     result,
                     on_progress,
                 )
+
+    # A re-init over an ALREADY-enrolled project rewrites the same bundled hooks
+    # the update path does, so it carries the same brick-the-project hazard (see
+    # _template_updater._rebless_intent_hook_digest). No-op when no marker exists.
+    from trw_mcp.bootstrap._template_updater import _rebless_intent_hook_digest
+
+    _rebless_intent_hook_digest(target_dir, result)
+
+    _install_git_hooks(target_dir, force, result, on_progress)
+
+
+def _install_git_hooks(
+    target_dir: Path,
+    force: bool,
+    result: dict[str, list[str]],
+    on_progress: ProgressCallback = None,
+) -> None:
+    """Install the TRW ``post-commit`` git hook (PRD-CORE-231 FR01/FR02).
+
+    Fail-open: a hook-install problem is recorded as a warning, never an abort —
+    a repo without the hook simply keeps the pre-FR01 behavior.
+    """
+    try:
+        from trw_mcp.bootstrap._git_hooks import install_git_post_commit_hook
+
+        hook_result = install_git_post_commit_hook(target_dir, force=force)
+        for path in hook_result["created"] + hook_result["updated"]:
+            result["created"].append(path)
+            if on_progress:
+                on_progress("Created", path)
+        result.setdefault("skipped", []).extend(hook_result["skipped"])
+        result.setdefault("warnings", []).extend(hook_result["errors"])
+    except Exception as exc:  # justified: fail-open, bootstrap must not abort
+        logger.warning("git_hook_install_failed", error=str(exc))
+        result.setdefault("warnings", []).append(f"git post-commit hook skipped: {exc}")
 
 
 # Skill/agent installers extracted to _init_project_skills (PRD-DIST-243 batch 21b).
@@ -258,11 +298,65 @@ def _generate_root_files(
     target_dir: Path,
     force: bool,
     result: dict[str, list[str]],
+    ide_targets: list[str] | None = None,
     on_progress: ProgressCallback = None,
+    *,
+    ide_explicit: bool = False,
 ) -> None:
-    """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``, ``REVIEW.md``)."""
+    """Generate root-level configuration files (``.mcp.json``, ``CLAUDE.md``, ``REVIEW.md``).
+
+    *ide_explicit* says whether *ide_targets* came from a user ``--ide`` choice
+    or from detection. It decides nothing else, but it decides this: a detected
+    list must never be treated as authoritative, because ``detect_ide`` reports
+    cursor-ide from ``shutil.which("cursor")``. Passing a detected list as if the
+    user had chosen it made a plain ``init-project`` on any machine with Cursor
+    installed strip the CLAUDE.md protocol from every new project.
+    """
     _merge_mcp_json(target_dir, result, on_progress)
-    _write_if_missing(target_dir / "CLAUDE.md", _minimal_claude_md(), force, result, on_progress)
+    claude_md_path = target_dir / "CLAUDE.md"
+    _write_if_missing(claude_md_path, _minimal_claude_md(), force, result, on_progress)
+    # Resolve the PRD-CORE-203 carrier on the file we just scaffolded, so a fresh
+    # install produces the same shape an existing project converges to. Without
+    # this, `init-project` always wrote a fully inline TRW block while
+    # `update-project` externalized it — the two entry points disagreed about the
+    # same file, and which shape a project ended up in depended on entry order.
+    # Bookkeeping goes to a scratch dict only to avoid double-reporting the path
+    # `_write_if_missing` already recorded — but its ERRORS are merged back. A
+    # carrier failure here (EROFS/ENOSPC, malformed markers) would otherwise be
+    # discarded while the installer still reported a clean create, which is a
+    # truthfulness defect, not just a cosmetic one.
+    # Record which clients the user actually chose BEFORE anything reads it
+    # back. Installing writes `.claude/` and `.cursor/` into every project
+    # whatever the client, so from here on detection cannot tell a codex-only
+    # project from a Claude Code one; without the record, every later run
+    # re-derives the wrong answer from artifacts we created ourselves.
+    from ._template_claude_md import claude_md_is_claimed
+
+    claimed = claude_md_is_claimed(target_dir, ide_targets if ide_explicit else None)
+    if claude_md_path.exists() and not claimed:
+        # PRD-CORE-240-FR04, same rule as the shared AGENTS.md: only claude-code
+        # declares CLAUDE.md, so for a codex/opencode/copilot project this file
+        # is scaffolded documentation that none of its clients load. Injecting
+        # the protocol here put a THIRD copy of the framework text in an unread
+        # file, where it then froze while the surfaces those clients do read
+        # moved on. The MCP sync path already declined this write
+        # (`_determine_write_target_decision`); bootstrap did it anyway, so the
+        # two entry points disagreed about the same file.
+        from trw_mcp.state.claude_md._agents_md import strip_orphaned_claude_md_block
+
+        strip_orphaned_claude_md_block(target_dir, ide_targets)
+    elif claude_md_path.exists():
+        from ._template_claude_md import _update_claude_md_trw_section
+
+        carrier_result: dict[str, list[str]] = {"updated": [], "preserved": [], "errors": []}
+        _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir, ide_targets)
+        result.setdefault("errors", []).extend(carrier_result["errors"])
+        # An existing user CLAUDE.md that `_write_if_missing` reported as
+        # "skipped" IS modified by the carrier; say so rather than leaving the
+        # operator with "Skipped: CLAUDE.md" over a rewritten file.
+        for path in carrier_result["updated"]:
+            if path not in result.get("updated", []):
+                result.setdefault("updated", []).append(path)
     _write_if_missing(target_dir / "REVIEW.md", _minimal_review_md(), force, result, on_progress)
 
 
@@ -315,16 +409,24 @@ def init_project(
 
     logger.info("project_init_started", project_root=str(target_dir), ide=ide)
 
-    # Validate target is a git repo. is_git_repo is symlink-safe — a plain
-    # .exists() follows symlinks, so a symlinked .git could fool this guard.
+    # PRD-INFRA-170-FR06 / OQ-1: a non-git target must NOT be left as the
+    # reproduced config-present, framework-bodies-absent half-install. The
+    # framework-body deploy (step 9, ``_write_version_yaml`` ->
+    # ``repair_framework_runtime``) only writes files under ``.trw/frameworks/``
+    # and is git-independent + idempotent, so we no longer bail when ``.git`` is
+    # absent. Git is now an informational nicety, not a gate — we surface a loud,
+    # non-silent warning and then run the full, usable install. Behavior for real
+    # git repos is unchanged (no warning emitted, identical phases).
+    #
+    # is_git_repo is symlink-safe — a plain ``.exists()`` follows symlinks, so a
+    # symlinked ``.git`` could otherwise fool this detection.
     if not is_git_repo(target_dir):
-        result["errors"].append(f"{target_dir} is not a git repository (.git/ not found)")
-        logger.error(
-            "project_init_failed",
-            project_root=str(target_dir),
-            error="not a git repository",
+        warning = (
+            f"{target_dir} is not a git repository — installing the framework anyway; "
+            "run 'git init' to enable git-based features."
         )
-        return result
+        result.setdefault("warnings", []).append(warning)
+        logger.warning("project_init_non_git", project_root=str(target_dir))
 
     try:
         _run_init_phases(
@@ -414,7 +516,7 @@ def _run_init_phases(
     _install_agents(target_dir, force, result, on_progress)
 
     # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
-    _generate_root_files(target_dir, force, result, on_progress)
+    _generate_root_files(target_dir, force, result, ide_targets, on_progress, ide_explicit=ide is not None)
 
     # 7a. Claude Code distill channels (always installed — claude-code is the default)
     if "claude-code" in ide_targets or not ide_targets:

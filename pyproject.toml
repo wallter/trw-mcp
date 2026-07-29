@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "0.62.0"
+version = "1.0.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -45,15 +45,22 @@ dependencies = [
     "starlette>=1.3.1",
     "structlog>=24.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
-    # Floor 0.11.0 is the lowest release carrying token_budget.estimate_serialized_entry_tokens,
-    # which _recall_impl.py imports UNGUARDED. It also carries the earlier hard deps
-    # rrf_fuse(importances=) and SQLiteBackend.find_active_by_content (recall RRF
-    # impact-blend + embedding-independent exact-content dedup). A lower floor lets pip
-    # resolve an older trw-memory (0.9.x is on PyPI) that satisfies the constraint but
-    # lacks the symbol, so every trw_recall raises ImportError at runtime. Raise the
-    # floor so the skew fails fast at install instead. When adding an import from a
-    # new trw-memory symbol, bump this floor to that trw-memory version IN THE SAME PR.
-    "trw-memory>=0.11.0,<1.0.0",
+    # Floor 0.12.0 is the lowest release carrying the `verification_status` field and
+    # its additive schema migration, which tools/_maintain_verify.py and
+    # tools/_recall_assertion_verification.py both consume (PRD-CORE-231). 0.11.0 was
+    # the previous floor, for token_budget.estimate_serialized_entry_tokens — imported
+    # UNGUARDED by _recall_impl.py — plus the earlier hard deps rrf_fuse(importances=)
+    # and SQLiteBackend.find_active_by_content. A lower floor lets pip resolve an older
+    # trw-memory that satisfies the constraint but lacks the symbol, so the call raises
+    # at runtime; the floor makes the skew fail fast at install instead. When adding an
+    # import from a new trw-memory symbol, bump this floor IN THE SAME PR.
+    #
+    # RELEASE ORDER (docs/deployment/CLAUDE.md): trw-memory ships FIRST. As of
+    # 2026-07-26 PyPI's latest trw-memory is 0.11.0, so this floor is unsatisfiable
+    # from PyPI and `uv lock` cannot resolve until trw-memory >=0.12.0 is published.
+    # Do NOT lower the floor to make the lock or its parity tests pass — that
+    # reinstates exactly the runtime skew the floor exists to prevent.
+    "trw-memory>=0.12.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 

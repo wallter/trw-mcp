@@ -27,6 +27,9 @@ PUBLIC_GATE_KEYS: tuple[str, ...] = (
     "review_scope_block",
     "review_block",
     "delivery_blocked",
+    # PRD-SEC-013-FR07: without this key the intent-violation block is created,
+    # persisted, and then projected away — enforcement would be silently inert.
+    "intent_violation_block",
     "build_gate_warning",
     "missing_gate",
     "blocked_task_type",

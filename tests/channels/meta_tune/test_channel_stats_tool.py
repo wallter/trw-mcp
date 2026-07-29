@@ -166,3 +166,33 @@ def test_tool_log_path_in_result(tmp_path: Path) -> None:
     _write_events(log_path, [_push(), _outcome()])
     result = compute_channel_stats_result(window_hours=1, repo_root=str(tmp_path))
     assert "log_path" in result
+
+
+def test_empty_log_reports_no_activity_not_ok(tmp_path: Path) -> None:
+    """An empty subsystem is not a healthy one.
+
+    `status: "ok"` with `channels: []` reads as "we looked and there is nothing
+    to throttle". For a subsystem that has never fired, nothing emitted anything
+    — there is nothing to be healthy about. This is the same distinction the
+    correlator draws between an unmeasured rate and a measured zero, applied one
+    level up at the tool boundary.
+    """
+    result = compute_channel_stats_result(window_hours=1, repo_root=str(tmp_path))
+
+    assert result["channels"] == []
+    assert result["status"] == "no_activity", "an empty channel list must not be reported as a healthy 'ok'"
+
+
+def test_a_populated_log_still_reports_ok(tmp_path: Path) -> None:
+    """The paired direction: real activity must still read as ok.
+
+    Without this, flipping the empty case could silently make the tool report
+    'no_activity' for a working subsystem.
+    """
+    log_path = tmp_path / ".trw" / "telemetry" / "channel-events.jsonl"
+    _write_events(log_path, [_push(), _outcome()])
+
+    result = compute_channel_stats_result(window_hours=1, repo_root=str(tmp_path))
+
+    assert result["channels"], "fixture should produce at least one channel row"
+    assert result["status"] == "ok"

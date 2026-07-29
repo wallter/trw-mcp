@@ -73,14 +73,21 @@ def test_session_start_org_layer_flows_into_resolved_profile(tmp_path: Path) -> 
 def test_session_start_compact_mode_preserves_profile_block(tmp_path: Path) -> None:
     """The compact-by-default payload still carries the resolved profile.
 
-    The trim step only drops diagnostic sub-blocks; the profile block is
-    load-bearing and must survive (PRD §9: every run carries the snapshot id).
+    ``resolved_profile`` is the load-bearing half — it tells the caller which
+    ceremony tier it is operating under. The ``profile_snapshot_id`` digest is
+    the audit half: opaque, with no caller action, and served in full by
+    trw_profile_explain. Since 2026-07-27 compact drops the digest and keeps
+    the block; this pins BOTH sides so neither can drift.
     """
     fn = _session_start_fn()
-    result: dict[str, Any] = fn(ctx=None, query="*", verbose=False)
-    assert result.get("compact") is True
-    assert "resolved_profile" in result
-    assert result["profile_snapshot_id"].startswith("surf_")
+    compact: dict[str, Any] = fn(ctx=None, query="*", verbose=False)
+    assert compact.get("compact") is True
+    assert "resolved_profile" in compact
+    assert "profile_snapshot_id" not in compact
+
+    verbose: dict[str, Any] = fn(ctx=None, query="*", verbose=True)
+    assert "resolved_profile" in verbose
+    assert verbose["profile_snapshot_id"].startswith("surf_")
 
 
 def test_session_start_malformed_org_layer_surfaces_structured_error(

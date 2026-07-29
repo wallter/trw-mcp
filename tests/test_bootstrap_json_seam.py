@@ -82,7 +82,7 @@ class TestReadJsonObject:
 
 @pytest.mark.unit
 class TestReadSettingsForMerge:
-    """The settings-merge seam shared by the Gemini + Antigravity CLI readers.
+    """The settings-merge seam behind the Antigravity CLI settings reader.
 
     Distinct from ``read_json_object``: corrupt content is preserved to a
     ``.bak`` and recovered (``{}``) rather than collapsed to ``None``, and a

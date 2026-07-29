@@ -104,7 +104,16 @@ def resolve_pool_content(
         # substitute correctly for opencode/cursor/aider users.
         return _select_nudge_message(pending, state, available_learnings=0, profile=cfg.client_profile)
     if pool == "context" and context:
-        urgency = _compute_urgency(state, _highest_priority_pending_step(state) or "session_start")
+        # Ledger UF-023: urgency is "how many times have we already nudged THIS
+        # step" (_compute_urgency reads state.nudge_counts[step]). Keying it on
+        # the most-overdue step defaulted to "session_start" whenever nothing was
+        # pending, so a reactive build/review nudge inherited the urgency of a
+        # step it never mentioned. Use the step the message is actually about;
+        # an unattributed reactive message has no per-step history to escalate.
+        from trw_mcp.tools._ceremony_nudge_emission import resolve_nudge_target_step
+
+        target_step = resolve_nudge_target_step("context", state, context=context)
+        urgency = _compute_urgency(state, target_step) if target_step else "low"
         return _context_reactive_message(context, state, urgency=urgency)
     return None
 

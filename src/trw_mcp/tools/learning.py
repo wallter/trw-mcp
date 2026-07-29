@@ -24,7 +24,7 @@ from trw_mcp.models.typed_dicts import (
     RecallResultDict,
 )
 from trw_mcp.scoring import rank_by_utility
-from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     generate_learning_id,
     save_learning_entry,
@@ -46,10 +46,12 @@ from trw_mcp.state.recall_search import (
 from trw_mcp.tools._learning_helpers import (
     check_and_handle_dedup,
 )
+from trw_mcp.tools._learn_arg_bags import parse_learn_metadata, parse_learn_update_fields
 from trw_mcp.tools._learning_module_helpers import _annotate_injected_learnings, _build_call_ctx, _coerce_tags
 from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _is_solution_summary, _validate_learn_enums
 from trw_mcp.tools._learning_module_helpers import _validate_learn_update_fields
-from trw_mcp.tools._learning_module_helpers import _create_llm_client, _note_run_path_compat, _read_injected_ids
+from trw_mcp.tools._learning_module_helpers import _create_llm_client, _read_injected_ids
+from trw_mcp.tools._learning_module_helpers import _sync_learning_yaml_backup
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
@@ -74,71 +76,78 @@ def register_learning_tools(server: FastMCP) -> None:
         tags: list[str] | str | None = None,
         evidence: list[str] | None = None,
         impact: float = 0.5,
-        shard_id: str | None = None,
-        source_type: str = "agent",
-        source_identity: str = "",
-        client_profile: str | None = None,
-        model_id: str | None = None,
-        consolidated_from: list[str] | None = None,
-        assertions: list[dict[str, str]] | None = None,
-        # PRD-CORE-110: Typed learning fields
         type: str = "pattern",
-        nudge_line: str = "",
-        expires: str = "",
         confidence: str = "unverified",
-        task_type: str = "",
-        domain: list[str] | None = None,
-        phase_origin: str = "",
-        phase_affinity: list[str] | None = None,
-        team_origin: str = "",
-        protection_tier: str = "normal",
-        # PRD-CORE-185 FR07: write-tier override.
+        source_type: str = "agent",
         scope: str = "auto",
-        # Feedback sub_5qbmT6WPNoP58rlv item 8: accepted for compatibility.
-        run_path: str | None = None,
+        metadata: dict[str, object] | str = "",
     ) -> LearnResultDict:
         """Persist a non-obvious discovery so future agents inherit the finding.
 
-        Use when:
-        - You found a root cause, gotcha, or durable pattern worth remembering.
-        - You validated an approach that prevents repeated mistakes.
-        - You hit an architecture constraint not obvious from the code.
+        Use when you hit a root cause, gotcha, constraint, or a validated
+        approach worth reusing. Routine observations dilute recall.
 
-        Record only learnings that change future implementation/debugging/review
-        behavior and are specific enough to recall later. Routine observations
-        ("I read the file", "the test passed") degrade recall quality.
+        Required: summary (headline) + detail (context, symptoms, why it
+        matters). tags: list or comma/space string. impact 0.0-1.0, higher
+        surfacing more often. type: incident | pattern | convention |
+        hypothesis | workaround. confidence: unverified | low | medium | high |
+        verified. scope picks the write tier: "auto" (default) prefers the
+        machine-local user store; "project"/"user" force one.
 
-        Required:
-        - summary: one-line headline.
-        - detail: full finding with context, symptoms, and why it matters.
+        metadata is an optional object for rare fields; unknown keys are
+        rejected. Accepted: source_identity, client_profile, model_id,
+        consolidated_from, assertions, nudge_line, task_type, domain,
+        phase_origin, phase_affinity, protection_tier. client_profile and
+        model_id auto-detect when omitted.
 
-        Recommended:
-        - tags: keywords for trw_recall filtering. Accepts a JSON list
-          (``["a","b"]``) or a comma/whitespace-separated string (``"a,b c"``).
-        - impact: 0.0-1.0; high values surface more often.
+        Output: {status, learning_id, path}. status is "recorded",
+        "skipped"/"merged" when dedup collapsed it into an existing entry, or
+        "rejected" with a reason.
 
-        Advanced (auto-detected if omitted):
-        - shard/source/client/model/type/domain/phase/team/protection metadata.
-        - scope: write-tier override (PRD-CORE-185). "auto" (default) routes
-          portable learnings to the machine-local user tier when a user-scope
-          store is present, else the project tier; "project"/"user" force it.
-        - run_path: accepted for compatibility with run-path-aware tools.
-          Learnings are run-independent, so it is only accepted and logged,
-          not validated, and never fails the call.
-
-        Output: LearnResultDict with
-        {id: str, status: "saved"|"deduped"|"error", dedup_match?: dict, ceremony_hint?: str}.
-
-        See Also: trw_recall, trw_learn_update
+        See Also: trw_recall reads learnings back; trw_learn_update corrects one
+        in place.
         """
+        # Maintainer notes (kept out of the docstring — callers pay for that text):
+        #   scope is PRD-CORE-185 FR07's write-tier override.
+        #   run_path was REMOVED 2026-07-28 under explicit operator
+        #   authorization. It was accepted and only debug-logged; it never
+        #   changed storage, because learnings are run-independent. Removal is
+        #   NOT free and the cost is recorded here rather than discovered later:
+        #   fastmcp 3.2.4 raises ToolError("Unexpected keyword argument") on an
+        #   unknown kwarg (verified empirically 2026-07-28), so an agent that
+        #   carries run_path over from trw_checkpoint loses THAT call's
+        #   learning. That failure is LOUD and self-correcting — the agent sees
+        #   the error and can retry — which is the trade Truthfulness > Velocity
+        #   accepts over a permanently-billed no-op parameter. fastmcp's
+        #   exclude_args would prune the schema while still accepting the
+        #   argument (also verified), but it is deprecated as of fastmcp 2.14
+        #   and is not a foundation for a hot-path tool.
+        #   metadata collapses 11 formerly-flat parameters (PRD-CORE-110 typed
+        #   fields + PRD-CORE-099 provenance) into one object — see
+        #   _learn_arg_bags for the accepted-key contract.
+        #   shard_id / expires / team_origin were REMOVED here. Re-measured
+        #   2026-07-28 against this repo's project store
+        #   (.trw/memory/memory.db, 9,240 entries — the largest sample on hand,
+        #   NOT a global census):
+        #     shard_id    — not a column on `memories` at all, and absent from
+        #                   all 1,959 non-empty metadata blobs. The 6,066 YAML
+        #                   sidecars that carry a `shard_id:` key all carry it
+        #                   EMPTY. So the argument was accepted and dropped: a
+        #                   caller who passed it got no scoping and no error.
+        #     expires_at  — 0 non-empty of 9,240.
+        #     team_origin — 0 non-empty of 9,240.
+        #   Read that as "never round-tripped in this corpus", not as proof no
+        #   caller anywhere ever passed them. expires and team_origin remain
+        #   settable through trw_learn_update(fields=...), which is where a TTL
+        #   or an ownership correction is actually decided.
         # PRD-CORE-099: Auto-detect client and model when not explicitly provided.
         # None = "not provided" → auto-detect. Empty string = explicit blank.
         from trw_mcp.state.source_detection import detect_client_profile, detect_model_id
         from trw_mcp.tools._learn_impl import execute_learn
 
-        # Feedback sub_5qbmT6WPNoP58rlv item 8: accept-and-log run_path for
-        # compatibility with the run-path-aware checkpoint/deliver tools.
-        _note_run_path_compat(run_path)
+        meta, _meta_reject = parse_learn_metadata(metadata)
+        if _meta_reject is not None:
+            return _meta_reject
 
         # Potemkin defect C: coerce advertised type aliases (e.g. 'gotcha',
         # presented as first-class in the docstring + trw-deliver skill) to a
@@ -149,14 +158,12 @@ def register_learning_tools(server: FastMCP) -> None:
         # core185-ENUM-UNGUARDED-3: validate enum args BEFORE forwarding so an
         # invalid value returns a structured rejection rather than an unhandled
         # ValueError from the downstream enum construction (mirrors trw_learn_update).
-        _enum_reject = _validate_learn_enums(type=type, confidence=confidence, protection_tier=protection_tier)
+        _enum_reject = _validate_learn_enums(type=type, confidence=confidence, protection_tier=meta.protection_tier)
         if _enum_reject is not None:
             return _enum_reject
 
-        if client_profile is None:
-            client_profile = detect_client_profile()
-        if model_id is None:
-            model_id = detect_model_id()
+        client_profile = meta.client_profile if meta.client_profile is not None else detect_client_profile()
+        model_id = meta.model_id if meta.model_id is not None else detect_model_id()
         call_ctx = _build_call_ctx(ctx)
 
         # PRD-IMPROVE-MCP-01 FR1: accept a comma/whitespace-separated string for
@@ -172,24 +179,21 @@ def register_learning_tools(server: FastMCP) -> None:
             tags=coerced_tags,
             evidence=evidence,
             impact=impact,
-            shard_id=shard_id,
             source_type=source_type,
-            source_identity=source_identity,
+            source_identity=meta.source_identity,
             client_profile=client_profile,
             model_id=model_id,
-            consolidated_from=consolidated_from,
-            assertions=assertions,
+            consolidated_from=meta.consolidated_from,
+            assertions=meta.assertions,
             is_solution_fn=_is_solution_summary,
             type=type,
-            nudge_line=nudge_line,
-            expires=expires,
+            nudge_line=meta.nudge_line,
             confidence=confidence,
-            task_type=task_type,
-            domain=domain,
-            phase_origin=phase_origin,
-            phase_affinity=phase_affinity,
-            team_origin=team_origin,
-            protection_tier=protection_tier,
+            task_type=meta.task_type,
+            domain=meta.domain,
+            phase_origin=meta.phase_origin,
+            phase_affinity=meta.phase_affinity,
+            protection_tier=meta.protection_tier,
             scope=scope,
             session_id=call_ctx.session_id or call_ctx.fastmcp_session,
             # Dependency injection: pass module-level refs for testability
@@ -207,58 +211,66 @@ def register_learning_tools(server: FastMCP) -> None:
         ctx: Context | None = None,
         learning_id: str = "",
         status: str | None = None,
+        summary: str | None = None,
         detail: str | None = None,
         impact: float | None = None,
-        summary: str | None = None,
-        assertions: list[dict[str, str]] | None = None,
-        # PRD-CORE-110: Typed learning update fields
-        type: str | None = None,
-        nudge_line: str | None = None,
-        expires: str | None = None,
-        confidence: str | None = None,
-        task_type: str | None = None,
-        domain: list[str] | None = None,
-        phase_origin: str | None = None,
-        phase_affinity: list[str] | None = None,
-        team_origin: str | None = None,
-        protection_tier: str | None = None,
-        feedback: str | None = None,
         tags: list[str] | None = None,
+        feedback: str | None = None,
         supersedes: str | None = None,
+        reverify_anchors: bool = False,
+        fields: dict[str, object] | str = "",
     ) -> dict[str, str]:
         """Update an existing learning — status, fields, or feedback signal.
 
-        Use when:
-        - The issue a learning describes has been fixed (status="resolved").
-        - A pattern is no longer applicable (status="obsolete").
-        - Detail or summary can be sharpened now that root cause is clearer.
-        - You want to boost/demote an entry's recall ranking via feedback.
+        Use when a learning is fixed or stale, needs sharper text, or should be
+        boosted/demoted in recall.
 
-        Output: dict with fields {status: "updated"|"not_found"|"invalid", error?: str,
-        field_updated?: str}.
+        Pass learning_id (e.g. "L-abc12345") plus only what changes; anything
+        you omit is left untouched. status: active | resolved | obsolete (last
+        two drop out of recall). feedback: helpful | unhelpful. tags replace the
+        existing set; [] clears it.
 
-        Args:
-            learning_id: ID of the learning to update (e.g., "L-abc12345").
-            status: New status — "active", "resolved", or "obsolete". Resolved/obsolete entries stop appearing in recall.
-            detail: Updated detail text (replaces existing detail).
-            impact: Updated impact score (0.0-1.0).
-            summary: Updated summary text (replaces existing summary).
-            assertions: Replace assertions on this entry (PRD-CORE-086 FR12). Empty list removes all.
-            type: Updated type — "incident", "pattern", "convention", "hypothesis", or "workaround".
-            nudge_line: Updated nudge text (max 80 chars, auto-truncated).
-            expires: Updated expiration date/condition.
-            confidence: Updated confidence — "unverified", "low", "medium", "high", or "verified".
-            task_type: Updated task type identifier.
-            domain: Updated domain tags.
-            phase_affinity: Updated phase affinities.
-            protection_tier: Updated protection tier.
-            feedback: Signal whether this learning was helpful or unhelpful — "helpful" or "unhelpful". Affects recall ranking via feedback-aware decay (PRD-CORE-132).
-            tags: Replace the entry's tag set. Passing `[]` clears all tags. Callers are responsible for dedup/normalization.
-            supersedes: id of a PRIOR learning that THIS learning replaces/corrects (PRD-CORE-194 FR04). Closes the prior record's validity window (sets its invalid_from + invalidated_by=this id) and RETAINS it — never a delete. Fires ONLY when explicitly passed; a routine field edit never closes a window.
+        supersedes: id of a PRIOR learning this replaces; closes its validity
+        window (never a delete). reverify_anchors rechecks anchors against the
+        current tree — use after a rename.
+
+        fields is an optional object of typed attributes; unknown keys are
+        rejected. Accepted: type (incident|pattern|convention|hypothesis|
+        workaround), confidence (unverified|low|medium|high|verified), expires,
+        nudge_line (cut at 80 chars), task_type, domain, phase_origin ("" or a
+        phase name), phase_affinity, team_origin, protection_tier, assertions
+        (replaces the set; [] clears it).
+
+        Output: {status, learning_id, changes} — changes names what was
+        written. status is "no_changes", "not_found", or "invalid" (with error).
         """
+        # Maintainer notes (kept out of the docstring — callers pay for that text):
+        #   assertions replacement is PRD-CORE-086 FR12; feedback feeds the
+        #   feedback-aware decay of PRD-CORE-132; supersedes implements the
+        #   bi-temporal window close of PRD-CORE-194 FR04 (sets invalid_from +
+        #   invalidated_by on the prior record, never a delete); reverify_anchors
+        #   is PRD-CORE-231 FR03 and is a no-op when the entry has no anchors.
+        #   Callers own tag dedup/normalization. protection_tier accepts
+        #   critical|high|normal|low|protected|permanent.
+        #   PARTIAL-UPDATE SENTINEL: every typed field defaults to None and the
+        #   adapter reads None as "the caller did not ask me to touch this". The
+        #   `fields` bag preserves that exactly — an absent key AND an explicit
+        #   null both yield None (see _learn_arg_bags.parse_learn_update_fields).
+        #   Do not "helpfully" default a missing key to an empty value; that
+        #   would silently clear data the caller never mentioned.
         config = get_config()
         writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
+
+        upd, _fields_reject = parse_learn_update_fields(fields)
+        if _fields_reject is not None:
+            return _fields_reject
+        type, expires = upd.type, upd.expires
+        nudge_line, confidence = upd.nudge_line, upd.confidence
+        task_type, domain = upd.task_type, upd.domain
+        phase_origin, phase_affinity = upd.phase_origin, upd.phase_affinity
+        team_origin, protection_tier = upd.team_origin, upd.protection_tier
+        assertions = upd.assertions
 
         # PRD-CORE-110: Validate enum fields before forwarding to adapter.
         # Potemkin defect C: coerce advertised type aliases (e.g. 'gotcha')
@@ -277,13 +289,22 @@ def register_learning_tools(server: FastMCP) -> None:
         if _reject is not None:
             return _reject
 
+        # PRD-CORE-231-FR03: refresh anchor_validity against the current tree
+        # BEFORE any other requested field update is applied.
+        if reverify_anchors:
+            from trw_mcp.tools._learn_anchors import reverify_entry_anchors
+
+            reverify_entry_anchors(trw_dir, resolve_project_root(), learning_id)
+
         # Validate assertions before the owning-backend adapter persists them.
         validated_assertions: list[dict[str, object]] | None = None
         if assertions is not None:
             from trw_memory.models.memory import Assertion
 
             validated: list[Assertion] = [Assertion.model_validate(a, strict=False) for a in assertions]
-            validated_assertions = [a.model_dump() for a in validated]
+            # mode="json": Assertion carries datetimes that a plain dump leaves
+            # as objects, which breaks JSON serialization downstream.
+            validated_assertions = [a.model_dump(mode="json") for a in validated]
 
         result = adapter_update(
             trw_dir,
@@ -308,70 +329,34 @@ def register_learning_tools(server: FastMCP) -> None:
             feedback=feedback,
         )
 
-        # Dual-write: also update YAML backup for rollback safety
+        # Dual-write: also update YAML backup for rollback safety.
         if result.get("status") == "updated":
-            _updated_field = (
-                "status"
-                if status is not None
-                else "detail"
-                if detail is not None
-                else "summary"
-                if summary is not None
-                else "impact"
-                if impact is not None
-                else "unknown"
+            logger.info("learn_update_ok", id=learning_id, changes=result.get("changes", ""))
+            _sync_learning_yaml_backup(
+                trw_dir,
+                config,
+                writer,
+                learning_id,
+                {
+                    "status": status,
+                    "detail": detail,
+                    "summary": summary,
+                    "impact": impact,
+                    "assertions": validated_assertions,
+                    # PRD-CORE-110 typed fields.
+                    "type": type,
+                    "nudge_line": nudge_line,
+                    "expires": expires,
+                    "confidence": confidence,
+                    "task_type": task_type,
+                    "domain": domain,
+                    "phase_origin": phase_origin,
+                    "phase_affinity": phase_affinity,
+                    "team_origin": team_origin,
+                    "protection_tier": protection_tier,
+                    "tags": tags,
+                },
             )
-            logger.info("learn_update_ok", id=learning_id, field_updated=_updated_field)
-            try:
-                from datetime import datetime, timezone
-
-                from trw_mcp.state.analytics import find_entry_by_id, resync_learning_index
-
-                entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-                found = find_entry_by_id(entries_dir, learning_id)
-                if found is not None:
-                    entry_path, data = found
-                    _today_iso = datetime.now(tz=timezone.utc).date().isoformat()
-                    if status is not None:
-                        data["status"] = status
-                        if status in ("resolved", "obsolete"):
-                            data["resolved_at"] = _today_iso
-                    if detail is not None:
-                        data["detail"] = detail
-                    if summary is not None:
-                        data["summary"] = summary
-                    if impact is not None:
-                        data["impact"] = impact
-                    if validated_assertions is not None:
-                        data["assertions"] = validated_assertions
-                    data["updated"] = _today_iso
-                    # PRD-CORE-110: Sync typed fields to YAML backup
-                    if type is not None:
-                        data["type"] = type
-                    if nudge_line is not None:
-                        data["nudge_line"] = nudge_line
-                    if expires is not None:
-                        data["expires"] = expires
-                    if confidence is not None:
-                        data["confidence"] = confidence
-                    if task_type is not None:
-                        data["task_type"] = task_type
-                    if domain is not None:
-                        data["domain"] = domain
-                    if phase_origin is not None:
-                        data["phase_origin"] = phase_origin
-                    if phase_affinity is not None:
-                        data["phase_affinity"] = phase_affinity
-                    if team_origin is not None:
-                        data["team_origin"] = team_origin
-                    if protection_tier is not None:
-                        data["protection_tier"] = protection_tier
-                    if tags is not None:
-                        data["tags"] = tags
-                    writer.write_yaml(entry_path, data)
-                    resync_learning_index(trw_dir)
-            except (OSError, ValueError, TypeError):
-                logger.debug("yaml_backup_update_failed", exc_info=True)
 
         return result
 
@@ -383,7 +368,6 @@ def register_learning_tools(server: FastMCP) -> None:
         tags: list[str] | None = None,
         min_impact: float = 0.0,
         status: str | None = "active",
-        shard_id: str | None = None,
         max_results: int | None = None,
         compact: bool | None = None,
         ultra_compact: bool = False,
@@ -397,57 +381,42 @@ def register_learning_tools(server: FastMCP) -> None:
     ) -> RecallResultDict:
         """Retrieve prior learnings relevant to your current task.
 
-        Use when:
-        - You are about to work in an unfamiliar area of the codebase.
-        - You suspect a bug has been seen before and want prior root-cause notes.
-        - You want a narrow tag/impact slice before spawning a subagent.
+        Use when entering unfamiliar code, when a bug may have been seen
+        before, or to pull a narrow slice before delegating.
 
-        See Also: trw_learn, trw_session_start.
+        Output: relevance-ranked learnings and a count.
 
-        Results are ranked by combined relevance (query match on summary/tags/detail)
-        and utility (impact, type-aware recency decay, prior feedback). Context
-        boosts prioritize entries matching your current domain, phase, and team.
+        Shaping: compact trims fields (auto-on for "*"), ultra_compact leaves
+        id+summary only, token_budget (>0) caps size, max_results defaults to
+        25 (0 = unlimited). Filters: tags, topic slug, min_impact 0.0-1.0,
+        as_of (ISO-8601 instant: returns records whose validity window covered
+        it; omitted means open records only), include_superseded (ranked below
+        open records).
 
-        Output: RecallResultDict with fields
-        {learnings: list[{id, summary, detail?, tags, impact, ...}],
-         count: int, query: str, ceremony_hint?: str}.
-
-        Example:
-            trw_recall(query="sqlite extension load mac", min_impact=0.6)
-            → {"learnings": [{"id": "L-abc12345", "summary": "...", ...}], "count": 3}
+        See Also: trw_learn to record a finding, trw_session_start for both at once.
 
         Args:
-            query: Search query (keywords matched against summaries/details).
-                Use "*" to list all (auto-enables compact mode).
-            tags: Optional tag filter — only return entries matching these tags.
-            min_impact: Minimum impact score filter (0.0-1.0). Use 0.7 for high-impact only.
-            status: Optional status filter — 'active', 'resolved', or 'obsolete'.
-            shard_id: Optional shard identifier for receipt attribution.
-            max_results: Maximum learnings to return (default 25, 0 = unlimited).
-            compact: When True, return only essential fields per learning.
-                When None (default), auto-enables for wildcard queries.
-            ultra_compact: When True, return only ``{learnings, count, ceremony_hint}``
-                with each learning reduced to ``{id, summary}``.
-            topic: Optional topic slug from knowledge topology. When provided,
-                only returns learnings belonging to that topic cluster.
-            token_budget: Optional max token ceiling for the serialized result.
-                Must be > 0. When omitted, a sane default cap is applied so a
-                recall can never overflow the context window (anti-collapse guard).
-            include_tiers: Optional tier scope (PRD-CORE-185). Project entries
-                are ALWAYS included; this flag only controls whether machine-local
-                USER-tier entries are added on top. None (default) and any list
-                containing "user" federate the user tier when a user-scope store
-                is present; ["project"] (no "user") restricts to project-only.
-                A user-only query is intentionally not expressible -- the project
-                tier is the local source of truth and is never excluded.
-            as_of: Optional ISO-8601 instant (PRD-CORE-194). Time-travel recall —
-                returns records whose validity window contained T. Malformed values
-                raise a clean validation error. Default None = open records only.
-            include_superseded: When True, also return superseded records, ranked
-                strictly below open ones (each flagged superseded/invalidated_by).
-
-        See Also: trw_learn
+            query: Keywords matched against summaries/details; "*" lists all.
+            status: 'active' (default), 'resolved', or 'obsolete'.
+            include_tiers: Project entries always return; this only toggles the
+                machine-local user tier — ["project"] excludes it, omitting it
+                or including "user" adds it. User-only is not expressible.
         """
+        # Maintainer notes (kept out of the docstring — callers pay for that text):
+        #   Ranking = query relevance (summary/tags/detail) x utility (impact,
+        #   type-aware recency decay, prior feedback), with context boosts for the
+        #   caller's domain/phase/team. token_budget's implicit default cap is the
+        #   anti-collapse guard. include_tiers is PRD-CORE-185 FR07 (project tier
+        #   is the local source of truth, never excludable); as_of /
+        #   include_superseded are the PRD-CORE-194 FR03 bi-temporal surface and a
+        #   malformed as_of raises a clean validation error.
+        #   shard_id was REMOVED (2026-07-27): it was declared, forwarded to
+        #   execute_recall, and never read by anything in the body. A caller who
+        #   passed it believed the recall was scoped to a shard and silently got
+        #   the whole corpus — a WRONG RESULT, not an error. The docstring's
+        #   "recorded for attribution" claim was also false: the only attribution
+        #   sink (state.receipts.log_recall_receipt) is never called from this
+        #   path, and its own shard_id kwarg has no production caller either.
         from trw_mcp.tools._recall_impl import execute_recall
 
         # PRD-CORE-141 FR03: build call_ctx so downstream find_active_run()
@@ -463,7 +432,6 @@ def register_learning_tools(server: FastMCP) -> None:
             tags=tags,
             min_impact=min_impact,
             status=status,
-            shard_id=shard_id,
             max_results=max_results,
             token_budget=token_budget,
             deprioritized_ids=injected_ids,
@@ -500,34 +468,23 @@ def register_learning_tools(server: FastMCP) -> None:
     ) -> ClaudeMdSyncResultDict:
         """Sync TRW protocol and ceremony guidance into the client's instruction file.
 
-        Use when:
-        - Onboarding a new project and the instruction file (CLAUDE.md / AGENTS.md)
-          does not yet contain the TRW auto-generated section.
-        - You've changed the behavioral protocol template and need it re-rendered.
-        - You switch IDE clients and need the correct surface written.
+        Use when onboarding a project whose instruction file — CLAUDE.md,
+        AGENTS.md, or the equivalent for the active client — lacks the TRW
+        auto-generated block, after changing the protocol template, or when
+        switching IDE clients.
+        Learnings are not promoted into the instruction file — trw_session_start() recall covers that.
 
-        Renders behavioral protocol and ceremony guidance into the auto-generated
-        block of whichever client surface is present (``CLAUDE.md``, ``AGENTS.md``,
-        ``.codex/INSTRUCTIONS.md``). Learnings are not promoted into the instruction file —
-        trw_session_start() recall handles that (PRD-CORE-093).
-
-        Output: ClaudeMdSyncResultDict with fields
-        {status: "success"|"error", files_written: list[str], sections_synced: int}.
-
-        Example:
-            trw_instructions_sync(client="auto")
-            → {"status": "success", "files_written": ["CLAUDE.md"], "sections_synced": 1}
+        Output: {status: "success" | "error", files_written, sections_synced}.
 
         Args:
-            scope: Sync scope — "root" for project instruction file, "sub" for module-level.
-            target_dir: Target directory for sub-instruction file generation.
-            client: Target client(s) to write instructions for.
-                "auto" (default) — detect via IDE config dirs;
-                "claude-code" — write CLAUDE.md only;
-                "opencode" — write AGENTS.md only;
-                "codex" — write .codex/INSTRUCTIONS.md only;
-                "all" — write every detected/known client surface.
+            scope: "root" for the project instruction file, "sub" for module-level.
+            target_dir: Directory to write the sub-scope file into.
+            client: "auto" (detect from IDE config dirs), "claude-code"
+                (CLAUDE.md), "opencode" (AGENTS.md), "codex"
+                (.codex/INSTRUCTIONS.md), or "all" for every known surface.
         """
+        # Maintainer note: rendering targets the auto-generated block of whichever
+        # client surface is present. Dropping learning promotion was PRD-CORE-093.
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
@@ -540,14 +497,12 @@ def register_learning_tools(server: FastMCP) -> None:
         target_dir: str | None = None,
         client: str = "auto",
     ) -> ClaudeMdSyncResultDict:
-        """Deprecated alias for ``trw_instructions_sync``.
+        """Deprecated alias for ``trw_instructions_sync`` — call that instead.
 
-        Use when: maintaining backward compatibility with older callers; prefer
-        ``trw_instructions_sync`` in new code. This alias emits a deprecation
-        warning on every invocation and will be removed in a future release.
+        Use when an older caller still references this name; it warns on every
+        invocation and will be removed in a future release.
 
-        Output: same as trw_instructions_sync — ClaudeMdSyncResultDict with fields
-        {status, files_written, sections_synced}.
+        Output: same as trw_instructions_sync.
         """
         logger.warning(
             "deprecated_tool_alias_used",

@@ -123,40 +123,22 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         risk_level: str = "",
         verification_mappings: list[dict[str, object]] | None = None,
     ) -> PrdCreateResultDict:
-        """Generate an AARE-F compliant PRD from a feature description.
+        """Generate an AARE-F PRD from a feature description and write it to disk.
 
-        Use when:
-        - You have a feature request or requirements and need a structured PRD.
-        - Before writing code for a P0/P1/P2 feature or risky behavioral change.
-        - You want auto-incremented PRD ID, YAML frontmatter, and catalogue sync.
+        Use when you have a feature request and need a structured PRD before
+        writing code for a P0/P1/P2 feature or risky behavioral change.
 
-        Produces category-appropriate sections, confidence scores, traceability
-        links, and typed AARE-F 3.2 verification mappings.
-        Updates INDEX.md/ROADMAP.md when ``index_auto_sync_on_status_change`` is on.
+        Allocates a PRD ID and frontmatter; syncs INDEX.md/ROADMAP.md. category
+        is CORE|QUAL|INFRA|LOCAL|EXPLR|RESEARCH|FIX (extendable via config);
+        priority is P0|P1|P2|P3; risk_level is critical|high|medium|low;
+        sequence auto-increments when left at 1.
 
-        Input:
-        - input_text: feature request or description (becomes Problem Statement + Background).
-        - category: one of CORE, QUAL, INFRA, LOCAL, EXPLR, RESEARCH, FIX (plus any
-          values added to ``.trw/config.yaml::extra_prd_categories``).
-        - priority: P0, P1, P2, or P3 — drives base confidence scores.
-        - title: auto-generated from input_text when empty.
-        - sequence: auto-increments from existing catalogue when default (1).
-        - risk_level: optional critical|high|medium|low — scales validation strictness.
-        - verification_mappings: optional list of mappings with requirement_id,
-          acceptance_criteria, method (test|analysis|inspection|demonstration),
-          evidence_artifact, pass_condition, and optional automation fields.
-
-        Output: PrdCreateResultDict with fields
-        {prd_id: str, title: str, category: str, priority: str, output_path: str,
-         content: str, sections_generated: int, index_synced: bool}.
-
-        Example:
-            trw_prd_create(input_text="Add rate limiting to public API",
-                           category="CORE", priority="P1")
-            → {"prd_id": "PRD-CORE-001", "output_path": "docs/requirements-aare-f/prds/PRD-CORE-001.md",
-               "sections_generated": 12, "index_synced": true, ...}
+        Output: prd_id, output_path, sections_generated, index_synced.
 
         See Also: trw_prd_validate
+
+        Args:
+            input_text: feature request/description; becomes the Problem Statement.
         """
         config = get_config()
         writer = FileStateWriter()
@@ -285,6 +267,7 @@ def _register_prd_create_tool(server: FastMCP) -> None:
         prd_content = _render_prd(frontmatter_dict, body)
 
         output_path = ""
+        not_written_reason = ""
         project_root = resolve_project_root()
         prds_dir = project_root / config.prds_relative_path
         if prds_dir.exists() or (project_root / config.trw_dir).exists():
@@ -292,6 +275,15 @@ def _register_prd_create_tool(server: FastMCP) -> None:
             prd_file = prds_dir / f"{prd_id}.md"
             writer.write_text(prd_file, prd_content)
             output_path = str(prd_file)
+        else:
+            # Nothing was persisted. An empty output_path was the only signal,
+            # and a caller reading prd_id/content would reasonably believe the
+            # PRD exists on disk. Name the reason so the failure is actionable.
+            not_written_reason = (
+                f"neither the PRD directory ({prds_dir}) nor {config.trw_dir} exists under {project_root}; "
+                "the rendered PRD is returned in `content` but was NOT written to disk"
+            )
+            logger.warning("prd_create_not_written", prd_id=prd_id, prds_dir=str(prds_dir))
 
         # Auto-sync INDEX.md/ROADMAP.md so catalogue stays current
         index_synced = False
@@ -320,13 +312,16 @@ def _register_prd_create_tool(server: FastMCP) -> None:
             "sections_generated": len(get_required_sections(category)),
             "index_synced": index_synced,
         }
+        if not_written_reason:
+            prd_result["not_written_reason"] = not_written_reason
 
         # Inject ceremony progress summary.
         try:
             from trw_mcp.state._paths import resolve_trw_dir
-            from trw_mcp.tools._ceremony_status import append_ceremony_status
+            from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
-            append_ceremony_status(cast("dict[str, object]", prd_result), resolve_trw_dir())
+            _prd_dict = cast("dict[str, object]", prd_result)
+            append_ceremony_status_for_tool(_prd_dict, resolve_trw_dir(), tool_name="prd_create")
         except Exception:  # justified: fail-open — ceremony status must not break prd_create
             logger.debug("prd_create_ceremony_status_skipped", exc_info=True)
 
@@ -344,58 +339,23 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         fast: bool = False,
         verbose: bool = False,
     ) -> ValidateResultDict:
-        """Score a PRD against the V2 validation suite before implementation.
+        """Score a PRD against the validation suite; returns a READY/NEEDS-WORK verdict.
 
-        Use when:
-        - A PRD just landed and you need a READY / NEEDS-WORK verdict before coding.
-        - You want ambiguity / completeness / traceability gates checked in one call.
+        Use when a PRD just landed and you need ambiguity/completeness/
+        traceability gates checked before coding.
 
-        Runs structure compliance, content quality, AARE-F compliance, and
-        ambiguity analysis. Catches issues here that would otherwise cause rework.
+        A time budget bounds every call; exceeding it flags validation_partial
+        (never a silent pass). quality_tier: skeleton|draft|review|approved.
 
-        Input:
-        - prd_path: path to the PRD markdown file (required).
-        - fast: when True (PRD-FIX-112), skip the repo-grounded dynamic checks
-          entirely and return a visibly PARTIAL result (``validation_partial=true``,
-          ``checks_skipped`` naming every dynamic group). Use for a quick
-          text-only score; re-run without ``fast`` for a fully-grounded verdict.
-        - verbose: when True, return the full diagnostic payload (per-occurrence
-          ``smell_findings``, per-line ``ears_classifications`` with text, the
-          cache addressing hashes, and the un-deduped ``wiring_gate_warnings``).
-          The default compact response groups/caps those diagnostics to cut token
-          cost; scoring and gate verdicts are identical in both modes.
+        Output: total_score, quality_tier, grade, valid, failures, dimensions.
 
-        Every call is bounded by ``prd_validate_budget_seconds`` (default 60s):
-        if the dynamic checks exceed the budget the remaining groups are skipped
-        and the result is flagged ``validation_partial`` rather than hanging.
-
-        Output: ValidateResultDict with fields
-        {total_score: float (0-100), quality_tier: str, grade: str,
-         valid: bool, ambiguity_rate: float, completeness_score: float,
-         traceability_coverage: float, measured_traceability_coverage: float,
-         verification_mapping_coverage: float, prd_status: str,
-         improvement_suggestions: list[ImprovementSuggestionDict],
-         failures: list[ValidationFailureDict], dimensions: list[DimensionScoreDict],
-         path: str, sections_found: list[str], sections_expected: list[str],
-         smell_findings: list[dict] (grouped-by-category in compact mode),
-         ears_classifications: dict (counts + actionable_lines) in compact mode,
-         section_scores: list[SectionScoreDict],
-         effective_risk_level: str, risk_scaled: bool, compact: bool,
-         status_drift_warnings: list[str], integrity_warnings: list[str],
-         validation_partial: bool, checks_skipped: list[str], cache: dict}.
-
-        validation_partial is True (PRD-FIX-112) when fast mode was requested or
-        the budget was exceeded mid-run; checks_skipped then names the skipped
-        dynamic check groups and integrity_warnings carries a loud
-        ``validation_partial:`` marker. A partial result is never a silent pass.
-
-        quality_tier values: "skeleton" | "draft" | "review" | "approved"
-        (QualityTier enum; no "PRODUCTION" tier exists).
-
-        Example:
-            trw_prd_validate(prd_path="docs/requirements-aare-f/prds/PRD-QUAL-074.md")
-            → {"total_score": 87, "quality_tier": "approved", "grade": "A",
-               "valid": true, "improvement_suggestions": []}
+        Args:
+            prd_path: path to the PRD markdown file (required).
+            fast: skip repo-grounded dynamic checks for a quick text-only score;
+                result is flagged validation_partial=true with checks_skipped
+                naming what was omitted. Re-run without fast for a full verdict.
+            verbose: return the full diagnostic payload instead of the default
+                compact, token-capped one; scores/verdicts are identical either way.
         """
         # prd_path has an empty default so FastMCP can inject ctx as the first
         # typed kwarg (PRD-CORE-141 FR03); an empty path is still rejected.
@@ -546,9 +506,10 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         # Inject ceremony progress summary.
         try:
             from trw_mcp.state._paths import resolve_trw_dir as _resolve_trw_dir
-            from trw_mcp.tools._ceremony_status import append_ceremony_status
+            from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
-            append_ceremony_status(cast("dict[str, object]", validate_result), _resolve_trw_dir())
+            _validate_dict = cast("dict[str, object]", validate_result)
+            append_ceremony_status_for_tool(_validate_dict, _resolve_trw_dir(), tool_name="prd_validate")
         except Exception:  # justified: fail-open — ceremony status must not break prd_validate
             logger.debug("prd_validate_ceremony_status_skipped", exc_info=True)
 

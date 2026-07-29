@@ -8,6 +8,7 @@ for precedent).
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -25,7 +26,24 @@ if not (REPO_ROOT / "scripts").is_dir():
     )
 
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
+
+#: Budget for the content an agent AUTHORS. Sentinel-delimited shared fragments
+#: (scripts/agent_fragments.py) are identical across agents and injected, so
+#: counting them charges an agent for policy it does not own — and adding a
+#: shared fragment would push whichever agent is closest to the cap over it,
+#: which is exactly what happened when the delegated-run precondition landed
+#: (89ff62ff01) on trw-auditor at 312 authored lines. Same rule the
+#: adversarial-auditor word budget uses in test_bundled_agents.py.
 LOC_LIMIT = 350
+
+#: Backstop on the WHOLE file, because the model reads every line including the
+#: injected ones. Deliberate ceiling, not a census: it must sit far enough above
+#: LOC_LIMIT to absorb the shared fragments (54 lines across three today) while
+#: still catching unbounded growth in shared policy.
+TOTAL_LOC_LIMIT = 420
+
+#: Matches a whole injected block, sentinel lines included.
+_FRAGMENT_BLOCK = re.compile(r"(?ms)^<!-- trw:[a-z-]+:start -->.*?^<!-- trw:[a-z-]+:end -->\n?")
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from post_extraction_static_audit import available_static_audit_commands
@@ -40,10 +58,18 @@ _AGENT_PARAMS = [pytest.param(p, id=p.name) for p in _agent_files()]
 
 @pytest.mark.parametrize("agent_path", _AGENT_PARAMS)
 def test_loc_under_limit(agent_path: Path) -> None:
-    """Every agent file must be <= 350 lines."""
-    loc = len(agent_path.read_text(encoding="utf-8").splitlines())
-    assert loc <= LOC_LIMIT, (
-        f"{agent_path.name}: {loc} LOC exceeds limit of {LOC_LIMIT}; extract shared content into a referenced doc"
+    """Authored content stays within budget, and the whole file within its backstop."""
+    text = agent_path.read_text(encoding="utf-8")
+    total = len(text.splitlines())
+    authored = len(_FRAGMENT_BLOCK.sub("", text).splitlines())
+
+    assert authored <= LOC_LIMIT, (
+        f"{agent_path.name}: {authored} authored LOC exceeds limit of {LOC_LIMIT}; "
+        "extract shared content into a referenced doc"
+    )
+    assert total <= TOTAL_LOC_LIMIT, (
+        f"{agent_path.name}: {total} total LOC (authored {authored} + injected fragments) "
+        f"exceeds the backstop of {TOTAL_LOC_LIMIT}; shared policy has grown too large to inject verbatim"
     )
 
 

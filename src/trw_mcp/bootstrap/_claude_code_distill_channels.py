@@ -1,6 +1,6 @@
 """Claude Code distill channel bootstrap — install entry-point.
 
-Installs all five Claude Code distill channel artifacts at ``init-project``
+Installs the remaining Claude Code distill channel artifacts at ``init-project``
 and ``update-project`` time. Called from ``bootstrap/_init_project_ide.py``
 and ``bootstrap/_ide_targets.py``.
 
@@ -8,11 +8,15 @@ Artifacts written:
   - .claude/agents/trw-distill-explorer.md    (CC-05)
   - .claude/hooks/pre-tool-distill-hint.sh    (CC-03 — opt-in gate applies)
   - .claude/hooks/lib-distill-hint.sh         (CC-03 shared library)
-  - .trw/channels/manifest.yaml               (five CC channel entries merged)
+  - .trw/channels/manifest.yaml               (two CC channel entries merged)
 
 NOTE: .claude/settings.json is NOT modified — operator opt-in per PRD-2405 OQ-01.
 
 PRD-DIST-2405 FR41-FR43.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
@@ -129,11 +133,17 @@ def install_claude_code_distill_channels(
     """
     result = _new_result()
 
-    # 1. Install CC-05 subagent (.claude/agents/trw-distill-explorer.md)
+    # 1. Install CC-05 subagent (.claude/agents/trw-distill-explorer.md).
+    #    PRD-CORE-239: gated on licence. The subagent is "powered by
+    #    trw-distill" and is useless without it, so an unlicensed project used
+    #    to receive an agent it could never run.
     try:
-        written = install_cc05_subagent(target_dir)
-        rel = ".claude/agents/trw-distill-explorer.md"
-        result["created" if written else "preserved"].append(rel)
+        from trw_mcp.bootstrap._distill_entitlement import distill_artifacts_entitled
+
+        if distill_artifacts_entitled(artifact="cc-05-distill-explorer", repo_root=target_dir):
+            written = install_cc05_subagent(target_dir)
+            rel = ".claude/agents/trw-distill-explorer.md"
+            result["created" if written else "preserved"].append(rel)
     except Exception as exc:  # justified: fail-open, subagent is best-effort
         log.warning("cc05_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"CC-05 subagent install failed: {exc}")
@@ -147,7 +157,7 @@ def install_claude_code_distill_channels(
             log.warning("cc_hook_install_failed", hook=hook_name, error=str(exc), outcome="warning")
             result["errors"].append(f"CC-03 hook {hook_name} install failed: {exc}")
 
-    # 3. Bootstrap channel manifest (five CC channel entries)
+    # 3. Bootstrap channel manifest (two CC channel entries)
     try:
         bootstrap_cc_channel_manifest(target_dir)
     except ManifestValidationError as exc:

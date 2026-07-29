@@ -71,8 +71,14 @@ class BuildStatus(BaseModel):
         default="full",
         description="Build check scope: 'full', 'quick', a tool name, or a project-native command label.",
     )
-    duration_secs: float = Field(
+    duration_secs: float | None = Field(
         ge=0.0,
-        default=0.0,
-        description="Total wall-clock duration of the build check.",
+        default=None,
+        description=(
+            "Observed wall-clock duration of the build check, or None when it "
+            "was not measured. None rather than 0.0 is deliberate: trw_build_check "
+            "executes nothing and has no clock, so it can only report a duration "
+            "when the caller supplies typed command results carrying timestamps. "
+            "0.0 would read as 'measured, and it was instant'."
+        ),
     )

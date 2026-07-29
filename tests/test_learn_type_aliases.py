@@ -10,13 +10,14 @@ logged coercion) before enum validation — WITHOUT widening trw-memory's enum.
 
 from __future__ import annotations
 
+import pytest
 import structlog
+from fastmcp.exceptions import ToolError
 from structlog.testing import capture_logs
 
 from trw_mcp.tools._learning_module_helpers import (
     _LEARN_TYPE_ALIASES,
     _coerce_learn_type,
-    _note_run_path_compat,
     _validate_learn_enums,
 )
 
@@ -81,26 +82,39 @@ def test_trw_learn_tool_accepts_gotcha_end_to_end() -> None:
     assert result["status"] != "rejected", result
 
 
-def test_note_run_path_compat_emits_debug_log_when_passed() -> None:
-    """P2-7: run_path is accept-and-log ONLY (never validated against a run
-    directory). The debug event fires so the accepted-but-storage-inert value
-    is observable rather than silently dropped."""
-    structlog.configure(
-        processors=[structlog.testing.LogCapture()],
-        wrapper_class=structlog.make_filtering_bound_logger(0),
-    )
-    with capture_logs() as logs:
-        _note_run_path_compat("/repo/.trw/runs/some-task/some-run")
-    events = [e for e in logs if e.get("event") == "learn_run_path_accepted_for_compat"]
-    assert len(events) == 1
-    assert events[0]["run_path"] == "/repo/.trw/runs/some-task/some-run"
+async def test_run_path_removal_fails_loudly_rather_than_silently() -> None:
+    """``run_path`` is gone from trw_learn, and passing it FAILS — visibly.
 
+    This pins the accepted cost of the 2026-07-28 removal rather than leaving
+    it to be rediscovered. ``run_path`` was accept-and-log only; it never
+    changed storage. Removing it reclaims schema every client pays for in every
+    session, but fastmcp/pydantic reject an unknown keyword with a hard
+    ToolError, so an agent that carries the argument over from trw_checkpoint
+    loses that call's learning.
 
-def test_note_run_path_compat_silent_when_none() -> None:
-    """No run_path supplied -> no compat log noise."""
-    with capture_logs() as logs:
-        _note_run_path_compat(None)
-    assert not [e for e in logs if e.get("event") == "learn_run_path_accepted_for_compat"]
+    The test asserts the failure is LOUD and NAMES the offending argument: an
+    agent can see what to drop and retry. A silent accept-and-ignore would be
+    the worse outcome under Vision Principle 1 — the caller would believe a
+    scoped write happened. If a future change makes this call succeed, the
+    parameter is back and its schema cost must be justified again.
+    """
+    from fastmcp import Client, FastMCP
+
+    from trw_mcp.tools.learning import register_learning_tools
+
+    server = FastMCP("test")
+    register_learning_tools(server)
+
+    async with Client(server) as client:
+        tool = next(t for t in await client.list_tools() if t.name == "trw_learn")
+        assert "run_path" not in tool.inputSchema.get("properties", {})
+
+        with pytest.raises(ToolError) as excinfo:
+            await client.call_tool(
+                "trw_learn",
+                {"summary": "s", "detail": "d", "run_path": "/repo/.trw/runs/t/r"},
+            )
+    assert "run_path" in str(excinfo.value)
 
 
 def test_project_alias_coerces_to_convention() -> None:
@@ -126,9 +140,15 @@ def test_project_alias_coercion_emits_debug_log() -> None:
     assert events[0]["resolved"] == "convention"
 
 
-def test_trw_learn_tool_accepts_run_path_for_compat() -> None:
-    """trw_learn accepts a run_path kwarg without failing the call
-    (feedback sub_5qbmT6WPNoP58rlv item 8)."""
+def test_trw_learn_tool_accepts_project_alias_end_to_end() -> None:
+    """The MCP tool persists a type='project' learning via the alias map.
+
+    Retains the end-to-end coverage of the sub_5qbmT6WPNoP58rlv item-8 case
+    that previously rode along with a ``run_path`` argument. The run_path half
+    of that accommodation was retired 2026-07-28 — see
+    ``test_run_path_removal_fails_loudly_rather_than_silently`` for the
+    behaviour that replaced it.
+    """
     from tests.conftest import extract_tool_fn, make_test_server
 
     learn_fn = extract_tool_fn(make_test_server("learning"), "trw_learn")
@@ -136,7 +156,6 @@ def test_trw_learn_tool_accepts_run_path_for_compat() -> None:
         summary="prefer path-limited git commit to dodge the shared-index race",
         detail="git add + separate commit lets a concurrent agent swallow staged files",
         type="project",
-        run_path="/repo/.trw/runs/some-task/some-run",
     )
     assert isinstance(result, dict)
     assert result["status"] != "rejected", result

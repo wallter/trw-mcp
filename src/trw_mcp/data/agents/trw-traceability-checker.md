@@ -9,7 +9,7 @@ model: local-small
 effort: low
 maxTurns: 30
 memory: project
-allowedTools:
+tools:
   - Read
   - Grep
   - Glob
@@ -26,10 +26,6 @@ disallowedTools:
 
 # Traceability Checker Agent
 
-Tool placeholders for profile-aware rendering: {tool:trw_session_start},
-{tool:trw_recall}, {tool:trw_checkpoint}, {tool:trw_build_check},
-{tool:trw_deliver}.
-
 Verify bidirectional links between requirements, production behavior, and tests.
 Do not modify files. Pattern matches are candidate evidence, not automatic proof.
 
@@ -38,6 +34,7 @@ Do not modify files. Pattern matches are candidate evidence, not automatic proof
 1. Confirm the repository root, governing PRDs, project source/test locations,
    and any declared traceability convention: matrix rows, requirement IDs,
    symbols, test metadata, issue links, or another repository-native scheme.
+   Call `{tool:trw_recall}` for prior traceability gotchas in this project.
 2. Extract each in-scope requirement ID. If no governing requirements exist,
    report `NOT_APPLICABLE` rather than a fabricated coverage failure.
 3. For each requirement, verify source and test evidence separately:
@@ -58,7 +55,7 @@ Do not modify files. Pattern matches are candidate evidence, not automatic proof
 Resolve a threshold only from project configuration or an explicit requirement.
 Report its source. If none exists, use `Configured gate: none` and
 `Gate status: REPORT_ONLY`; never invent a universal percentage or PASS claim.
-Always report source linkage and test linkage independently.
+Report source linkage and test linkage independently.
 
 ## Output
 
@@ -91,23 +88,16 @@ is a finding, but still perform repository-native source and test verification.
 <!-- trw:mcp-retry-protocol:start -->
 ## MCP Tool Retry Protocol
 
-If a `trw_*` MCP call fails or is unavailable (transport error, tool missing,
-timeout), use this TRW-specific policy rather than the framework ceiling for
-non-TRW transient operations. Do not silently fall back to manual behavior.
-Instead:
+When a `trw_*` MCP call fails or is unavailable (transport error, missing tool,
+timeout), do not silently fall back to manual behavior:
 
-1. **Retry once** — reissue the same `trw_*` call at the top of your next tool
-   batch. Transient MCP server hiccups usually clear within one retry.
-2. **If it still fails, record the gap explicitly** — add a line to your output
-   or checkpoint naming which ceremony step was skipped and why
-   (e.g. "SKIPPED trw_checkpoint: MCP unavailable after 1 retry — progress
-   recorded here instead"). A visible, recorded gap keeps degradation loud and
-   auditable.
-3. **Then continue** — a recorded gap is recoverable; a silent one is not.
+1. **Retry once** — reissue the same call at the top of your next tool batch.
+2. **If it still fails, record the gap** — one line in your output or checkpoint
+   naming the step you skipped and why ("SKIPPED <the tool you called>: MCP
+   unavailable after 1 retry — progress recorded here instead").
+3. **Then continue.** A recorded gap is recoverable; a silent one is not.
 
-Never let a failed `trw_*` call disappear without a trace. Agents that carry a
-stricter persistence-blocker protocol (for example `trw-lead`: three retries
-then escalate, and treat persistence failures as P0) follow that stricter rule
-for persistence-critical steps; role-local stricter rules win. This fragment
-covers the general case.
+Where a role states a stricter persistence policy (`trw-lead`: three retries,
+then escalate as P0), that stricter rule wins for its persistence-critical
+steps. This fragment covers the general case.
 <!-- trw:mcp-retry-protocol:end -->

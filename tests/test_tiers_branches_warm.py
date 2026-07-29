@@ -20,15 +20,11 @@ class TestWarmAddWithMemoryStore:
         trw_dir.mkdir(parents=True, exist_ok=True)
         mgr = TierManager(trw_dir)
 
-        mock_store = MagicMock()
-        mock_store_cls = MagicMock(return_value=mock_store)
-        mock_store_cls.available.return_value = True
-
-        with patch("trw_mcp.state.tiers.MemoryStore", mock_store_cls, create=True):
-            original_import = __builtins__.__import__ if hasattr(__builtins__, "__import__") else __import__
-            with patch.dict("sys.modules", {}):
-                assert original_import
-
+        # Removed: a `patch("trw_mcp.state.tiers.MemoryStore", ..., create=True)`
+        # block whose only body was `assert original_import` on the builtin
+        # `__import__`. `tiers` has no `MemoryStore` attribute, so `create=True`
+        # invented one that nothing reads — the block patched nothing, asserted
+        # nothing about this module, and its mocks were then discarded.
         mock_ms = MagicMock()
         mock_ms.available.return_value = True
         mock_instance = MagicMock()

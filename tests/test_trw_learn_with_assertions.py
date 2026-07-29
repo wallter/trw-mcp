@@ -204,7 +204,7 @@ class TestTrwLearnStoresAssertions:
         result = learn_fn(
             summary="test assertion learning",
             detail="detail text",
-            assertions=SAMPLE_ASSERTIONS,
+            metadata={"assertions": SAMPLE_ASSERTIONS},
         )
         assert result["status"] == "recorded"
         assert stored_kwargs.get("assertions") == SAMPLE_ASSERTIONS

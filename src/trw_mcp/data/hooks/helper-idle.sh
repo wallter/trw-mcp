@@ -30,6 +30,31 @@ if [ -z "$_helper_name" ]; then
   _helper_name=$(printf '%s' "$_payload" | grep -o '"helper_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"helper_name"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
 
+# --- Run ownership (PRD-FIX-118 FR03) ------------------------------------
+# The only run-scoped question this nudge asks is "did this helper checkpoint or
+# save a learning?". Answering it from the newest run means a stranger's
+# checkpoint silences OUR helper's nudge — a false negative nobody would notice.
+#
+# What "unowned" means HERE: "no run-scoped ceremony evidence" -> the nudge is
+# still evaluated (and still capped at one per helper), and the non-run-scoped
+# hook-executions.log signal below can still clear it. The gate keeps firing.
+_session_id=""
+if command -v jq >/dev/null 2>&1; then
+  _session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
+fi
+if [ -z "$_session_id" ]; then
+  _session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+fi
+_session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""
+
+_run_dir=""
+if [ -n "$_session_id" ]; then
+  _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""
+else
+  # Identity unknown — preserve single-instance behaviour rather than disabling.
+  _run_dir=$(find_active_run) || _run_dir=""
+fi
+
 # Skip if we can't identify the helper
 [ -z "$_helper_name" ] && exit 0
 
@@ -105,9 +130,10 @@ if [ "$_blocks" -ge 1 ]; then
   exit 0
 fi
 
-# Check if helper has done meaningful work (checkpoint or learning)
+# Check if helper has done meaningful work (checkpoint or learning) in THIS
+# SESSION'S OWN run (resolved above). Empty _run_dir == no evidence, not "borrow
+# the newest run's evidence".
 _has_ceremony=0
-_run_dir=$(find_active_run) || true
 if [ -n "$_run_dir" ]; then
   _events_path="${_run_dir}meta/events.jsonl"
   if [ -f "$_events_path" ]; then

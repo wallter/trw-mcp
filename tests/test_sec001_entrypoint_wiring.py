@@ -88,7 +88,7 @@ def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, m
         ctx=_FakeContext("mcp-session-456"),
         summary="Safe learned summary",
         detail="Safe learned detail",
-        source_identity="audit-agent",
+        metadata={"source_identity": "audit-agent"},
     )
 
     assert result["status"] == "recorded"

@@ -387,9 +387,16 @@ class TestManagedArtifactsManifest:
         assert isinstance(agents, list)
         assert isinstance(hooks, list)
 
-        # These asserts are for TRW bundled SKILLS & AGENTS, if these numbers are being changed,
-        # ensure the change is for a skill/agent that should be released and distributed with the TRW Framework
-        # or if the skill/agent/change is for an internal monorepo skill
-        assert len(skills) == 28
-        assert len(agents) == 12
+        # The manifest must list exactly what ships. Adding or removing a bundled
+        # skill/agent is a distribution decision — this asserts the manifest
+        # tracks that decision, rather than a literal count, which silently went
+        # stale across the trw-release-verify, trw-simplify, and email-template
+        # retirements and stopped enforcing anything at all.
+        from trw_mcp.bootstrap._init_project_skills import _data_dir
+
+        bundled_skills = {p.name for p in (_data_dir() / "skills").iterdir() if (p / "SKILL.md").is_file()}
+        bundled_agents = {p.name for p in (_data_dir() / "agents").glob("*.md")}
+
+        assert set(skills) == bundled_skills, "managed-artifacts manifest drifted from data/skills"
+        assert set(agents) == bundled_agents, "managed-artifacts manifest drifted from data/agents"
         assert len(hooks) > 0

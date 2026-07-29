@@ -36,8 +36,13 @@ def _is_user_customized_trw_entry(existing: object) -> bool:
       - the entry has fields beyond ``command`` and ``args`` (e.g. ``env``,
         ``cwd`` — user has added them)
 
-    Returns False for default-shaped entries (``command="trw-mcp"`` with
-    just ``args=["--debug"]``) — those are TRW-managed and safe to refresh.
+    Returns False for default-shaped entries (``command="trw-mcp"`` with only
+    ``args``) — those are TRW-managed and safe to refresh. Note that a legacy
+    ``args=["--debug"]`` entry is still default-shaped, so refreshing an install
+    that predates the 2026-07-27 removal of the per-client ``--debug``
+    divergence will drop the flag. That is the intended migration: verbose
+    logging moved to ``.trw/config.yaml`` ``debug: true``. A user who pinned an
+    absolute ``command`` or added extra keys is preserved either way.
 
     Conservative heuristic: when in doubt, prefer preservation over rewrite
     so we never silently break a working dev configuration.

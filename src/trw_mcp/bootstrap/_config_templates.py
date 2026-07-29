@@ -32,6 +32,11 @@ def _default_config(
         "# Each trw_init creates: {runs_root}/{task_name}/{run_id}/",
         f"runs_root: {runs_root}",
         "",
+        "# Verbose logging. THE toggle for log level, for every client alike —",
+        "# no client's generated MCP config passes --debug. Set to true for",
+        "# pre-release / local framework development: DEBUG-level events plus a",
+        "# .trw/logs/trw-mcp-<date>.jsonl file sink. Env overrides, highest first:",
+        "# TRW_LOG_LEVEL, then TRW_DEBUG.",
         "debug: false",
         "claude_md_max_lines: 500",
         f"framework_version: {config.framework_version}",
@@ -77,8 +82,34 @@ def _minimal_review_md() -> str:
 
 
 def _minimal_claude_md() -> str:
-    """Generate a minimal Claude-compatible instruction file with TRW protocol."""
-    return """\
+    """Generate a minimal Claude-compatible instruction file with TRW protocol.
+
+    The deliver-gate statement is pulled from the shared renderer rather than
+    written out here. This template is a hand-maintained copy of the protocol,
+    and the copy had drifted: it omitted the gate entirely, so a freshly
+    installed claude-code project had no deliver-gate statement in its
+    instruction surface — inline before externalization, and in the
+    ``.trw/INSTRUCTIONS.md`` sidecar after it, since the sidecar is built from
+    this block. `trw-mcp doctor` reported the FAIL correctly; nothing had
+    reconciled the two.
+    """
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
+
+    return (
+        _MINIMAL_CLAUDE_MD_TEMPLATE.replace(
+            _GATE_ANCHOR,
+            f"{render_deliver_gate_statement().strip()}\n\n{_GATE_ANCHOR}",
+            1,
+        )
+        if _GATE_ANCHOR in _MINIMAL_CLAUDE_MD_TEMPLATE
+        else _MINIMAL_CLAUDE_MD_TEMPLATE
+    )
+
+
+# The gate statement is inserted immediately above this heading.
+_GATE_ANCHOR = "### Framework Reference"
+
+_MINIMAL_CLAUDE_MD_TEMPLATE = """\
 # Project Instructions
 
 This file provides guidance to AI coding clients when working with code in this repository.

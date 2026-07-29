@@ -386,16 +386,21 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
 
     # Proximal reward detection (PRD-CORE-104-FR02) — from run events
     try:
-        from trw_mcp.scoring.proximal_reward import detect_proximal_signals
+        from trw_mcp.scoring.proximal_reward import detect_proximal_signals, read_proximal_event_window
 
-        events: list[dict[str, object]] = []
-        if resolved_run is not None:
-            events_path = resolved_run / "meta" / "events.jsonl"
-            if events_path.exists():
-                reader = FileStateReader()
-                events = reader.read_jsonl(events_path)
-        signals = detect_proximal_signals(events)
+        # UF-026: nudge_shown lives in session-events.jsonl and build/test events
+        # live in the run's meta/events.jsonl, so the adjacency scan needs both
+        # streams merged by timestamp — scanning the run alone found zero nudges.
+        signals = detect_proximal_signals(read_proximal_event_window(trw_dir, resolved_run))
         result["proximal_signals"] = [dict(s) for s in signals]
+        # Ledger UF-026: the signals used to stop here, in a reporting field.
+        # Feed them into the Q-learning update so a nudge the agent visibly
+        # acted on can actually move the surfaced learning's value.
+        from trw_mcp.scoring import apply_proximal_rewards
+
+        proximal_updates = apply_proximal_rewards(trw_dir, signals)
+        if proximal_updates:
+            result["proximal_q_updates"] = proximal_updates
     except Exception:  # justified: fail-open
         logger.debug("delivery_metric_proximal_signals_failed", exc_info=True)
         result["proximal_signals"] = []

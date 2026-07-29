@@ -199,14 +199,21 @@ class TestEmbedFailureCounter:
         count = memory_adapter.get_embed_failure_count()
         assert count == 0, f"Disabled embeddings must not count as failures, got {count}"
 
-    @pytest.mark.skip(
-        reason="Pre-existing: mock_embedder patched at wrong layer — get_embedder not consulted by SQLite backend"
-    )
     def test_counter_does_not_increment_when_embedder_available(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """store_learning with working embedder → counter stays at 0."""
-        from trw_mcp.state import memory_adapter
+        """store_learning with working embedder → counter stays at 0.
+
+        This test was ``@pytest.mark.skip``-ed for "mock_embedder patched at
+        wrong layer". That was true — ``memory_adapter`` re-exports
+        ``get_embedder``, but ``_embed_and_store_returning`` calls the
+        ``_memory_connection`` definition site, so the mock was never consulted.
+        It is also why the assertion could not fail: the counter starts at 0, so
+        ``count == 0`` held whether or not the embed path ran at all. Patch the
+        definition site (as the sibling failure test already does) and assert
+        the embedder was actually reached.
+        """
+        from trw_mcp.state import _memory_connection, memory_adapter
 
         memory_adapter.reset_embed_failure_count()
 
@@ -215,10 +222,15 @@ class TestEmbedFailureCounter:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         (trw_dir / "memory").mkdir()
 
+        from trw_mcp.models.config import TRWConfig
+
+        mock_config = TRWConfig.__new__(TRWConfig)
+        object.__setattr__(mock_config, "embeddings_enabled", True)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: mock_config)
+
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = [0.1] * 384
-
-        monkeypatch.setattr(memory_adapter, "get_embedder", lambda: mock_embedder)
+        monkeypatch.setattr(_memory_connection, "get_embedder", lambda: mock_embedder)
 
         memory_adapter.store_learning(
             trw_dir,
@@ -227,8 +239,10 @@ class TestEmbedFailureCounter:
             "Detail",
         )
 
-        count = memory_adapter.get_embed_failure_count()
-        assert count == 0
+        # Non-vacuity: a working embedder must have been consulted, or "counter
+        # stays at 0" proves nothing about the success path.
+        assert mock_embedder.embed.called, "embed path never ran — the assertion below is vacuous"
+        assert memory_adapter.get_embed_failure_count() == 0
 
     def test_get_embed_failure_count_exists(self) -> None:
         """get_embed_failure_count function must exist and return int."""

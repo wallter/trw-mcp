@@ -9,6 +9,7 @@ Sibling-style integration tests against ``_install_agents`` directly.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,13 @@ def empty_target(tmp_path: Path) -> Path:
 
 def _empty_result() -> dict[str, list[str]]:
     return {"created": [], "skipped": [], "errors": []}
+
+
+def _bundled_agent_names() -> set[str]:
+    """Filenames of the agents the bundle actually ships."""
+    from trw_mcp.bootstrap._init_project import _DATA_DIR
+
+    return {path.name for path in (_DATA_DIR / "agents").glob("*.md")}
 
 
 def _read_model_line(agent_path: Path) -> str | None:
@@ -98,8 +106,9 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
         agent_paths = [p for p in result["created"] if p.endswith(".md") and "agents" in p]
-        # Bundle ships 11 agents; installer must create all of them.
-        assert len(agent_paths) == 11
+        # Derived from the bundle, not a literal: a hardcoded census stops
+        # enforcing anything the moment an agent is added or retired.
+        assert len(agent_paths) == len(_bundled_agent_names())
 
     def test_idempotent_second_run_skips(self, empty_target: Path) -> None:
         """A second install (without ``force``) skips existing files."""
@@ -111,7 +120,7 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         # Second run produces no creates and several skips.
         assert not [p for p in second["created"] if "agents" in p]
         skipped_agents = [p for p in second["skipped"] if "agents" in p]
-        assert len(skipped_agents) == 11
+        assert len(skipped_agents) == len(_bundled_agent_names())
 
     def test_force_overwrites_with_resolved_value(self, empty_target: Path) -> None:
         """A pre-existing file with a stale tier is overwritten on force."""
@@ -129,11 +138,11 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
 
 
 class TestInstallAgentsBytePreservation:
-    """FR-10: rewrite preserves every byte except the ``model:`` value."""
+    """FR-10: install rewrites only the ``model:`` value and ``{tool:...}`` markers."""
 
-    def test_only_model_line_differs_from_bundle(self, empty_target: Path) -> None:
-        """For an agent that pins a tier, the destination matches the
-        bundle byte-for-byte EXCEPT the ``model:`` line."""
+    def test_only_model_line_and_tool_markers_differ_from_bundle(self, empty_target: Path) -> None:
+        """The destination matches the bundle line-for-line except the ``model:``
+        line and lines carrying a profile-rendered tool placeholder."""
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
 
@@ -148,11 +157,38 @@ class TestInstallAgentsBytePreservation:
             "rewrite changed line count -- byte-preservation contract broken"
         )
         diffs = [(i, a, b) for i, (a, b) in enumerate(zip(bundle_lines, installed_lines, strict=True)) if a != b]
-        # Exactly one line must differ (the model: line) and both ends
-        # must start with ``model:``.
-        assert len(diffs) == 1, f"unexpected diffs: {diffs}"
-        i, a, b = diffs[0]
-        assert a.startswith("model:") and b.startswith("model:")
+        assert diffs, "expected at least the model: line to be rewritten"
+        for _, source, dest in diffs:
+            if source.startswith("model:"):
+                assert dest.startswith("model:")
+                continue
+            # The only other permitted rewrite is placeholder rendering.
+            assert "{tool:" in source, f"unexpected rewrite of a non-placeholder line: {source!r}"
+            assert "{tool:" not in dest, f"placeholder survived into the installed agent: {dest!r}"
+
+    def test_installed_agents_carry_no_literal_placeholders(self, empty_target: Path) -> None:
+        """A ``{tool:trw_x}`` marker reaching a user project names no real tool.
+
+        Regression guard: the installer resolved the capability tier but never
+        rendered tool placeholders, so installed agents instructed the model to
+        call a literal ``{tool:trw_recall}``.
+        """
+        _install_agents(empty_target, force=False, result=_empty_result())
+
+        installed_dir = empty_target / ".claude" / "agents"
+        offenders = {
+            path.name: re.findall(r"\{tool:[^}]+\}", path.read_text(encoding="utf-8"))
+            for path in sorted(installed_dir.glob("*.md"))
+        }
+        assert any(installed_dir.glob("*.md")), "no agents installed"
+        assert not any(offenders.values()), f"literal placeholders survived install: {offenders}"
+
+    def test_installed_agents_use_the_profile_tool_namespace(self, empty_target: Path) -> None:
+        """claude-code exposes TRW tools as ``mcp__trw__*`` — the body must say so."""
+        _install_agents(empty_target, force=False, result=_empty_result())
+
+        implementer = (empty_target / ".claude" / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
+        assert "mcp__trw__trw_build_check(" in implementer
 
 
 class TestInstallAgentsUnknownTier:

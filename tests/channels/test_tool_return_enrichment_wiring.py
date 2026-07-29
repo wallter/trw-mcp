@@ -192,9 +192,7 @@ class TestBeforeEditHintTierWiring:
     ) -> dict[str, Any]:
         """Build a real git repo + sidecar + entitlement, set TRW_CLIENT_PROFILE, call tool."""
         import json
-        import os
         import subprocess
-        import sys
         from datetime import datetime, timedelta, timezone
 
         from trw_mcp.state._entitlements import sign_entitlement_for_dev
@@ -240,13 +238,13 @@ class TestBeforeEditHintTierWiring:
 
         monkeypatch.setenv("TRW_CLIENT_PROFILE", client_profile)
 
-        # Use conftest pattern: import get_tools_sync directly
-        tests_dir = os.path.join(os.path.dirname(__file__), "..")
-        if tests_dir not in sys.path:
-            sys.path.insert(0, tests_dir)
-        from conftest import get_tools_sync
+        # Import by package path, never a bare ``conftest``: the bare name
+        # resolves to whichever conftest module reached sys.modules first, so
+        # running this file after tests/wiring/ picked up that directory's
+        # conftest and failed with a spurious ImportError.
         from fastmcp import FastMCP
 
+        from tests.conftest import get_tools_sync
         from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
 
         srv = FastMCP("test")

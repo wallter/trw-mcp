@@ -127,10 +127,20 @@ def apply_review_mandate_advisory(
         if "REVIEW" not in [str(p).upper() for p in mandatory]:
             return
         result["review_required"] = "true"
+        # One clause, not three sentences: the only part the caller can act on
+        # is "call trw_review before trw_deliver". That this run's complexity
+        # overrides the session ceremony tier explains WHY the flag is set and
+        # changes nothing the caller does, so it stays here in the source
+        # rather than costing tokens in every init response.
+        # The CONSEQUENCE is config-derived, never asserted. Under the shipped
+        # default (review_gate_mode="warn") a missing review emits a soft
+        # review_warning and delivery proceeds — so a flat "or delivery blocks"
+        # is false for most callers, and this function's own docstring above
+        # says it does not touch the deliver gate. Only "block" mode earns the
+        # stronger clause.
+        consequence = " Delivery blocks without one." if getattr(config, "review_gate_mode", "warn") == "block" else ""
         result["review_mandate_advisory"] = (
-            "REVIEW: MANDATORY for this run. This run requires a REVIEW phase "
-            "before deliver (run complexity overrides the session ceremony tier). "
-            "Run trw_review before trw_deliver to avoid a deliver-time block."
+            f"REVIEW mandatory for this run — call trw_review before trw_deliver.{consequence}"
         )
     except Exception:  # justified: fail-open per NFR02 — advisory must not block init
         logger.debug("review_mandate_advisory_skipped", exc_info=True)

@@ -22,7 +22,6 @@ def test_surface_config_from_defaults() -> None:
     assert surfaces.nudge.dedup_enabled is True
     assert surfaces.recall.enabled is True
     assert surfaces.recall.max_results == cfg.recall_max_results
-    assert surfaces.recall.injection_preview_chars == 500
     assert surfaces.recall.session_start_recall is True
     assert surfaces.mcp_instructions_enabled is True
     assert surfaces.hooks_enabled is True

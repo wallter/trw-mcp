@@ -66,16 +66,15 @@ trw-distill risk data via MCP tools and return structured Markdown reports.
 When invoked as `@trw-distill-explorer <file-path>`:
 
 1. Call `trw_before_edit_hint(file_path="<file-path>")` via MCP.
-2. Call `trw_entity_risk_map(file_path="<file-path>")` via MCP.
-3. Return a Markdown report with sections:
-   - **Risk Score** (`risk_score`)
-   - **Importers** (`importers` list)
-   - **Inferred Tests** (`inferred_tests` list)
-   - **Co-change Neighbors** (`co_change_neighbors` list)
-   - **Hotspot Warnings** (`hotspot_warnings` list)
-   - **Learnings** (top-3 from `learnings` field)
-4. If `distill_status == "stale_sha"`, include a staleness notice.
-5. If `distill_status == "tier_required"`, note the tier gate and return
+2. Return a Markdown report from `distill_hint`:
+   - **Risk Score** (`distill_hint.risk_score`)
+   - **Importers** (`distill_hint.importers` list)
+   - **Inferred Tests** (`distill_hint.inferred_tests` list)
+   - **Co-change Neighbors** (`distill_hint.co_change_neighbors` list)
+   - **Hotspot Warnings** (`distill_hint.hotspot_warnings` list)
+   - **Learnings** (top-3 from the `learnings` field)
+3. If `distill_status == "stale_sha"`, include a staleness notice.
+4. If `distill_status == "tier_required"`, note the tier gate and return
    only `trw_recall` learnings.
 
 ### Mode B — Project hotspots table

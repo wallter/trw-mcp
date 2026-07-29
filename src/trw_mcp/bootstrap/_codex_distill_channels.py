@@ -1,18 +1,22 @@
 """Codex distill channel bootstrap — install entry-point.
 
-Installs all three Codex distill channel artifacts at ``init-project``
+Installs the remaining Codex distill channel artifacts at ``init-project``
 and ``update-project`` time. Called from ``bootstrap/_init_project_ide.py``
 and ``bootstrap/_ide_targets.py``.
 
 Artifacts written:
   - .codex/hooks/trw_post_edit_telemetry.py  (codex-posttooluse-telemetry)
   - .codex/hooks.json                         (PostToolUse group for distill hook)
-  - .trw/channels/manifest.yaml              (three codex channel entries merged)
+  - .trw/channels/manifest.yaml              (two codex channel entries merged)
 
 AGENTS.md segment (codex-agents-md-hotspots) is a runtime channel managed by
 ``render_and_inject()`` — no stub file is written at install time.
 
 PRD-DIST-2402 FR41-FR43.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
@@ -248,7 +252,7 @@ def install_codex_distill_channels(
         log.warning("codex_hooks_json_merge_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"hooks.json merge failed: {exc}")
 
-    # 2. Bootstrap channel manifest (three codex channel entries)
+    # 2. Bootstrap channel manifest (two codex channel entries)
     try:
         bootstrap_codex_channel_manifest(target_dir)
     except ManifestValidationError as exc:

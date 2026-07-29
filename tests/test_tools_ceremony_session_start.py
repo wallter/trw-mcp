@@ -338,8 +338,9 @@ class TestPrdCore215Fr01:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
         ):
-            result = tools["trw_session_start"].fn()
-            result_again = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(verbose=True)
+            result_again = tools["trw_session_start"].fn(verbose=True)
+            compact_result = tools["trw_session_start"].fn()
 
         block = result["connection_fingerprint"]
         assert isinstance(block, dict)
@@ -349,6 +350,14 @@ class TestPrdCore215Fr01:
         # Two same-process production calls preserve nonce + server identity.
         assert result_again["connection_fingerprint"]["connection_nonce"] == block["connection_nonce"]
         assert result_again["connection_fingerprint"]["result_schema"] == block["result_schema"]
+
+        # UF-052: FR01 still emits the block on the compact (default) path, but
+        # only its two non-constant fields — the eight constants/derivables and
+        # opaque digests cost ~96 tokens per session with no consumer.
+        compact_block = compact_result["connection_fingerprint"]
+        assert isinstance(compact_block, dict)
+        assert set(compact_block) == {"build_identity", "connection_nonce"}
+        assert compact_block["connection_nonce"] == block["connection_nonce"]
 
 
 @pytest.mark.integration

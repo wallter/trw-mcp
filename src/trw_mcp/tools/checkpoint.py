@@ -18,11 +18,15 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import CheckpointResultDict, PreCompactResultDict
 from trw_mcp.models.typed_dicts._orchestration import CheckpointRecordDict
 from trw_mcp.state._call_context import build_call_context as _build_call_context
+from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._paths import (
     find_active_run,
     resolve_project_root,
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+from trw_mcp.tools._checkpoint_obligations import (
+    compute_pending_ceremony as _compute_pending_ceremony,
+)
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
@@ -46,17 +50,12 @@ def _reset_tool_call_counter() -> None:
     _checkpoint_state.counter = 0
 
 
-_CEREMONY_OBLIGATIONS: list[tuple[str, str, str]] = [
-    ("session_started", "trw_session_start()", "not yet called"),
-    ("build_checked", "trw_build_check()", "required before delivery"),
-    ("review_done", "trw_review()", "recommended before delivery"),
-    ("delivered", "trw_deliver()", "required at session end"),
-]
-
-
-def _compute_pending_ceremony(ceremony_state: dict[str, object]) -> list[str]:
-    """Return list of pending ceremony obligation descriptions."""
-    return [f"{tool} — {desc}" for key, tool, desc in _CEREMONY_OBLIGATIONS if not ceremony_state.get(key)]
+# The ceremony-obligation list lives in _checkpoint_obligations (imported at the
+# top of this module). It carried three flat consequence strings that no code
+# consulted: build "required before delivery" is false for every non-coding task
+# type under the shipped block_coding default, review "recommended" is false the
+# other way under review_gate_mode=block, and deliver "required" is enforced
+# nowhere. Each is now resolved through the same predicate the deliver path uses.
 
 
 def _maybe_auto_checkpoint() -> CheckpointResultDict | None:
@@ -252,7 +251,13 @@ def _write_compact_state(
     state_file.parent.mkdir(parents=True, exist_ok=True)
 
     _evt_text = events_path.read_text().strip() if events_path.exists() else ""
-    pending_ceremony = _compute_pending_ceremony(ceremony_state)
+    # run_dir + events let the obligation consequences be resolved against the
+    # real deliver gate rather than asserted; both are already in hand here.
+    pending_ceremony = _compute_pending_ceremony(
+        ceremony_state,
+        run_dir=run_dir,
+        events=read_jsonl_resilient(events_path),
+    )
 
     state_data: dict[str, object] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -302,7 +307,11 @@ def _write_compact_instructions(
             "CEREMONY OBLIGATIONS (complete these before session ends):\n"
             "{ceremony_pending}"
         )
-    pending_ceremony = _compute_pending_ceremony(ceremony_state)
+    pending_ceremony = _compute_pending_ceremony(
+        ceremony_state,
+        run_dir=run_dir,
+        events=read_jsonl_resilient(run_dir / "meta" / "events.jsonl"),
+    )
     instructions = template.format(
         phase=phase,
         run_id=str(run_dir.name),
@@ -329,25 +338,17 @@ def register_checkpoint_tools(server: FastMCP) -> None:
     ) -> PreCompactResultDict:
         """Capture a safety checkpoint before the context window compacts.
 
-        Use when:
-        - Invoked by the PreCompact hook on imminent context compaction.
-        - You suspect compaction is near and want a clean resume point on disk.
+        Use when the PreCompact hook fires or compaction looks near. directive and
+        context_anchor (what you are mid-flight on, and where) cannot be derived
+        from run state; the next trw_session_start surfaces them so the session
+        resumes exactly.
 
-        PRD-CORE-165 FR-01: pass ``directive`` (the active operator directive /
-        task you are mid-flight on) and ``context_anchor`` (where you are in it —
-        e.g. the in-flight experiment or handoff pointer). These live in the
-        conversation, not in trw state, so they cannot be auto-derived; when
-        supplied they are persisted into the pre-compact state and surfaced on the
-        next ``trw_session_start`` so the post-compaction session resumes exactly
-        instead of re-orienting by hand. Both are optional and backward-compatible.
-
-        Best-effort: sub-step failures populate ``status`` but do not raise.
-
-        Output: PreCompactResultDict with fields
-        {status: "written"|"skipped"|"error", reason?: str,
-         checkpoint_path?: str, instructions_path?: str, compact_state_path?: str,
-         directive?: str, context_anchor?: str}.
+        Output: status ("success"/"skipped"/"failed"), reason or error, run path,
+        artifact paths.
         """
+        # Best-effort by design: sub-step failures land in ``status`` rather than
+        # raising, so an imminent compaction is never made worse by an exception.
+        # Both caller-supplied fields are optional and backward-compatible.
         cfg = get_config()
         if not cfg.auto_checkpoint_pre_compact:
             return {"status": "skipped", "reason": "auto_checkpoint_pre_compact disabled"}

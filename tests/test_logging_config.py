@@ -15,6 +15,7 @@ import structlog
 
 from trw_mcp._logging import (
     _add_component,
+    _config_debug_requested,
     _redact_secrets,
     _resolve_log_level,
     _verbosity_to_level,
@@ -168,3 +169,126 @@ class TestConfigureLogging:
         log_file = tmp_path / "test.log"
         configure_logging(log_file=log_file)
         assert log_file.exists()
+
+
+@pytest.mark.unit
+class TestConfigDebugPrecedence:
+    """``.trw/config.yaml::debug`` is THE portable verbosity toggle.
+
+    No client bootstrap profile bakes ``--debug`` into its generated MCP server
+    entry, so this key is the only thing that turns DEBUG on identically for
+    every client. These tests pin the precedence contract.
+    """
+
+    def test_config_debug_enables_debug_level(self) -> None:
+        assert _resolve_log_level(config_debug=True) == logging.DEBUG
+
+    def test_config_debug_off_keeps_info(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        assert _resolve_log_level(config_debug=False) == logging.INFO
+
+    def test_explicit_level_beats_config_debug(self) -> None:
+        assert _resolve_log_level(explicit_level="WARNING", config_debug=True) == logging.WARNING
+
+    def test_env_beats_config_debug(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TRW_LOG_LEVEL", "ERROR")
+        assert _resolve_log_level(config_debug=True) == logging.ERROR
+
+    def test_quiet_flag_beats_config_debug(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``--quiet`` is an explicit caller signal; an on-disk default must not undo it."""
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        assert _resolve_log_level(verbosity=-1, config_debug=True) == logging.WARNING
+
+
+@pytest.mark.unit
+class TestConfigDebugRequested:
+    """``_config_debug_requested`` gates the config read on precedence."""
+
+    def _config(self, *, debug: bool) -> Any:
+        cfg = MagicMock()
+        cfg.debug = debug
+        return cfg
+
+    def test_reads_config_when_nothing_else_decides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        with patch("trw_mcp.models.config.get_config", return_value=self._config(debug=True)):
+            assert _config_debug_requested(verbosity=0, debug=False, explicit_level=None) is True
+
+    def test_returns_false_when_config_debug_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        with patch("trw_mcp.models.config.get_config", return_value=self._config(debug=False)):
+            assert _config_debug_requested(verbosity=0, debug=False, explicit_level=None) is False
+
+    @pytest.mark.parametrize(
+        ("kwargs", "reason"),
+        [
+            ({"verbosity": 0, "debug": False, "explicit_level": "CRITICAL"}, "explicit --log-level"),
+            ({"verbosity": 0, "debug": True, "explicit_level": None}, "explicit --debug"),
+            ({"verbosity": -1, "debug": False, "explicit_level": None}, "explicit --quiet"),
+        ],
+    )
+    def test_skips_config_read_when_a_flag_decides(
+        self,
+        kwargs: dict[str, Any],
+        reason: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Import safety: server/__init__ configures logging at import time.
+
+        It passes an explicit level, so ``get_config`` must never be reached —
+        a config load during package import is not safe.
+        """
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        with patch("trw_mcp.models.config.get_config", side_effect=AssertionError("config read: " + reason)):
+            assert _config_debug_requested(**kwargs) is False
+
+    def test_env_level_skips_config_read(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("TRW_LOG_LEVEL", "ERROR")
+        with patch("trw_mcp.models.config.get_config", side_effect=AssertionError("config read")):
+            assert _config_debug_requested(verbosity=0, debug=False, explicit_level=None) is False
+
+    def test_config_load_failure_fails_open(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        with patch("trw_mcp.models.config.get_config", side_effect=RuntimeError("boom")):
+            assert _config_debug_requested(verbosity=0, debug=False, explicit_level=None) is False
+
+
+class TestConfigDebugEndToEnd:
+    """Real path: ``.trw/config.yaml`` -> TRWConfig -> configure_logging -> file sink."""
+
+    def _boot(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, *, debug_yaml: str) -> Any:
+        from trw_mcp.models.config import reload_config
+
+        monkeypatch.delenv("TRW_LOG_LEVEL", raising=False)
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        monkeypatch.delenv("TRW_DEBUG", raising=False)
+        (tmp_path / ".trw").mkdir(parents=True, exist_ok=True)
+        (tmp_path / ".trw" / "config.yaml").write_text(f"debug: {debug_yaml}\n", encoding="utf-8")
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda *a, **k: tmp_path)
+        monkeypatch.chdir(tmp_path)
+        reload_config()
+        configure_logging(json_output=True, package_name="trw-mcp")
+        structlog.get_logger("trw_mcp.probe").debug("config_debug_probe_event")
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        return tmp_path / ".trw" / "logs"
+
+    def test_debug_true_writes_debug_event_to_file_sink(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log_dir = self._boot(tmp_path, monkeypatch, debug_yaml="true")
+        assert log_dir.is_dir(), "config debug:true must open the .trw/logs file sink"
+        written = "".join(f.read_text(encoding="utf-8") for f in log_dir.glob("*.jsonl"))
+        assert "config_debug_probe_event" in written
+
+    def test_debug_false_drops_debug_event_and_opens_no_sink(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log_dir = self._boot(tmp_path, monkeypatch, debug_yaml="false")
+        assert not log_dir.exists(), "config debug:false must not open a file sink"

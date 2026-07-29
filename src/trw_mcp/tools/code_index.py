@@ -73,18 +73,14 @@ def register_code_index_tools(server: FastMCP) -> None:
         force: bool = False,
         paths: list[str] | None = None,
     ) -> dict[str, object]:
-        """Update the local SHA-256 code-index manifest.
+        """Refresh the local SHA-256 code index before search or symbol lookup.
 
-        Use when an agent needs a fresh local code-index manifest before code
-        search or symbol analysis without returning file bodies.
+        Use when: the index is stale.
+
+        Output: status, manifest_path, and index stats (file counts only, never bodies).
 
         Args:
-            repo_root: Repository root to index.
-            force: Reclassify all discovered files as freshly added.
-            paths: Optional repo-relative file or directory limits.
-
-        Returns:
-            {"status": "ok", "manifest_path": str, "stats": {...}}
+            force: reclassify all discovered files as freshly added.
         """
 
         return trw_code_index_update(repo_root=repo_root, force=force, paths=paths)

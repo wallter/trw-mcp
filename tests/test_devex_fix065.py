@@ -130,6 +130,14 @@ class TestToolDocstringSeeAlso:
         assert "trw_learn" in desc
         assert "trw_learn" in desc
 
+    # These two were briefly deleted on 2026-07-27 by the tool-definition
+    # token-budget campaign, on the reasoning that a "See Also" chain is
+    # unfollowable and therefore pure cost. Restored the same day: FR04 is a
+    # delivered requirement, the whole cost is ~60 chars per tool against
+    # ~23k saved by that campaign, and retiring a shipped requirement is not a
+    # side effect a trim gets to have. The lines now sit ABOVE ``Args:`` so
+    # FastMCP actually serves them — below it they would have been decorative.
+
     def test_trw_session_start_see_also(self) -> None:
         from tests.conftest import get_tools_sync, make_test_server
 
@@ -137,8 +145,7 @@ class TestToolDocstringSeeAlso:
         tools = get_tools_sync(server)
         desc = tools["trw_session_start"].description or ""
         assert "See Also:" in desc
-        assert "trw_init" in desc
-        assert "trw_recall" in desc
+        assert "trw_status" in desc
 
     def test_trw_deliver_see_also(self) -> None:
         from tests.conftest import get_tools_sync, make_test_server
@@ -147,8 +154,7 @@ class TestToolDocstringSeeAlso:
         tools = get_tools_sync(server)
         desc = tools["trw_deliver"].description or ""
         assert "See Also:" in desc
-        assert "trw_checkpoint" in desc
-        assert "trw_instructions_sync" in desc
+        assert "trw_build_check" in desc
 
     def test_trw_prd_create_see_also(self) -> None:
         from tests.conftest import get_tools_sync, make_test_server

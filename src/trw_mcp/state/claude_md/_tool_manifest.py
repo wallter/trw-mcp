@@ -160,7 +160,6 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_before_edit_hint": "Surface risk hints for a file before you edit it",
     "trw_before_edit_hint_batch": "Surface risk hints for a batch of files before editing",
     "trw_codebase_risk_report": "Report aggregate codebase risk for a repository",
-    "trw_entity_risk_map": "Map per-entity risk across a repository",
     "trw_ordering_compare": "Compare candidate build/work ordering strategies",
     "trw_cross_repo_ordering": "Compute cross-repository work ordering",
     # Evidence + coordination

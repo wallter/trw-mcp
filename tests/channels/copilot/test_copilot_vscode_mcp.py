@@ -129,20 +129,34 @@ def test_warn_skip_on_user_modification_without_force(tmp_path: Path) -> None:
 
 
 def test_json_key_order_stable(tmp_path: Path) -> None:
-    """Dicts with keys in different insertion orders produce identical JSON bytes."""
-    from trw_mcp.channels.copilot._templates import render_c3_mcp_json
-    from trw_mcp.channels.copilot._vscode_mcp import _TRW_MCP_SERVER_ENTRY
+    """Existing servers in different insertion orders produce identical JSON bytes.
 
-    # Build same logical dict with keys in different orders
-    order1 = {"z-other": {"type": "stdio", "command": "z"}, "a-other": {"type": "stdio", "command": "a"}}
-    order2 = {"a-other": {"type": "stdio", "command": "a"}, "z-other": {"type": "stdio", "command": "z"}}
+    PRD-CORE-239 FR01: this used to call `render_c3_mcp_json` from
+    `channels/copilot/_templates.py`, which FR01 deleted along with the two
+    removed copilot instruction-file channels. That helper had **zero**
+    production callers even before FR01 — `_vscode_mcp._generate_under_lock`
+    merges `servers.trw` inline — so the test was pinning a dead duplicate of
+    the shipped logic. `copilot-vscode-mcp-config` survives, and so does the
+    NFR09 byte-stability property, so the case is re-pointed at the live
+    writer instead of being dropped.
+    """
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    for target, servers in (
+        (a, {"z-other": {"type": "stdio", "command": "z"}, "a-other": {"type": "stdio", "command": "a"}}),
+        (b, {"a-other": {"type": "stdio", "command": "a"}, "z-other": {"type": "stdio", "command": "z"}}),
+    ):
+        (target / ".vscode").mkdir(parents=True)
+        (target / ".vscode" / "mcp.json").write_text(json.dumps({"servers": servers}), encoding="utf-8")
+        _call(target)
 
-    merged1 = render_c3_mcp_json(existing={"servers": order1}, trw_entry=_TRW_MCP_SERVER_ENTRY)
-    merged2 = render_c3_mcp_json(existing={"servers": order2}, trw_entry=_TRW_MCP_SERVER_ENTRY)
-
-    json1 = json.dumps(merged1, indent=2, sort_keys=True)
-    json2 = json.dumps(merged2, indent=2, sort_keys=True)
+    json1 = (a / ".vscode" / "mcp.json").read_text(encoding="utf-8")
+    json2 = (b / ".vscode" / "mcp.json").read_text(encoding="utf-8")
     assert json1 == json2, "sort_keys=True should produce byte-identical output regardless of insertion order"
+    # Non-vacuity: the two files must actually carry the merged content, or
+    # byte-equality would be satisfied by two identically-empty writes.
+    assert '"trw"' in json1
+    assert '"z-other"' in json1
 
 
 def test_vscode_mcp_json_uses_sort_keys(tmp_path: Path) -> None:

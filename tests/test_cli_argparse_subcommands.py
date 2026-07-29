@@ -205,3 +205,51 @@ def test_transport_non_stdio_rejected(parser) -> None:  # type: ignore[no-untype
     """Only stdio is a valid transport; anything else must still error."""
     with pytest.raises(SystemExit):
         parser.parse_args(["--transport", "http", "serve"])
+
+
+# ── Withdrawn client ids keep an actionable message (2026-07-27) ──────
+
+
+def test_withdrawn_ide_names_its_successor() -> None:
+    """A withdrawn --ide value must not degrade to argparse's "invalid choice".
+
+    A user who types a withdrawn id already knows the name, so answering
+    "unknown value" tells them strictly less than they arrived with. The
+    ``gemini`` entry regressed to exactly that when the profile was deleted on
+    2026-07-24: the shipped installer still carried the good message while
+    every live code path had lost it.
+    """
+    import argparse
+
+    from trw_mcp.server._cli_argparse_project import _ide_choice
+
+    for withdrawn, must_mention in (("gemini", "antigravity-cli"), ("aider", "uninstall")):
+        with pytest.raises(argparse.ArgumentTypeError) as exc:
+            _ide_choice(withdrawn)
+        message = str(exc.value)
+        assert withdrawn in message
+        assert must_mention in message, f"{withdrawn} message must point somewhere useful: {message}"
+
+
+def test_unknown_ide_still_falls_through_to_argparse() -> None:
+    """Only *recognized* withdrawn ids get the custom error.
+
+    A genuine typo must reach argparse's ``choices`` check, which supplies the
+    did-you-mean. Swallowing it here would lose that.
+    """
+    from trw_mcp.server._cli_argparse_project import _ide_choice
+
+    assert _ide_choice("cursor-id") == "cursor-id"
+
+
+def test_retired_tables_agree_across_cli_and_bootstrap() -> None:
+    """Two hand-maintained tables name the same withdrawn ids.
+
+    Pattern P11 in docs/documentation/wiring-defect-patterns.md — a subset
+    registry with no derivation drifts silently. This asserts the two stay in
+    step until one is derived from the other.
+    """
+    from trw_mcp.bootstrap._utils import _RETIRED_IDES
+    from trw_mcp.server._cli_argparse_project import _RETIRED_IDE_HINTS
+
+    assert set(_RETIRED_IDE_HINTS) == set(_RETIRED_IDES)

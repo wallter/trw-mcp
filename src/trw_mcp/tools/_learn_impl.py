@@ -22,6 +22,12 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 # Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
 # Re-exported so existing test imports continue to work.
 from trw_mcp.tools._learn_anchors import resolve_learn_anchors
+from trw_mcp.tools._learn_journal_wiring import (
+    capture_journal_payload,
+    consume_journal,
+    journal_accepted,
+)
+from trw_mcp.tools._learn_preflight import resolve_learn_deps, run_accept_gates
 from trw_mcp.tools._learn_side_effects import (
     _LEARN_INJECTION_PATTERNS as _LEARN_INJECTION_PATTERNS,
 )
@@ -33,6 +39,9 @@ from trw_mcp.tools._learn_side_effects import (
 )
 from trw_mcp.tools._learn_side_effects import (
     _append_provenance_signed as _append_provenance_signed,
+)
+from trw_mcp.tools._learn_side_effects import (
+    _auxiliary_content_reject as _auxiliary_content_reject,
 )
 from trw_mcp.tools._learn_side_effects import (
     _content_policy_reject as _content_policy_reject,
@@ -54,7 +63,6 @@ from trw_mcp.tools._learning_helpers import (
     calibrate_impact,
     check_soft_cap,
     enforce_distribution,
-    is_noise_summary,
 )
 
 logger = structlog.get_logger(__name__)
@@ -106,6 +114,11 @@ def execute_learn(
     _update_analytics: Any = None,
     _list_active_learnings: Any = None,
     _check_and_handle_dedup: Any = None,
+    # Write-ahead-journal replay seam (durability fix). ``_replay_learning_id``
+    # forces the original id so a crash-recovery replay is idempotent;
+    # ``_from_journal`` suppresses re-journaling on that replay path.
+    _replay_learning_id: str | None = None,
+    _from_journal: bool = False,
 ) -> LearnResultDict:
     """Execute the core learn workflow: validate, dedup, store, distribute.
 
@@ -130,67 +143,56 @@ def execute_learn(
         _list_active_learnings: Injected active learnings lister.
         _check_and_handle_dedup: Injected dedup checker.
     """
-    # Resolve injected deps with fallbacks
-    from trw_mcp.state.analytics import generate_learning_id as _default_gen_id
-    from trw_mcp.state.analytics import save_learning_entry as _default_save
-    from trw_mcp.state.analytics import update_analytics as _default_update_a
-    from trw_mcp.state.memory_adapter import list_active_learnings as _default_list
-    from trw_mcp.state.memory_adapter import store_learning as _default_store
-    from trw_mcp.tools._learning_helpers import check_and_handle_dedup as _default_dedup
+    # Snapshot the replayable original args BEFORE any local mutation so the
+    # write-ahead journal persists raw caller inputs (calibrate_impact etc. are
+    # not idempotent). Captured now; written only once the entry is ACCEPTED.
+    _journal_payload = capture_journal_payload(dict(locals()))
 
-    store_fn: Any = _adapter_store or _default_store
-    gen_id_fn = _generate_learning_id or _default_gen_id
-    save_entry_fn = _save_learning_entry or _default_save
-    update_analytics_fn = _update_analytics or _default_update_a
-    list_active_fn = _list_active_learnings or _default_list
-    dedup_fn = _check_and_handle_dedup or _default_dedup
+    # Resolve injected deps with fallbacks (see _learn_preflight.LearnDeps).
+    deps = resolve_learn_deps(
+        _adapter_store,
+        _generate_learning_id,
+        _save_learning_entry,
+        _update_analytics,
+        _list_active_learnings,
+        _check_and_handle_dedup,
+    )
 
     # Input validation (PRD-QUAL-042-FR06): impact bounds
     impact = max(0.0, min(1.0, impact))
 
-    # PRD-QUAL-032-FR09: Reject auto-generated noise entries early
-    if is_noise_summary(summary):
-        return {
-            "status": "rejected",
-            "reason": "noise_filter",
-            "message": f"Summary matches noise pattern — not persisted: {summary[:60]}",
-        }
+    # Acceptance gates — noise filter, then content policy, then the opt-in LLM
+    # utility filter. These MUST stay ahead of the journal write below: a
+    # rejected learning must never become a durable, replayable record.
+    rejection = run_accept_gates(summary, detail, config, logger)
+    if rejection is not None:
+        return rejection
 
-    # Security audit 2026-04-18 H2: content policy (length caps + injection
-    # patterns). Protects the stored-prompt-injection surface since recalled
-    # learnings are surfaced verbatim to future agents via trw_session_start,
-    # trw_recall, and the trw://learnings/summary resource.
-    _policy_reject = _content_policy_reject(summary, detail)
-    if _policy_reject is not None:
+    # Same gate, the fields the long-form scan never saw. Runs here rather than
+    # inside run_accept_gates so the pre-journal boundary that module owns stays
+    # a single cohesive slice; the ordering guarantee that matters is unchanged —
+    # this is still strictly BEFORE journal_accepted, so a rejected learning is
+    # never durably recorded or replayed.
+    aux_rejection = _auxiliary_content_reject(tags, evidence, nudge_line)
+    if aux_rejection is not None:
         logger.warning(
             "learn_content_policy_rejected",
-            reason=_policy_reject["reason"],
+            reason=aux_rejection["reason"],
+            field_group="auxiliary",
             summary_preview=summary[:60],
         )
-        return cast("LearnResultDict", _policy_reject)
+        return cast("LearnResultDict", aux_rejection)
 
-    # PRD-QUAL-062: LLM-based Utility Scoring (opt-in). Gated behind
-    # config.llm_utility_filter_enabled (default False): unconditionally
-    # constructing an LLMClient + calling is_high_utility fires a live Claude
-    # Haiku API call on every trw_learn with no operator kill-switch, adding
-    # undisclosed latency + cost. Only build the client when the operator has
-    # explicitly enabled the filter.
-    if config.llm_utility_filter_enabled:
-        try:
-            from trw_mcp.clients.llm import LLMClient
-            from trw_mcp.tools._learn_validator import is_high_utility
-
-            llm = LLMClient(model="haiku", system_prompt="")
-            if getattr(llm, "_available", True):
-                is_valid, reject_reason = is_high_utility(summary, detail, llm)
-                if not is_valid:
-                    return {
-                        "status": "rejected",
-                        "reason": "llm_utility_filter",
-                        "message": f"Rejected by utility filter: {reject_reason}",
-                    }
-        except Exception as exc:  # justified: fail-open, LLM utility filter is advisory only
-            logger.warning("llm_utility_filter_failed", error=str(exc))
+    # Durability fix: the learning has now passed every acceptance gate (noise,
+    # content policy, LLM utility). Assign its stable id and DURABLY JOURNAL it
+    # BEFORE the slow pre-store pipeline (active-set load + semantic dedup +
+    # embedding cold-start) that can push this call past the client's 120s tool
+    # timeout. If the session then exits mid-pipeline, the next session_start
+    # sweep replays the journaled record so the accepted learning is never
+    # silently lost. Consumed on every terminal-handled path below (and retained
+    # only on a store error, which the replay retries).
+    learning_id = _replay_learning_id or deps.generate_id()
+    journal_accepted(trw_dir, config, learning_id, _journal_payload, from_journal=_from_journal)
 
     reader = FileStateReader()
     writer = FileStateWriter()
@@ -255,18 +257,16 @@ def execute_learn(
     # Fetch active learnings once -- reused by soft-cap and distribution
     all_active: list[dict[str, object]] = []
     with contextlib.suppress(OSError, StateError, ValueError, TypeError):
-        all_active = list_active_fn(trw_dir)
+        all_active = deps.list_active(trw_dir)
     calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
         calibrated_impact,
         all_active,
         config,
     )
 
-    learning_id = gen_id_fn()
-
     # Semantic dedup check (PRD-CORE-042) -- must run BEFORE storing
     safe_evidence = evidence or []
-    dedup_result = dedup_fn(
+    dedup_result = deps.dedup(
         LearningParams(
             summary=summary,
             detail=detail,
@@ -297,6 +297,9 @@ def execute_learn(
         config,
     )
     if dedup_result is not None:
+        # Deduped (skip/merge) is a terminal-handled outcome — the content is
+        # accounted for in the survivor, so retire the pending record.
+        consume_journal(trw_dir, config, learning_id)
         return cast("LearnResultDict", dedup_result)
 
     # PRD-CORE-111 FR04: code-grounded anchors from recently modified files
@@ -341,12 +344,16 @@ def execute_learn(
         "session_id": session_id,
         "scope": scope,  # PRD-CORE-185 FR07: write-tier override
     }
-    if _store_accepts_positional_trw_dir(store_fn):
-        store_result = store_fn(trw_dir, **store_kwargs)
+    if _store_accepts_positional_trw_dir(deps.store):
+        store_result = deps.store(trw_dir, **store_kwargs)
     else:
-        store_result = store_fn(trw_dir=trw_dir, **store_kwargs)
+        store_result = deps.store(trw_dir=trw_dir, **store_kwargs)
     store_result_dict = store_result if isinstance(store_result, dict) else {}
     if store_result_dict.get("status") == "quarantined":
+        # Quarantine is a deliberate anomaly-detector decision, not a loss — the
+        # entry landed in the quarantine store. Retire the pending record so it
+        # is not replayed (and re-quarantined) on the next sweep.
+        consume_journal(trw_dir, config, learning_id)
         return {
             "learning_id": learning_id,
             "path": str(store_result_dict.get("path", f"sqlite://{learning_id}")),
@@ -376,6 +383,9 @@ def execute_learn(
             "status": "error",
             "distribution_warning": "",
         }
+    # The SQLite row is now durable (source of truth per D8). The write-ahead
+    # journal has done its job — retire the pending record so it is not replayed.
+    consume_journal(trw_dir, config, learning_id)
     _append_provenance_signed(
         trw_dir=trw_dir,
         learning_id=learning_id,
@@ -419,8 +429,8 @@ def execute_learn(
         consolidated_from=consolidated_from,
         trw_dir=trw_dir,
         entries_dir=entries_dir,
-        save_entry_fn=save_entry_fn,
-        update_analytics_fn=update_analytics_fn,
+        save_entry_fn=deps.save_entry,
+        update_analytics_fn=deps.update_analytics,
     )
 
     # Forced distribution enforcement (PRD-CORE-034)
@@ -462,9 +472,9 @@ def execute_learn(
 
     # Inject ceremony progress summary into response.
     try:
-        from trw_mcp.tools._ceremony_status import append_ceremony_status
+        from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
-        append_ceremony_status(cast("dict[str, object]", result_dict), trw_dir)
+        append_ceremony_status_for_tool(cast("dict[str, object]", result_dict), trw_dir, tool_name="learn")
     except Exception:  # justified: fail-open
         logger.debug("learn_ceremony_status_skipped", exc_info=True)
 

@@ -9,7 +9,8 @@ from pydantic import Field
 NudgeMessengerLiteral = Literal[
     "standard",
     "minimal",
-    "learning_injection",
+    # PRD-CORE-241-FR07 retired "learning_injection" (iter-22: 50.0% vs 66.7%,
+    # n=30, p=0.1527, REJECTED). "contextual" supersedes it — do not reinstate.
     "contextual",
     "contextual_action",
     "contextual_distress",
@@ -39,8 +40,8 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v26.1_TRW"
-    aaref_version: str = "v3.2.0"
+    framework_version: str = "v26.2_TRW"
+    aaref_version: str = "v3.2.1"
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
@@ -64,6 +65,11 @@ class _CeremonyFields:
     validation_fk_optimal_max: float = 12.0
     # Wiring gate (PRD-CORE-190): warn=advisory; block=opt-in WIRING_GATE_FAIL.
     wiring_gate_mode: Literal["warn", "block"] = "warn"
+    # PRD-CORE-231-FR04: per-PRD-category override consulted BEFORE the global
+    # mode, so `block` can be piloted on one category (e.g. {"CORE": "block"})
+    # instead of flipping the whole catalogue at once. Keys are compared
+    # case-insensitively; empty dict == exact pre-FR04 behavior.
+    wiring_gate_mode_overrides: dict[str, Literal["warn", "block"]] = Field(default_factory=dict)
 
     risk_scaling_enabled: bool = True
     phase_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
@@ -77,16 +83,12 @@ class _CeremonyFields:
     index_auto_sync_on_status_change: bool = True
     strict_input_criteria: bool = False
 
-    grooming_max_iterations: int = 5
-    grooming_target_completeness: float = 0.85
-    grooming_research_scope: Literal["full", "codebase", "minimal"] = "full"
-    grooming_placeholder_density_threshold: float = 0.10
-    grooming_partial_density_threshold: float = 0.20
-
+    # The five grooming_* and three findings_* fields were removed 2026-07-28
+    # (PRD-QUAL-131-FR01): no production reader, and no grooming or findings
+    # subsystem for them to configure. ``finding_dedup_threshold`` (singular) is
+    # a separate field and is retained -- it is unread too, but it is not part of
+    # a whole-cluster removal and is triaged on its own evidence.
     finding_dedup_threshold: float = 0.6
-    findings_dir: str = "findings"
-    findings_entries_dir: str = "entries"
-    findings_registry_file: str = "registry.yaml"
 
     reflect_sequence_lookback: int = 3
     reflect_max_positive_learnings: int = 5
@@ -96,17 +98,12 @@ class _CeremonyFields:
     reversion_rate_elevated: float = 0.15
     reversion_rate_concerning: float = 0.30
 
-    debt_registry_filename: str = "debt-registry.yaml"
-    debt_id_prefix: str = "DEBT"
-    debt_initial_decay_score: float = 0.5
-    debt_decay_base_score: float = 0.3
-    debt_decay_daily_rate: float = 0.01
-    debt_decay_assessment_rate: float = 0.05
-    debt_auto_promote_threshold: float = 0.9
-    debt_actionable_threshold: float = 0.7
-    debt_budget_critical_ratio: float = 0.20
-    debt_budget_high_ratio: float = 0.15
-    debt_default_wave_size: int = 5
+    # The eleven debt_* fields were removed 2026-07-28 (PRD-QUAL-131-FR01).
+    # A repository-wide search for technical_debt, DebtRegistry, debt_registry
+    # and TechDebt across trw-mcp/src/trw_mcp returned hits in exactly two files
+    # -- this declaration and its admission registry -- with `nudge` (85 files)
+    # as the non-vacuity control. There was no debt subsystem for them to
+    # configure; the whole cluster described a feature that does not exist.
 
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
     compliance_long_session_event_threshold: int = 5
@@ -123,7 +120,9 @@ class _CeremonyFields:
     # COMPREHENSIVE runs. Default ON, advisory-only (never gates delivery).
     review_mandate_advisory_enabled: bool = True
     commit_fr_trailer_enabled: bool = True
-    sprint_integration_branch_pattern: str = "sprint-{N}-integration"
+    # sprint_integration_branch_pattern removed 2026-07-28 (PRD-QUAL-131-FR01)
+    # with the rest of the sprint_* cluster. Its only reference outside this
+    # file was a test asserting its default, which is not a consumer.
     compliance_review_retention_days: int = 365
     provenance_enabled: bool = True
     confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
@@ -177,10 +176,16 @@ class _CeremonyFields:
         description="Nudge injection density: low=less frequent, high=more frequent; None defers to profile default.",
     )
 
-    nudge_pool_weight_workflow: int = 40
-    nudge_pool_weight_learnings: int = 30
-    nudge_pool_weight_ceremony: int = 20
-    nudge_pool_weight_context: int = 10
+    # The four flat nudge_pool_weight_* fields were removed 2026-07-28
+    # (PRD-QUAL-131-FR05). The nudge pool is LIVE and its weights ARE read --
+    # from the client profile. 85490eb73c (2026-06-09) made
+    # ``client_profile.nudge_pool_weights`` the authority (read at
+    # tools/_ceremony_status_pool.py) and left these four behind, so setting one
+    # was not a no-op that looked like a no-op: it was a no-op that looked like a
+    # working control, and the profile silently won. The two cooldowns below are
+    # read from TRWConfig by the SAME function -- two neighbours in one config
+    # family wired, four not, which is what made this the sharpest case in the
+    # census. Five trw-eval ablation arms rode on these and were retired first.
     nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
     nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
     nudge_pool_cooldown_wall_clock_max_hours: int = Field(

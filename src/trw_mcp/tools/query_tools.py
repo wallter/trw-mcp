@@ -351,12 +351,15 @@ def register_query_tools(server: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Return a merged cross-emitter event view for a session.
 
+        Use when reconstructing what happened: the audit trail, activity
+        history, or timeline of tool calls, hooks, and run events across every
+        emitter — not just one run's log.
+
+        Output: merged event rows, newest first.
+
         Args:
-            session_id: When provided, restrict results to events whose
-                ``session_id`` matches. Pass ``None`` for cross-session
-                trend queries.
-            filters: Optional extra equality filters. Supported keys:
-                ``run_id``, ``event_type``, ``emitter``.
+            session_id: restrict to this session; None for cross-session queries.
+            filters: extra equality filters — run_id, event_type, and/or emitter.
         """
         consult_mcp_security(
             "trw_query_events",
@@ -371,11 +374,9 @@ def register_query_tools(server: FastMCP) -> None:
         before_path: str,
         after_path: str,
     ) -> dict[str, Any]:
-        """Diff two PRD files with requirement, metric, and acceptance-gate focus.
+        """Diff two PRD files, focused on requirements, metrics, and acceptance gates.
 
-        Use when:
-        - Reviewing changes between two PRD versions or drafts.
-        - Auditing how requirements or acceptance criteria have evolved.
+        Use when: reviewing how a PRD changed between two versions or drafts.
         """
         consult_mcp_security(
             "trw_prd_diff",
@@ -390,12 +391,12 @@ def register_query_tools(server: FastMCP) -> None:
         snapshot_id_a: str,
         snapshot_id_b: str,
     ) -> dict[str, Any]:
-        """Structured diff between two surface snapshots.
+        """Return added/removed/changed surface fields between two snapshots.
 
-        Returns a single ``changes`` list of per-surface objects (each with
-        ``change_type`` ∈ {added, removed, changed}) plus ``added_count`` /
-        ``removed_count`` / ``changed_count`` totals. ``changed`` entries
-        appear in both snapshots with different ``content_hash`` values.
+        Use when investigating configuration or tool-surface drift: what
+        changed between two recorded snapshots, by field.
+
+        Output: added, removed, and changed field entries.
         """
         consult_mcp_security(
             "trw_surface_diff",

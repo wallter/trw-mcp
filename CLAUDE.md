@@ -21,7 +21,7 @@ ruff check src/                        # Lint
 - `state/` — phases, ceremony, nudge engine, `trw-memory` adapter, claude_md generation, pin isolation (`YAML(typ="safe")` reads)
 - `security/`, `meta_tune/` — MCP trust boundary + self-modification safety gates
 - `scoring/` — utility scoring, Q-learning + outcome correlation, decay, adaptive ceremony, CLEAR scorer
-- `bootstrap/`, `client_profiles/`, `agents/` — multi-host installer (8 profiles) + capability-tier resolver (`frontier|balanced|local-large|local-small`)
+- `bootstrap/`, `client_profiles/`, `agents/` — multi-host installer (7 active profiles; the uninstall registry carries an 8th entry for retired `aider`) + capability-tier resolver (`frontier|balanced|local-large|local-small`)
 - `middleware/`, `telemetry/`, `data/` — observation masking + ceremony; telemetry pipeline; bundled agents/skills/hooks
 
 ## Security Notes

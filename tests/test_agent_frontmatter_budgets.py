@@ -1,26 +1,21 @@
-"""Agent frontmatter ``max_tokens`` headroom audit.
+"""Agent frontmatter must not pin an output-token cap.
 
-Capability-tier agent definitions should avoid brittle token caps. If an
-adapter-specific agent declares ``max_tokens: N`` in frontmatter, it must keep
-explicit headroom and round to the nearest 500 so future model/tokenizer changes
-do not silently truncate output.
+``max_tokens`` is a Claude **Messages API** request parameter. It is not part of
+the sub-agent frontmatter schema (``name``, ``description``, ``tools``,
+``disallowedTools``, ``model``, ``permissionMode``, ``maxTurns``, ``skills``,
+``mcpServers``, ``hooks``, ``memory``, ``background``, ``effort``, ``isolation``,
+``color``, ``initialPrompt``), so a value declared there is inert: it does not
+raise the ceiling, does not lower it, and cannot silently truncate output either.
 
-Policy (FR07):
-
-* If an agent frontmatter declares ``max_tokens``, it MUST be a positive multiple
-  of 500 with adapter-specific rationale.
-* If an agent frontmatter does NOT declare ``max_tokens``, the active adapter
-  default applies — no edit needed. This is the state the target agents ship in today.
-
-The five target agents are the highest-traffic flagship agents: ``trw-lead``, ``trw-implementer``, ``trw-prd-groomer``,
-``trw-reviewer``, ``trw-auditor``. Both the user-exposed copies under
-``.claude/agents/`` AND the bundled mirror under
-``trw-mcp/src/trw_mcp/data/agents/`` are checked.
+The original policy (FR07) enforced a rounding/headroom rule on that inert field.
+Rounding an ignored number to the nearest 500 protects nothing, so the guard is
+now the only rule that carries a real consequence: the key must stay absent, so
+nobody re-adds it believing it caps anything. Output length is governed by the
+model, and turn count by ``maxTurns`` — which *is* in the schema.
 """
 
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Any
 
@@ -28,14 +23,6 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-TARGET_AGENTS: tuple[str, ...] = (
-    "trw-lead",
-    "trw-implementer",
-    "trw-prd-groomer",
-    "trw-reviewer",
-    "trw-auditor",
-)
 
 MIRROR_DIRS: tuple[Path, ...] = (
     REPO_ROOT / ".claude" / "agents",
@@ -58,113 +45,20 @@ def _parse_frontmatter(path: Path) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def _bumped_floor(old_value: int) -> int:
-    """Return ceil(old * 1.2 / 500) * 500 — FR07 rounding policy."""
-    return int(math.ceil(old_value * 1.2 / 500) * 500)
+def _agent_files() -> list[Path]:
+    return [path for mirror in MIRROR_DIRS for path in sorted(mirror.glob("*.md"))]
 
 
-# ---------------------------------------------------------------------------
+def test_agent_files_discovered() -> None:
+    """Guard against a silently empty scan if a mirror moves."""
+    assert _agent_files(), f"no agent files found under {[str(p) for p in MIRROR_DIRS]}"
 
 
-@pytest.mark.parametrize("mirror", MIRROR_DIRS, ids=lambda p: p.name)
-@pytest.mark.parametrize("agent", TARGET_AGENTS)
-def test_target_agent_file_exists(mirror: Path, agent: str) -> None:
-    """All 5 flagship agents exist in both mirror trees."""
-    path = mirror / f"{agent}.md"
-    assert path.exists(), f"missing flagship agent: {path}"
-
-
-@pytest.mark.parametrize("mirror", MIRROR_DIRS, ids=lambda p: p.name)
-@pytest.mark.parametrize("agent", TARGET_AGENTS)
-def test_max_tokens_honors_20pct_headroom_or_is_absent(mirror: Path, agent: str) -> None:
-    """If ``max_tokens`` is set, it must be positive and rounded to a 500-token boundary.
-
-    The 5 flagship agents ship today without a ``max_tokens`` frontmatter
-    entry (SDK default applies), which is the FR07-compliant state. Should
-    any agent later pin the value, this test enforces that the pinned value
-    carries explicit headroom, rounded up to 500.
-    """
-    path = mirror / f"{agent}.md"
+@pytest.mark.parametrize("path", _agent_files(), ids=lambda p: f"{p.parent.name}/{p.stem}")
+def test_no_agent_pins_max_tokens(path: Path) -> None:
     fm = _parse_frontmatter(path)
     assert fm is not None, f"could not parse frontmatter: {path}"
-
-    if "max_tokens" not in fm:
-        # Default applies — FR07 explicitly permits this.
-        return
-
-    value = fm["max_tokens"]
-    assert isinstance(value, int), f"{path}: max_tokens must be int, got {type(value).__name__}"
-    assert value > 0, f"{path}: max_tokens must be positive"
-    assert value % 500 == 0, f"{path}: max_tokens={value} must be rounded to nearest 500"
-
-
-def test_bumped_floor_rounding_policy() -> None:
-    """Rounding helper matches FR07 spec: ceil(old * 1.2 / 500) * 500."""
-    # 10_000 * 1.2 = 12_000 → 12_000
-    assert _bumped_floor(10_000) == 12_000
-    # 8_000 * 1.2 = 9_600 → rounds up to 10_000
-    assert _bumped_floor(8_000) == 10_000
-    # 4_096 * 1.2 = 4_915.2 → rounds up to 5_000
-    assert _bumped_floor(4_096) == 5_000
-    # already a multiple after bump
-    assert _bumped_floor(5_000) == 6_000
-
-
-# ---------------------------------------------------------------------------
-# FR07 enforcement-branch coverage (GAP-04): the 5 flagship agents ship
-# without ``max_tokens`` today, so the "if pinned, honor bumped floor"
-# branch of the policy is never exercised against real files. These
-# synthetic fixtures cover both the compliant-pinned and non-compliant-
-# pinned branches so the forward guard is regression-protected.
-# ---------------------------------------------------------------------------
-
-
-def _write_agent(tmp_path: Path, body: str) -> Path:
-    p = tmp_path / "synthetic-agent.md"
-    p.write_text(body, encoding="utf-8")
-    return p
-
-
-def test_enforcement_branch_accepts_compliant_pinned_value(tmp_path: Path) -> None:
-    """FR07 enforcement: a pinned ``max_tokens`` meeting bumped_floor is accepted."""
-    path = _write_agent(
-        tmp_path,
-        "---\nname: synthetic\nmodel: frontier\nmax_tokens: 10000\n---\nbody\n",
+    assert "max_tokens" not in fm, (
+        f"{path}: `max_tokens` is a Messages API parameter, not a sub-agent frontmatter "
+        f"field — it is ignored here. Use `maxTurns` to bound the agent's work."
     )
-    fm = _parse_frontmatter(path)
-    assert fm is not None
-    value = fm["max_tokens"]
-    assert isinstance(value, int)
-    assert value > 0
-    assert value % 500 == 0
-    # Represents a post-bump 8_000 → 10_000 roll-up.
-    assert value >= _bumped_floor(8_000)
-
-
-def test_enforcement_branch_rejects_non_multiple_of_500(tmp_path: Path) -> None:
-    """FR07 enforcement: pinned values that aren't rounded to 500 are flagged."""
-    path = _write_agent(
-        tmp_path,
-        "---\nname: synthetic\nmodel: frontier\nmax_tokens: 9600\n---\nbody\n",
-    )
-    fm = _parse_frontmatter(path)
-    assert fm is not None
-    value = fm["max_tokens"]
-    assert isinstance(value, int)
-    # Direct FR07 rounding assertion — this is the branch the production
-    # test delegates to when an agent DOES pin a value.
-    assert value % 500 != 0, "fixture must violate the 500-rounding rule"
-
-
-def test_enforcement_branch_rejects_zero_or_negative(tmp_path: Path) -> None:
-    """FR07 enforcement: a non-positive pinned ``max_tokens`` is a violation."""
-    path = _write_agent(
-        tmp_path,
-        "---\nname: synthetic\nmodel: frontier\nmax_tokens: 0\n---\nbody\n",
-    )
-    fm = _parse_frontmatter(path)
-    assert fm is not None
-    assert fm["max_tokens"] == 0
-    # The production test asserts `value > 0`; this fixture proves the
-    # branch would fail as intended if an agent ever shipped `0`.
-    assert not (fm["max_tokens"] > 0)

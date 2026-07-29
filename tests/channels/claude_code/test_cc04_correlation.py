@@ -1,4 +1,17 @@
-"""Behavioral tests for CC-04 PostToolUse correlation (PRD-DIST-2405 FR33-FR36).
+"""Behavioral tests for the CC-04 hint-file layer (PRD-DIST-2405 FR33-FR36).
+
+PRD-CORE-239 FR01 removed the ``cc-04-posttooluse-correlation`` *channel* —
+its manifest entry no longer exists in manifest-claude-code.yaml, and the
+three tests that asserted that entry were deleted with it. What remains is
+still live: ``write_hint_file`` is invoked by the shipped CC-03 PreToolUse
+hook (``data/claude_code/hooks/pre-tool-distill-hint.sh``), so every case
+below exercises code that runs on a real install.
+
+Caveat worth carrying: nothing *reads* those hint files. ``prune_hint_files``
+has no caller and no ``edit_correlated`` event is emitted anywhere, so the
+hint files are a producer without a consumer. That is pre-existing (see
+CHANGELOG "0 such events across 4,126 records") and outside FR01's scope, but
+these tests should not be read as evidence that correlation works end to end.
 
 Architecture finding: CC-04 has NO shell-level PostToolUse hook script.
 The correlation layer is entirely implemented in Python via:
@@ -13,8 +26,7 @@ What this file tests:
   2. No cross-contamination between different tool_use_ids (FR33).
   3. Fail-open on IO error (FR34): write_hint_file creates the dir if absent.
   4. Hint file structure matches CC-04 correlation schema (FR33/FR36).
-  5. The channel manifest declares CC-04 as ``posttooluse_event_log`` surface.
-  6. Shell-level hint-file write succeeds for warm invocations within aligned timeout
+  5. Shell-level hint-file write succeeds for warm invocations within aligned timeout
      (2.5s). compute_before_edit_hint imports ~0.76s (no embedding stack at module
      level), so warm calls complete well within budget.
 
@@ -212,6 +224,81 @@ class TestHintFileKeyedByToolUseId:
 # ---------------------------------------------------------------------------
 
 
+class TestExceptionIsNotTelemeteredAsATimeout:
+    """A raised subprocess must not leave the provisional ``timeout_fallback`` record.
+
+    The hook writes a provisional CC-04 record with
+    ``distill_status="timeout_fallback"`` BEFORE starting the bounded (2.5s)
+    intelligence subprocess, expecting a successful run to overwrite it. But
+    ``write_hint_file`` is called inside the same ``try:`` as
+    ``compute_before_edit_hint``, so any exception — a broken venv
+    ``ImportError``, a version-skew ``AttributeError``, a real bug — used to
+    leave the provisional record standing. An operator debugging a low hit
+    rate then saw a ``timeout_fallback`` count mixing real 2.5s timeouts with
+    unrelated exceptions, and tuned the timeout budget for a defect that has
+    nothing to do with timing.
+
+    Both cases are exercised here. The timeout case is the non-vacuity control:
+    an ``except`` handler that unconditionally stamped ``exception_fallback``,
+    or one that stopped writing the provisional record at all, would fail it.
+    """
+
+    @staticmethod
+    def _project(tmp_path: Path, python_path: str) -> Path:
+        _enable_cc03(tmp_path)
+        (tmp_path / ".trw" / "channels" / "cc03-python.txt").write_text(python_path, encoding="utf-8")
+        return tmp_path
+
+    @staticmethod
+    def _status(tmp_project: Path, tool_use_id: str) -> str:
+        record = tmp_project / ".trw" / "context" / "cc03-hints" / f"{tool_use_id}.json"
+        assert record.exists(), "the hook must always leave a correlation record"
+        status = json.loads(record.read_text(encoding="utf-8"))["distill_status"]
+        assert isinstance(status, str)
+        return status
+
+    def test_import_failure_records_exception_not_timeout(self, tmp_path: Path) -> None:
+        """A Python that cannot import ``trw_mcp`` raises instantly — nothing timed out."""
+        # sys.base_prefix's interpreter is the system Python: it runs the
+        # stdlib-only provisional writer fine, and raises ImportError on
+        # `from trw_mcp.tools.before_edit_hint import ...`.
+        system_python = str(Path(sys.base_prefix) / "bin" / "python3")
+        if not Path(system_python).is_file():
+            import pytest
+
+            pytest.skip(f"no non-venv interpreter at {system_python} to force an ImportError")
+
+        project = self._project(tmp_path, system_python)
+        tool_use_id = "toolu-exc-fallback"
+        result = _run_hook(_make_pretooluse(file_path="src/module.py", tool_use_id=tool_use_id), project)
+        assert result.returncode == 0  # FR26: never blocking
+        assert self._status(project, tool_use_id) == "exception_fallback"
+
+    def test_genuine_timeout_still_records_timeout(self, tmp_path: Path) -> None:
+        """Non-vacuity control: a real 2.5s overrun must still read ``timeout_fallback``.
+
+        The shim runs the stdlib-only provisional write normally and hangs only
+        on the intelligence call, so ``timeout 2.5`` kills the subprocess before
+        any handler can run and the provisional record is the correct answer.
+        """
+        shim = tmp_path / "slow-python.sh"
+        shim.write_text(
+            "#!/bin/sh\n"
+            'case "$2" in\n'
+            "  *compute_before_edit_hint*) sleep 10 ;;\n"
+            f'  *) exec "{sys.executable}" "$@" ;;\n'
+            "esac\n",
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+
+        project = self._project(tmp_path, str(shim))
+        tool_use_id = "toolu-real-timeout"
+        result = _run_hook(_make_pretooluse(file_path="src/module.py", tool_use_id=tool_use_id), project)
+        assert result.returncode == 0
+        assert self._status(project, tool_use_id) == "timeout_fallback"
+
+
 class TestNoCrossContamination:
     """FR33: concurrent hint files for different tool_use_ids don't cross-contaminate."""
 
@@ -294,79 +381,15 @@ class TestFailOpen:
 
 
 # ---------------------------------------------------------------------------
-# FR36 — Channel manifest declares CC-04 correctly
+# PRD-CORE-239 FR01: `TestChannelManifestDeclaresCC04` (three tests asserting
+# the entry's presence, its `posttooluse_event_log` surface, and its absent
+# activation_gate) was deleted with its subject. `cc-04-posttooluse-correlation`
+# is no longer an entry in manifest-claude-code.yaml, so there is nothing left
+# to declare. The rest of this file survives deliberately: the hint-file
+# mechanism it exercises (`write_hint_file`) is still called by the shipped
+# CC-03 PreToolUse hook, so those cases pin live behaviour, not a removed
+# channel. See the module docstring for the producer/consumer caveat.
 # ---------------------------------------------------------------------------
-
-
-class TestChannelManifestDeclaresCC04:
-    """FR36: the bundled manifest-claude-code.yaml declares CC-04 correctly."""
-
-    def test_cc04_entry_present_in_manifest(self) -> None:
-        """CC-04 entry exists in the bundled channel manifest."""
-        from pathlib import Path as _Path
-
-        manifest_path = (
-            _Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "claude_code"
-            / "channels"
-            / "manifest-claude-code.yaml"
-        )
-        # Load via ManifestLoader for validation
-        from ruamel.yaml import YAML
-
-        yaml = YAML(typ="safe")
-        raw = yaml.load(manifest_path.read_text(encoding="utf-8")) or {}
-        channels = raw.get("channels", [])
-        ids = [c.get("id") for c in channels]
-        assert "cc-04-posttooluse-correlation" in ids
-
-    def test_cc04_surface_is_posttooluse_event_log(self) -> None:
-        """CC-04 surface is posttooluse_event_log (not instruction_file)."""
-        from pathlib import Path as _Path
-
-        from ruamel.yaml import YAML
-
-        manifest_path = (
-            _Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "claude_code"
-            / "channels"
-            / "manifest-claude-code.yaml"
-        )
-        yaml = YAML(typ="safe")
-        raw = yaml.load(manifest_path.read_text(encoding="utf-8")) or {}
-        channels = raw.get("channels", [])
-        cc04 = next((c for c in channels if c.get("id") == "cc-04-posttooluse-correlation"), None)
-        assert cc04 is not None
-        assert cc04.get("surface") == "posttooluse_event_log"
-
-    def test_cc04_fail_open_flag_matches_spec(self) -> None:
-        """CC-04 has no activation_gate (always-on) per FR33."""
-        from pathlib import Path as _Path
-
-        from ruamel.yaml import YAML
-
-        manifest_path = (
-            _Path(__file__).parent.parent.parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "claude_code"
-            / "channels"
-            / "manifest-claude-code.yaml"
-        )
-        yaml = YAML(typ="safe")
-        raw = yaml.load(manifest_path.read_text(encoding="utf-8")) or {}
-        channels = raw.get("channels", [])
-        cc04 = next((c for c in channels if c.get("id") == "cc-04-posttooluse-correlation"), None)
-        assert cc04 is not None
-        # Always-on: no activation gate
-        assert not cc04.get("activation_gate"), "CC-04 must be always-on (no activation_gate)"
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +414,12 @@ class TestNoShellPostToolUseHook:
         )
 
     def test_only_expected_hooks_in_data_dir(self) -> None:
-        """data/claude_code/hooks/ contains exactly the two expected hook files."""
+        """data/claude_code/hooks/ contains exactly the two expected hook files.
+
+        The PRD-CORE-231 git post-commit hook deliberately lives in
+        ``data/git_hooks/``, NOT here: this directory is the Claude Code
+        tool-lifecycle surface and has no post-commit event.
+        """
         hooks_dir = Path(__file__).parent.parent.parent.parent / "src" / "trw_mcp" / "data" / "claude_code" / "hooks"
         actual_files = {f.name for f in hooks_dir.iterdir() if f.is_file()}
         expected_files = {"pre-tool-distill-hint.sh", "lib-distill-hint.sh"}

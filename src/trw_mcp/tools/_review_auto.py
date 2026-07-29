@@ -1,9 +1,14 @@
 # Parent facade: tools/_review_helpers.py
-"""Auto-mode and cross-model review handlers.
+"""Auto-mode review handler.
 
 Extracted from ``_review_helpers.py`` to keep the facade under the
 500-line threshold.  All public names are re-exported from
 ``_review_helpers.py`` so existing import paths are preserved.
+
+The cross-model mode and the review-coverage vocabulary it owns now live in
+``_review_cross_model.py``; both are re-exported here unchanged so
+``from trw_mcp.tools._review_auto import handle_cross_model_mode`` keeps
+working.
 
 Note: shared helpers are accessed via ``_helpers.<name>`` (module reference)
 rather than direct name imports so that ``patch("trw_mcp.tools._review_helpers._get_git_diff", ...)``
@@ -22,12 +27,51 @@ import structlog
 from trw_mcp.models.run import IntegrationReviewArtifact
 from trw_mcp.models.typed_dicts import (
     AutoReviewResult,
-    CrossModelReviewResult,
     MultiReviewerAnalysisResult,
 )
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
-from trw_mcp.tools._review_validation import normalize_review_finding
+
+# Re-exported for back-compat: these moved to _review_cross_model.py but callers
+# and tests import them from here. ``X as X`` is required — a plain re-export is
+# deleted by ruff --fix and rejected by mypy --strict.
+from trw_mcp.tools._review_cross_model import (
+    COVERAGE_CROSS_FAMILY as COVERAGE_CROSS_FAMILY,
+)
+from trw_mcp.tools._review_cross_model import (
+    COVERAGE_SINGLE_FAMILY as COVERAGE_SINGLE_FAMILY,
+)
+from trw_mcp.tools._review_cross_model import (
+    EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON as EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON,
+)
+from trw_mcp.tools._review_cross_model import (
+    REASON_CROSS_MODEL_DISABLED as REASON_CROSS_MODEL_DISABLED,
+)
+from trw_mcp.tools._review_cross_model import (
+    REASON_NO_DIFF as REASON_NO_DIFF,
+)
+from trw_mcp.tools._review_cross_model import (
+    REASON_PROVIDER_INTEGRATION_ABSENT as REASON_PROVIDER_INTEGRATION_ABSENT,
+)
+from trw_mcp.tools._review_cross_model import (
+    REASON_PROVIDER_RETURNED_EMPTY as REASON_PROVIDER_RETURNED_EMPTY,
+)
+from trw_mcp.tools._review_cross_model import (
+    REASON_PROVIDER_UNREACHABLE as REASON_PROVIDER_UNREACHABLE,
+)
+from trw_mcp.tools._review_cross_model import (
+    _build_single_family_caveat as _build_single_family_caveat,
+)
+from trw_mcp.tools._review_cross_model import (
+    _honeypots_in_findings as _honeypots_in_findings,
+)
+from trw_mcp.tools._review_cross_model import (
+    _same_family_fallback as _same_family_fallback,
+)
+from trw_mcp.tools._review_cross_model import (
+    handle_cross_model_mode as handle_cross_model_mode,
+)
+from trw_mcp.tools._review_validation import apply_confidence_gate, normalize_review_findings
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -35,80 +79,25 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# PRD-QUAL-108-FR01/FR02: review family-coverage stamp + closed-set reason tokens.
-COVERAGE_CROSS_FAMILY = "cross_family"
-COVERAGE_SINGLE_FAMILY = "single_family"
-
-# FR02 degradation reason tokens (closed set). The caveat string is built from a
-# fixed template (reason token + provider NAME only) — never free interpolation
-# of a provider response body or credentials (NFR03).
-REASON_CROSS_MODEL_DISABLED = "cross_model_disabled"
-REASON_PROVIDER_UNREACHABLE = "provider_unreachable"
-REASON_PROVIDER_RETURNED_EMPTY = "provider_returned_empty"
-REASON_NO_DIFF = "no_diff"
 EMPTY_REVIEWER_FINDINGS_LIMITED_REASON = (
     "pre-collected reviewer_findings contained no schema-valid findings and "
     "no typed independent-review receipt was supplied"
 )
-EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON = (
-    "same-family fallback contained no schema-valid findings and no typed independent-review receipt"
-)
 
 
-def _build_single_family_caveat(reason_token: str, provider: str) -> str:
-    """Build the single-family caveat from a closed-set token + provider name.
+def _roles_attested_by(findings: list[dict[str, object]]) -> list[str]:
+    """Distinct ``reviewer_role`` values actually present in *findings*.
 
-    Fixed template only — never embeds provider response bodies, API keys, or
-    raw error text (NFR03 security invariant).
+    The canonical roles come first in :data:`_helpers.REVIEWER_ROLES` order so the
+    stamp is deterministic; any additional caller-named role is appended. An
+    empty list is the honest answer when no finding names a role — that shortfall
+    is what makes a one-role payload fail a six-role review plan instead of
+    silently satisfying it.
     """
-    provider_label = provider or "unset"
-    return (
-        f"single-family coverage ({reason_token}): cross-family review was not "
-        f"realized for provider '{provider_label}'; verdict reflects same-family "
-        f"multi-seed + honeypot findings only."
-    )
-
-
-def _honeypots_in_findings(findings: list[dict[str, object]]) -> bool:
-    """True iff any same-family finding is flagged as a honeypot (FR03).
-
-    Records *presence* only; authoring a honeypot corpus is out of scope (NG3).
-    A finding is a honeypot if it carries a truthy ``honeypot`` flag.
-    """
-    return any(isinstance(f, dict) and bool(f.get("honeypot")) for f in findings)
-
-
-def _same_family_fallback(
-    diff: str,
-    config: TRWConfig,
-) -> tuple[list[dict[str, str]], bool, bool, str]:
-    """Run the QUAL-027 same-family multi-reviewer path as the fallback substrate.
-
-    Returns ``(verdict_findings, honeypots_present, analysis_limited,
-    limited_reason)``. ``verdict_findings`` is the severity-only list consumed by
-    ``_compute_verdict``. The honesty labels travel with the findings so a
-    degraded marker scan cannot satisfy the substantive REVIEW gate. This NEVER
-    raises: the multi-reviewer path is the already-tested QUAL-027 entry point.
-    """
-    # The lazy ``__getattr__`` re-export in _review_helpers.py (see its
-    # _REEXPORT_MAP / module docstring) types this re-exported callable as
-    # ``object``, so mypy flags the call; the runtime target is the real function.
-    analysis = _helpers._run_multi_reviewer_analysis(diff, config)  # type: ignore[operator]
-    raw_findings = analysis.get("findings", [])
-    if not isinstance(raw_findings, list):
-        raw_findings = []
-    validated_findings = [
-        finding
-        for raw_finding in raw_findings
-        if (finding := normalize_review_finding(raw_finding, default_confidence=0.0)) is not None
-    ]
-    verdict_findings: list[dict[str, str]] = [{"severity": str(finding["severity"])} for finding in validated_findings]
-    analysis_limited = bool(analysis.get("auto_analysis_limited", False))
-    limited_reason = str(analysis.get("limited_reason", "")) if analysis_limited else ""
-    if not analysis_limited and not validated_findings:
-        analysis_limited = True
-        limited_reason = EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON
-    return verdict_findings, _honeypots_in_findings(raw_findings), analysis_limited, limited_reason
+    named = {str(f.get("reviewer_role", "")).strip() for f in findings if isinstance(f, dict)}
+    named.discard("")
+    ordered = [role for role in _helpers.REVIEWER_ROLES if role in named]
+    return ordered + sorted(named.difference(ordered))
 
 
 def handle_auto_mode(
@@ -129,17 +118,28 @@ def handle_auto_mode(
     """
     diff = _helpers._get_git_diff()
 
+    rejections: list[dict[str, object]] = []
+    rejected_count = 0
     if reviewer_findings is not None:
-        validated_reviewer_findings = [
-            finding
-            for raw_finding in reviewer_findings
-            if (finding := normalize_review_finding(raw_finding, default_confidence=0.0)) is not None
-        ]
+        # No default_confidence: an omitted ``confidence`` means the caller stated
+        # no score, NOT that they have zero confidence. Injecting 0.0 here put
+        # every unscored finding below the (80) threshold, so an audit handoff of
+        # real P0/P1 findings came back verdict='pass', substantive=True,
+        # critical_count=0 — the accept-list incident one layer down. Falling
+        # through to ReviewFinding's own 1.0 default makes an unscored finding
+        # count, which can only ever make the gate harder to pass.
+        validated_reviewer_findings, rejections = normalize_review_findings(reviewer_findings)
+        rejected_count = len(reviewer_findings) - len(validated_reviewer_findings)
         # Real pre-collected findings from client-side multi-agent review:
         # only schema-valid evidence is substantive. An empty/placeholder list
         # has no typed independent-review receipt, so it fails closed.
         analysis: MultiReviewerAnalysisResult = {
-            "reviewer_roles_run": list(_helpers.REVIEWER_ROLES) if validated_reviewer_findings else [],
+            # Honest roles: the roles the SUPPLIED findings actually attest to,
+            # never the full role list inferred from "the caller sent something".
+            # The receipt's realized_reviewer_roles is derived from this, so
+            # claiming all six here would let one reviewer's findings satisfy a
+            # six-role plan by assertion (VISION principle 3).
+            "reviewer_roles_run": _roles_attested_by(validated_reviewer_findings),
             "reviewer_errors": [],
             "findings": validated_reviewer_findings,
             "auto_analysis_limited": not validated_reviewer_findings,
@@ -165,19 +165,10 @@ def handle_auto_mode(
     # Multi-agent review confidence threshold (QUAL-027): 0-100 scale
     confidence_threshold = config.review_confidence_threshold
 
-    # Filter findings by confidence threshold
-    # ReviewFinding.confidence is 0.0-1.0 float; config threshold is 0-100 int.
-    # Normalize both to 0-100 for comparison.
-    surfaced: list[dict[str, object]] = []
-    for f in all_auto_findings:
-        if not isinstance(f, dict):
-            continue
-        confidence = f.get("confidence", 0)
-        if isinstance(confidence, (int, float)):
-            # Normalize: values <= 1.0 are 0-1 scale, multiply to 0-100
-            confidence_pct = confidence * 100 if confidence <= 1.0 else confidence
-            if confidence_pct >= confidence_threshold:
-                surfaced.append(f)
+    # Filter findings by confidence threshold. Every removal is recorded with an
+    # index + reason so a suppressed finding is visible to the caller that sent
+    # it, instead of only showing up as a gap between the two counts.
+    surfaced, suppressed, suppressed_count = apply_confidence_gate(all_auto_findings, confidence_threshold)
 
     # Compute verdict from surfaced findings only
     surfaced_for_verdict: list[dict[str, str]] = [{"severity": str(f.get("severity", "info"))} for f in surfaced]
@@ -209,6 +200,19 @@ def handle_auto_mode(
         "review_family_coverage": COVERAGE_SINGLE_FAMILY,
         "single_family_caveat": _build_single_family_caveat(REASON_CROSS_MODEL_DISABLED, "auto-mode (same-family)"),
     }
+    if rejected_count:
+        # Caller-supplied findings were dropped: report it, never just log it.
+        logger.warning("auto_review_findings_rejected", review_id=review_id, rejected=rejected_count)
+        result["rejected_findings_count"] = rejected_count
+        result["rejected_findings"] = rejections
+    if suppressed_count:
+        # Schema-valid findings the confidence gate removed before the verdict.
+        # Reported separately from rejections: the fix is different (raise the
+        # finding's confidence or lower review_confidence_threshold, vs. correct
+        # a malformed payload).
+        logger.warning("auto_review_findings_suppressed", review_id=review_id, suppressed=suppressed_count)
+        result["suppressed_findings_count"] = suppressed_count
+        result["suppressed_findings"] = suppressed
     if auto_analysis_limited:
         logger.info(
             "auto_review_analysis_limited",
@@ -275,6 +279,11 @@ def handle_auto_mode(
             "total_findings_count": len(all_auto_findings),
             "confidence_threshold": confidence_threshold,
             "findings": surfaced,
+            # Persisted alongside the surfaced findings so a later reader of
+            # review.yaml can tell "nothing was found" from "findings were
+            # filtered out below the confidence threshold".
+            "suppressed_findings_count": suppressed_count,
+            "suppressed_findings": suppressed,
             # Honest labeling persisted into the artifact so any reader of
             # review.yaml can tell a limited pattern-scan from a real review.
             "auto_analysis_limited": auto_analysis_limited,
@@ -331,152 +340,4 @@ def handle_auto_mode(
             integration_path = resolved_run / "meta" / "integration-review.yaml"
             writer.write_yaml(integration_path, integration_data)
 
-    return result
-
-
-def handle_cross_model_mode(
-    config: TRWConfig,
-    resolved_run: Path | None,
-    review_id: str,
-    ts: str,
-    prd_ids: list[str] | None = None,
-    *,
-    verified_reviewer_identity: RunIdentity | None = None,
-) -> CrossModelReviewResult:
-    """Handle the cross-model review mode -- get diff, invoke provider, persist.
-
-    PRD-QUAL-108: never hard-requires cross-family availability. When cross-family
-    is unavailable (disabled / no diff / unreachable provider / empty result) the
-    review degrades to the same-family multi-seed + honeypot path, computes a
-    verdict from those findings, and stamps the verdict ``single_family`` with a
-    closed-set caveat. The coverage stamp reflects REALIZED findings, never
-    configuration intent (NFR02).
-    """
-    diff = _helpers._get_git_diff()
-    cross_model_skipped = False
-    cross_model_findings: list[dict[str, str]] = []
-    # Determine the degradation reason (None => cross-family realized).
-    reason_token: str | None = None
-
-    if not _helpers._cross_family_available(config):
-        # Config-only unavailability (disabled or no provider configured).
-        reason_token = REASON_CROSS_MODEL_DISABLED
-        cross_model_skipped = True
-        logger.info("cross_model_review_disabled")
-    elif not diff:
-        reason_token = REASON_NO_DIFF
-        cross_model_skipped = True
-        logger.info("cross_model_review_no_diff")
-    else:
-        try:
-            raw_findings = _helpers._invoke_cross_model_review(diff, config)
-        except Exception:  # trw:intentional fail-toward-single-family-coverage
-            # FR03/NFR02: ANY provider error degrades to single-family rather than
-            # raising or emitting an ``error`` verdict. The raw exception text is
-            # deliberately NOT surfaced (NFR03) — only the reason token + provider.
-            logger.info("cross_model_review_provider_unreachable", exc_info=True)
-            raw_findings = []
-            reason_token = REASON_PROVIDER_UNREACHABLE
-            cross_model_skipped = True
-        else:
-            validated_cross_model_findings = [
-                finding
-                for raw_finding in raw_findings
-                if (finding := normalize_review_finding(raw_finding)) is not None
-            ]
-            if not validated_cross_model_findings:
-                reason_token = REASON_PROVIDER_RETURNED_EMPTY
-                cross_model_skipped = True
-            else:
-                cross_model_findings.extend(
-                    {
-                        "category": str(finding["category"]),
-                        "severity": str(finding["severity"]),
-                        "description": str(finding["description"]),
-                        "source": "cross_model",
-                        "provider": config.cross_model_provider,
-                    }
-                    for finding in validated_cross_model_findings
-                )
-
-    # Coverage is cross_family ONLY when realized cross-family findings exist
-    # (NFR02 truthfulness invariant). Otherwise fall back to same-family.
-    cross_family_realized = reason_token is None and bool(cross_model_findings)
-    honeypots_present = False
-    # Realized same-family findings on the degraded path. ``total_findings`` below
-    # counts only cross-family findings (0 when degraded), so this keeps the
-    # verdict-driving evidence count visible (P2-QUAL-108-03).
-    same_family_findings_count = 0
-    auto_analysis_limited = False
-    limited_reason = ""
-
-    if cross_family_realized:
-        review_family_coverage = COVERAGE_CROSS_FAMILY
-        single_family_caveat = ""
-        verdict = _helpers._compute_verdict(cross_model_findings)
-    else:
-        # FR03 graceful degradation: compute the verdict from same-family
-        # multi-seed + honeypot findings. Never raises, never blocks on missing
-        # cross-family access.
-        review_family_coverage = COVERAGE_SINGLE_FAMILY
-        single_family_caveat = _build_single_family_caveat(
-            reason_token or REASON_CROSS_MODEL_DISABLED, config.cross_model_provider
-        )
-        fallback_findings, honeypots_present, auto_analysis_limited, limited_reason = _same_family_fallback(
-            diff, config
-        )
-        same_family_findings_count = len(fallback_findings)
-        verdict = _helpers._compute_verdict(fallback_findings)
-
-    substantive = not auto_analysis_limited
-
-    result: CrossModelReviewResult = {
-        "review_id": review_id,
-        "verdict": verdict,
-        "mode": "cross_model",
-        "cross_model_skipped": cross_model_skipped,
-        "cross_model_provider": config.cross_model_provider,
-        "total_findings": len(cross_model_findings),
-        "same_family_findings_count": same_family_findings_count,
-        "run_path": str(resolved_run) if resolved_run else None,
-        "review_family_coverage": review_family_coverage,
-        "single_family_caveat": single_family_caveat,
-        "honeypots_present": honeypots_present,
-        "auto_analysis_limited": auto_analysis_limited,
-        "limited_reason": limited_reason,
-        "substantive": substantive,
-    }
-
-    result["review_yaml"] = _helpers._persist_review_artifact(
-        resolved_run,
-        {
-            "review_id": review_id,
-            "timestamp": ts,
-            "verdict": verdict,
-            "mode": "cross_model",
-            "cross_model_skipped": cross_model_skipped,
-            "cross_model_provider": config.cross_model_provider,
-            "cross_model_findings": cross_model_findings,
-            # PRD-QUAL-108: coverage + caveat surfaced in the persisted artifact (US3).
-            "review_family_coverage": review_family_coverage,
-            "single_family_caveat": single_family_caveat,
-            "honeypots_present": honeypots_present,
-            "same_family_findings_count": same_family_findings_count,
-            "auto_analysis_limited": auto_analysis_limited,
-            "limited_reason": limited_reason,
-            "substantive": substantive,
-        },
-        {
-            "review_id": review_id,
-            "verdict": verdict,
-            "mode": "cross_model",
-            "cross_model_skipped": cross_model_skipped,
-            "review_family_coverage": review_family_coverage,
-            "auto_analysis_limited": auto_analysis_limited,
-            "substantive": substantive,
-            "prd_ids": list(prd_ids) if prd_ids else [],
-        },
-        cast("dict[str, object]", result),
-        verified_reviewer_identity=verified_reviewer_identity,
-    )
     return result

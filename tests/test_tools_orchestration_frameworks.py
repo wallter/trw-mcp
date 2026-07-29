@@ -187,14 +187,16 @@ class TestTrwInitWaveManifest:
     def test_init_with_wave_manifest_creates_validated_plan(self, orch_tools: dict[str, Any]) -> None:
         result = orch_tools["trw_init"].fn(
             task_name="wave-init-task",
-            wave_manifest=[
-                {"wave": 1, "shards": [{"id": "S1", "title": "Research", "goals": ["research"]}]},
-                {
-                    "wave": 2,
-                    "shards": [{"id": "S2", "title": "Implement", "goals": ["implement"]}],
-                    "depends_on": [1],
-                },
-            ],
+            advanced={
+                "wave_manifest": [
+                    {"wave": 1, "shards": [{"id": "S1", "title": "Research", "goals": ["research"]}]},
+                    {
+                        "wave": 2,
+                        "shards": [{"id": "S2", "title": "Implement", "goals": ["implement"]}],
+                        "depends_on": [1],
+                    },
+                ]
+            },
         )
 
         assert result["wave_plan_status"] == "wave_plan_created"
@@ -208,7 +210,7 @@ class TestTrwInitWaveManifest:
         with pytest.raises(ValidationError, match="depends_on references non-existent wave"):
             orch_tools["trw_init"].fn(
                 task_name="invalid-wave-task",
-                wave_manifest=[{"wave": 1, "shards": [], "depends_on": [99]}],
+                advanced={"wave_manifest": [{"wave": 1, "shards": [], "depends_on": [99]}]},
             )
 
     def test_init_without_wave_manifest_no_wave_keys(

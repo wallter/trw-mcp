@@ -4,7 +4,7 @@ PRD-DIST-2403 FR16-FR19 / audit P0-13 / P1-11.
 
 Note: T2 tool-return payload construction is handled by the shared substrate
 ``channels/_tool_return_tiers.py::enrich_response()``, called directly from
-``tools/before_edit_hint.py``, ``tools/entity_risk_map.py``, and
+``tools/before_edit_hint.py``, and
 ``tools/codebase_risk_report.py``.  The per-client ``build_t2_payload``
 helper that previously lived here was dead code (never called from tools/)
 and was removed.  The substrate ``enrich_response`` path covers FR16.

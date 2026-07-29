@@ -147,11 +147,12 @@ def register_replay_tools(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     async def trw_replay_outcomes(since: str | None = None) -> ReplayOutcomesResult:
-        """Replay unsynced delivered-run outcomes once, optionally through an old-run cutoff.
+        """Flush unsynced delivered-run outcomes once (e.g. after a backend outage).
 
-        Use when:
-        - Delivered runs may have missed their outcome sync (backend outage, kill).
-        - You need pending outcome telemetry flushed before analyzing results.
+        Use when: delivered runs may have missed their outcome sync.
+
+        Args:
+            since: optional cutoff; only replay runs delivered after this.
         """
         from trw_mcp.state._paths import resolve_trw_dir
 

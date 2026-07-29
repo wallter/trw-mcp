@@ -167,8 +167,14 @@ def attribute_failures(failures: list[str]) -> FailureAttributionDict | None:
     if not failures:
         return None
 
-    changed = changed_files()
     try:
+        # ``changed_files`` used to be called OUTSIDE this guard. It only
+        # catches TimeoutExpired/FileNotFoundError/OSError, so any other
+        # subprocess or decoding failure escaped and broke ``trw_build_check``
+        # itself — after the build status had already been persisted, leaving
+        # recorded evidence behind a failed tool call. The module's stated
+        # fail-open contract said otherwise; this closes the gap.
+        changed = changed_files()
         if changed is None:
             per_failure: list[FailureAttributionItemDict] = [
                 FailureAttributionItemDict(

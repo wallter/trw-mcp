@@ -110,23 +110,47 @@ class TestStorageErrorPropagation:
         finally:
             monkeypatch.setattr(backend, "store", original_store)
 
-    def test_recall_learnings_storage_error_returns_empty_not_exception(
+    def test_hybrid_recall_does_not_consult_backend_search_at_all(
         self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When SQLiteBackend.search() raises StorageError, recall_learnings() must
-        return an empty list (or error dict), NOT propagate an uncaught exception."""
+        """Renamed from ``..._storage_error_returns_empty_not_exception``.
+
+        That test raised ``StorageError`` from ``backend.search`` and asserted
+        ``isinstance(result, (list, dict))``. Two things were wrong with it: the
+        assertion admits every possible outcome, and — measured — ``search`` is
+        called **zero** times on the hybrid recall path, which ranks a
+        ``list_entries`` candidate pool. The exception it "protected against"
+        never fired, so the test proved nothing about the seam it named.
+
+        What is worth pinning is the routing fact itself: with an embedder
+        available, keyword ``search`` is not on the path. If that changes, the
+        StorageError translation seam DOES become reachable and needs its own
+        coverage — this test is the tripwire for that.
+        """
         store_learning(trw_dir, "L-p1a002", "setup entry", "detail", impact=0.5)
 
+        embedder = MagicMock()
+        embedder.embed.return_value = [0.1] * 384
+        embedder.available.return_value = True
+        monkeypatch.setattr("trw_mcp.state._memory_connection.get_embedder", lambda: embedder)
+
         backend = get_backend(trw_dir)
+        search_calls: list[object] = []
 
         def raise_storage_error(*args: object, **kwargs: object) -> list[MemoryEntry]:
+            search_calls.append(args)
             raise StorageError("simulated read failure")
 
         monkeypatch.setattr(backend, "search", raise_storage_error)
 
         result = recall_learnings(trw_dir, "setup entry")
-        # Adapter must return a list (possibly empty) or error dict — not raise
-        assert isinstance(result, (list, dict)), f"Expected list or dict, got {type(result)}"
+        assert search_calls == [], (
+            "backend.search is now on the hybrid recall path; its StorageError "
+            "translation seam is reachable and needs real coverage"
+        )
+        assert [entry["id"] for entry in result] == ["L-p1a002"], (
+            f"hybrid recall lost the stored entry: {result}"
+        )
 
     def test_recall_learnings_list_entries_error_returns_empty(
         self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -143,7 +167,11 @@ class TestStorageErrorPropagation:
         monkeypatch.setattr(backend, "list_entries", raise_storage_error)
 
         result = recall_learnings(trw_dir, "*")
-        assert isinstance(result, (list, dict))
+        # The wildcard path has no alternative source, so the honest degraded
+        # answer is an EMPTY list — never a partial one presented as complete,
+        # and never a raised StorageError. `isinstance(result, (list, dict))`
+        # admitted every one of those outcomes.
+        assert result == [], f"expected an empty degraded result, got: {result}"
 
 
 # ---------------------------------------------------------------------------

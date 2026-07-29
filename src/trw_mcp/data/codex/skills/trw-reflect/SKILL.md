@@ -56,6 +56,14 @@ alongside new opportunities, or suggest `/trw-reflect action`). A ledger that
 only ever accumulates recorded-only rows has not closed the follow-through
 loop — say so plainly when the debt grows.
 
+**Concurrent-instance check.** A ledger whose recorded identity differs from
+yours and whose mtime falls in this session's window belongs to an instance
+still working. Its rows are its live queue, not your recurrences: do not route
+them. Record them under "Recurring (deduped)" as owned elsewhere, and if your
+session holds sharper evidence than theirs, route that as
+`evidence-contributed` (Step 4) instead of filing your own. Compare identities,
+never filename slugs — same-day filenames collide across instances.
+
 ## Step 1: Collect signals (external evidence only)
 
 Gather what exists; skip gracefully what doesn't (e.g., no active run → skip
@@ -132,6 +140,13 @@ header. The ledger IS the deliverable; the next reflection treats
 `recorded-only` rows as unimplemented when checking recurrence.
 
 ## Step 4: Route and implement
+
+**Claim before you route.** The backlog row's `Claim` cell is set in the SAME
+edit that files the PRD or starts the fix — never after; the window that matters
+is while you are working. `claimed:<identity-short> <YYYY-MM-DD>` in flight, then
+the `PRD-<CAT>-<NNN>` or `shipped:<sha>` that supersedes it. Vocabulary is
+documented at the top of `docs/documentation/improvement-backlog.md`. A row
+claimed by another identity is owned — treat it as the Step 0 concurrent case.
 
 Route each approved opportunity to exactly one channel:
 

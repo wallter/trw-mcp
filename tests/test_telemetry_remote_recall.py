@@ -109,6 +109,10 @@ class TestRemoteRecallSuccess:
         ):
             result = fetch_shared_learnings("query")
 
+        # Non-vacuity: without this the loop body never runs when the fetch
+        # returns [] (e.g. the embed=None branch starts failing closed) and the
+        # test reports "every result is labelled" for zero results.
+        assert len(result) == 3, f"expected all 3 backend rows, got {result}"
         for item in result:
             assert item["summary"].startswith("[shared] ")
 

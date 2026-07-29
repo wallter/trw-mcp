@@ -85,7 +85,7 @@ def test_profile_messenger_resolves_to_standard(profile_id: str, tmp_path: Path)
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
-    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=[profile_id])
+    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=[profile_id])  # type: ignore[call-arg]  # aliased pydantic fields; valid at runtime
 
     assert config.effective_nudge_messenger == "standard"
 
@@ -103,9 +103,10 @@ def test_append_ceremony_status_emits_when_enabled(profile_id: str, tmp_path: Pa
     """FR10: when a nudge-enabled profile is active and a learning candidate is
     available, ``append_ceremony_status`` emits a ``nudge_shown`` INFO event.
 
-    Drives the ``learning_injection`` messenger branch (line 504 in
-    _ceremony_status.py) to guarantee a deterministic emission; real-world
-    pool dispatch would be non-deterministic in a unit test.
+    Drives the ``contextual`` messenger branch to guarantee a deterministic
+    emission; real-world pool dispatch would be non-deterministic in a unit
+    test. (Was the ``learning_injection`` branch until PRD-CORE-241-FR07
+    retired it; the two branches have the same emission shape.)
     """
     from trw_mcp.tools._ceremony_status import append_ceremony_status
 
@@ -114,12 +115,12 @@ def test_append_ceremony_status_emits_when_enabled(profile_id: str, tmp_path: Pa
     _write_profile_config(
         trw_dir,
         profile_id,
-        extra="nudge_enabled: true\nnudge_messenger: learning_injection\n",
+        extra="nudge_enabled: true\nnudge_messenger: contextual\n",
     )
 
     with (
         patch(
-            "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
+            "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
             return_value=("Injected nudge content", "L-fr10", "foo.py"),
         ),
         structlog.testing.capture_logs() as captured,
@@ -148,7 +149,7 @@ def test_profile_budget_respected(profile_id: str, tmp_path: Path) -> None:
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
-    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=[profile_id])
+    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=[profile_id])  # type: ignore[call-arg]  # aliased pydantic fields; valid at runtime
     budget = config.nudge_budget_chars
     assert budget >= 100  # sanity: Field(ge=100)
 
@@ -187,11 +188,11 @@ def test_append_ceremony_status_idempotent_across_two_calls(profile_id: str, tmp
     _write_profile_config(
         trw_dir,
         profile_id,
-        extra="nudge_enabled: true\nnudge_messenger: learning_injection\n",
+        extra="nudge_enabled: true\nnudge_messenger: contextual\n",
     )
 
     with patch(
-        "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
+        "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
         return_value=("Injected nudge", "L-dedup", "foo.py"),
     ):
         with structlog.testing.capture_logs() as first_capture:
@@ -217,7 +218,7 @@ def test_append_ceremony_status_idempotent_across_two_calls(profile_id: str, tmp
         f"{profile_id}: second call must not re-emit deduped learning_id; got {second_events!r}"
     )
     # Response contract: first call carries nudge_content, second does not
-    # (matches test_learning_injection_messenger_dedups_and_records_impression).
+    # (matches the contextual-branch dedup path in test_nudge_isolation.py).
     assert first.get("nudge_content") == "Injected nudge"
     assert second.get("nudge_content") != "Injected nudge"
 
@@ -257,7 +258,7 @@ def test_compute_nudge_uses_passed_profile_weights_not_global(tmp_path: Path) ->
 
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
-    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=["claude-code"])
+    config = TRWConfig(trw_dir=str(trw_dir), target_platforms=["claude-code"])  # type: ignore[call-arg]  # aliased pydantic fields; valid at runtime
 
     # ClientProfile is frozen — derive both profiles from the resolved registry
     # profile via model_copy(update=...) so all required fields stay valid.
@@ -315,7 +316,7 @@ def test_nudge_off_profile_emits_no_nudge_shown_info(profile_id: str, tmp_path: 
 
     with (
         patch(
-            "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
+            "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
             return_value=("Should-not-appear", "L-off", "foo.py"),
         ),
         structlog.testing.capture_logs() as captured,
@@ -342,7 +343,7 @@ def test_nudge_off_profile_emits_no_nudge_shown_jsonl(profile_id: str, tmp_path:
     _write_profile_config(trw_dir, profile_id)
 
     with patch(
-        "trw_mcp.state.ceremony_nudge.select_learning_injection_content",
+        "trw_mcp.state.ceremony_nudge.select_contextual_nudge_content",
         return_value=("Should-not-appear", "L-off", "foo.py"),
     ):
         append_ceremony_status({"status": "ok"}, trw_dir)

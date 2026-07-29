@@ -30,7 +30,6 @@ _BUILTIN_CLIENTS = [
     "cursor",
     "codex",
     "aider",
-    "gemini",
     "copilot",
     "all",
 ]

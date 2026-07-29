@@ -1,6 +1,6 @@
 """opencode distill channel bootstrap — single entry-point.
 
-Installs all six opencode distill channel artifacts at ``init-project`` and
+Installs the remaining opencode distill channel artifacts at ``init-project`` and
 ``update-project`` time.  Called as a facade from ``bootstrap/_opencode.py``.
 
 Install ordering (FR26):
@@ -20,6 +20,10 @@ Artifacts written:
   - .gitignore entries for channel-events.jsonl and client-profile.env
 
 PRD-DIST-2403 FR25-FR30.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
@@ -33,10 +37,6 @@ from ruamel.yaml import YAML
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.channels._gitignore import add_gitignore_entry
 from trw_mcp.channels._manifest_loader import ManifestValidationError
-from trw_mcp.channels.opencode._agents_md_segment import (
-    SidecarData,
-    install_opencode_agents_md_distill_segment,
-)
 from trw_mcp.channels.opencode._custom_commands import install_custom_commands
 from trw_mcp.channels.opencode._explorer_agent import install_explorer_agent
 
@@ -96,7 +96,7 @@ def _save_managed_artifacts(repo_root: Path, data: dict[str, Any]) -> None:
 
 
 def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
-    """Load manifest-opencode.yaml and merge six ChannelEntry records.
+    """Load manifest-opencode.yaml and merge five ChannelEntry records.
 
     Merge is additive — existing entries for other clients are preserved (FR30).
     All-or-nothing: if any entry fails validation, raises ManifestValidationError
@@ -129,22 +129,27 @@ def bootstrap_channel_manifest(repo_root: Path) -> dict[str, object]:
 
 def install_opencode_distill_channels(
     repo_root: Path,
-    sidecar_data: SidecarData | None = None,
+    sidecar_data: object | None = None,
     sidecar_sha: str | None = None,
 ) -> dict[str, object]:
-    """Install all six opencode distill channel artifacts.
+    """Install the opencode distill channel artifacts.
 
     This is the single entry-point called from ``bootstrap/_opencode.py``
     as a thin facade.
 
     Args:
         repo_root: Repository root directory.
-        sidecar_data: Optional parsed sidecar payload for T1 render.
-        sidecar_sha: Optional sidecar git SHA for TTL tracking.
+        sidecar_data: Accepted and ignored. PRD-CORE-239 FR01 removed the
+            AGENTS.md distill segment this fed; the parameter is retained so the
+            `bootstrap/_opencode.py` facade and its callers keep their signature
+            through the removal rather than changing two contracts at once.
+        sidecar_sha: Accepted and ignored, same reason.
 
     Returns:
         Dict with install status for each artifact group.
     """
+    del sidecar_data, sidecar_sha  # see Args — retained, not used
+
     results: dict[str, object] = {}
 
     # 1. Load managed artifacts (for user-edit detection)
@@ -154,21 +159,33 @@ def install_opencode_distill_channels(
     raw_explorer = managed.get("explorer_agent")
     explorer_sha: str | None = str(raw_explorer) if raw_explorer is not None else None
 
-    # 2. AGENTS.md distill segment (acquires shared agents-md.lock internally)
-    segment_result = install_opencode_agents_md_distill_segment(
-        repo_root,
-        sidecar_data,
-        sidecar_sha,
-    )
-    results["agents_md_segment"] = segment_result.status
+    # 2. The AGENTS.md distill segment is gone (PRD-CORE-239 FR01). opencode was
+    #    the one client whose segment was invoked directly by its installer
+    #    rather than through the placeholder-only `trw_channel_render`, so it is
+    #    also the only one whose removal changes real behaviour: the marker
+    #    block is no longer written. `uninstall` still strips any block a
+    #    previous version left behind, via the `trw:distill:start/end` pair in
+    #    MARKER_REGISTRY.
+    results["agents_md_segment"] = "removed_prd_core_239"
 
     # 3. Custom command files
     cmd_results = install_custom_commands(repo_root, existing_hashes=cmd_hashes)
     results["custom_commands"] = {k: v["status"] for k, v in cmd_results.items()}
 
-    # 4. Explorer agent
-    explorer_result = install_explorer_agent(repo_root, existing_sha256=explorer_sha)
-    results["explorer_agent"] = explorer_result["status"]
+    # 4. Explorer agent — PRD-CORE-239: licence-gated. Third sibling of cc-05
+    #    and ag-02; all three install an agent that cannot function without the
+    #    proprietary package. Note the CUSTOM COMMANDS above are deliberately
+    #    NOT gated: their bodies call `trw_before_edit_hint`,
+    #    `trw_codebase_risk_report` and `trw_recall` over MCP, which work on the
+    #    free tier. Only the distill-dependent agent is withheld.
+    from trw_mcp.bootstrap._distill_entitlement import distill_artifacts_entitled
+
+    if distill_artifacts_entitled(artifact="opencode-explorer-agent", repo_root=repo_root):
+        explorer_result = install_explorer_agent(repo_root, existing_sha256=explorer_sha)
+        results["explorer_agent"] = explorer_result["status"]
+    else:
+        explorer_result = {"status": "skipped_unentitled"}
+        results["explorer_agent"] = "skipped_unentitled"
 
     # 5. Update managed-artifacts.yaml with new hashes
     new_cmd_hashes: dict[str, str] = {}

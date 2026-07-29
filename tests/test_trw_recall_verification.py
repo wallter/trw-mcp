@@ -70,6 +70,13 @@ def _make_assertion_result(passed: bool | None, evidence: str = "") -> MagicMock
     return result
 
 
+def _persisted_assertions(call_args: Any) -> list[dict[str, Any]]:
+    """Return the assertion payload handed to ``backend.update()`` as plain dicts."""
+    written = call_args[1]["assertions"]
+    assert isinstance(written, list)
+    return [json.loads(a.model_dump_json()) for a in written]
+
+
 @pytest.fixture()
 def config() -> TRWConfig:
     """Provide a TRWConfig instance with default assertion settings."""
@@ -245,10 +252,10 @@ class TestVerifyAssertionsPersistsResults:
         mock_backend.update.assert_called_once()
         call_args = mock_backend.update.call_args
         assert call_args[0][0] == "L-persist"  # entry_id
-        # The assertions kwarg should be a JSON string
-        assertions_json = call_args[1]["assertions"]
-        parsed = json.loads(assertions_json)
-        assert isinstance(parsed, list)
+        # PRD-CORE-231-FR02: the kwarg carries validated Assertion MODELS, not a
+        # pre-serialized JSON string — update() reconstructs the entry to hash it
+        # and a raw string there makes that reconstruction raise.
+        parsed = _persisted_assertions(call_args)
         assert len(parsed) == 1
         assert parsed[0]["last_result"] is True
 
@@ -296,9 +303,7 @@ class TestFirstFailedAtSetOnFailure:
         _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         # Check persisted assertions have first_failed_at set
-        call_args = mock_backend.update.call_args
-        assertions_json = call_args[1]["assertions"]
-        parsed = json.loads(assertions_json)
+        parsed = _persisted_assertions(mock_backend.update.call_args)
         assert parsed[0]["first_failed_at"] is not None
         # Verify it's a valid ISO timestamp
         datetime.fromisoformat(parsed[0]["first_failed_at"])
@@ -347,7 +352,5 @@ class TestFirstFailedAtClearedOnPass:
 
         _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
-        call_args = mock_backend.update.call_args
-        assertions_json = call_args[1]["assertions"]
-        parsed = json.loads(assertions_json)
+        parsed = _persisted_assertions(mock_backend.update.call_args)
         assert parsed[0]["first_failed_at"] is None

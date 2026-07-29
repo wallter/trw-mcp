@@ -24,9 +24,6 @@ import pytest
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools.before_edit_hint_batch import compute_before_edit_hint_batch
 from trw_mcp.tools.codebase_risk_report import compute_codebase_risk_report
-from trw_mcp.tools.cross_repo_ordering import compute_cross_repo_ordering
-from trw_mcp.tools.entity_risk_map import compute_entity_risk_map
-from trw_mcp.tools.ordering_compare import compute_ordering_compare
 
 
 def _write_entitlement(trw_dir: Path, tier: str) -> None:
@@ -38,13 +35,17 @@ def _write_entitlement(trw_dir: Path, tier: str) -> None:
     )
 
 
-# The four tools whose flow is repo_root -> tier gate, so a repo_root arg alone
+# Tools whose flow is repo_root -> tier gate, so a repo_root arg alone
 # reaches the gate (no valid sidecar needed to observe tier_required vs unlocked).
+#
+# `entity_risk_map` was the third member until 2026-07-29, when UF-011 was
+# resolved by removing the tool: it consumed a sidecar no producer emits, so it
+# could never return data at any tier. The two that remain exercise the same
+# gate on the same path, so the beta-unlock property stays covered in both
+# directions.
 _UNIFORM_TOOLS = {
     "before_edit_hint_batch": compute_before_edit_hint_batch,
     "codebase_risk_report": compute_codebase_risk_report,
-    "entity_risk_map": compute_entity_risk_map,
-    "ordering_compare": compute_ordering_compare,
 }
 
 
@@ -65,33 +66,6 @@ class TestUniformSidecarToolsBetaUnlock:
         # is fine; it just must not be tier_required.
         assert result.tier == "beta", tool_name
         assert result.distill_status != "tier_required", tool_name
-
-
-class TestCrossRepoOrderingBetaUnlock:
-    """cross_repo_ordering checks the sidecar BEFORE the tier gate on the
-    no-sidecar path, so we hand it an existing (junk) sidecar_path to reach the
-    gate for both the free and beta cases."""
-
-    def _junk_sidecar(self, tmp_path: Path) -> str:
-        sidecar = tmp_path / "cross-repo-aggregate-x.json"
-        sidecar.write_text("{}")
-        return str(sidecar)
-
-    def test_free_tier_is_gated(self, tmp_path: Path) -> None:
-        result = compute_cross_repo_ordering(
-            repo_root=str(tmp_path),
-            sidecar_path=self._junk_sidecar(tmp_path),
-        )
-        assert result.distill_status == "tier_required"
-
-    def test_beta_tier_opens_the_gate(self, tmp_path: Path) -> None:
-        _write_entitlement(tmp_path / ".trw", "beta")
-        result = compute_cross_repo_ordering(
-            repo_root=str(tmp_path),
-            sidecar_path=self._junk_sidecar(tmp_path),
-        )
-        assert result.tier == "beta"
-        assert result.distill_status != "tier_required"
 
 
 class TestDistillPresenceUnlock:

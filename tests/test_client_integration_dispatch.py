@@ -24,9 +24,9 @@ def test_iter_matching_integrations_returns_stable_order() -> None:
 
 
 def test_iter_matching_integrations_ignores_retired_ids() -> None:
-    # Retired ids (gemini/aider) match no integration — they were removed from
-    # CLIENT_INTEGRATIONS on retirement.
-    integrations = iter_matching_integrations(["gemini", "aider", "opencode"])
+    # The retired id (aider) and any unknown id match no integration — they are
+    # absent from CLIENT_INTEGRATIONS.
+    integrations = iter_matching_integrations(["aider", "not-a-real-client", "opencode"])
     assert [integration.name for integration in integrations] == ["opencode"]
 
 

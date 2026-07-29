@@ -118,7 +118,7 @@ def _update_opencode_artifacts(
             agents_section = render_minimal_protocol()
         else:
             agents_section = render_agents_trw_section()
-        agents_result = generate_agents_md(target_dir, agents_section)
+        agents_result = generate_agents_md(target_dir, agents_section, client_id="opencode")
         result["created"].extend(agents_result.get("created", []))
         result["updated"].extend(agents_result.get("updated", []))
         result["errors"].extend(agents_result.get("errors", []))
@@ -247,7 +247,7 @@ def _update_codex_artifacts(
     try:
         from trw_mcp.state.claude_md._static_sections import render_codex_trw_section
 
-        agents_md_result = generate_agents_md(target_dir, render_codex_trw_section())
+        agents_md_result = generate_agents_md(target_dir, render_codex_trw_section(), client_id="codex")
         result["created"].extend(agents_md_result.get("created", []))
         result["updated"].extend(agents_md_result.get("updated", []))
         result["errors"].extend(agents_md_result.get("errors", []))
@@ -312,7 +312,7 @@ def _update_copilot_artifacts(
         result.setdefault("warnings", []).append(f"copilot-instructions.md update skipped: {exc}")
 
     try:
-        path_result = generate_copilot_path_instructions(target_dir)
+        path_result = generate_copilot_path_instructions(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, path_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"copilot path instructions update skipped: {exc}")
@@ -324,13 +324,13 @@ def _update_copilot_artifacts(
         result.setdefault("warnings", []).append(f"copilot hooks.json update skipped: {exc}")
 
     try:
-        agents_result = generate_copilot_agents(target_dir)
+        agents_result = generate_copilot_agents(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"copilot agents update skipped: {exc}")
 
     try:
-        skills_result = install_copilot_skills(target_dir)
+        skills_result = install_copilot_skills(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, skills_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"copilot skills update skipped: {exc}")
@@ -383,7 +383,7 @@ def _update_antigravity_artifacts(
         result.setdefault("warnings", []).append(f"antigravity MCP config update skipped: {exc}")
 
     try:
-        agents_result = generate_antigravity_agents(target_dir)
+        agents_result = generate_antigravity_agents(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"antigravity agents update skipped: {exc}")
@@ -395,7 +395,27 @@ def _update_antigravity_artifacts(
 
 
 def _extract_trw_section_content() -> str:
-    """Extract the content between trw:start and trw:end from _minimal_claude_md."""
+    """Return the shared TRW protocol body for cursor-ide's always-applied rule.
+
+    Sourced from the shared renderer. It used to slice the block out of the
+    ``_minimal_claude_md()`` scaffold, which made cursor-ide the one client
+    whose protocol came from a hardcoded second copy — and that copy was
+    missing the deliver-gate statement every other client's carrier states.
+    Cursor resolves this file eagerly (`alwaysApply: true`), so it is
+    cursor-ide's protocol carrier and has to carry the whole protocol.
+
+    Falls back to the old extraction if the renderer is unavailable, because a
+    weaker rule file still beats an empty one.
+    """
+    try:
+        from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+        rendered = render_agents_trw_section().strip()
+        if rendered:
+            return rendered
+    except Exception:  # justified: fail-open — a rule file with the old body beats none
+        logger.warning("cursor_rule_shared_renderer_unavailable", exc_info=True)
+
     full = _minimal_claude_md()
     start_idx, end_idx = full.find(_TRW_START_MARKER), full.find(_TRW_END_MARKER)
     if start_idx != -1 and end_idx != -1:
@@ -412,6 +432,7 @@ def _update_cursor_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
     ide_override: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Update Cursor artifacts for cursor-ide and/or cursor-cli surfaces.
 
@@ -475,21 +496,21 @@ def _update_cursor_artifacts(
 
         # FR03: .cursor/agents/trw-*.md
         try:
-            sub_result = generate_cursor_ide_subagents(target_dir)
+            sub_result = generate_cursor_ide_subagents(target_dir, manifest_hashes=manifest_hashes)
             _absorb_sub_result(result, sub_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(f".cursor/agents/ update skipped: {type(exc).__name__}: {exc}")
 
         # FR05: .cursor/commands/trw-*.md
         try:
-            cmd_result = generate_cursor_ide_commands(target_dir)
+            cmd_result = generate_cursor_ide_commands(target_dir, manifest_hashes=manifest_hashes)
             _absorb_sub_result(result, cmd_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(f".cursor/commands/ update skipped: {type(exc).__name__}: {exc}")
 
         # FR04: .cursor/skills/<name>/
         try:
-            skills_result = generate_cursor_ide_skills(target_dir)
+            skills_result = generate_cursor_ide_skills(target_dir, manifest_hashes=manifest_hashes)
             _absorb_sub_result(result, skills_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(f".cursor/skills/ update skipped: {type(exc).__name__}: {exc}")
@@ -536,7 +557,6 @@ def _update_cursor_cli_artifacts(
     Called from ``_update_cursor_artifacts`` when cursor-cli is in targets.
     Fail-open: each generator is wrapped in try/except.
     """
-    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
     from ._cursor_cli import (
         generate_cursor_cli_agents_md,
@@ -553,7 +573,18 @@ def _update_cursor_cli_artifacts(
 
     # FR04: AGENTS.md with TRW sentinel block
     try:
-        trw_section = render_agents_trw_section()
+        # PRD-CORE-240-FR06: cursor-cli cannot resolve any include, so AGENTS.md
+        # is its ONLY protocol carrier and the block must stay inline — which makes
+        # minimising it the obligation instead. It renders the LIGHT body: its
+        # profile declares ceremony_mode="light", and the sync path already picks
+        # render_minimal_protocol() on that basis (state/claude_md/_agents_md).
+        # This install path was passing the FULL section regardless, so a light
+        # client was carrying the heavy body — 105 lines where its own profile
+        # asks for the compact one. FRAMEWORK-CORE's floor still holds: the
+        # minimal body states the deliver gate and the rigid tool set verbatim.
+        from ._cursor_cli import _cursor_cli_trw_section
+
+        trw_section = _cursor_cli_trw_section()
         agents_result = generate_cursor_cli_agents_md(target_dir, trw_section)
         _absorb_sub_result(result, agents_result)
     except Exception as exc:  # justified: fail-open, AGENTS.md update is best-effort

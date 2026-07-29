@@ -50,7 +50,9 @@ _CLIENT_KEY_ALLOWLIST: dict[DispatchClient, tuple[str, ...]] = {
         "AWS_PROFILE",
     ),
     "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-    # agy = Antigravity CLI (Gemini-family models).
+    # agy = Antigravity CLI (Gemini-family models). ``GEMINI_API_KEY`` is
+    # Antigravity's OWN documented credential env var — it is NOT a remnant of
+    # the removed ``gemini`` client profile. Do not delete it in a gemini sweep.
     "agy": ("GEMINI_API_KEY", "ANTIGRAVITY_API_KEY"),
     # opencode is multi-provider — forward all three provider keys.
     "opencode": (

@@ -1,10 +1,10 @@
 <!-- trw:span id=fw-title dest=both class=normative -->
-v26.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+v26.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
 Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
-Version date: 2026-07-09 | Model policy: capability-based, never provider-bound
+Version date: 2026-07-27 | Model policy: capability-based, never provider-bound
 
-<!-- trw:span id=fw-v26-1-mandate-trw-is-a-method-not-a-mode dest=core class=normative -->
-> **v26.1 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refines enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules.
+<!-- trw:span id=fw-mandate-trw-is-a-method-not-a-model-prompt dest=core class=normative -->
+> **v26.2 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 is a generation-integrity release: the compact core now defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. No obligation changed. The version was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`; the compact views are NOT yet the default reading path.
 
 <!-- trw:span id=fw-blk2 dest=both class=normative -->
 <trw-framework>
@@ -14,7 +14,7 @@ Version date: 2026-07-09 | Model policy: capability-based, never provider-bound
 <!-- trw:span id=fw-execution-model-summary dest=core class=normative -->
 ## EXECUTION MODEL SUMMARY
 
-**v26.1_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
+**v26.2_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
 
 Core loop: load memory → understand evidence → plan only as needed → implement → verify with project-native checks → review → deliver.
 **Deliver gate (no fourth path)**: call `trw_deliver` only with (1) a recorded passing `trw_build_check`; (2) a durable acceptable-failure record naming the failed check, residual risk, owner, and expiry, passed through `allow_unverified=true` + `unverified_reason`; or (3) an authorized operator/config override recorded with technical rationale. An override permits delivery; it never turns unverified work into verified work.
@@ -80,12 +80,14 @@ Use the harness's safe concurrency limit, the fewest independent evidence axes t
 Run confidence = the lowest confidence among active requirements. Do not average away a blocking gap.
 Where the project defines an evidence taxonomy (e.g., Observed / Verified / Inferred / Unknown), map: high ≈ Verified; medium ≈ Observed but not independently verified, or Inferred with partial verification; low ≈ Unknown or conflicting. Status reports SHOULD use the evidence taxonomy; run gating uses these three levels. Never collapse Observed into Verified.
 
+**Absence of a measurement is not a measurement of absence.** A step that could not run — errored, timed out, skipped, retries exhausted — MUST be recorded as *not measured* with a reason, and stay distinguishable from one that ran and found nothing. This binds consumers too: aggregation MUST NOT merge the two. A real zero and a missing result are both falsy, so `value or default` collapses them silently — and the run then reports success while measuring nothing.
+
 ---
 
 <!-- trw:span id=fw-persistence dest=core class=normative -->
 ## PERSISTENCE
 
-When a run directory exists, paths below are relative to `{RUN_ROOT}`. A task for which `trw_init` is legitimately skipped MUST still leave durable completion evidence in the nearest project-native artifact (issue/PR, requested handoff, checked-in report, or final response captured by the harness). No-run work is not exempt from persistence, and it MUST NOT fabricate a run layout that was never initialized.
+When a run directory exists, paths below are relative to `{RUN_ROOT}` — the run's own directory, `.trw/runs/<task>/<run-id>` under the project root. A task for which `trw_init` is legitimately skipped MUST still leave durable completion evidence in the nearest project-native artifact (issue/PR, requested handoff, checked-in report, or final response captured by the harness). No-run work is not exempt from persistence, and it MUST NOT fabricate a run layout that was never initialized.
 
 | File | Update When | Failure |
 |------|-------------|---------|
@@ -327,7 +329,7 @@ Rules:
 - Adapter docs MUST avoid provider-only assumptions unless scoped to that provider's adapter.
 - Hooks are advisory unless the runtime explicitly blocks execution.
 - Skills are optional entrypoints; direct MCP tools remain canonical.
-- Instruction sync targets are profile-driven (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.codex/INSTRUCTIONS.md`, `.cursor/rules/**`, etc.). The framework MUST say "client instruction file" unless a provider-specific adapter is being documented.
+- Instruction sync targets are profile-driven (`AGENTS.md`, `CLAUDE.md`, `.codex/INSTRUCTIONS.md`, `.cursor/rules/**`, etc.). The framework MUST say "client instruction file" unless a provider-specific adapter is being documented.
 - Client profiles tune surface density, never protocol: full-mode clients get hooks, nudges, skills, and the framework reference; light-mode clients (small-context harnesses) get curated tool presets and instruction-file guidance only. The rigid tool set and the deliver gate are identical everywhere — for light clients the generated instruction file IS the protocol carrier, so it MUST state them.
 
 ---
@@ -347,6 +349,13 @@ Rules:
 - All writes MUST stay within `{REPO_ROOT}/**`, `{TASK_DIR}/**`, and `{RUNS_ROOT}/**` unless the user explicitly expands scope.
 - Runtime artifacts (`{RUNS_ROOT}/**`, `.trw/memory/**`, `.trw/context/**`, `.ai/**`) SHOULD NOT be mixed into source commits.
 </bootstrap-rules>
+
+---
+
+<!-- trw:span id=fw-formations-stub dest=core_stub class=reference -->
+## FORMATIONS
+
+Four formations — SINGLE-TRACK, MAP-REDUCE, PIPELINE, and DEBATE + CRITIC + JUDGE. ORC selects the simplest that fits the evidence and harness; none requires a specific vendor tool, and where parallel delegates are unavailable the same shards run sequentially. Selection tree, per-formation output artifacts, and worked criteria: `FRAMEWORK-REFERENCE.md` § FORMATIONS.
 
 ---
 
@@ -686,7 +695,7 @@ Delegate prompts SHOULD include: context, task, constraints, output contract, an
 <!-- trw:span id=fw-framework-adherence dest=core class=normative -->
 ## FRAMEWORK ADHERENCE
 
-**This document (`.trw/frameworks/FRAMEWORK.md`) is the methodology TRW tools implement.** Reading it is not optional when the task is non-trivial: without it, tools become disconnected rituals.
+**This document is the methodology TRW tools implement.** Reading it is not optional when the task is non-trivial: without it, tools become disconnected rituals. It ships in three views under `.trw/frameworks/`: `FRAMEWORK-CORE.md` (the compact normative core), `FRAMEWORK-REFERENCE.md` (matrices, examples, rationale), and `FRAMEWORK.md` (both, combined).
 
 | Trigger | Action |
 |---------|--------|

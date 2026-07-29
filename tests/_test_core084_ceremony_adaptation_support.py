@@ -16,7 +16,21 @@ def _run_agents_md_sync(
     agents_md_learning_min_impact: float = 0.7,
     mock_learnings: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    """Run execute_claude_md_sync with mocked infra targeting AGENTS.md."""
+    """Run execute_claude_md_sync with mocked infra targeting AGENTS.md.
+
+    Driven through ``cursor-cli`` rather than ``opencode``. PRD-CORE-084 is about
+    AGENTS.md ceremony-mode rendering and learning injection, not about any
+    particular client — and as of PRD-CORE-240-FR04 opencode no longer receives
+    the shared AGENTS.md (it owns ``.opencode/INSTRUCTIONS.md``, referenced from
+    ``opencode.json``).
+
+    cursor-cli is the right substitute, not codex: these tests assert that
+    ``ceremony_mode`` SWITCHES the rendered body between the full and minimal
+    forms, and that switch lives on the GENERIC AGENTS.md render. codex always
+    renders its own codex-specific section, so the mode has no effect there and
+    the comparison would pass vacuously (both bodies identical). cursor-cli takes
+    the generic path and its AGENTS.md is its primary carrier.
+    """
     from trw_mcp.state.claude_md._sync import execute_claude_md_sync
     from trw_mcp.state.persistence import FileStateReader
 
@@ -55,5 +69,5 @@ def _run_agents_md_sync(
             config=config,
             reader=reader,
             llm=llm,
-            client="opencode",
+            client="cursor-cli",
         )

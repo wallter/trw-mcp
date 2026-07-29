@@ -133,12 +133,10 @@ def register_ordering_compare_tools(server: FastMCP) -> None:
         repo_root: str | None = None,
         cache_dir: str | None = None,
     ) -> dict[str, Any]:
-        """Return c741 RiskOrderingComparison for the current SHA.
+        """Compare two persisted risk-ordering sidecars for overlap and rank-correlation drift.
 
-        Use when comparing two persisted risk-ordering sidecars for overlap
-        and rank-correlation drift.
-
-        Tier-gated. NEVER raises.
+        Use when: checking whether risk ordering has drifted between runs.
+        Tier-gated. Never raises.
         """
         result = compute_ordering_compare(
             repo_root=repo_root,

@@ -14,6 +14,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 def _make_git_repo(tmp_path: Path) -> Path:
     """Initialize a bare git repo."""
@@ -28,15 +30,21 @@ def _assert_result_format(result: dict[str, list[str]]) -> None:
         assert isinstance(result[key], list), f"result[{key!r}] is not a list"
 
 
-def _load_manifest_ids(tmp_path: Path) -> set[str]:
-    """Load channel IDs from manifest.yaml."""
+def _load_manifest_ids(tmp_path: Path, client: str | None = None) -> set[str]:
+    """Load channel IDs from manifest.yaml, optionally scoped to one client.
+
+    PRD-CORE-239 FR01: the per-client assertions below moved from a list of
+    ``id in ids`` checks to exact set equality on the client's own entries.
+    Membership checks would still pass if a removed channel were reintroduced;
+    equality pins the surviving set on both sides.
+    """
     from trw_mcp.channels._manifest_loader import load
 
     manifest_path = tmp_path / ".trw" / "channels" / "manifest.yaml"
     if not manifest_path.exists():
         return set()
     manifest = load(manifest_path)
-    return {e.id for e in manifest.channels}
+    return {e.id for e in manifest.channels if client is None or e.client == client}
 
 
 # ---------------------------------------------------------------------------
@@ -56,33 +64,65 @@ def test_install_claude_code_distill_channels_returns_correct_format(tmp_path: P
 
 
 def test_install_claude_code_distill_channels_populates_manifest(tmp_path: Path) -> None:
-    """install_claude_code_distill_channels merges five CC entries into manifest."""
+    """install_claude_code_distill_channels merges the two CC entries into manifest.
+
+    PRD-CORE-239 FR01 removed cc-01-memory-distill-snapshot,
+    cc-02-claude-md-distill-segment and cc-04-posttooluse-correlation — the
+    three CC channels that wrote distill-derived prose into a file the user
+    reads. cc-03 and cc-05 survive and are asserted as an exact set.
+    """
     from trw_mcp.bootstrap._claude_code_distill_channels import (
         install_claude_code_distill_channels,
     )
 
     install_claude_code_distill_channels(tmp_path)
 
-    ids = _load_manifest_ids(tmp_path)
-    assert "cc-01-memory-distill-snapshot" in ids
-    assert "cc-02-claude-md-distill-segment" in ids
-    assert "cc-03-pretooluse-hint" in ids
-    assert "cc-04-posttooluse-correlation" in ids
-    assert "cc-05-distill-explorer" in ids
+    assert _load_manifest_ids(tmp_path, client="claude-code") == {
+        "cc-03-pretooluse-hint",
+        "cc-05-distill-explorer",
+    }
 
 
-def test_install_claude_code_distill_channels_installs_subagent(tmp_path: Path) -> None:
-    """install_claude_code_distill_channels installs CC-05 subagent file."""
+def test_install_claude_code_distill_channels_installs_subagent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-239: CC-05 installs for a LICENSED project.
+
+    The conftest autouse fixture pins distill absent, so this must opt in —
+    which is the point: the gate is closed by default.
+    """
     from trw_mcp.bootstrap._claude_code_distill_channels import (
         install_claude_code_distill_channels,
     )
 
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
     install_claude_code_distill_channels(tmp_path)
 
     agent_path = tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
     assert agent_path.exists(), f"CC-05 subagent not found at {agent_path}"
     content = agent_path.read_text(encoding="utf-8")
     assert "trw-distill-explorer" in content
+
+
+def test_claude_code_subagent_withheld_without_a_licence(tmp_path: Path) -> None:
+    """The defect this PRD fixes: an unlicensed project got an unusable agent.
+
+    `.claude/agents/trw-distill-explorer.md` is "powered by trw-distill" and
+    cannot function without the proprietary package. Installing it for a
+    free-tier user hands them an agent that silently does nothing.
+    """
+    from trw_mcp.bootstrap._claude_code_distill_channels import (
+        install_claude_code_distill_channels,
+    )
+
+    # conftest's _default_distill_absent already pins the gate closed.
+    install_claude_code_distill_channels(tmp_path)
+
+    assert not (tmp_path / ".claude" / "agents" / "trw-distill-explorer.md").exists()
+    # ...while the distill-FREE hooks still install.
+    assert (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").exists(), (
+        "the CC-03 hint hooks call the free MCP tools and must NOT be gated"
+    )
 
 
 def test_bootstrap_cc_channel_manifest_is_idempotent(tmp_path: Path) -> None:
@@ -117,38 +157,45 @@ def test_install_cursor_distill_channels_returns_correct_format(tmp_path: Path) 
 
 
 def test_install_cursor_distill_channels_populates_manifest(tmp_path: Path) -> None:
-    """install_cursor_distill_channels merges five cursor entries into manifest."""
+    """install_cursor_distill_channels merges the two cursor entries into manifest.
+
+    PRD-CORE-239 FR01 removed the three .cursor/rules/*.mdc writers
+    (cursor-mdc-conventions, cursor-mdc-hotspots-template,
+    cursor-mdc-dangerous-edits) and cursor-cli-agents-md-snapshot. The
+    surviving pair is asserted as an exact set — cursor-pretooluse-hint was
+    already shipping in manifest-cursor.yaml but this test never named it.
+    """
     from trw_mcp.bootstrap._cursor_distill_channels import (
         install_cursor_distill_channels,
     )
 
     install_cursor_distill_channels(tmp_path)
 
-    ids = _load_manifest_ids(tmp_path)
-    assert "cursor-mdc-conventions" in ids
-    assert "cursor-mdc-hotspots-template" in ids
-    assert "cursor-mdc-dangerous-edits" in ids
-    assert "cursor-mcp-tool-return" in ids
-    assert "cursor-cli-agents-md-snapshot" in ids
+    assert _load_manifest_ids(tmp_path, client="cursor-ide") == {
+        "cursor-mcp-tool-return",
+        "cursor-pretooluse-hint",
+    }
 
 
-def test_install_cursor_distill_channels_writes_mdc_stubs(tmp_path: Path) -> None:
-    """install_cursor_distill_channels writes T0 stub MDC files."""
+def test_cursor_distill_channels_no_longer_write_mdc_stubs(tmp_path: Path) -> None:
+    """PRD-CORE-239: the T0 MDC stubs are gone, and that is the fix.
+
+    `render_presence_beacon_mdc` hardcoded the rule description to "TRW distill
+    data available — quota exceeded, use trw_codebase_risk_report() for full
+    analysis". Cursor surfaces that string to the agent as the rule's summary,
+    so every Cursor project was told data existed and had been truncated by a
+    quota — when in fact nothing had ever been generated and no quota was hit.
+    Two false claims, shipped on every init-project regardless of licence.
+    """
     from trw_mcp.bootstrap._cursor_distill_channels import (
         install_cursor_distill_channels,
     )
 
     install_cursor_distill_channels(tmp_path)
 
-    cursor_rules = tmp_path / ".cursor" / "rules"
-    # At least one stub MDC file should be written
-    mdc_files = list(cursor_rules.glob("*.mdc")) if cursor_rules.exists() else []
-    assert len(mdc_files) >= 1, f"Expected at least one stub MDC file in {cursor_rules}"
-
-
-# ---------------------------------------------------------------------------
-# Codex distill channels
-# ---------------------------------------------------------------------------
+    rules_dir = tmp_path / ".cursor" / "rules"
+    for stub in ("distill-conventions.mdc", "distill-dangerous-edits.mdc"):
+        assert not (rules_dir / stub).exists(), f"{stub} asserts data that does not exist; it must no longer be written"
 
 
 def test_install_codex_distill_channels_returns_correct_format(tmp_path: Path) -> None:
@@ -163,17 +210,21 @@ def test_install_codex_distill_channels_returns_correct_format(tmp_path: Path) -
 
 
 def test_install_codex_distill_channels_populates_manifest(tmp_path: Path) -> None:
-    """install_codex_distill_channels merges three codex entries into manifest."""
+    """install_codex_distill_channels merges the two codex entries into manifest.
+
+    PRD-CORE-239 FR01 removed codex-agents-md-hotspots, the AGENTS.md hotspot
+    segment writer. The two non-instruction-file codex channels survive.
+    """
     from trw_mcp.bootstrap._codex_distill_channels import (
         install_codex_distill_channels,
     )
 
     install_codex_distill_channels(tmp_path)
 
-    ids = _load_manifest_ids(tmp_path)
-    assert "codex-agents-md-hotspots" in ids
-    assert "codex-tool-return-t2" in ids
-    assert "codex-posttooluse-telemetry" in ids
+    assert _load_manifest_ids(tmp_path, client="codex") == {
+        "codex-tool-return-t2",
+        "codex-posttooluse-telemetry",
+    }
 
 
 def test_install_codex_distill_channels_installs_hook(tmp_path: Path) -> None:
@@ -207,30 +258,87 @@ def test_install_antigravity_distill_channels_returns_correct_format(tmp_path: P
 
 
 def test_install_antigravity_distill_channels_populates_manifest(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels merges four AG entries into manifest."""
+    """install_antigravity_distill_channels merges three AG entries into manifest.
+
+    PRD-CORE-239 FR01 removed ag-01-antigravity-md-distill, the ANTIGRAVITY.md
+    segment writer. AG-02/03/04 survive.
+    """
     from trw_mcp.bootstrap._antigravity_distill_channels import (
         install_antigravity_distill_channels,
     )
 
     install_antigravity_distill_channels(tmp_path)
 
-    ids = _load_manifest_ids(tmp_path)
-    assert "ag-01-antigravity-md-distill" in ids
-    assert "ag-02-distill-explorer-subagent" in ids
-    assert "ag-03-before-edit-hook" in ids
-    assert "ag-04-tool-return-enrichment" in ids
+    assert _load_manifest_ids(tmp_path, client="antigravity-cli") == {
+        "ag-02-distill-explorer-subagent",
+        "ag-03-before-edit-hook",
+        "ag-04-tool-return-enrichment",
+    }
 
 
-def test_install_antigravity_distill_channels_installs_subagent(tmp_path: Path) -> None:
-    """install_antigravity_distill_channels installs AG-02 explorer subagent."""
+def test_install_antigravity_distill_channels_installs_subagent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-CORE-239: AG-02 installs for a licensed project."""
     from trw_mcp.bootstrap._antigravity_distill_channels import (
         install_antigravity_distill_channels,
     )
 
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
     install_antigravity_distill_channels(tmp_path)
 
     agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
     assert agent_path.exists(), f"AG-02 subagent not found at {agent_path}"
+
+
+def test_antigravity_subagent_withheld_without_a_licence(tmp_path: Path) -> None:
+    """Sibling of the CC-05 gate — all three explorer agents behave alike.
+
+    Gating one of three identical siblings would have been a subset defect
+    inside the fix itself.
+    """
+    from trw_mcp.bootstrap._antigravity_distill_channels import (
+        install_antigravity_distill_channels,
+    )
+
+    install_antigravity_distill_channels(tmp_path)
+
+    assert not (tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md").exists()
+    # ...while the distill-FREE before-edit hook still installs. The manifest
+    # calls ag-03 "aspirational / no implementation"; it is neither.
+    assert (tmp_path / ".antigravitycli" / "hooks" / "trw_before_edit_telemetry.py").exists(), (
+        "the AG-03 PreToolUse hook is distill-free and must NOT be gated"
+    )
+
+
+def test_opencode_explorer_withheld_without_a_licence(tmp_path: Path) -> None:
+    """The third sibling. Two of three were pinned; this one only asserted.
+
+    cc-05 and ag-02 each had a withholding test; the opencode explorer was
+    gated in the same commit but never pinned, so the asymmetry was invisible —
+    a coverage audit reading `channels/opencode/_explorer_agent.py` (which has
+    no gate of its own, because the gate lives at the bootstrap caller)
+    reasonably concluded it was ungated. Two siblings guarded and one guarded
+    only by inspection is how the third quietly becomes the next defect.
+
+    The custom commands are deliberately NOT gated and must survive: their
+    bodies call free MCP tools (`trw_before_edit_hint`, `trw_codebase_risk_report`,
+    `trw_recall`), so withholding them would break the free tier to protect a
+    paid one.
+    """
+    from trw_mcp.bootstrap._opencode_distill_channels import (
+        install_opencode_distill_channels,
+    )
+
+    result = install_opencode_distill_channels(tmp_path)
+
+    assert not (tmp_path / ".opencode" / "agents" / "trw-distill-explorer.md").exists(), (
+        "an unlicensed project must not receive an agent that cannot function"
+    )
+    assert result.get("explorer_agent") == "skipped_unentitled", (
+        "the skip must be reported, not silent — a silent skip reproduces the "
+        f"defect one level down; got {result.get('explorer_agent')!r}"
+    )
 
 
 def test_public_opencode_and_antigravity_artifacts_do_not_require_distill_cli(tmp_path: Path) -> None:
@@ -272,18 +380,25 @@ def test_install_copilot_distill_channels_returns_correct_format(tmp_path: Path)
 
 
 def test_install_copilot_distill_channels_populates_manifest(tmp_path: Path) -> None:
-    """install_copilot_distill_channels merges four copilot entries into manifest."""
+    """install_copilot_distill_channels merges three copilot entries into manifest.
+
+    PRD-CORE-239 FR01 removed copilot-instructions-distill (the
+    .github/copilot-instructions.md segment) and
+    copilot-path-instructions-distill (.github/instructions/*.instructions.md).
+    The MCP-config and tool-return channels survive; copilot-pretooluse-hint
+    was already shipping in manifest-copilot.yaml but this test never named it.
+    """
     from trw_mcp.bootstrap._copilot_distill_channels import (
         install_copilot_distill_channels,
     )
 
     install_copilot_distill_channels(tmp_path)
 
-    ids = _load_manifest_ids(tmp_path)
-    assert "copilot-instructions-distill" in ids
-    assert "copilot-path-instructions-distill" in ids
-    assert "copilot-vscode-mcp-config" in ids
-    assert "copilot-mcp-tool-return" in ids
+    assert _load_manifest_ids(tmp_path, client="copilot") == {
+        "copilot-vscode-mcp-config",
+        "copilot-mcp-tool-return",
+        "copilot-pretooluse-hint",
+    }
 
 
 def test_install_copilot_distill_channels_installs_vscode_mcp(tmp_path: Path) -> None:
@@ -303,21 +418,21 @@ def test_install_copilot_distill_channels_installs_vscode_mcp(tmp_path: Path) ->
     assert "trw" in data["servers"]
 
 
-def test_install_copilot_distill_channels_installs_c2_stub(tmp_path: Path) -> None:
-    """install_copilot_distill_channels installs C2 path instructions stub."""
+def test_copilot_distill_channels_no_longer_write_the_c2_stub(tmp_path: Path) -> None:
+    """PRD-CORE-239: the C2 path-instructions stub is gone.
+
+    Its body was ``run `trw-distill self-improve risk-report` `` — planted into
+    .github/instructions/ for every Copilot project, including the majority
+    whose owners do not license trw-distill and would get "command not found".
+    """
     from trw_mcp.bootstrap._copilot_distill_channels import (
         install_copilot_distill_channels,
     )
 
     install_copilot_distill_channels(tmp_path)
 
-    c2_path = tmp_path / ".github" / "instructions" / "trw-distill-hotspots.instructions.md"
-    assert c2_path.exists(), f"C2 path instructions not found at {c2_path}"
-
-
-# ---------------------------------------------------------------------------
-# Opencode distill channels (already existed — regression test)
-# ---------------------------------------------------------------------------
+    c2 = tmp_path / ".github" / "instructions" / "trw-distill-hotspots.instructions.md"
+    assert not c2.exists(), "the C2 stub advertises a paid CLI to unlicensed users"
 
 
 def test_install_opencode_distill_channels_returns_results(tmp_path: Path) -> None:
@@ -333,20 +448,26 @@ def test_install_opencode_distill_channels_returns_results(tmp_path: Path) -> No
 
 
 def test_install_opencode_distill_channels_populates_manifest(tmp_path: Path) -> None:
-    """install_opencode_distill_channels merges six opencode entries into manifest."""
+    """install_opencode_distill_channels merges five opencode entries into manifest.
+
+    PRD-CORE-239 FR01 removed opencode-agents-md-segment, the AGENTS.md marker
+    block. opencode was the one client whose segment was invoked directly by
+    its installer, so this is the only manifest whose shrink also changed
+    on-disk behaviour.
+    """
     from trw_mcp.bootstrap._opencode_distill_channels import (
         bootstrap_channel_manifest,
     )
 
     bootstrap_channel_manifest(tmp_path)
 
-    ids = _load_manifest_ids(tmp_path)
-    assert "opencode-agents-md-segment" in ids
-    assert "opencode-custom-cmd-before-edit" in ids
-    assert "opencode-custom-cmd-hotspots" in ids
-    assert "opencode-custom-cmd-conventions" in ids
-    assert "opencode-tool-return-enrichment" in ids
-    assert "opencode-explorer-agent" in ids
+    assert _load_manifest_ids(tmp_path, client="opencode") == {
+        "opencode-custom-cmd-before-edit",
+        "opencode-custom-cmd-hotspots",
+        "opencode-custom-cmd-conventions",
+        "opencode-tool-return-enrichment",
+        "opencode-explorer-agent",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -361,27 +482,32 @@ def test_init_project_wires_claude_code_distill_channels(tmp_path: Path) -> None
     claude-code is in the ide_targets list. Uses direct call (not patching
     every init_project step) — just test the distill module is callable.
     """
+    # Directly exercise the install function on a bare tmp_path.
+    # PRD-CORE-239: CC-05 is licence-gated, so this wiring test opts in — it is
+    # asserting that the wiring reaches the installer, not that the gate is open.
+    import pytest as _pytest
+
     from trw_mcp.bootstrap._claude_code_distill_channels import (
         install_claude_code_distill_channels,
     )
 
-    # Directly exercise the install function on a bare tmp_path
-    result = install_claude_code_distill_channels(tmp_path)
+    mp = _pytest.MonkeyPatch()
+    mp.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+    try:
+        result = install_claude_code_distill_channels(tmp_path)
+    finally:
+        mp.undo()
 
-    # CC-05 subagent must be installed
+    # CC-05 subagent must be installed for a licensed project
     agent_path = tmp_path / ".claude" / "agents" / "trw-distill-explorer.md"
     assert agent_path.exists()
 
-    # Manifest must have all 5 CC entries
-    ids = _load_manifest_ids(tmp_path)
-    cc_ids = {
-        "cc-01-memory-distill-snapshot",
-        "cc-02-claude-md-distill-segment",
+    # Manifest must have both surviving CC entries. PRD-CORE-239 FR01 removed
+    # cc-01/cc-02/cc-04; the wiring claim is unchanged, only the expected set.
+    assert _load_manifest_ids(tmp_path, client="claude-code") == {
         "cc-03-pretooluse-hint",
-        "cc-04-posttooluse-correlation",
         "cc-05-distill-explorer",
     }
-    assert cc_ids.issubset(ids), f"Missing CC IDs: {cc_ids - ids}"
 
     # No unexpected errors
     assert not result["errors"], f"Got errors: {result['errors']}"

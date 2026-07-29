@@ -66,8 +66,13 @@ def recall_focused(
 ) -> list[dict[str, object]]:
     """Focused recall on a user-supplied query.
 
-    Used by the session_start focused path -- BM25 + vector hybrid search
-    against the caller's task description. Compact mode by default.
+    Used by the session_start focused path. ``allow_cold_embedding_init=False``
+    means this factory never triggers a model load, so it reaches BM25 + vector
+    hybrid search ONLY when some earlier operation in the same process already
+    initialized the embedder. When the embedder is uninitialized the search
+    degrades to all-token keyword matching, which a multi-word natural-language
+    query cannot satisfy — see :func:`focused_recall_zero_match_advisory`, which
+    explains a zero-row result to the caller. Compact mode by default.
     """
     return _default_recall()(
         trw_dir,
@@ -106,6 +111,52 @@ def recall_recent_bypass(
 
 
 # ---------------------------------------------------------------------------
+# Zero-match advisory for the focused session-start path
+# ---------------------------------------------------------------------------
+
+# Both strings are emitted ONLY when a non-wildcard focused recall returns zero
+# rows, so they cost nothing on the normal path (token-budget rule: advisory
+# fields are omitted when they carry no signal). Without them, ``query_matched:
+# 0`` is unexplained and the caller reads the impact-ranked baseline union as if
+# it were query hits.
+_UNINITIALIZED_INDEX_ADVISORY = (
+    "Focused recall matched 0 entries: the vector index was not initialized in this "
+    "process (session_start never triggers a model load), so only all-token keyword "
+    "matching ran -- a multi-word natural-language query cannot match that way. The "
+    "learnings returned are the impact-ranked baseline, NOT query matches. Call "
+    "trw_recall(query=...) for full hybrid BM25+vector search."
+)
+
+_HYBRID_INDEX_ADVISORY = (
+    "Focused recall matched 0 entries via hybrid search. The learnings returned are the "
+    "impact-ranked baseline, NOT query matches. Broaden the query or call "
+    "trw_recall(query=..., min_impact=0)."
+)
+
+
+def focused_recall_zero_match_advisory() -> str:
+    """Explain a zero-row :func:`recall_focused` result to the calling agent.
+
+    Probes the embedder cache WITHOUT initializing it (``get_initialized_embedder``
+    is the same non-loading accessor the recall path itself uses), so the advisory
+    reports what actually ran. Must be called at recall time: later session_start
+    steps may initialize the embedder, which would make a deferred probe lie.
+
+    Fail-open: an import/probe failure reports the uninitialized-index wording,
+    which is the conservative reading (it tells the caller to re-run via
+    ``trw_recall``).
+    """
+    try:
+        from trw_mcp.state._memory_connection import get_initialized_embedder
+
+        initialized = get_initialized_embedder() is not None
+    except Exception:  # justified: advisory text must never break session start
+        logger.debug("focused_recall_advisory_probe_failed", exc_info=True)
+        initialized = False
+    return _HYBRID_INDEX_ADVISORY if initialized else _UNINITIALIZED_INDEX_ADVISORY
+
+
+# ---------------------------------------------------------------------------
 # Nudge factories
 # ---------------------------------------------------------------------------
 
@@ -120,7 +171,7 @@ def recall_for_nudge_pool(
 ) -> list[dict[str, object]]:
     """Recall candidates for nudge content selection.
 
-    Used by ``_try_learning_nudge_content`` and ``select_learning_injection_content``
+    Used by ``_try_learning_nudge_content`` and ``select_contextual_nudge_content``
     pools. ``compact=False`` because nudge text rendering needs the
     learning's ``summary`` and possibly ``detail``.
     """
@@ -163,6 +214,7 @@ def recall_for_review_tags(
 
 
 __all__ = [
+    "focused_recall_zero_match_advisory",
     "recall_baseline_high_impact",
     "recall_focused",
     "recall_for_nudge_pool",

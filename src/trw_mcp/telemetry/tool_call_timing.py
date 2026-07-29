@@ -136,21 +136,45 @@ def _pricing_version() -> str:
     return str(_load_pricing().get("version", "unknown"))
 
 
+#: Model ids already reported as absent from the pricing table. Bounds the
+#: warning to one line per distinct id per process instead of one per call.
+_UNPRICED_MODELS_SEEN: set[str] = set()
+
+
 def _usd_cost_estimate(
     *,
     model_id: str | None,
     input_tokens: int,
     output_tokens: int,
 ) -> float:
-    """Look up per-1K rates and return an estimated USD cost for the call."""
+    """Look up per-1K rates and return an estimated USD cost for the call.
+
+    The incoming id is matched by *family* rather than by exact key. One model
+    reaches this function under several spellings — a dated snapshot
+    (``claude-haiku-4-5-20251001``, which is exactly what ``clients/llm.py``
+    stamps for its own default model), a ``[1m]`` long-context rendering, a
+    Vertex ``@``-pin, or a Bedrock provider prefix. The previous exact
+    ``models.get(model_id)`` matched none of those, so a priced model could
+    report ``$0.00`` — indistinguishable from a genuinely free call.
+
+    A model with no row still estimates ``0.0``, but now says so once per
+    distinct id rather than silently.
+    """
     if not model_id:
         return 0.0
     table = _load_pricing()
     models = table.get("models", {})
     if not isinstance(models, dict):
         return 0.0
-    entry = models.get(model_id)
+
+    from trw_mcp.models.config import match_model_family
+
+    key = match_model_family(model_id, models)
+    entry = models.get(key) if key is not None else None
     if not isinstance(entry, dict):
+        if model_id not in _UNPRICED_MODELS_SEEN:
+            _UNPRICED_MODELS_SEEN.add(model_id)
+            logger.warning("pricing_model_unknown", model_id=model_id, estimate_usd=0.0)
         return 0.0
     in_rate = float(entry.get("input_per_1k", 0.0) or 0.0)
     out_rate = float(entry.get("output_per_1k", 0.0) or 0.0)
@@ -162,6 +186,7 @@ def clear_pricing_cache() -> None:
     global _PRICING_CACHE, _PRICING_PATH_CACHE
     _PRICING_CACHE = None
     _PRICING_PATH_CACHE = None
+    _UNPRICED_MODELS_SEEN.clear()
 
 
 def _pipeline_projection(event: ToolCallEvent) -> dict[str, object]:

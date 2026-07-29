@@ -46,13 +46,11 @@ def _fake_result(text: str = "All good.", *, ok_exit: int = 0) -> DispatchResult
     )
 
 
-def test_gemini_client_rejected_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
+def test_unknown_client_rejected_exit_2(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
-        run_dispatch(_ns(client="gemini"))
+        run_dispatch(_ns(client="not-a-real-cli"))
     assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "agy" in err
-    assert "EOL" in err
+    assert "disabled" in capsys.readouterr().err
 
 
 def test_prints_text_and_exits_zero_on_ok(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

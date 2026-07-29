@@ -17,20 +17,34 @@ Use when: adversarially checking implementation behavior against a PRD before de
 
 Verify that implementation code matches PRD acceptance criteria. This is NOT a code quality review; use the packaged `trw-reviewer` helper or a client-native code-review workflow for that. This audit answers one question: **does the code do what the PRD says it should?**
 
+## Shared Protocol
+
+This skill is an invocation adapter. It owns argument resolution, the readiness
+gate, the search procedure, and dispatch — **not** the audit protocol. The audit
+protocol is defined once, in the sibling `audit-framework.md` that ships in this
+skill directory: evidence tiers (Section A), root-cause taxonomy (Section B),
+the NFR checklist (Section C), the wave-pause heuristic (Section D), the finding
+schema plus severity ladder and overall verdict criteria (Section E), the
+severity-to-impact mapping (Section F), the audit report schema (Section G), and
+the report delivery rule (Section H). Read it before Step 1 and follow it
+verbatim; this file never restates it.
+
 ## Path Discovery
 
 Read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) to locate PRDs.
 
 
-## Preflight Verification Contract
+## Prior-Learning Contract
 
-Check `events.jsonl` for `pre_implementation_checklist_complete` and `pre_audit_self_review`. Include these fields in audit output when applicable:
+Call `trw_recall(query='<prd-domain> audit-finding')` before auditing and verify
+whether each known pattern was addressed here. Record the result under the
+`prior_learning_verification:` key of the report schema in `audit-framework.md`
+Section G, which defines its shape.
 
-```yaml
-preflight_verification: present|missing|not_applicable
-self_review_alignment: matches|underreported|missing
-prior_learning_verification: checked|missing|not_applicable
-```
+Do **not** audit the implementer's self-report. Self-attested checklist events
+are caller-controlled and are therefore not evidence; verify the implementation
+against the spec directly. Never record a process-gap finding for the absence of
+a self-review artifact.
 
 ## Workflow
 
@@ -111,82 +125,23 @@ For each FR, answer three questions by reading the actual code:
 
 ### Step 5: NFR Checklist
 
-Evaluate every checklist item for each audited surface. Mark non-applicable items `NA` only with concrete justification.
+Run every item in the `audit-framework.md` Section C checklist against each
+audited surface. Section C is the only list; do not work from a remembered or
+abbreviated copy.
 
-| # | NFR | Check | Common Miss |
-|---|-----|-------|-------------|
-| 1 | **Pagination limits** | Max limit enforced, offset >= 0, defaults present | Unlimited `?limit=999999` |
-| 2 | **Input validation** | Body/params validated, oversized rejected | No size limits |
-| 3 | **Auth enforcement** | Protected endpoints return 401/403 | Only 1-2 tested |
-| 4 | **Error handling** | Non-critical failures wrapped, no crash | Logging exception crashes request |
-| 5 | **Response completeness** | All specified fields present with correct types | Status code only |
-| 6 | **Negative testing** | Revoked creds fail, 404 on not-found | Happy path only |
-| 7 | **Rate limiting** | Applied where specified, Retry-After on 429 | Exists but untested |
-| 8 | **Data consistency** | Timestamps correct, IDs match | Not verified |
-| 9 | **Idempotency** | Duplicate requests safe where specified | No dedup |
-| 10 | **Logging/Audit** | Security actions logged, no PII | Not tested |
+Mark non-applicable items `NA` only with concrete justification, per the Section C `N/A` rule.
 
 ### Step 6: Severity Assignment
 
-| Severity | Criteria | Examples |
-|----------|----------|----------|
-| P0 | FR completely missing or fundamentally broken | Endpoint not implemented, auth not enforced |
-| P1 | FR partially implemented, key behavior missing | Pagination exists but no max limit, response missing fields |
-| P2 | Minor gap, edge case not covered | Missing negative test, cosmetic field wrong |
+Assign P0/P1/P2 using the severity criteria in `audit-framework.md` Section E,
+including its security-PRD escalation rule. Section E is the only severity
+ladder.
 
-**Security PRD escalation (PRD-QUAL-044-FR04)**: If the PRD has `tags: [security]` or its title contains "security"/"hardening"/"vulnerability", any FAIL or MISSING verdict is automatically escalated to P0. Security PRDs cannot be left incomplete.
+### Step 7: Report the Audit
 
-### Step 7: Write Audit Report
-
-Write to `scratch/audits/AUDIT-{PRD-ID}.yaml`:
-
-```yaml
-audit_id: AUDIT-{PRD-ID}
-prd_id: PRD-{CATEGORY}-{SEQ}
-prd_title: "{title}"
-timestamp: "{ISO 8601}"
-
-fr_verdicts:
-  - fr_id: FR01
-    title: "{FR title}"
-    acceptance_criterion: "{exact text from PRD}"
-    verdict: PASS|PARTIAL|FAIL|MISSING
-    implementation_file: "path/to/file:line"
-    test_file: "path/to/test_file:test_name"
-    findings:
-      - severity: P0|P1|P2
-        issue: "Description of the gap"
-        evidence: "What code does vs. what spec requires"
-        fix: "Specific recommendation"
-    test_quality:
-      seeds_meaningful_data: true|false
-      checks_response_body: true|false
-      covers_negative_cases: true|false
-      would_catch_regression: true|false
-
-nfr_audit:
-  - nfr: "Pagination limits"
-    verdict: PASS|FAIL|NA
-    evidence: "Specific code reference"
-    finding: "Description if FAIL"
-  # ... one row per checklist item above
-
-summary:
-  total_frs: 5
-  pass: 2
-  partial: 1
-  fail: 1
-  missing: 1
-  p0_count: 1
-  p1_count: 2
-  p2_count: 0
-  overall_verdict: PASS|CONDITIONAL|FAIL
-```
-
-Overall verdict rules:
-- **PASS**: All FRs pass, no P0/P1 findings
-- **CONDITIONAL**: No P0, <=2 P1 findings (fixable without replan)
-- **FAIL**: Any P0 OR >2 P1 findings
+Emit the report schema defined in `audit-framework.md` Section G, and deliver it
+per Section H. Assign the overall verdict from the Section E verdict criteria
+table. This file defines none of those three; read them.
 
 ### Step 7.5: Spec Reconciliation
 
@@ -203,7 +158,6 @@ Output a markdown summary:
 - Severity summary (P0/P1/P2 counts)
 - Overall verdict with rationale
 - Top 3 most critical findings with fix recommendations
-- Audit report file path
 
 Call `trw_learn` only when findings reveal a non-obvious reusable pattern, not for routine audit status.
 
@@ -219,7 +173,7 @@ When auditing FRs that include `Assertions:` blocks, use them as objective evide
 
 ## Constraints
 
-- NEVER modify code files — this skill is read-only (except writing the audit report)
+- NEVER modify code files — this audit is read-only
 - NEVER accept "tests pass" as evidence of spec compliance
 - NEVER use PARTIAL to soften a failed acceptance criterion; PARTIAL requires concrete implemented behavior plus an explicit remaining gap
 - NEVER skip NFR checklist items — mark NA with justification if truly not applicable

@@ -20,8 +20,11 @@ fi
 
 init_hook_timer
 
-# FR07: Read stdin payload for transcript_path (must happen before any stdin-consuming command)
+# FR07: Read stdin payload for transcript_path (must happen before any stdin-consuming command).
+# The same read also yields the Stop payload's session_id, used below to resolve
+# this session's OWN run (PRD-FIX-118 FR03).
 _transcript_path=""
+_stdin_session_id=""
 if ! [ -t 0 ]; then
   _stdin_payload=$(cat 2>/dev/null) || _stdin_payload=""
   if [ -n "$_stdin_payload" ]; then
@@ -29,6 +32,10 @@ if ! [ -t 0 ]; then
       | grep -o '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]*"' \
       | head -1 \
       | sed 's/.*"transcript_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || _transcript_path=""
+    _stdin_session_id=$(printf '%s' "$_stdin_payload" \
+      | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -1 \
+      | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || _stdin_session_id=""
   fi
 fi
 
@@ -45,8 +52,31 @@ _max_total_cycles="${TRW_MAX_TOTAL_CYCLES:-6}"
 _max_phase_iter=$(printf '%d' "$_max_phase_iter" 2>/dev/null) || _max_phase_iter=3
 _max_total_cycles=$(printf '%d' "$_max_total_cycles" 2>/dev/null) || _max_total_cycles=6
 
-# Require an active TRW run
-_run_dir=$(find_active_run) || exit 0
+# --- Require an active TRW run THIS SESSION OWNS (PRD-FIX-118 FR03) ---------
+# This is the only hook here that BLOCKS session exit, so mis-attribution is at
+# its most expensive: every criterion below (plan_updated, file_modified,
+# build_check_complete, review_complete) is read out of a run's own events.jsonl,
+# and the reversion logic WRITES a phase_reversion event back into it. Under
+# concurrency, recency would have this session blocked on — and writing into —
+# another instance's run.
+#
+# What "unowned" means HERE: exit 0 without enforcing. That is not a hole: the
+# phase cycle IS the run. A session that never called trw_init is not in a phase,
+# so there are no exit criteria to evaluate, and the state file this hook drives
+# (.claude/trw-phase-cycle.local.md) would otherwise be written from a stranger's
+# phase. stop-ceremony.sh remains the session-scoped delivery reminder.
+_session_id=$(trw_pin_key "$_stdin_session_id" 2>/dev/null) || _session_id=""
+if [ -n "$_session_id" ]; then
+  _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""
+  if [ -z "$_run_dir" ]; then
+    log_hook_execution "Stop/phase-cycle-unowned" "" "0"
+    exit 0
+  fi
+else
+  # Identity unknown (client publishes none) — legacy single-instance behaviour.
+  # Dropping this branch would disable the gate outright for those clients.
+  _run_dir=$(find_active_run) || exit 0
+fi
 [ -n "$_run_dir" ] || exit 0
 
 _events_path="${_run_dir}meta/events.jsonl"
@@ -63,8 +93,31 @@ if has_event "$_events_path" "trw_deliver_complete"; then
   exit 0
 fi
 
-# Determine current phase via lib-trw infer_phase
-_current_phase="$(infer_phase)"
+# _pcs_infer_phase: lib-trw.sh's infer_phase ladder, evaluated against a GIVEN
+# events log. Calling infer_phase() directly would re-resolve the run by recency
+# inside the library, so the phase could come from a parallel instance's run while
+# every criterion below is read from the run resolved above — a guaranteed
+# mismatch under concurrency (block on OUR run for a phase that is not ours).
+# Same order, same vocabulary; only the run selection differs.
+_pcs_infer_phase() {
+  _pip_events="$1"
+  [ -f "$_pip_events" ] || { printf 'none'; return; }
+  if has_event "$_pip_events" "trw_deliver_complete"; then printf 'done'; return; fi
+  if has_event "$_pip_events" "reflection_complete" || has_event "$_pip_events" "trw_reflect_complete"; then
+    printf 'deliver'
+    return
+  fi
+  if has_event "$_pip_events" "build_check_complete"; then printf 'validate'; return; fi
+  if has_event "$_pip_events" "file_modified"; then printf 'implement'; return; fi
+  if grep -q '"tool_name"[[:space:]]*:[[:space:]]*"trw_prd_validate"' "$_pip_events" 2>/dev/null; then
+    printf 'plan'
+    return
+  fi
+  printf 'early'
+}
+
+# Determine current phase from the OWNED run's events
+_current_phase="$(_pcs_infer_phase "$_events_path")"
 
 # Phases that always allow exit without criteria checks
 case "$_current_phase" in

@@ -253,6 +253,7 @@ def perform_session_recalls(
     # PRD-FIX-085 FR05: use named recall factories instead of direct
     # adapter_recall calls so the call site declares its intent.
     from trw_mcp.state.recall_factories import (
+        focused_recall_zero_match_advisory,
         recall_baseline_high_impact,
         recall_focused,
         recall_recent_bypass,
@@ -264,6 +265,13 @@ def perform_session_recalls(
             baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
             extra["query"] = query
             extra["query_matched"] = len(focused)
+            if not focused:
+                # ``query_matched: 0`` alone is unreadable: the returned list is
+                # then purely the impact-ranked baseline, which is
+                # query-INDEPENDENT. Probe here (not later) — subsequent
+                # session_start steps can initialize the embedder and would make
+                # the probe misreport what this recall actually ran.
+                extra["query_advisory"] = focused_recall_zero_match_advisory()
             seen_ids: set[str] = set()
             for entry in focused + baseline:
                 learning_id = str(entry.get("id", ""))

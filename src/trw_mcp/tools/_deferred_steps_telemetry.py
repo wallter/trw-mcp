@@ -58,9 +58,9 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     # ceremony-score inputs; authoritative run state is read from run.yaml
     # below), so a torn concurrent append must drop that one line rather than
     # StateError-abort the whole telemetry step — which _run_step would record
-    # as failed, wiping tools_invoked, the ceremony score, and the
-    # session_summary write that drives trw_quality_dashboard. Use the resilient
-    # reader, matching the trw_status / _do_reflect seams over this same log.
+    # as failed, wiping tools_invoked, the ceremony score, and the persisted
+    # session_summary telemetry. Use the resilient reader, matching the
+    # trw_status / _do_reflect seams over this same log.
     events: list[dict[str, object]] = []
     if resolved_run is not None:
         ev_path = resolved_run / "meta" / "events.jsonl"
@@ -111,7 +111,7 @@ def _step_telemetry(resolved_run: Path | None) -> TelemetryStepResult:
     )
     tel_client.flush()
 
-    # Write session summary to session-events.jsonl for trw_quality_dashboard
+    # Persist the session summary to the append-only session event history.
     from trw_mcp.state.persistence import (
         FileEventLogger,
     )

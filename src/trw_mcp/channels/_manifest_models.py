@@ -48,7 +48,6 @@ class ChannelSurface(str, Enum):
     OPENCODE_RULES_SEGMENT = "opencode_rules_segment"
     ANTIGRAVITY_RULES_SEGMENT = "antigravity_rules_segment"
     VSCODE_MCP_JSON = "vscode_mcp_json"
-    GEMINI_MD_SEGMENT = "gemini_md_segment"
     EXPLORER_PANEL = "explorer_panel"
     EPHEMERAL_STDOUT = "ephemeral_stdout"
 
@@ -157,13 +156,11 @@ class ChannelEntry(BaseModel):
     # --- Tier configuration ---
     tier_default: str = "T2"
     tier_min: str = "T0"
-    operator_tier_override_key: str | None = None
 
     # --- Marker configuration ---
     markers: MarkersConfig = Field(default_factory=MarkersConfig)
 
     # --- Record types ---
-    distill_record_types: list[str] = Field(default_factory=list)
 
     # --- TTL configuration ---
     ttl_commits: int | None = None
@@ -188,7 +185,6 @@ class ChannelEntry(BaseModel):
     # --- Metadata / docs ---
     description: str | None = None
     regenerate_cmd: str | None = None
-    client_version_min: str | None = None
 
     # --- MDC-specific (Cursor) ---
     mdc_description: str | None = None
@@ -196,14 +192,8 @@ class ChannelEntry(BaseModel):
     mdc_always_apply: bool = False
 
     # --- Telemetry and correlation ---
-    session_correlation: bool = True
-    emit_on_ttl_skip: bool = True
-    emit_on_conflict_skip: bool = True
-    emit_on_lock_skip: bool = True
 
     # --- Sidecar contract (optional — not all channels consume a sidecar) ---
-    sidecar_schema: str | None = "risk-report-sidecar/v0"
-    sidecar_path: str | None = None
 
     # --- Hook integration ---
     hook_schema_confirmed_at: str | None = None
@@ -291,6 +281,15 @@ JOIN_KEY_FIELDS: tuple[str, str] = ("session_id", "file_path")
 
 DEFAULT_CORRELATION_WINDOW_SECONDS: int = 3600
 
+# trw:intentional These seven values are UNVALIDATED DESIGN PRIORS, not measured
+# capture rates. No calibration study has been run for any client; none has an N,
+# a CI, or a derivation. They are load-bearing regardless — `meta_tune/_correlator.py`
+# divides observed rates by them (`min(raw / factor, 1.0)`) — so any number reported
+# through that path inherits a guess. The `claude-code` factor in particular describes
+# a CC-04 correlation hook that emits nothing today (0 `edit_correlated` events across
+# 4,126 records), so it currently scales an empty set.
+# Replace with measurement before citing any cross-client comparison; see
+# docs/research/providers/CHANNEL-ARCHITECTURE.md §Cross-Client Meta-Tune Correlation.
 CLIENT_CORRECTION_FACTORS: dict[str, float] = {
     "claude-code": 0.85,
     "codex": 0.70,

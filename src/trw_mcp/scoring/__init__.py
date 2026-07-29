@@ -54,6 +54,9 @@ from trw_mcp.scoring._correlation import (
     _resolve_event_reward as _resolve_event_reward,
 )
 from trw_mcp.scoring._correlation import (
+    apply_proximal_rewards as apply_proximal_rewards,
+)
+from trw_mcp.scoring._correlation import (
     compute_composite_outcome as compute_composite_outcome,
 )
 from trw_mcp.scoring._correlation import (
@@ -186,6 +189,7 @@ __all__ = [
     "RecallContext",
     "SkillLifecycleRecord",
     "apply_impact_decay",
+    "apply_proximal_rewards",
     "apply_time_decay",
     "bayesian_calibrate",
     "classify_complexity",

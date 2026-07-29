@@ -109,6 +109,13 @@ class TestLearningsSummaryPatternsSection:
         fn = _get_learnings_resource()
         result = fn()
         assert "Good Pattern" in result
+        # The corrupt file carries a YAML deserialization payload
+        # (``!!python/object:os.system``). "Skipped" has to mean the payload
+        # never reaches the rendered resource either — asserting only that the
+        # GOOD pattern survived would also pass if the tag were echoed verbatim
+        # into agent-visible output.
+        assert "os.system" not in result
+        assert "python/object" not in result
 
 
 class TestLearningsSummaryAnalyticsSection:

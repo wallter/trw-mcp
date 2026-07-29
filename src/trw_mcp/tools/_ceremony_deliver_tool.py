@@ -30,6 +30,7 @@ from trw_mcp.tools._ceremony_deliver_steps import (
     unpack_gate_result,
 )
 from trw_mcp.tools._deferred_delivery import DEFERRED_STEPS, _launch_deferred
+from trw_mcp.tools._delivery_build_gates import write_session_deliver_marker
 from trw_mcp.tools._delivery_journal_wiring import (
     DeliverJournal,
     compute_deferred_digest,
@@ -250,6 +251,7 @@ def run_trw_deliver(
     with journal.step("S18"):  # ceremony deliver-called flag
         _mark_deliver_and_reflect_learning(trw_dir, results)
     _write_nudge_analysis_artifact(trw_dir, results)
+    _attach_deliver_ceremony_status(trw_dir, results)
     with journal.step("S20"):  # delivery-complete event append
         _log_deliver_event(
             trw_dir,
@@ -394,6 +396,38 @@ def _write_nudge_analysis_artifact(trw_dir: Path, results: DeliverResultDict) ->
         record_into(cast("MutableMapping[str, object]", results), "nudge_analysis", exc)
 
 
+def _attach_deliver_ceremony_status(trw_dir: Path, results: DeliverResultDict) -> None:
+    """Decorate the deliver response with reactive ceremony status (ledger UF-042).
+
+    ``trw_deliver`` never called the ceremony injector, so ``ToolName.DELIVER``
+    reached ``_context_reactive_message`` from no production path and — with
+    ``trw_build_check`` equally unwired — ``NudgeContext.build_passed`` had no
+    writer anywhere. Deliver reads the session's recorded build outcome back out
+    of ceremony state and supplies it, which is what makes the build-failure
+    reversion prompt reachable at the moment it matters most.
+
+    Runs AFTER ``_write_nudge_analysis_artifact`` on purpose: the artifact
+    describes the session's nudges, and a nudge emitted by this very call is not
+    part of the session it is summarising.
+
+    Fail-open: decoration must never block a delivery that already succeeded.
+    """
+    try:
+        from trw_mcp.state.ceremony_progress import read_ceremony_state
+        from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
+
+        recorded = read_ceremony_state(trw_dir).build_check_result
+        append_ceremony_status_for_tool(
+            cast("dict[str, object]", results),
+            trw_dir,
+            tool_name="deliver",
+            tool_success=bool(results.get("success", True)),
+            build_passed=(recorded == "passed") if recorded else None,
+        )
+    except Exception as exc:  # justified: fail-open — status decoration must not block deliver
+        record_into(cast("MutableMapping[str, object]", results), "ceremony_status", exc, severity="info")
+
+
 def _log_deliver_event(
     trw_dir: Path,
     resolved_run: Path | None,
@@ -403,15 +437,27 @@ def _log_deliver_event(
     critical_elapsed: float,
     session_id: str,
 ) -> None:
+    # Session-scoped completion marker — written on EVERY deliver regardless of
+    # pin state so an UNPINNED deliver (no run dir) still leaves a recency-bounded
+    # signal the Stop hook can trust. Pinned runs additionally record the marker
+    # in their own events.jsonl below. See write_session_deliver_marker.
+    write_session_deliver_marker(trw_dir, session_id)
     if resolved_run is None or not (resolved_run / "meta").exists():
         return
     try:
         from trw_mcp.state.ceremony_progress import read_ceremony_state
 
-        nudge_summary = dict(read_ceremony_state(trw_dir).nudge_counts)
+        _state = read_ceremony_state(trw_dir)
+        nudge_summary = dict(_state.nudge_counts)
+        # ``nudge_counts`` is step-targeted only (nudge-analysis schema v2), so on
+        # a live repo it is ~empty and this event would silently report zero nudge
+        # volume. ``pool_nudge_counts`` is the per-emission ledger every pool
+        # writes — it is what a consumer must sum for total volume.
+        pool_nudge_counts = dict(_state.pool_nudge_counts)
     except Exception as exc:  # justified: fail-open
         record_into(cast("MutableMapping[str, object]", results), "deliver_nudge_summary", exc, severity="info")
         nudge_summary = {}
+        pool_nudge_counts = {}
     from trw_mcp.tools import ceremony as _ceremony
 
     _ceremony._events.log_event(
@@ -423,6 +469,7 @@ def _log_deliver_event(
             "critical_elapsed_seconds": critical_elapsed,
             "errors": len(errors),
             "nudge_summary": nudge_summary,
+            "pool_nudge_counts": pool_nudge_counts,
             "session_id": session_id,
         },
     )

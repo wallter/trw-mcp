@@ -25,7 +25,17 @@ class _TelemetryFields:
 
     # -- Debug & telemetry --
 
-    debug: bool = False
+    # THE portable log-verbosity toggle. No client bootstrap profile bakes
+    # ``--debug`` into its generated MCP server entry (that divergence was
+    # removed 2026-07-27), so this key — or ``TRW_DEBUG`` / ``TRW_LOG_LEVEL``
+    # — is how an operator turns on DEBUG-level logging plus the
+    # ``.trw/logs/trw-mcp-*.jsonl`` file sink, identically for every client.
+    # Consumed by ``_logging.configure_logging`` (below --log-level /
+    # TRW_LOG_LEVEL / --debug / -v / -q) and by ``server/_cli.py``.
+    debug: bool = Field(
+        default=False,
+        description="Enable DEBUG-level logging and the .trw/logs/ file sink for every MCP client",
+    )
     logs_dir: str = "logs"
     telemetry: bool = False
     telemetry_enabled: bool = True
@@ -69,13 +79,11 @@ class _TelemetryFields:
     # 'gen_ai'; when on, every value passes through telemetry/anonymizer.py.
     otel_capture_messages: bool = False
 
-    # -- Velocity tracking --
-
-    velocity_alert_min_runs: int = 5
-    velocity_alert_r_squared_min: float = 0.4
+    # -- Framework overhead --
+    #
+    # The seven velocity_* fields that used to sit here were removed 2026-07-28
+    # (PRD-QUAL-131-FR01): no production reader, and no velocity-tracking
+    # subsystem for them to configure. ``framework_overhead_threshold`` IS read
+    # and stays; it was filed under the velocity heading but is not a velocity
+    # field.
     framework_overhead_threshold: float = 0.30
-    velocity_history_max_entries: int = 200
-    velocity_stable_threshold: float = 0.05
-    velocity_effective_q_threshold: float = 0.5
-    velocity_sign_test_alpha: float = 0.1
-    velocity_confounder_jump_ratio: float = 1.5

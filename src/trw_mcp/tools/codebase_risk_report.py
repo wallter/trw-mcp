@@ -170,14 +170,12 @@ def register_codebase_risk_report_tools(server: FastMCP) -> None:
         top_n: int = 20,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Return c737/c739 ranked composite-risk report for the current SHA.
+        """Return the ranked file-level composite-risk report for the current SHA.
 
-        Use when a reviewer needs file-level structural risk ordering from
-        a persisted trw-distill sidecar before prioritizing review effort.
+        Use when: prioritizing review effort. Tier-gated.
 
-        Tier-gated. ``top_n=0`` returns all entries; default 20.
-        Returns ``CodebaseRiskReportResult.model_dump()`` enriched by client
-        tier. NEVER raises.
+        Args:
+            top_n: entries to return; 0 returns all (default 20).
         """
         result = compute_codebase_risk_report(
             repo_root=repo_root,

@@ -107,7 +107,11 @@ class WriteTargets(BaseModel):
 
     claude_md: bool = False
     agents_md: bool = False
-    agents_md_primary: bool = False  # primary write target (CLI profiles, e.g. cursor-cli)
+    # ``agents_md_primary`` was removed 2026-07-28 (PRD-QUAL-131-FR06): zero
+    # production readers. The fact it encoded -- that AGENTS.md is cursor-cli's
+    # ONLY carrier -- is real and load-bearing, which is why it is documented in
+    # PRD-CORE-242 and PRD-CORE-240-FR03 rather than encoded in a boolean nobody
+    # consulted. A flag no code reads does not enforce the constraint it names.
     cli_config: bool = False  # .cursor/cli.json managed (cursor-cli only)
     cursor_rules: bool = False
     copilot_instructions: bool = False
@@ -173,8 +177,6 @@ class ClientProfile(BaseModel):
 
     # Feature flags
     hooks_enabled: bool = True
-    agents_md_enabled: bool = False
-    review_md_enabled: bool = True
     include_framework_ref: bool = True
     include_delegation: bool = True
 
@@ -217,12 +219,27 @@ class ClientProfile(BaseModel):
     # -- In-file import capability (PRD-CORE-203 FR01) --
     # Whether this client's instruction file supports an in-file import
     # directive that recursively embeds another file into context.
-    #   ``"at_path"`` -> Claude Code's ``@<repo-root-relative-path>`` syntax
-    #                    (recursive, <=5 hops). Eligible for TRW-block
-    #                    externalization to ``.trw/INSTRUCTIONS.md``.
-    #   ``"none"``    -> no in-file import (opencode/codex/gemini/copilot/aider/
-    #                    cursor read a concrete file; the block is inlined).
-    instruction_import_syntax: Literal["none", "at_path"] = "none"
+    # How this client resolves an in-file include, which decides whether the TRW
+    # block can be externalized to ``.trw/INSTRUCTIONS.md`` or must stay inline.
+    #
+    #   ``"at_path"``  -> Claude Code's ``@path`` syntax. Resolves relative to the
+    #                     FILE CONTAINING the import (not the repo root — a
+    #                     long-standing error in this comment, corrected
+    #                     2026-07-28), recursive to 4 hops (not 5), and accepts
+    #                     ``~``/absolute paths.
+    #   ``"at_path_repo_relative"``
+    #                  -> GitHub Copilot CLI's ``@relpath``. Same in-file shape,
+    #                     but the reference MUST stay inside the repository:
+    #                     absolute and ``~``-rooted paths are rejected, and it is
+    #                     NOT expanded inside ``*.instructions.md``. Modelled
+    #                     distinctly rather than folded into ``at_path`` because
+    #                     emitting a ``~``-rooted import for Copilot would simply
+    #                     not load (PRD-CORE-240-FR03).
+    #   ``"none"``     -> no in-file import. opencode and codex name the file in
+    #                     their own config instead; cursor-cli, cursor-ide and
+    #                     antigravity-cli have no working mechanism at all and
+    #                     keep the block inline (see INCLUDE_INCAPABLE_CLIENTS).
+    instruction_import_syntax: Literal["none", "at_path", "at_path_repo_relative"] = "none"
 
     @computed_field  # type: ignore[prop-decorator]  # Pydantic v2 supports @computed_field on @property; the decorator-order lint is a known Pyright limitation.
     @property

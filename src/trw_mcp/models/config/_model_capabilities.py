@@ -11,16 +11,22 @@ TRW still never auto-selects xhigh/max; recommendation happens upstream in
 task-profile resolution. The catalog only changes the mapping decision, and
 every decision remains advice — never a claim of harness application.
 
-Provenance: Anthropic model docs verified 2026-07-09; see
-docs/research/providers/claude-code/CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md §1/§7.
+Provenance: Anthropic model docs verified 2026-07-09, re-verified and
+extended 2026-07-26 (Claude Opus 5 + Sonnet 4.5 entries). See
+docs/research/providers/claude-code/CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md §1/§7
+and docs/documentation/prompting/OPUS-5-BEST-PRACTICES.md §Effort.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from trw_mcp.models.task_profile_types import ExecutionEffort
 
 # Bump when entries change so adapter decision identities change with it.
-ANTHROPIC_MODEL_CATALOG_VERSION = "anthropic-models-2026-07"
+# Date-precise (not month-precise): two entry changes inside one calendar
+# month must still produce two distinct decision identities.
+ANTHROPIC_MODEL_CATALOG_VERSION = "anthropic-models-2026-07-26"
 
 _FULL_EFFORT: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "xhigh", "max"})
 _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max"})
@@ -39,12 +45,19 @@ _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max
 _ANTHROPIC_EFFORT_CAPABILITIES: dict[str, frozenset[ExecutionEffort]] = {
     "claude-fable-5": _FULL_EFFORT,
     "claude-mythos-5": _FULL_EFFORT,
+    "claude-opus-5": _FULL_EFFORT,
     "claude-opus-4-8": _FULL_EFFORT,
     "claude-opus-4-7": _FULL_EFFORT,
     "claude-sonnet-5": _FULL_EFFORT,
     "claude-opus-4-6": _NO_XHIGH,
     "claude-sonnet-4-6": _NO_XHIGH,
     "claude-opus-4-5": frozenset({"low", "medium", "high"}),
+    # trw:intentional empty frozenset, not absence. Sonnet 4.5 and Haiku 4.5
+    # *error* on the effort parameter rather than ignoring it, so the adapter
+    # must return `unsupported` (write nothing) instead of clamping to a value
+    # the API would reject. Omitting them would fall through to the safe base
+    # and wrongly report low/medium/high as mapped.
+    "claude-sonnet-4-5": frozenset(),
     "claude-haiku-4-5": frozenset(),
 }
 
@@ -62,17 +75,43 @@ def _normalize_model_id(model_id: str) -> str:
     return normalized
 
 
+def match_model_family(model_id: str, keys: Iterable[str]) -> str | None:
+    """Return the entry of *keys* naming *model_id*'s family, or ``None``.
+
+    The single implementation of "which table row describes this model id".
+    One concrete model reaches TRW under several spellings — a bare alias
+    (``claude-opus-5``), a dated snapshot (``claude-haiku-4-5-20251001``), a
+    Claude Code long-context rendering (``claude-opus-5[1m]``), a Vertex pin
+    (``claude-opus-4-5@20251101``), and Bedrock's plain or region-prefixed
+    provider forms (``anthropic.claude-opus-5``, ``us.anthropic.claude-opus-5``).
+    A table keyed on bare aliases and read with an exact dict lookup silently
+    misses every other spelling, which is how a model can appear to cost
+    nothing at all.
+
+    Matching is longest-key-first so a longer family never loses to a shorter
+    prefix, and a match must land on a ``-``/``[``/``@`` boundary so
+    ``claude-opus-4-80`` never inherits ``claude-opus-4-8``.
+    """
+    normalized = _normalize_model_id(model_id)
+    if not normalized:
+        return None
+    # `keys` may come from a user-supplied YAML table (TRWConfig.pricing_table_path),
+    # where a bare `2026:` or `on:` key parses as int/bool. `len()` and `startswith`
+    # would raise on those, and the caller's fail-open would then drop the entire
+    # telemetry event rather than just the price — a worse outcome than the $0.00
+    # this matcher exists to prevent.
+    str_keys = [k for k in keys if isinstance(k, str)]
+    for key in sorted(str_keys, key=len, reverse=True):
+        if normalized == key or (normalized.startswith(key) and normalized[len(key) : len(key) + 1] in _BOUNDARY_CHARS):
+            return key
+    return None
+
+
 def lookup_model_effort_capabilities(model_id: str) -> frozenset[ExecutionEffort] | None:
     """Return the declared effort set for a trusted model identity.
 
     Returns ``None`` for unknown models (callers keep their safe default) and
     an empty frozenset for models that declare no effort support at all.
     """
-    normalized = _normalize_model_id(model_id)
-    if not normalized:
-        return None
-    # Longest key first so a longer family never loses to a shorter prefix.
-    for key in sorted(_ANTHROPIC_EFFORT_CAPABILITIES, key=len, reverse=True):
-        if normalized == key or (normalized.startswith(key) and normalized[len(key) : len(key) + 1] in _BOUNDARY_CHARS):
-            return _ANTHROPIC_EFFORT_CAPABILITIES[key]
-    return None
+    key = match_model_family(model_id, _ANTHROPIC_EFFORT_CAPABILITIES)
+    return _ANTHROPIC_EFFORT_CAPABILITIES[key] if key is not None else None

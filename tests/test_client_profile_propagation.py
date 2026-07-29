@@ -106,10 +106,10 @@ class TestCtxPropagation:
         assert result == "aider"
 
     def test_ctx_none_client_params_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv(_ENV_VAR, "gemini")
+        monkeypatch.setenv(_ENV_VAR, "copilot")
         ctx = _make_ctx_null_client_params()
         result = resolve_client_profile(ctx=ctx)
-        assert result == "gemini"
+        assert result == "copilot"
 
     def test_ctx_blank_name_falls_back_to_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(_ENV_VAR, "cursor-cli")

@@ -40,7 +40,7 @@ KERNEL_TOOLS: tuple[str, ...] = (
 
 #: The eleven non-kernel capability packs -> exact ordered tool IDs. This is the
 #: complete registered surface (operator-only tools such as
-#: ``trw_meta_tune_propose`` / ``trw_channel_render`` / ``trw_channel_stats`` /
+#: ``trw_meta_tune_propose`` / ``trw_channel_stats`` /
 #: ``trw_replay_outcomes`` each belong to exactly one pack so the FR01 manifest
 #: stays a bijection with the registrar). Public status / lifecycle are decided
 #: by the registry, not here — this table is membership only.
@@ -56,7 +56,6 @@ CAPABILITY_PACKS: dict[str, tuple[str, ...]] = {
     "code_risk": (
         "trw_code_index_update",
         "trw_codebase_risk_report",
-        "trw_entity_risk_map",
         "trw_ordering_compare",
         "trw_cross_repo_ordering",
     ),
@@ -88,7 +87,6 @@ CAPABILITY_PACKS: dict[str, tuple[str, ...]] = {
         "trw_surface_diff",
         "trw_mcp_security_status",
         "trw_pipeline_health",
-        "trw_channel_render",
         "trw_channel_stats",
     ),
     "memory_management": ("trw_learn_update", "trw_graph_related"),
@@ -108,7 +106,6 @@ PACK_TOOLS: dict[str, tuple[str, ...]] = {"kernel": KERNEL_TOOLS, **CAPABILITY_P
 OPERATOR_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "trw_meta_tune_propose",
-        "trw_channel_render",
         "trw_channel_stats",
         "trw_replay_outcomes",
     }

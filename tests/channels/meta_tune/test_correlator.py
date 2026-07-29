@@ -116,12 +116,55 @@ def test_correlate_push_followed_by_outcome_within_window(tmp_path: Path) -> Non
     assert r.raw_rate == pytest.approx(1.0)
 
 
-def test_correlate_push_no_outcome_uncorrelated(tmp_path: Path) -> None:
+def test_correlate_no_outcome_events_at_all_is_unmeasured_not_zero(
+    tmp_path: Path,
+) -> None:
+    """A log with no outcome events yields no rate, rather than a rate of zero.
+
+    This test previously asserted ``raw_rate == 0.0`` here, which encoded the
+    defect: it made "we cannot measure this" indistinguishable from "we
+    measured, and the answer is none". Nothing in the codebase has ever emitted
+    any member of ``OUTCOME_EVENT_TYPES``, so this branch was not an edge case —
+    it was every call, in every project, and the 0.0 it produced was surfaced
+    through ``trw_channel_stats`` and ``channel-doctor stats`` as "0.0%".
+    """
     events = [_push_event()]
     results = correlate(events, window_seconds=3600)
     assert len(results) == 1
     assert results[0].correlated == 0
-    assert results[0].raw_rate == pytest.approx(0.0)
+    assert results[0].outcome_unmeasured is True
+    assert results[0].raw_rate is None
+    assert results[0].adj_rate is None
+
+
+def test_a_genuine_zero_is_still_reported_as_zero() -> None:
+    """The discrimination, not just the new default.
+
+    When outcome events DO exist and simply do not correlate, that is a real
+    measurement of zero and must be reported as ``0.0`` — otherwise the fix
+    would have swapped one blanket answer for another and destroyed the
+    signal it was meant to protect.
+    """
+    events = [
+        _push_event(session_id="sess-1", file_path="CLAUDE.md"),
+        # Same session — so outcome instrumentation demonstrably ran here — but
+        # a different file, so it cannot join to the push above. That makes the
+        # non-correlation a real observation rather than an absence of one.
+        #
+        # An earlier version of this test used a different *session*, which the
+        # per-channel measurability rule now (correctly) classifies as
+        # unmeasured: an outcome in another session says nothing about whether
+        # this one was being watched.
+        _outcome_event(session_id="sess-1", file_path="other.md"),
+    ]
+
+    results = correlate(events, window_seconds=3600)
+
+    pushes = [r for r in results if r.total_pushes > 0]
+    assert len(pushes) == 1
+    assert pushes[0].correlated == 0
+    assert pushes[0].outcome_unmeasured is False, "outcome events were present, so the rate WAS measurable"
+    assert pushes[0].raw_rate == pytest.approx(0.0)
 
 
 def test_correlate_outcome_outside_window_uncorrelated() -> None:
@@ -284,3 +327,43 @@ def test_correlate_pull_tool_call_event_type() -> None:
     ]
     results = correlate(events, window_seconds=3600)
     assert results[0].correlated == 1
+
+
+def test_one_channels_outcomes_do_not_mark_another_channel_measured() -> None:
+    """Measurability is per (channel, client), never global over the log.
+
+    A first version of this fix computed `unmeasured = not parsed_outcomes`
+    across the whole file, so a single outcome event anywhere handed every
+    OTHER channel back the fabricated 0.0 — and with n past `min_n` that is a
+    real tier demotion. A mixed log was enough to re-create the exact defect
+    the flag exists to prevent. Found in review, not by the original tests.
+    """
+    events = [
+        # cursor pushes in a session where nothing ever observes outcomes.
+        *[
+            _push_event(
+                channel_id="cur-01",
+                client="cursor",
+                session_id="sess-cursor",
+                ts="2026-05-28T10:00:00.000Z",
+            )
+            for _ in range(3)
+        ],
+        # An unrelated claude-code session DOES record an outcome.
+        _push_event(channel_id="cc-01", client="claude-code", session_id="sess-cc"),
+        _outcome_event(channel_id="cc-01", client="claude-code", session_id="sess-cc"),
+    ]
+
+    results = correlate(events, window_seconds=3600)
+    by_key = {(r.channel_id, r.client): r for r in results}
+
+    cursor = by_key[("cur-01", "cursor")]
+    assert cursor.outcome_unmeasured is True, (
+        "no outcome was ever recorded in this channel's session, so its rate "
+        "is unmeasured — another client's outcome must not vouch for it"
+    )
+    assert cursor.raw_rate is None
+
+    claude = by_key[("cc-01", "claude-code")]
+    assert claude.outcome_unmeasured is False
+    assert claude.raw_rate == pytest.approx(1.0)

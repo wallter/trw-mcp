@@ -15,9 +15,11 @@ from trw_mcp.models.config._profiles import resolve_client_profile
 
 _PROFILE_OUTPUT_CASES: tuple[tuple[str, frozenset[str], tuple[str, ...]], ...] = (
     ("claude-code", frozenset({"claude_md"}), ("CLAUDE.md",)),
-    ("opencode", frozenset({"agents_md"}), (".opencode/INSTRUCTIONS.md",)),
+    # PRD-CORE-240-FR04: opencode writes no shared surface flag — its primary
+    # artifact is .opencode/INSTRUCTIONS.md, referenced from opencode.json.
+    ("opencode", frozenset(), (".opencode/INSTRUCTIONS.md",)),
     ("cursor-ide", frozenset({"agents_md", "cursor_rules"}), (".cursor/rules/trw-ceremony.mdc",)),
-    ("cursor-cli", frozenset({"agents_md", "agents_md_primary", "cli_config"}), ("AGENTS.md", ".cursor/cli.json")),
+    ("cursor-cli", frozenset({"agents_md", "cli_config"}), ("AGENTS.md", ".cursor/cli.json")),
     ("codex", frozenset({"agents_md"}), (".codex/INSTRUCTIONS.md",)),
     ("copilot", frozenset({"agents_md", "copilot_instructions"}), (".github/copilot-instructions.md",)),
     ("antigravity-cli", frozenset({"agents_md", "antigravitycli_md"}), ("ANTIGRAVITY.md",)),

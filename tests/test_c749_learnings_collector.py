@@ -7,6 +7,8 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools._learnings_collector import (
     DEFAULT_TOP_N,
@@ -71,30 +73,86 @@ class TestBuildFileQueries:
 
 
 class TestCollectLearnings:
+    """The recall backend is stubbed on purpose.
+
+    These tests previously asserted ``isinstance(result, list)`` against the
+    ambient corpus. On a clean checkout that corpus is empty, so every one of
+    them held with ``collect_learnings`` returning ``[]`` unconditionally — the
+    cap was never observed, the filter was never observed, and
+    ``test_returns_learning_summaries`` iterated an empty list. Stubbing
+    ``recall_learnings`` makes the queries and the returned shape observable.
+    """
+
+    @staticmethod
+    def _stub_recall(
+        monkeypatch: pytest.MonkeyPatch,
+        rows_for: dict[str, list[dict[str, object]]] | None = None,
+    ) -> list[str]:
+        """Record every query reaching recall; return canned rows. Returns the log."""
+        seen: list[str] = []
+
+        def fake_recall(query: str, max_results: int = 5, **_: object) -> list[dict[str, object]]:
+            seen.append(query)
+            return list((rows_for or {}).get(query, []))
+
+        monkeypatch.setattr(
+            "trw_mcp.state.learning_injection.recall_learnings",
+            fake_recall,
+        )
+        return seen
+
     def test_empty_queries(self) -> None:
         assert collect_learnings([]) == []
 
-    def test_invalid_queries_skipped(self) -> None:
-        # Should not raise; non-strings filtered
-        result = collect_learnings(["", "x" * 10])
-        assert isinstance(result, list)
+    def test_invalid_queries_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Blank and non-string queries never reach the recall backend."""
+        seen = self._stub_recall(monkeypatch)
+        result = collect_learnings(["", "real-query", None, 7])  # type: ignore[list-item]
+        assert seen == ["real-query"], f"invalid queries were forwarded: {seen}"
+        assert result == []
 
-    def test_max_queries_cap(self) -> None:
-        # Should cap at MAX_QUERIES = 10
+    def test_max_queries_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """More than MAX_QUERIES inputs → only the first MAX_QUERIES are issued."""
+        seen = self._stub_recall(monkeypatch)
         queries = ["q" + str(i) for i in range(20)]
-        result = collect_learnings(queries, top_n=DEFAULT_TOP_N)
-        assert isinstance(result, list)
+        collect_learnings(queries, top_n=DEFAULT_TOP_N)
+        assert seen == queries[:MAX_QUERIES], f"cap not applied: {len(seen)} queries issued"
 
-    def test_default_top_n(self) -> None:
-        # Default behavior — returns at most DEFAULT_TOP_N
+    def test_default_top_n(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default caps the returned summaries at DEFAULT_TOP_N, not just 'at most'."""
+        rows = [{"id": f"L-{i:03d}", "summary": f"Summary {i}", "impact": 0.5} for i in range(20)]
+        self._stub_recall(monkeypatch, {"foo.py": rows})
         result = collect_learnings(["foo.py"])
-        assert len(result) <= DEFAULT_TOP_N
+        assert len(result) == DEFAULT_TOP_N
+        assert [item.id for item in result] == [f"L-{i:03d}" for i in range(DEFAULT_TOP_N)]
 
-    def test_returns_learning_summaries(self) -> None:
-        # On the live monorepo, "foo.py" finds some learnings
+    def test_returns_learning_summaries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Rows are projected onto LearningSummary, field for field."""
+        self._stub_recall(
+            monkeypatch,
+            {"foo.py": [{"id": "L-abc", "summary": "Watch the dedup key", "impact": 0.8, "tags": ["a", "b"]}]},
+        )
         result = collect_learnings(["foo.py"])
-        for item in result:
-            assert isinstance(item, LearningSummary)
+        assert result == [LearningSummary(id="L-abc", summary="Watch the dedup key", impact=0.8, tags=["a", "b"])]
+
+    def test_duplicate_ids_across_queries_are_deduped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The same learning surfaced by two queries is returned once."""
+        row: dict[str, object] = {"id": "L-dup", "summary": "Seen twice", "impact": 0.4}
+        self._stub_recall(monkeypatch, {"a.py": [row], "b.py": [row]})
+        assert [item.id for item in collect_learnings(["a.py", "b.py"])] == ["L-dup"]
+
+    def test_recall_failure_on_one_query_does_not_abort_the_rest(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """"NEVER raises" must mean the remaining queries still run."""
+
+        def fake_recall(query: str, max_results: int = 5, **_: object) -> list[dict[str, object]]:
+            if query == "boom.py":
+                raise RuntimeError("backend down")
+            return [{"id": "L-ok", "summary": "Survived", "impact": 0.3}]
+
+        monkeypatch.setattr("trw_mcp.state.learning_injection.recall_learnings", fake_recall)
+        assert [item.id for item in collect_learnings(["boom.py", "fine.py"])] == ["L-ok"]
 
 
 class TestBatchToolLearnings:
@@ -162,79 +220,6 @@ class TestRiskReportLearnings:
         from trw_mcp.tools.codebase_risk_report import compute_codebase_risk_report
 
         r = compute_codebase_risk_report(repo_root=str(tmp_path), top_n=5)
-        assert r.distill_status == "hint_available"
-        assert isinstance(r.learnings, list)
-        assert r.learnings_count == len(r.learnings)
-
-
-class TestOrderingCompareLearnings:
-    def test_pro_with_sidecar_has_learnings_field(self, tmp_path: Path) -> None:
-        sha = _make_git_repo(tmp_path)
-        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
-        _write_envelope(
-            cache_dir / f"ordering-compare-{sha}.json",
-            sha,
-            {
-                "label_a": "high_composite_risk_paths",
-                "label_b": "high_risk_paths",
-                "n_a": 10,
-                "n_b": 10,
-                "n_intersection": 5,
-                "n_union": 15,
-                "jaccard": 0.333,
-                "kendall_tau_b": 0.85,
-                "only_in_a": ["foo.py"],
-                "only_in_b": ["bar.py"],
-                "overlap_status": "overlap",
-            },
-        )
-        _write_entitlement(tmp_path / ".trw", "pro")
-        from trw_mcp.tools.ordering_compare import compute_ordering_compare
-
-        r = compute_ordering_compare(repo_root=str(tmp_path))
-        assert r.distill_status == "hint_available"
-        assert isinstance(r.learnings, list)
-        assert r.learnings_count == len(r.learnings)
-
-
-class TestCrossRepoLearnings:
-    def test_pro_with_sidecar_has_learnings_field(self, tmp_path: Path) -> None:
-        _make_git_repo(tmp_path)
-        _write_entitlement(tmp_path / ".trw", "pro")
-        sidecar = tmp_path / "shared" / "cross-repo-aggregate-xyz.json"
-        _write_envelope(
-            sidecar,
-            "xyz",
-            {
-                "n_repos": 2,
-                "per_repo": [
-                    {
-                        "repo_label": "r1",
-                        "comparison": {
-                            "label_a": "a",
-                            "label_b": "b",
-                            "n_a": 5,
-                            "n_b": 5,
-                            "n_intersection": 3,
-                            "n_union": 7,
-                            "jaccard": 0.428,
-                            "kendall_tau_b": 0.9,
-                            "only_in_a": [],
-                            "only_in_b": [],
-                            "overlap_status": "overlap",
-                        },
-                    },
-                ],
-                "overlap_status_counts": {"overlap": 1},
-                "summary_verdict": "consistent_overlap",
-            },
-        )
-        from trw_mcp.tools.cross_repo_ordering import compute_cross_repo_ordering
-
-        r = compute_cross_repo_ordering(
-            repo_root=str(tmp_path),
-            sidecar_path=str(sidecar),
-        )
         assert r.distill_status == "hint_available"
         assert isinstance(r.learnings, list)
         assert r.learnings_count == len(r.learnings)

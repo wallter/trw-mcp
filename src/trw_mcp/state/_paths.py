@@ -19,6 +19,7 @@ from typing import Any
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._no_active_run import NO_ACTIVE_RUN_REASON, no_active_run_remedy
 from trw_mcp.state._path_context_probe import (
     _FASTMCP_CTX_PROBES as _FASTMCP_CTX_PROBES,
 )
@@ -142,13 +143,33 @@ class TRWCallContext:
     fastmcp_session: str | None
 
 
+def _client_session_id() -> str | None:
+    """Return the launching client's own session id, or ``None``.
+
+    Imported lazily: :mod:`trw_mcp.client_profiles` pulls in the profile registry
+    at package import, and this module is imported early by ``state``. Python
+    caches the module after the first call, so the cost is a dict lookup.
+    Fail-open -- an unavailable registry must never break pin resolution.
+    """
+    try:
+        from trw_mcp.client_profiles.session_identity import resolve_client_session_id
+
+        return resolve_client_session_id()
+    except Exception:  # justified: identity probing must not break pin resolution
+        _runtime_logger().debug("client_session_id_probe_failed", exc_info=True)
+        return None
+
+
 def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
-    """Resolve the pin-key for the current call via four-layer fallback.
+    """Resolve the pin-key for the current call via layered fallback.
 
     Precedence (strict):
       1. *explicit* arg — caller-supplied, wins unconditionally.
       2. ``TRW_SESSION_ID`` env var — operator-forced identity / subprocess
-         inheritance.
+         inheritance, and what ``.trw/runtime/hook-env.sh`` exports into hook
+         shells (PRD-FIX-118 FR01).
+      2b. The launching client's own session variable (PRD-FIX-118 FR01) — the
+         one identifier the MCP server and a shell hook can BOTH observe.
       3. FastMCP :class:`~fastmcp.Context` probing via
          :func:`_extract_fastmcp_session_id`.
       4. Process-level :data:`_session_id` UUID — legacy fallback for
@@ -159,7 +180,7 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     pre-PRD-CORE-141 behavior (Wave 3 rollback kill-switch).
 
     Every layer emits a ``pin_resolved`` structured log with a ``source``
-    field (``explicit`` | ``env`` | ``ctx`` | ``process``).  When
+    field (``explicit`` | ``env`` | ``client_env`` | ``ctx`` | ``process``).  When
     ``source=ctx``, a ``ctx_attr_path`` field names the probe that matched.
 
     Parameters
@@ -204,6 +225,26 @@ def resolve_pin_key(ctx: object | None, explicit: str | None = None) -> str:
     if env_id:
         _runtime_logger().info("pin_resolved", source="env", pin_key=env_id)
         return env_id
+
+    # Layer 2b — the launching client's own session id (PRD-FIX-118 FR01).
+    #
+    # This layer exists so the pin key is MUTUALLY KNOWABLE. Layer 3 below mints
+    # its key inside the MCP server, where no shell hook can observe it; keying
+    # pins.json on it left hooks unable to ask "which run is mine?" and guessing
+    # "which run is newest?" instead -- another instance's run, under concurrency.
+    # The client's variable (e.g. CLAUDE_CODE_SESSION_ID) is present in BOTH this
+    # process's environment and every hook shell, so preferring it here makes the
+    # key readable on both sides. The hook side gets the identical string from
+    # ``.trw/runtime/hook-env.sh``, which exports it as TRW_SESSION_ID (layer 2).
+    #
+    # Ordered ABOVE the ctx probe deliberately: an unobservable key is exactly the
+    # defect. Clients that publish nothing fall through unchanged, so this is
+    # additive. Pre-existing pins keyed on old ctx UUIDs simply stop matching and
+    # are reaped by ``trw-mcp gc`` on its normal schedule.
+    client_id = _client_session_id()
+    if client_id:
+        _runtime_logger().info("pin_resolved", source="client_env", pin_key=client_id)
+        return client_id
 
     # Layer 3 — FastMCP Context probing
     if ctx is not None:
@@ -551,16 +592,21 @@ def resolve_run_path(
     """
     if run_path:
         resolved = Path(run_path).resolve()
-        if not resolved.exists():
-            raise StateError(
-                f"Run path does not exist: {resolved}",
-                path=str(resolved),
-            )
-        # Path containment check (PRD-QUAL-042-FR02)
+        # Path containment check (PRD-QUAL-042-FR02). Ordered BEFORE the
+        # existence check (PRD-CORE-233 NFR03): once every sub-agent is told to
+        # pass run_path=, this is a load-bearing boundary — an out-of-root path
+        # must not have its existence probed, and the caller-visible message
+        # must not echo it back. The absolute path stays in structured context
+        # for operators; only the message is redacted.
         project_root = resolve_project_root()
         if not resolved.is_relative_to(project_root):
             raise StateError(
-                f"Run path escapes project root: {resolved}",
+                "Run path escapes project root; supply a run directory inside the project.",
+                path=str(resolved),
+            )
+        if not resolved.exists():
+            raise StateError(
+                f"Run path does not exist: {resolved}",
                 path=str(resolved),
             )
         return resolved
@@ -569,9 +615,18 @@ def resolve_run_path(
     project_root = resolve_project_root()
     runs_dir = project_root / config.runs_root
     if not runs_dir.exists():
+        # Audit C-3: "no runs directory" IS the no-active-run condition — there
+        # cannot be an active run when the tree holding runs does not exist. It
+        # previously raised a bare message with neither a remedy nor the
+        # machine-readable ``reason`` marker FR02 keys on, so a caller in this
+        # state got a dead end while the semantically identical case 20 lines
+        # below got the full recovery path. Same condition, same typed answer.
         raise StateError(
-            f"Cannot auto-detect run path: {config.runs_root}/ directory not found",
+            f"Cannot auto-detect run path: {config.runs_root}/ directory not found. "
+            + no_active_run_remedy(),
+            suggestion=no_active_run_remedy(),
             project_root=str(project_root),
+            reason=NO_ACTIVE_RUN_REASON,
         )
 
     # Primary: prefer pinned/active run so trw_status aligns with trw_session_start.
@@ -587,12 +642,15 @@ def resolve_run_path(
     # INFO event was already emitted inside ``find_active_run`` — no need
     # to log again here.
     if context is not None:
+        # PRD-CORE-233 FR03: the remedy set is shared with the ceremony hint
+        # builder so a caller never sees different options for the same
+        # condition; ``reason`` is the machine-readable marker FR02 keys on.
         raise StateError(
-            "No active run for this session (pin not found, scan fallback suppressed). "
-            "Call trw_init() to create a run or trw_adopt_run(run_path=...) to resume one.",
-            suggestion="Call trw_init() or trw_adopt_run(run_path=...) before checkpoint/deliver.",
+            "No active run for this session (pin not found, scan fallback suppressed). " + no_active_run_remedy(),
+            suggestion=no_active_run_remedy(),
             project_root=str(project_root),
             pin_key=context.session_id,
+            reason=NO_ACTIVE_RUN_REASON,
         )
 
     # PRD-FIX-085 FR02: HOT_PATH guard. If we reach this fallback during
@@ -628,9 +686,16 @@ def resolve_run_path(
     # Fallback: latest mtime for clients that never pinned a run.
     latest_run = _find_latest_run_dir(runs_dir)
     if latest_run is None:
+        # Audit C-3 (third instance, found by the absent-vs-empty parity test):
+        # an empty runs/ is the same condition as a missing one and as a
+        # suppressed scan — all three mean "no run this caller can use". They
+        # must carry the same remedy and the same FR02 ``reason`` marker, or the
+        # recovery a caller gets depends on which spelling of "none" it hit.
         raise StateError(
-            f"No active runs found in {config.runs_root}/",
+            f"No active runs found in {config.runs_root}/. " + no_active_run_remedy(),
+            suggestion=no_active_run_remedy(),
             project_root=str(project_root),
+            reason=NO_ACTIVE_RUN_REASON,
         )
     logger.info(
         "resolve_run_path_mtime_fallback",

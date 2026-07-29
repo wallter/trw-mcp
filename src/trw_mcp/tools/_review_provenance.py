@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Literal
 
 import structlog
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from trw_mcp.state.persistence import FileStateReader
 
@@ -52,6 +53,82 @@ class RunIdentity:
 
     run_id: str = ""
     session_id: str = ""
+
+
+class ReviewerIdentityClaim(BaseModel):
+    """Parsed ``reviewer_identity`` bag from ``trw_review`` (PRD-CORE-234 collapse).
+
+    Four flat ``reviewer_*`` parameters became ONE structured argument. The bag is
+    accepted as an untyped dict at the tool boundary (a Pydantic model in the
+    parameter position re-emits every field into ``$defs`` and costs MORE schema
+    than the flat params) and validated into this model on the first line of the
+    body, so the collapse buys wire-schema cost without giving up any validation.
+
+    ``extra="forbid"`` is load-bearing, not tidiness: a typo'd
+    ``reviewer_reciept_id`` inside a permissive bag would read as "no receipt"
+    and silently downgrade the review's provenance class — the same
+    silent-discard failure the surrounding module exists to prevent. Keys are
+    byte-identical to the parameters they replaced.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    reviewer_source: str | None = None
+    reviewer_receipt_id: str | None = None
+    reviewer_run_id: str | None = None
+    reviewer_session_id: str | None = None
+
+    @field_validator("reviewer_source")
+    @classmethod
+    def _known_source(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in ALLOWED_REVIEWER_SOURCES:
+            raise ValueError(f"invalid reviewer_source {value!r}; allowed: {', '.join(ALLOWED_REVIEWER_SOURCES)}")
+        return normalized
+
+    @model_validator(mode="after")
+    def _operator_needs_receipt(self) -> ReviewerIdentityClaim:
+        # Same invariant build_reviewer_block enforces (FR01), re-checked at the
+        # boundary so the collapse cannot become the place it gets lost, and so
+        # the caller is told at argument-parse time rather than mid-persist.
+        if self.reviewer_source == "operator" and not (self.reviewer_receipt_id or "").strip():
+            raise ValueError("reviewer_identity.reviewer_source='operator' requires a non-empty reviewer_receipt_id")
+        return self
+
+
+REVIEWER_IDENTITY_KEYS: tuple[str, ...] = tuple(ReviewerIdentityClaim.model_fields)
+
+
+def parse_reviewer_identity(raw: object) -> ReviewerIdentityClaim:
+    """Parse the ``reviewer_identity`` bag, REJECTING anything unrecognized.
+
+    Accepts a mapping, a JSON object string (some clients serialize structured
+    arguments — Claude Code issue #3084), or an empty value. Every rejection
+    names the accepted key set so a caller can fix the call instead of receiving
+    a quietly weaker review.
+    """
+    if raw is None or raw == "" or raw == {}:
+        return ReviewerIdentityClaim()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError as err:
+            raise ValueError(f"reviewer_identity must be an object or JSON object string: {err}") from err
+    if not isinstance(raw, dict):
+        # trw:intentional ValueError, not TypeError: all three rejection paths in
+        # this function raise ValueError so a caller has ONE exception type to
+        # catch for "your reviewer_identity was not usable". Raising TypeError
+        # only here would split that contract on an argument whose whole job is
+        # to be rejected loudly.
+        raise ValueError(  # noqa: TRY004
+            f"reviewer_identity must be an object with keys {list(REVIEWER_IDENTITY_KEYS)}"
+        )
+    try:
+        return ReviewerIdentityClaim.model_validate(raw)
+    except ValidationError as err:
+        raise ValueError(f"invalid reviewer_identity: {err}; accepted keys: {list(REVIEWER_IDENTITY_KEYS)}") from err
 
 
 # ---------------------------------------------------------------------------

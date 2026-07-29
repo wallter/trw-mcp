@@ -17,11 +17,10 @@ Precedence (highest wins):
   the ``dispatch_default_read_only`` config baseline. (The caller is responsible
   for turning an ``--allow-writes`` request into ``read_only=False``.)
 
-``gemini`` is rejected (EOL) BEFORE the enabled-clients check so the redirect to
-``agy`` always wins. A resolved client absent from ``dispatch_enabled_clients``
-is rejected. All rejection paths raise :class:`DispatchResolutionError` carrying
-an ``exit_code`` so the CLI can translate it to ``sys.exit`` and the MCP tool can
-surface it as a structured ``{"error", "exit_code"}`` payload.
+A resolved client absent from ``dispatch_enabled_clients`` is rejected. All
+rejection paths raise :class:`DispatchResolutionError` carrying an ``exit_code``
+so the CLI can translate it to ``sys.exit`` and the MCP tool can surface it as a
+structured ``{"error", "exit_code"}`` payload.
 """
 
 from __future__ import annotations
@@ -31,19 +30,14 @@ from pathlib import Path
 from trw_mcp.dispatch._roles import apply_role
 from trw_mcp.dispatch._types import DispatchRequest
 
-_GEMINI_EOL_MSG = (
-    "Gemini CLI was retired (EOL 2026-06-18) and is not a dispatch target. "
-    "Use '--client agy' (Antigravity CLI) instead."
-)
-
 
 class DispatchResolutionError(ValueError):
     """A dispatch request could not be resolved into a valid target.
 
     Carries ``exit_code`` so the CLI maps it directly to ``sys.exit`` and the MCP
     tool can echo the same code in its structured error payload. ``2`` is used
-    for every resolution failure (unresolved / disabled / gemini-EOL) to mirror
-    the CLI's pre-existing exit conventions.
+    for every resolution failure (unresolved / disabled) to mirror the CLI's
+    pre-existing exit conventions.
     """
 
     def __init__(self, message: str, *, exit_code: int = 2) -> None:
@@ -59,9 +53,8 @@ def _resolve_client(
 ) -> str:
     """Resolve the target client by precedence, raising on failure.
 
-    explicit > role mapping > default. ``gemini`` is rejected BEFORE the
-    enabled-clients check so the EOL redirect always wins. A resolved client not
-    in ``dispatch_enabled_clients`` is rejected.
+    explicit > role mapping > default. A resolved client not in
+    ``dispatch_enabled_clients`` is rejected.
     """
     default_client = getattr(dispatch_cfg, "dispatch_default_client", None)
     role_client = getattr(dispatch_cfg, "dispatch_role_client", {})
@@ -79,9 +72,6 @@ def _resolve_client(
         )
 
     resolved = str(resolved)
-    if resolved == "gemini":
-        raise DispatchResolutionError(_GEMINI_EOL_MSG, exit_code=2)
-
     enabled = getattr(dispatch_cfg, "dispatch_enabled_clients", [])
     if isinstance(enabled, list) and resolved not in enabled:
         raise DispatchResolutionError(
@@ -107,7 +97,7 @@ def resolve_dispatch_request(
     """Build a validated :class:`DispatchRequest` from loose inputs + config.
 
     Raises :class:`DispatchResolutionError` (``exit_code=2``) when no client
-    resolves, the resolved client is disabled, or ``gemini`` is requested.
+    resolves or the resolved client is disabled.
     """
     resolved_client = _resolve_client(client=client, role=role, dispatch_cfg=dispatch_cfg)
 

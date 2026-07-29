@@ -11,7 +11,52 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 
 init_hook_timer
 
-_run_dir=$(find_active_run) || exit 0
+# Housekeeping is SESSION-scoped, not run-scoped, so it runs on every session end
+# regardless of which run (if any) this session owns. It used to sit AFTER the
+# run-scoped early exits, which meant it only ever ran in the narrow "this run has
+# events and no reflection" case — and once the run is resolved by ownership
+# instead of recency, an unowned session would have stopped cleaning up entirely.
+_project_root="$(get_repo_root)" || true
+if [ -n "$_project_root" ]; then
+  cleanup_block_files "$_project_root/.trw/context"
+  cleanup_phase_cycle "$_project_root"
+fi
+
+# --- Resolve THIS SESSION'S OWN run (PRD-FIX-118 FR03) ---------------------
+# The warning below quotes a concrete event count as "your work". Sourced by
+# recency it reports a parallel instance's events, which is both untrue and
+# unactionable — the reader has no access to that run.
+#
+# What "unowned" means HERE: skip the run-scoped warning. The premise ("N events
+# were logged into your run") is unverifiable without an owned run, and there is
+# no session-scoped event count to substitute — .trw/context/session-events.jsonl
+# is a shared append-only log, so a run-less variant would fire on EVERY session
+# end whether or not this session did anything. The delivery reminder that
+# actually gates is stop-ceremony.sh, which handles the unpinned case explicitly;
+# this hook is the advisory echo of it. Housekeeping above still runs.
+_session_id="${TRW_SESSION_ID:-}"
+if [ -z "$_session_id" ] && ! [ -t 0 ]; then
+  _stdin_payload=$(cat 2>/dev/null) || _stdin_payload=""
+  if [ -n "$_stdin_payload" ]; then
+    _session_id=$(printf '%s' "$_stdin_payload" \
+      | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -1 \
+      | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || _session_id=""
+  fi
+fi
+_session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""
+
+_run_dir=""
+if [ -n "$_session_id" ]; then
+  _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""
+  if [ -z "$_run_dir" ]; then
+    log_hook_execution "SessionEnd" "unowned" "0"
+    exit 0
+  fi
+else
+  # Identity unknown — legacy newest-wins keeps single-instance clients warned.
+  _run_dir=$(find_active_run) || exit 0
+fi
 [ -n "$_run_dir" ] || exit 0
 
 _events_path="${_run_dir}meta/events.jsonl"
@@ -24,13 +69,6 @@ _event_count=$(wc -l < "$_events_path" 2>/dev/null | tr -d ' ') || _event_count=
 # Check for reflection event
 if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "trw_deliver_complete"; then
   exit 0
-fi
-
-# Housekeeping: clean up per-helper block count files
-_project_root="$(get_repo_root)" || true
-if [ -n "$_project_root" ]; then
-  cleanup_block_files "$_project_root/.trw/context"
-  cleanup_phase_cycle "$_project_root"
 fi
 
 # Events exist but no reflection — warn

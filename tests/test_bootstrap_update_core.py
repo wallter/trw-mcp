@@ -12,6 +12,60 @@ from trw_mcp.models.config import TRWConfig
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
 
+def _bundle_with_override(bundle_root: Path, rel: str, content: str) -> Path:
+    """Return a copy of the shipped data dir with one artifact set to *content*.
+
+    Models "bundle version N" for the stale-artifact tests. Installing from this
+    directory makes TRW the author of the older content, which is what gives
+    ``managed-artifacts.yaml`` a legitimate ownership hash — as opposed to
+    hand-writing the file and re-baselining it, which records the writer's bytes
+    as TRW's and is the PRD-FIX-121 defect itself.
+
+    *bundle_root* must be OUTSIDE the target project (the repo fixture is
+    ``tmp_path`` itself), so use ``tmp_path_factory``.
+    """
+    import shutil
+
+    from trw_mcp.bootstrap._utils import _DATA_DIR
+
+    old_bundle = bundle_root / "data"
+    if not old_bundle.exists():
+        shutil.copytree(_DATA_DIR, old_bundle)
+    target = old_bundle / rel
+    assert target.is_file(), f"{rel} is not a bundled artifact"
+    target.write_text(content, encoding="utf-8")
+    return old_bundle
+
+
+def resolve_instruction_text(instruction_file: Path) -> str:
+    """Return an instruction file's text with its ``@``-imports resolved.
+
+    The TRW block reaches a client instruction file through a *carrier*
+    (PRD-CORE-203): either INLINE between the markers, or externalized to a
+    ``.trw/`` sidecar with a single ``@<relpath>`` import left in its place.
+    Assertions about protocol content must hold under both, so they run against
+    the resolved text rather than the raw file.
+
+    This is deliberately stronger than the previous raw-substring assertions: a
+    dangling import (one whose target is missing or empty) contributes nothing
+    here, so the protocol assertion fails -- which is the correct outcome and
+    exactly the failure a raw read could not distinguish from success.
+
+    Resolution is single-hop and relative to the *containing file's* directory,
+    matching Claude Code's documented semantics.
+    """
+    text = instruction_file.read_text(encoding="utf-8")
+    parts = [text]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("@") or len(stripped.split()) != 1:
+            continue
+        target = instruction_file.parent / stripped[1:]
+        if target.is_file():
+            parts.append(target.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 class TestUpdateProjectBasics:
     """Test update_project basic behavior."""
 
@@ -112,40 +166,51 @@ class TestUpdateOverwritesFrameworkFiles:
         assert content != "old framework content"
         assert TRWConfig().framework_version in content
 
-    def test_updates_hooks(self, initialized_repo: Path) -> None:
+    def test_updates_hooks(self, initialized_repo: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
         """A stale-but-unedited hook is overwritten with the latest version.
 
-        The manifest hash is refreshed to record the stale content as the
-        install baseline (i.e. the user did NOT edit it since install), so the
-        PRD-FIX-068-FR05 guard reports it unmodified and the newer bundled
-        content wins.
+        PRD-FIX-121-FR04. Staleness is established the ONLY legitimate way:
+        TRW itself installs an older bundle, so ``managed-artifacts.yaml`` holds
+        a hash TRW actually wrote.
+
+        The previous fixture hand-wrote ``"old hook"`` and then called
+        ``_write_manifest`` to re-baseline it. That is exactly the laundering
+        PRD-FIX-121-FR01 now forbids — the recorder declines content matching
+        neither the bundle nor its own prior record — so it can no longer
+        manufacture a stale-but-unedited artifact. The behavior under test is
+        unchanged and still asserted; only the fixture moved.
         """
-        from trw_mcp.bootstrap._utils import _DATA_DIR
-        from trw_mcp.bootstrap._version_migration import _write_manifest
-
+        old_bundle = _bundle_with_override(tmp_path_factory.mktemp("bundle-n"), "hooks/session-start.sh", "old hook")
         hook_path = initialized_repo / ".claude" / "hooks" / "session-start.sh"
-        hook_path.write_text("old hook", encoding="utf-8")
-        # Refresh the manifest so "old hook" is the recorded baseline (unmodified).
-        _write_manifest(initialized_repo, {"updated": [], "created": [], "errors": []}, _DATA_DIR)
 
-        update_project(initialized_repo)
+        # Version N: TRW writes the older hook and records ITS hash as the baseline.
+        update_project(initialized_repo, data_dir=old_bundle)
+        assert hook_path.read_text(encoding="utf-8") == "old hook"
+
+        # Version N+1: the bundle advances, the user never touched the file.
+        result = update_project(initialized_repo)
 
         content = hook_path.read_text(encoding="utf-8")
         assert content != "old hook"
+        # Non-vacuity: refreshed, NOT misclassified as a user edit and preserved.
+        assert str(hook_path) not in result.get("modified", [])
 
-    def test_updates_skills(self, initialized_repo: Path) -> None:
-        """A stale-but-unedited skill file is overwritten with the latest version."""
-        from trw_mcp.bootstrap._utils import _DATA_DIR
-        from trw_mcp.bootstrap._version_migration import _write_manifest
+    def test_updates_skills(self, initialized_repo: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+        """A stale-but-unedited skill file is overwritten with the latest version.
 
+        PRD-FIX-121-FR04; same fixture migration as :meth:`test_updates_hooks`.
+        """
+        old_bundle = _bundle_with_override(tmp_path_factory.mktemp("bundle-n"), "skills/trw-deliver/SKILL.md", "old skill")
         skill_path = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
-        skill_path.write_text("old skill", encoding="utf-8")
-        _write_manifest(initialized_repo, {"updated": [], "created": [], "errors": []}, _DATA_DIR)
 
-        update_project(initialized_repo)
+        update_project(initialized_repo, data_dir=old_bundle)
+        assert skill_path.read_text(encoding="utf-8") == "old skill"
+
+        result = update_project(initialized_repo)
 
         content = skill_path.read_text(encoding="utf-8")
         assert content != "old skill"
+        assert str(skill_path) not in result.get("modified", [])
 
     def test_updates_agents(self, initialized_repo: Path) -> None:
         """Framework-managed (unmodified) agents are re-materialized on update.
@@ -191,7 +256,8 @@ class TestUpdateClaudeMdSmartMerge:
         updated = claude_md.read_text(encoding="utf-8")
         assert "My Custom Section" in updated
         assert "This is user content." in updated
-        assert "trw_session_start" in updated  # TRW section still present
+        # Protocol reachable via the carrier (inline or resolved @-import).
+        assert "trw_session_start" in resolve_instruction_text(claude_md)
 
     def test_updates_trw_section(self, initialized_repo: Path) -> None:
         """TRW auto-generated section is updated."""
@@ -202,7 +268,7 @@ class TestUpdateClaudeMdSmartMerge:
         content = claude_md.read_text(encoding="utf-8")
         assert "<!-- trw:start -->" in content
         assert "<!-- trw:end -->" in content
-        assert "trw_session_start" in content
+        assert "trw_session_start" in resolve_instruction_text(claude_md)
 
     def test_appends_trw_section_if_missing(self, initialized_repo: Path) -> None:
         """If CLAUDE.md has no TRW markers, append the section."""
@@ -214,7 +280,7 @@ class TestUpdateClaudeMdSmartMerge:
         content = claude_md.read_text(encoding="utf-8")
         assert "# My Project" in content
         assert "<!-- trw:start -->" in content
-        assert "trw_session_start" in content
+        assert "trw_session_start" in resolve_instruction_text(claude_md)
 
     def test_creates_claude_md_if_missing(self, initialized_repo: Path) -> None:
         """If CLAUDE.md doesn't exist, create it from template."""
@@ -224,7 +290,7 @@ class TestUpdateClaudeMdSmartMerge:
         result = update_project(initialized_repo)
         assert not result["errors"]
         assert claude_md.exists()
-        assert "trw_session_start" in claude_md.read_text(encoding="utf-8")
+        assert "trw_session_start" in resolve_instruction_text(claude_md)
 
 
 @pytest.mark.unit

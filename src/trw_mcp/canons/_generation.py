@@ -98,9 +98,21 @@ def compile_registry_canon(repo_root: Path, compiled: CompiledCanon) -> CompileR
 
 
 def generated_outputs(repo_root: Path, compiled: CompiledCanon) -> tuple[GeneratedOutput, ...]:
-    """Freshly compiled ``(path, content)`` for core, reference, and inventory."""
+    """Freshly compiled ``(path, content)`` for combined, core, reference, and inventory.
+
+    The combined view belongs here even though the frozen baseline digest already
+    guards its *content*: the digest is compared against freshly compiled bytes,
+    never against the file. Omitting it left the combined file both unwritten by
+    ``--write`` and uncompared by ``check_generation`` — so a legitimate source
+    change silently stranded the most-mirrored view (3 tracked mirrors including
+    ``.trw/frameworks/FRAMEWORK.md``) at the previous generation, with the
+    compiler and ``check-aaref-sync.py`` both reporting OK. Including it does not
+    weaken the freeze: ``compile_registry_canon`` still raises on any combined
+    drift from the manifest digest before a byte is written.
+    """
     result = compile_registry_canon(repo_root, compiled)
     return (
+        GeneratedOutput(compiled.combined, result.combined),
         GeneratedOutput(compiled.compact_core, result.core),
         GeneratedOutput(compiled.reference, result.reference),
         GeneratedOutput(compiled.obligation_inventory, serialize_inventory(result.inventory)),

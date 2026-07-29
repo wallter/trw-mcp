@@ -49,7 +49,8 @@ def test_valid_event_types_count() -> None:
     # 20 canonical channel events from master plan §6.2
     # + 2 renderer-distinct events (channel_lock_skip, channel_error — HIGH-1 fix)
     # + 1 system recovery event (manifest_recovered, FR15 / SYS-04)
-    assert len(VALID_EVENT_TYPES) == 23
+    # + 1 hint-delivery measurement event (hint_delivered, PRD-CORE-231 FR01)
+    assert len(VALID_EVENT_TYPES) == 24
 
 
 def test_valid_event_types_contains_canonical() -> None:

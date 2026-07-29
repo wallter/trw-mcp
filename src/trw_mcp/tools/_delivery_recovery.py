@@ -20,11 +20,15 @@ from __future__ import annotations
 import os
 import sqlite3
 
+import structlog
+
 from trw_mcp.tools._delivery_effect_registry import ReplayClass, is_auto_replayable_after_started
 from trw_mcp.tools._delivery_journal_store import JournalStore
 from trw_mcp.tools._delivery_models import (
+    TERMINAL_OPERATION_STATES,
     OperationRecord,
     OperationState,
+    QueueState,
     RecoverResult,
     RecoverStatus,
     RecoveryAction,
@@ -38,6 +42,8 @@ from trw_mcp.tools._delivery_request import (
     DeliveryRequestError,
     verify_capability,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 def process_alive(pid: int) -> bool:
@@ -217,13 +223,74 @@ def _fail(status: RecoverStatus, code: str, operation: OperationRecord) -> Recov
     )
 
 
-def run_maintenance(store: JournalStore, conn: sqlite3.Connection, now_ms: int) -> dict[str, int]:
+def terminal_queue_state(op_state: OperationState) -> QueueState:
+    """Retirement state for a terminal operation's deferred queue link (FR06).
+
+    A cancelled operation retires its link as ``CANCELLED``; a succeeded/failed
+    operation retires it as ``DONE``. Either way the link leaves the ``QUEUED``
+    state so it no longer counts against the bounded FIFO depth.
+    """
+    return QueueState.CANCELLED if op_state is OperationState.CANCELLED else QueueState.DONE
+
+
+def reap_orphaned_queue_links(
+    store: JournalStore,
+    conn: sqlite3.Connection,
+    now_ms: int,
+    stale_lease_ms: int,
+) -> int:
+    """Retire ``QUEUED`` links that no live process will ever drain (FR06 self-heal).
+
+    A ``QUEUED`` link is reaped iff its owning operation is missing or already
+    terminal (a completed op left its link behind), OR the link is older than the
+    stale-lease window AND its operation holds no live lease. A link whose
+    operation holds a live lease, or that is still within the stale window under a
+    non-terminal operation, is NEVER reaped — live deferred work is never dropped
+    (FR06/NFR04). Must run inside the caller's IMMEDIATE transaction; returns the
+    number of links retired so the reap is observable, never silent.
+    """
+    terminal_reaped = 0
+    stale_reaped = 0
+    for link in store.get_queue(conn):
+        if link.state is not QueueState.QUEUED:
+            continue
+        op = store.get_operation(conn, link.operation_id)
+        if op is not None and op.state not in TERMINAL_OPERATION_STATES:
+            live_lease = (
+                bool(op.lease_expiry_utc_ms) and now_ms < op.lease_expiry_utc_ms and process_alive(op.lease_pid)
+            )
+            if live_lease or now_ms - link.enqueued_utc_ms < stale_lease_ms:
+                continue
+            store.update_queue_state(conn, link.operation_id, QueueState.CANCELLED)
+            stale_reaped += 1
+        else:
+            retire = terminal_queue_state(op.state) if op is not None else QueueState.CANCELLED
+            store.update_queue_state(conn, link.operation_id, retire)
+            terminal_reaped += 1
+    reaped = terminal_reaped + stale_reaped
+    if reaped:
+        logger.info(
+            "delivery_queue_links_reaped",
+            terminal_reaped=terminal_reaped,
+            stale_reaped=stale_reaped,
+        )
+    return reaped
+
+
+def run_maintenance(
+    store: JournalStore,
+    conn: sqlite3.Connection,
+    now_ms: int,
+    stale_lease_ms: int = 0,
+) -> dict[str, int]:
     """Compact/expire per the fixed v1 lifecycle table (NFR04).
 
     Runs inside its own IMMEDIATE transaction: terminal full records tombstone at
     30 days, unresolved full records at 90 days, and tombstones/IDs delete at the
     180-day horizon. Compaction preserves request/terminal digests so a deleted
-    row can never silently reopen an old identifier. Returns counts for evidence.
+    row can never silently reopen an old identifier. A stale-``QUEUED`` link sweep
+    runs in the same transaction so orphaned deferred links never accumulate
+    against the FIFO depth. Returns counts for evidence.
     """
     compacted = 0
     expired = 0
@@ -242,10 +309,12 @@ def run_maintenance(store: JournalStore, conn: sqlite3.Connection, now_ms: int) 
             if now_ms >= tombstone.expiry_utc_ms:
                 store.delete_tombstone(conn, tombstone.operation_id)
                 expired += 1
+        reaped_queue_links = reap_orphaned_queue_links(store, conn, now_ms, stale_lease_ms)
     return {
         "compacted_terminal": compacted,
         "tombstoned_unresolved": tombstoned_unresolved,
         "expired_tombstones": expired,
+        "reaped_queue_links": reaped_queue_links,
     }
 
 

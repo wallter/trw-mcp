@@ -29,15 +29,60 @@ if [ -z "$_task_subject" ]; then
   _task_subject=$(printf '%s' "$_payload" | grep -o '"task_subject"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"task_subject"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
 
+# --- Run ownership (PRD-FIX-118 FR03) ------------------------------------
+# Every run-scoped fact this gate reads (did the helper checkpoint? is there a
+# completion artifact?) must come from THIS session's own run. Under concurrency
+# the newest run belongs to another instance, so recency would (a) clear the
+# checkpoint requirement using a stranger's checkpoint and (b) point the helper
+# at a scratch/ path inside a run it cannot write to.
+#
+# What "unowned" means HERE: "no run-scoped evidence exists for this session".
+# That is deliberately NOT "skip the gate" — the checkpoint nudge below still
+# fires, exactly as it does today when no run exists at all, and the FR01 build
+# gate above is not run-scoped and is untouched. The gate keeps enforcing; it
+# just stops borrowing another session's evidence to satisfy itself.
+_session_id=""
+if command -v jq >/dev/null 2>&1; then
+  _session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
+fi
+if [ -z "$_session_id" ]; then
+  _session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+fi
+_session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""
+
+_run_dir=""
+if [ -n "$_session_id" ]; then
+  _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""
+else
+  # Identity unknown (client publishes none) — newest-wins is the honest best
+  # guess for a single-instance install, and removing it would silently disable
+  # the gate for every such client.
+  _run_dir=$(find_active_run) || _run_dir=""
+fi
+
 # FR04: Soft gates override
 [ "${TRW_SOFT_GATES:-0}" = "1" ] && log_hook_execution "CompletionGate" "${_helper_name:-unknown}:${_task_subject}" "0:soft-gate" && exit 0
 
-# If NOT a helper (subagent intermediate), soft gate only
+# If NOT a helper (subagent intermediate), soft gate only.
+# The advisory is evaluated inline against the OWNED run rather than through
+# lib-trw.sh's check_ceremony_status(), which re-resolves the run by recency and
+# would therefore report a parallel instance's ceremony state as if it were ours.
+# Same ladder as check_ceremony_status: >=3 events, deliver short-circuits,
+# otherwise reflect/checkpoint must both be present.
 if [ -z "$_helper_name" ]; then
   log_hook_execution "CompletionGate" "${_helper_name:-unknown}:${_task_subject}" "0"
-  _missing=$(check_ceremony_status 2>/dev/null) || exit 0
-  if [ -n "$_missing" ]; then
-    echo "TRW NOTE: Ceremony pending — remember to call trw_deliver() when all tasks are done." >&2
+  # Unowned -> no run-scoped ceremony to advise about. The Stop hook still
+  # carries the session-scoped trw_deliver reminder, so nothing is lost.
+  [ -n "$_run_dir" ] || exit 0
+  _cg_events="${_run_dir}meta/events.jsonl"
+  [ -f "$_cg_events" ] || exit 0
+  _cg_count=$(wc -l < "$_cg_events" 2>/dev/null | tr -d ' ') || _cg_count=0
+  [ "${_cg_count:-0}" -ge 3 ] 2>/dev/null || exit 0
+  if ! has_event "$_cg_events" "trw_deliver_complete"; then
+    if ! has_event "$_cg_events" "checkpoint" ||
+      { ! has_event "$_cg_events" "reflection_complete" && ! has_event "$_cg_events" "trw_reflect_complete"; }; then
+      echo "TRW NOTE: Ceremony pending — remember to call trw_deliver() when all tasks are done." >&2
+    fi
   fi
   exit 0
 fi
@@ -84,9 +129,9 @@ if [ "$_blocks" -ge 1 ]; then
   exit 0
 fi
 
-# Check if helper has checkpointed during this run
+# Check if helper has checkpointed during THIS SESSION'S OWN run (resolved above).
+# An empty _run_dir means "no evidence", never "assume the newest run's evidence".
 _has_checkpoint=0
-_run_dir=$(find_active_run) || true
 if [ -n "$_run_dir" ]; then
   _events_path="${_run_dir}meta/events.jsonl"
   if [ -f "$_events_path" ] && has_event "$_events_path" "checkpoint"; then
@@ -114,7 +159,7 @@ if [ "$_has_checkpoint" -eq 1 ]; then
     if [ "${_has_partial:-0}" != "0" ] && [ "$_blocks" -lt 2 ]; then
       _blocks=$((_blocks + 1))
       printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
-      echo "TRW: Completion artifact has ${_has_partial} partial/incomplete FR(s). Implement ALL FRs before completing — partial work costs 2-3x to fix later. Re-read each FR, verify your code matches, then update the artifact. (Block $_blocks/2)" >&2
+      echo "TRW: Completion artifact has ${_has_partial} partial/incomplete FR(s). Implement every FR before completing — a half-implemented FR is harder to finish later than now, because the context that made it obvious is gone. Re-read each FR, verify your code matches, then update the artifact. (Block $_blocks/2)" >&2
       log_hook_execution "CompletionGate" "${_helper_name:-unknown}:${_task_subject}" "2:partial-frs"
       _trw_intentional_exit=1
       exit 2
@@ -129,7 +174,7 @@ if [ "$_has_checkpoint" -eq 1 ]; then
     if [ "${_evidence_count:-0}" = "0" ] && [ "$_blocks" -lt 2 ]; then
       _blocks=$((_blocks + 1))
       printf '%s' "$_blocks" > "$_block_file" 2>/dev/null || true
-      echo "TRW: Completion artifact has no evidence fields. Each FR needs: evidence: \"verified {timestamp} — {method}: {specific output}\". Run the 5-step verification ritual (IDENTIFY → RUN → READ → VERIFY → RECORD) for each FR. (Block $_blocks/2)" >&2
+      echo "TRW: Completion artifact has no evidence fields. Each FR needs: evidence: \"verified {timestamp} — {method}: {specific output}\" — the command you ran and what it printed, not \"function exists at line N\". (Block $_blocks/2)" >&2
       log_hook_execution "CompletionGate" "${_helper_name:-unknown}:${_task_subject}" "2:missing-evidence"
       _trw_intentional_exit=1
       exit 2

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -136,6 +137,35 @@ class TestAttributeFailures:
         assert result is not None
         assert result["unknown"] == 1
         assert result["per_failure"][0]["classification"] == "unknown"
+
+    def test_changed_files_raising_degrades_to_unknown(self) -> None:
+        """The fail-open contract must cover the git call itself, not just what follows it.
+
+        ``changed_files`` only catches TimeoutExpired/FileNotFoundError/OSError,
+        and it used to be invoked OUTSIDE ``attribute_failures``' guard. Anything
+        else escaping it — a decoding error, a subprocess argument error — broke
+        ``trw_build_check`` outright, and did so AFTER the build status had been
+        persisted, leaving recorded evidence behind a failed tool call. The
+        pre-existing internal-error test patched ``_attribute_one``, which sits
+        inside the guard, so this path was never exercised.
+        """
+        with patch(f"{_MOD}.changed_files", side_effect=RuntimeError("git exploded")):
+            result = fa.attribute_failures(["tests/test_x.py::t FAILED"])
+        assert result is not None, "attribution must degrade, not raise"
+        assert result["unknown"] == 1
+        assert result["changed_files_count"] == 0
+
+    def test_build_check_survives_an_attribution_crash(self, build_check_invoke: Any) -> None:
+        """End-to-end: the tool still returns its result when attribution blows up."""
+        with patch(f"{_MOD}.changed_files", side_effect=RuntimeError("git exploded")):
+            result = build_check_invoke(
+                tests_passed=False,
+                test_count=3,
+                failure_count=1,
+                failures=["tests/test_x.py::t FAILED"],
+            )
+        assert result["tests_passed"] is False
+        assert result["failure_count"] == 1
 
 
 class TestChangedFiles:

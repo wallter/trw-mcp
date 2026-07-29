@@ -9,7 +9,9 @@ definitions; review.py re-exports them so existing test patches at
 ``trw_mcp.tools.review.*`` continue to resolve.
 
 Mode handler functions are extracted to sub-modules for module-size compliance:
-- ``_review_auto.py``: handle_auto_mode, handle_cross_model_mode
+- ``_review_auto.py``: handle_auto_mode
+- ``_review_cross_model.py``: handle_cross_model_mode + the review-coverage
+  vocabulary (COVERAGE_*/REASON_* tokens, ``_build_single_family_caveat``)
 - ``_review_manual.py``: handle_manual_mode, handle_reconcile_mode, validate_manual_findings,
   count_by_severity, and reconciliation helpers
 - ``_review_multi.py``: _run_multi_reviewer_analysis
@@ -30,15 +32,6 @@ if TYPE_CHECKING:
     from trw_mcp.tools._review_provenance import RunIdentity
 
 logger = structlog.get_logger(__name__)
-
-PRE_IMPLEMENTATION_CHECKLIST_EVENT = "pre_implementation_checklist_complete"
-PRE_AUDIT_SELF_REVIEW_EVENT = "pre_audit_self_review"
-_PREFLIGHT_EVENT_TYPES: frozenset[str] = frozenset(
-    {
-        PRE_IMPLEMENTATION_CHECKLIST_EVENT,
-        PRE_AUDIT_SELF_REVIEW_EVENT,
-    }
-)
 
 # ---------------------------------------------------------------------------
 # Shared constants and low-level helpers (canonical definitions)
@@ -87,41 +80,39 @@ def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> st
 
 
 def _normalize_severity(severity: str) -> str:
-    """Map external severity labels to internal severity levels."""
-    severity_lower = severity.lower().strip()
-    if severity_lower in ("error", "critical", "high"):
-        return "critical"
-    if severity_lower in ("warning", "medium"):
-        return "warning"
-    return "info"
+    """Map an external severity label to its internal level.
+
+    Resolves through ``SEVERITY_ALIASES``, the same table the accept-check in
+    ``normalize_review_finding`` is derived from, so a label can never be
+    accepted with no meaning or carry a meaning it is not accepted under.
+    Unknown labels fall back to ``info`` — but they are rejected upstream
+    before reaching here, so the fallback is defensive, not a silent downgrade.
+    """
+    from trw_mcp.tools._review_validation import SEVERITY_ALIASES
+
+    return SEVERITY_ALIASES.get(severity.lower().strip(), "info")
 
 
 def _invoke_cross_model_review(
     diff: str,
     config: TRWConfig,
-) -> list[dict[str, str]]:
-    """Invoke cross-model review via external provider.
+) -> list[dict[str, str]] | None:
+    """Invoke cross-model review via an external provider — the ONE integration seam.
 
-    This function is the integration point for cross-model review.
-    It attempts to call an external code-review service. Since the
-    MCP server cannot synchronously call another MCP server, this
-    returns an empty list with a preparation note.
+    Returns ``None`` when NO provider transport was attempted, and a (possibly
+    empty) list when one was. The distinction is load-bearing for honesty: no
+    transport is wired to this seam yet, so every call returns ``None`` and the
+    caller degrades with ``provider_integration_absent``. Collapsing both cases
+    to ``[]`` made a configured-but-never-contacted provider report
+    ``provider_returned_empty`` — blaming the operator's provider for TRW's own
+    missing integration. Wiring a transport here is the only change needed; the
+    ``[]`` branch is what a real provider returning nothing produces.
 
     Args:
         diff: The git diff text to review.
         config: TRWConfig instance with cross_model_* fields.
-
-    Returns:
-        List of normalized finding dicts (empty until provider is configured).
     """
-    if not diff:
-        return []
-
-    # Integration point: when code-review-mcp or another provider
-    # is configured, this function will route the diff to it.
-    # For now, return empty — the cross_model_skipped flag in the
-    # caller communicates that no external review was performed.
-    return []
+    return None
 
 
 def _cross_family_available(config: TRWConfig) -> bool:
@@ -200,9 +191,6 @@ def _persist_review_artifact(
     from trw_mcp.tools._review_provenance import ensure_reviewer_block
 
     ensure_reviewer_block(review_payload, resolved_run, reader, verified_identity=verified_reviewer_identity)
-    preflight_checks = _load_preflight_checks(resolved_run, reader, prd_ids)
-    if preflight_checks:
-        review_payload["preflight_checks"] = preflight_checks
 
     # CORE-205 FR02/FR03: the typed receipt is authoritative.  review.yaml is
     # retained only as a derived projection.  Receipt failure is visible and,
@@ -282,47 +270,6 @@ def _markdown_table_cell(value: object) -> str:
     return " ".join(str(value).replace("|", "\\|").splitlines())
 
 
-def _log_preflight_events(
-    resolved_run: Path | None,
-    *,
-    prd_id: str,
-    checklist_complete: bool = False,
-    self_review: dict[str, object] | None = None,
-) -> list[str]:
-    """Persist explicit preflight checklist/self-review events for a run."""
-    if resolved_run is None:
-        return []
-
-    events_path = resolved_run / "meta" / "events.jsonl"
-    if not events_path.parent.exists():
-        return []
-
-    writer = FileStateWriter()
-    event_logger = FileEventLogger(writer)
-    logged_events: list[str] = []
-
-    if checklist_complete:
-        event_logger.log_event(
-            events_path,
-            PRE_IMPLEMENTATION_CHECKLIST_EVENT,
-            {
-                "prd_id": prd_id,
-                "completed": True,
-            },
-        )
-        logged_events.append(PRE_IMPLEMENTATION_CHECKLIST_EVENT)
-
-    if self_review is not None:
-        event_logger.log_event(
-            events_path,
-            PRE_AUDIT_SELF_REVIEW_EVENT,
-            _normalize_self_review_payload(prd_id, self_review if isinstance(self_review, dict) else {}),
-        )
-        logged_events.append(PRE_AUDIT_SELF_REVIEW_EVENT)
-
-    return logged_events
-
-
 def _resolve_review_prd_ids(
     resolved_run: Path,
     reader: FileStateReader,
@@ -358,93 +305,6 @@ def _extract_review_finding_categories(review_data: dict[str, object]) -> list[s
     ]
 
 
-def _normalize_self_review_payload(prd_id: str, self_review: dict[str, object]) -> dict[str, object]:
-    """Normalize a self-review payload before persisting to events.jsonl."""
-    return {
-        "prd_id": prd_id,
-        "passed": _normalize_self_review_count(self_review.get("passed")),
-        "failed": _normalize_self_review_count(self_review.get("failed")),
-        "skipped": _normalize_self_review_count(self_review.get("skipped")),
-        "wiring_issues": _normalize_issue_list(self_review.get("wiring_issues")),
-        "nfr_issues": _normalize_issue_list(self_review.get("nfr_issues")),
-        "test_issues": _normalize_issue_list(self_review.get("test_issues")),
-    }
-
-
-def _normalize_self_review_count(value: object) -> int:
-    """Coerce malformed self-review counters to a non-negative integer."""
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return max(value, 0)
-    if isinstance(value, float):
-        return max(int(value), 0) if value.is_integer() else 0
-    if isinstance(value, str):
-        normalized = value.strip()
-        if not normalized:
-            return 0
-        try:
-            return max(int(normalized), 0)
-        except ValueError:
-            return 0
-    return 0
-
-
-def _normalize_issue_list(value: object) -> list[str]:
-    """Coerce a possibly-missing issue collection into ``list[str]``."""
-    if isinstance(value, str):
-        return [value] if value else []
-    if isinstance(value, (list, tuple, set)):
-        return [str(item) for item in value if str(item)]
-    if value is None:
-        return []
-    return []
-
-
-def _load_preflight_checks(
-    resolved_run: Path,
-    reader: FileStateReader,
-    prd_ids: list[str],
-) -> dict[str, dict[str, dict[str, object]]]:
-    """Load latest preflight checklist/self-review events for the scoped PRDs."""
-    events_path = resolved_run / "meta" / "events.jsonl"
-    if not events_path.exists():
-        return {}
-
-    try:
-        events = reader.read_jsonl(events_path)
-    except Exception:  # justified: fail-open, review artifact should persist without preflight metadata
-        logger.debug("review_preflight_checks_unavailable", exc_info=True)
-        return {}
-
-    scoped_prd_ids = set(prd_ids)
-    preflight_checks: dict[str, dict[str, dict[str, object]]] = {}
-    for event in events:
-        event_type = str(event.get("event", ""))
-        if event_type not in _PREFLIGHT_EVENT_TYPES:
-            continue
-
-        event_data = _extract_review_event_data(event)
-        prd_id = str(event_data.get("prd_id", ""))
-        if not prd_id or (scoped_prd_ids and prd_id not in scoped_prd_ids):
-            continue
-
-        preflight_checks.setdefault(prd_id, {})[event_type] = {
-            **event_data,
-            "ts": str(event.get("ts", event_data.get("ts", ""))),
-        }
-
-    return preflight_checks
-
-
-def _extract_review_event_data(event: dict[str, object]) -> dict[str, object]:
-    """Return a normalized event payload for flat or nested event records."""
-    nested = event.get("data")
-    if isinstance(nested, dict):
-        return nested
-    return event
-
-
 # ---------------------------------------------------------------------------
 # Lazy re-exports from sub-modules (preserves existing import paths)
 # ---------------------------------------------------------------------------
@@ -453,7 +313,8 @@ def _extract_review_event_data(event: dict[str, object]) -> dict[str, object]:
 _REEXPORT_MAP: dict[str, str] = {
     # _review_auto.py
     "handle_auto_mode": "trw_mcp.tools._review_auto",
-    "handle_cross_model_mode": "trw_mcp.tools._review_auto",
+    # _review_cross_model.py
+    "handle_cross_model_mode": "trw_mcp.tools._review_cross_model",
     # _review_manual.py
     "handle_manual_mode": "trw_mcp.tools._review_manual",
     "handle_reconcile_mode": "trw_mcp.tools._review_manual",

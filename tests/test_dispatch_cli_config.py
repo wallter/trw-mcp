@@ -2,7 +2,7 @@
 
 These assert the resolved DispatchRequest the stub runner saw, proving that
 ``config.dispatch`` defaults actually flow into the request (client, model,
-timeout, read-only) and that the enabled-clients / gemini gates fire.
+timeout, read-only) and that the enabled-clients gate fires.
 
 ``get_config`` is patched at the CONSUMER site (``trw_mcp.dispatch._cli``) per
 the repo testing rules. ``dispatch`` (the runner) is stubbed so no child
@@ -156,20 +156,6 @@ def test_disabled_client_exits_2_no_dispatch(
     assert exc.value.code == 2
     assert "disabled" in capsys.readouterr().err
     assert "req" not in captured
-
-
-def test_gemini_rejected_before_enabled_check(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # gemini is not in enabled_clients either, but the EOL redirect must win.
-    cfg = _StubDispatchConfig()
-    _install(monkeypatch, cfg)
-    with pytest.raises(SystemExit) as exc:
-        run_dispatch(_ns(client="gemini"))
-    assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "EOL" in err
-    assert "agy" in err
 
 
 def test_model_omitted_uses_default_models(monkeypatch: pytest.MonkeyPatch) -> None:

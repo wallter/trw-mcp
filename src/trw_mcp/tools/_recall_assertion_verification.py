@@ -6,10 +6,9 @@ compatibility with tests and callers that import via the parent module.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import structlog
 
@@ -18,20 +17,18 @@ from trw_mcp.scoring._recall import RecallContext
 
 logger = structlog.get_logger(__name__)
 
+# The per-result normaliser moved to _verification_pass (PRD-CORE-231, shared
+# with the maintain-verify sweep). Re-exported so the _recall_impl facade — and
+# any caller importing it from there — keeps working.
+from trw_mcp.tools._verification_pass import (  # noqa: E402
+    _assertion_result_detail as _assertion_result_detail,
+)
 
-def _assertion_result_detail(
-    entry_id: str,
-    index: int,
-    assertion: Any,
-    result: Any,
-) -> dict[str, object]:
-    """Normalize verification result payloads to the recall response contract."""
-    detail = cast("dict[str, object]", result.model_dump())
-    detail["id"] = f"{entry_id}:{index}"
-    detail.setdefault("type", getattr(assertion, "type", ""))
-    detail.setdefault("pattern", getattr(assertion, "pattern", ""))
-    detail.setdefault("target", getattr(assertion, "target", ""))
-    return detail
+
+def _raw_list(learning: dict[str, object], key: str) -> list[object]:
+    """Return a learning's serialized ``assertions``/``anchors`` list, or ``[]``."""
+    raw = learning.get(key)
+    return raw if isinstance(raw, list) else []
 
 
 def _verify_assertions(
@@ -41,12 +38,18 @@ def _verify_assertions(
     rank_fn: Callable[..., list[dict[str, object]]],
     context: RecallContext | None = None,
 ) -> list[dict[str, object]]:
-    """Run assertion verification on ranked learnings (PRD-CORE-086 FR06).
+    """Run assertion + anchor verification on ranked learnings.
 
-    Also persists verification results (last_result, last_verified_at,
-    first_failed_at) and applies auto-stale detection (FR08).
+    PRD-CORE-086 FR06/FR08 (assertion results, auto-stale) plus
+    PRD-CORE-231 FR02/FR03: the computed ``verification_status`` and the
+    freshly recomputed ``anchor_validity`` are PERSISTED in the same batched
+    ``backend.update()`` that already wrote ``assertions``, instead of living
+    only on the response payload.
     """
-    from datetime import datetime, timedelta, timezone
+    from trw_mcp.tools._verification_pass import (
+        persist_verification_outcome,
+        run_verification_pass,
+    )
 
     assertion_penalties: dict[str, float] = {}
     project_root_path: Path | None = None
@@ -58,86 +61,51 @@ def _verify_assertions(
         logger.debug("assertion_project_root_resolve_failed", exc_info=True)
 
     try:
-        from trw_memory.lifecycle.verification import verify_assertions
-        from trw_memory.models.memory import Assertion
-
-        now = datetime.now(timezone.utc)
-        stale_threshold = now - timedelta(days=config.assertion_stale_threshold_days)
+        backend = _resolve_backend()
 
         for learning in ranked_learnings:
-            raw_assertions = learning.get("assertions")
-            if not raw_assertions or not isinstance(raw_assertions, list):
+            raw_assertions = _raw_list(learning, "assertions")
+            raw_anchors = _raw_list(learning, "anchors")
+            # FR03: an entry with anchors but no assertions still needs anchor
+            # re-verification; only a fully unanchored, unasserted entry is skipped.
+            if not raw_assertions and not raw_anchors:
                 continue
             entry_id = str(learning.get("id", ""))
             try:
-                assertions_list = [
-                    Assertion.model_validate(a, strict=False) for a in raw_assertions if isinstance(a, dict)
-                ]
-                results = verify_assertions(assertions_list, project_root_path)
-
-                passing = sum(1 for r in results if r.passed is True)
-                failing = sum(1 for r in results if r.passed is False)
-                stale = sum(1 for r in results if r.passed is None)
-
-                learning["assertion_status"] = {
-                    "passing": passing,
-                    "failing": failing,
-                    "stale": stale,
-                    "details": [
-                        _assertion_result_detail(entry_id, index, assertion, result)
-                        for index, (assertion, result) in enumerate(
-                            zip(assertions_list, results, strict=False),
-                            start=1,
-                        )
-                    ],
-                }
-
-                if failing > 0:
-                    penalty = config.assertion_failure_penalty * (failing / len(results))
-                    assertion_penalties[entry_id] = penalty
-
-                # FR06: Update assertion fields with verification results
-                updated_assertions: list[dict[str, object]] = []
-                for assertion, result in zip(assertions_list, results, strict=False):
-                    a_dict = assertion.model_dump()
-                    a_dict["last_result"] = result.passed
-                    a_dict["last_verified_at"] = now.isoformat()
-                    a_dict["last_evidence"] = result.evidence
-                    # FR08: Track first_failed_at transitions
-                    if result.passed is False:
-                        # Set first_failed_at if not already set (transition to failure)
-                        if assertion.first_failed_at is None:
-                            a_dict["first_failed_at"] = now.isoformat()
-                    elif result.passed is True:
-                        # Clear first_failed_at on transition back to passing
-                        a_dict["first_failed_at"] = None
-                    updated_assertions.append(a_dict)
-
-                # Persist updated assertions via backend
-                try:
-                    from trw_mcp.state._paths import resolve_trw_dir
-                    from trw_mcp.state.memory_adapter import get_backend
-
-                    trw_dir = resolve_trw_dir()
-                    backend = get_backend(trw_dir)
-                    backend.update(entry_id, assertions=json.dumps(updated_assertions))
-                except Exception:  # justified: persist is best-effort
-                    logger.debug("assertion_result_persist_failed", entry_id=entry_id, exc_info=True)
-
-                # FR08: Auto-stale detection — if ALL assertions have been
-                # failing for longer than the threshold, mark learning stale
-                all_persistently_failing = len(updated_assertions) > 0 and all(
-                    a.get("first_failed_at") is not None
-                    and datetime.fromisoformat(str(a["first_failed_at"])) < stale_threshold
-                    for a in updated_assertions
+                outcome = run_verification_pass(
+                    entry_id,
+                    raw_assertions,
+                    raw_anchors,
+                    assertion_failure_penalty=config.assertion_failure_penalty,
+                    assertion_stale_threshold_days=config.assertion_stale_threshold_days,
+                    project_root=project_root_path,
                 )
-                if all_persistently_failing:
+
+                if outcome.assertion_status:
+                    learning["assertion_status"] = outcome.assertion_status
+                if outcome.penalty:
+                    assertion_penalties[entry_id] = outcome.penalty
+                if outcome.anchor_validity is not None:
+                    learning["anchor_validity"] = outcome.anchor_validity
+                if not outcome.verifiable:
+                    # Nothing was actually checked — leave whatever verdict is
+                    # already persisted on the payload rather than inventing or
+                    # erasing one.
+                    pass
+                elif outcome.verification_status == "stale":
                     logger.info(
                         "learning_auto_stale",
                         entry_id=entry_id,
                         threshold_days=config.assertion_stale_threshold_days,
                     )
                     learning["verification_status"] = "stale"
+                else:
+                    # A previously-stale entry that re-passes must not keep
+                    # advertising the old verdict on this response either.
+                    learning.pop("verification_status", None)
+
+                if backend is not None:
+                    persist_verification_outcome(backend, outcome)
 
             except Exception:  # justified: scan-resilience
                 logger.debug(
@@ -158,3 +126,15 @@ def _verify_assertions(
         logger.debug("assertion_verification_unavailable", exc_info=True)
 
     return ranked_learnings
+
+
+def _resolve_backend() -> Any | None:
+    """Resolve the memory backend for verification write-back, or ``None``."""
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.memory_adapter import get_backend
+
+        return get_backend(resolve_trw_dir())
+    except Exception:  # justified: persist is best-effort
+        logger.debug("verification_backend_unavailable", exc_info=True)
+        return None

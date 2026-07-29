@@ -16,79 +16,20 @@ import pytest
 def _registered_production_tools() -> set[str]:
     """Return the full set of tool names registered on a FRESH production server.
 
-    Mirrors ``server/_tools._register_tools`` so the parity test sees every
-    registered tool regardless of the per-session surface mask.
+    Iterates ``server/_tools._tool_registrars()`` — the SAME tuple production
+    boot walks — rather than re-listing the registrars by hand. A hand-copied
+    list is the drift the single-source tuple exists to prevent: it silently
+    kept passing after a registrar was removed, because it imported the dead
+    module itself.
     """
     import asyncio
 
     from fastmcp import FastMCP
 
-    from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
-    from trw_mcp.tools.agent_work_evidence import register_agent_work_evidence_tools
-    from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
-    from trw_mcp.tools.before_edit_hint_batch import register_before_edit_hint_batch_tools
-    from trw_mcp.tools.build import register_build_tools
-    from trw_mcp.tools.ceremony import register_ceremony_tools
-    from trw_mcp.tools.ceremony_feedback import register_ceremony_feedback_tools
-    from trw_mcp.tools.channel_render import register_channel_render_tools
-    from trw_mcp.tools.channel_stats import register_channel_stats_tools
-    from trw_mcp.tools.checkpoint import register_checkpoint_tools
-    from trw_mcp.tools.code_index import register_code_index_tools
-    from trw_mcp.tools.code_search import register_code_search_tools
-    from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
-    from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
-    from trw_mcp.tools.dispatch import register_dispatch_tools
-    from trw_mcp.tools.entity_risk_map import register_entity_risk_map_tools
-    from trw_mcp.tools.knowledge import register_knowledge_tools
-    from trw_mcp.tools.learning import register_learning_tools
-    from trw_mcp.tools.mcp_security_status import register_mcp_security_status
-    from trw_mcp.tools.meta_tune_ops import register_meta_tune_tools
-    from trw_mcp.tools.orchestration import register_orchestration_tools
-    from trw_mcp.tools.ordering_compare import register_ordering_compare_tools
-    from trw_mcp.tools.phase_overrides import register_phase_override_tools
-    from trw_mcp.tools.query_tools import register_query_tools
-    from trw_mcp.tools.replay import register_replay_tools
-    from trw_mcp.tools.requirements import register_requirements_tools
-    from trw_mcp.tools.review import register_review_tools
-    from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
-    from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
-    from trw_mcp.tools.trw_probe import register_probe_tools
-    from trw_mcp.tools.trw_profile_explain import register_trw_profile_explain_tools
+    from trw_mcp.server._tools import _tool_registrars
 
     server = FastMCP("parity-probe")
-    for fn in (
-        register_build_tools,
-        register_ceremony_tools,
-        register_ceremony_feedback_tools,
-        register_checkpoint_tools,
-        register_learning_tools,
-        register_meta_tune_tools,
-        register_knowledge_tools,
-        register_orchestration_tools,
-        register_requirements_tools,
-        register_replay_tools,
-        register_review_tools,
-        register_query_tools,
-        register_mcp_security_status,
-        register_before_edit_hint_tools,
-        register_before_edit_hint_batch_tools,
-        register_codebase_risk_report_tools,
-        register_ordering_compare_tools,
-        register_cross_repo_ordering_tools,
-        register_code_index_tools,
-        register_code_search_tools,
-        register_entity_risk_map_tools,
-        register_agent_work_evidence_tools,
-        register_skill_discovery_tools,
-        register_submit_feedback_tools,
-        register_channel_render_tools,
-        register_channel_stats_tools,
-        register_pipeline_health_tools,
-        register_probe_tools,
-        register_trw_profile_explain_tools,
-        register_phase_override_tools,
-        register_dispatch_tools,
-    ):
+    for fn in _tool_registrars():
         fn(server)
     return {t.name for t in asyncio.run(server.list_tools())}
 

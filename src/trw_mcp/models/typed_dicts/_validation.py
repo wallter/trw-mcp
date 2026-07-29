@@ -69,8 +69,14 @@ class PrdFrontmatterDict(TypedDict, total=False):
     aaref_components: object
 
 
-class PrdCreateResultDict(TypedDict):
-    """Return shape of ``trw_prd_create`` MCP tool."""
+class PrdCreateResultDict(TypedDict, total=False):
+    """Return shape of ``trw_prd_create`` MCP tool.
+
+    ``not_written_reason`` is present ONLY when the PRD could not be persisted
+    (no PRD directory and no ``.trw``). Without it, an empty ``output_path`` was
+    the sole signal that a returned ``prd_id`` + ``content`` exist nowhere on
+    disk. Every other key is always populated.
+    """
 
     prd_id: str
     title: str
@@ -80,6 +86,7 @@ class PrdCreateResultDict(TypedDict):
     content: str
     sections_generated: int
     index_synced: bool
+    not_written_reason: str
 
 
 class ValidateResultDict(TypedDict, total=False):

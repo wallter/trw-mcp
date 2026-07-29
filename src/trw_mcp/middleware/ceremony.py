@@ -6,6 +6,16 @@ When `.trw/context/pre_compact_state.json` indicates recovery is pending,
 that post-compaction state, tools execute normally and the middleware only adds
 advisory warnings for sessions that skipped ceremony.
 
+The post-compaction gate is scoped to a *gate generation*: when the shared
+signal is first observed, only the sessions already known at that instant are
+blanket-gated. A session first registered afterwards holds no pre-compaction
+context to recover, so gating it would be both semantically wrong and
+unsatisfiable for any toolset that lacks ``trw_session_start`` (a TRW sub-agent
+is allowlisted for ``trw_learn``/``trw_checkpoint``/``trw_recall``/
+``trw_build_check`` only, so a blanket gate deadlocked every tool it could
+call). The session that actually compacted is in the snapshot and stays blocked
+until its own ``trw_session_start`` succeeds.
+
 This is client-agnostic — works with Claude Code, Cursor, Windsurf, or
 any MCP client. Middleware state is keyed by MCP session_id so parallel
 connections remain isolated from one another.
@@ -16,6 +26,7 @@ from __future__ import annotations
 __all__ = ["CeremonyMiddleware"]
 
 import json
+import os
 from collections import OrderedDict
 
 import structlog
@@ -37,10 +48,25 @@ _MAX_TRACKED_SESSIONS = 2048
 # Module-level session state: session_id -> True (ceremony completed).
 _session_state: dict[str, bool] = {}
 
-# Session-local recovery gate state. A session that sees the post-compaction
+# Session-local recovery gate decision. A session that sees the post-compaction
 # marker must complete its own successful session_start() even if another
-# session later clears the shared disk marker.
+# session later clears the shared disk marker. ``True`` = owes recovery,
+# ``False`` = explicitly exempted for the current gate generation, absent =
+# not yet decided.
 _compaction_gate_sessions: dict[str, bool] = {}
+
+# Rising-edge tracking for the shared compaction signal. The blanket gate is
+# applied ONCE, to the sessions known at the moment the signal is first
+# observed ("the gate generation"). A session first registered AFTER that edge
+# cannot hold pre-compaction context, so retroactively gating it is both
+# semantically wrong and — for a sub-agent toolset that lacks
+# ``trw_session_start`` — unsatisfiable: every trw_* call it can make would be
+# blocked for the life of the server with no way to clear the gate.
+_compaction_signal_raised: bool = False
+
+# Monotonic generation counter, bumped on each rising edge. Log-only: it makes
+# gate raises and per-session exemptions correlatable in structured logs.
+_compaction_gate_generation: int = 0
 
 # Sessions observed by the middleware in this server process, in insertion
 # order. When a new compaction marker appears, every currently known session
@@ -64,10 +90,54 @@ def _register_session(session_id: str) -> None:
         oldest, _ = _known_sessions.popitem(last=False)
         _session_state.pop(oldest, None)
         _compaction_gate_sessions.pop(oldest, None)
+        _compaction_gate_attempts.pop(oldest, None)
 
 
 # Tools that clear the ceremony gate.
 CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
+
+#: Tools the post-compaction gate MUST NOT block (operator-approved 2026-07-26;
+#: the decision audit C-5 deferred).
+#:
+#: The gate exists to stop an agent ACTING on stale post-compaction context.
+#: These three do not act — they record what already happened. Their content is
+#: supplied by the caller and cannot be corrupted by a stale framework, so
+#: blocking them buys no context integrity; it only destroys evidence, and that
+#: loss is unrecoverable. Measured consequence of gating them: a delegated
+#: VALIDATE completed with NO recorded ``trw_build_check`` and a checkpoint that
+#: reported ``recorded: false`` (three delegates, one session, 2026-07-26) —
+#: the precise failure the framework exists to prevent. A gate that defends
+#: context integrity by destroying evidence integrity has its priorities
+#: inverted.
+#:
+#: Everything else stays gated, including ``trw_recall`` (it SHAPES subsequent
+#: decisions, which is exactly what a stale-context agent must not do) and
+#: ``trw_deliver`` (a terminal act). The bounded escape below is unchanged and
+#: still backstops those.
+EVIDENCE_RECORDING_TOOLS: frozenset[str] = frozenset({"trw_checkpoint", "trw_learn", "trw_build_check"})
+
+# How many times a session may be hard-blocked by the post-compaction gate
+# before the gate degrades to advisory for that session (audit C-5).
+#
+# Under stdio there is ONE ``ServerSession`` per process, so ``ctx.session_id``
+# is a single value shared by the parent agent and every sub-agent it spawns
+# (see data/hooks/subagent-start.sh: "A subagent shell inherits its parent's
+# session id"). Ten of eleven bundled agents have no ``trw_session_start`` in
+# their toolset, so an inherited-session sub-agent could never clear a gate the
+# parent's id had already armed — every trw_* call it can make blocked, for the
+# life of the server. Observed live three times in one session.
+#
+# The first N blocks behave exactly as before: a capable top-level agent is
+# stopped and told precisely what to do, so the recovery guarantee holds. Only
+# after repeated blocks with no intervening session_start — proof the caller
+# CANNOT satisfy the gate — does it degrade to pass-through with the recovery
+# text still prepended. The nudge is never removed (operator standing rule), and
+# the disk marker is deliberately left in place so the genuine obligation
+# survives for whoever can act on it.
+_COMPACTION_GATE_MAX_BLOCKS: int = max(1, int(os.environ.get("TRW_COMPACTION_GATE_MAX_BLOCKS", "2")))
+
+# session_id -> consecutive blocked trw_* calls since the last session_start.
+_compaction_gate_attempts: dict[str, int] = {}
 
 # Warning prepended to every non-exempt tool response when ceremony
 # has not been run. Value-oriented framing — explains what the agent gains
@@ -107,9 +177,14 @@ def is_session_active(session_id: str) -> bool:
 
 def reset_state() -> None:
     """Clear all session state — for testing only."""
+    global _compaction_signal_raised, _compaction_gate_generation
+
     _session_state.clear()
     _compaction_gate_sessions.clear()
+    _compaction_gate_attempts.clear()
     _known_sessions.clear()
+    _compaction_signal_raised = False
+    _compaction_gate_generation = 0
 
 
 def _annotate_operation_backed_claim(tool_name: str, result: object) -> None:
@@ -237,12 +312,75 @@ def _session_start_succeeded(result: object) -> bool:
     return False
 
 
-def _is_compaction_gate_required_for_session(session_id: str) -> bool:
-    """Return True when this session still owes post-compaction recovery."""
+def _raise_compaction_gate(session_id: str) -> None:
+    """Blanket-gate the sessions known at this compaction signal's rising edge.
 
-    if _is_compaction_gate_required():
-        for known_session_id in list(_known_sessions):
-            _compaction_gate_sessions[known_session_id] = True
+    Called once per rising edge. ``session_id`` is the session whose call
+    observed the signal; it is already in ``_known_sessions`` (the middleware
+    registers before evaluating the gate) so it is part of the snapshot and
+    stays blocked — the session that actually compacted must still recover.
+    """
+
+    global _compaction_gate_generation
+
+    _compaction_gate_generation += 1
+    for known_session_id in list(_known_sessions):
+        _compaction_gate_sessions[known_session_id] = True
+    logger.info(
+        "compaction_gate_raised",
+        op="ceremony",
+        component="ceremony",
+        session_id=session_id,
+        generation=_compaction_gate_generation,
+        gated_session_count=len(_known_sessions),
+    )
+
+
+def _is_compaction_gate_required_for_session(session_id: str) -> bool:
+    """Return True when this session still owes post-compaction recovery.
+
+    The blanket gate is scoped to the gate generation: only sessions that
+    already existed when the signal was raised owe recovery. A session first
+    seen afterwards is recorded as exempt (and the decision logged) so its
+    trw_* calls pass through — otherwise a sub-agent whose toolset omits
+    ``trw_session_start`` would be permanently unable to clear its own gate.
+
+    Fail-open: any bookkeeping failure returns False rather than hard-blocking
+    a tool call.
+    """
+
+    global _compaction_signal_raised
+
+    try:
+        signal_present = _is_compaction_gate_required()
+        if not signal_present:
+            _compaction_signal_raised = False
+        elif not _compaction_signal_raised:
+            # Latch only AFTER a successful snapshot: a transient failure must
+            # re-arm the raise on the next call, never silently disarm the
+            # gate for the rest of this generation.
+            _raise_compaction_gate(session_id)
+            _compaction_signal_raised = True
+        elif session_id not in _compaction_gate_sessions:
+            _compaction_gate_sessions[session_id] = False
+            logger.info(
+                "compaction_gate_session_exempt",
+                op="ceremony",
+                component="ceremony",
+                session_id=session_id,
+                generation=_compaction_gate_generation,
+                outcome="registered_after_gate_raise",
+            )
+    except Exception:  # justified: fail-open -- gate scoping must never hard-block a tool call
+        logger.warning(
+            "compaction_gate_scoping_failed",
+            component="ceremony",
+            op="scope_compaction_gate",
+            session_id=session_id,
+            outcome="fail_open",
+            exc_info=True,
+        )
+        return False
 
     return _compaction_gate_sessions.get(session_id, False)
 
@@ -283,6 +421,7 @@ class CeremonyMiddleware(Middleware):
             if _session_start_succeeded(ceremony_result):
                 mark_session_active(session_id)
                 _compaction_gate_sessions.pop(session_id, None)
+                _compaction_gate_attempts.pop(session_id, None)
                 _clear_compaction_gate_safe()
                 logger.debug(
                     "ceremony_activated",
@@ -302,28 +441,68 @@ class CeremonyMiddleware(Middleware):
             return ceremony_result
 
         # Post-compaction gate (PRD-CORE-098-FR06): only block trw_* tools
-        # when recovery is actually pending after context compaction.
-        if compaction_gate_required and tool_name.startswith("trw_"):
-            error_payload = {
-                "error": "session_start_required",
-                "message": (
-                    "Call trw_session_start() to load your prior learnings"
-                    " before using other tools. This ensures you don't repeat"
-                    " solved problems or miss known gotchas."
-                ),
-                "tool_attempted": tool_name,
-            }
-            logger.info(
-                "ceremony_gate_blocked",
+        # when recovery is actually pending after context compaction, and never
+        # the evidence-recording tools (see EVIDENCE_RECORDING_TOOLS).
+        if compaction_gate_required and tool_name.startswith("trw_") and tool_name not in EVIDENCE_RECORDING_TOOLS:
+            # Two remedies, because the caller may be able to perform only one.
+            # Naming just the first stranded every delegated sub-agent: ten of
+            # eleven bundled agents hold no trw_session_start, so a compliant
+            # delegate read an impossible instruction, retried once, and stopped
+            # one call short of the escape below — observed 2026-07-26, blocks
+            # arriving in exact pairs against a MAX_BLOCKS of 2.
+            recovery_message = (
+                "Call trw_session_start() to load your prior learnings"
+                " before using other tools. This ensures you don't repeat"
+                " solved problems or miss known gotchas."
+                " If you do NOT hold trw_session_start (you are a delegated"
+                " sub-agent sharing your dispatcher's session), retry this call"
+                f" — after {_COMPACTION_GATE_MAX_BLOCKS} blocks the gate passes"
+                " you through, and post-compaction recovery is your"
+                " dispatcher's obligation, not yours."
+            )
+            blocked_count = _compaction_gate_attempts.get(session_id, 0) + 1
+            _compaction_gate_attempts[session_id] = blocked_count
+
+            if blocked_count <= _COMPACTION_GATE_MAX_BLOCKS:
+                error_payload = {
+                    "error": "session_start_required",
+                    "message": recovery_message,
+                    "tool_attempted": tool_name,
+                }
+                logger.info(
+                    "ceremony_gate_blocked",
+                    op="ceremony",
+                    session_id=session_id,
+                    tool=tool_name,
+                    compaction_gate_required=compaction_gate_required,
+                    blocked_count=blocked_count,
+                )
+                return ToolResult(
+                    content=[TextContent(type="text", text=error_payload["message"])],
+                    structured_content=error_payload,
+                )
+
+            # Audit C-5: repeated blocks with no intervening session_start are
+            # proof the caller CANNOT satisfy this gate — an inherited-session
+            # sub-agent whose toolset omits trw_session_start. Degrade to
+            # advisory rather than deadlock. The recovery text is still
+            # prepended (the nudge is never removed) and the disk marker is
+            # deliberately NOT cleared, so the real post-compaction obligation
+            # survives for a caller able to discharge it.
+            logger.warning(
+                "compaction_gate_degraded",
                 op="ceremony",
+                component="ceremony",
                 session_id=session_id,
                 tool=tool_name,
-                compaction_gate_required=compaction_gate_required,
+                blocked_count=blocked_count,
+                threshold=_COMPACTION_GATE_MAX_BLOCKS,
+                outcome="degraded_to_advisory_unsatisfiable_gate",
             )
-            return ToolResult(
-                content=[TextContent(type="text", text=error_payload["message"])],
-                structured_content=error_payload,
-            )
+            degraded: ToolResult = await call_next(context)
+            degraded.content.insert(0, TextContent(type="text", text=recovery_message))
+            _touch_heartbeat_safe(session_id)
+            return degraded
 
         # Execute the tool
         result: ToolResult = await call_next(context)

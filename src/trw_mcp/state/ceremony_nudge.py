@@ -259,25 +259,6 @@ def compute_nudge_minimal(state: CeremonyState, available_learnings: int = 0) ->
         return ""
 
 
-def compute_nudge_learning_injection(
-    state: CeremonyState,
-    trw_dir: Path,
-    context: NudgeContext | None = None,
-) -> str:
-    """Surface a task-relevant prior learning in the ceremony nudge slot."""
-
-    del context  # reserved for future context-aware refinements
-
-    try:
-        content, _, _ = select_learning_injection_content(state, trw_dir)
-        if content:
-            return content
-        return compute_nudge_minimal(state)
-    except Exception:  # justified: fail-open -- recall issues must not break ceremony status
-        logger.debug("compute_nudge_learning_injection_failed", exc_info=True)
-        return compute_nudge_minimal(state)
-
-
 def compute_nudge_contextual(
     state: CeremonyState,
     trw_dir: Path,
@@ -363,9 +344,6 @@ from trw_mcp.state._ceremony_nudge_selectors import (
 )
 from trw_mcp.state._ceremony_nudge_selectors import (
     select_contextual_nudge_content as select_contextual_nudge_content,
-)
-from trw_mcp.state._ceremony_nudge_selectors import (
-    select_learning_injection_content as select_learning_injection_content,
 )
 from trw_mcp.state._ceremony_nudge_specialized import (
     compute_nudge_anchor as compute_nudge_anchor,

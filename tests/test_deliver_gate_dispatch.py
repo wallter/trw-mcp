@@ -45,13 +45,15 @@ def _run(
 # --------------------------------------------------------------------------- #
 
 
-def test_gate_table_has_five_descriptors_in_precedence_order() -> None:
+def test_gate_table_has_six_descriptors_in_precedence_order() -> None:
     keys = [d.key for d in gd._GATE_TABLE]
     assert keys == [
         "integration_review_block",
         "review_scope_block",
         "review_block",
         "delivery_blocked",
+        # PRD-SEC-013-FR07: open intent-contract violation blocks before the advisory build gate.
+        "intent_violation_block",
         "build_gate_warning",
     ]
 

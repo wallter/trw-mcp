@@ -13,6 +13,28 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _licensed_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD-CORE-239: this file's subject is what a LICENSED install produces.
+
+    CC-05 (`.claude/agents/trw-distill-explorer.md`) is now gated on
+    trw-distill availability, and the root conftest pins that gate CLOSED by
+    default so the suite stays hermetic. Every case here asserts the contents
+    and idempotency of an artifact only a licensed project receives, so the
+    gate is opened for the whole module rather than case by case.
+
+    The closed-gate behaviour is covered separately in
+    `tests/test_distill_channel_bootstrap_wiring.py` and
+    `tests/test_distill_entitlement_gate.py` — this fixture must not become the
+    only statement about the gate.
+    """
+    monkeypatch.setattr(
+        "trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True
+    )
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -93,19 +115,18 @@ class TestFirstInstall:
         manifest_path = tmp_path / ".trw" / "channels" / "manifest.yaml"
         assert manifest_path.exists()
 
-    def test_channel_manifest_has_five_cc_entries(self, tmp_path: Path) -> None:
-        """Five CC channel entries are merged into the manifest."""
+    def test_channel_manifest_has_two_cc_entries(self, tmp_path: Path) -> None:
+        """Both surviving CC channel entries are merged into the manifest.
+
+        PRD-CORE-239 FR01 removed cc-01-memory-distill-snapshot,
+        cc-02-claude-md-distill-segment and cc-04-posttooluse-correlation.
+        The assertion is exact equality rather than `issubset` so a
+        reintroduced entry fails here instead of passing silently.
+        """
         _call_install(tmp_path)
         manifest = _load_manifest(tmp_path)
         cc_ids = {e.id for e in manifest.channels if e.client == "claude-code"}  # type: ignore[attr-defined]
-        expected = {
-            "cc-01-memory-distill-snapshot",
-            "cc-02-claude-md-distill-segment",
-            "cc-03-pretooluse-hint",
-            "cc-04-posttooluse-correlation",
-            "cc-05-distill-explorer",
-        }
-        assert expected.issubset(cc_ids), f"Missing CC entries: {expected - cc_ids}"
+        assert cc_ids == {"cc-03-pretooluse-hint", "cc-05-distill-explorer"}
 
     def test_settings_json_not_written(self, tmp_path: Path) -> None:
         """OQ-01: .claude/settings.json is NOT written (operator opt-in required)."""
@@ -157,20 +178,17 @@ class TestIdempotency:
             f"Duplicate manifest entries found: {[i for i in cc_ids if cc_ids.count(i) > 1]}"
         )
 
-    def test_second_call_manifest_has_same_five_cc_entries(self, tmp_path: Path) -> None:
-        """After two runs, exactly the same five CC entries exist."""
+    def test_second_call_manifest_has_same_two_cc_entries(self, tmp_path: Path) -> None:
+        """After two runs, exactly the same two CC entries exist.
+
+        PRD-CORE-239 FR01 removed cc-01/cc-02/cc-04; the idempotency claim is
+        unchanged, only the expected set.
+        """
         _call_install(tmp_path)
         _call_install(tmp_path)
         manifest = _load_manifest(tmp_path)
         cc_ids = {e.id for e in manifest.channels if e.client == "claude-code"}
-        expected = {
-            "cc-01-memory-distill-snapshot",
-            "cc-02-claude-md-distill-segment",
-            "cc-03-pretooluse-hint",
-            "cc-04-posttooluse-correlation",
-            "cc-05-distill-explorer",
-        }
-        assert expected == cc_ids
+        assert cc_ids == {"cc-03-pretooluse-hint", "cc-05-distill-explorer"}
 
     def test_second_call_hook_content_unchanged(self, tmp_path: Path) -> None:
         """Hook file content is identical after two installs."""
@@ -304,16 +322,11 @@ class TestManifestContent:
         assert cc03 is not None
         assert cc03.activation_gate == "cc03_hook_enabled"  # type: ignore[attr-defined]
 
-    def test_cc04_entry_has_no_activation_gate(self, tmp_path: Path) -> None:
-        """CC-04 is always-on (no activation_gate)."""
-        _call_install(tmp_path)
-        manifest = _load_manifest(tmp_path)
-        cc04 = next(
-            (e for e in manifest.channels if e.id == "cc-04-posttooluse-correlation"),  # type: ignore[attr-defined]
-            None,
-        )
-        assert cc04 is not None
-        assert not cc04.activation_gate  # type: ignore[attr-defined]
+    # PRD-CORE-239 FR01: test_cc04_entry_has_no_activation_gate was deleted with
+    # its subject. cc-04-posttooluse-correlation is no longer a manifest entry,
+    # so there is no entry left whose activation_gate could be asserted. It is
+    # not re-expressed as an absence check: `cc-04 not in ids` would be
+    # trivially true for every future manifest and would prove nothing.
 
     def test_cc05_entry_has_subagent_file_surface(self, tmp_path: Path) -> None:
         """CC-05 manifest entry has subagent_file surface."""
@@ -329,7 +342,15 @@ class TestManifestContent:
         assert surface_str == "subagent_file"
 
     def test_manifest_merge_preserves_non_cc_entries(self, tmp_path: Path) -> None:
-        """Merging CC entries preserves existing non-claude-code entries."""
+        """Merging CC entries preserves existing non-claude-code entries.
+
+        PRD-CORE-239 FR01: the pre-planted foreign entry was
+        `codex-agents-md-hotspots` and the added entry asserted was
+        `cc-01-memory-distill-snapshot`; both channels are removed. The
+        foreign entry is now a surviving codex channel so this test does not
+        keep a deleted id alive in the corpus, and the added-entry assertion
+        names cc-03, which the installer really merges.
+        """
         from trw_mcp.channels._manifest_loader import auto_recreate_empty, load, write
         from trw_mcp.channels._manifest_models import ChannelEntry
         from trw_mcp.channels._provenance import now_utc_iso8601
@@ -341,9 +362,9 @@ class TestManifestContent:
         existing = load(manifest_path)
         existing.channels.append(
             ChannelEntry(
-                id="codex-agents-md-hotspots",
+                id="codex-posttooluse-telemetry",
                 client="codex",
-                surface="codex_agents_md_segment",  # type: ignore[arg-type]
+                surface="instruction_file_segment",  # type: ignore[arg-type]
                 telemetry_tag="codex_test",
             )
         )
@@ -354,8 +375,8 @@ class TestManifestContent:
 
         merged = _load_manifest(tmp_path)
         ids = {e.id for e in merged.channels}
-        assert "codex-agents-md-hotspots" in ids, "Existing codex entry must be preserved"
-        assert "cc-01-memory-distill-snapshot" in ids, "New CC entries must be added"
+        assert "codex-posttooluse-telemetry" in ids, "Existing codex entry must be preserved"
+        assert "cc-03-pretooluse-hint" in ids, "New CC entries must be added"
 
 
 # ---------------------------------------------------------------------------

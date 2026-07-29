@@ -112,7 +112,14 @@ def compute_security_status(
 def register_mcp_security_status(server: FastMCP) -> None:
     @server.tool()
     def trw_mcp_security_status() -> dict[str, Any]:
-        """Report registered servers, allowlist identity, anomalies, and quarantines."""
+        """Report registered servers, allowlist identity, anomalies, and quarantines.
+
+        Use when an MCP call was blocked or a server looks untrusted, and you
+        need the security/trust-boundary state: which servers are registered,
+        which are quarantined, and what anomalies were detected.
+
+        Output: per-server trust rows, anomaly counts, quarantine list.
+        """
         from trw_mcp.server import _app as app_module
         from trw_mcp.state._paths import resolve_trw_dir
 

@@ -45,9 +45,27 @@ EOF
   printf '%s' "$_p"
 }
 
+# The cases below run WITHOUT a session identity, which is the legacy
+# newest-run-wins branch (PRD-FIX-118 FR03). `_pin_run` opts a project into the
+# ownership branch instead, so the score gate is proven on BOTH paths rather than
+# only the one that no modern client actually takes.
+_TEST_SESSION_ID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+_pin_run() {
+  # $1 = project_root — pin the sample run to $_TEST_SESSION_ID
+  mkdir -p "$1/.trw/runtime"
+  printf '{"%s": {"run_path": "%s/.trw/runs/sample-task/20260604T000000Z-deadbeef"}}\n' \
+    "$_TEST_SESSION_ID" "$1" > "$1/.trw/runtime/pins.json"
+}
+
 _run_hook() {
   # $1 = project_root
   CLAUDE_PROJECT_DIR="$1" sh "$_hook" < /dev/null
+}
+
+_run_hook_as_session() {
+  # $1 = project_root — run with an identity, so ownership decides the run
+  CLAUDE_PROJECT_DIR="$1" TRW_SESSION_ID="$_TEST_SESSION_ID" sh "$_hook" < /dev/null
 }
 
 # --- Test 1: low score (24) BLOCKS the PLAN gate (exit 2) — the core F3 defect ---
@@ -135,6 +153,29 @@ else
   _fail=$((_fail + 1)); echo "FAIL: last-entry low score exited $_rc (expected 2)"
 fi
 rm -rf "$_t7"
+
+# --- Test 8: the OWNED-run path reaches the same gate (low score BLOCKS) ---
+_t8=$(_setup_plan_project "24.0")
+_pin_run "$_t8"
+_run_hook_as_session "$_t8" >/dev/null 2>&1; _rc=$?
+if [ $_rc -eq 2 ]; then
+  _pass=$((_pass + 1)); echo "PASS: owned run with score 24 still blocks the PLAN gate"
+else
+  _fail=$((_fail + 1)); echo "FAIL: owned run with score 24 exited $_rc (expected 2)"
+fi
+rm -rf "$_t8"
+
+# --- Test 9: an identified session that owns NO run does not enforce (exit 0) ---
+# A failing PLAN gate exists on disk and would block via recency; owning no run
+# means owning no phase cycle, so this session must not be blocked by it.
+_t9=$(_setup_plan_project "24.0")
+_run_hook_as_session "$_t9" >/dev/null 2>&1; _rc=$?
+if [ $_rc -eq 0 ]; then
+  _pass=$((_pass + 1)); echo "PASS: unowned session is not blocked by another run's PLAN gate"
+else
+  _fail=$((_fail + 1)); echo "FAIL: unowned session exited $_rc (expected 0)"
+fi
+rm -rf "$_t9"
 
 echo ""
 echo "=== $_pass passed, $_fail failed ==="

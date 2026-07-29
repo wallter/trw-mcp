@@ -255,6 +255,49 @@ def add_operational_subcommands(
         help="Emit findings as JSON for CI/telemetry ingestion instead of a human report.",
     )
 
+    # maintain-verify (PRD-CORE-231-FR02) — batch assertion/anchor sweep
+    maintain_verify_parser = subparsers.add_parser(
+        "maintain-verify",
+        help=(
+            "Re-verify every stored learning that carries assertions and persist the "
+            "resulting verification_status / anchor_validity. Run post-commit and nightly "
+            "to bound stale-claim latency."
+        ),
+    )
+    maintain_verify_parser.add_argument(
+        "--namespace",
+        default=None,
+        help="Restrict the sweep to one memory namespace (default: every namespace).",
+    )
+    maintain_verify_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Emit the sweep summary as JSON instead of a human-readable line.",
+    )
+
+    # learn-drain (PRD-INFRA-171-FR06) — on-demand learn-journal flush
+    learn_drain_parser = subparsers.add_parser(
+        "learn-drain",
+        help=(
+            "Replay pending write-ahead learn records into the memory store on demand, "
+            "without waiting for a quiet session_start. Exits non-zero if any record was "
+            "retained for a later sweep."
+        ),
+    )
+    learn_drain_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max records to replay (default: learn_journal_drain_limit).",
+    )
+    learn_drain_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Emit the drain summary as JSON instead of a human-readable line.",
+    )
+
     # version-status
     version_parser = subparsers.add_parser(
         "version-status",

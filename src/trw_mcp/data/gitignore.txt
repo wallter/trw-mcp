@@ -6,5 +6,12 @@ context/
 reflections/
 logs/
 *.jsonl
+# PRD-SEC-013 override evidence: C9 can only flag a forged approval record or a
+# rewritten override ledger if git can SEE those files. The `*.jsonl` rule above
+# hid both from every git-side check (probe finding N7), so the two evidence
+# paths are force-tracked. Removing either negation re-hides the evidence and is
+# itself a control-plane finding.
+!contracts/intent-override-ledger.jsonl
+!contracts/weaken-edit-approvals.jsonl
 *.lock
 knowledge.db

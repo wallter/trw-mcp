@@ -7,13 +7,13 @@
     "rationale": 1,
     "reference": 22
   },
-  "core_digest": "aebc588e777c5f8557af81aeafdf26d179342acd90e6e4f8919b0aa2cc2c5273",
+  "core_digest": "0446cf2ef01eb338028be1b7dec1ce72b42643beaad743d295c334f045e67b75",
   "obligations": [
     {
       "body_lines": 13,
       "class": "normative",
       "dest": "both",
-      "digest": "2d73784663f7bde62ccff7fa8a14185679dcbed64191cc3f374bd80b7de5c60f",
+      "digest": "a30747cccb07c0d0bb36e69d357acb96fc82c26d51708c959b3d879ad1f8adc1",
       "id": "af-title",
       "nonblank_lines": 8,
       "start_line": 1
@@ -22,7 +22,7 @@
       "body_lines": 16,
       "class": "normative",
       "dest": "core",
-      "digest": "f2a59d29c8c4e5db1227be4bf7bb2c4331e6c8faa3566ac119d9bb40ed0cf2cf",
+      "digest": "5fbc1ebbf200b6cced382c5f6116a28e1eaca7413f2018b53a70e4d150e817e6",
       "id": "af-0-what-this-framework-is-and-is-not",
       "nonblank_lines": 9,
       "start_line": 15
@@ -157,7 +157,7 @@
       "body_lines": 12,
       "class": "normative",
       "dest": "core",
-      "digest": "b4ad894462e4ca0a8af3927cc8c00b378fd690d7c3858f37660b6375f7c56eae",
+      "digest": "9afa32609f9e66c29e53a775734bcd5a8c08ef816ae1322eba5ba7c5468fb64c",
       "id": "af-c3-risk-based-rigor-scaling-partial",
       "nonblank_lines": 9,
       "start_line": 200
@@ -337,7 +337,7 @@
       "body_lines": 14,
       "class": "normative",
       "dest": "core",
-      "digest": "5c3e9c04f2f0219ead702afeb641d24042428c2541bcb795f311fe9c79755d0c",
+      "digest": "fba397e1da8bb55556aad7441c59cc24558594312725f6844e4596ff71693f8d",
       "id": "af-minimum-viable-setup",
       "nonblank_lines": 13,
       "start_line": 388
@@ -391,7 +391,7 @@
       "body_lines": 13,
       "class": "reference",
       "dest": "reference",
-      "digest": "0afb6d0a85f27125d197c2f1aab28316fdb1af926474b17891aacd79dc1cc7f4",
+      "digest": "7ab56610eda3ca8ff026eb36e9a908e6cea7779b616906ad796996b5951505ff",
       "id": "af-11-relationship-to-framework-md",
       "nonblank_lines": 9,
       "start_line": 464
@@ -400,7 +400,7 @@
       "body_lines": 12,
       "class": "compatibility",
       "dest": "core",
-      "digest": "341932c2c2e20aa8534b7076bbe596e5901d3bbc1ea7714623f1d7bd091f313f",
+      "digest": "0498ea2a7f050b726a41d48c5e3a488b5dfbf00725ba671acd052370f5c18923",
       "id": "af-12-maintenance-versioning",
       "nonblank_lines": 8,
       "start_line": 478
@@ -451,8 +451,8 @@
       "start_line": 550
     }
   ],
-  "reference_digest": "40b8a2dacec2a25da77debe63e1d6cc7150bc1c2cb7ea465c059a31801af5e74",
+  "reference_digest": "384eee5eb1234bba1a5d754aebbf96865d4c73eb26e3958fea8f0eecf336b09a",
   "schema": 1,
-  "source_digest_combined": "16f00cd7d23c3898ce8b86d52536f262c294a4d482fdd865f5f1038cfeb11a00",
+  "source_digest_combined": "09b46d42145d539214adf9671e6628ee9eb829c5dccefd8eb9b3ab917e546120",
   "span_count": 49
 }

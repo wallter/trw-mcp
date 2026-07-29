@@ -48,10 +48,10 @@ def register_code_search_tools(server: FastMCP) -> None:
         top_k: int = 10,
         path: str | None = None,
     ) -> dict[str, object]:
-        """Search local indexed code chunks.
+        """Search local indexed code chunks by full-text/lexical query.
 
         Use when an agent has run ``trw_code_index_update`` and needs ranked code
-        context without reading full files.
+        context without grepping the tree or reading full files.
         """
 
         return trw_code_search(repo_root=repo_root, query=query, mode=mode, top_k=top_k, path=path)
@@ -64,10 +64,10 @@ def register_code_search_tools(server: FastMCP) -> None:
         top_k: int = 10,
         path: str | None = None,
     ) -> dict[str, object]:
-        """Find local indexed symbols with exact matches ranked first.
+        """Find where a symbol is defined — function, class, or method — exact matches first.
 
-        Use when an agent needs symbol locations from the local code index
-        without scanning or returning full file bodies.
+        Use when an agent needs a definition's location from the local code
+        index without scanning the tree or returning full file bodies.
         """
 
         return trw_code_symbol(repo_root=repo_root, symbol=symbol, top_k=top_k, path=path)

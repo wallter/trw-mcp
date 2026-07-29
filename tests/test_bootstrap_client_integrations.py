@@ -131,8 +131,19 @@ class TestInitProjectExceptionBoundary:
         assert isinstance(result, dict)
         assert any("init-project failed" in e and "RuntimeError" in e for e in result["errors"])
 
-    def test_non_git_repo_still_returns_dict(self, tmp_path: Path) -> None:
-        """The pre-existing git guard still short-circuits with the dict contract."""
+    def test_non_git_repo_deploys_and_warns(self, tmp_path: Path) -> None:
+        """PRD-INFRA-170-FR06: a non-git target is no longer a fatal skip.
+
+        It now deploys the framework (the bodies are git-independent) and
+        records a loud, non-silent warning instead of an error — never the
+        reproduced config-present, framework-absent half-install.
+        """
         result = ip.init_project(tmp_path)  # no .git/
         assert isinstance(result, dict)
-        assert any("not a git repository" in e for e in result["errors"])
+        # No fatal git error, but a surfaced warning naming the condition.
+        assert not any("not a git repository" in e for e in result["errors"])
+        assert any("not a git repository" in w for w in result.get("warnings", []))
+        # The framework bodies deployed despite the missing .git/.
+        frameworks = tmp_path / ".trw" / "frameworks"
+        assert (frameworks / "FRAMEWORK-CORE.md").is_file()
+        assert (frameworks / "DEPLOYMENT.json").is_file()

@@ -1,6 +1,6 @@
-v26.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+v26.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
 Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
-Version date: 2026-07-09 | Model policy: capability-based, never provider-bound
+Version date: 2026-07-27 | Model policy: capability-based, never provider-bound
 
 <trw-framework>
 

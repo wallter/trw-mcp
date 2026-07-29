@@ -31,6 +31,33 @@ from trw_mcp.tools._task_profile_observability import apply_task_profile_observa
 logger = structlog.get_logger(__name__)
 
 
+def _stale_close_remedy() -> str:
+    """Return the stale-run remedy clause, or none when auto-close is off.
+
+    The advisory used to state flatly that ``trw_session_start`` would
+    "auto-close them". ``_ceremony_helpers`` only runs ``auto_close_stale_runs``
+    when ``config.run_auto_close_enabled`` is set, so with it disabled the
+    sentence directed the agent to a call that would demonstrably not do the
+    thing it promised — a consequence the config does not enforce (HB-1).
+
+    The count itself is always surfaced; only the REMEDY is conditional, so
+    turning auto-close off makes TRW quieter about the fix, never blind to the
+    staleness. Fail-open to no clause: an unreadable config cannot prove the
+    remedy applies, and an unproven remedy must not be asserted.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+
+        if get_config().run_auto_close_enabled:
+            return " Use trw_session_start to auto-close them."
+    # INFO, not debug: a default install passes no --debug, where debug events are
+    # dropped before any processor runs — and the caller cannot tell a suppressed
+    # remedy (auto-close off) from an unresolvable one (config unreadable).
+    except Exception:  # justified: fail-open, advisory wording must not break status
+        logger.info("stale_close_remedy_degraded", exc_info=True)
+    return ""
+
+
 def assemble_status_result(
     state_data: dict[str, object],
     events: list[dict[str, object]],
@@ -126,7 +153,7 @@ def assemble_status_result(
         # Prose hint is one-time-useful; after it has been surfaced once for
         # this run, later status checks carry only the bare ``stale_count``.
         if stale > 0 and _orch.stale_advisory_first_time(resolved_path):
-            result["stale_runs_advisory"] = f"{stale} stale run(s) detected. Use trw_session_start to auto-close them."
+            result["stale_runs_advisory"] = f"{stale} stale run(s) detected.{_stale_close_remedy()}"
     except Exception:  # justified: fail-open, stale run count is advisory only
         result["stale_count_error"] = True
         logger.warning("stale_count_scan_failed", exc_info=True)

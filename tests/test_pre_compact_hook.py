@@ -8,10 +8,20 @@ import subprocess
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
+
+#: Every live copy of the hook. The vendored `trw-eval/trw-mcp-local/` copy was
+#: dropped here because that whole tree was deliberately deleted in
+#: `a77650f238` ("delete stale vendored trw-mcp-local (342 files, trw-mcp
+#: 0.39.2)"). This tuple kept naming it, so both tests in this module raised
+#: FileNotFoundError against a path removed on purpose — a stale reference, not
+#: a missing artifact.
+#:
+#: Deliberately NOT filtered with `if path.exists()`: these two copies MUST both
+#: be present, and skipping absent ones would turn a deleted hook into a silent
+#: pass. If a third distribution copy is reintroduced, add it here explicitly.
 _HOOK_PATHS = (
     _ROOT.parent / ".claude" / "hooks" / "pre-compact.sh",
     _ROOT / "src" / "trw_mcp" / "data" / "hooks" / "pre-compact.sh",
-    _ROOT.parent / "trw-eval" / "trw-mcp-local" / "src" / "trw_mcp" / "data" / "hooks" / "pre-compact.sh",
 )
 
 
@@ -49,7 +59,7 @@ log_hook_execution() { printf '%s|%s|%s\\n' "$1" "$2" "$3" >> "$TRW_HOOK_LOG"; }
 
 def test_pre_compact_hook_copies_stay_in_sync() -> None:
     contents = [hook_path.read_text(encoding="utf-8") for hook_path in _HOOK_PATHS]
-    assert contents[0] == contents[1] == contents[2]
+    assert len(set(contents)) == 1, "every shipped copy of pre-compact.sh must be byte-identical"
 
 
 def test_pre_compact_hook_clears_injected_learning_ids(tmp_path: Path) -> None:

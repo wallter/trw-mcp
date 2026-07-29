@@ -111,11 +111,38 @@ def _append_provenance_signed(
         logger.debug("learn_provenance_append_failed", learning_id=learning_id, exc_info=True)
 
 
+def _scan_injection(*fields: str) -> re.Pattern[str] | None:
+    """Return the first blocked injection pattern matching any of *fields*.
+
+    Fields are joined with a newline, never concatenated bare: bare
+    concatenation welds the last character of one field to the first of the
+    next ("benign" + "ignore all…" -> "benignignore all…"), which defeats any
+    pattern anchored on a leading word boundary. An attacker controls both
+    fields, so the adjacency would be theirs to arrange.
+    """
+    combined = "\n".join(fields)
+    for pattern in _LEARN_INJECTION_PATTERNS:
+        if pattern.search(combined):
+            return pattern
+    return None
+
+
+def _injection_rejection(pattern: re.Pattern[str]) -> dict[str, object]:
+    """Build the rejection payload for a matched injection pattern."""
+    return {
+        "status": "rejected",
+        "reason": "injection_pattern",
+        "message": f"content matched blocked injection pattern {pattern.pattern!r}",
+    }
+
+
 def _content_policy_reject(summary: str, detail: str) -> dict[str, object] | None:
     """Return a rejection payload if content exceeds caps or matches an
     injection pattern; None if the content is acceptable.
 
-    Security audit 2026-04-18 H2.
+    Security audit 2026-04-18 H2. Covers the two long-form fields only; the
+    auxiliary caller-controlled fields are gated by
+    :func:`_auxiliary_content_reject`.
     """
     if len(summary) > _MAX_SUMMARY_CHARS:
         return {
@@ -129,15 +156,37 @@ def _content_policy_reject(summary: str, detail: str) -> dict[str, object] | Non
             "reason": "detail_too_long",
             "message": f"detail exceeds {_MAX_DETAIL_CHARS} chars (got {len(detail)})",
         }
-    combined = f"{summary}\n{detail}"
-    for pattern in _LEARN_INJECTION_PATTERNS:
-        if pattern.search(combined):
-            return {
-                "status": "rejected",
-                "reason": "injection_pattern",
-                "message": f"content matched blocked injection pattern {pattern.pattern!r}",
-            }
-    return None
+    pattern = _scan_injection(summary, detail)
+    return _injection_rejection(pattern) if pattern is not None else None
+
+
+def _auxiliary_content_reject(
+    tags: list[str] | None,
+    evidence: list[str] | None,
+    nudge_line: str,
+) -> dict[str, object] | None:
+    """Gate the caller-controlled fields the two long-form gates never saw.
+
+    VERIFIED GAP (2026-07-27). ``trw_learn`` content passes two independent
+    injection gates: ``_content_policy_reject`` here, which scanned only
+    ``summary``+``detail``, and ``trw_memory.security.poisoning.
+    validate_entry_payload`` at the store, which scans ``content``+``detail``+
+    ``tags``. Neither ever looked at ``evidence`` or ``nudge_line``. Both are
+    stored and replayed verbatim into a future agent's context — ``evidence``
+    rides in every non-compact ``trw_recall`` entry (it is not in
+    ``recall_internal_fields``), and ``nudge_line`` is read straight out of the
+    row and rendered as nudge text by ``_ceremony_nudge_selectors``, which is
+    the single most direct injection sink in the system. A payload in either
+    field was accepted by both gates end-to-end.
+
+    This is the same defect class the 2026-06-09 audit closed for ``tags`` at
+    the store layer; closing it there did not close it here, because a defence
+    layer owns every field it touches. ``tags`` is re-scanned here so the tool
+    boundary rejects before a durable journal record is written, rather than
+    relying on the store to raise afterwards.
+    """
+    pattern = _scan_injection(*(tags or []), *(evidence or []), nudge_line)
+    return _injection_rejection(pattern) if pattern is not None else None
 
 
 def _handle_consolidation(

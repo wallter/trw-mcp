@@ -102,6 +102,7 @@ def dispatch_for_profile(
     reader: FileStateReader,
     llm: LLMClient,
     client: str = "auto",
+    instruction_manifest_hashes: dict[str, str] | None = None,
 ) -> ClaudeMdSyncResultDict:
     """Dispatch a CLAUDE.md / AGENTS.md sync for the active profile.
 
@@ -125,6 +126,13 @@ def dispatch_for_profile(
         client: Target client identifier (``"auto"``, ``"claude-code"``,
             ``"opencode"``, ``"codex"``, ``"cursor"``, ``"copilot"``,
             ``"antigravity-cli"``, or ``"all"``).
+        instruction_manifest_hashes: Content-hash baseline describing TRW's
+            last write to the per-client instruction files, captured before any
+            write in the calling flow. ``update-project`` must pass this,
+            because it rewrites the on-disk manifest from current content
+            before reaching here — leaving a user's edit indistinguishable from
+            TRW's own output. ``None`` lets the generators read the manifest
+            themselves, which is correct for a standalone sync.
 
     Returns:
         Dict shaped like :class:`ClaudeMdSyncResultDict` describing the
@@ -170,6 +178,7 @@ def dispatch_for_profile(
             instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
                 project_root,
                 decision.instruction_targets,
+                instruction_manifest_hashes,
             )
             logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
             logger.info(
@@ -266,6 +275,7 @@ def dispatch_for_profile(
     instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
         project_root,
         decision.instruction_targets,
+        instruction_manifest_hashes,
     )
 
     agents_md_synced, agents_md_path = _sync_agents_md_if_needed(

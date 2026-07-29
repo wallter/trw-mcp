@@ -74,7 +74,6 @@ class RunStatusDict(TypedDict, total=False):
     status: str
     task_name: str
     capability_tier: str
-    model_tier: str
     recommended_effort: str
     effort_source: str
     effort_adapter_status: str
@@ -94,7 +93,15 @@ class SessionStartResultDict(TypedDict, total=False):
     learnings_count: int
     query: str
     query_matched: int
+    # Present ONLY when a focused query matched zero entries — explains that the
+    # returned learnings are the query-independent impact-ranked baseline and
+    # points the caller at trw_recall for full hybrid search.
+    query_advisory: str
     total_available: int
+    # PRD-CORE-215 FR01 connection fingerprint. Full ten-field block under
+    # verbose=True; compact mode keeps only build_identity + connection_nonce
+    # (see tools/_session_start_trim.py::_FINGERPRINT_COMPACT_FIELDS).
+    connection_fingerprint: dict[str, object]
     response_compacted: bool
     side_effects_deferred: dict[str, object]
     recall_degraded: dict[str, object]
@@ -294,7 +301,7 @@ class BuildCheckResultDict(TypedDict, total=False):
     failure_count: int
     failures: list[str]
     scope: str
-    duration_secs: float
+    duration_secs: float | None
     cache_path: str
     status: str
     reason: str

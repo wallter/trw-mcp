@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 from ._cursor import HookHandlerEntry
-from ._file_ops import read_json_object
+from ._file_ops import read_json_object, replace_marker_region
 
 logger = structlog.get_logger(__name__)
 
@@ -300,12 +300,44 @@ def _merge_agents_md(existing: str, trw_block: str, begin: str, end: str) -> str
     If both sentinels are found, the content between them is replaced with the
     new ``trw_block`` and everything outside is preserved.  If sentinels are
     absent, the TRW block is prepended with a blank line before existing content.
+
+    Sentinel matching is line-anchored, never a substring scan. The previous
+    ``begin in existing`` + ``partition`` form bound to the FIRST occurrence
+    anywhere in the document, so an AGENTS.md that merely *mentioned* a sentinel
+    in prose or backticks lost everything between that mention and the real
+    block — the 705-line ROADMAP corruption shape that
+    ``.claude/rules/trw-mcp-python.md`` §Marker / Sentinel Matching forbids.
     """
-    if begin in existing and end in existing:
-        pre, _, rest = existing.partition(begin)
-        _, _, post = rest.partition(end)
-        return pre + trw_block + post
+    merged = replace_marker_region(existing, start=begin, end=end, new_block=trw_block)
+    if merged is not None:
+        return merged
     return trw_block + "\n\n" + existing
+
+
+def _cursor_cli_trw_section() -> str:
+    """Return the TRW body for cursor-cli's AGENTS.md, sized to its profile.
+
+    cursor-cli is a light-ceremony client whose AGENTS.md is its only protocol
+    carrier (no include mechanism resolves for it), so the body must be the
+    smallest text that still carries the protocol — the deliver gate and the
+    rigid tool set — rather than the full section.
+
+    Falls back to the full section if the profile cannot be resolved: carrying
+    too much is recoverable, carrying too little loses the gate.
+    """
+    from trw_mcp.state.claude_md._static_sections import (
+        render_agents_trw_section,
+        render_minimal_protocol,
+    )
+
+    try:
+        from trw_mcp.models.config._profiles import resolve_client_profile
+
+        if resolve_client_profile("cursor-cli").ceremony_mode == "light":
+            return render_minimal_protocol()
+    except Exception:  # justified: fail-safe — an unresolvable profile keeps the fuller body
+        logger.warning("cursor_cli_profile_unresolved_using_full_section", exc_info=True)
+    return render_agents_trw_section()
 
 
 def generate_cursor_cli_agents_md(

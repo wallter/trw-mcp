@@ -8,8 +8,8 @@ Three helpers:
 - ``_validate_skill`` — verify SKILL.md has required frontmatter fields
 - ``_install_skills`` — copy bundled skills to .claude/skills/
 - ``_install_agents`` — copy bundled agent .md files to .claude/agents/,
-  rewriting the ``model:`` field via the per-client tier resolver
-  (PRD-INFRA-104).
+  materializing them for the client: tool-placeholder rendering plus
+  capability-tier ``model:`` resolution (PRD-INFRA-104).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.agents.tier_resolver import rewrite_model_line
+from trw_mcp.agents.tier_resolver import materialize_agent
 from trw_mcp.models.skill_manifest import validate_skill_markdown
 
 from ._utils import (
@@ -134,14 +134,14 @@ def _install_agents(
 ) -> None:
     """Copy bundled agent markdown files to ``.claude/agents/``.
 
-    PRD-INFRA-104: bundled agents declare a capability-tier vocabulary
-    (``frontier|balanced|local-large|local-small``) in their ``model:``
-    frontmatter. Each client harness accepts a different concrete model
-    vocabulary, so this function applies
-    :func:`trw_mcp.agents.tier_resolver.rewrite_model_line` per agent
-    before writing the destination file. For the default ``claude-code``
-    client that means ``model: frontier`` → ``model: opus``, etc.
-    Unknown tiers are logged and the file is skipped (FR-11).
+    Bundled agents are client-neutral: they declare a capability tier
+    (``frontier|balanced|local-large|local-small``) in ``model:`` and reference
+    TRW tools through ``{tool:trw_x}`` placeholders. Each file is materialized
+    for *client* via :func:`trw_mcp.agents.tier_resolver.materialize_agent`
+    before it is written — for the default ``claude-code`` client that means
+    ``model: frontier`` → ``model: opus`` and ``{tool:trw_recall}`` →
+    ``mcp__trw__trw_recall``. Unknown tiers are logged and the file is skipped
+    (FR-11).
 
     Args:
         target_dir: Root of the target git repository.
@@ -193,7 +193,7 @@ def _install_one_agent(
     on_progress: ProgressCallback,
     client: str,
 ) -> None:
-    """Install a single bundled agent, rewriting its ``model:`` field.
+    """Install a single bundled agent, materialized for *client*.
 
     Idempotent: if *dest* already exists and *force* is False, the file
     is skipped (matching :func:`trw_mcp.bootstrap._utils._copy_file`
@@ -216,7 +216,7 @@ def _install_one_agent(
         return
 
     try:
-        rewritten = rewrite_model_line(bundled, client=client)
+        rewritten = materialize_agent(bundled, client=client)
     except ValueError as exc:
         # Unknown tier -- surface clearly, skip this agent only.
         logger.warning(

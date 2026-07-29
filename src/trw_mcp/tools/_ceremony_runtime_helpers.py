@@ -28,6 +28,7 @@ from trw_mcp.models.typed_dicts import (
     ReflectResultDict,
     RunStatusDict,
 )
+from trw_mcp.state._no_active_run import no_active_run_remedy
 from trw_mcp.state.analytics import find_success_patterns, update_analytics
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
@@ -126,11 +127,13 @@ def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
 
 
 def _no_active_run_hint(candidate_runs: list[dict[str, object]]) -> str:
-    """Build actionable no-pin guidance while preserving PRD-CORE-141 isolation."""
-    hint = (
-        "No active run for this session. Call trw_init() to create a new run, "
-        "or call trw_adopt_run(run_path=...) to resume an existing run."
-    )
+    """Build actionable no-pin guidance while preserving PRD-CORE-141 isolation.
+
+    PRD-CORE-233 FR03: the remedy set comes from ``state._no_active_run`` — the
+    same source the resolver's ``StateError`` uses — so this hint and that error
+    can never drift into offering a caller different options.
+    """
+    hint = "No active run for this session. " + no_active_run_remedy()
     if candidate_runs:
         hint += " Candidate run paths are advisory only; TRW will not auto-adopt another session's run."
     return hint

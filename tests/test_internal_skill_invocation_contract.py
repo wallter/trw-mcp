@@ -8,13 +8,17 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+#: Every live copy of the internal PRD-review skill. The two vendored
+#: `trw-eval/trw-mcp-local/` copies were dropped because that whole tree was
+#: deliberately deleted in `a77650f238` ("delete stale vendored trw-mcp-local
+#: (342 files, trw-mcp 0.39.2)") — stale references, not missing artifacts.
+#: Deliberately NOT filtered with `.exists()`: a deleted surface must fail
+#: loudly here, not silently drop out of the contract.
 PRD_REVIEW_SURFACES = (
     ROOT / "trw-mcp/src/trw_mcp/data/skills/trw-prd-review/SKILL.md",
     ROOT / "trw-mcp/src/trw_mcp/data/codex/skills/trw-prd-review/SKILL.md",
     ROOT / ".claude/skills/trw-prd-review/SKILL.md",
     ROOT / ".agents/skills/trw-prd-review/SKILL.md",
-    ROOT / "trw-eval/trw-mcp-local/src/trw_mcp/data/skills/trw-prd-review/SKILL.md",
-    ROOT / "trw-eval/trw-mcp-local/src/trw_mcp/data/codex/skills/trw-prd-review/SKILL.md",
 )
 PUBLIC_GUIDANCE_SURFACES = (
     ROOT / "platform/src/app/(marketing)/docs/skills/skills-page/data.tsx",

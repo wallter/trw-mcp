@@ -28,7 +28,9 @@ def test_audit_skill_keeps_operational_rules_not_motivational_duplicates() -> No
         content = path.read_text(encoding="utf-8")
         assert "## Why This Exists" not in content
         assert "## Rationalization Watchlist" not in content
-        assert content.count("scratch/audits") == 1
+        # The audit is read-only and runs as trw-auditor, which has no Write tool:
+        # it must not direct reports at an invented scratch path.
+        assert "scratch/audits" not in content
 
         for constraint in (
             'NEVER accept "tests pass" as evidence of spec compliance',
@@ -41,9 +43,16 @@ def test_audit_skill_keeps_operational_rules_not_motivational_duplicates() -> No
             "### Step 3: Locate Code and Tests",
             "### Step 4: Audit Each FR",
             "### Step 5: NFR Checklist",
-            "### Step 7: Write Audit Report",
-            "nfr_audit:",
-            "verdict: PASS|FAIL|NA",
+            "### Step 7: Report the Audit",
+            # PRD-QUAL-128-FR03: the report schema (`nfr_audit:` and its
+            # `verdict: PASS|FAIL|NA` row) moved to audit-framework.md Section G,
+            # which is now its only definition. The skill must POINT at it —
+            # restating it here is what let the skill path drift to a 4-key
+            # finding schema and a 10-row checklist (drifts D1/D6). The schema's
+            # own contract is asserted in
+            # test_audit_protocol_contracts.py::test_report_schema_keys_and_enums_are_derived_not_pinned.
+            "audit-framework.md",
+            "Section G",
         ):
             assert required in content
 

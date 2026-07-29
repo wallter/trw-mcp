@@ -24,15 +24,20 @@ Honest scope per CONSTITUTION §1:
   No version-range / fuzzy-match fallback.
 - Learnings half always returns even when distill_sidecar feature is
   ungated — preserves operator value at free tier.
+
+Repo-root / SHA / envelope resolution lives in ``_sidecar_substrate``
+(extracted FROM this module at c747). This tool was the last of the five
+sidecar consumers still carrying a hand-rolled copy of that logic, and the
+copy had diverged: an unresolvable ``git rev-parse HEAD`` was reported as
+``stale_sha`` — a status that asserts a sidecar was read and disagreed —
+when no sidecar had been consulted at all. The substrate has a distinct
+``no_git_sha`` for exactly that case. Consuming the substrate is what keeps
+the two from diverging again; do not reintroduce a local resolver here.
 """
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from contextlib import suppress
-from pathlib import Path
 from typing import Any, Literal
 
 from fastmcp import Context, FastMCP
@@ -44,11 +49,26 @@ from pydantic import BaseModel, ConfigDict, Field
 from trw_mcp.tools import _sidecar_substrate
 from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
 from trw_mcp.tools._learnings_collector import LearningSummary
+from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus
 
-_SCHEMA_VERSION_ACCEPTED: str = "risk-report-sidecar/v0"
+# Derived from the substrate, never re-spelled: a hand-copied constant is how
+# the two drifted in the first place.
+_SCHEMA_VERSION_ACCEPTED: str = _sidecar_substrate.SCHEMA_VERSION_ACCEPTED
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
-_DEFAULT_CACHE_DIR_REL: str = ".trw/distill/map-cache"
-_DEFAULT_LEARNINGS_TOP_N: int = 5
+_TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
+
+#: This tool adds exactly one status to the shared vocabulary: the sidecar
+#: loaded cleanly but describes a DIFFERENT file. Everything else is the
+#: substrate's closed set, so a new shared status arrives here automatically.
+BeforeEditHintStatus = CurrentSidecarStatus | Literal["target_not_in_sidecar"]
+
+#: Statuses in which the entitlement gate never ran, so "was this edit
+#: eligible?" has no answer. ``tier_required`` means checked-and-denied;
+#: ``no_repo_root`` means the substrate returned before reaching the gate.
+#: Emitting ``eligible: True`` for either would write a claim into durable
+#: telemetry that no check ever made — the same defect as the ``stale_sha``
+#: mislabel this module was migrated to fix.
+_ELIGIBILITY_UNDETERMINED: frozenset[str] = frozenset({"tier_required", "no_repo_root"})
 
 
 class BeforeYouEditHintPayload(BaseModel):
@@ -88,16 +108,7 @@ class BeforeEditHintResult(BaseModel):
     file_path: str
     tier: str
     distill_hint: BeforeYouEditHintPayload | None = None
-    distill_status: Literal[
-        "hint_available",
-        "tier_required",
-        "sidecar_missing",
-        "sidecar_malformed",
-        "schema_mismatch",
-        "target_not_in_sidecar",
-        "stale_sha",
-        "ok",
-    ] = "sidecar_missing"
+    distill_status: BeforeEditHintStatus = "sidecar_missing"
     distill_action: str | None = None
     distill_sidecar_path: str | None = None
     distill_sidecar_sha: str | None = None
@@ -105,106 +116,27 @@ class BeforeEditHintResult(BaseModel):
     learnings_count: int = 0
 
 
-def _resolve_repo_root(repo_root: str | None) -> Path | None:
-    if repo_root is not None:
-        return Path(repo_root)
-    git_executable = shutil.which("git")
-    if git_executable is None:
-        return None
-    try:
-        proc = subprocess.run(  # noqa: S603
-            [git_executable, "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode == 0:
-            stripped = proc.stdout.strip()
-            if stripped:
-                return Path(stripped)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def _resolve_git_sha(repo_root: Path) -> str | None:
-    git_executable = shutil.which("git")
-    if git_executable is None:
-        return None
-    try:
-        proc = subprocess.run(  # noqa: S603
-            [git_executable, "rev-parse", "HEAD"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if proc.returncode == 0:
-            stripped = proc.stdout.strip()
-            if stripped and len(stripped) == 40 and all(c in "0123456789abcdef" for c in stripped):
-                return stripped
-    except (OSError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
-def _load_sidecar_envelope(sidecar_path: Path) -> dict[str, Any] | None:
-    if not sidecar_path.exists():
-        return None
-    try:
-        parsed = json.loads(sidecar_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    return parsed
+def _cli_remediation(file_path: str) -> str:
+    """Exact command that regenerates this file's single-file sidecar."""
+    return f"cd <repo> && trw-distill self-improve before-edit --repo . --file {file_path} --persist-sidecar"
 
 
 def _select_distill_hint(
-    sidecar_path: Path,
+    payload: Any,
     file_path: str,
-    sidecar_sha_expected: str,
 ) -> tuple[
     BeforeYouEditHintPayload | None,
-    Literal[
-        "hint_available",
-        "sidecar_missing",
-        "sidecar_malformed",
-        "schema_mismatch",
-        "target_not_in_sidecar",
-        "stale_sha",
-    ],
+    Literal["hint_available", "sidecar_malformed", "target_not_in_sidecar"],
     str | None,
 ]:
-    """Inspect sidecar envelope; return (payload, status, action).
+    """Validate an already-loaded sidecar payload against the requested file.
+
+    The substrate has already proved the envelope exists, carries the accepted
+    schema_version, and matches HEAD. What is left is this tool's own contract:
+    the payload must describe ``file_path`` and must satisfy the mirror model.
 
     NEVER raises — every failure path returns (None, status, action).
     """
-    envelope = _load_sidecar_envelope(sidecar_path)
-    if envelope is None:
-        return (
-            None,
-            "sidecar_missing",
-            f"Run: cd <repo> && trw-distill self-improve before-edit --repo . --file {file_path} --persist-sidecar",
-        )
-    schema = envelope.get("schema_version")
-    if schema != _SCHEMA_VERSION_ACCEPTED:
-        return (
-            None,
-            "schema_mismatch",
-            f"Sidecar schema_version={schema!r}; expected "
-            f"{_SCHEMA_VERSION_ACCEPTED!r} — upgrade trw-distill or trw-mcp",
-        )
-    sidecar_sha = envelope.get("sha")
-    if not isinstance(sidecar_sha, str) or sidecar_sha != sidecar_sha_expected:
-        return (
-            None,
-            "stale_sha",
-            f"Sidecar SHA={sidecar_sha!r}; HEAD={sidecar_sha_expected} — re-run with --persist-sidecar",
-        )
-    payload = envelope.get("payload")
     if not isinstance(payload, dict):
         return (
             None,
@@ -253,77 +185,58 @@ def compute_before_edit_hint(
     cache_dir: str | None = None,
 ) -> BeforeEditHintResult:
     """Pure-Python entry point used by the MCP tool registrar + tests."""
-    from trw_mcp.state._entitlements import load_entitlement
-    from trw_mcp.state._paths import resolve_trw_dir
-
-    resolved_repo_root = _resolve_repo_root(repo_root)
     learnings = _collect_learnings(file_path)
 
-    trw_dir = (resolved_repo_root / ".trw") if resolved_repo_root is not None else resolve_trw_dir()
-    entitlement = load_entitlement(trw_dir)
-
-    # Entitlement resolves via EITHER an installed trw-distill package (proof
-    # of a paid entitlement — the installer historically never wrote the
-    # `.trw/entitlements.yaml` sentinel, so an entitled install otherwise
-    # resolved tier="free") OR a valid entitlement sentinel.
-    distill_present = _sidecar_substrate.distill_installed()
-    feature_allowed = distill_present or entitlement.has_feature("trw_before_edit_hint:distill_sidecar")
-
-    # Display tier: reflect the package-presence unlock so a working hint is
-    # never labelled tier="free".
-    display_tier: str = entitlement.tier
-    if distill_present and entitlement.tier == "free":
-        display_tier = "proprietary"
+    # Repo root, entitlement gate, HEAD sha, envelope + schema + sha checks all
+    # come from the shared substrate. Its status vocabulary distinguishes the
+    # three "we never got as far as comparing" cases — `no_repo_root`,
+    # `tier_required`, `no_git_sha` — from `stale_sha`, which is a real
+    # comparison that disagreed. The tier the substrate reports already folds in
+    # the trw-distill-installed unlock (tier="proprietary" without a sentinel).
+    sidecar = _sidecar_substrate.resolve_current_sidecar(
+        repo_root=repo_root,
+        cache_dir=cache_dir,
+        feature=_TIER_FEATURE,
+        artifact_name=_ARTIFACT_NAME_SINGLE,
+        cli_remediation=_cli_remediation(file_path),
+    )
 
     distill_hint: BeforeYouEditHintPayload | None = None
-    distill_status: Literal[
-        "hint_available",
-        "tier_required",
-        "sidecar_missing",
-        "sidecar_malformed",
-        "schema_mismatch",
-        "target_not_in_sidecar",
-        "stale_sha",
-        "ok",
-    ] = "tier_required"
-    # No remediation nag by default: when trw-distill is not installed the
-    # sidecar feature is simply unavailable, and emitting a paid-tier remediation
-    # on every edit would burn caller tokens for a feature not opted into. The
-    # learnings half below always returns, preserving value at any tier.
-    distill_action: str | None = None
-    distill_sidecar_path: str | None = None
-    distill_sidecar_sha: str | None = None
+    # No remediation nag on the tier-gated path: when trw-distill is not
+    # installed the sidecar feature is simply unavailable, and emitting a
+    # paid-tier remediation on every edit would burn caller tokens for a feature
+    # not opted into. `resolve_current_sidecar` already returns action=None
+    # there. The learnings half below always returns, preserving value at any
+    # tier.
+    distill_status: BeforeEditHintStatus = sidecar.status
+    distill_action: str | None = sidecar.action
+    if sidecar.status == "hint_available":
+        distill_hint, distill_status, distill_action = _select_distill_hint(sidecar.payload, file_path)
 
-    if feature_allowed:
-        if resolved_repo_root is None:
-            distill_status = "sidecar_missing"
-            distill_action = "Could not resolve git repo root — pass --repo or run from inside a git checkout"
-        else:
-            resolved_cache_dir = (
-                Path(cache_dir) if cache_dir is not None else resolved_repo_root / _DEFAULT_CACHE_DIR_REL
-            )
-            git_sha = _resolve_git_sha(resolved_repo_root)
-            if git_sha is None:
-                distill_status = "stale_sha"
-                distill_action = "Could not run `git rev-parse HEAD` — verify .git/ present + git CLI installed"
-            else:
-                distill_sidecar_sha = git_sha
-                sidecar_path = resolved_cache_dir / f"{_ARTIFACT_NAME_SINGLE}-{git_sha}.json"
-                distill_sidecar_path = str(sidecar_path)
-                distill_hint, distill_status, distill_action = _select_distill_hint(
-                    sidecar_path,
-                    file_path,
-                    git_sha,
-                )
+    # PRD-CORE-231-FR01: record every ELIGIBLE edit in durable telemetry.
+    # "Eligible" == the entitlement gate ran AND allowed the feature. Misses are
+    # recorded too — a gate computed only from hits would be a survivorship
+    # statistic — but a status in `_ELIGIBILITY_UNDETERMINED` means the gate
+    # never produced an answer, and `eligible: True` there would be a fabricated
+    # one. This is the single emission point shared by the CC-03 hook subprocess
+    # and the direct MCP-tool path.
+    if distill_status not in _ELIGIBILITY_UNDETERMINED:
+        from trw_mcp.channels._distill_telemetry import emit_hint_delivered
+
+        emit_hint_delivered(
+            tier="T2" if distill_status == "hint_available" else sidecar.tier,
+            distill_status=distill_status,
+            file_path=file_path,
+        )
 
     return BeforeEditHintResult(
         file_path=file_path,
-        tier=display_tier,
+        tier=sidecar.tier,
         distill_hint=distill_hint,
         distill_status=distill_status,
         distill_action=distill_action,
-        distill_sidecar_path=distill_sidecar_path,
-        distill_sidecar_sha=distill_sidecar_sha,
+        distill_sidecar_path=sidecar.sidecar_path,
+        distill_sidecar_sha=sidecar.sidecar_sha,
         learnings=learnings,
         learnings_count=len(learnings),
     )
@@ -339,18 +252,10 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
         cache_dir: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
-        """Return cold-start codebase intelligence for ``file_path``.
+        """Return sidecar risk hints (paid tiers) + prior learnings (all tiers) for one file.
 
-        Use when an agent is about to edit a file and needs sidecar-backed
-        risk context plus relevant prior learnings before reading broadly.
-
-        Sources:
-        - trw-distill sidecar (tier-gated; requires team/pro/enterprise)
-        - existing learnings via trw_recall (always)
-
-        Returns BeforeEditHintResult.model_dump() enriched by client tier.
-        NEVER raises — failure paths populate ``distill_status`` +
-        ``distill_action`` so the operator gets an actionable next step.
+        Use when: about to edit file_path (trw_before_edit_hint_batch covers
+        many files). Never raises; on failure, distill_status explains why.
         """
         result = compute_before_edit_hint(
             file_path=file_path,
@@ -382,6 +287,7 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
 
 __all__ = [
     "BeforeEditHintResult",
+    "BeforeEditHintStatus",
     "BeforeYouEditHintPayload",
     "LearningSummary",
     "compute_before_edit_hint",

@@ -16,11 +16,12 @@ Modularizes the two longest tool functions into focused, testable helpers:
 Sub-modules (extracted for the 500-line module size gate):
  - _session_recall_helpers: recall, phase tags, antipattern alerts
 - _delivery_helpers: delivery gates, compliance copy, finalize_run
+- _ceremony_maintenance_steps: version sentinel, WAL checkpoint, learn-journal
+  drain, writer-pressure details (the fail-open auto-maintenance sub-steps)
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import structlog
@@ -31,8 +32,17 @@ from trw_mcp.state.persistence import (
     FileEventLogger,
     FileStateWriter,
 )
-from trw_mcp.tools._ceremony_status import (
-    append_ceremony_status as append_ceremony_status,
+from trw_mcp.tools._ceremony_maintenance_steps import (
+    _check_version_sentinel as _check_version_sentinel,
+)
+from trw_mcp.tools._ceremony_maintenance_steps import (
+    _run_learn_journal_drain as _run_learn_journal_drain,
+)
+from trw_mcp.tools._ceremony_maintenance_steps import (
+    _run_wal_maintenance as _run_wal_maintenance,
+)
+from trw_mcp.tools._ceremony_maintenance_steps import (
+    _writer_pressure_details as _writer_pressure_details,
 )
 from trw_mcp.tools._ceremony_telemetry import (
     _resolve_trw_dir_compat as _resolve_trw_dir_compat,
@@ -232,70 +242,19 @@ def step_mark_session_started(session_id: str | None = None) -> None:
     mark_session_started(_resolve_trw_dir_compat(), session_id=session_id)
 
 
-def step_ceremony_status(
-    results: dict[str, object],
-) -> None:
+def step_ceremony_status(results: dict[str, object]) -> None:
     """Inject ceremony status into response when full ceremony mode is active.
 
-    Skipped for light ceremony mode (FR07, PRD-CORE-084).
+    Skipped for light ceremony mode (FR07, PRD-CORE-084). Carries the
+    session-start reactive context (PRD-CORE-084 FR03).
     """
     from trw_mcp.models.config import get_config
+    from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
-    config = get_config()
-    if config.effective_ceremony_mode == "light":
+    if get_config().effective_ceremony_mode == "light":
         return
 
-    append_ceremony_status(results, _resolve_trw_dir_compat())
-
-
-def _check_version_sentinel(
-    trw_dir: Path,
-    maintenance: AutoMaintenanceDict,
-) -> None:
-    """Detect if the installer wrote a newer version since this process started.
-
-    The installer writes ``.trw/installed-version.json`` after upgrading.
-    If the on-disk version is newer than the running version, inject an
-    ``update_advisory`` telling the user to run ``/mcp`` to reload.
-    """
-    sentinel = trw_dir / "installed-version.json"
-    if not sentinel.is_file():
-        return
-
-    try:
-        data = json.loads(sentinel.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return
-
-    installed_version = str(data.get("version", ""))
-    if not installed_version:
-        return
-
-    # Compare with running version
-    try:
-        from importlib.metadata import version as pkg_version
-
-        running_version = pkg_version("trw-mcp")
-    except Exception:  # justified: importlib.metadata may fail in edge cases
-        return
-
-    # Potemkin defect D (sub_zAfRqZYYq2KtF72d): fire ONLY when the on-disk
-    # installed version is genuinely NEWER than the running process — a real
-    # pending upgrade that a ``/mcp`` reload would apply. The previous bare
-    # ``!=`` check also fired when on-disk was OLDER than (or differently
-    # formatted from) the running version, e.g. a stale sentinel left by a
-    # downgrade or a server that out-lived the on-disk install. That produced
-    # the confusing "vOLD was installed but still running vNEW — reload"
-    # advisory the operator reported (reloading would DOWN-grade, not update).
-    # Reuse the canonical semver comparator so the direction logic lives in one
-    # place; it fails closed (no advisory) on any unparseable version.
-    from trw_mcp.state.auto_upgrade import _compare_versions
-
-    if _compare_versions(running_version, installed_version) and "update_advisory" not in maintenance:
-        maintenance["update_advisory"] = (
-            f"TRW v{installed_version} is installed on disk but this MCP server is still "
-            f"running v{running_version}. Run /mcp to reload."
-        )
+    append_ceremony_status_for_tool(results, _resolve_trw_dir_compat(), tool_name="session_start")
 
 
 def run_auto_maintenance(
@@ -404,55 +363,17 @@ def run_auto_maintenance(
         writer_pids=writer_pids,
     )
 
+    _run_learn_journal_drain(
+        trw_dir,
+        config,
+        maintenance,
+        defer_memory_heavy=defer_memory_heavy,
+        defer_reason=defer_reason,
+        writer_pids=writer_pids,
+    )
+
     logger.debug(
         "auto_maintenance_complete",
         keys=list(maintenance.keys()),
     )
     return maintenance
-
-
-def _writer_pressure_details(
-    config: TRWConfig,
-    defer_reason: str,
-    writer_pids: list[int],
-    *,
-    retain_legacy_reason: bool = False,
-) -> dict[str, object]:
-    from trw_mcp.state.memory_pressure import writer_pressure_details
-
-    return writer_pressure_details(
-        defer_reason,
-        writer_pids,
-        threshold=config.session_start_writer_pressure_threshold,
-        retain_legacy_reason=retain_legacy_reason,
-    )
-
-
-def _run_wal_maintenance(
-    trw_dir: Path,
-    config: TRWConfig,
-    maintenance: AutoMaintenanceDict,
-    *,
-    defer_memory_heavy: bool,
-    defer_reason: str,
-    writer_pids: list[int],
-) -> None:
-    """Run or defer the WAL checkpoint without coupling its failures to other maintenance."""
-    try:
-        if defer_memory_heavy:
-            maintenance["wal_checkpoint_deferred"] = _writer_pressure_details(config, defer_reason, writer_pids)
-            logger.warning(
-                "wal_checkpoint_deferred",
-                reason=defer_reason,
-                writer_pids=writer_pids,
-                writer_count=len(writer_pids),
-                threshold=config.session_start_writer_pressure_threshold,
-            )
-        else:
-            from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-
-            wal_result = maybe_checkpoint_wal(trw_dir)
-            if wal_result.get("checkpointed"):
-                maintenance["wal_checkpoint"] = wal_result
-    except Exception:  # justified: fail-open, WAL checkpoint must not block session start
-        logger.warning("maintenance_wal_checkpoint_failed", exc_info=True)

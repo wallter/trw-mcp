@@ -146,17 +146,23 @@ def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry
     TRW always writes a stdio launcher: every client spawns its own
     ``trw-mcp`` instance. The ``trw-mcp`` CLI is the portability boundary —
     writing a direct Codex ``url`` is unsupported.
+
+    No ``--debug``: a client profile tunes surface density, never protocol, and
+    log verbosity is protocol. Codex, Cursor, and opencode used to bake the flag
+    in while Claude Code did not, so the same install logged different things
+    depending on which client spawned the server. Verbose logging is now opted
+    into once, portably, via ``.trw/config.yaml`` ``debug: true`` (or
+    ``TRW_LOG_LEVEL``/``TRW_DEBUG``), which applies to every client alike.
     """
     project_executable = target_dir / ".venv" / "bin" / "trw-mcp" if target_dir is not None else None
+    args: list[str] = []
     if project_executable is not None and project_executable.exists():
         command = ".venv/bin/trw-mcp"
-        args = ["--debug"]
     elif shutil.which("trw-mcp"):
         command = "trw-mcp"
-        args = ["--debug"]
     else:
         command = sys.executable
-        args = ["-m", "trw_mcp.server", "--debug"]
+        args = ["-m", "trw_mcp.server"]
     return {"command": command, "args": args, "enabled": True}
 
 
@@ -401,13 +407,15 @@ def _codex_user_edited(dest: Path, rel: str, incoming: bytes, manifest_hashes: d
     fixes; one that diverges from both is a genuine user edit. Falls back to
     "preserve" when there is no manifest record but the content already diverges
     from the incoming bundle (can't prove it's stale-vs-edited).
+
+    Thin alias over the shared predicate. It used to be a private fifth copy of
+    the same three lines; ``_managed_client_artifacts`` warns there must not be a
+    sixth, and a duty with N implementations is exactly how PRD-FIX-121's defect
+    reached seven surfaces.
     """
-    import hashlib
+    from ._managed_client_artifacts import artifact_user_edited
 
-    from ._version_manifest import _is_user_modified
-
-    framework_hashes = {hashlib.sha256(incoming).hexdigest()}
-    return _is_user_modified(dest, rel, manifest_hashes, framework_hashes=framework_hashes)
+    return artifact_user_edited(dest, rel, incoming, manifest_hashes)
 
 
 def generate_codex_agents(

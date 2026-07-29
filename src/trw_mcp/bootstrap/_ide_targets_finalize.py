@@ -48,11 +48,10 @@ def _update_config_target_platforms(
         are preserved.
       - Legacy profile identifiers (currently: ``cursor`` → ``cursor-ide``)
         are silently migrated. See ``_LEGACY_PROFILE_RENAMES``.
-      - Retired identifiers (``gemini``, ``aider`` — 2026-07-11) are DROPPED
-        from the list (not migrated to a replacement, since the artifacts
-        differ) and a result warning records the retirement + migration hint.
-        Existing ``.gemini/`` files on disk are left untouched; uninstall
-        handles their cleanup on demand.
+      - Retired identifiers (``aider`` — 2026-07-11) are DROPPED from the list
+        (not migrated to a replacement, since the artifacts differ) and a result
+        warning records the retirement + migration hint. Existing on-disk files
+        are left untouched; uninstall handles their cleanup on demand.
       - Duplicates are de-duplicated, preserving first occurrence.
       - When the merged list equals the existing list (no new IDEs, no legacy
         rename, and no retired id dropped), the file is preserved (not rewritten).
@@ -136,6 +135,7 @@ def _run_claude_md_sync(
     target_dir: Path,
     result: dict[str, list[str]],
     timeout: int = 30,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Run CLAUDE.md sync after update to resolve placeholders and promote learnings.
 
@@ -167,13 +167,19 @@ def _run_claude_md_sync(
         config = get_config()
         reader = FileStateReader()
 
-        # Skip LLM-dependent sync when no Anthropic API key is available
-        # (installer runs outside Claude Code sessions -- no auth)
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            result.setdefault("warnings", []).append(
-                "CLAUDE.md LLM sync skipped (no ANTHROPIC_API_KEY) — will complete on next trw_session_start()"
-            )
-            return
+        # NOTE: there is deliberately no ANTHROPIC_API_KEY guard here.
+        # This sync is pure file I/O and never reaches an LLM: dispatch_for_profile
+        # does `del reader, llm`, and _build_sync_result hardcodes `llm_used: False`.
+        # A previous guard returned early whenever the key was unset, which is the
+        # normal case for a Claude Code *subscription* user. On that path
+        # update-project ran only the carrier-unaware writer
+        # (_update_project.py -> _template_updater -> _update_claude_md_trw_section)
+        # and silently reverted CLAUDE.md externalization on every run, reporting
+        # success with the warning buried in result["warnings"]. Gating a
+        # deterministic write on an unrelated credential is what made the
+        # deterministic half unreachable. Pinned by TestSyncRunsWithoutApiKey.
+        # LLMClient() constructs fine without a key; if it ever raises, the
+        # except-Exception handler below records it as a warning (fail-open).
 
         def _do_sync() -> ClaudeMdSyncResultDict:
             # Suppress stdout/stderr so structlog noise and SDK auth errors
@@ -189,6 +195,7 @@ def _run_claude_md_sync(
                     config=config,
                     reader=reader,
                     llm=llm,
+                    instruction_manifest_hashes=manifest_hashes,
                 )
             finally:
                 sys.stdout, sys.stderr = saved_stdout, saved_stderr

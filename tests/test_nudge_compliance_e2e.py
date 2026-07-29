@@ -32,9 +32,8 @@ def _checkpoint_pending_workspace(tmp_path: Path) -> Path:
     """A .trw workspace where session_start is done but checkpoint is pending."""
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
-    # Deterministic, recordable nudges via the minimal messenger.
     (trw_dir / "config.yaml").write_text(
-        "nudge_enabled: true\nnudge_messenger: minimal\n",
+        "nudge_enabled: true\n",
         encoding="utf-8",
     )
     write_ceremony_state(
@@ -49,16 +48,30 @@ def _checkpoint_pending_workspace(tmp_path: Path) -> Path:
     return trw_dir
 
 
+def _fire_checkpoint_nudge(trw_dir: Path) -> dict[str, object]:
+    """Emit one nudge whose CONTENT actually targets the pending checkpoint step.
+
+    Ledger UF-023: this fixture previously used the ``minimal`` messenger, whose
+    own pending ladder renders "Call trw_deliver() to persist this session." in
+    this state — yet the emission was counted against ``checkpoint`` because the
+    old attribution read ``_highest_priority_pending_step`` instead of the
+    content. Attribution now follows the content, so the compliance loop is
+    driven by the ``ceremony`` pool, which is the pool that renders
+    ``load_pool_message("ceremony", phase_hint="checkpoint")``.
+    """
+    with patch("trw_mcp.state.ceremony_nudge._select_nudge_pool", return_value="ceremony"):
+        return append_ceremony_status({}, trw_dir)
+
+
 @pytest.mark.integration
 class TestNudgeComplianceLoop:
     def test_nudge_fires_for_pending_checkpoint(self, tmp_path: Path) -> None:
         """append_ceremony_status surfaces nudge_content and records the step."""
         trw_dir = _checkpoint_pending_workspace(tmp_path)
-        response = append_ceremony_status({}, trw_dir)
+        response = _fire_checkpoint_nudge(trw_dir)
         assert "ceremony_status" in response
         assert response.get("nudge_content")  # a nudge fired
-        # The emitted nudge was counted against the highest-priority pending
-        # step, which is checkpoint (session_start already done).
+        # The emitted nudge was counted against the step its content addresses.
         state = read_ceremony_state(trw_dir)
         assert state.nudge_counts.get("checkpoint", 0) >= 1
 
@@ -67,7 +80,7 @@ class TestNudgeComplianceLoop:
         trw_dir = _checkpoint_pending_workspace(tmp_path)
 
         # Nudge fires.
-        append_ceremony_status({}, trw_dir)
+        _fire_checkpoint_nudge(trw_dir)
         before = compute_nudge_analysis(trw_dir)
         assert before.nudge_counts_by_step.get("checkpoint", 0) >= 1
         assert before.nudge_step_completed.get("checkpoint") is False
@@ -158,7 +171,10 @@ class TestDeliverWritesNudgeAnalysis:
         artifact = trw_dir / "context" / "nudge-analysis.json"
         assert artifact.exists()
         data = json.loads(artifact.read_text(encoding="utf-8"))
-        assert data["schema_version"] == 1
+        # Version VALUE is pinned once, in test_nudge_schema_contract.py.
+        from trw_mcp.state.nudge_analysis import _ARTIFACT_SCHEMA_VERSION
+
+        assert data["schema_version"] == _ARTIFACT_SCHEMA_VERSION
         # deliver_called flips True during deliver, so deliver is NOT resistant
         # even though build_check is.
         assert data["resistance_by_step"].get("build_check") == 3

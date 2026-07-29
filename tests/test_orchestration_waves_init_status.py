@@ -44,7 +44,7 @@ class TestTrwInitConfigOverrides:
         """config_overrides values are merged into .trw/config.yaml."""
         orch_tools["trw_init"].fn(
             task_name="override-task",
-            config_overrides={"custom_key": "custom_value", "parallelism_max": "8"},
+            advanced={"config_overrides": {"custom_key": "custom_value", "parallelism_max": "8"}},
         )
 
         config_path = tmp_path / ".trw" / "config.yaml"
@@ -59,7 +59,7 @@ class TestTrwInitConfigOverrides:
         """config_overrides=None runs without error (default path)."""
         result = orch_tools["trw_init"].fn(
             task_name="no-override-task",
-            config_overrides=None,
+            advanced=None,
         )
         assert result["status"] == "initialized"
 
@@ -75,7 +75,7 @@ class TestTrwInitConfigOverrides:
 
         orch_tools["trw_init"].fn(
             task_name="second-task",
-            config_overrides={"should_not": "appear"},
+            advanced={"config_overrides": {"should_not": "appear"}},
         )
 
         assert config_path.read_text(encoding="utf-8") == original
@@ -128,7 +128,15 @@ class TestTrwInitReviewMandateAdvisory:
     CORE-192 deliver gate."""
 
     def test_init_review_required_comprehensive(self, orch_tools: dict[str, Any]) -> None:
-        """HARD complexity_hint -> COMPREHENSIVE -> review_required + override nudge."""
+        """HARD complexity_hint -> COMPREHENSIVE -> review_required + actionable advisory.
+
+        This asserted the rationale clause "overrides the session ceremony
+        tier" until 2026-07-27. That clause explained WHY the flag was set and
+        changed nothing the caller does, so it was moved to a source comment
+        and the advisory cut from three sentences to one. What the advisory
+        must still carry is the ACTION — call trw_review before trw_deliver —
+        which is what these assertions now pin.
+        """
         result = orch_tools["trw_init"].fn(
             task_name="hard-review-task",
             complexity_hint="HARD",
@@ -137,7 +145,31 @@ class TestTrwInitReviewMandateAdvisory:
         advisory = result["review_mandate_advisory"].lower()
         assert "review" in advisory
         assert "mandatory" in advisory
-        assert "overrides the session ceremony tier" in advisory
+        assert "trw_review" in advisory
+        assert "trw_deliver" in advisory
+
+    def test_advisory_does_not_claim_delivery_blocks_under_the_default_gate(
+        self, orch_tools: dict[str, Any]
+    ) -> None:
+        """review_gate_mode defaults to "warn" — a blocking claim would be false.
+
+        The 2026-07-27 compaction of this advisory introduced the clause "or
+        delivery blocks", which is false for every caller running the shipped
+        default: a missing review emits a soft review_warning and delivery
+        proceeds. The substring assertions in the tests above all passed with
+        that clause present, so this pins the consequence explicitly.
+        """
+        result = orch_tools["trw_init"].fn(
+            task_name="default-gate-task",
+            complexity_hint="HARD",
+        )
+        advisory = result["review_mandate_advisory"].lower()
+        assert "blocks" not in advisory, (
+            "advisory asserts a hard block, but review_gate_mode defaults to "
+            f"'warn' and delivery proceeds: {advisory!r}"
+        )
+        # The ACTION must still be there — this must not pass by going silent.
+        assert "trw_review" in advisory and "trw_deliver" in advisory
 
     def test_init_review_required_standard(self, orch_tools: dict[str, Any]) -> None:
         """STANDARD complexity_hint -> REVIEW mandatory -> review_required true."""
@@ -405,7 +437,7 @@ class TestRunCurrentness:
         register_learning_tools(server)
         fp = freeze_fingerprint(
             trw_mcp_version="0.0.0",
-            framework_version="v26.1_TRW",
+            framework_version="v26.2_TRW",
             aaref_version="v3.2.0",
             template_version="3.2",
             registry_digest=registry.digest,
@@ -420,7 +452,7 @@ class TestRunCurrentness:
             stamp_path = run_root / "meta" / "canon_fingerprints.yaml"
             assert stamp_path.exists(), "trw_init must stamp canon fingerprints"
 
-            summary = summarize_run_currentness(run_root, run_framework="v26.1_TRW")
+            summary = summarize_run_currentness(run_root, run_framework="v26.2_TRW")
             assert summary["currentness"] == "current"
             assert summary["run_deployed_canon_fingerprint"] == registry.digest
             assert summary["run_live_process_fingerprint"] == fp.digest
@@ -437,7 +469,7 @@ class TestRunCurrentness:
 
         run_root = tmp_path / "legacy-run"
         (run_root / "meta").mkdir(parents=True)
-        summary = summarize_run_currentness(run_root, run_framework="v26.1_TRW")
+        summary = summarize_run_currentness(run_root, run_framework="v26.2_TRW")
         assert summary["currentness"] == "unknown"
 
 

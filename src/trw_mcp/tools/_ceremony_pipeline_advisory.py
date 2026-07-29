@@ -42,12 +42,21 @@ def step_pipeline_health_advisory(
     ``check_pipeline_health`` gate over the three hard-breakage signatures
     (push staleness, dead graph, localhost-only target). When the gate trips,
     ESCALATES — injecting a prominent structured ``pipeline_health_warning``
-    (``{"enforce": True, "severity": ..., "reasons": [...]}``) so the
+    (``{"severity": ..., "reasons": [...], "enforced_by": ...}``) so the
     breakage is surfaced, not buried in the compact advisory string.
 
     This session-start surface is intentionally fail-OPEN (it never blocks the
-    hot path); the fail-CLOSED enforcement lives in ``check_pipeline_health``
-    for ``make check`` / CI / deliver-time use.
+    hot path); the fail-CLOSED enforcement lives in ``check_pipeline_health``,
+    reachable only through the dedicated ``make pipeline-health`` target.
+
+    The warning therefore names ``make pipeline-health`` and NOT delivery.
+    ``check_pipeline_health`` has exactly two consumers — this function and its
+    own ``__main__`` behind that Make target — so no deliver gate reads pipeline
+    health, ``make pipeline-health`` is deliberately excluded from ``make check``
+    (it is expected to exit non-zero while the pipeline is pre-activation), and
+    the earlier ``"enforce": True`` / "fix before delivery" wording asserted an
+    enforcement point that does not exist. ``enforced_by`` states where the
+    fail-closed check actually lives instead of claiming one here.
 
     Args:
         trw_dir: The resolved .trw directory path.
@@ -83,12 +92,12 @@ def step_pipeline_health_advisory(
         if not bool(verdict.get("healthy")) and verdict.get("status") == "degraded":
             reasons = [str(r) for r in verdict.get("reasons", [])]
             results["pipeline_health_warning"] = {
-                "enforce": True,
                 "severity": "error",
                 "reasons": reasons,
+                "enforced_by": "make pipeline-health",
                 "advisory": (
-                    "ENFORCE: compounding pipeline is broken — "
-                    "run check_pipeline_health / see trw_pipeline_health() and fix before delivery."
+                    "Compounding pipeline is broken — call trw_pipeline_health() for detail. "
+                    "The fail-closed check is `make pipeline-health`; no TRW tool blocks on this."
                 ),
             }
             logger.error(

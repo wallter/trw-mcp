@@ -24,7 +24,7 @@ class TestTrwInitConfigOverrides:
         """When config_overrides is provided, values appear in .trw/config.yaml."""
         result = orch_tools["trw_init"].fn(
             task_name="override-task",
-            config_overrides={"custom_key": "custom_value", "parallelism_max": "8"},
+            advanced={"config_overrides": {"custom_key": "custom_value", "parallelism_max": "8"}},
         )
 
         assert result["status"] == "initialized"
@@ -55,11 +55,11 @@ class TestTrwInitConfigOverrides:
         """Second trw_init call does NOT overwrite existing config.yaml (idempotent)."""
         orch_tools["trw_init"].fn(
             task_name="first-task",
-            config_overrides={"sentinel_key": "original"},
+            advanced={"config_overrides": {"sentinel_key": "original"}},
         )
         orch_tools["trw_init"].fn(
             task_name="second-task",
-            config_overrides={"sentinel_key": "should_not_appear"},
+            advanced={"config_overrides": {"sentinel_key": "should_not_appear"}},
         )
 
         reader = FileStateReader()

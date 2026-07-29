@@ -2,7 +2,7 @@
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Six channels consuming PRD-DIST-2400 substrate:
+Five channels consuming PRD-DIST-2400 substrate:
 - opencode-agents-md-segment        (instruction_file_segment, T1 default)
 - opencode-custom-cmd-before-edit   (custom_command, FULL_REWRITE)
 - opencode-custom-cmd-hotspots      (custom_command, FULL_REWRITE)
@@ -15,21 +15,19 @@ T2 tool-return payload construction uses the shared substrate
 from the three distill tool files — no per-client builder in this package.
 
 PRD-DIST-2403.
+
+PRD-CORE-239 FR01 removed this client's instruction-file segment channel(s);
+the counts above are the post-removal reality. Prose that outlives the code it
+describes is defect pattern P7 — the class this whole removal was about.
 """
 
 from __future__ import annotations
 
-from trw_mcp.channels.opencode._agents_md_segment import (
-    install_opencode_agents_md_distill_segment as install_opencode_agents_md_distill_segment,
-)
 from trw_mcp.channels.opencode._custom_commands import (
     install_custom_commands as install_custom_commands,
 )
 from trw_mcp.channels.opencode._explorer_agent import (
     install_explorer_agent as install_explorer_agent,
-)
-from trw_mcp.channels.opencode._ip_filter import (
-    filter_proprietary_paths as filter_proprietary_paths,
 )
 from trw_mcp.channels.opencode._shared_lock import (
     agents_md_lock as agents_md_lock,
@@ -46,11 +44,9 @@ from trw_mcp.channels.opencode._tool_return_enrichment import (
 
 __all__ = [
     "agents_md_lock",
-    "filter_proprietary_paths",
     "get_default_tier_for_opencode",
     "install_custom_commands",
     "install_explorer_agent",
-    "install_opencode_agents_md_distill_segment",
     "is_opencode_client",
     "resolve_transport",
 ]

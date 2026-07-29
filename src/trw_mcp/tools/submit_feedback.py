@@ -200,6 +200,14 @@ MIN_MESSAGE_LEN = 10
 MAX_METADATA_KEYS = 16
 MAX_METADATA_KEY_LEN = 64
 MAX_METADATA_VALUE_LEN = 200
+# ``contact_email`` was the one user-controlled field with neither a length cap
+# nor a newline check, despite NFR01 claiming a single chokepoint over "every
+# user-controlled field": a 10k string of secrets containing ``@`` was accepted
+# verbatim. RFC 5321 caps a path at 254 octets; anything longer is not an
+# address. Redaction is deliberately NOT applied — an address is the field's
+# whole purpose and mangling it would defeat the reply path — so the defence is
+# a hard bound plus rejection of the shapes that smuggle a payload.
+MAX_CONTACT_EMAIL_LEN = 254
 
 # HTTP timeout for the submission round-trip. Submissions are tiny; this is
 # generous enough to ride out a cold-start without leaving the agent hanging.
@@ -291,8 +299,13 @@ def _validate(
                 return f"metadata value for key {k!r} exceeds {MAX_METADATA_VALUE_LEN} chars"
             if "\r" in k or "\n" in k or "\r" in v or "\n" in v:
                 return "metadata must not contain newline characters"
-    if contact_email is not None and (not isinstance(contact_email, str) or "@" not in contact_email):
-        return "contact_email must be a valid email address"
+    if contact_email is not None:
+        if not isinstance(contact_email, str) or "@" not in contact_email:
+            return "contact_email must be a valid email address"
+        if len(contact_email) > MAX_CONTACT_EMAIL_LEN:
+            return f"contact_email must be at most {MAX_CONTACT_EMAIL_LEN} chars"
+        if any(ch in contact_email for ch in "\r\n") or contact_email.strip() != contact_email:
+            return "contact_email must not contain newline or surrounding whitespace"
     return ""
 
 
@@ -526,32 +539,10 @@ def register_submit_feedback_tools(server: FastMCP) -> None:
         contact_email: str | None = None,
         metadata: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """Submit a memo to the TRW maintainer (PRD-CORE-182).
-
-        Use when:
-        - You found a bug, installation problem, or rough edge worth flagging.
-        - You want to send a feature request or piece of feedback that
-          deserves a real reply instead of disappearing into a personal log.
-        - You want the maintainer to see exactly which trw-mcp / Python / OS
-          you are on without retyping it — environment metadata is attached
-          automatically.
-
-        Input:
-        - category: one of ``bugfix``, ``installation``, ``feedback``,
-          ``feature_request``, ``question``, ``other``.
-        - subject: short headline (1-200 chars, no newlines).
-        - message: full memo body (10-10000 chars).
-        - contact_email: optional reply-to address; defaults to no reply-to.
-        - metadata: optional extra key/value pairs (16 keys max, 200 char
-          values max). Merged on top of the auto-attached environment dict.
-
-        Output: dict with ``success``, ``submission_id`` (when 200),
-        ``error`` (when non-200), ``status_code`` (HTTP status or 0 on
-        validation/transport error), and ``metadata_attached`` (the dict
-        actually sent so you can audit it locally).
-
-        Never raises — transport and validation failures are reported in the
-        ``error`` field.
+        """Submit a memo to the TRW maintainer; environment metadata is
+        auto-attached. Use when reporting a bug, feedback, or feature
+        request. Never raises. category is one of {bugfix, installation,
+        feedback, feature_request, question, other}.
         """
         return submit_feedback(
             category=category,
@@ -563,6 +554,7 @@ def register_submit_feedback_tools(server: FastMCP) -> None:
 
 
 __all__ = [
+    "MAX_CONTACT_EMAIL_LEN",
     "MAX_MESSAGE_LEN",
     "MAX_METADATA_KEYS",
     "MAX_METADATA_KEY_LEN",

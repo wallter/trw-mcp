@@ -34,7 +34,7 @@ class TestTrwInitComplexity:
         """FR08: trw_init with simple signals classifies as MINIMAL."""
         result = orch_tools["trw_init"].fn(
             task_name="minimal-task",
-            complexity_signals={"files_affected": 1},
+            advanced={"complexity_signals": {"files_affected": 1}},
         )
         assert result["complexity_class"] == "MINIMAL"
 
@@ -52,10 +52,12 @@ class TestTrwInitComplexity:
         """FR08: trw_init with complex signals classifies as COMPREHENSIVE."""
         result = orch_tools["trw_init"].fn(
             task_name="complex-task",
-            complexity_signals={
-                "files_affected": 5,
-                "novel_patterns": True,
-                "cross_cutting": True,
+            advanced={
+                "complexity_signals": {
+                    "files_affected": 5,
+                    "novel_patterns": True,
+                    "cross_cutting": True,
+                }
             },
         )
         assert result["complexity_class"] == "COMPREHENSIVE"
@@ -72,10 +74,12 @@ class TestTrwInitComplexity:
         """FR05/FR09: trw_init with 2 risk signals records override."""
         result = orch_tools["trw_init"].fn(
             task_name="secure-task",
-            complexity_signals={
-                "files_affected": 1,
-                "security_change": True,
-                "data_migration": True,
+            advanced={
+                "complexity_signals": {
+                    "files_affected": 1,
+                    "security_change": True,
+                    "data_migration": True,
+                }
             },
         )
         assert result["complexity_class"] == "COMPREHENSIVE"

@@ -20,6 +20,41 @@ import pytest
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
 
 # ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``detect_ide`` depend only on what each test seeds into ``tmp_path``.
+
+    ``detect_ide`` mixes two signals: files under the project root, and
+    machine-global ones — ``shutil.which("cursor")``, ``shutil.which("cursor-agent")``
+    and the ``CURSOR_*`` env vars (PRD-CORE-136-FR07). On any developer box with
+    Cursor installed, that makes *every* ``tmp_path`` project detect as
+    ``cursor-ide`` even when the directory is empty, so this file's "nothing
+    detected" assertions were answering a question about the host, not about the
+    code. Twin of the fixture in ``test_target_platforms.py``; both exist because
+    the leak is in production detection, not in the tests.
+    """
+    import shutil as _shutil
+
+    from trw_mcp.bootstrap import _utils
+
+    original_which = _shutil.which
+
+    def _which_filtered(cmd: str, *args: object, **kwargs: object) -> str | None:
+        if cmd in {"cursor", "cursor-agent"}:
+            return None
+        return original_which(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(_utils.shutil, "which", _which_filtered)
+    monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
+    monkeypatch.delenv("CURSOR_SESSION_ID", raising=False)
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+
+
+# ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
@@ -74,7 +109,13 @@ def _run_sync(tmp_path: Path, **kwargs: object) -> dict[str, object]:
 
 
 class TestInstructionsSync:
-    """FR13: Instructions sync writes to AGENTS.md for opencode clients."""
+    """FR13: instructions sync routes writes by ``write_targets``, not by detection alone.
+
+    The shared AGENTS.md goes to the clients whose profile declares
+    ``write_targets.agents_md`` — codex, copilot, antigravity-cli, cursor-cli and
+    cursor-ide. opencode is not one of them any more (PRD-CORE-240-FR04); it owns
+    ``.opencode/INSTRUCTIONS.md``.
+    """
 
     def test_fr13_backward_compat_no_client_writes_claude_md(self, tmp_path: Path) -> None:
         """Calling without client parameter still writes CLAUDE.md (backward compat)."""
@@ -99,28 +140,32 @@ class TestInstructionsSync:
         # AGENTS.md should not exist (was not created)
         assert not agents_md.exists()
 
-    def test_fr13_writes_agents_md_when_opencode_dir_present(self, tmp_path: Path) -> None:
-        """With .opencode/ directory, AGENTS.md is written on auto-detection."""
+    def test_fr13_opencode_dir_detected_does_not_write_shared_agents_md(self, tmp_path: Path) -> None:
+        """With .opencode/ auto-detected, the shared AGENTS.md is NOT written.
+
+        PRD-CORE-240-FR04 withdrew opencode's claim on the shared surface
+        (``writes_shared_agents_md=False``); it owns ``.opencode/INSTRUCTIONS.md``.
+        Until 47aa22ae2b the auto path keyed on "some sync-capable client was
+        detected" rather than on the profile flag, so it kept writing the surface
+        the profile had withdrawn — and this test asserted that as correct.
+        """
         (tmp_path / ".opencode").mkdir()
 
         result = _run_sync(tmp_path, client="auto")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "AGENTS.md should be created when .opencode/ is detected"
-        content = agents_md.read_text(encoding="utf-8")
-        assert TRW_MARKER_START in content
-        assert TRW_MARKER_END in content
-        assert result["agents_md_synced"] is True
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists(), "opencode no longer claims the shared AGENTS.md"
+        assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").is_file(), "opencode still gets its own file"
 
-    def test_fr13_writes_agents_md_when_opencode_json_present(self, tmp_path: Path) -> None:
-        """With opencode.json file, AGENTS.md is written on auto-detection."""
+    def test_fr13_opencode_json_detected_does_not_write_shared_agents_md(self, tmp_path: Path) -> None:
+        """The opencode.json detection path reaches the same FR04 conclusion as .opencode/."""
         (tmp_path / "opencode.json").write_text('{"mcp": {}}', encoding="utf-8")
 
         result = _run_sync(tmp_path, client="auto")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "AGENTS.md should be created when opencode.json is detected"
-        assert result["agents_md_synced"] is True
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists()
+        assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").is_file()
 
     def test_fr13_writes_agents_md_when_codex_dir_present(self, tmp_path: Path) -> None:
         """With .codex/ directory, AGENTS.md is written on auto-detection."""
@@ -135,9 +180,9 @@ class TestInstructionsSync:
         assert result["agents_md_synced"] is True
 
     def test_fr13_writes_both_when_both_detected(self, tmp_path: Path) -> None:
-        """With both .claude/ and .opencode/, both CLAUDE.md and AGENTS.md are written."""
+        """With both .claude/ and .codex/, both CLAUDE.md and AGENTS.md are written."""
         (tmp_path / ".claude").mkdir()
-        (tmp_path / ".opencode").mkdir()
+        (tmp_path / ".codex").mkdir()
         (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="auto")
@@ -150,15 +195,35 @@ class TestInstructionsSync:
         assert TRW_MARKER_START in agents_md.read_text(encoding="utf-8")
         assert result["agents_md_synced"] is True
 
+    def test_fr13_claude_plus_opencode_writes_claude_md_only(self, tmp_path: Path) -> None:
+        """A co-detected client that has NO AGENTS.md claim must not drag the surface in.
+
+        The mixed-detection counterpart of the FR04 withdrawal: claude-code is
+        detected (so CLAUDE.md is written) but opencode is the only other client,
+        and it no longer claims AGENTS.md — so no shared surface is created.
+        """
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".opencode").mkdir()
+        (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
+
+        result = _run_sync(tmp_path, client="auto")
+
+        assert TRW_MARKER_START in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists()
+
     def test_fr13_client_override_opencode_only(self, tmp_path: Path) -> None:
-        """client='opencode' writes AGENTS.md only, not CLAUDE.md."""
+        """client='opencode' writes its OWN instruction file, not CLAUDE.md or AGENTS.md.
+
+        PRD-CORE-240-FR04: opencode no longer receives the shared AGENTS.md; it owns .opencode/INSTRUCTIONS.md, referenced from opencode.json.
+        """
         (tmp_path / "CLAUDE.md").write_text("# Existing\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="opencode")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "AGENTS.md must be written with client='opencode'"
-        assert result["agents_md_synced"] is True
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists()
+        assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").is_file()
 
         # CLAUDE.md should not have TRW markers injected
         claude_md = tmp_path / "CLAUDE.md"
@@ -230,7 +295,7 @@ class TestInstructionsSync:
 
     def test_fr13_same_markers_in_agents_md(self, tmp_path: Path) -> None:
         """AGENTS.md uses <!-- trw:start --> / <!-- trw:end --> markers."""
-        (tmp_path / ".opencode").mkdir()
+        (tmp_path / ".codex").mkdir()
 
         _run_sync(tmp_path, client="auto")
 
@@ -292,7 +357,7 @@ class TestInstructionsSync:
 
     def test_fr13_result_includes_agents_md_path(self, tmp_path: Path) -> None:
         """Result includes agents_md_path when AGENTS.md is written."""
-        (tmp_path / ".opencode").mkdir()
+        (tmp_path / ".codex").mkdir()
 
         result = _run_sync(tmp_path, client="auto")
 
@@ -312,7 +377,7 @@ class TestInstructionsSync:
             f"# AGENTS.md\n\nUser content here.\n\n{TRW_MARKER_START}\nOld TRW section\n{TRW_MARKER_END}\n",
             encoding="utf-8",
         )
-        (tmp_path / ".opencode").mkdir()
+        (tmp_path / ".codex").mkdir()
 
         _run_sync(tmp_path, client="auto")
 
@@ -420,8 +485,8 @@ class TestOpencodeParity:
 
         _run_sync(tmp_path, client="opencode")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "opencode sync must produce AGENTS.md"
+        agents_md = tmp_path / ".opencode" / "INSTRUCTIONS.md"
+        assert agents_md.exists(), "opencode sync must produce its own instruction file"
 
         content = _normalize_agents_md_for_parity(agents_md.read_text(encoding="utf-8")).encode()
         actual_sha = hashlib.sha256(content).hexdigest()
@@ -453,8 +518,12 @@ class TestOpencodeParity:
         (tmp_path / ".opencode").mkdir()
         _run_sync(tmp_path, client="opencode")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "opencode sync must produce AGENTS.md"
+        # PRD-CORE-240-FR04: the leak assertion is unchanged in intent; what
+        # changed is WHICH file opencode reads. It owns .opencode/INSTRUCTIONS.md
+        # and no longer receives the shared AGENTS.md.
+        agents_md = tmp_path / ".opencode" / "INSTRUCTIONS.md"
+        assert agents_md.exists(), "opencode sync must produce its own instruction file"
+        assert not (tmp_path / "AGENTS.md").exists(), "the shared file must be untouched"
 
         content = agents_md.read_text(encoding="utf-8")
         assert "Claude Code" not in content, (

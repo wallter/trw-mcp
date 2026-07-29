@@ -296,7 +296,7 @@ class TestIntegration:
 
         assert result["surfaced_findings_count"] == 1
 
-    def test_auto_mode_finding_missing_confidence_defaults_to_zero(
+    def test_auto_mode_finding_missing_confidence_is_unscored_not_zero(
         self,
         tmp_path: Path,
         run_dir: Path,
@@ -320,7 +320,12 @@ class TestIntegration:
         ):
             result = tools["trw_review"].fn(reviewer_findings=reviewer_findings)
 
-        assert result["surfaced_findings_count"] == 0
+        # End-to-end through the real trw_review tool: a critical finding that
+        # states no confidence must reach the verdict, not be zeroed and filtered
+        # into a silent 'pass'.
+        assert result["surfaced_findings_count"] == 1
+        assert result["verdict"] == "block"
+        assert result["critical_count"] == 1
 
     def test_cross_model_with_findings_from_stub(
         self,

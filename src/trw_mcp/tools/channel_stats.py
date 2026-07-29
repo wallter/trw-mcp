@@ -88,8 +88,16 @@ def compute_channel_stats_result(
 
         channels_out: list[dict[str, Any]] = [e.model_dump() for e in report.channels]
 
+        # "ok" with an empty list reads as "healthy, nothing to throttle". For a
+        # subsystem that has never fired, that is the wrong claim: no channel
+        # emitted anything, so there is nothing to be healthy ABOUT. Same
+        # distinction the correlator now draws between an unmeasured rate and a
+        # measured zero — a caller must be able to tell "we looked and all is
+        # well" from "there was nothing to look at".
+        status = "ok" if channels_out else "no_activity"
+
         return {
-            "status": "ok",
+            "status": status,
             "channels": channels_out,
             "total_events": report.total_events,
             "window_seconds": report.window_seconds,
@@ -113,32 +121,24 @@ def compute_channel_stats_result(
 def register_channel_stats_tools(mcp: FastMCP) -> None:
     """Register trw_channel_stats on the MCP server."""
 
+    # Reads channel-events.jsonl, computes push->outcome correlation rates per
+    # (channel_id, client), applies CLIENT_CORRECTION_FACTORS, and evaluates
+    # CLIENT_THROTTLE_THRESHOLDS to produce throttle decisions.
     @mcp.tool()
     def trw_channel_stats(
         window_hours: int = 1,
         repo_root: str | None = None,
     ) -> dict[str, Any]:
-        """Return channel correlation and throttle stats for operator review.
+        """Return per-channel correlation rate and throttle status.
 
-        Use when:
-        - Inspecting active channel health, throttle decisions, or event telemetry statistics.
-        - Debugging channel latency, performance drops, or correlation issues.
+        Use when: inspecting channel health or debugging throttle decisions.
 
-        Reads channel-events.jsonl, computes push→outcome correlation rates
-        per (channel_id, client), applies CLIENT_CORRECTION_FACTORS, and
-        evaluates CLIENT_THROTTLE_THRESHOLDS to produce throttle decisions.
+        Output: status ok|no_activity|error, per-channel correlation + throttle
+        rows, total_events. no_activity means the log held no channel events at
+        all, which is distinct from ok with an empty list.
 
         Args:
-            window_hours: Correlation time window in hours (default 1).
-            repo_root: Explicit repo root; auto-detected via git if omitted.
-
-        Returns:
-            Dict with keys:
-            - status: "ok" | "error"
-            - channels: list of per-channel stat dicts
-            - total_events: raw event count in the log
-            - window_seconds: effective window used
-            - log_path: resolved path to the event log
+            window_hours: correlation time window in hours (default 1).
         """
         return compute_channel_stats_result(
             window_hours=window_hours,

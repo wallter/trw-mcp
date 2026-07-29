@@ -82,7 +82,7 @@ if [ "$_phase_suppressed" = "0" ]; then
       echo "TRW [RESEARCH/PLAN]: PRD validation gates implementation — trw_prd_validate catches ambiguity before it becomes rework."
       ;;
     plan)
-      echo "TRW [PLAN]: Run trw_prd_validate before implementing — catching spec gaps now saves 2-3x rework vs discovering them during implementation."
+      echo "TRW [PLAN]: Run trw_prd_validate before implementing — a spec gap found now is an edit; found during implementation it is a rewrite."
       ;;
     implement)
       echo "TRW [IMPLEMENT]: Before completing, re-read FRs for coverage gaps. Call trw_checkpoint after milestones — uncheckpointed work is lost on compaction."

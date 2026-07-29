@@ -183,6 +183,8 @@ def step_recall_learnings(
             results["query"] = str(extra["query"])
         if "query_matched" in extra:
             results["query_matched"] = int(str(extra["query_matched"]))
+        if "query_advisory" in extra:
+            results["query_advisory"] = str(extra["query_advisory"])
         if "total_available" in extra:
             results["total_available"] = int(str(extra["total_available"]))
         if "response_compacted" in extra:
@@ -381,6 +383,12 @@ def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None =
     ``graph_health`` advisory so the wiring gap surfaces before more un-graphed
     learnings accumulate. Returns ``None`` (advisory omitted) when the graph is
     populated, when the corpus is small, or on any error (fail-open).
+
+    The remedy is config-derived, never asserted: ``trw_deliver`` backfills the
+    graph inside ``step_knowledge_sync`` only while
+    ``deliver_graph_backfill_enabled`` is true (the shipped default). With it
+    off, "re-deliver to trigger graph backfill" would send an agent to a step
+    that no longer runs, so the advisory names the config field instead.
     """
     import sqlite3
 
@@ -394,10 +402,18 @@ def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None =
         edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
         memories = count_entries(trw_dir)
         if edge_count == 0 and memories > 10:
+            from trw_mcp.models.config import get_config
+
+            backfill_on = bool(getattr(get_config(), "deliver_graph_backfill_enabled", True))
+            remedy = (
+                "re-deliver (trw_deliver) to trigger graph backfill"
+                if backfill_on
+                else "deliver-time backfill is off (deliver_graph_backfill_enabled=false)"
+            )
             return {
                 "status": "empty",
                 "memories": memories,
-                "advisory": ("knowledge graph empty — re-deliver (trw_deliver) to trigger graph backfill"),
+                "advisory": f"knowledge graph empty — {remedy}",
             }
         return None
     except Exception as exc:  # justified: fail-open — graph-health probe must not block session start

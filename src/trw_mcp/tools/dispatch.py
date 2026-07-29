@@ -22,7 +22,7 @@ from __future__ import annotations
 import structlog
 from fastmcp import FastMCP
 
-from trw_mcp.dispatch._jobs import get_status, start_background
+from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_background
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
 from trw_mcp.dispatch._runner import dispatch
 from trw_mcp.dispatch._types import DispatchResult
@@ -101,7 +101,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
         role: str | None = None,
         model: str | None = None,
         timeout_s: int | None = None,
-        read_only: bool = True,
+        read_only: bool | None = None,
         allow_writes: bool = False,
         cwd: str | None = None,
         isolate: bool = True,
@@ -109,44 +109,19 @@ def register_dispatch_tools(server: FastMCP) -> None:
         wait: bool = False,
         verbose: bool = False,
     ) -> dict[str, object]:
-        """Dispatch a prompt to another coding-agent CLI for a second opinion.
+        """Delegate a prompt to a sub-agent — another coding-agent CLI, client
+        in {claude, codex, agy, opencode}. Use when you need an independent
+        agent's review. Async by default (job_id; poll
+        trw_dispatch_status), or wait=True (<=120s) for an inline result.
+        read_only defaults to the dispatch_default_read_only config (True);
+        allow_writes=True forces writes, confining cwd (if set) to the
+        project root and forbidding "..".
 
-        Use when you (a shell-less harness) want an independent agent
-        (claude / codex / agy / opencode) to review or answer something. The
-        target client, model, timeout, and read-only posture all fall back to
-        ``.trw/config.yaml`` ``dispatch.*`` defaults when omitted.
-
-        By default (``wait=False``) this returns IMMEDIATELY with a ``job_id``
-        and ``status="running"`` — the child runs detached in the background.
-        Poll ``trw_dispatch_status(job_id)`` until the status is terminal
-        (succeeded / failed / timed_out / cancelled). Pass ``wait=True`` only for
-        short prompts to run synchronously and get the result inline.
+        Output: job_id + status to poll; inline result when wait=True; error + exit_code if rejected.
 
         Args:
-            prompt: The instruction/question for the child agent. Never echoed
-                back in logs or the return payload.
-            client: Target CLI (claude/codex/agy/opencode). None -> config default.
-            role: Optional read-only audit role preamble (e.g. "adversarial-audit").
-            model: Optional model override. None -> per-client config default.
-            timeout_s: Hard wall-clock timeout. None -> config default.
-            read_only: Forbid the child from writing (default True).
-            allow_writes: Authoritatively enable writes (overrides read_only).
-                When True, ``cwd`` (if given) must be within the project root.
-            cwd: Working directory for the child. None -> current directory.
-            isolate: Isolate the child from host config/hooks/MCP (default True).
-            use_pty: Wrap in a pseudo-TTY for clients that drop non-TTY stdout.
-            wait: Run synchronously and return the result inline (default False).
-            verbose: On a successful (``ok=True``) result, include the full
-                (capped) ``raw_stdout``/``raw_stderr`` streams. By default they
-                are omitted on success (they duplicate ``text``/``structured``);
-                failure results always carry the capped streams. Default False.
-
-        Returns:
-            wait=False: {"job_id", "status": "running", "client", "argv_redacted"}.
-            wait=True:  {"job_id": None, "status": "succeeded"|"failed", "result": {...}}.
-                On a successful result the ``result`` omits ``raw_stdout``/``raw_stderr``
-                (marked ``raw_streams_omitted=True``) unless ``verbose=True``.
-            On a resolution error: {"error": str, "exit_code": int}.
+            prompt: instruction for the child; never echoed back.
+            verbose: raw streams on success.
         """
         dispatch_cfg = get_config().dispatch
 
@@ -161,9 +136,11 @@ def register_dispatch_tools(server: FastMCP) -> None:
             resolved_cwd = Path(cwd)
 
         # F-03: an explicit read_only is honored; allow_writes=True forces writes
-        # (read_only=False). Otherwise leave read_only=None so the resolver applies
-        # the config default rather than this signature's True default silently
-        # overriding a config default of False.
+        # (read_only=False); None defers to dispatch_default_read_only (True).
+        # This parameter used to default to True, so the resolver's config branch
+        # — and the config field itself — were unreachable from MCP: an operator
+        # setting dispatch_default_read_only had no effect here. Same behavior
+        # under default config, honest under a customized one.
         resolved_read_only: bool | None = False if allow_writes else read_only
 
         # F-07 (full cwd confinement): a WRITES-enabled dispatch must not run with
@@ -228,39 +205,29 @@ def register_dispatch_tools(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     def trw_dispatch_status(job_id: str, verbose: bool = False) -> dict[str, object]:
-        """Poll a background dispatch job started by ``trw_dispatch(wait=False)``.
+        """Poll a job from trw_dispatch(wait=False). Use when checking if a
+        background dispatch has finished.
 
-        Use when you called ``trw_dispatch(wait=False)`` and need to check
-        whether the background job has finished.
-
-        Returns the job's current status; when the status is terminal
-        (succeeded / failed / timed_out) the redacted :class:`DispatchResult` is
-        included under ``result``. While the job is still ``running`` (or it was
-        ``cancelled`` with no result), ``result`` is None.
-
-        On a successful (``ok=True``) terminal result the ``raw_stdout``/
-        ``raw_stderr`` streams are omitted (marked ``raw_streams_omitted=True``,
-        with ``raw_streams_result_file`` pointing at the on-disk result JSON that
-        still holds the full streams) so a re-poll does not re-pay their token
-        cost. A failed result keeps the capped streams. ``verbose=True`` includes
-        the full capped streams even on success.
+        Output: job_id + status + terminal (stop polling when true); result is
+        present once terminal AND the child wrote one, else None.
 
         Args:
-            job_id: The id returned by ``trw_dispatch(wait=False)``.
-            verbose: Include the full capped raw streams even on a successful
-                result (default False omits them on success).
-
-        Returns:
-            {"job_id", "status", "result": {...}|None}, or
-            {"error": "unknown job_id ..."} if the id is not known.
+            verbose: include full raw streams on success.
         """
         try:
             job = get_status(job_id)
         except (KeyError, ValueError):
             return {"error": f"unknown job_id {job_id!r}"}
 
+        # Terminal set is imported, not restated: the hand-copied tuple here
+        # omitted "cancelled", so a job cancelled AFTER its child had already
+        # written a result reported result=None forever — real evidence on disk,
+        # discarded because a poller's local list had drifted from the registry's.
+        # ``terminal`` is returned so a caller knows when to stop polling without
+        # keeping its own copy of the same set.
+        terminal = job.status in _TERMINAL_STATUSES
         result_payload: dict[str, object] | None = None
-        if job.status in ("succeeded", "failed", "timed_out"):
+        if terminal:
             from trw_mcp.dispatch._jobs import get_result
 
             result = get_result(job_id)
@@ -270,5 +237,6 @@ def register_dispatch_tools(server: FastMCP) -> None:
         return {
             "job_id": job.job_id,
             "status": job.status,
+            "terminal": terminal,
             "result": result_payload,
         }

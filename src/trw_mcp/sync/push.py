@@ -59,6 +59,24 @@ def _content_sync_hash(payload: dict[str, object]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _sanitize_metadata_value(value: object) -> object:
+    """Scrub PII from a metadata VALUE, recursing through lists and dicts.
+
+    Metadata KEYS are structural (they name the field, e.g. ``client_profile``)
+    and are left intact; only the values can carry user text. Egress is the sole
+    masking boundary now that the write path stores verbatim
+    (``trw_memory.security._runtime_pii``), so an unsanitized value here leaves
+    the machine raw.
+    """
+    if isinstance(value, str):
+        return strip_pii(value)
+    if isinstance(value, list):
+        return [_sanitize_metadata_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_metadata_value(item) for key, item in value.items()}
+    return value
+
+
 def _http_status_from_exception(exc: BaseException) -> int | None:
     """Extract an HTTP status code from httpx-style exceptions when present."""
 
@@ -282,7 +300,10 @@ class SyncPusher:
         raw_impact = d.get("importance") or d.get("impact") or 0.5
         impact = float(raw_impact) if isinstance(raw_impact, (int, float)) else 0.5
         raw_tags = d.get("tags", [])
-        tags = list(raw_tags)[:20] if isinstance(raw_tags, list) else []
+        # Tags and metadata are egressed content just like summary/detail: a
+        # credential or address pasted into a tag used to be masked by the write
+        # path, which no longer mutates anything, so this boundary owns it.
+        tags = [strip_pii(str(tag)) for tag in list(raw_tags)[:20]] if isinstance(raw_tags, list) else []
         summary = strip_pii(str(d.get("summary", d.get("content", ""))))
         summary = redact_paths(summary, self._project_root)[:1000]
         raw_detail = d.get("detail")
@@ -292,8 +313,11 @@ class SyncPusher:
         raw_vector_clock = d.get("vector_clock", {})
         vector_clock = dict(raw_vector_clock) if isinstance(raw_vector_clock, dict) else {}
         raw_metadata = d.get("metadata", {})
-        metadata: dict[str, object] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
-        installation_id = metadata.get("installation_id")
+        raw_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+        metadata: dict[str, object] = {str(key): _sanitize_metadata_value(value) for key, value in raw_metadata.items()}
+        # Anonymized from the ORIGINAL value: the id is a hash input, and
+        # strip_pii would reshape digit-heavy ids before hashing.
+        installation_id = raw_metadata.get("installation_id")
         if isinstance(installation_id, str) and installation_id:
             metadata["installation_id"] = anonymize_installation_id(installation_id)
         payload: dict[str, object] = {

@@ -19,11 +19,12 @@ Self-contained:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 import structlog
 
-from trw_mcp.agents.tier_resolver import rewrite_model_line
+from trw_mcp.agents.tier_resolver import materialize_agent
 from trw_mcp.exceptions import StateError
 
 from ._file_ops import ProgressCallback
@@ -88,39 +89,135 @@ def _read_manifest(target_dir: Path) -> dict[str, object] | None:
         return None
 
 
+def _instruction_file_baselines(target_dir: Path) -> list[tuple[str, Path, set[str]]]:
+    """Framework baselines for the two whole-file client instruction surfaces.
+
+    ``.opencode/INSTRUCTIONS.md`` and ``.codex/INSTRUCTIONS.md`` have no bundled
+    file — TRW renders them whole — so their "what TRW would write" baseline is
+    the rendering itself, exactly as ``_opencode_instructions`` computes it on the
+    write side. A render failure yields NO entry, which fails toward preservation
+    (PRD-FIX-121-NFR04).
+    """
+    from trw_mcp.state.claude_md._instruction_clients import _detect_opencode_model_family
+    from trw_mcp.state.claude_md._static_sections import render_codex_instructions, render_opencode_instructions
+
+    renderers: tuple[tuple[str, Callable[[], str]], ...] = (
+        (".opencode/INSTRUCTIONS.md", lambda: render_opencode_instructions(_detect_opencode_model_family(target_dir))),
+        (".codex/INSTRUCTIONS.md", render_codex_instructions),
+    )
+    entries: list[tuple[str, Path, set[str]]] = []
+    for rel, render in renderers:
+        try:
+            rendered = render()
+        except Exception:  # justified: an unrenderable baseline must not abort the manifest write
+            logger.warning("instruction_baseline_render_failed", path=rel)
+            continue
+        entries.append((rel, target_dir / rel, {hashlib.sha256(rendered.encode("utf-8")).hexdigest()}))
+    return entries
+
+
+def _core_artifact_baselines(
+    target_dir: Path,
+    bundled: dict[str, list[str]],
+    data_dir: Path | None,
+) -> list[tuple[str, Path, set[str]]]:
+    """``(manifest key, installed path, framework-hash baseline)`` per core artifact.
+
+    The baseline MUST be the same one the WRITER of that artifact consults, or
+    the recorder and the guard disagree about what "TRW's own content" means.
+    Agents are the reason this returns a hash SET: ``_apply_agent_update``
+    accepts both the raw bundled tier form and the resolved form
+    (:func:`_framework_agent_hashes`), so a recorder that only knew the raw bytes
+    would decline every healthy agent and freeze them all once the bundle moved
+    on — the RISK-001 over-correction PRD-FIX-121 explicitly forbids.
+
+    ``AGENTS.md`` is deliberately absent. It is a marker-merged SHARED file: TRW
+    owns one block, the user owns the rest, so a whole-file ownership hash is
+    meaningless there. It was recorded before PRD-FIX-121 and never read — its
+    writer (``state.claude_md._agents_md``) does a marker merge and consults no
+    content hash — so recording it only kept a hash of the user's prose in a map
+    labelled "what TRW wrote".
+    """
+    from ._utils import _DATA_DIR
+
+    effective = data_dir or _DATA_DIR
+    claude = target_dir / ".claude"
+    opencode_src = effective / "opencode"
+    opencode = target_dir / ".opencode"
+    entries: list[tuple[str, Path, set[str]]] = [
+        (name, claude / "agents" / name, _framework_agent_hashes(effective / "agents" / name, client="claude-code"))
+        for name in bundled.get("agents", [])
+    ]
+    entries += [
+        (name, claude / "hooks" / name, _framework_content_hashes(effective / "hooks" / name))
+        for name in bundled.get("hooks", [])
+    ]
+    entries += [
+        (
+            f"{name}/SKILL.md",
+            claude / "skills" / name / "SKILL.md",
+            _framework_content_hashes(effective / "skills" / name / "SKILL.md"),
+        )
+        for name in bundled.get("skills", [])
+    ]
+    for kind in ("commands", "agents"):
+        entries += [
+            (
+                f".opencode/{kind}/{name}",
+                opencode / kind / name,
+                _framework_content_hashes(opencode_src / kind / name),
+            )
+            for name in bundled.get(f"opencode_{kind}", [])
+        ]
+    entries += [
+        (
+            f".opencode/skills/{name}/SKILL.md",
+            opencode / "skills" / name / "SKILL.md",
+            _framework_content_hashes(opencode_src / "skills" / name / "SKILL.md"),
+        )
+        for name in bundled.get("opencode_skills", [])
+    ]
+    return entries + _instruction_file_baselines(target_dir)
+
+
 def _compute_content_hashes(
     target_dir: Path,
     bundled: dict[str, list[str]],
+    prev_hashes: dict[str, str] | None = None,
+    data_dir: Path | None = None,
 ) -> dict[str, str]:
-    """Compute SHA256 hashes of installed artifact files.
+    """Compute SHA256 hashes of installed ``.claude``/``.opencode``/``.codex`` artifacts.
 
     PRD-FIX-068-FR04: Hashes enable drift detection between installed
     copies and the current bundle.
-    """
-    hashes: dict[str, str] = {}
 
-    def _record_hash(path: Path, key: str) -> None:
+    PRD-FIX-121-FR01: an artifact the user has edited is **omitted** — not
+    recorded as ``null``, not recorded with a sentinel. *prev_hashes* is the
+    manifest as it stood BEFORE this run; content matching neither the current
+    bundle nor its own previous record is the user's, and recording it would make
+    the NEXT update read the user's own hash back as "TRW wrote this" and
+    overwrite it. Omission is what makes ``_is_user_modified`` fall through to the
+    framework baseline and preserve again.
+    """
+    from ._managed_client_artifacts import artifact_user_edited_against
+
+    hashes: dict[str, str] = {}
+    for key, path, framework_hashes in _core_artifact_baselines(target_dir, bundled, data_dir):
+        if not path.is_file():
+            continue
+        if not framework_hashes:
+            # The bundled source was unreadable, so ownership is undecidable.
+            # Fail toward the user (no entry), never toward "TRW owns it" —
+            # that error path is how the defect would come back (NFR04).
+            logger.warning("manifest_baseline_unavailable", path=key)
+            continue
+        if artifact_user_edited_against(path, key, framework_hashes, prev_hashes):
+            logger.info("manifest_ownership_declined", path=key)
+            continue
         try:
-            if path.is_file():
-                hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+            hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:
             logger.warning("content_hash_failed", path=str(path))
-
-    for name in bundled["agents"]:
-        _record_hash(target_dir / ".claude" / "agents" / name, name)
-    for name in bundled["hooks"]:
-        _record_hash(target_dir / ".claude" / "hooks" / name, name)
-    for name in bundled["skills"]:
-        _record_hash(target_dir / ".claude" / "skills" / name / "SKILL.md", f"{name}/SKILL.md")
-    for name in bundled.get("opencode_commands", []):
-        _record_hash(target_dir / ".opencode" / "commands" / name, f".opencode/commands/{name}")
-    for name in bundled.get("opencode_agents", []):
-        _record_hash(target_dir / ".opencode" / "agents" / name, f".opencode/agents/{name}")
-    for name in bundled.get("opencode_skills", []):
-        _record_hash(target_dir / ".opencode" / "skills" / name / "SKILL.md", f".opencode/skills/{name}/SKILL.md")
-    _record_hash(target_dir / ".opencode" / "INSTRUCTIONS.md", ".opencode/INSTRUCTIONS.md")
-    _record_hash(target_dir / ".codex" / "INSTRUCTIONS.md", ".codex/INSTRUCTIONS.md")
-    _record_hash(target_dir / "AGENTS.md", "AGENTS.md")
     return hashes
 
 
@@ -150,18 +247,19 @@ def _manifest_content_hashes(
 def _render_agent(src: Path, *, client: str) -> str | None:
     """Return the resolved text of a bundled agent, or ``None`` on failure.
 
-    The bundled agent declares a capability tier (``model: frontier``); this
-    rewrites it to the model id *client* accepts (``model: opus`` for
-    ``claude-code``) via :func:`rewrite_model_line`. Returns ``None`` when the
-    source is unreadable or the tier is unknown for *client* (mirrors the
-    per-agent skip-on-error semantics of ``_install_one_agent``).
+    Applies the same bundle→installed transform the installer uses
+    (:func:`materialize_agent`: tool-placeholder rendering plus capability-tier
+    resolution), so an already-current agent never reports as a pending update.
+    Returns ``None`` when the source is unreadable or the tier is unknown for
+    *client* (mirrors the per-agent skip-on-error semantics of
+    ``_install_one_agent``).
     """
     try:
         raw = src.read_text(encoding="utf-8")
     except OSError:
         return None
     try:
-        return rewrite_model_line(raw, client=client)
+        return materialize_agent(raw, client=client)
     except ValueError:
         return None
 

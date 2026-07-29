@@ -108,6 +108,17 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
         base["anchors"] = [a.model_dump() for a in entry.anchors]
     base["anchor_validity"] = entry.anchor_validity
 
+    # PRD-CORE-231-FR02: surface the PERSISTED staleness verdict so a stale
+    # claim stays visibly stale in a fresh session, not only in the session that
+    # happened to compute it. Omitted when None (the common case) to keep the
+    # recall payload's token cost unchanged for healthy entries.
+    # getattr: trw-memory versions independently of trw-mcp, so an installed
+    # trw-memory predating the FR02 column has no such attribute — degrade to
+    # "no verdict" instead of raising on every recall.
+    verification_status = getattr(entry, "verification_status", None)
+    if verification_status is not None:
+        base["verification_status"] = verification_status
+
     # Outcome attribution fields (PRD-CORE-108)
     base["sessions_surfaced"] = entry.sessions_surfaced
     base["avg_rework_delta"] = entry.avg_rework_delta

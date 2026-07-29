@@ -196,4 +196,41 @@ def resolve_learn_anchors(
     return anchors, anchor_validity
 
 
-__all__ = ["resolve_learn_anchors"]
+def reverify_entry_anchors(trw_dir: Path, project_root: Path, learning_id: str) -> float | None:
+    """Recompute + persist an existing entry's ``anchor_validity`` (FR03).
+
+    PRD-CORE-231-FR03: ``compute_anchor_validity()`` used to run only at
+    ``trw_learn()`` write time, so a learning anchored to code that has since
+    moved kept its write-time score (usually 1.0) and an undeserved recall
+    ranking boost forever. This re-runs the SAME pure function against the
+    CURRENT tree and writes the fresh score through.
+
+    Returns the refreshed score, or ``None`` when there was nothing to do (no
+    such entry, no anchors) or the recomputation could not run. Fail-open: an
+    error never propagates to the caller's update.
+    """
+    try:
+        from trw_memory.lifecycle.anchor_validation import compute_anchor_validity
+
+        from trw_mcp.state.memory_adapter import get_backend
+
+        backend = get_backend(trw_dir)
+        entry = backend.get(learning_id)
+        anchors = list(getattr(entry, "anchors", []) or []) if entry is not None else []
+        if not anchors:
+            return None
+
+        validity = compute_anchor_validity(
+            [a.model_dump() if hasattr(a, "model_dump") else a for a in anchors],
+            str(project_root),
+            learning_id=learning_id,
+        )
+        backend.update(learning_id, anchor_validity=validity)
+        logger.info("anchor_validity_reverified", entry_id=learning_id, anchor_validity=validity)
+        return validity
+    except Exception:  # justified: fail-open, re-verification must not block the update
+        logger.debug("anchor_reverification_skipped", entry_id=learning_id, exc_info=True)
+        return None
+
+
+__all__ = ["resolve_learn_anchors", "reverify_entry_anchors"]

@@ -282,10 +282,10 @@ class TestUpdateConfig:
         config = tmp_path / "config.yaml"
         config.write_text("installation_id: test\n", encoding="utf-8")
 
-        update_config(config, "test", "", False, target_platforms=["cursor-ide", "codex", "gemini"])
+        update_config(config, "test", "", False, target_platforms=["cursor-ide", "codex", "copilot"])
 
         content = config.read_text(encoding="utf-8")
-        assert 'target_platforms:\n  - "cursor-ide"\n  - "codex"\n  - "gemini"\n' in content
+        assert 'target_platforms:\n  - "cursor-ide"\n  - "codex"\n  - "copilot"\n' in content
 
     def test_rewrites_target_platforms_without_duplication(self, tmp_path: Path) -> None:
         """Existing target_platforms blocks are replaced in place."""

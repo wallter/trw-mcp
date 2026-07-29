@@ -343,11 +343,17 @@ class TestReviewLogsEvent:
 
 
 class TestPreflightLoggingRemoved:
-    """trw_preflight_log was removed from the MCP tool surface (14-tool reduction).
+    """The preflight/self-review signal is retired end-to-end (UF-001/UF-002).
 
-    The underlying review.py logic (pre_implementation_checklist_complete and
-    pre_audit_self_review event writing) remains as an internal API, but the
-    public MCP tool registration was intentionally removed.
+    PRD-FIX-076 removed the ``trw_preflight_log`` MCP tool but kept the writer
+    ``_log_preflight_events`` and the reader ``_load_preflight_checks``. That left
+    a producer with zero call sites feeding a reader that could only ever return
+    ``{}`` — while the bundled auditor agent still mandated the check and recorded
+    ``self_review_alignment: missing`` on every single audit.
+
+    Resolution (2026-07-24): delete rather than wire. Both events could only ever
+    carry implementer self-attestation, which PRD-CORE-213 established is not
+    evidence, and nothing read ``preflight_checks`` back out of ``review.yaml``.
     """
 
     def test_trw_preflight_log_not_registered(
@@ -360,6 +366,69 @@ class TestPreflightLoggingRemoved:
         assert "trw_preflight_log" not in tools, (
             "trw_preflight_log was removed from the MCP surface; "
             "do not re-register it without an explicit PRD approval."
+        )
+
+    def test_preflight_helpers_are_gone(self) -> None:
+        """The orphaned writer/reader pair must not come back without a producer."""
+        from trw_mcp.tools import _review_helpers, review
+
+        for name in ("_log_preflight_events", "_load_preflight_checks"):
+            assert not hasattr(_review_helpers, name), (
+                f"_review_helpers.{name} was deleted as unreachable; reintroducing it "
+                "requires a real (non-self-attested) producer wired into a live path."
+            )
+            assert not hasattr(review, name), f"review.py still re-exports deleted symbol {name}"
+
+    def test_review_yaml_omits_preflight_checks_even_when_events_exist(
+        self,
+        tmp_path: Path,
+        run_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """review.yaml must not carry a ``preflight_checks`` block.
+
+        Seeds the exact legacy events the retired reader used to harvest, so the
+        assertion fails if the reader is ever re-wired without a producer.
+        """
+        import yaml as _yaml
+
+        (run_dir / "meta" / "run.yaml").write_text(
+            "run_id: review-test\nstatus: active\nphase: review\ntask_name: review-task\n"
+            "prd_scope:\n  - PRD-QUAL-056\n",
+            encoding="utf-8",
+        )
+        (run_dir / "meta" / "events.jsonl").write_text(
+            json.dumps(
+                {
+                    "event": "pre_implementation_checklist_complete",
+                    "ts": "2026-07-24T00:00:00Z",
+                    "data": {"prd_id": "PRD-QUAL-056", "completed": True},
+                }
+            )
+            + "\n"
+            + json.dumps(
+                {
+                    "event": "pre_audit_self_review",
+                    "ts": "2026-07-24T00:00:01Z",
+                    "data": {"prd_id": "PRD-QUAL-056", "passed": 3, "failed": 0},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        tools = _make_ceremony_server(monkeypatch, tmp_path)
+        with patch("trw_mcp.tools.review.find_active_run", return_value=run_dir):
+            tools["trw_review"].fn(
+                findings=[
+                    {"category": "testing", "severity": "info", "description": "Missing edge case test"},
+                ],
+            )
+
+        review_payload = _yaml.safe_load((run_dir / "meta" / "review.yaml").read_text(encoding="utf-8"))
+        assert "preflight_checks" not in review_payload, (
+            "review.yaml must not emit preflight_checks — the field was write-only "
+            "(no consumer anywhere) and its producing tool no longer exists."
         )
 
 

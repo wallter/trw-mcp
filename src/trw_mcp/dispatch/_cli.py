@@ -7,7 +7,7 @@ every CLI invocation.
 Behavior: build a :class:`DispatchRequest` (applying any audit role to the
 prompt), run it, then emit either the raw JSON result (``--json`` /
 ``--output-file``) or the plain normalized answer. Exit 0 iff the result is
-``ok``, else 1. ``--client gemini`` exits 2 with a redirect to ``agy``.
+``ok``, else 1. An unresolvable or disabled ``--client`` exits 2.
 """
 
 from __future__ import annotations
@@ -63,8 +63,8 @@ def run_dispatch(args: argparse.Namespace) -> None:
     Delegates client/model/timeout/read-only resolution to the shared
     :func:`resolve_dispatch_request` so the CLI and the MCP tool path produce
     byte-identical requests. A :class:`DispatchResolutionError` (unresolved /
-    disabled / gemini-EOL) is translated to a stderr message + ``sys.exit`` with
-    the carried exit code (2), matching the CLI's historical behavior.
+    disabled) is translated to a stderr message + ``sys.exit`` with the carried
+    exit code (2), matching the CLI's historical behavior.
     """
     dispatch_cfg = get_config().dispatch
 

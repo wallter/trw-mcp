@@ -113,16 +113,21 @@ _LEGACY_IDE_ALIASES: dict[str, str] = {
     "cursor": "cursor-ide",  # split into cursor-ide / cursor-cli in v0.44
 }
 
-# Retired identifiers — profiles removed from active support (operator decision
-# 2026-07-11). Selecting one is an actionable error, not an unknown-id error;
-# prior configs carrying them are dropped with a notice, never a crash.
+# Withdrawn identifiers — profiles no longer installable. Selecting one is an
+# actionable error, not an unknown-id error; prior configs carrying them are
+# dropped with a notice, never a crash.
+#
+# Keep an entry here even after a profile is fully deleted. A user who types a
+# withdrawn id already knows the name, so answering "unknown value" tells them
+# strictly less than they arrived with — and the successor is the one thing they
+# actually need. This table costs one line per withdrawn client, forever.
 _RETIRED_IDES: dict[str, str] = {
+    "aider": "the aider profile was retired 2026-07-11 (it never generated client artifacts)",
     "gemini": (
-        "the Gemini CLI profile was retired after Google deprecated Gemini CLI "
-        "in favor of Antigravity CLI — use --ide antigravity-cli; existing "
-        ".gemini/ files can be cleaned with 'trw-mcp uninstall'"
+        "the gemini profile was removed 2026-07-24 — use --ide antigravity-cli instead. "
+        "The removal included gemini's uninstall surfaces, so any leftover .gemini/ files "
+        "must be deleted by hand"
     ),
-    "aider": "the aider profile was retired (it never generated client artifacts)",
 }
 
 _IDE_META: dict[str, dict[str, str]] = {
@@ -1786,17 +1791,75 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
         except (ValueError, OSError):
             pid_path.unlink(missing_ok=True)
 
-    # Write version sentinel for stdio instances to detect upgrade
+    # Write version sentinel for stdio instances to detect upgrade.
+    #
+    # DRY + truthful (installer-client bug 2026-07-21): record the version that
+    # the MCP client will ACTUALLY run — the PATH-resolved `trw-mcp` — NOT the
+    # version this installer intended to install (TRW_VERSION). When a stale
+    # install shadows PATH (e.g. an old `pip install --user` trw-mcp that a fresh
+    # install did not supersede), stamping TRW_VERSION produces a marker that
+    # lies about what runs: the runtime then sees marker > running and advises a
+    # `/mcp` reload that CANNOT help, because a reload re-spawns the same stale
+    # executable. Writing the resolved version keeps the marker honest and the
+    # advisory correct, and we warn loudly at install time so the shadow is
+    # visible instead of silently masked.
     sentinel_path = trw_dir / "installed-version.json"
+    resolved_version = _resolve_path_trw_mcp_version()
+    marker_version = resolved_version or TRW_VERSION
     try:
         sentinel_path.write_text(
-            json.dumps({"version": TRW_VERSION, "timestamp": _iso_now()}),
+            json.dumps(
+                {
+                    "version": marker_version,
+                    "intended": TRW_VERSION,
+                    "timestamp": _iso_now(),
+                }
+            ),
             encoding="utf-8",
         )
     except OSError:
         pass  # Best-effort
 
+    if resolved_version and resolved_version != TRW_VERSION:
+        shadow = shutil.which("trw-mcp")
+        ui.step_warn(
+            f"A trw-mcp {resolved_version} is shadowing the freshly-installed "
+            f"{TRW_VERSION} on your PATH — the new version will NOT run until this is fixed."
+        )
+        if shadow:
+            ui.step_warn(f"  Shadowing binary: {shadow}")
+        ui.step_warn(
+            "  Fix: remove the stale install (e.g. 'pip uninstall trw-mcp' in the "
+            "environment that owns it) or reorder PATH so the new install wins, then reconnect the MCP client."
+        )
+
     _write_version_yaml_metadata(target_dir)
+
+
+def _resolve_path_trw_mcp_version() -> str | None:
+    """Return the version of the ``trw-mcp`` that PATH actually resolves.
+
+    This is the binary an MCP client will spawn — which is NOT necessarily the
+    one this installer just installed if a stale copy shadows PATH. Returns
+    ``None`` when no ``trw-mcp`` is on PATH or its version cannot be read, in
+    which case the caller falls back to the intended ``TRW_VERSION``.
+    """
+    exe = shutil.which("trw-mcp")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # "trw-mcp X.Y.Z" -> "X.Y.Z"; tolerate bare "X.Y.Z".
+    parts = out.split()
+    return parts[-1] if parts else None
 
 
 def _write_version_yaml_metadata(target_dir: Path) -> None:
@@ -2332,8 +2395,8 @@ def _detect_project_ides(project_dir: str) -> list[str]:
         has_copilot_agents = False
     if os.path.isfile(os.path.join(project_dir, ".github", "copilot-instructions.md")) or has_copilot_agents:
         detected.append("copilot")
-    # gemini/aider detection removed with the profiles' retirement (2026-07-11):
-    # a leftover .gemini/ or .aider.conf.yml must not auto-select a retired id.
+    # aider detection removed with the profile's retirement (2026-07-11): a
+    # leftover .aider.conf.yml must not auto-select a retired id.
     return _unique(detected)
 
 
@@ -3668,9 +3731,13 @@ def phase_project_setup(
         return []
 
     if not (target_dir / ".git").is_dir():
-        ui.step_warn("Not a git repository — skipping project setup")
-        ui.step_warn("After git init, run: trw-mcp init-project .")
-        return []
+        # PRD-INFRA-170-FR06 / OQ-1: do NOT bail here. The framework bodies
+        # deploy git-independently (init-project step 9 -> repair_framework_runtime
+        # under .trw/frameworks/). Returning early is exactly what left users with
+        # a config-present, framework-absent half-install. Warn loudly, then fall
+        # through to the real init so the framework deploys even in a non-git dir.
+        ui.step_warn("Not a git repository — installing the framework anyway")
+        ui.step_warn("Run 'git init' to enable git-based features.")
 
     # IDE detection and selection
     detected_clis = _detect_installed_clis()
@@ -3755,6 +3822,47 @@ def phase_project_setup(
         ui.step_warn("Skipped user-scope provisioning (filesystem error)")
 
     return resolved_targets
+
+
+def run_install_doctor(
+    ui: UI,
+    python: str,
+    target_dir: Path,
+    pip_target: str = "",
+) -> bool:
+    """PRD-INFRA-170-FR06: run ``trw-mcp doctor`` at install end.
+
+    Returns True when the deployed framework is healthy (no FAIL check). On any
+    FAIL check, emit a LOUD, non-silent warning naming the failing checks and the
+    single remediation command — never a silent green success line. Fail-open: a
+    doctor that cannot run or parse warns but never aborts the install.
+    """
+    trw_cmd = find_trw_cmd(python, pip_target=pip_target)
+    cmd = trw_cmd + ["doctor", str(target_dir), "--format", "json"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        ui.step_warn(f"Could not run 'trw-mcp doctor' ({exc}); verify the install manually.")
+        return False
+    try:
+        payload = json.loads(proc.stdout)
+        checks = payload.get("checks", [])
+    except (ValueError, AttributeError):
+        ui.step_warn("Could not parse 'trw-mcp doctor' output; verify the install manually.")
+        return False
+    failed = [
+        str(check.get("name", "?"))
+        for check in checks
+        if isinstance(check, dict) and check.get("status") == "FAIL"
+    ]
+    if failed:
+        ui.step_warn("trw-mcp doctor reported problems with the installed framework:")
+        for name in failed:
+            ui.step_warn(f"  FAIL: {name}")
+        ui.step_warn("Fix: run 'git init && trw-mcp init-project .' in this directory.")
+        return False
+    ui.step_ok("Framework health check passed (trw-mcp doctor: no failures)")
+    return True
 
 
 def _resolve_interactive_telemetry(
@@ -4477,6 +4585,12 @@ def main() -> None:
             pip_target=args.pip_target,
             provision_user_tier=provision_user_tier,
         )
+
+        # PRD-INFRA-170-FR06: run doctor at install end. A residual framework
+        # FAIL (e.g. a deploy that silently failed) is surfaced LOUDLY here
+        # instead of being hidden behind a green success banner.
+        if not args.upgrade:
+            run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
 
         # Step N+1 (conditional): Configure
         platform_status = "offline"

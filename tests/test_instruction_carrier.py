@@ -133,8 +133,24 @@ class TestProfileImportSyntax:
     def test_claude_code_is_at_path(self) -> None:
         assert resolve_client_profile("claude-code").instruction_import_syntax == "at_path"
 
-    @pytest.mark.parametrize("client", ["opencode", "codex", "copilot", "antigravity-cli", "cursor-ide", "cursor-cli"])
+    def test_copilot_is_repo_relative_at_path(self) -> None:
+        """PRD-CORE-240-FR03: copilot's "none" was stale, not a capability statement.
+
+        GitHub documents `@relpath` includes for the Copilot **CLI** — but this
+        one profile also serves Copilot Chat in VS Code (it writes
+        `.vscode/mcp.json`), and neither GitHub's repository-instructions docs
+        nor VS Code's own custom-instructions docs describe ANY file-inclusion
+        syntax for `.github/copilot-instructions.md`. An `@` line there is a
+        dangling literal for every Chat user: a file that exists, parses,
+        reports success and carries nothing — strictly worse than the injection
+        it replaced. Declaring the capability per-CLIENT when it actually varies
+        per-SURFACE is what made this look shippable.
+        """
+        assert resolve_client_profile("copilot").instruction_import_syntax == "none"
+
+    @pytest.mark.parametrize("client", ["opencode", "codex", "antigravity-cli", "cursor-ide", "cursor-cli"])
     def test_import_incapable_profiles_are_none(self, client: str) -> None:
+        """opencode/codex name their file in config; the other three have no mechanism."""
         assert resolve_client_profile(client).instruction_import_syntax == "none"
 
 

@@ -49,7 +49,7 @@ def _surface(tool_desc: str = "does a thing") -> RealizedSurface:
 def _freeze(surface: RealizedSurface, **overrides: str) -> ProcessFingerprint:
     kwargs: dict[str, object] = {
         "trw_mcp_version": "1.0.0",
-        "framework_version": "v26.1_TRW",
+        "framework_version": "v26.2_TRW",
         "aaref_version": "v3.2.0",
         "template_version": "3.2",
         "registry_digest": "reg-digest",
@@ -165,7 +165,7 @@ def test_real_file_mutation_makes_frozen_process_stale(tmp_path: Path) -> None:
     first_digest = hashlib.sha256(body.read_bytes()).hexdigest()
     frozen = freeze_fingerprint(
         trw_mcp_version="1.0.0",
-        framework_version="v26.1_TRW",
+        framework_version="v26.2_TRW",
         aaref_version="v3.2.0",
         template_version="3.2",
         registry_digest="registry-one",

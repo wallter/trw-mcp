@@ -30,9 +30,9 @@ Tools outside the resolved surface are masked, not deregistered. A denial names 
 
 ## Delegation
 
-Delegate to focused helpers when the harness supports it and file ownership is clear. When it does not, run the same shards sequentially. Delegation is an optimization — the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
+Delegate only for work that is genuinely independent and parallelizable — a wide multi-file investigation, or shards with disjoint file ownership. Not for work you could finish in a handful of tool calls, and not to verify your own work; verification belongs in your own loop. If one helper suffices, use one. When the harness cannot delegate, run the same shards sequentially — delegation is an optimization, and the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
 
-## Deliver Gate (v26.1)
+## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
 - (a) `trw_build_check` returned `build_check_result=pass`, **or**

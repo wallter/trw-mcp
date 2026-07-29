@@ -216,6 +216,36 @@ def _generate_behavioral_protocol_md(
         result["warnings"].append(f"behavioral_protocol.md generation failed: {exc}")
 
 
+def _update_git_hooks(
+    target_dir: Path,
+    result: dict[str, list[str]],
+    dry_run: bool,
+    on_progress: ProgressCallback = None,
+) -> None:
+    """Refresh the TRW ``post-commit`` git hook (PRD-CORE-231 FR01/FR02).
+
+    ``force=True`` on the installed script so an updated bundled hook actually
+    lands; the ``.git/hooks/post-commit`` shim itself only ever rewrites the
+    marker-guarded TRW block, so a user's own hook logic survives.
+    """
+    try:
+        from trw_mcp.bootstrap._git_hooks import install_git_post_commit_hook
+
+        hook_result = install_git_post_commit_hook(target_dir, force=True, dry_run=dry_run)
+        for path in hook_result["created"]:
+            result.setdefault("created", []).append(path)
+            if on_progress:
+                on_progress("Created", path)
+        for path in hook_result["updated"]:
+            result.setdefault("updated", []).append(path)
+            if on_progress:
+                on_progress("Updated", path)
+        result.setdefault("warnings", []).extend(hook_result["errors"])
+    except Exception as exc:  # justified: fail-open, update must not abort
+        logger.warning("git_hook_update_failed", error=str(exc))
+        result.setdefault("warnings", []).append(f"git post-commit hook skipped: {exc}")
+
+
 def _run_core_update_phases(
     target_dir: Path,
     effective_data: Path,
@@ -246,6 +276,10 @@ def _run_core_update_phases(
     # PRD-CORE-093 FR03: Generate behavioral_protocol.md for session-start hook
     _generate_behavioral_protocol_md(target_dir, result, dry_run)
 
+    # PRD-CORE-231 FR01/FR02: keep the git post-commit hook current. Idempotent
+    # (replaces only the marker-guarded block) and fail-open.
+    _update_git_hooks(target_dir, result, dry_run, on_progress)
+
     if on_progress:
         on_progress("Phase", "Updating configuration files...")
     _update_mcp_config(target_dir, result, dry_run, on_progress)
@@ -258,6 +292,7 @@ def _run_core_update_phases(
         effective_data,
         dry_run,
         cleanup_context=dry_run,
+        manifest_hashes=manifest_hashes,
     )
 
     _check_package_version(result)
@@ -290,11 +325,27 @@ def _run_post_update_phases(
     _write_version_yaml(target_dir, result, on_progress)
 
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
-    _update_config_target_platforms(target_dir, ide_targets, result)
+    # Do NOT feed raw detection into the append-only recorder when the project
+    # already recorded its clients and the caller named none. `_update_config_
+    # target_platforms` never narrows (PRD-FIX-076), and detection reports
+    # claude-code for any project containing `.claude/` — which TRW itself
+    # creates for EVERY client, since hooks and skills are universal artifacts.
+    # So a bare `update-project` on a codex project appended claude-code
+    # permanently, and the CLAUDE.md block came back on the next run. The
+    # append-only rule exists to protect a USER's list, not to let our own
+    # scaffolding vote itself into it.
+    from ._template_claude_md import _recorded_plus_newly_adopted
+
+    recorded = [] if ide else _recorded_plus_newly_adopted(target_dir)
+    _update_config_target_platforms(target_dir, recorded or ide_targets, result)
 
     if on_progress:
         on_progress("Phase", "Syncing CLAUDE.md...")
-    _run_claude_md_sync(target_dir, result)
+    # Pass the PRE-write baseline: by the time the sync runs, the on-disk
+    # manifest has already been rewritten from current content, so a user's
+    # hand-edited instruction file would look like TRW's own last write and be
+    # silently overwritten.
+    _run_claude_md_sync(target_dir, result, manifest_hashes=manifest_hashes)
 
     if on_progress:
         on_progress("Phase", "Running auto-maintenance...")

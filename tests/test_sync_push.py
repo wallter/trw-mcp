@@ -5,6 +5,7 @@ PRD-FIX-087: push_learnings/push_outcomes are now async + httpx.AsyncClient.
 
 from __future__ import annotations
 
+import json
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -401,6 +402,59 @@ async def test_push_logs_structured_start_and_complete_events() -> None:
     assert mock_info.call_args_list[-1].args == ("sync_push_complete",)
     assert mock_info.call_args_list[-1].kwargs["event_type"] == "sync_push_complete"
     assert mock_info.call_args_list[-1].kwargs["client_id"] == "sync-client-1"
+
+
+async def test_pushed_payload_masks_pii_in_tags_and_metadata_values() -> None:
+    """Tags and metadata values are sanitized before the batch leaves the machine.
+
+    Egress is the only masking boundary now that the store path keeps user text
+    verbatim, so an unsanitized tag or metadata value is published raw. Asserted
+    on the JSON body handed to httpx rather than on ``_serialize_entry``'s
+    return, because the body is the thing that egresses.
+    """
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        learning_sharing_enabled=True,
+    )
+    entry = _make_mock_entry("L-pii")
+    entry.to_dict.return_value["tags"] = ["incident", "reporter-alice@example.com"]
+    entry.to_dict.return_value["metadata"] = {
+        "source": "unit-test",
+        "installation_id": "install-123",
+        "owner": "alice@example.com",
+        "nested": {"token": "sk_abcdefghijklmnopqrstuvwxyz1234"},
+        "notes": ["ping alice@example.com"],
+        "retries": 3,
+    }
+
+    response = MagicMock()
+    response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0, "errors": 0}
+    response.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock(response)
+
+    with patch("httpx.AsyncClient", mock_client_cls):
+        await pusher.push_learnings([entry])
+
+    mock_client = mock_client_cls.return_value.__aenter__.return_value
+    body = mock_client.post.call_args.kwargs["json"]
+    wire = json.dumps(body)
+    published = body["entries"][0]
+
+    assert "alice@example.com" not in wire
+    assert "sk_abcdefghijklmnopqrstuvwxyz1234" not in wire
+    assert published["tags"] == ["incident", "<email>"]
+    assert published["metadata"]["owner"] == "<email>"
+    assert published["metadata"]["nested"]["token"] == "<api_key>"
+    assert published["metadata"]["notes"] == ["ping <email>"]
+    # Structural keys and non-string values survive untouched, and the
+    # installation id is still hashed from its RAW value.
+    assert published["metadata"]["source"] == "unit-test"
+    assert published["metadata"]["retries"] == 3
+    assert published["metadata"]["installation_id"] not in ("", "install-123")
 
 
 def test_resolve_sync_client_id_anonymizes_installation_id() -> None:

@@ -116,21 +116,24 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
 
             try:
                 from trw_mcp.state._session_id import resolve_effective_session_id
-                from trw_mcp.state.ceremony_nudge import _highest_priority_pending_step
-                from trw_mcp.state.nudge_analysis import compute_nudge_timing
 
                 # Work targets #4/#6: stamp live timing + A/B arm/messenger only on
                 # genuine nudges (not phase-transition surfaces). For transitions
                 # the nudge-only fields stay empty/None so log_surface_event omits
                 # them, keeping phase_transition events shape-compatible.
+                #
+                # Ledger UF-023: this branch previously stamped
+                # ``_highest_priority_pending_step(state) or "session_start"``. The
+                # learnings pool renders a prior-learning caution, which targets no
+                # ceremony step at all — so the step and the timing fields it feeds
+                # are omitted rather than defaulted to a step this nudge never
+                # mentioned. ``resolve_nudge_target_step`` is the single rule.
                 nudge_step = ""
                 is_timely: bool | None = None
                 step_distance: int | None = None
                 variant_label = ""
                 messenger_label = ""
                 if not is_transition:
-                    nudge_step = _highest_priority_pending_step(state) or "session_start"
-                    is_timely, step_distance = compute_nudge_timing(nudge_step, state)
                     variant_label = nudge_variant_label
                     messenger_label = "standard"
                 log_surface_event(

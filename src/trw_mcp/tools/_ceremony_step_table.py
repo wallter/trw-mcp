@@ -195,6 +195,8 @@ def _ss_sanitize_maintain(sctx: SessionStartContext) -> None:
         "embeddings_backfill_scheduled",
         "embeddings_backfill_deferred",
         "wal_checkpoint_deferred",
+        "pending_learns_replayed",
+        "pending_learns_deferred",
     ):
         if key in maintenance:
             results[key] = maintenance[key]

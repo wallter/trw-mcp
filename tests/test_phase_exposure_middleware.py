@@ -81,7 +81,15 @@ def middleware() -> PhaseExposureMiddleware:
 
 @pytest.mark.asyncio
 async def test_research_phase_subset(middleware: PhaseExposureMiddleware, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR03/US-001: RESEARCH excludes deliver/review; includes init/recall."""
+    """FR03/US-001: RESEARCH excludes the PLAN-only requirements tools; includes
+    init/recall.
+
+    PRD-FIX-119 FR01 moved ``trw_review`` into ``RIGID_TOOLS``, so it is now
+    never-hidden like ``trw_deliver``/``trw_build_check`` (it is the NO_ESCAPE
+    ``review_scope_block`` remedy AND the only writer of ``Phase.REVIEW``). The
+    masked-tool exemplar for this phase is therefore ``trw_prd_create``, which
+    keeps the "RESEARCH really does exclude something" half of the assertion.
+    """
     monkeypatch.setattr(
         "trw_mcp.middleware.phase_exposure.resolve_active_phase",
         lambda **_: "RESEARCH",
@@ -97,10 +105,11 @@ async def test_research_phase_subset(middleware: PhaseExposureMiddleware, monkey
     assert "trw_init" in names
     assert "trw_recall" in names
     assert "trw_session_start" in names
-    assert "trw_review" not in names
-    # trw_deliver / trw_build_check are rigid → always visible
+    assert "trw_prd_create" not in names  # PLAN-only requirements tool, masked here
+    # trw_deliver / trw_build_check / trw_review are rigid → always visible
     assert "trw_deliver" in names
     assert "trw_build_check" in names
+    assert "trw_review" in names  # PRD-FIX-119 FR01/FR07
 
 
 @pytest.mark.asyncio
@@ -186,7 +195,11 @@ async def test_fail_open_on_internal_error(
 
 @pytest.mark.asyncio
 async def test_masked_call_denied(middleware: PhaseExposureMiddleware, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR05: calling a masked tool returns a tool_not_in_phase error, no body."""
+    """FR05: calling a masked tool returns a tool_not_in_phase error, no body.
+
+    Exemplar is ``trw_prd_create`` (a PLAN-bucket tool) since PRD-FIX-119 FR01
+    made ``trw_review`` rigid.
+    """
     monkeypatch.setattr(
         "trw_mcp.middleware.phase_exposure.resolve_active_phase",
         lambda **_: "RESEARCH",
@@ -199,14 +212,14 @@ async def test_masked_call_denied(middleware: PhaseExposureMiddleware, monkeypat
         return _FakeToolResult(content=[TextContent(type="text", text="executed")])
 
     ctx = _FakeMiddlewareContext(
-        message=_FakeMessage(name="trw_review"),
+        message=_FakeMessage(name="trw_prd_create"),
         fastmcp_context=_FakeContext(),
     )
     out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
     assert called is False, "masked tool body must NOT execute"
     assert out.structured_content is not None
     assert out.structured_content["error_type"] == "tool_not_in_phase"
-    assert out.structured_content["tool_name"] == "trw_review"
+    assert out.structured_content["tool_name"] == "trw_prd_create"
     assert out.structured_content["current_phase"] == "RESEARCH"
     assert "trw_recall" in out.structured_content["available_tools"]
 
@@ -251,7 +264,12 @@ async def test_rigid_call_never_denied(middleware: PhaseExposureMiddleware, monk
 
 @pytest.mark.asyncio
 async def test_call_fail_open_on_error(middleware: PhaseExposureMiddleware, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR05/NFR02: a resolution error during call denial fails open (executes)."""
+    """FR05/NFR02: a resolution error during call denial fails open (executes).
+
+    The tool must be one that would otherwise be MASKED in the resolved phase,
+    or the assertion proves nothing — hence ``trw_prd_create`` rather than
+    ``trw_review``, which PRD-FIX-119 FR01 made rigid (always callable).
+    """
 
     def _boom(**_: Any) -> str:
         raise RuntimeError("kaboom")
@@ -262,7 +280,7 @@ async def test_call_fail_open_on_error(middleware: PhaseExposureMiddleware, monk
         return _FakeToolResult(content=[TextContent(type="text", text="executed")])
 
     ctx = _FakeMiddlewareContext(
-        message=_FakeMessage(name="trw_review"),
+        message=_FakeMessage(name="trw_prd_create"),
         fastmcp_context=_FakeContext(),
     )
     out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
@@ -281,7 +299,9 @@ async def test_override_allows_single_masked_call(
         lambda **_: "RESEARCH",
     )
     phase_overrides.reset_overrides()
-    phase_overrides.grant_override("sess-1", "trw_review", reason="x" * 25)
+    # Exemplar must be a genuinely masked tool: PRD-FIX-119 FR01 made
+    # trw_review rigid, so it can no longer demonstrate single-use unmasking.
+    phase_overrides.grant_override("sess-1", "trw_prd_create", reason="x" * 25)
 
     calls = 0
 
@@ -291,7 +311,7 @@ async def test_override_allows_single_masked_call(
         return _FakeToolResult(content=[TextContent(type="text", text="executed")])
 
     ctx = _FakeMiddlewareContext(
-        message=_FakeMessage(name="trw_review"),
+        message=_FakeMessage(name="trw_prd_create"),
         fastmcp_context=_FakeContext(),
     )
     first = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
@@ -328,7 +348,7 @@ async def test_telemetry_emitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         return _FakeToolResult(content=[TextContent(type="text", text="x")])
 
     ctx = _FakeMiddlewareContext(
-        message=_FakeMessage(name="trw_review"),
+        message=_FakeMessage(name="trw_prd_create"),
         fastmcp_context=_FakeContext(),
     )
     await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
@@ -340,7 +360,7 @@ async def test_telemetry_emitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     evt = lines[0]
     assert evt["event_type"] == "phase_exposure"
     assert evt["payload"]["event_type"] == "mask_denied"
-    assert evt["payload"]["tool_name"] == "trw_review"
+    assert evt["payload"]["tool_name"] == "trw_prd_create"
     assert evt["payload"]["phase"] == "RESEARCH"
     # No tool arguments leaked into telemetry.
     assert "arguments" not in evt["payload"]

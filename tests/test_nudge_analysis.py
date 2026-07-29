@@ -226,7 +226,13 @@ class TestArtifactWrite:
         assert path is not None
         assert path == trw_dir / "context" / "nudge-analysis.json"
         data = json.loads(path.read_text(encoding="utf-8"))
-        assert data["schema_version"] == 1
+        # The current version's VALUE is pinned once, in
+        # tests/test_nudge_schema_contract.py::test_nudge_analysis_schema_version_is_2.
+        # Here we only require the artifact to carry it, so a version bump does
+        # not have to be edited into three places.
+        from trw_mcp.state.nudge_analysis import _ARTIFACT_SCHEMA_VERSION
+
+        assert data["schema_version"] == _ARTIFACT_SCHEMA_VERSION
         assert data["session_id"] == "s1"
         assert data["applicable"] is True
         assert data["total_nudges"] == 2

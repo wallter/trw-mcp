@@ -26,7 +26,7 @@ __all__ = ["SUPPORTED_CLIENTS", "UnsupportedClientError", "build_command"]
 
 
 class UnsupportedClientError(ValueError):
-    """Raised for a client we deliberately do not support (e.g. gemini, EOL'd)."""
+    """Raised for a client id outside :data:`SUPPORTED_CLIENTS`."""
 
 
 @dataclass(frozen=True)

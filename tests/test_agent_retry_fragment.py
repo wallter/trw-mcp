@@ -8,6 +8,7 @@ templates can never silently drift from the one source of truth.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,9 @@ _SPEC = importlib.util.spec_from_file_location(
 )
 assert _SPEC is not None and _SPEC.loader is not None
 _FRAGMENTS = importlib.util.module_from_spec(_SPEC)
+# Register before exec so the module's @dataclass declarations can resolve
+# annotations — dataclasses looks the defining module up in sys.modules.
+sys.modules[_SPEC.name] = _FRAGMENTS
 _SPEC.loader.exec_module(_FRAGMENTS)
 
 BUNDLED_AGENTS_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
@@ -38,13 +42,16 @@ FRAMEWORK_REFERENCE = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "fram
 
 
 def _has_allowed_trw_tool(frontmatter: dict[str, Any]) -> bool:
-    for field in ("tools", "allowedTools"):
-        values = frontmatter.get(field)
-        if isinstance(values, list) and any(
-            isinstance(value, str) and value.startswith("mcp__trw__") for value in values
-        ):
-            return True
-    return False
+    """True when the harness-honored allowlist actually grants a ``trw_*`` tool.
+
+    Only ``tools`` counts. ``allowedTools`` is a CLI/SDK permission option, not a
+    sub-agent frontmatter field, so an allowlist declared there is discarded by
+    the harness and must never satisfy this reachability check.
+    """
+    values = frontmatter.get("tools")
+    return isinstance(values, list) and any(
+        isinstance(value, str) and value.startswith("mcp__trw__") for value in values
+    )
 
 
 def test_fragment_source_exists_and_nonempty() -> None:
@@ -93,7 +100,9 @@ def test_every_agent_with_retry_protocol_can_call_a_trw_tool() -> None:
     ("frontmatter", "expected"),
     [
         ({"tools": ["mcp__trw__trw_recall"]}, True),
-        ({"allowedTools": ["mcp__trw__trw_code_search"]}, True),
+        # `allowedTools` is not part of the sub-agent frontmatter schema — an
+        # allowlist declared there is dropped, so it grants nothing.
+        ({"allowedTools": ["mcp__trw__trw_code_search"]}, False),
         ({"description": "mcp__trw__", "disallowedTools": ["mcp__trw__trw_recall"]}, False),
     ],
 )
@@ -131,7 +140,7 @@ def test_check_all_detects_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     )
 
     monkeypatch.setattr(_FRAGMENTS, "agent_files", lambda: sorted(fake_agents.glob("*.md")))
-    assert _FRAGMENTS.check_all() == ["bad.md"]
+    assert _FRAGMENTS.check_all() == ["bad.md[mcp-retry-protocol]"]
 
 
 def test_inject_is_idempotent() -> None:

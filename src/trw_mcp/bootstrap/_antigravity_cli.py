@@ -47,6 +47,17 @@ _ANTIGRAVITY_SETTINGS_PATH = ".antigravitycli/settings.json"
 _ANTIGRAVITY_AGENTS_DIR = ".antigravitycli/agents"
 _ANTIGRAVITY_MD_PATH = "ANTIGRAVITY.md"
 
+#: The workspace-rules folder Antigravity documents. `.agent/rules` (singular)
+#: is the legacy name it still supports; new installs get the current one.
+#: Source: antigravity.google/docs/rules-workflows
+_ANTIGRAVITY_RULES_DIR = ".agents/rules"
+_ANTIGRAVITY_RULE_FILENAME = "trw-ceremony.md"
+
+#: "Rules files are limited to 12,000 characters each" (same source). Enforced
+#: rather than assumed: over the limit the tail is dropped, and the deliver gate
+#: renders last.
+_ANTIGRAVITY_RULE_MAX_CHARS = 12_000
+
 # ---------------------------------------------------------------------------
 # Marker constants
 # ---------------------------------------------------------------------------
@@ -80,18 +91,71 @@ def generate_antigravity_instructions(
     *,
     force: bool = False,
 ) -> dict[str, list[str]]:
-    """Generate or smart-merge ``ANTIGRAVITY.md``."""
+    """Generate the workspace rule, and smart-merge ``ANTIGRAVITY.md``."""
     result = _new_result()
+    rendered = _antigravity_instructions_content()
+    _write_antigravity_workspace_rule(target_dir, rendered, result, force=force)
     write_instruction_file_with_merge(
         target_path=target_dir / _ANTIGRAVITY_MD_PATH,
         rel_path=_ANTIGRAVITY_MD_PATH,
-        trw_section=_antigravity_instructions_content(),
+        trw_section=rendered,
         start_marker=_ANTIGRAVITY_TRW_START_MARKER,
         end_marker=_ANTIGRAVITY_TRW_END_MARKER,
         force=force,
         result=result,
     )
     return result
+
+
+def _write_antigravity_workspace_rule(
+    target_dir: Path,
+    rendered: str,
+    result: dict[str, list[str]],
+    *,
+    force: bool = False,
+) -> None:
+    """Write the protocol to the path Antigravity DOCUMENTS reading.
+
+    ``ANTIGRAVITY.md`` appears in no Antigravity primary source. Its own
+    rules documentation names exactly two locations — ``~/.gemini/GEMINI.md``
+    globally and ``.agents/rules/`` per workspace ("Workspace rules live in the
+    .agents/rules folder of your workspace or git root", with ``.agent/rules``
+    kept for backward compatibility). TRW was writing its protocol to a
+    filename the vendor never documents loading, which is the worst outcome
+    available: an artifact that exists, reports success, and reaches no model.
+
+    So the rule file is now the carrier. ``ANTIGRAVITY.md`` is still written —
+    removing it is a separate call, and if some undocumented path does read it,
+    dropping it would cost the protocol. Belt and braces beats a guess in
+    either direction.
+
+    This file is TRW-owned, so it is a *generated artifact* rather than
+    injection into a file the user authored — the same shape as opencode's and
+    codex's dedicated instruction files.
+
+    Antigravity caps rule files at 12,000 characters; the rendered protocol is
+    an order of magnitude under that, but the guard is explicit because a
+    silent truncation would strip the deliver gate off the end.
+    """
+    rule_path = target_dir / _ANTIGRAVITY_RULES_DIR / _ANTIGRAVITY_RULE_FILENAME
+    rel_path = f"{_ANTIGRAVITY_RULES_DIR}/{_ANTIGRAVITY_RULE_FILENAME}"
+
+    if len(rendered) > _ANTIGRAVITY_RULE_MAX_CHARS:
+        result.setdefault("errors", []).append(
+            f"{rel_path}: rendered protocol is {len(rendered)} chars, over Antigravity's "
+            f"{_ANTIGRAVITY_RULE_MAX_CHARS}-char rule limit — it would be truncated"
+        )
+        return
+
+    write_instruction_file_with_merge(
+        target_path=rule_path,
+        rel_path=rel_path,
+        trw_section=rendered,
+        start_marker=_ANTIGRAVITY_TRW_START_MARKER,
+        end_marker=_ANTIGRAVITY_TRW_END_MARKER,
+        force=force,
+        result=result,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -263,15 +327,28 @@ Call `mcp_trw_trw_deliver()` when complete.
 }
 
 
+def antigravity_agent_contents() -> dict[str, bytes]:
+    """Bundled ``.antigravitycli/agents/*`` content, keyed by repo-relative path."""
+    from ._file_ops import agent_template_contents
+
+    return agent_template_contents(_ANTIGRAVITY_AGENTS_DIR, _ANTIGRAVITY_AGENT_TEMPLATES)
+
+
 def generate_antigravity_agents(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, list[str]]:
-    """Generate ``.antigravitycli/agents/trw-*.md`` subagent definitions."""
+    """Generate ``.antigravitycli/agents/trw-*.md`` subagent definitions.
+
+    Content-aware: unmodified agents are refreshed when the bundled template
+    changes; user-edited ones are preserved.
+    """
     return write_agent_templates(
         target_dir,
         agents_dir=_ANTIGRAVITY_AGENTS_DIR,
         templates=_ANTIGRAVITY_AGENT_TEMPLATES,
         force=force,
+        manifest_hashes=manifest_hashes,
     )

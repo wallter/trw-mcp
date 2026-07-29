@@ -87,9 +87,9 @@ prd:
   stubs: {stubs}
   ip_tier: public
 default_path_proof:
-  receipt: tests/test_default_entrypoint.py::test_public_default_path
+  receipt: tests/test_core213_transition_gate.py::test_public_default_path
   source_digest: sha256:{digest}
-  removal_assertion: tests/test_default_entrypoint.py::test_superseded_path_absent
+  removal_assertion: tests/test_core213_transition_gate.py::test_superseded_path_absent
 ---
 
 # {pid}
@@ -115,6 +115,13 @@ def _write_prd(
         _PRD_FRONT.format(pid=pid, prio=prio, level=level, stubs=stubs, body=body, digest="a" * 64),
         encoding="utf-8",
     )
+    # The default_path_proof in _PRD_FRONT names this file, and the FR05 gate now
+    # resolves the paths a proof names. Materializing it keeps the fixture
+    # self-consistent — a proof pointing at nothing is exactly what the gate is
+    # supposed to reject, so leaving it absent would test the wrong thing here.
+    proof_file = root / "tests" / "test_core213_transition_gate.py"
+    proof_file.parent.mkdir(parents=True, exist_ok=True)
+    proof_file.touch()
 
 
 def _make_run(
@@ -639,19 +646,30 @@ def test_prd_qual_119_fr01() -> None:
     assert "no_completion_components_recorded" in empty.reasons
 
 
-def test_prd_qual_119_fr05() -> None:
+def test_prd_qual_119_fr05(tmp_path: Path) -> None:
     """FR05 acceptance: Given only unit or substrate tests pass, When completion
     is requested, Then it fails until a content-bound default-path integration
-    receipt and removal assertion exist."""
+    receipt and removal assertion exist.
+
+    ``project_root`` is passed explicitly so the shape assertions below do not
+    depend on where the suite happens to run: the proof-file existence check is
+    covered on its own in ``tests/test_prd_proof_paths.py``.
+    """
     from trw_mcp.tools._prd_transition_gate import (
         MISSING_DEFAULT_PATH_PROOF,
         default_path_proof_blocking,
     )
 
+    proof_file = tmp_path / "tests" / "test_core213_transition_gate.py"
+    proof_file.parent.mkdir(parents=True)
+    proof_file.touch()
+
     # A live claim with no proof block fails.
-    assert default_path_proof_blocking({}, "live") == [MISSING_DEFAULT_PATH_PROOF]
+    assert default_path_proof_blocking({}, "live", project_root=tmp_path) == [MISSING_DEFAULT_PATH_PROOF]
     # Unit/substrate evidence alone (no receipt block) fails.
-    assert default_path_proof_blocking({"verification": {"unit_tests": "pass"}}, "live") == [MISSING_DEFAULT_PATH_PROOF]
+    assert default_path_proof_blocking({"verification": {"unit_tests": "pass"}}, "live", project_root=tmp_path) == [
+        MISSING_DEFAULT_PATH_PROOF
+    ]
     # Partial blocks fail: missing removal assertion, missing content binding.
     assert default_path_proof_blocking(
         {"default_path_proof": {"receipt": "itest-receipt-1", "source_digest": "sha256:aa"}}, "live"
@@ -669,6 +687,7 @@ def test_prd_qual_119_fr05() -> None:
             }
         },
         "live",
+        project_root=tmp_path,
     ) == [MISSING_DEFAULT_PATH_PROOF]
 
     # The complete content-bound proof passes.
@@ -676,17 +695,18 @@ def test_prd_qual_119_fr05() -> None:
         default_path_proof_blocking(
             {
                 "default_path_proof": {
-                    "receipt": "tests/test_x.py::test_default_public_entrypoint",
+                    "receipt": "tests/test_core213_transition_gate.py::test_default_public_entrypoint",
                     "source_digest": "sha256:" + "a" * 64,
-                    "removal_assertion": "tests/test_x.py::test_superseded_path_absent",
+                    "removal_assertion": "tests/test_core213_transition_gate.py::test_superseded_path_absent",
                 }
             },
             "live",
+            project_root=tmp_path,
         )
         == []
     )
     # Non-live claims are not subject to the live proof requirement.
-    assert default_path_proof_blocking({}, "partial") == []
+    assert default_path_proof_blocking({}, "partial", project_root=tmp_path) == []
 
 
 def test_transition_gate_filters_unrelated_shared_worktree_prds() -> None:

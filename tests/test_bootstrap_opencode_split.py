@@ -37,7 +37,9 @@ class TestOpenCodeBootstrap:
         generate_opencode_config(tmp_path)
         config = json.loads((tmp_path / "opencode.json").read_text())
         assert config["mcp"]["trw"]["type"] == "local"
-        assert config["mcp"]["trw"]["command"] == ["trw-mcp", "--debug"]
+        # No --debug: log verbosity is protocol, not per-client surface density.
+        # See tests/test_bootstrap_debug_flag_parity.py.
+        assert config["mcp"]["trw"]["command"] == ["trw-mcp"]
         assert "args" not in config["mcp"]["trw"]
 
     def test_fr11_agents_md_created(self, tmp_path: Path) -> None:
@@ -140,10 +142,10 @@ class TestOpenCodeJsonMerge:
         existing: dict[str, object] = {"mcp": {"trw": {"type": "local", "command": ["old"]}}}
         trw: dict[str, object] = {
             "type": "local",
-            "command": ["trw-mcp", "--debug"],
+            "command": ["trw-mcp"],
         }
         result = merge_opencode_json(existing, trw)
-        assert result["mcp"]["trw"]["command"] == ["trw-mcp", "--debug"]
+        assert result["mcp"]["trw"]["command"] == ["trw-mcp"]
 
     def test_fr16_fresh_install_full_template(self, tmp_path: Path) -> None:
         result = generate_opencode_config(tmp_path)

@@ -69,12 +69,16 @@ def _get_trw_mcp_entry_cursor() -> CursorServerEntry:
 
     Uses the installed ``trw-mcp`` binary when available; falls back to
     the current Python interpreter invoking the module directly.
+
+    No ``--debug``: log verbosity is protocol, not per-client surface density,
+    so every profile now generates the same args. Verbose logging is opted into
+    portably via ``.trw/config.yaml`` ``debug: true``.
     """
     if shutil.which("trw-mcp"):
         command: str | list[str] = "trw-mcp"
     else:
         command = [sys.executable, "-m", "trw_mcp.server"]
-    return {"command": command, "args": ["--debug"]}
+    return {"command": command, "args": []}
 
 
 def _write_fresh_mcp(path: Path, trw_entry: CursorServerEntry) -> None:
@@ -393,60 +397,117 @@ def generate_cursor_rules_mdc(
 # ---------------------------------------------------------------------------
 
 
+def cursor_skill_mirror_contents(
+    skill_names: list[str],
+    source_dir: Path | None = None,
+) -> dict[str, bytes]:
+    """Bundled ``.cursor/skills/**`` content, keyed by repo-relative path.
+
+    Single source of truth shared by :func:`generate_cursor_skills_mirror` and
+    the managed-artifact manifest sweep. Missing source skills are logged and
+    skipped (the generator does not fail on them).
+    """
+    skills_src = source_dir or (_DATA_DIR / "skills")
+    contents: dict[str, bytes] = {}
+    for name in skill_names:
+        src = skills_src / name
+        if not src.is_dir():
+            logger.warning("cursor_skill_source_missing", skill=name, src=str(src))
+            continue
+        for skill_file in sorted(src.rglob("*")):
+            if not skill_file.is_file():
+                continue
+            rel = f".cursor/skills/{name}/{skill_file.relative_to(src).as_posix()}"
+            try:
+                contents[rel] = skill_file.read_bytes()
+            except OSError:
+                logger.warning("cursor_skill_source_unreadable", path=str(skill_file))
+    return contents
+
+
 def generate_cursor_skills_mirror(
     target_dir: Path,
     skill_names: list[str],
     source_dir: Path | None = None,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
     """Mirror named TRW skills into .cursor/skills/ (PRD-CORE-136-FR02).
 
-    For each name in ``skill_names``, copies the skill directory tree from
+    For each name in ``skill_names``, mirrors the skill directory tree from
     ``source_dir`` (or the bundled ``data/skills/`` directory) to
     ``.cursor/skills/<name>/``.  User-authored skills NOT in ``skill_names``
     are preserved untouched.
+
+    Content-aware (CONSTITUTION HB-2): each mirrored FILE is guarded
+    individually — one matching the bundled content or TRW's recorded last write
+    is refreshed, one that diverges from both is a user edit and is preserved.
+    The previous unconditional ``copytree(..., dirs_exist_ok=True)`` destroyed
+    every hand edit inside a mirrored skill on every update; ``force`` only
+    controlled whether the directory was cleared first, never whether the copy
+    happened.
 
     Args:
         target_dir: Root of the target git repository.
         skill_names: Skill directory names to mirror (e.g. ["trw-deliver"]).
         source_dir: Override for bundled skills directory. Defaults to
             ``data/skills/`` within the installed package.
-        force: When True, remove existing skill dirs before copy.
+        force: When True, remove existing skill dirs before copy — this is the
+            documented escape hatch for discarding local edits.
+        manifest_hashes: ``content_hashes`` from the manifest as it stood BEFORE
+            this run, used to recognise TRW's own previous write.
 
     Returns:
         Dict with 'created'/'updated'/'preserved' lists.
     """
+    from ._managed_client_artifacts import artifact_user_edited
+
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    skills_src = source_dir or (_DATA_DIR / "skills")
     dest_root = target_dir / ".cursor" / "skills"
     dest_root.mkdir(parents=True, exist_ok=True)
 
+    contents = cursor_skill_mirror_contents(skill_names, source_dir)
     for name in skill_names:
-        src = skills_src / name
-        dst = dest_root / name
-        if not src.is_dir():
-            logger.warning("cursor_skill_source_missing", skill=name, src=str(src))
+        prefix = f".cursor/skills/{name}/"
+        skill_files = {rel: data for rel, data in contents.items() if rel.startswith(prefix)}
+        if not skill_files:
             continue
 
+        dst = dest_root / name
         existed = dst.exists()
         if existed and force:
             shutil.rmtree(dst)
             existed = False
+        dst.mkdir(parents=True, exist_ok=True)
 
-        shutil.copytree(str(src), str(dst), dirs_exist_ok=True)
+        wrote_any = False
+        for rel, incoming in skill_files.items():
+            dest_file = target_dir / rel
+            if dest_file.is_file() and not force and artifact_user_edited(dest_file, rel, incoming, manifest_hashes):
+                logger.info("cursor_skill_user_modified", path=rel)
+                continue
+            try:
+                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                dest_file.write_bytes(incoming)
+                wrote_any = True
+            except OSError:
+                logger.warning("cursor_skill_write_failed", path=rel)
 
-        rel = f".cursor/skills/{name}"
-        if existed:
-            result["updated"].append(rel)
+        rel_dir = f".cursor/skills/{name}"
+        if not existed:
+            result["created"].append(rel_dir)
+        elif wrote_any:
+            result["updated"].append(rel_dir)
         else:
-            result["created"].append(rel)
+            result["preserved"].append(rel_dir)
 
     logger.debug(
         "generate_cursor_skills_mirror",
         skills=skill_names,
         created=result["created"],
         updated=result["updated"],
+        preserved=result["preserved"],
     )
     return result
 

@@ -107,7 +107,7 @@ class TestAutoObsoleteOnCompendium:
             detail="This consolidates L-001 and L-002",
             tags=["pattern"],
             impact=0.8,
-            consolidated_from=[lid1, lid2],
+            metadata={"consolidated_from": [lid1, lid2]},
         )
 
         # Verify both source entries are now obsolete
@@ -167,7 +167,7 @@ class TestAutoObsoleteOnCompendium:
             detail="References a non-existent entry",
             tags=["pattern"],
             impact=0.8,
-            consolidated_from=["L-nonexistent-id-999"],
+            metadata={"consolidated_from": ["L-nonexistent-id-999"]},
         )
         assert result["status"] == "recorded"
 

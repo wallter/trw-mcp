@@ -226,14 +226,20 @@ class TestCheckDeliveryGates:
         self,
         run_dir: Path,
     ) -> None:
-        """Build gate check should not raise on read errors."""
+        """Unreadable state must not raise — and must not become positive evidence.
+
+        ``isinstance(result, dict)`` also held for ``{}``, i.e. for a gate that
+        silently OPENS when it cannot read the run. That is the failure mode the
+        deliver gate exists to prevent: "could not verify" is not "verified".
+        """
         mock_reader = MagicMock(spec=FileStateReader)
         mock_reader.exists.return_value = True
         mock_reader.read_jsonl.side_effect = Exception("read error")
         mock_reader.read_yaml.side_effect = Exception("read error")
 
         result = check_delivery_gates(run_dir, mock_reader)
-        assert isinstance(result, dict)
+        assert "No substantive trw_review" in str(result["review_advisory"])
+        assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
 
     def test_corrupt_review_yaml_is_treated_as_missing_evidence(
         self,

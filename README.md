@@ -19,7 +19,7 @@
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->46<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->45<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
 ## What it does
@@ -151,9 +151,9 @@ Then verify: `.trw/` dirs are `0700`, `memory.db` is `0600`, and no outbound con
 
 <a id="mcp-tools"></a>
 
-## MCP Tools (<!-- inv:tools -->46<!-- /inv -->)
+## MCP Tools (<!-- inv:tools -->45<!-- /inv -->)
 
-The table below covers the most-used tools out of the full <!-- inv:tools -->46<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
+The table below covers the most-used tools out of the full <!-- inv:tools -->45<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
 
 | Category | Tools | Purpose |
 |----------|-------|---------|

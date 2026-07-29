@@ -25,60 +25,53 @@ init_hook_timer
 # Read stdin payload to determine source
 _payload=$(cat) || exit 0
 _source=""
+_payload_session_id=""
 if command -v jq >/dev/null 2>&1; then
   _source=$(printf '%s' "$_payload" | jq -r '.source // empty' 2>/dev/null) || true
+  _payload_session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
 fi
 # Fallback: extract source via grep
 if [ -z "$_source" ]; then
   _source=$(printf '%s' "$_payload" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
+if [ -z "$_payload_session_id" ]; then
+  _payload_session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+fi
 
 _project_root="$(get_repo_root)" || exit 0
 
-# --- PRD-CORE-060-FR06: Tier-calibrated ceremony guidance ---
-_emit_tier_guidance() {
-  # Find the most recent active run.yaml
-  _run_yaml=""
-  _task_root="$_project_root/docs"
-  if [ -f "$_project_root/.trw/config.yaml" ] && command -v grep >/dev/null 2>&1; then
-    _custom_root=$(grep -m1 'task_root:' "$_project_root/.trw/config.yaml" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-    [ -n "$_custom_root" ] && _task_root="$_project_root/$_custom_root"
-  fi
-  if [ -d "$_task_root" ]; then
-    _run_yaml=$(find "$_task_root" -name "run.yaml" -path "*/meta/run.yaml" 2>/dev/null | sort -r | head -1) || true
-  fi
+# --- PRD-FIX-118 FR03/FR04/FR05: own-run state, never a foreign run's ---
+#
+# What changed and why. This used to glob every */meta/run.yaml under the task
+# root, sort lexicographically, take the last, and print that run's declared
+# complexity field as THIS session's ceremony tier. With several instances live
+# (four concurrent servers observed 2026-07-24) the newest run is routinely
+# another session's, so the tier printed here contradicted the tier
+# trw_session_start resolved from the profile in the very same boot -- once
+# observed as hook "MINIMAL" vs resolved COMPREHENSIVE. An agent had to guess.
+#
+# Two rules now hold:
+#   FR05 -- one tier authority. Ceremony tier comes from
+#           profile/session_resolve.py via trw_session_start. This hook does not
+#           compute, read, or print a tier. Deleting the duplicate resolver is
+#           the fix; reconciling two of them would not be.
+#   FR04 -- an unpinned session says so. No tier, no phase, no event count, no
+#           progress figure may be sourced from a run this session does not own.
+_emit_run_state() {
+  _own_run=$(resolve_owned_run "$_payload_session_id") || _own_run=""
 
-  if [ -z "$_run_yaml" ] || [ ! -f "$_run_yaml" ]; then
-    echo "CEREMONY: No active run — classify task complexity before calling trw_init."
+  if [ -z "$_own_run" ]; then
+    echo "CEREMONY: No run is pinned to this session — call trw_init(task_name) to start one."
+    echo "  This session's run state is unknown, so no phase, tier, or event count is shown."
+    echo "  Ceremony tier comes from trw_session_start(), the single authority."
     return
   fi
 
-  _tier=""
-  if command -v grep >/dev/null 2>&1; then
-    _tier=$(grep -m1 'complexity_class:' "$_run_yaml" 2>/dev/null | sed 's/.*: *//' | tr -d "\"'" 2>/dev/null) || true
-  fi
-
-  case "$_tier" in
-    MINIMAL)
-      echo "CEREMONY — Tier: MINIMAL | trw_recall only | No trw_init required"
-      echo "  Mandatory phases: IMPLEMENT, VALIDATE, DELIVER (skipping tests is never OK)"
-      echo "  Skip: RESEARCH, PLAN, REVIEW"
-      ;;
-    STANDARD)
-      echo "CEREMONY — Tier: STANDARD"
-      echo "  Mandatory phases: Plan, Implement, Validate, Review, Deliver"
-      echo "  1 checkpoint minimum"
-      echo "  Review: MANDATORY — independent review catches false completions self-review misses (delivery warns when missing)"
-      ;;
-    COMPREHENSIVE)
-      echo "CEREMONY — Tier: COMPREHENSIVE"
-      echo "  Mandatory phases: Research, Plan, Implement, Validate, Review, Deliver"
-      echo "  Multiple checkpoints, shard self-review required, adversarial audit recommended"
-      ;;
-    *)
-      # No complexity_class or unknown — emit no tier guidance
-      ;;
-  esac
+  # Sanitize before echoing into the AI context: the path originates in
+  # pins.json, which is machine-written but still untrusted input to this hook.
+  _own_run_rel=$(_sanitize_context_text "${_own_run#"$_project_root"/}")
+  echo "CEREMONY: Run pinned to this session: $_own_run_rel"
+  echo "  Call trw_session_start() for your resolved ceremony tier, then trw_status() for phase."
 }
 
 # --- Untrusted-text sanitizer for AI-context injection defense ---
@@ -110,8 +103,56 @@ _framework_ref_enabled() {
   [ "${TRW_FRAMEWORK_MD_ENABLED:-true}" != "false" ]
 }
 
+# _protocol_in_instruction_file: true when the client instruction file already
+# carries the behavioral protocol.
+#
+# trw_instructions_sync renders the SAME protocol into both the client
+# instruction file and .trw/context/behavioral_protocol.md. Clients keep their
+# instruction file in context across resume, compact, and clear -- it lives in
+# the system prompt, not the conversation -- so emitting the protocol again on
+# those events costs ~1.3k tokens for zero new information. Emit it only when
+# no instruction file carries it (light clients, bare harnesses, a project that
+# has never run instructions_sync).
+#
+# Matches the TRW managed-block marker on a WHOLE LINE, fixed-string. Not a
+# token scan: `.claude/rules/trw-mcp-python.md` §Marker/Sentinel Matching
+# requires line-anchored whole-line matching for exactly this class of check,
+# after a substring search once hit an inline prose mention and destroyed 705
+# ROADMAP lines. A token scan for `trw_session_start` would also fire on any
+# project whose instruction file merely MENTIONS the tool -- a migration note,
+# a changelog entry, a README paragraph -- and then suppress the protocol while
+# pointing at a section that does not exist. The marker is written only by
+# trw_instructions_sync, which is the same code path that renders the protocol,
+# so its presence is proof rather than correlation.
+#
+# Source of truth for the marker: state/claude_md/_parser.py::TRW_MARKER_START.
+# Source of truth for the per-profile filename mapping:
+# client_profiles/catalog.py::write_targets.instruction_path -- the list below
+# is its root-file subset. A name missing here degrades to emitting the
+# protocol, which is the safe direction.
+_TRW_INSTRUCTION_MARKER='<!-- trw:start -->'
+
+_protocol_in_instruction_file() {
+  for _pif_f in \
+    "$_project_root/CLAUDE.md" \
+    "$_project_root/AGENTS.md" \
+    "$_project_root/ANTIGRAVITY.md" \
+    "$_project_root/.claude/INSTRUCTIONS.md" \
+    "$_project_root/.codex/INSTRUCTIONS.md" \
+    "$_project_root/.github/copilot-instructions.md"; do
+    if [ -f "$_pif_f" ] && grep -qxF "$_TRW_INSTRUCTION_MARKER" "$_pif_f" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # --- Value-oriented protocol summary ---
 _emit_protocol() {
+  if _protocol_in_instruction_file; then
+    echo "PROTOCOL: unchanged and still in context — see the TRW protocol section of your client instruction file."
+    return 0
+  fi
   echo "## TRW Behavioral Protocol"
   echo ""
   _protocol_file="$_project_root/.trw/context/behavioral_protocol.md"
@@ -136,7 +177,7 @@ case "$_source" in
     # FR01: Fresh startup — protocol table lives in CLAUDE.md (single source of truth).
     # _emit_protocol is NOT called here to avoid duplication (PRD-CORE-120-FR01).
     # It IS called for compact/clear/resume where CLAUDE.md context may be lost.
-    _emit_tier_guidance
+    _emit_run_state
     echo ""
     if _framework_ref_enabled; then
       echo "FRAMEWORK: Read .trw/frameworks/FRAMEWORK-CORE.md before starting work."
@@ -144,11 +185,11 @@ case "$_source" in
       echo "  exit criteria for each phase, optional coordination patterns, quality gates with rubric scoring,"
       echo "  phase reversion rules, and the rationalization watchlist. Your tools implement this methodology —"
       echo "  without reading it, you will pass tool checks while missing the process that prevents rework."
-      echo "  The framework is ~500 lines. Read it once at session start; re-read relevant sections at phase transitions."
+      echo "  It is ~385 lines / ~8k tokens. Read it once at session start; re-read only the relevant sections at phase transitions."
       echo ""
     fi
     echo "YOUR ROLE: Verify evidence, preserve knowledge, and coordinate only when the harness and task justify it."
-    echo "For non-trivial tasks, use helpers only when available and file ownership is clear; otherwise run the same protocol sequentially."
+    echo "Delegate only for genuinely independent, parallelizable work with disjoint file ownership — not for what you could finish in a few tool calls, and not to verify your own work."
     echo ""
     echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK.md, completion artifacts."
     echo ""
@@ -159,7 +200,7 @@ case "$_source" in
     # FR02: Resume — brief, goal-oriented
     _emit_protocol
     echo ""
-    _emit_tier_guidance
+    _emit_run_state
     echo ""
     echo "SESSION RESUMED — your run state and learnings are preserved."
     if _framework_ref_enabled; then
@@ -173,11 +214,12 @@ case "$_source" in
     echo "CONTEXT COMPACTED — your conversation was compressed but your implementation progress is safe."
     echo ""
     if _framework_ref_enabled; then
-      echo "FRAMEWORK RE-READ REQUIRED: Read .trw/frameworks/FRAMEWORK-CORE.md now, before resuming work."
-      echo "WHY: Context compaction erased your understanding of the methodology. The framework itself mandates"
-      echo "  re-reading after compaction (§ FRAMEWORK ADHERENCE). This costs ~500 tokens but prevents systematic"
-      echo "  errors from working without phase gates, exit criteria, coordination guidance, and quality rubrics."
-      echo "  Agents who skip this produce work that drifts from the methodology and requires rework."
+      echo "FRAMEWORK RELOAD: re-read .trw/frameworks/FRAMEWORK-CORE.md before resuming work."
+      echo "WHAT: per § FRAMEWORK ADHERENCE, reload the EXECUTION MODEL SUMMARY plus the phase/gate sections your"
+      echo "  current phase touches — not the whole document unless the task or a governing instruction requires it."
+      echo "  A full read is ~8k tokens; a targeted reload is a fraction of that and covers the gates that matter."
+      echo "WHY: compaction erased your working memory of the methodology, and work without phase gates, exit"
+      echo "  criteria, and quality rubrics drifts from it and needs rework."
       echo ""
     fi
     _emit_protocol
@@ -205,11 +247,7 @@ case "$_source" in
       fi
     fi
     echo ""
-    if _framework_ref_enabled; then
-      echo "CONTINUE: Read .trw/frameworks/FRAMEWORK-CORE.md first, then call trw_session_start(query='your task domain') to reload learnings and active run state."
-    else
-      echo "CONTINUE: Call trw_session_start(query='your task domain') to reload learnings and active run state."
-    fi
+    echo "CONTINUE: call trw_session_start(query='your task domain') to reload learnings and active run state."
     echo "After session_start, call trw_status() if you need the current run snapshot."
     echo "Your checkpoint has your progress — pick up where you left off rather than re-planning."
     ;;
@@ -226,7 +264,7 @@ case "$_source" in
       echo ""
     fi
     echo "YOUR ROLE: Verify evidence, preserve knowledge, and coordinate only when the harness and task justify it."
-    echo "For non-trivial tasks, use helpers only when available and file ownership is clear; otherwise run the same protocol sequentially."
+    echo "Delegate only for genuinely independent, parallelizable work with disjoint file ownership — not for what you could finish in a few tool calls, and not to verify your own work."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;

@@ -46,10 +46,11 @@ def test_invalid_protection_tier_returns_rejection() -> None:
     [
         ({"type": "unknown"}, "invalid_type"),
         ({"confidence": "trusted"}, "invalid_confidence"),
-        ({"protection_tier": "top-secret"}, "invalid_protection_tier"),
+        # protection_tier travels in the `metadata` bag (PRD tool-definition budget).
+        ({"metadata": {"protection_tier": "top-secret"}}, "invalid_protection_tier"),
     ],
 )
-def test_trw_learn_tool_returns_structured_rejection_not_exception(bad_kwargs: dict[str, str], reason: str) -> None:
+def test_trw_learn_tool_returns_structured_rejection_not_exception(bad_kwargs: dict[str, object], reason: str) -> None:
     """The MCP tool returns a stable LearnResultDict, never a raw ValueError."""
     from tests.conftest import extract_tool_fn, make_test_server
 

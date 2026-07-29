@@ -215,8 +215,16 @@ class TestHandleAutoMode:
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
         assert result["surfaced_findings_count"] == 1
 
-    def test_finding_missing_confidence_defaults_to_zero(self, run_dir: Path) -> None:
-        """Finding without confidence key defaults to 0 → filtered at threshold > 0."""
+    def test_finding_missing_confidence_is_unscored_not_zero(self, run_dir: Path) -> None:
+        """A finding with no confidence key surfaces and drives the verdict.
+
+        This previously asserted the opposite ("defaults to 0 -> filtered"),
+        which made a *critical* finding with no confidence field come back as
+        surfaced=0 / verdict=pass. Omitting confidence means the caller stated no
+        score, not that they have none; ReviewFinding's own 1.0 default applies.
+        Explicitly LOW confidence is still filtered — see
+        ``test_all_below_threshold_verdict_is_pass``.
+        """
         config = _make_config(confidence_threshold=80)
         reviewer_findings = [
             {
@@ -228,4 +236,5 @@ class TestHandleAutoMode:
         ]
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
             result = handle_auto_mode(config, run_dir, "review-auto", "2026-03-01T00:00:00Z", reviewer_findings)
-        assert result["surfaced_findings_count"] == 0
+        assert result["surfaced_findings_count"] == 1
+        assert result["verdict"] == "block"

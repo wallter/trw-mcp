@@ -25,7 +25,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
-from trw_mcp.tools._review_validation import normalize_review_finding
+from trw_mcp.tools._review_validation import normalize_review_findings
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -77,7 +77,9 @@ def handle_manual_mode(
     from trw_mcp.state.persistence import FileStateReader
     from trw_mcp.tools._review_provenance import build_reviewer_block, derive_reviewer_source
 
-    validated = validate_manual_findings(raw_findings)
+    accepted, rejections = normalize_review_findings(raw_findings)
+    validated = cast("list[ReviewFindingDict]", accepted)
+    rejected_count = len(raw_findings) - len(validated)
     critical_count, warning_count, info_count = count_by_severity(validated)
     verdict = _helpers._compute_verdict(cast("list[dict[str, str]]", validated))
     # CORE-205 FR02: a completed, fully covered review may honestly have zero
@@ -109,6 +111,13 @@ def handle_manual_mode(
     }
     if not substantive:
         result["non_substantive_reason"] = MANUAL_EMPTY_REVIEW_REASON
+    if rejected_count:
+        # The caller's own input was dropped — say so IN the response. A log line
+        # is invisible to the agent that supplied the findings, and silence here
+        # is what turned a bad accept-list into an empty review nobody noticed.
+        logger.warning("manual_review_findings_rejected", rejected=rejected_count, accepted=len(validated))
+        result["rejected_findings_count"] = rejected_count
+        result["rejected_findings"] = rejections
 
     result["review_yaml"] = _helpers._persist_review_artifact(
         resolved_run,
@@ -120,6 +129,8 @@ def handle_manual_mode(
             "warning_count": warning_count,
             "info_count": info_count,
             "findings": validated,
+            "rejected_findings_count": rejected_count,
+            "rejected_findings": rejections,
             "substantive": substantive,
             "non_substantive_reason": "" if substantive else MANUAL_EMPTY_REVIEW_REASON,
             "reviewer": reviewer_block,
@@ -143,17 +154,20 @@ def validate_manual_findings(
 ) -> list[ReviewFindingDict]:
     """Validate and normalize a list of manually-provided findings.
 
-    Runs each finding through ReviewFinding model validation,
-    normalizing severity levels to the canonical set.
+    Runs each finding through ReviewFinding model validation, normalizing
+    severity levels to the canonical set. Accepted findings only — callers that
+    must REPORT what was dropped use ``normalize_review_findings`` directly (see
+    :func:`handle_manual_mode`), which is the same validator with the rejection
+    record attached.
     """
-    validated: list[ReviewFindingDict] = []
-    for index, finding in enumerate(raw_findings):
-        normalized = normalize_review_finding(finding)
-        if normalized is None:
-            logger.warning("manual_review_finding_rejected", index=index, reason="invalid_or_placeholder")
-            continue
-        validated.append(cast("ReviewFindingDict", normalized))
-    return validated
+    accepted, rejections = normalize_review_findings(raw_findings)
+    for rejection in rejections:
+        logger.warning(
+            "manual_review_finding_rejected",
+            index=rejection.get("index"),
+            reason=rejection.get("reason"),
+        )
+    return cast("list[ReviewFindingDict]", accepted)
 
 
 def count_by_severity(
@@ -331,6 +345,10 @@ def handle_reconcile_mode(
 
     all_mismatches: list[dict[str, str]] = []
     all_not_checkable: list[dict[str, str]] = []
+    # A PRD that could not be opened was skipped with only a log line while
+    # prd_count still reported it, so two missing PRDs came back
+    # verdict='clean', prd_count=2 — "reconciled cleanly" for files never read.
+    prds_not_read: list[str] = []
     total_frs = 0
 
     for prd_id in effective_prd_ids:
@@ -339,6 +357,7 @@ def handle_reconcile_mode(
             prd_content = prd_path.read_text(encoding="utf-8")
         except OSError:
             logger.warning("reconcile_prd_not_found", prd_id=prd_id, path=str(prd_path))
+            prds_not_read.append(prd_id)
             continue
         # Count FRs from already-loaded content (avoids double file read)
         fr_section = _extract_section(prd_content, "Functional Requirements")
@@ -350,12 +369,17 @@ def handle_reconcile_mode(
         all_not_checkable.extend(_extract_fr_not_checkable(prd_content, prd_id))
 
     verdict = "drift_detected" if all_mismatches else "clean"
+    prds_read_count = len(effective_prd_ids) - len(prds_not_read)
 
     result: ReconcileReviewResult = {
         "review_id": review_id,
         "verdict": verdict,
         "mismatches": all_mismatches,
         "prd_count": len(effective_prd_ids),
+        # prd_count is what was REQUESTED; this is what was actually opened. The
+        # two differ exactly when a PRD could not be read, and only the second
+        # one bounds what the verdict can honestly speak for.
+        "prds_read_count": prds_read_count,
         "total_frs": total_frs,
         "mismatch_count": len(all_mismatches),
         # Honest labeling: this verdict reflects identifier substring presence
@@ -364,6 +388,13 @@ def handle_reconcile_mode(
         "fr_not_checkable": all_not_checkable,
         "not_checkable_count": len(all_not_checkable),
     }
+    if prds_not_read:
+        result["prds_not_read"] = prds_not_read
+        result["prds_not_read_count"] = len(prds_not_read)
+    if not prds_read_count:
+        # Nothing was opened, so 'clean' means "nothing was reconciled", not
+        # "no drift" — same distinction the no_governing_prd branch already draws.
+        result["reason"] = "no_prd_could_be_read_nothing_reconciled"
 
     # Persist reconciliation artifact and log event
     if resolved_run is not None:
@@ -375,6 +406,8 @@ def handle_reconcile_mode(
             "verdict": verdict,
             "prd_ids": effective_prd_ids,
             "prd_count": len(effective_prd_ids),
+            "prds_read_count": prds_read_count,
+            "prds_not_read": prds_not_read,
             "total_frs": total_frs,
             "mismatch_count": len(all_mismatches),
             "mismatches": all_mismatches,

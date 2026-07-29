@@ -22,10 +22,11 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.clients.llm import LLMClient
-from trw_mcp.models.config import get_config
+from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import LearnResultDict
 from trw_mcp.state._call_context import build_call_context as _build_call_ctx
 from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state.persistence import FileStateWriter
 
 __all__ = [
     "_LEARN_TYPE_ALIASES",
@@ -36,11 +37,33 @@ __all__ = [
     "_coerce_tags",
     "_create_llm_client",
     "_is_solution_summary",
-    "_note_run_path_compat",
     "_read_injected_ids",
+    "_sync_learning_yaml_backup",
     "_validate_learn_enums",
     "_validate_learn_update_fields",
 ]
+
+#: YAML sidecar keys that ``trw_learn_update`` mirrors, in write order. Kept as
+#: an explicit tuple rather than ``dict`` iteration order so a caller-supplied
+#: mapping cannot change which keys are written or in what order.
+_YAML_SYNC_KEYS: tuple[str, ...] = (
+    "status",
+    "detail",
+    "summary",
+    "impact",
+    "assertions",
+    "type",
+    "nudge_line",
+    "expires",
+    "confidence",
+    "task_type",
+    "domain",
+    "phase_affinity",
+    "phase_origin",
+    "protection_tier",
+    "tags",
+    "team_origin",
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -159,19 +182,6 @@ _LEARN_TYPE_ALIASES: dict[str, str] = {
 }
 
 
-def _note_run_path_compat(run_path: str | None) -> None:
-    """Log a ``trw_learn(run_path=...)`` argument accepted for compatibility.
-
-    Feedback sub_5qbmT6WPNoP58rlv item 8: agents reasonably pass ``run_path``
-    after using the run-path-aware checkpoint/deliver tools. Learnings are
-    run-independent, so the value is only ACCEPTED and logged (observable) — it
-    is NOT validated against any run directory and does not change storage,
-    keeping an otherwise-valid learning from failing.
-    """
-    if run_path is not None:
-        logger.debug("learn_run_path_accepted_for_compat", run_path=run_path)
-
-
 def _coerce_learn_type(type: str) -> str:
     """Map an advertised type alias to a valid ``MemoryType`` value.
 
@@ -269,6 +279,48 @@ def _annotate_injected_learnings(
         else:
             fresh.append(entry)
     result["learnings"] = fresh + already
+
+
+def _sync_learning_yaml_backup(
+    trw_dir: Path,
+    config: TRWConfig,
+    writer: FileStateWriter,
+    learning_id: str,
+    updates: dict[str, object | None],
+) -> None:
+    """Mirror an applied ``trw_learn_update`` into the YAML sidecar.
+
+    The SQLite row is the source of truth; the sidecar exists for rollback, so
+    this is best-effort and never raises into the tool. ``None`` means "the
+    caller did not ask me to touch this field" — the same partial-update
+    sentinel the adapter uses — so an unmentioned field is left as-is rather
+    than cleared.
+    """
+    from datetime import datetime, timezone
+
+    from trw_mcp.state.analytics import find_entry_by_id, resync_learning_index
+
+    try:
+        entries_dir = trw_dir / config.learnings_dir / config.entries_dir
+        found = find_entry_by_id(entries_dir, learning_id)
+        if found is None:
+            return
+        entry_path, data = found
+        today_iso = datetime.now(tz=timezone.utc).date().isoformat()
+        for key in _YAML_SYNC_KEYS:
+            value = updates.get(key)
+            if value is None:
+                continue
+            data[key] = value
+            # A retired learning also records WHEN it was retired, so a later
+            # audit can tell a stale entry from a deliberately closed one.
+            if key == "status" and value in ("resolved", "obsolete"):
+                data["resolved_at"] = today_iso
+        data["updated"] = today_iso
+        writer.write_yaml(entry_path, data)
+        resync_learning_index(trw_dir)
+    except (OSError, ValueError, TypeError):
+        logger.debug("yaml_backup_update_failed", learning_id=learning_id, exc_info=True)
 
 
 def _create_llm_client() -> LLMClient:

@@ -35,14 +35,21 @@ def _emit_nudge_surface_event(
     client_id: str,
     learning_id: str,
     target_file: str | None,
-    pending_step: str,
+    pending_step: str | None,
 ) -> None:
     """Log a nudge surface event with live timing (#4) + A/B arm/messenger (#6).
 
-    Shared by the learning-injection and contextual messenger branches of
-    ``append_ceremony_status`` (previously duplicated). Stamps the live
+    Shared by every emitting branch of ``append_ceremony_status`` through
+    ``_ceremony_nudge_emission.record_emitted_nudge`` (ledger UF-024 — the
+    workflow/ceremony branches previously logged nothing). Stamps the live
     timing-validity (``is_timely`` / ``step_distance_from_call``) and the A/B
     arm + messenger so population comparison can slice real traffic.
+
+    ``pending_step=None`` means the nudge targets no ceremony step (a learning
+    or workflow message). Timing validity is undefined there, so the timing
+    fields are OMITTED rather than defaulted: ``compute_nudge_timing`` reports
+    ``is_timely=True`` for any unknown step name, which would be the same class
+    of fabricated label as ledger UF-023.
 
     Fail-open: surface telemetry must never break ceremony-status decoration.
     """
@@ -51,7 +58,10 @@ def _emit_nudge_surface_event(
         from trw_mcp.state.nudge_analysis import compute_nudge_timing
         from trw_mcp.state.surface_tracking import log_surface_event
 
-        is_timely, step_distance = compute_nudge_timing(pending_step, state)
+        is_timely: bool | None = None
+        step_distance: int | None = None
+        if pending_step:
+            is_timely, step_distance = compute_nudge_timing(pending_step, state)
         log_surface_event(
             effective_dir,
             learning_id=learning_id,
@@ -64,7 +74,7 @@ def _emit_nudge_surface_event(
             model_family=cfg.model_family or "generic",
             trw_version=cfg.framework_version,
             session_id=resolve_effective_session_id(effective_dir),
-            nudge_step=pending_step,
+            nudge_step=pending_step or "",
             is_timely=is_timely,
             step_distance_from_call=step_distance,
             nudge_variant=cfg.nudge_variant or "",

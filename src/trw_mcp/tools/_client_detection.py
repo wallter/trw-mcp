@@ -43,7 +43,6 @@ _CLIENT_DEFAULT_TIER: dict[str, str] = {
     "claude-code": "T1",
     "antigravity": "T1",
     "antigravity-cli": "T1",
-    "gemini": "T1",
     "aider": "T1",
     "copilot": "T0",
 }

@@ -32,28 +32,20 @@ def register_trw_profile_explain_tools(server: FastMCP) -> None:
         task_name: str = "",
         ctx: Context | None = None,
     ) -> dict[str, object]:
-        """Explain the resolved profile's per-field layer attribution.
+        """Show which config layer set each field of the resolved profile.
 
-        Use when:
-        - A surprising ceremony/review/build-check gate fires and you need to
-          see WHICH layer contributed the offending value.
-        - Auditing the policy in force for the session (NIST 24h reconstruction).
+        Use when: a ceremony/review/build-check gate fires unexpectedly.
 
-        Resolves the full 6-layer chain (defaults → org → domain → task-type →
-        session → client) and reports, for every surface field, its effective
-        value, the origin layer, and the full override chain.
+        Output: the resolved profile, and per field the layer that set it.
 
-        Input (all optional — inferred when omitted):
-        - domain: override the inferred domain layer (e.g. ``frontend``).
-        - task_type: override the inferred task-type layer (e.g. ``bugfix``).
-        - prd_path: PRD/file path used to infer the domain when not explicit.
-        - task_name: task name used to infer the task-type when not explicit.
-
-        Output: dict with ``fields`` (list of {field, value, origin_layer,
-        override_chain}), ``layers_applied``, ``surface_snapshot_id``,
-        ``session_override_hash``, and ``resolved_profile``. On error: a
-        ``{error: str}`` payload (fail-open, never raises).
+        Args:
+            domain: override the inferred domain, e.g. "frontend".
+            task_type: override the inferred task type, e.g. "bugfix".
+            prd_path: infers domain when domain is unset.
+            task_name: infers task_type when task_type is unset.
         """
+        # Resolves the full 6-layer chain: defaults -> org -> domain ->
+        # task-type -> session -> client.
         try:
             from trw_mcp.models.config import get_config
             from trw_mcp.profile import build_explanation, resolve_session_profile

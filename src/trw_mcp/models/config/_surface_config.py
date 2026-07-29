@@ -32,7 +32,6 @@ class RecallConfig(BaseModel):
 
     enabled: bool = True
     max_results: int = Field(default=25, ge=1)
-    injection_preview_chars: int = Field(default=500, ge=50, le=2000)
     session_start_recall: bool = True
 
 

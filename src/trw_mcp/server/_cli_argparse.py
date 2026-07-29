@@ -290,7 +290,7 @@ def _add_dispatch_subcommand(
         "--client",
         default=None,
         help=(
-            "Target CLI: claude | codex | agy | opencode (gemini is EOL — use agy). "
+            "Target CLI: claude | codex | agy | opencode. "
             "Optional: defaults to dispatch.default_client (or a --role default) "
             "from .trw/config.yaml."
         ),

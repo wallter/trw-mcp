@@ -44,10 +44,12 @@ def test_init_writes_session_profile_and_surfaces_mode(_init_fn, tmp_project: Pa
 
 def test_init_planning_mode_override_is_honored(_init_fn, tmp_project: Path) -> None:  # type: ignore[no-untyped-def]
     """FR13: --planning-mode override forces the written overlay tier."""
+    # planning_mode moved into the collapsed ``advanced`` bag; passing it flat
+    # is now a TypeError, so this call also covers the bag reaching the Scout.
     result = _init_fn(
         task_name="forced-task",
         objective="force comprehensive",
-        planning_mode="TRIANGULATED",
+        advanced={"planning_mode": "TRIANGULATED"},
     )
     assert result["planning_mode"] == "TRIANGULATED"
     assert result["scout_ceremony_tier"] == "COMPREHENSIVE"
@@ -62,7 +64,7 @@ def test_init_overlay_consumed_by_h2_resolver(_init_fn, tmp_project: Path) -> No
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.profile import resolve_session_profile
 
-    result = _init_fn(task_name="e2e-task", objective="x", planning_mode="DIRECT")
+    result = _init_fn(task_name="e2e-task", objective="x", advanced={"planning_mode": "DIRECT"})
     run_dir = Path(result["run_path"])
     config = TRWConfig(trw_dir=str(tmp_project / ".trw"))
     resolved = resolve_session_profile(config, run_dir=run_dir)

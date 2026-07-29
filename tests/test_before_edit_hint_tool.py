@@ -20,6 +20,21 @@ from trw_mcp.tools.before_edit_hint import (
 )
 
 
+def _make_unborn_git_repo(repo_path: Path) -> None:
+    """Init a git repo with ZERO commits, so ``git rev-parse HEAD`` fails.
+
+    This is the cheapest reproducible way to make HEAD unresolvable without
+    removing git from PATH: an unborn HEAD exits 128. Real-world equivalents
+    are a fresh ``git init`` before the first commit, a corrupt ``.git/``, and
+    a machine with no git CLI.
+    """
+    repo_path.mkdir(parents=True, exist_ok=True)
+    (repo_path / "foo.py").write_text("x = 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=repo_path, check=True)
+
+
 def _make_git_repo(repo_path: Path) -> str:
     """Init minimal git repo; return HEAD SHA."""
     repo_path.mkdir(parents=True, exist_ok=True)
@@ -219,6 +234,54 @@ class TestPaidTierGracefulFailures:
         )
         assert r.distill_status == "stale_sha"
 
+    def test_unresolvable_head_is_not_stale_sha(self, tmp_path: Path) -> None:
+        """`git rev-parse HEAD` failing must NOT be reported as ``stale_sha``.
+
+        ``stale_sha`` asserts a sidecar was read and its SHA disagreed with
+        HEAD. When HEAD itself cannot be resolved, nothing was compared — only
+        the action string ever admitted that, while ``distill_status`` (which
+        is what lands in durable telemetry via ``emit_hint_delivered``) claimed
+        a comparison had happened. The substrate's ``no_git_sha`` is the honest
+        status, and four sibling tools already report it.
+        """
+        _make_unborn_git_repo(tmp_path)
+        _write_entitlement(tmp_path / ".trw", "pro")
+        r = compute_before_edit_hint(
+            file_path="foo.py",
+            repo_root=str(tmp_path),
+        )
+        assert r.distill_status == "no_git_sha"
+        assert r.distill_status != "stale_sha"
+
+    def test_unresolvable_head_and_stale_sidecar_are_distinguishable(self, tmp_path: Path) -> None:
+        """Non-vacuity control for :meth:`test_unresolvable_head_is_not_stale_sha`.
+
+        A ``compute_before_edit_hint`` that returned ``no_git_sha``
+        unconditionally would satisfy that test. Both scenarios are exercised
+        here in one test and asserted to differ, so collapsing either onto the
+        other fails.
+        """
+        unborn = tmp_path / "unborn"
+        _make_unborn_git_repo(unborn)
+        _write_entitlement(unborn / ".trw", "pro")
+        unborn_result = compute_before_edit_hint(file_path="foo.py", repo_root=str(unborn))
+
+        stale = tmp_path / "stale"
+        sha = _make_git_repo(stale)
+        cache_dir = stale / ".trw" / "distill" / "map-cache"
+        _write_sidecar(cache_dir, sha, "foo.py")
+        # Rewrite the envelope's internal sha so a REAL comparison disagrees.
+        sidecar_file = cache_dir / f"before-edit-hint-{sha}.json"
+        envelope = json.loads(sidecar_file.read_text())
+        envelope["sha"] = "0" * 40
+        sidecar_file.write_text(json.dumps(envelope))
+        _write_entitlement(stale / ".trw", "pro")
+        stale_result = compute_before_edit_hint(file_path="foo.py", repo_root=str(stale))
+
+        assert unborn_result.distill_status == "no_git_sha"
+        assert stale_result.distill_status == "stale_sha"
+        assert unborn_result.distill_status != stale_result.distill_status
+
     def test_target_not_in_sidecar(self, tmp_path: Path) -> None:
         sha = _make_git_repo(tmp_path)
         cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
@@ -277,13 +340,79 @@ class TestPaidTierGracefulFailures:
 
 
 class TestSelectHintHelper:
-    def test_returns_action_strings(self, tmp_path: Path) -> None:
-        # Direct unit test of helper independent of git/entitlement
-        sidecar = tmp_path / "nope.json"
-        hint, status, action = _select_distill_hint(sidecar, "foo.py", "abc" * 13 + "a")
+    """Direct unit tests of the payload-validation half, independent of git.
+
+    Envelope/SHA/schema resolution now lives in ``_sidecar_substrate`` (see
+    ``test_sidecar_substrate.py``); what remains here is this tool's own
+    contract on an already-loaded payload.
+    """
+
+    def test_non_dict_payload_is_malformed(self) -> None:
+        hint, status, action = _select_distill_hint(["not", "a", "dict"], "foo.py")
         assert hint is None
-        assert status == "sidecar_missing"
+        assert status == "sidecar_malformed"
+        assert action
+
+    def test_other_target_returns_actionable_remediation(self) -> None:
+        hint, status, action = _select_distill_hint({"target_path": "other.py"}, "foo.py")
+        assert hint is None
+        assert status == "target_not_in_sidecar"
         assert "trw-distill self-improve before-edit" in (action or "")
+
+    def test_matching_payload_validates(self) -> None:
+        hint, status, action = _select_distill_hint(
+            {"target_path": "foo.py", "target_exists_in_map": True},
+            "foo.py",
+        )
+        assert status == "hint_available"
+        assert action is None
+        assert hint is not None
+        assert hint.target_path == "foo.py"
+
+
+class TestEligibilityTelemetry:
+    """PRD-CORE-231-FR01: ``hint_delivered`` must not claim undetermined eligibility."""
+
+    @staticmethod
+    def _capture(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, str]]:
+        emitted: list[dict[str, str]] = []
+
+        def _fake(*, tier: str, distill_status: str, file_path: str, client: str | None = None) -> None:
+            emitted.append({"tier": tier, "distill_status": distill_status, "file_path": file_path})
+
+        monkeypatch.setattr(
+            "trw_mcp.channels._distill_telemetry.emit_hint_delivered",
+            _fake,
+        )
+        return emitted
+
+    def test_unresolvable_repo_root_emits_no_eligible_event(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``no_repo_root`` means the entitlement gate never ran.
+
+        ``emit_hint_delivered`` stamps ``eligible: True`` on every record it
+        writes, so emitting one here would durably assert an entitlement check
+        that did not happen.
+        """
+        emitted = self._capture(monkeypatch)
+        monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.resolve_repo_root", lambda _root: None)
+        r = compute_before_edit_hint(file_path="foo.py")
+        assert r.distill_status == "no_repo_root"
+        assert emitted == []
+
+    def test_resolvable_miss_still_emits(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Non-vacuity control: a real MISS must still be recorded.
+
+        Suppressing every emission would pass the test above; the >=90%
+        delivery gate is only meaningful if misses reach telemetry too.
+        """
+        emitted = self._capture(monkeypatch)
+        _make_git_repo(tmp_path)
+        _write_entitlement(tmp_path / ".trw", "pro")
+        r = compute_before_edit_hint(file_path="foo.py", repo_root=str(tmp_path))
+        assert r.distill_status == "sidecar_missing"
+        assert [e["distill_status"] for e in emitted] == ["sidecar_missing"]
 
 
 class TestModelContracts:

@@ -420,9 +420,19 @@ def test_session_start_escalates_to_prominent_warning_when_gate_trips(tmp_path: 
     # Escalated: a structured warning surface, prominently flagged.
     warning = results.get("pipeline_health_warning")
     assert isinstance(warning, dict)
-    assert warning.get("enforce") is True
+    # The escalation must name WHERE the fail-closed check lives, not claim one
+    # here. ``check_pipeline_health`` has exactly two consumers — the session
+    # start step below and its own __main__ behind ``make pipeline-health``,
+    # which is deliberately excluded from ``make check``. No deliver gate reads
+    # pipeline health, so the previous ``enforce: True`` + "fix before delivery"
+    # wording asserted an enforcement point that does not exist (HB-1).
+    assert warning.get("enforced_by") == "make pipeline-health"
+    assert "enforce" not in warning, "must not re-assert an enforcement this surface does not apply"
     assert warning.get("severity") in {"error", "critical", "warning"}
     assert isinstance(warning.get("reasons"), list) and warning["reasons"]
+    advisory = str(warning.get("advisory", ""))
+    assert "before delivery" not in advisory, "no deliver gate reads pipeline health"
+    assert "make pipeline-health" in advisory
 
 
 def test_session_start_silent_when_healthy(tmp_path: Path) -> None:

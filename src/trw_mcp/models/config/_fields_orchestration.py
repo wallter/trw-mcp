@@ -25,19 +25,13 @@ class _OrchestrationFields:
     max_child_depth: int = 2
     checkpoint_secs: int = 600
 
-    # -- Phase time caps --
-
-    phase_cap_research: float = 0.25
-    phase_cap_plan: float = 0.15
-    phase_cap_implement: float = 0.35
-    phase_cap_validate: float = 0.10
-    phase_cap_review: float = 0.10
-    phase_cap_deliver: float = 0.05
+    # The six flat phase_cap_* fields were removed 2026-07-28
+    # (PRD-QUAL-131-FR01). Nothing read them: the live phase-cap values are the
+    # defaults on ``PhaseTimeCaps`` in ``_sub_models.py``, which carries its own
+    # ``research``/``plan``/``implement``/``validate_phase``/``review``/
+    # ``deliver`` fields and never projected from these. Two encodings of the
+    # same six numbers, one of them settable and inert.
 
     # -- Wave adaptation --
 
-    adaptation_enabled: bool = True
-    max_total_waves: int = 8
-    max_adaptations_per_run: int = 5
-    max_shards_added_per_adaptation: int = 3
     adaptation_auto_approve_threshold: int = 5

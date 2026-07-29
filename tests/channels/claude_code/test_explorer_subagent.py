@@ -76,7 +76,6 @@ class TestExplorerAgentContent:
         content = get_explorer_agent_content()
         assert "mcp__trw__trw_before_edit_hint" in content
         assert "mcp__trw__trw_codebase_risk_report" in content
-        assert "mcp__trw__trw_entity_risk_map" in content
         assert "mcp__trw__trw_recall" in content
         assert "Read" in content
         assert "Glob" in content
@@ -98,7 +97,6 @@ class TestExplorerAgentContent:
         """FR39: description contains trigger phrases for delegation."""
         content = get_explorer_agent_content()
         assert "full codebase risk analysis" in content
-        assert "entity risk map" in content
         assert "ordering comparison" in content
 
     def test_description_contains_anti_examples(self) -> None:

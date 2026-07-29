@@ -100,6 +100,52 @@ def test_load_not_a_mapping_raises(tmp_path: Path) -> None:
         load(p)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "format_version: manifest/v1\nchannels: [\n",  # unterminated flow sequence
+        "format_version: manifest/v1\n\tchannels: []\n",  # tab indentation
+        'a: "unterminated\n',  # unterminated quoted scalar
+        "key: *undefined_anchor\n",  # undefined alias
+    ],
+)
+def test_load_malformed_yaml_raises_validation_error(tmp_path: Path, content: str) -> None:
+    """Unparseable YAML must surface as ManifestValidationError, not a raw YAMLError.
+
+    Callers document a never-raises contract and only catch the two Manifest*
+    errors, so a bare ruamel YAMLError would escape to the operator as a
+    traceback (PRD-CORE-231 FR05 review finding F3).
+    """
+    p = tmp_path / "manifest.yaml"
+    _write_yaml(p, content)
+
+    with pytest.raises(ManifestValidationError, match="not valid YAML"):
+        load(p)
+
+
+def test_malformed_manifest_raises_a_typed_error_not_a_bare_yaml_crash(tmp_path: Path) -> None:
+    """The loader's own contract, kept after its drift-gate caller was retired.
+
+    This asserted the same corrupt-YAML input through
+    `_instruction_drift.check_instruction_drift`, whose FR05 never-crashes
+    contract it was proving. PRD-CORE-239 FR01 removed that gate: evaluating
+    its `_is_checkable()` predicate across all six bundled manifests matched
+    exactly two entries, both channels the same PRD deletes, so it would have
+    reported "0 checked" forever afterwards.
+
+    The loader behaviour underneath is still worth pinning — every surviving
+    caller (`bootstrap/_distill_channel_manifest.py`, `cli/channel_doctor.py`)
+    depends on corrupt YAML surfacing as `ManifestValidationError` rather than
+    a raw parser exception, so this now tests that directly instead of through
+    a deleted consumer.
+    """
+    manifest = tmp_path / ".trw" / "channels" / "manifest.yaml"
+    _write_yaml(manifest, "format_version: manifest/v1\nchannels: [\n")
+
+    with pytest.raises(ManifestValidationError):
+        load(manifest)
+
+
 def test_load_invalid_channel_field_raises(tmp_path: Path) -> None:
     """extra='forbid' on ChannelEntry should cause ManifestValidationError."""
     yaml_str = """\
@@ -209,7 +255,14 @@ channels:
     assert manifest.channels[0].tier_default == "T3"
 
 
-def test_content_types_alias_normalized(tmp_path: Path) -> None:
+def test_content_types_is_dropped_not_renamed(tmp_path: Path) -> None:
+    """A retired key must still LOAD, and must no longer be renamed.
+
+    Same shape as the tier-override case: `distill_record_types` and its
+    `content_types` / `record_types` aliases were set per channel with
+    purpose-built values and read by nothing, so PRD-CORE-239 removed the field.
+    An old manifest that still carries the legacy key must keep loading.
+    """
     yaml_str = """\
 format_version: "manifest/v1"
 channels:
@@ -224,7 +277,8 @@ channels:
     p = tmp_path / "manifest.yaml"
     _write_yaml(p, yaml_str)
     manifest = load(p)
-    assert manifest.channels[0].distill_record_types == ["hotspot", "edge_case"]
+    assert manifest.channels[0].id == "ch1"
+    assert not hasattr(manifest.channels[0], "distill_record_types")
 
 
 def test_stale_action_cleanup_trigger_alias_normalized(tmp_path: Path) -> None:
@@ -246,7 +300,19 @@ channels:
     assert cleanup.action == "TIER_DOWN"
 
 
-def test_tier_override_key_alias_normalized(tmp_path: Path) -> None:
+def test_tier_override_key_is_dropped_not_renamed(tmp_path: Path) -> None:
+    """A retired key must still LOAD, and must no longer be renamed.
+
+    This asserted the legacy `tier_override_key` was renamed onto
+    `operator_tier_override_key`. PRD-CORE-239 removed that field from
+    `ChannelEntry` — it was authored per channel with real variation, documented
+    in CHANNEL-ARCHITECTURE.md as an operator-facing override, and read by no
+    consumer — so the rename now targets nothing and, under `extra="forbid"`,
+    would raise on a manifest a previous version wrote.
+
+    The property worth keeping is backward compatibility: the key is dropped and
+    the entry still loads.
+    """
     yaml_str = """\
 format_version: "manifest/v1"
 channels:
@@ -259,7 +325,8 @@ channels:
     p = tmp_path / "manifest.yaml"
     _write_yaml(p, yaml_str)
     manifest = load(p)
-    assert manifest.channels[0].operator_tier_override_key == "MY_TIER_KEY"
+    assert manifest.channels[0].id == "ch1"
+    assert not hasattr(manifest.channels[0], "operator_tier_override_key")
 
 
 # ---------------------------------------------------------------------------

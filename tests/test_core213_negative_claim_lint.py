@@ -45,7 +45,7 @@ def test_agent_files_carry_rule(agent_file: str) -> None:
     assert "trw_code_search" in text
     assert "grep" in text
     frontmatter = yaml.safe_load(text.split("---", 2)[1])
-    granted_tools = frontmatter.get("tools", frontmatter.get("allowedTools", []))
+    granted_tools = frontmatter.get("tools", [])
     assert "mcp__trw__trw_code_search" in granted_tools
 
 

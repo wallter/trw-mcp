@@ -314,12 +314,89 @@ class MCPSecurityConfig(BaseModel):
     quarantine: MCPSecurityQuarantineConfig = Field(default_factory=MCPSecurityQuarantineConfig)
 
 
+class IntentContractConfig(BaseModel):
+    """PRD-SEC-013 NFR04: typed knobs for the intent-contract control points.
+
+    ``override_ledger_path`` is deliberately ABSENT (R13): the override ledger
+    and its checkpoint live at hardcoded canonical paths so no config layer can
+    substitute a parallel ledger.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Advisory switch, NOT a master switch: since 8221e9e59e the control "
+            "points resolve enrollment before consulting it, so it governs only "
+            "the never-enrolled state — which is already a structural no-op "
+            "(NFR01 rows 1-2). Setting it false does NOT disarm an ENROLLED "
+            "project; a working-tree edit here would otherwise have been a "
+            "one-line total disarm that C9 never sees. The documented off switch "
+            "for an enrolled project is un-enrollment (an auditable, committed "
+            "act) or an operator break-glass token (which ledgers)."
+        ),
+    )
+    contract_path: str = Field(
+        default=".trw/contracts/must-not-happen.yaml",
+        description="Repo-relative locator of the must_not_happen contract file (C9-protected).",
+    )
+    telemetry_path: str = Field(
+        default=".trw/context/intent-hook-telemetry.json",
+        description="Repo-relative path of the FR06 hook-firing telemetry file (operational data).",
+    )
+    falsifier_timeout_seconds: float = Field(
+        default=3.0,
+        gt=0.0,
+        le=5.0,
+        description="Per-falsifier subprocess timeout; strictly below the FR07 hook budget.",
+    )
+    pre_write_hook_budget_seconds: float = Field(
+        default=1.0,
+        gt=0.0,
+        le=2.0,
+        description="FR05 pre-write hook total wall-clock budget (metadata-only, no falsifier).",
+    )
+    post_edit_hook_budget_seconds: float = Field(
+        default=5.0,
+        gt=0.0,
+        le=5.0,
+        description="FR07 post-edit hook total wall-clock budget (includes falsifier execution).",
+    )
+    false_block_window_size: int = Field(
+        default=30,
+        ge=1,
+        description="FR06 rolling window size over BLOCK-CLASS outcomes only (never allow-outcomes).",
+    )
+    false_block_rate_max: float = Field(
+        default=0.05,
+        gt=0.0,
+        le=1.0,
+        description="Track T gate threshold for the blocks-only false-block rate.",
+    )
+    falsifier_allowed_commands: tuple[str, ...] = Field(
+        default=("pytest",),
+        description="Allowlist of argv[0] values a structured falsifier ref may execute (never a shell string).",
+    )
+    retro_compensator_window_commits: int = Field(
+        default=500,
+        ge=1,
+        description="FR08 retro-compensator history window, in commits.",
+    )
+    break_glass_token_ttl_max_seconds: int = Field(
+        default=3600,
+        ge=1,
+        description="Maximum TTL an operator may mint into a break-glass token (FR07/R3).",
+    )
+
+
 class SecurityConfig(BaseModel):
     """Top-level security configuration."""
 
     model_config = ConfigDict(frozen=True)
 
     mcp: MCPSecurityConfig = Field(default_factory=MCPSecurityConfig)
+    intent: IntentContractConfig = Field(default_factory=IntentContractConfig)
 
 
 class PhaseTimeCaps(BaseModel):

@@ -307,6 +307,17 @@ def check_delivery_gates(
     """
     result: DeliveryGatesDict = {}
 
+    # PRD-SEC-013-FR07: an open intent-contract violation (persisted marker) is a
+    # BLOCK-class gate until dispositioned (fix + falsifier re-pass, or break-glass).
+    # Checked before the no-active-run early return — a violation blocks delivery
+    # regardless of run state. Lazy import keeps the boot path free of this package.
+    if trw_dir is not None:
+        from trw_mcp.security.intent_contract.violations import intent_violation_gate_block
+
+        intent_block = intent_violation_gate_block(trw_dir.parent)
+        if intent_block:
+            result["intent_violation_block"] = intent_block
+
     if run_path is None:
         build_warning = _check_no_active_run_build_gate(trw_dir, reader, session_id=session_id)
         if build_warning:

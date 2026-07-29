@@ -67,14 +67,38 @@ class CorrelationEvent(BaseModel):
 
 
 class CorrelationResult(BaseModel):
+    """A correlation rate, or an explicit statement that none was measurable.
+
+    ``outcome_unmeasured`` exists because a rate of ``0.0`` and "we have no way
+    to know" are different claims, and this model could previously only make the
+    first one. Nothing in the codebase has ever emitted any member of
+    ``OUTCOME_EVENT_TYPES`` — a repo-wide grep for ``edit_correlated``,
+    ``subagent_outcome`` and ``snapshot_written`` finds them only in the
+    ``_telemetry.py`` vocabulary that declares them and the set here that
+    consumes them. So every call to ``correlate()`` in every project since this
+    module was written has reported ``raw_rate=0.0``: a fabricated measurement,
+    surfaced through ``trw_channel_stats`` and ``channel-doctor stats`` as
+    "0.0%" — which reads as *we measured, and the answer is none*.
+
+    This is the local idiom, not a new invention. ``_ttl.py::CheckResult``
+    carries ``ttl_unknown`` alongside ``is_stale`` for the same reason, and
+    ``_throttle.py::ThrottleVerdict`` has ``INSUFFICIENT_DATA`` as a verdict
+    distinct from ``HOLD``. This cluster had the pattern in two of three places;
+    the third is where the fabricated zero lived.
+
+    ``raw_rate``/``adj_rate`` are therefore ``None`` when unmeasured, so a
+    consumer cannot read a number that was never computed.
+    """
+
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     channel_id: str
     client: str
     total_pushes: int
     correlated: int
-    raw_rate: float
-    adj_rate: float
+    raw_rate: float | None
+    adj_rate: float | None
+    outcome_unmeasured: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -179,15 +203,31 @@ def correlate(
             continue
         parsed_outcomes.append((oc.get("session_id"), oc.get("file_path"), t))
 
+    # Sessions in which outcome instrumentation demonstrably ran. Measurability
+    # is decided per (channel, client) against THIS, not against the log as a
+    # whole: a single outcome event anywhere would otherwise mark every other
+    # channel "measured" and hand it back the fabricated 0.0 this function
+    # exists to suppress — a mixed log is enough to demote an unrelated
+    # channel's tier.
+    #
+    # session_id is the right grain because outcome emission is session-scoped
+    # instrumentation. If session S recorded any outcome, then a push in S that
+    # did not correlate is a genuine zero; if S recorded none, we cannot tell
+    # "nothing happened" from "nothing was watching".
+    observed_sessions: set[str | None] = {oc_session for oc_session, _, _ in parsed_outcomes}
+
     # Aggregate per (channel_id, client)
     totals: dict[tuple[str, str], int] = {}
     correlated: dict[tuple[str, str], int] = {}
+    measurable: set[tuple[str, str]] = set()
 
     for push in pushes:
         channel_id = push.get("channel_id", "")
         client = push.get("client", "")
         key = (channel_id, client)
         totals[key] = totals.get(key, 0) + 1
+        if push.get("session_id") in observed_sessions:
+            measurable.add(key)
 
         push_ts = _ts_to_seconds(push.get("ts", ""))
         if push_ts is None:
@@ -211,9 +251,14 @@ def correlate(
     results: list[CorrelationResult] = []
     for key, total in totals.items():
         channel_id, client = key
+        # No joinable outcome for this channel's sessions means the denominator
+        # of the question is missing: we are not observing a zero correlation
+        # rate, we are failing to observe anything. Distinguish it rather than
+        # letting `corr / total` manufacture a 0.0 that reads as a measurement.
+        unmeasured = key not in measurable
         corr = correlated.get(key, 0)
-        raw = corr / total if total > 0 else 0.0
-        adj = adjusted_rate(raw, client)
+        raw = None if unmeasured else (corr / total if total > 0 else 0.0)
+        adj = None if raw is None else adjusted_rate(raw, client)
         results.append(
             CorrelationResult(
                 channel_id=channel_id,
@@ -222,6 +267,7 @@ def correlate(
                 correlated=corr,
                 raw_rate=raw,
                 adj_rate=adj,
+                outcome_unmeasured=unmeasured,
             )
         )
 

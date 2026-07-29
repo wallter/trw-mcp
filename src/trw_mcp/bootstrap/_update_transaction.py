@@ -32,7 +32,6 @@ _TRANSACTION_DIRS: tuple[str, ...] = (
     ".opencode",
     ".vscode",
     ".github",
-    ".gemini",
     ".antigravitycli",
 )
 _TRANSACTION_FILES: tuple[str, ...] = (
@@ -59,7 +58,6 @@ _TRANSACTION_FILES: tuple[str, ...] = (
     "CLAUDE.md",
     # Root FRAMEWORK.md is a live update target fed by the canon registry.
     "FRAMEWORK.md",
-    "GEMINI.md",
     "opencode.json",
 )
 
@@ -190,9 +188,7 @@ def _restore_transaction_snapshot(target_dir: Path, snapshot_root: Path) -> None
                     if _is_pruned_nested_dir(child):
                         continue
                     _remove_transaction_path(child)
-                shutil.copytree(
-                    src, dest, symlinks=True, dirs_exist_ok=True, ignore=_snapshot_copy_ignore
-                )
+                shutil.copytree(src, dest, symlinks=True, dirs_exist_ok=True, ignore=_snapshot_copy_ignore)
                 continue
             # Snapshot did NOT have this dir — it was newly created by the failed
             # update. Remove the managed dir entirely (rmdir once its managed

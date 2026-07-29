@@ -1,7 +1,7 @@
 """Shared tier-aware response shaping for distill MCP tools.
 
 Maps resolved client tier (T0 / T1 / T2) to the content included in
-trw_before_edit_hint, trw_codebase_risk_report, and trw_entity_risk_map
+trw_before_edit_hint and trw_codebase_risk_report
 tool RESPONSES.
 
 Design contract
@@ -9,7 +9,7 @@ Design contract
 - **T2** (codex, opencode, cursor-ide, cursor-cli): full distill payload —
   importers, inferred_tests, co_change_neighbors, hotspot_warnings, risk_score
   are included without truncation.
-- **T1** (claude-code, antigravity, gemini, aider, default): compressed subset
+- **T1** (claude-code, antigravity, aider, default): compressed subset
   — hotspot_warnings (max 3), importers (max 5), inferred_tests (max 3),
   risk_score; drops doc_references and co_change_neighbors.
 - **T0** (copilot, free tier): presence beacon only — distill_status,
@@ -89,7 +89,7 @@ def _build_t1_enrichment(result: dict[str, object]) -> dict[str, object]:
     """Compressed subset for T1 clients."""
     hint = _extract_distill_hint(result)
     if hint is None:
-        # For codebase_risk_report and entity_risk_map: pull aggregate fields.
+        # For codebase_risk_report: pull aggregate fields.
         risk_score: float | None = _safe_float(result, "risk_score")
         return {
             "tier_applied": "T1",

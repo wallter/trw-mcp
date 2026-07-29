@@ -370,11 +370,11 @@ def test_dispatch_resolution_error_returns_error(monkeypatch: pytest.MonkeyPatch
     assert out["exit_code"] == 2
 
 
-def test_dispatch_gemini_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dispatch_unknown_client_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("trw_mcp.tools.dispatch.get_config", lambda: _RootCfg(_Cfg()))
-    out = _tool("trw_dispatch")(prompt="p", client="gemini")
+    out = _tool("trw_dispatch")(prompt="p", client="not-a-real-cli")
     assert "error" in out
-    assert "agy" in str(out["error"])
+    assert "disabled" in str(out["error"])
     assert out["exit_code"] == 2
 
 

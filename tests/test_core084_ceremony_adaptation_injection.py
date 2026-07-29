@@ -126,7 +126,10 @@ class TestAgentsMdLearningInjection:
                 config=config,
                 reader=reader,
                 llm=llm,
-                client="opencode",
+                # cursor-cli, not opencode: PRD-CORE-240-FR04 withdrew opencode's
+                # shared AGENTS.md. This test is about recall failing open, not
+                # about any particular client.
+                client="cursor-cli",
             )
 
         assert result["agents_md_synced"] is True

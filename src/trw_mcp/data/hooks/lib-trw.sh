@@ -45,9 +45,88 @@ get_task_root() {
   printf 'docs'
 }
 
+# trw_pin_key: Print THIS session's pin key, or nothing.
+# PRD-FIX-118 FR01/FR02.
+#
+# The key is TRW_SESSION_ID, exported by .trw/runtime/hook-env.sh from the
+# client's own session variable (e.g. CLAUDE_CODE_SESSION_ID) -- the same string
+# the MCP server keys .trw/runtime/pins.json on via resolve_pin_key. This
+# function deliberately knows NOTHING about individual clients: the per-profile
+# mapping lives in exactly one place (client_profiles/session_identity.py) and
+# reaches here through the generated hook-env.sh. A stale hook-env.sh (written
+# before FR01) or a client that publishes no identity therefore yields empty --
+# the honest "identity unknown" state, not a guess.
+#
+# Args: $1=optional fallback key (e.g. the session_id from a hook's stdin
+#       payload), used only when TRW_SESSION_ID is absent.
+# Returns 0 and prints the key when known; 1 otherwise.
+trw_pin_key() {
+  _tpk_key="${TRW_SESSION_ID:-}"
+  [ -n "$_tpk_key" ] || _tpk_key="${1:-}"
+  [ -n "$_tpk_key" ] || return 1
+  printf '%s' "$_tpk_key"
+}
+
+# resolve_owned_run: Print the run directory THIS session owns, or nothing.
+# PRD-FIX-118 FR02 -- the single run-ownership primitive.
+#
+# Ownership means: an entry keyed by this session's own pin key exists in
+# .trw/runtime/pins.json AND points at a real run inside this project. It is
+# NEVER established by recency -- that is precisely the defect this replaces.
+# An unowned session gets empty output and a non-zero status so its caller can
+# emit an explicit unpinned state (FR04) instead of adopting a foreign run.
+#
+# Contract notes:
+#   - Output ends with a trailing slash, matching find_active_run, so callers
+#     can keep using "${run_dir}meta/events.jsonl".
+#   - Read-only. Resolving ownership never pins, creates, or adopts a run
+#     (NFR04): candidate runs stay advisory.
+#   - Containment: a pin whose run_path escapes the project root is rejected,
+#     mirroring the check already proven in post-tool-event.sh.
+#   - Fail-open (NFR01): a missing, unreadable, or malformed pins.json, an
+#     absent jq/python3, or a dangling run_path all resolve to "unowned".
+#
+# Args: $1=optional fallback pin key (see trw_pin_key).
+# Returns 0 and prints the owned run dir; 1 otherwise.
+resolve_owned_run() {
+  _ror_key=$(trw_pin_key "${1:-}") || return 1
+  [ -n "$_ror_key" ] || return 1
+
+  _ror_root="$(get_repo_root 2>/dev/null)" || return 1
+  _ror_root=$(cd "$_ror_root" 2>/dev/null && pwd -P) || return 1
+  _ror_pins="$_ror_root/.trw/runtime/pins.json"
+  [ -f "$_ror_pins" ] || return 1
+
+  _ror_path=""
+  if command -v jq >/dev/null 2>&1; then
+    _ror_path=$(jq -r --arg sid "$_ror_key" '.[$sid].run_path // empty' "$_ror_pins" 2>/dev/null) || _ror_path=""
+  elif command -v python3 >/dev/null 2>&1; then
+    _ror_path=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], {}).get("run_path", ""))' "$_ror_pins" "$_ror_key" 2>/dev/null) || _ror_path=""
+  fi
+  [ -n "$_ror_path" ] || return 1
+  [ -d "$_ror_path" ] || return 1
+  _ror_path=$(cd "$_ror_path" 2>/dev/null && pwd -P) || return 1
+
+  # Containment: reject a pin pointing outside this project's run layouts.
+  _ror_task_root="$(get_task_root)"
+  case "${_ror_path%/}/" in
+    "${_ror_root%/}/.trw/runs/"*) : ;;
+    "${_ror_root%/}/${_ror_task_root%/}/"*/runs/*/) : ;;
+    *) return 1 ;;
+  esac
+
+  [ -f "${_ror_path%/}/meta/run.yaml" ] || return 1
+  printf '%s/' "${_ror_path%/}"
+}
+
 # find_active_run: Locate the most recently created run directory.
 # Prints the path to the run directory, or empty string if none found.
 # Returns 0 if found, 1 if not.
+#
+# PRD-FIX-118 FR03: RECENCY FALLBACK ONLY. Newest-wins is correct only when this
+# session's identity is unknowable (no pin key at all) -- with N instances live it
+# otherwise hands the caller another session's run. New call sites MUST try
+# resolve_owned_run first and reach this only when trw_pin_key returns empty.
 find_active_run() {
   _task_root="${1:-$(get_task_root)}"
   _project_root="$(get_repo_root 2>/dev/null)" || return 1
@@ -194,6 +273,154 @@ has_recent_deliver() {
   fi
 
   return 1
+}
+
+# has_recent_session_deliver: True when the session-scoped log records a recent
+# deliver. An UNPINNED trw_deliver has no run events.jsonl to receive its
+# completion marker, so it lands ONLY in .trw/context/session-events.jsonl. That
+# signal is session-scoped and must be trusted regardless of which run
+# find_active_run attributed to this session. The mtime recency bound stops an
+# old, persisted marker in the append-only log from clearing every future
+# session's nudge.
+# Args: $1=max_age_minutes (default 240).
+# Returns 0 if a recent session-scoped deliver exists, 1 otherwise.
+has_recent_session_deliver() {
+  _hrsd_max_age="${1:-240}"
+  _hrsd_root="$(get_repo_root 2>/dev/null)" || return 1
+  _hrsd_events="$_hrsd_root/.trw/context/session-events.jsonl"
+  [ -f "$_hrsd_events" ] || return 1
+  find "$_hrsd_events" -mmin "-$_hrsd_max_age" 2>/dev/null | grep -q . || return 1
+  has_event "$_hrsd_events" "trw_deliver_complete"
+}
+
+# trw_stop_deliver_window_min: Recency window, in minutes, for the session-scoped
+# tool-invocation deliver predicate below (PRD-FIX-117 FR01).
+#
+# The default is 240 — deliberately the SAME constant has_recent_deliver and
+# has_recent_session_deliver already use — so the unpinned path inherits exactly
+# the tolerance the pinned path has today rather than a newly invented, laxer one
+# (PRD-FIX-117 OQ-01).
+#
+# Override precedence (first non-empty wins):
+#   1. $TRW_STOP_DELIVER_WINDOW_MIN                      (env, per session)
+#   2. stop_deliver_window_minutes: in .trw/config.yaml  (project)
+#   3. 240                                               (default)
+# A value of 0 disables the FR01 predicate entirely — the documented rollback
+# knob: the reminder then fires exactly as it does today. A non-numeric value is
+# ignored in favour of the default rather than silently disabling the gate.
+trw_stop_deliver_window_min() {
+  _tsdw_val="${TRW_STOP_DELIVER_WINDOW_MIN:-}"
+  if [ -z "$_tsdw_val" ]; then
+    _tsdw_cfg="$(get_repo_root 2>/dev/null)/.trw/config.yaml"
+    if [ -f "$_tsdw_cfg" ]; then
+      _tsdw_val=$(grep '^stop_deliver_window_minutes:' "$_tsdw_cfg" 2>/dev/null | head -1 \
+        | sed 's/^stop_deliver_window_minutes:[[:space:]]*//' | tr -d "'\"" | tr -d '[:space:]')
+    fi
+  fi
+  case "$_tsdw_val" in
+    '' | *[!0-9]*) printf '240' ;;
+    *) printf '%s' "$_tsdw_val" ;;
+  esac
+}
+
+# has_recent_session_tool_deliver: True when .trw/context/session-events.jsonl
+# records a SUCCESSFUL trw_deliver TOOL INVOCATION whose own row timestamp falls
+# inside the recency window. PRD-FIX-117 FR01.
+#
+# Why this exists. The telemetry fallback path (the one taken precisely when no
+# run directory resolves) writes an unpinned delivery as
+#   {"event":"tool_invocation","tool_name":"trw_deliver","success":true,...}
+# and NEVER as {"event":"trw_deliver_complete",...}. has_event matches the
+# "event" field only, so has_recent_session_deliver above is structurally blind
+# to unpinned deliveries — not merely unlucky. Measured on the live log
+# 2026-07-24: 208 rows, 186 tool_invocation, 22 of them trw_deliver, and the
+# trw_deliver_complete type effectively absent from the unpinned write path.
+#
+# Recency is evaluated on the ROW's own ts, not on the file's mtime, because
+# session-events.jsonl is appended by every tool call: its mtime is always fresh,
+# so a file-level window would let one ancient deliver row suppress the reminder
+# for every future session. ISO-8601 UTC timestamps compare correctly as plain
+# strings, so no per-row date parsing is needed.
+#
+# Cost (NFR03): a bounded tail of the log, never a full scan.
+#   $TRW_SESSION_EVENT_TAIL_LINES (default 500).
+#
+# Fail-open (NFR01): an absent/unreadable log, an unusable date(1), a malformed
+# row, or a non-numeric window all yield 1 ("no delivery observed") — i.e. TODAY's
+# behaviour, the reminder still fires. A suppressed true positive is worse than a
+# surviving false one.
+#
+# Args: $1=max_age_minutes (default: trw_stop_deliver_window_min).
+# Returns 0 if a recent successful trw_deliver invocation exists, 1 otherwise.
+has_recent_session_tool_deliver() {
+  _hrstd_max_age="${1:-$(trw_stop_deliver_window_min)}"
+  case "$_hrstd_max_age" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ "$_hrstd_max_age" -gt 0 ] 2>/dev/null || return 1
+
+  _hrstd_root="$(get_repo_root 2>/dev/null)" || return 1
+  _hrstd_events="$_hrstd_root/.trw/context/session-events.jsonl"
+  [ -f "$_hrstd_events" ] || return 1
+  [ -r "$_hrstd_events" ] || return 1
+
+  # Cutoff as a lexicographically comparable UTC ISO-8601 prefix. GNU date first,
+  # then BSD date; if neither works we cannot bound recency, so fail open.
+  _hrstd_cut=$(date -u -d "$_hrstd_max_age minutes ago" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null) || _hrstd_cut=""
+  if [ -z "$_hrstd_cut" ]; then
+    _hrstd_cut=$(date -u -v-"${_hrstd_max_age}"M '+%Y-%m-%dT%H:%M:%S' 2>/dev/null) || _hrstd_cut=""
+  fi
+  [ -n "$_hrstd_cut" ] || return 1
+
+  _hrstd_tail="${TRW_SESSION_EVENT_TAIL_LINES:-500}"
+  case "$_hrstd_tail" in
+    '' | *[!0-9]* | 0) _hrstd_tail=500 ;;
+  esac
+
+  # Preferred path: jq parses each row exactly (field order, escaping, nesting).
+  # fromjson? drops malformed lines instead of aborting the scan.
+  if command -v jq >/dev/null 2>&1; then
+    tail -n "$_hrstd_tail" "$_hrstd_events" 2>/dev/null | jq -e -R --arg cut "$_hrstd_cut" '
+        (fromjson? // empty)
+        | select(.event == "tool_invocation" and .tool_name == "trw_deliver" and .success == true)
+        | select(((.ts // "") | tostring)[0:19] >= $cut)
+      ' >/dev/null 2>&1 && return 0
+    return 1
+  fi
+
+  # Fallback path (NFR02): no new runtime dependency. Same verdict, text match.
+  tail -n "$_hrstd_tail" "$_hrstd_events" 2>/dev/null | awk -v cut="$_hrstd_cut" '
+    /"event"[[:space:]]*:[[:space:]]*"tool_invocation"/ &&
+    /"tool_name"[[:space:]]*:[[:space:]]*"trw_deliver"/ &&
+    /"success"[[:space:]]*:[[:space:]]*true/ {
+      if (match($0, /"ts"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
+        ts = substr($0, RSTART, RLENGTH)
+        sub(/^"ts"[[:space:]]*:[[:space:]]*"/, "", ts)
+        sub(/"$/, "", ts)
+        if (substr(ts, 1, 19) >= cut) { found = 1; exit }
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+# pin_run_path_for: Print the run_path pinned to a given session_id, or nothing.
+# Reads .trw/runtime/pins.json (a session_id -> {run_path,...} map written by the
+# MCP pin-isolation layer) so the Stop hook can attribute enforcement to THIS
+# session's own run instead of a parallel instance's newest run. Uses jq when
+# available; without jq it returns non-zero so the caller falls back to legacy
+# behavior rather than guessing from a fragile multi-line grep.
+# Args: $1=pins_json_path, $2=session_id.
+# Returns 0 and prints the path when resolved; 1 otherwise.
+pin_run_path_for() {
+  _prp_pins="$1"
+  _prp_sid="$2"
+  [ -f "$_prp_pins" ] || return 1
+  [ -n "$_prp_sid" ] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  _prp_val=$(jq -r --arg sid "$_prp_sid" '.[$sid].run_path // empty' "$_prp_pins" 2>/dev/null) || return 1
+  [ -n "$_prp_val" ] || return 1
+  printf '%s' "$_prp_val"
 }
 
 # infer_phase: Determine current execution phase from events.jsonl patterns.

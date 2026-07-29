@@ -35,7 +35,7 @@ class TestSmartMergeMarkerSection:
         assert out == _section("hello") + "\n"
 
     def test_replaces_between_markers_preserving_user_content(self) -> None:
-        existing = "# My GEMINI.md\n\nuser preamble\n\n" + _section("OLD trw body") + "\n\nuser postamble\n"
+        existing = "# My AGENTS.md\n\nuser preamble\n\n" + _section("OLD trw body") + "\n\nuser postamble\n"
         new = _section("NEW trw body")
 
         out = smart_merge_marker_section(existing, new, start_marker=_START, end_marker=_END)

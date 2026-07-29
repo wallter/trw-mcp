@@ -18,8 +18,6 @@ READINESS_OWNERS = (
     DATA / "codex/skills/trw-exec-plan/SKILL.md",
     DATA / "agents/trw-prd-groomer.md",
     DATA / "agents/trw-lead.md",
-    DATA / "copilot/agents/trw-lead.agent.md",
-    DATA / "copilot/plugin/agents/trw-lead.agent.md",
 )
 
 AUDIT_VARIANTS = (
@@ -88,8 +86,13 @@ def test_prd_new_delegates_or_supplies_a_resolvable_readiness_flow() -> None:
 
 
 def test_client_mirrors_preserve_semantics_and_lifecycle_vocabulary() -> None:
-    """Copilot direct/plugin lead mirrors match and Cursor does not invent READY status."""
-    assert _read(READINESS_OWNERS[-2]) == _read(READINESS_OWNERS[-1])
+    """Cursor does not invent a READY status of its own.
+
+    The copilot direct/plugin lead-mirror equality this also asserted is gone
+    with the mirrors: ``data/copilot/agents`` and ``data/copilot/plugin/agents``
+    were shipped bytes no installer read — ``generate_copilot_agents`` writes
+    from the inline ``_COPILOT_AGENT_TEMPLATES`` dict.
+    """
     cursor = _read(CURSOR_COMMAND)
     assert "Sets status to READY" not in cursor
     assert "lifecycle status" in cursor

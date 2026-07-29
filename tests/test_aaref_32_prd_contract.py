@@ -526,12 +526,24 @@ def test_completeness_warning_uses_zero_to_one_completeness_scale(tmp_path: Path
 def test_deployed_prd_templates_are_byte_identical() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     authoring = repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "prd_template.md"
+    # Every live mirror of the authoring template. The vendored
+    # `trw-eval/trw-mcp-local/` mirror was dropped because that whole tree was
+    # deliberately deleted in `a77650f238` ("delete stale vendored
+    # trw-mcp-local (342 files, trw-mcp 0.39.2)") — a stale reference, not a
+    # missing artifact. Deliberately NOT filtered with `.exists()`: a deleted
+    # mirror must fail loudly, not silently pass.
     mirrors = [
         repo_root / "docs" / "requirements-aare-f" / "prds" / "TEMPLATE.md",
-        repo_root / "trw-eval" / "trw-mcp-local" / "src" / "trw_mcp" / "data" / "prd_template.md",
     ]
+    assert mirrors, "byte-identity guard needs at least one mirror to compare"
     expected = authoring.read_bytes()
-    assert b"AARE-F Framework v3.2.0" in expected
+    # The research-basis stamp is a template VARIABLE, not a literal. It used to be a
+    # hardcoded v3.2.0, so every PRD generated after AARE-F moved stamped a version that
+    # no longer existed. Asserting the placeholder keeps the guard meaningful across
+    # version bumps; asserting a literal would have to be re-pasted at every bump, which
+    # is how the stale value survived in the first place.
+    assert b"AARE-F Framework {AAREF_VERSION}" in expected
+    assert b"AARE-F Framework v3." not in expected, "a version literal crept back in"
     assert b"verification:" in expected
     assert b"aaref_components:" not in expected
     assert b"conflicts_with:" not in expected

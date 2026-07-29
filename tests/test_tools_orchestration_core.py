@@ -50,7 +50,9 @@ class TestTrwInit:
         assert result["status"] == "initialized"
         assert len(result["task_profile_hash"]) == 16
         assert result["capability_tier"] == "balanced"
-        assert result["model_tier"] == result["capability_tier"]
+        # model_tier was a byte-for-byte duplicate of capability_tier and was
+        # removed from responses 2026-07-27; assert it stays gone.
+        assert "model_tier" not in result
         assert result["recommended_effort"] == "medium"
         assert result["effort_source"] == "task_complexity"
         assert result["effort_adapter_status"] == "advisory"
@@ -119,7 +121,7 @@ class TestTrwStatus:
         assert status["phase_durations"]["active_phase"] == "research"
         assert status["phase_durations"]["phase_seconds"]["research"] >= 0.0
         assert status["capability_tier"] == "balanced"
-        assert status["model_tier"] == status["capability_tier"]
+        assert "model_tier" not in status
         assert status["recommended_effort"] == "medium"
         assert status["effort_source"] == "task_complexity"
         assert status["effort_adapter_status"] == "advisory"

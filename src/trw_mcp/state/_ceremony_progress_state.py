@@ -196,7 +196,16 @@ def mark_review(trw_dir: Path, verdict: str, p0_count: int = 0, *, substantive: 
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
         state.review_called = substantive
-        state.review_verdict = verdict if substantive else "non_substantive"
+        if substantive and not verdict.strip():
+            # The docstring's promise ("without letting empty artifacts satisfy it")
+            # did not cover an empty *verdict*: it was stored verbatim and the status
+            # renderer coerced it to the word "recorded". Persist the absence instead,
+            # so a caller that omitted the verdict is distinguishable from one that
+            # reached a conclusion.
+            logger.warning("review_verdict_empty_on_substantive_call", p0_count=p0_count)
+            state.review_verdict = "verdict_unrecorded"
+        else:
+            state.review_verdict = verdict if substantive else "non_substantive"
         state.review_p0_count = p0_count if substantive else 0
         write_ceremony_state(trw_dir, state)
 

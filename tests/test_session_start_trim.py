@@ -16,6 +16,7 @@ from typing import cast
 
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.tools._session_start_trim import (
+    _COMPACT_DROP_KEYS,
     DEFAULT_TOP_K,
     estimate_payload_tokens,
     find_intentional_marker,
@@ -273,3 +274,53 @@ class TestFoldDeferredBlocks:
     def test_no_deferred_blocks_no_summary_key(self) -> None:
         result = trim_session_start_payload({"learnings": [], "run": {}, "errors": [], "success": True}, verbose=False)
         assert "deferred" not in result
+
+
+class TestCompactDropKeys:
+    """Identity/provenance stamps are dropped at the response boundary."""
+
+    @staticmethod
+    def _stamped_payload() -> SessionStartResultDict:
+        return cast(
+            "SessionStartResultDict",
+            {
+                "learnings": [],
+                "run": {"status": "no_active_run"},
+                "errors": [],
+                "success": True,
+                "surface_snapshot_id": "0" * 64,
+                "profile_snapshot_id": "surf_" + "a" * 64,
+                "session_override_hash": "sess_" + "b" * 64,
+                "profile_layers_applied": ["defaults"],
+                "first_session_emitted": False,
+                "resolved_profile": {"ceremony_tier": "STANDARD"},
+            },
+        )
+
+    def test_compact_drops_identity_stamps(self) -> None:
+        result = trim_session_start_payload(self._stamped_payload(), verbose=False)
+
+        for key in _COMPACT_DROP_KEYS:
+            assert key not in result, f"{key} survived compaction"
+
+    def test_compact_keeps_the_load_bearing_neighbours(self) -> None:
+        """The drop must not take the resolved profile or run state with it."""
+        result = trim_session_start_payload(self._stamped_payload(), verbose=False)
+
+        assert result["resolved_profile"] == {"ceremony_tier": "STANDARD"}
+        assert result["run"] == {"status": "no_active_run"}
+        assert result["success"] is True
+
+    def test_verbose_keeps_identity_stamps(self) -> None:
+        """verbose=True remains the full-audit escape hatch."""
+        result = trim_session_start_payload(self._stamped_payload(), verbose=True)
+
+        for key in _COMPACT_DROP_KEYS:
+            assert key in result, f"{key} was dropped even under verbose=True"
+
+    def test_drop_is_measurable(self) -> None:
+        payload = self._stamped_payload()
+        before = estimate_payload_tokens(payload)
+        after = trim_session_start_payload(payload, verbose=False)["payload_token_estimate"]
+
+        assert after < before, "dropping five stamps did not shrink the payload"

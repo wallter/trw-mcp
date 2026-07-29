@@ -31,7 +31,18 @@ class TestUpdateClaudeMdTrwSection:
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
 
-        with patch.object(Path, "write_text", side_effect=OSError("read-only fs")):
+        # Both write mechanisms must fail for the contract to be exercised: the
+        # carrier writes atomically through FileStateWriter (temp file + rename),
+        # so patching Path.write_text alone leaves the carrier succeeding and
+        # nothing to report. Patching only the inline mechanism would assert on
+        # an implementation detail rather than "a failed write is reported".
+        with (
+            patch.object(Path, "write_text", side_effect=OSError("read-only fs")),
+            patch(
+                "trw_mcp.state.persistence.FileStateWriter.write_text",
+                side_effect=OSError("read-only fs"),
+            ),
+        ):
             _update_claude_md_trw_section(claude_md, result)
 
         assert any("Failed to update" in e for e in result["errors"])
@@ -66,7 +77,15 @@ class TestUpdateClaudeMdTrwSection:
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
 
-        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+        # See test_write_error_with_existing_markers: the carrier's atomic writer
+        # bypasses Path.write_text, so both mechanisms must fail here.
+        with (
+            patch.object(Path, "write_text", side_effect=OSError("disk full")),
+            patch(
+                "trw_mcp.state.persistence.FileStateWriter.write_text",
+                side_effect=OSError("disk full"),
+            ),
+        ):
             _update_claude_md_trw_section(claude_md, result)
 
         assert any("Failed to update" in e for e in result["errors"])

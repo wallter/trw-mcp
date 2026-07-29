@@ -55,7 +55,6 @@ def test_opencode_target_activates_light_mode() -> None:
     config = TRWConfig(target_platforms=["opencode"])
     assert config.effective_ceremony_mode == "light"
     assert config.client_profile.ceremony_mode == "light"
-    assert config.client_profile.agents_md_enabled is True
     assert config.client_profile.include_framework_ref is False
 
 
@@ -85,10 +84,15 @@ def test_effective_ceremony_mode_opencode_flat_field_still_full() -> None:
 
 
 @pytest.mark.unit
-def test_write_targets_agents_md_primary_default_false() -> None:
-    """WriteTargets.agents_md_primary defaults to False."""
-    write_targets = WriteTargets()
-    assert write_targets.agents_md_primary is False
+def test_write_targets_has_no_agents_md_primary_field() -> None:
+    """PRD-QUAL-131-FR06: the unread flag is gone, and instruction_path carries the fact.
+
+    ``agents_md_primary`` had zero production readers, so it enforced nothing.
+    ``instruction_path`` is asserted alongside as the non-vacuity control -- it is
+    the field that actually names cursor-cli's only carrier.
+    """
+    assert "agents_md_primary" not in WriteTargets.model_fields
+    assert "instruction_path" in WriteTargets.model_fields
 
 
 @pytest.mark.unit
@@ -96,13 +100,6 @@ def test_write_targets_cli_config_default_false() -> None:
     """WriteTargets.cli_config defaults to False."""
     write_targets = WriteTargets()
     assert write_targets.cli_config is False
-
-
-@pytest.mark.unit
-def test_write_targets_agents_md_primary_can_be_set_true() -> None:
-    """WriteTargets.agents_md_primary can be set to True."""
-    write_targets = WriteTargets(agents_md=True, agents_md_primary=True, instruction_path="AGENTS.md")
-    assert write_targets.agents_md_primary is True
 
 
 @pytest.mark.unit
@@ -120,7 +117,6 @@ def test_cursor_ide_profile_resolves() -> None:
     assert profile.ceremony_mode == "full"
     assert profile.write_targets.cursor_rules is True
     assert profile.write_targets.agents_md is True
-    assert profile.write_targets.agents_md_primary is False
     assert profile.write_targets.cli_config is False
     assert profile.write_targets.instruction_path == ".cursor/rules/trw-ceremony.mdc"
 
@@ -131,7 +127,6 @@ def test_cursor_cli_profile_resolves() -> None:
     profile = resolve_client_profile("cursor-cli")
     assert profile.client_id == "cursor-cli"
     assert profile.ceremony_mode == "light"
-    assert profile.write_targets.agents_md_primary is True
     assert profile.write_targets.cli_config is True
     assert profile.write_targets.instruction_path == "AGENTS.md"
     assert profile.include_framework_ref is False

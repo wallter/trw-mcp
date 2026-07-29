@@ -91,20 +91,6 @@ _GUIDANCE_EXPECTATIONS = {
         "migration",
         "score-gaming",
     ],
-    _PKG_DATA / "copilot" / "agents" / "trw-lead.agent.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
-    _PKG_DATA / "copilot" / "plugin" / "agents" / "trw-lead.agent.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
     _REPO_ROOT / ".claude" / "skills" / "trw-prd-ready" / "SKILL.md": [
         "implementation-readiness",
         "control points",

@@ -236,12 +236,18 @@ class TestMcpJsonCommand:
 class TestCrashWrapper:
     """Verify the __main__.py crash wrapper captures errors."""
 
-    def test_crash_log_writes_stderr(self) -> None:
+    def test_crash_log_writes_stderr(self, tmp_path: Path) -> None:
         from trw_mcp.server.__main__ import _crash_log
 
+        # Path.cwd is patched for the same reason test_crash_log_writes_file
+        # patches it: _crash_log appends to Path.cwd()/.trw/logs/crash.log.
+        # Without the patch this test wrote a fake "test boom" crash into the
+        # real repo log on every run — 96 of 96 entries across two copies of
+        # crash.log were this test, and the file whose entire purpose is
+        # incident triage had never recorded a real crash.
         err = RuntimeError("test boom")
         stderr = io.StringIO()
-        with patch("sys.stderr", stderr):
+        with patch("sys.stderr", stderr), patch("pathlib.Path.cwd", return_value=tmp_path):
             _crash_log(err)
         output = stderr.getvalue()
         assert "TRW MCP CRASH" in output

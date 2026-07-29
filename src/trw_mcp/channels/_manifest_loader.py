@@ -15,6 +15,7 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, ConfigDict, ValidationError
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
 from trw_mcp.channels._manifest_models import (
     DISTILL_MARKER_KEYS,
@@ -109,12 +110,12 @@ def _normalize_aliases(entry_dict: dict[str, Any]) -> dict[str, Any]:
         elif alias in d:
             d.pop(alias)
 
-    # distill_record_types: content_types | record_types
-    for alias in ("content_types", "record_types"):
-        if alias in d and "distill_record_types" not in d:
-            d["distill_record_types"] = d.pop(alias)
-        elif alias in d:
-            d.pop(alias)
+    # distill_record_types and its legacy aliases were removed from ChannelEntry
+    # (never read by any consumer). An old manifest that still carries them must
+    # keep loading, so they are DROPPED rather than renamed onto a field that no
+    # longer exists — renaming would turn a stale key into a ValidationError.
+    for alias in ("content_types", "record_types", "distill_record_types"):
+        d.pop(alias, None)
 
     # cleanup: stale_action + cleanup_trigger → cleanup dict
     if ("stale_action" in d or "cleanup_trigger" in d) and "cleanup" not in d:
@@ -128,11 +129,21 @@ def _normalize_aliases(entry_dict: dict[str, Any]) -> dict[str, Any]:
         d.pop("stale_action", None)
         d.pop("cleanup_trigger", None)
 
-    # operator_tier_override_key: tier_override_key
-    if "tier_override_key" in d and "operator_tier_override_key" not in d:
-        d["operator_tier_override_key"] = d.pop("tier_override_key")
-    elif "tier_override_key" in d:
-        d.pop("tier_override_key")
+    # Same for the tier-override key and the four emit_on_* / session_correlation
+    # flags: all were authored per-channel with real variation and read by
+    # nothing, so they are dropped on load for backward compatibility.
+    for removed in (
+        "tier_override_key",
+        "operator_tier_override_key",
+        "client_version_min",
+        "sidecar_schema",
+        "sidecar_path",
+        "emit_on_ttl_skip",
+        "emit_on_conflict_skip",
+        "emit_on_lock_skip",
+        "session_correlation",
+    ):
+        d.pop(removed, None)
 
     return d
 
@@ -147,15 +158,23 @@ def load(path: Path) -> ChannelManifest:
 
     Raises:
         ManifestMissingError: if the file does not exist.
-        ManifestValidationError: if format_version is absent or wrong, or
-            if any channel entry fails Pydantic validation.
+        ManifestValidationError: if the file is not parseable YAML, if
+            format_version is absent or wrong, or if any channel entry fails
+            Pydantic validation.
     """
     if not path.exists():
         raise ManifestMissingError(f"Manifest not found: {path}")
 
     yaml = YAML(typ="safe")
-    with path.open("r", encoding="utf-8") as fh:
-        raw: Any = yaml.load(fh)
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            raw: Any = yaml.load(fh)
+    except YAMLError as exc:
+        # A syntactically malformed manifest is a VALIDATION failure, not an
+        # unhandled crash: callers (channel_doctor, the bootstrap merge)
+        # document a never-raises contract and only catch the two Manifest*
+        # errors, so a raw ruamel YAMLError would escape as a traceback.
+        raise ManifestValidationError(f"Manifest is not valid YAML: {exc}") from exc
 
     if not isinstance(raw, dict):
         raise ManifestValidationError("Manifest must be a YAML mapping")

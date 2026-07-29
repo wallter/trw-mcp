@@ -57,6 +57,41 @@ def test_deliver_surfaces_unpinned_missing_build_as_advisory(tmp_path: Path) -> 
     assert "build_gate_block" not in result
 
 
+def test_unpinned_deliver_writes_session_events_deliver_marker(tmp_path: Path) -> None:
+    """An UNPINNED trw_deliver must leave a session-scoped completion marker.
+
+    Regression: without a run dir, ``_log_deliver_event`` had no events.jsonl to
+    write ``trw_deliver_complete`` to, so the Stop hook (which attributes a
+    foreign run to the unpinned session) never saw the deliver succeed and nagged
+    falsely. The marker now lands in ``.trw/context/session-events.jsonl`` on
+    every deliver, carrying ``session_id`` + an ISO ``ts`` the hook can bound.
+    """
+    project = tmp_path / "project"
+    trw_dir = project / ".trw"
+    _write_ceremony_state(trw_dir, "passed")
+    deliver_fn = _make_deliver_fn()
+
+    with (
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+    ):
+        result = deliver_fn(skip_reflect=True)
+
+    assert result["success"] is True
+    session_events = trw_dir / "context" / "session-events.jsonl"
+    assert session_events.exists(), "unpinned deliver must write session-events.jsonl"
+    markers = [
+        json.loads(line)
+        for line in session_events.read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line).get("event") == "trw_deliver_complete"
+    ]
+    assert markers, "session-events must record a trw_deliver_complete marker"
+    marker = markers[-1]
+    assert "session_id" in marker, "marker must carry session_id for attribution"
+    assert marker.get("ts"), "marker must carry an ISO timestamp for recency bounding"
+
+
 def test_deliver_does_not_inherit_unbound_global_build_check(tmp_path: Path) -> None:
     """A session-aware delivery cannot inherit legacy global build evidence."""
     project = tmp_path / "project"

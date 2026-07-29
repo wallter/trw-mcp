@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,39 +22,170 @@ logger = structlog.get_logger(__name__)
 REQUIRED_BUILD_COMMAND_IDS: tuple[str, ...] = ("tests", "static_checks")
 _POLICY_VERSION = "v26.1-build-receipts"
 
+# The exact JSON keys this parser understands. Anything else is rejected BY
+# NAME. Before 2026-07-27 unknown keys were silently dropped, so the common
+# caller guess ``{"id": "tests", "passed": true}`` produced an entry with no
+# command_id and a defaulted-to-failure exit code — a green run recorded red,
+# then reported to the caller as though *they* had misreported it.
+COMMAND_RESULT_FIELDS: tuple[str, ...] = (
+    "command_id",
+    "label",
+    "command_class",
+    "exit_code",
+    "started_at",
+    "completed_at",
+    "test_count",
+    "failure_count",
+    "coverage_pct",
+    "limitations",
+)
 
-def _int_value(value: object, default: int = 0) -> int:
-    return int(value) if isinstance(value, (int, float, str)) else default
+COMMAND_RESULT_EXAMPLE = '{"command_id": "tests", "label": "pytest -q", "command_class": "test", "exit_code": 0}'
 
 
-def _optional_int(value: object) -> int | None:
-    return _int_value(value) if value is not None else None
+def _require_int(value: object, *, field: str, where: str) -> int:
+    """Coerce a JSON scalar to int, or say exactly which field was unusable."""
+    # ``bool`` is an ``int`` subclass in Python; accepting it would quietly turn
+    # the ``"passed": true`` mistake into ``exit_code=1`` (= failed).
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError(f"{where}: {field!r} must be an integer, got {value!r}")  # noqa: TRY004 - one caller-facing exception type for every malformed command_results payload.
+    try:
+        return int(value)
+    except ValueError:
+        raise ValueError(f"{where}: {field!r} must be an integer, got {value!r}") from None
 
 
-def _optional_float(value: object) -> float | None:
-    return float(value) if isinstance(value, (int, float, str)) else None
+def _optional_int(value: object, *, field: str, where: str) -> int | None:
+    return None if value is None else _require_int(value, field=field, where=where)
 
 
-def parse_build_command_results(raw_results: list[dict[str, object]] | None) -> tuple[BuildCommandResult, ...] | None:
-    """Parse the public JSON shape without weakening the strict receipt model."""
+def _optional_float(value: object, *, field: str, where: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError(f"{where}: {field!r} must be a number, got {value!r}")  # noqa: TRY004 - one caller-facing exception type for every malformed command_results payload.
+    try:
+        return float(value)
+    except ValueError:
+        raise ValueError(f"{where}: {field!r} must be a number, got {value!r}") from None
+
+
+def _parse_one_command_result(raw: object, index: int) -> BuildCommandResult:
+    """Validate a single caller-supplied command-result mapping.
+
+    Every rejection names the field actually at fault. The rule this enforces:
+    a typed command result is *evidence*, and evidence that cannot state its own
+    outcome is not evidence — so ``exit_code`` is required rather than defaulted.
+    Defaulting it to 1 silently converted a passing run into a failing record;
+    defaulting it to 0 would fabricate a pass. Neither is reportable, so we fail
+    loudly instead (CONSTITUTION HB-1/HB-4).
+    """
+    where = f"command_results[{index}]"
+    if not isinstance(raw, dict):
+        raise ValueError(  # noqa: TRY004 - see above
+            f"{where}: expected an object, got {type(raw).__name__}. Example: {COMMAND_RESULT_EXAMPLE}"
+        )
+
+    unknown = sorted(set(raw) - set(COMMAND_RESULT_FIELDS))
+    if unknown:
+        raise ValueError(
+            f"{where}: unrecognized field(s) {unknown}. Accepted fields are {list(COMMAND_RESULT_FIELDS)}. "
+            f"Example: {COMMAND_RESULT_EXAMPLE}"
+        )
+
+    command_id = str(raw.get("command_id", "")).strip()
+    if not command_id:
+        raise ValueError(
+            f"{where}: 'command_id' is required and identifies which planned command this result covers "
+            f"(the build plan requires {list(REQUIRED_BUILD_COMMAND_IDS)}). Example: {COMMAND_RESULT_EXAMPLE}"
+        )
+    where = f"{where} (command_id={command_id!r})"
+
+    if "exit_code" not in raw or raw["exit_code"] is None:
+        raise ValueError(
+            f"{where}: 'exit_code' is required — it is the only field that states whether the command "
+            f"passed, and inferring one would fabricate the outcome. Use 0 for success. "
+            f"Example: {COMMAND_RESULT_EXAMPLE}"
+        )
+
+    raw_class = str(raw.get("command_class", "other"))
+    try:
+        command_class = CommandClass(raw_class)
+    except ValueError:
+        accepted = [member.value for member in CommandClass]
+        raise ValueError(f"{where}: unknown 'command_class' {raw_class!r}; accepted values are {accepted}") from None
+
+    return BuildCommandResult(
+        command_id=command_id,
+        label=str(raw.get("label", "")),
+        command_class=command_class,
+        exit_code=_require_int(raw["exit_code"], field="exit_code", where=where),
+        started_at=str(raw.get("started_at", "")),
+        completed_at=str(raw.get("completed_at", "")),
+        test_count=_optional_int(raw.get("test_count"), field="test_count", where=where),
+        failure_count=_optional_int(raw.get("failure_count"), field="failure_count", where=where),
+        coverage_pct=_optional_float(raw.get("coverage_pct"), field="coverage_pct", where=where),
+        limitations=str(raw.get("limitations", "")),
+    )
+
+
+def _decode_json_payload(raw: str) -> list[object]:
+    """Accept a JSON-serialized ``command_results`` array.
+
+    fastmcp 3.2.4 does no JSON-string pre-parsing (verified 2026-07-27), so a
+    client that serializes this argument — the Claude Code #3084 shape — is
+    rejected by pydantic before any TRW code runs, with an error that says
+    nothing about how to proceed. The only workaround available to such a
+    caller is to DROP ``command_results``, which in enforce mode means no
+    BuildReceipt is written at all. Tolerating the string form therefore
+    strengthens the evidence path rather than relaxing it: the decoded payload
+    goes through exactly the same per-entry validation.
+    """
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"command_results was a string but is not valid JSON ({exc.msg} at position {exc.pos}). "
+            f"Supply the array itself, or a JSON encoding of it. Example: [{COMMAND_RESULT_EXAMPLE}]"
+        ) from None
+    if not isinstance(decoded, list):
+        raise ValueError(  # noqa: TRY004 - see above
+            f"command_results decoded to {type(decoded).__name__}, expected a JSON array of command results. "
+            f"Example: [{COMMAND_RESULT_EXAMPLE}]"
+        )
+    return decoded
+
+
+def parse_build_command_results(
+    raw_results: list[dict[str, object]] | str | None,
+) -> tuple[BuildCommandResult, ...] | None:
+    """Parse the public JSON shape without weakening the strict receipt model.
+
+    Returns ``None`` only when the caller supplied nothing at all. An empty list
+    is a caller error, not a legacy report: it claims typed evidence and then
+    supplies none.
+    """
     if raw_results is None:
         return None
-    parsed = [
-        BuildCommandResult(
-            command_id=str(raw.get("command_id", "")),
-            label=str(raw.get("label", "")),
-            command_class=CommandClass(str(raw.get("command_class", "other"))),
-            exit_code=_int_value(raw.get("exit_code"), 1),
-            started_at=str(raw.get("started_at", "")),
-            completed_at=str(raw.get("completed_at", "")),
-            test_count=_optional_int(raw.get("test_count")),
-            failure_count=_optional_int(raw.get("failure_count")),
-            coverage_pct=_optional_float(raw.get("coverage_pct")),
-            limitations=str(raw.get("limitations", "")),
+    entries: list[object]
+    if isinstance(raw_results, str):
+        stripped = raw_results.strip()
+        if not stripped:
+            # An empty string is how several clients encode an UNSET optional
+            # string argument, so it routes to the legacy path — where
+            # ``_require_tests_passed`` still demands an explicit outcome. It
+            # never yields a pass without evidence.
+            return None
+        entries = _decode_json_payload(stripped)
+    else:
+        entries = list(raw_results)
+    if not entries:
+        raise ValueError(
+            "command_results was supplied but empty. Omit it entirely to report legacy booleans, or "
+            f"supply one entry per executed command (required: {list(REQUIRED_BUILD_COMMAND_IDS)}). "
+            f"Example: [{COMMAND_RESULT_EXAMPLE}]"
         )
-        for raw in raw_results
-    ]
-    return tuple(parsed)
+    return tuple(_parse_one_command_result(raw, index) for index, raw in enumerate(entries))
 
 
 def _legacy_results(tests_passed: bool, static_checks_clean: bool, scope_label: str) -> tuple[BuildCommandResult, ...]:
@@ -85,12 +217,42 @@ def _governing_prd_paths(run_path: Path, project_root: Path) -> tuple[tuple[str,
         ids = ()
     paths: list[str] = []
     prds_dir = project_root / "docs" / "requirements-aare-f" / "prds"
+    missing: list[str] = []
     for prd_id in sorted(ids):
         exact = prds_dir / f"{prd_id}.md"
         matches = [exact] if exact.is_file() else sorted(prds_dir.glob(f"{prd_id}-*.md"))
-        if len(matches) != 1:
-            raise ValueError(f"governing PRD {prd_id!r} did not resolve uniquely")
+        if len(matches) > 1:
+            # Genuinely ambiguous: two files claim the same ID. That is a
+            # requirements-integrity problem and binding evidence to an
+            # arbitrary one of them would be worse than refusing.
+            raise ValueError(
+                f"governing PRD {prd_id!r} matches {len(matches)} files in {prds_dir}: "
+                + ", ".join(m.name for m in matches)
+            )
+        if not matches:
+            # NOT ambiguous — absent. A run can outlive the PRD it was scoped to
+            # (archived, renamed, superseded), and that is a data condition, not
+            # an integrity violation.
+            #
+            # This distinction is load-bearing. The single `!= 1` check that used
+            # to be here raised "did not resolve uniquely" for a MISSING file,
+            # and because record_build_receipt is fail-open, the receipt was
+            # silently skipped — so every trw_build_check on such a run wrote no
+            # typed receipt, and trw_deliver then blocked forever on the LAST
+            # good receipt with "content-stale build evidence". The operator sees
+            # a staleness message about a file, for a run whose real problem is a
+            # PRD id that no longer resolves. Observed 2026-07-28 on a run scoped
+            # to PRD-CORE-098, which exists only as an execution plan.
+            missing.append(prd_id)
+            continue
         paths.append(matches[0].relative_to(project_root).as_posix())
+    if missing:
+        logger.info(
+            "governing_prd_unresolved",
+            prd_ids=missing,
+            prds_dir=str(prds_dir),
+            note="run references PRDs with no file; receipt binds the ones that resolved",
+        )
     return ids, tuple(paths)
 
 
@@ -273,6 +435,8 @@ def load_latest_build_evidence(
 
 
 __all__ = [
+    "COMMAND_RESULT_EXAMPLE",
+    "COMMAND_RESULT_FIELDS",
     "REQUIRED_BUILD_COMMAND_IDS",
     "latest_build_receipt",
     "load_latest_build_evidence",

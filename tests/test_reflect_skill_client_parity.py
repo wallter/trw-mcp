@@ -184,14 +184,34 @@ def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
     assert "reason=target_not_implemented" in result.stdout
 
     root = Path(__file__).resolve().parents[2]
-    # Glob-discovered (auditor follow-up): every trw-reflect mirror that EXISTS
-    # anywhere in the repo is asserted — a future mirror can never drift silently.
+    data_root = root / "trw-mcp" / "src" / "trw_mcp" / "data"
+    # The mirror population is DERIVED, not counted (PRD-INFRA-174-FR02). The
+    # previous `len(mirrors) >= 7` sat exactly at its own boundary: it could
+    # detect a DELETED mirror and nothing else. It could not detect a NEW
+    # UNGUARDED one, and once the population grew it would have degraded silently
+    # to "at least 7 of N". The expected set is enumerated from the bundled
+    # SKILLS ROOTS — a source independent of trw-reflect itself — so shipping a
+    # new client skill subset without a trw-reflect mirror now fails here.
+    expected = sorted(
+        {
+            root / ".agents" / "skills" / "trw-reflect" / "SKILL.md",
+            root / ".claude" / "skills" / "trw-reflect" / "SKILL.md",
+        }
+        | {
+            skills_root / "trw-reflect" / "SKILL.md"
+            for skills_root in data_root.rglob("skills")
+            if skills_root.is_dir()
+        }
+    )
     mirrors = sorted(
         set(root.glob(".agents/skills/trw-reflect/SKILL.md"))
         | set(root.glob(".claude/skills/trw-reflect/SKILL.md"))
-        | set((root / "trw-mcp" / "src" / "trw_mcp" / "data").rglob("trw-reflect/SKILL.md"))
+        | set(data_root.rglob("trw-reflect/SKILL.md"))
     )
-    assert len(mirrors) >= 7, mirrors  # the currently-known mirror population
+    assert mirrors == expected, {
+        "missing": sorted(set(expected) - set(mirrors)),
+        "unexpected": sorted(set(mirrors) - set(expected)),
+    }
     for mirror in mirrors:
         content = mirror.read_text(encoding="utf-8")
         assert "Typed follow-through lifecycle (PRD-QUAL-120-FR06)" in content, mirror

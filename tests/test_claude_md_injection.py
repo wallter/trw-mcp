@@ -533,3 +533,63 @@ class TestMergeTrwSectionNeverGluesMarker:
         assert "stale body" not in result  # block replaced
         assert "TRW body." in result
         assert any(line.strip() == TRW_AUTO_COMMENT for line in result.splitlines())
+
+
+class TestMergeMarkerMatchingIsLineAnchored:
+    """A marker mentioned in prose must never delimit the replaced region.
+
+    ``merge_trw_section`` is the delivery-path writer -- what
+    ``trw_instructions_sync`` and ``trw_deliver`` call for CLAUDE.md and
+    AGENTS.md. It located the section with ``existing.index(TRW_MARKER_START)``,
+    a substring scan returning the FIRST occurrence anywhere in the file, then
+    deleted everything from there to the end marker. A user whose instruction
+    file merely *mentioned* a marker -- in prose, backticks, or a fenced block --
+    silently lost every line between that mention and the real block.
+
+    This is the 705-line ROADMAP corruption shape that
+    ``.claude/rules/trw-mcp-python.md`` Marker / Sentinel Matching exists to
+    forbid. The bootstrap sibling had been hardened with
+    ``find_marker_line_span``; this copy never was.
+    """
+
+    def test_prose_mention_of_start_marker_does_not_eat_user_content(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "CLAUDE.md"
+        target.write_text(
+            "# Doc\n\n"
+            f"Prose mentioning `{TRW_MARKER_START}` inline should be ignored.\n\n"
+            f"{TRW_MARKER_START}\nOLD BLOCK\n{TRW_MARKER_END}\n\n"
+            "Trailing user note.\n",
+            encoding="utf-8",
+        )
+
+        merge_trw_section(
+            target, f"{TRW_MARKER_START}\nNEW BLOCK\n{TRW_MARKER_END}\n", max_lines=500
+        )
+
+        out = target.read_text(encoding="utf-8")
+        assert f"Prose mentioning `{TRW_MARKER_START}` inline should be ignored." in out
+        assert "Trailing user note." in out
+        assert "NEW BLOCK" in out
+        assert "OLD BLOCK" not in out
+
+    def test_prose_mention_with_no_real_block_appends_rather_than_replaces(
+        self, tmp_path: Path
+    ) -> None:
+        """With only a prose mention and no real block, nothing may be consumed."""
+        target = tmp_path / "CLAUDE.md"
+        target.write_text(
+            f"# Doc\n\nWe use `{TRW_MARKER_START}` to delimit the block.\n\n"
+            "Important user paragraph.\n",
+            encoding="utf-8",
+        )
+
+        merge_trw_section(
+            target, f"{TRW_MARKER_START}\nNEW BLOCK\n{TRW_MARKER_END}\n", max_lines=500
+        )
+
+        out = target.read_text(encoding="utf-8")
+        assert "Important user paragraph." in out
+        assert f"We use `{TRW_MARKER_START}` to delimit the block." in out
+        assert "NEW BLOCK" in out

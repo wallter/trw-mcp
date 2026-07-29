@@ -44,7 +44,11 @@ class TestUpdateProjectMultiIDE:
         instructions = (tmp_path / ".opencode" / "INSTRUCTIONS.md").read_text()
         assert "trw_session_start" in instructions
         assert "trw_deliver" in instructions
-        assert (tmp_path / "AGENTS.md").exists()
+        # PRD-CORE-240-FR04 (operator decision 2026-07-28): opencode no longer
+        # receives the shared AGENTS.md. It owns .opencode/INSTRUCTIONS.md, which
+        # opencode.json's `instructions` array now actually references.
+        if (tmp_path / "AGENTS.md").exists():
+            assert "<!-- trw:start -->" not in (tmp_path / "AGENTS.md").read_text()
         assert (tmp_path / ".opencode" / "commands" / "trw-deliver.md").exists()
         assert (tmp_path / ".opencode" / "agents" / "trw-implementer.md").exists()
         assert (tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md").exists()

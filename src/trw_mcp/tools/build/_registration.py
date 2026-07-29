@@ -17,25 +17,17 @@ PRD-FIX-084 precedent on ``trw_session_start``.
 
 from __future__ import annotations
 
-import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from queue import Empty
 from time import monotonic
-from typing import Literal
 
 import structlog
 from fastmcp import Context, FastMCP
 
-import trw_mcp.tools._q_learning_state as _qls
 from trw_mcp.models._evidence_plans import BuildCommandResult
 from trw_mcp.models.build import BuildStatus
 from trw_mcp.models.config import get_config
-from trw_mcp.models.typed_dicts._tools import (
-    QLearningDeferredDict,
-    QLearningHealthDict,
-)
 from trw_mcp.state._paths import (
     TRWCallContext,
     find_active_run,
@@ -44,27 +36,36 @@ from trw_mcp.state._paths import (
 )
 from trw_mcp.tools._evidence_persistence import WriteOutcome
 from trw_mcp.tools.build._build_check_helpers import (
-    _BUILD_CHECK_USAGE as _BUILD_CHECK_USAGE,
-)
-from trw_mcp.tools.build._build_check_helpers import (
     _finalize_build_result as _finalize_build_result,
 )
 from trw_mcp.tools.build._build_check_helpers import (
     _require_tests_passed as _require_tests_passed,
+)
+from trw_mcp.tools.build._build_check_helpers import (
+    derive_duration_secs as derive_duration_secs,
+)
+from trw_mcp.tools.build._build_check_helpers import (
+    reconcile_typed_results as reconcile_typed_results,
 )
 from trw_mcp.tools.build._core import (
     cache_build_status,
     persist_build_progress_state,
 )
 from trw_mcp.tools.build._failure_attribution import attribute_failures
+
+# PRD-FIX-088 FR01: the deferred Q-learning subsystem lives in a sibling module.
+# Re-exported explicitly (``X as X``) because mypy --strict rejects implicit
+# re-export and ``test_fix027_scoring_build_check.py`` reaches for
+# ``reg_mod.get_q_learning_health()``.
+from trw_mcp.tools.build._q_learning_dispatch import (
+    _dispatch_q_learning_async as _dispatch_q_learning_async,
+)
+from trw_mcp.tools.build._q_learning_dispatch import (
+    get_q_learning_health as get_q_learning_health,
+)
 from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
-
-# PRD-FIX-088 FR01: literal alias for the ``thread_state`` field on
-# :class:`QLearningDeferredDict`. Kept private to this module since it
-# is an implementation detail of the dispatcher.
-_DispatchThreadState = Literal["launched", "queued", "queue_full"]
 
 
 def _build_call_context(ctx: Context | None) -> TRWCallContext:
@@ -99,38 +100,27 @@ def register_build_tools(server: FastMCP) -> None:
         failures: list[str] | None = None,
         run_path: str | None = None,
         min_coverage: float | None = None,
-        command_results: list[dict[str, object]] | None = None,
+        command_results: list[dict[str, object]] | str | None = None,
     ) -> dict[str, object]:
         """Record build/test results for ceremony tracking and delivery gates.
 
-        Use when:
-        - You just ran project-native validation (via shell/CI/script) and need the outcome logged.
-        - You want the delivery gate to see the latest pass/fail + coverage.
-        - You want Q-learning feedback attached to a phase transition.
+        Use when you just ran validation and need it logged for the delivery gate.
 
-        This tool does NOT execute subprocesses — run validation commands first,
-        then call this with the results.
+        This tool does not execute anything - run validation yourself, then
+        call this with the results. tests_passed is required with no default
+        guess. scope is e.g. "full" or "quick". min_coverage flips
+        tests_passed False below threshold.
 
-        Input:
-        - tests_passed: True or False — required; no default guess.
-        - test_count: total checks/tests that ran.
-        - failure_count: number that failed.
-        - coverage_pct: 0.0-100.0, if measured.
-        - static_checks_clean: preferred neutral status for configured static/type/lint/schema checks.
-        - mypy_clean: legacy compatibility alias; use only for older clients or Python-specific reports.
-        - scope: label like ``full``, ``quick``, ``type-check``, ``cargo test``, ``npm test``.
-        - failures: optional list of up to 10 failure descriptions.
-        - run_path: optional run directory for event logging.
-        - min_coverage: when set, falls tests_passed to False if coverage_pct
-          is below the threshold (adds ``coverage_threshold_failed`` flag).
-        - command_results: typed results for the server-required ``tests`` and
-          ``static_checks`` command IDs. Required in evidence enforce mode;
-          legacy booleans are accepted only by observe mode.
+        Output: tests_passed, static_checks_clean, coverage_pct,
+        coverage_threshold_failed.
 
-        Output: dict with fields
-        {status, run_id?, outcome, tests_passed, coverage_pct,
-         static_checks_clean, mypy_clean, coverage_threshold_failed?,
-         gate_effects: list[str]}.
+        Args:
+            coverage_pct: 0.0-100.0, if measured.
+            static_checks_clean: pass/fail for static/type/lint checks. Set this
+                one; omitting it records CLEAN. mypy_clean is its legacy alias.
+            command_results: enforce mode requires one entry per required command,
+                each {"command_id": "tests"|"static_checks", "label": str,
+                "command_class": "test"|"static", "exit_code": int}.
         """
         # PRD-FIX-088 FR03: Per-step latency telemetry for ``trw_build_check``.
         # Every named step records elapsed-since-start so future regressions
@@ -159,15 +149,11 @@ def register_build_tools(server: FastMCP) -> None:
             reported_tests_passed = _require_tests_passed(tests_passed)
             effective_static_checks_clean = mypy_clean if static_checks_clean is None else static_checks_clean
         else:
-            by_id = {item.command_id: item for item in typed_command_results}
-            typed_tests_passed = by_id.get("tests") is not None and by_id["tests"].passed
-            typed_static_clean = by_id.get("static_checks") is not None and by_id["static_checks"].passed
-            if tests_passed is not None and tests_passed != typed_tests_passed:
-                raise ValueError("tests_passed contradicts typed command result 'tests'")
-            if static_checks_clean is not None and static_checks_clean != typed_static_clean:
-                raise ValueError("static_checks_clean contradicts typed command result 'static_checks'")
-            reported_tests_passed = typed_tests_passed
-            effective_static_checks_clean = typed_static_clean
+            reported_tests_passed, effective_static_checks_clean = reconcile_typed_results(
+                typed_command_results,
+                tests_passed=tests_passed,
+                static_checks_clean=static_checks_clean,
+            )
         config = get_config()
         if not config.build_check_enabled:
             return {
@@ -183,6 +169,12 @@ def register_build_tools(server: FastMCP) -> None:
 
         effective_failures = (failures or [])[:10]
 
+        # This tool executes nothing, so it has no clock of its own. A real
+        # duration exists only when the caller supplied typed command results
+        # carrying started_at/completed_at; otherwise it stays unknown and is
+        # omitted from the response and the event rather than reported as 0.0.
+        observed_duration_secs = derive_duration_secs(typed_command_results)
+
         # Step: persist (cache + progress state)
         _persist_started = monotonic()
         status = BuildStatus(
@@ -196,7 +188,7 @@ def register_build_tools(server: FastMCP) -> None:
             failures=effective_failures,
             timestamp=datetime.now(timezone.utc).isoformat(),
             scope=scope,
-            duration_secs=0.0,
+            duration_secs=observed_duration_secs,
         )
 
         cache_path = cache_build_status(trw_dir, status)
@@ -273,7 +265,6 @@ def register_build_tools(server: FastMCP) -> None:
             "failure_count": status.failure_count,
             "failures": status.failures,
             "scope": status.scope,
-            "duration_secs": status.duration_secs,
             "cache_path": str(cache_path),
             "q_learning_deferred": q_learning_deferred,
             "build_receipt_id": receipt_write.receipt_id if receipt_write is not None else "",
@@ -300,6 +291,27 @@ def register_build_tools(server: FastMCP) -> None:
             result["q_learning_error"] = q_health["last_error"]
             result["q_learning_error_count"] = q_health["error_count"]
 
+        # Ledger UF-042: trw_build_check never called the ceremony injector, so
+        # ``NudgeContext.build_passed`` had NO production writer anywhere and the
+        # "Build failed -> revert to PLAN" branch of ``_reversion_prompt`` plus
+        # the context-pool bypass in ``_select_nudge_pool`` were unreachable for
+        # that reason alone. This is the writer.
+        #
+        # Fail-open, matching trw_deliver's call site
+        # (``_ceremony_deliver_tool._append_deliver_ceremony_status``): nudge
+        # injection is telemetry riding the build hot path, and a filesystem
+        # error, a lock contention, or a serialization failure inside it must
+        # never turn a completed build check into a tool failure.
+        try:
+            from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
+
+            _build_ok = event_type == "build_passed"
+            append_ceremony_status_for_tool(
+                result, trw_dir, tool_name="build_check", tool_success=_build_ok, build_passed=_build_ok
+            )
+        except Exception:  # justified: fail-open, status decoration must not fail build_check
+            logger.debug("build_check_ceremony_status_skipped", exc_info=True)
+
         _record_step("finalize", _finalize_started)
         _record_step("total", _call_started_at)
         result["step_durations_ms"] = step_durations_ms
@@ -324,161 +336,6 @@ def register_build_tools(server: FastMCP) -> None:
 
 
 # --- Private helpers ---
-
-
-# ---------------------------------------------------------------------------
-# PRD-FIX-088 FR01: Background Q-learning worker — single-flight + queue.
-# Worker handle, lock, and aggregated health counters live in
-# ``_q_learning_state`` (extracted to keep this module testable; tests
-# reset state via the conftest fixture).
-
-
-def _dispatch_q_learning_async(
-    event_type: str,
-    scope: str,
-    tool_call_id: str,
-) -> QLearningDeferredDict:
-    """Schedule Q-learning outcome correlation on the background worker.
-
-    Returns a stable :class:`QLearningDeferredDict` (always non-None) with
-    a literal ``reason`` and a literal ``thread_state`` so log readers and
-    tests get static-typed access without ``cast`` / ``# type: ignore``.
-
-    PRD-FIX-088 FR01: ``tool_call_id`` is threaded through so the async
-    ``q_learning_complete`` and ``outcome_correlation_applied`` events the
-    worker emits can be correlated back to the originating tool call.
-    """
-    scheduled_at = datetime.now(timezone.utc).isoformat()
-    thread_state: _DispatchThreadState
-    with _qls._q_lock:
-        worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
-        if worker_alive:
-            try:
-                _qls._q_queue.put_nowait((event_type, tool_call_id))
-                thread_state = "queued"
-            except Exception:  # justified: bounded queue overflow is best-effort
-                logger.warning(
-                    "q_learning_queue_full",
-                    event_type=event_type,
-                    scope=scope,
-                    queue_max=_qls._q_queue.maxsize,
-                    tool_call_id=tool_call_id,
-                )
-                thread_state = "queue_full"
-        else:
-            _qls._q_thread = threading.Thread(
-                target=_q_learning_worker,
-                args=(event_type, scope, tool_call_id),
-                name="trw-q-learning",
-                daemon=True,
-            )
-            _qls._q_thread.start()
-            thread_state = "launched"
-    return QLearningDeferredDict(
-        reason="deferred_always",
-        scheduled_at=scheduled_at,
-        thread_state=thread_state,
-        tool_call_id=tool_call_id,
-    )
-
-
-def _q_learning_worker(
-    initial_event_type: str,
-    scope: str,
-    tool_call_id: str,
-) -> None:
-    """Background worker: process the initial event then drain the coalescing queue.
-
-    Single-flight contract: only one worker at a time. While alive, peer
-    callers enqueue ``(event_type, tool_call_id)`` onto ``_q_queue``;
-    after the initial pass completes, the worker drains the queue and
-    exits. The handle is cleared in ``finally`` so a crash leaves no
-    zombie reference.
-
-    PRD-FIX-088 P1.5 Fix 6: catches ``Exception`` (not ``BaseException``)
-    so daemon threads do not swallow ``KeyboardInterrupt``/``SystemExit``.
-    P1.5 Fix 8: this is the **single** crash-recording site — the inner
-    helper now raises straight through so ``q_learning_worker_crashed``
-    is the one accurate event when correlation throws.
-    """
-    try:
-        _process_q_learning_inline(initial_event_type, scope, tool_call_id)
-        # Drain coalescing queue until empty. ``get_nowait`` returns
-        # immediately on empty, breaking the loop.
-        while True:
-            try:
-                queued_event, queued_call_id = _qls._q_queue.get_nowait()
-            except Empty:
-                break
-            _process_q_learning_inline(queued_event, scope, queued_call_id)
-    except Exception as exc:  # justified: bg-thread last-resort barrier
-        # PRD-FIX-088 round-2 F2: atomic count + last_error update via
-        # ``_q_lock``-guarded helper; prevents torn reads from
-        # ``get_q_learning_health()``.
-        new_count = _qls.record_error(exc)
-        logger.exception(
-            "q_learning_worker_crashed",
-            event_type=initial_event_type,
-            scope=scope,
-            error_count=new_count,
-            tool_call_id=tool_call_id,
-        )
-    finally:
-        with _qls._q_lock:
-            _qls._q_thread = None
-
-
-def _process_q_learning_inline(
-    event_type: str,
-    scope: str,
-    tool_call_id: str,
-) -> None:
-    """Run a single Q-learning correlation pass and record outcome.
-
-    PRD-FIX-088 P1.5 Fix 8: previously this caught ``Exception`` and
-    logged ``q_learning_failed``, which made the worker's outer
-    ``except`` unreachable for normal failures and produced two
-    overlapping error events. The catch has been removed; exceptions
-    propagate to the worker and are recorded once via
-    ``q_learning_worker_crashed``.
-
-    Note (Fix 10): the import of ``process_outcome_for_event`` is
-    deferred here to avoid a potential ``trw_mcp.scoring`` ↔ ``tools``
-    import cycle at module-load time. The function is called once per
-    pass, so the per-call import cost is negligible.
-    """
-    from trw_mcp.scoring import process_outcome_for_event
-
-    updated = process_outcome_for_event(
-        event_type,
-        tool_call_id=tool_call_id,
-    )
-    logger.info(
-        "q_learning_complete",
-        event_type=event_type,
-        scope=scope,
-        updated_count=len(updated),
-        tool_call_id=tool_call_id,
-    )
-    # PRD-FIX-088 round-2 F2: lock-guarded clear via helper.
-    _qls.mark_success()
-
-
-def get_q_learning_health() -> QLearningHealthDict:
-    """Return Q-learning worker health for observability.
-
-    Round-2 F2: ``snapshot()`` returns ``(count, last_error)`` as a
-    coherent pair under ``_q_lock`` so callers never see a newer count
-    paired with a stale message.
-    """
-    worker_alive = _qls._q_thread is not None and _qls._q_thread.is_alive()
-    error_count, last_error = _qls.snapshot()
-    return QLearningHealthDict(
-        queue_size=_qls._q_queue.qsize(),
-        error_count=error_count,
-        last_error=last_error,
-        worker_alive=worker_alive,
-    )
 
 
 def _dual_write_build_receipt(
@@ -537,6 +394,5 @@ def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> N
             ),
             "mypy_clean": getattr(status, "mypy_clean", False),
             "coverage_pct": str(getattr(status, "coverage_pct", 0)),
-            "duration_secs": str(getattr(status, "duration_secs", 0)),
         },
     )

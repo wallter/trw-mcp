@@ -217,11 +217,10 @@ def test_fresh_session_start_no_hijack_returns_null_run_with_hint(
     _seed_active_run(isolated_project, "sprint-92", "20260101T000000Z-aaaa1111")
 
     # Silence heavy session_start substeps we don't care about.
-    monkeypatch.setattr(
-        "trw_mcp.tools.ceremony.perform_session_recalls",
-        lambda *_a, **_kw: ([], False, {}),
-        raising=False,
-    )
+    # (A third setattr on `trw_mcp.tools.ceremony.perform_session_recalls` with
+    # `raising=False` was removed: that module has no such attribute, so the
+    # call silently patched nothing. The `_ceremony_helpers` target below is
+    # the real seam and is left `raising=True` so it fails loudly if it moves.)
     monkeypatch.setattr(
         "trw_mcp.tools._ceremony_helpers.perform_session_recalls",
         lambda *_a, **_kw: ([], False, {}),
@@ -230,7 +229,7 @@ def test_fresh_session_start_no_hijack_returns_null_run_with_hint(
     server = make_test_server("ceremony")
     session_start = extract_tool_fn(server, "trw_session_start")
 
-    fresh_ctx = SimpleNamespace(session_id="fresh-gemini-scenario")
+    fresh_ctx = SimpleNamespace(session_id="fresh-client-scenario")
     result = session_start(ctx=fresh_ctx, query="")
 
     # Run field reflects the no-pin state (NOT the on-disk run).

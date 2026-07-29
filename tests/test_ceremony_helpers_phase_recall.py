@@ -47,12 +47,12 @@ class TestPerformSessionRecalls:
             {"id": "L-002", "summary": "Test 2", "impact": 0.9},
         ]
         with (
+            # Was `patch("..._ceremony_helpers.adapter_recall", ...) if False
+            # else patch(...)`. The `if False` arm was never constructed, and
+            # `_ceremony_helpers` has no `adapter_recall` attribute anyway — it
+            # would have raised had it ever been reached. Only the live arm
+            # remains.
             patch(
-                "trw_mcp.tools._ceremony_helpers.adapter_recall",
-                return_value=mock_entries,
-            )
-            if False
-            else patch(
                 "trw_mcp.state.memory_adapter.recall_learnings",
                 return_value=mock_entries,
             ),

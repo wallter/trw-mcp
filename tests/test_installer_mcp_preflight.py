@@ -137,9 +137,6 @@ def test_preflight_exits_when_wrapper_binary_missing(installer_path: Path, tmp_p
     """
     module = _load(installer_path)
 
-    # Override wrapper generation to NOT create the wrapper (simulate
-    # pip_install failure that would have sys.exit'd earlier but for some
-    # reason didn't in a future refactor).
     observed, target = _install_fixture(
         module,
         monkeypatch,
@@ -148,22 +145,37 @@ def test_preflight_exits_when_wrapper_binary_missing(installer_path: Path, tmp_p
         probe_stdout="",
     )
 
-    # Also stub the wrapper-generation step to be a no-op (simulate the
-    # silent-fail regression path). We do this by patching `Path.write_text`
-    # on the wrapper path, but simpler: monkeypatch `wrapper.write_text` by
-    # overriding the phase to skip wrapper creation. In practice the test
-    # just runs and asserts sys.exit(1) fires when the probe can't find it.
-    # To do that cleanly, we delete the wrapper right before the probe step
-    # by running the phase in two halves — but the simplest path is to run
-    # the full phase and assert sys.exit was called. Since phase_install_packages
-    # DOES create the wrapper when target is set, we can't easily make the
-    # wrapper absent mid-phase. Skip this test variant in favor of the
-    # integration coverage in verify-installer.sh.
+    # The seam the original version of this test could not find: the phase
+    # generates the wrapper through ``_write_pythonpath_wrapper``. No-op'ing
+    # that reproduces the iter-18 failure mode exactly — pip reported success,
+    # the wrapper generator did not run, and the preflight is the only thing
+    # standing between that and an eval run with zero registered tools.
+    # (This test previously ended in an unconditional ``pytest.skip``, so both
+    # parametrizations were dead and the guard below was never exercised.)
+    wrapper_calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(
+        module,
+        "_write_pythonpath_wrapper",
+        lambda *a, **kw: wrapper_calls.append(a),
+    )
 
-    # Instead, assert the probe logic's gate works: call the relevant path
-    # directly by deleting the wrapper AFTER phase runs, then re-running the
-    # probe fragment via direct code pull.
-    pytest.skip("Wrapper-missing path requires integration test; covered by smoke test in verify-installer.sh")
+    with pytest.raises(SystemExit) as exc_info:
+        module.phase_install_packages(
+            MagicMock(),
+            2,
+            4,
+            sys.executable,
+            tmp_path / "trw-memory.whl",
+            tmp_path / "trw-mcp.whl",
+            pip_target=str(target),
+        )
+
+    assert exc_info.value.code == 1
+    assert wrapper_calls, "wrapper generation seam was never reached — the guard proves nothing"
+    assert not (target / "bin" / "trw-mcp").exists()
+    # Must fail BEFORE spawning the (absent) binary, not after.
+    probe_cmds = [r for r in observed if any("serve" in str(x) for x in r["cmd"])]
+    assert not probe_cmds, f"probe ran against a missing wrapper: {probe_cmds}"
 
 
 @pytest.mark.parametrize("installer_path", _PATHS, ids=["template", "artifact"])

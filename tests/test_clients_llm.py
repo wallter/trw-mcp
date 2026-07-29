@@ -133,11 +133,13 @@ class TestModelAliasResolution:
         assert _resolve_model("haiku") == "claude-haiku-4-5-20251001"
 
     def test_sonnet_alias(self) -> None:
-        assert _resolve_model("sonnet") == "claude-sonnet-4-6"
+        # Bumped 4-6 -> 5 (2026-07-26).
+        assert _resolve_model("sonnet") == "claude-sonnet-5"
 
     def test_opus_alias(self) -> None:
-        # PRD-QUAL-072 FR01: bumped from 4-6 to 4-7 (2026-04-23).
-        assert _resolve_model("opus") == "claude-opus-4-7"
+        # PRD-QUAL-072 FR01 bumped 4-6 -> 4-7 (2026-04-23); bumped again to
+        # the Claude 5 generation (2026-07-26).
+        assert _resolve_model("opus") == "claude-opus-5"
 
     def test_custom_model_passthrough(self) -> None:
         assert _resolve_model("claude-custom-123") == "claude-custom-123"
@@ -202,8 +204,7 @@ class TestAsk:
         await client.ask("test", model="opus")
 
         call_kwargs = mock_async_client.messages.create.call_args[1]
-        # PRD-QUAL-072 FR01: opus alias bumped to 4-7.
-        assert call_kwargs["model"] == "claude-opus-4-7"
+        assert call_kwargs["model"] == "claude-opus-5"
 
     @pytest.mark.asyncio
     async def test_ask_returns_none_on_empty_content(self) -> None:
@@ -232,35 +233,144 @@ class TestAsk:
 
 
 # ---------------------------------------------------------------------------
-# PRD-QUAL-072: Opus 4.7 migration — alias bump + backward compat (FR01, FR09)
+# Capability-alias currency + backward compat (PRD-QUAL-072 FR01/FR09 lineage)
 # ---------------------------------------------------------------------------
 
 
-class TestOpus47Migration:
-    """PRD-QUAL-072 FR01 + FR09 — opus alias resolves to 4.7; 4.6 still works."""
+class TestCapabilityAliasCurrency:
+    """The three capability aliases resolve to the current model generation.
 
-    def test_opus_alias_resolves_to_47(self) -> None:
-        """FR01: short alias ``opus`` resolves to claude-opus-4-7."""
+    Superseded ``TestOpus47Migration``: the aliases have been bumped twice
+    since (4.6 -> 4.7 in 2026-04, 4.7 -> Claude 5 in 2026-07). The FR09
+    passthrough guarantee is unchanged and still covered below.
+    """
+
+    def test_frontier_aliases_resolve_to_opus_5(self) -> None:
         from trw_mcp.clients.llm import _MODEL_MAP
 
-        assert _MODEL_MAP["opus"] == "claude-opus-4-7"
-        assert _resolve_model("opus") == "claude-opus-4-7"
+        assert _MODEL_MAP["opus"] == "claude-opus-5"
+        assert _MODEL_MAP["frontier"] == "claude-opus-5"
 
-    def test_sonnet_and_haiku_aliases_unchanged(self) -> None:
-        """FR01: sonnet/haiku aliases are NOT bumped by this PRD."""
+    def test_balanced_aliases_resolve_to_sonnet_5(self) -> None:
         from trw_mcp.clients.llm import _MODEL_MAP
 
-        assert _MODEL_MAP["sonnet"] == "claude-sonnet-4-6"
+        assert _MODEL_MAP["sonnet"] == "claude-sonnet-5"
+        assert _MODEL_MAP["balanced"] == "claude-sonnet-5"
+
+    def test_fast_aliases_unchanged(self) -> None:
+        """Haiku is deliberately NOT bumped — 4.5 is the current Haiku."""
+        from trw_mcp.clients.llm import _MODEL_MAP
+
         assert _MODEL_MAP["haiku"] == "claude-haiku-4-5-20251001"
+        assert _MODEL_MAP["fast"] == "claude-haiku-4-5-20251001"
 
-    def test_opus_46_explicit_id_still_resolves(self) -> None:
-        """FR09: explicit ``claude-opus-4-6`` passes through unchanged."""
+    def test_superseded_explicit_ids_still_resolve(self) -> None:
+        """FR09: pinning an older generation explicitly keeps working."""
         assert _resolve_model("claude-opus-4-6") == "claude-opus-4-6"
+        assert _resolve_model("claude-opus-4-7") == "claude-opus-4-7"
+        assert _resolve_model("claude-sonnet-4-6") == "claude-sonnet-4-6"
 
     def test_unknown_model_id_passes_through(self) -> None:
         """FR09: arbitrary model strings pass through untouched."""
-        assert _resolve_model("claude-opus-4-7") == "claude-opus-4-7"
-        assert _resolve_model("some-future-model-5-0") == "some-future-model-5-0"
+        assert _resolve_model("some-future-model-6-0") == "some-future-model-6-0"
+
+
+# ---------------------------------------------------------------------------
+# Request shape: output budget + effort gating
+# ---------------------------------------------------------------------------
+
+
+class TestRequestShape:
+    """The request must stay valid across models with different capabilities."""
+
+    @pytest.mark.asyncio
+    async def test_output_budget_leaves_room_for_thinking(self) -> None:
+        """A thinking-by-default model must not spend the whole budget reasoning.
+
+        ``max_tokens`` caps thinking *and* response text together. The previous
+        1024 ceiling predates adaptive-thinking-by-default and could truncate a
+        short answer into nothing.
+        """
+        mock_async_client, client = _make_wired_client("Response")
+
+        await client.ask("test", model="opus")
+
+        call_kwargs = mock_async_client.messages.create.call_args[1]
+        assert call_kwargs["max_tokens"] >= 4096
+
+    @pytest.mark.asyncio
+    async def test_effort_requested_on_declaring_model(self) -> None:
+        """Cost posture: internal augmentation asks for low effort, not the API default of high."""
+        mock_async_client, client = _make_wired_client("Response")
+
+        await client.ask("test", model="opus")
+
+        call_kwargs = mock_async_client.messages.create.call_args[1]
+        assert call_kwargs["output_config"] == {"effort": "low"}
+
+    @pytest.mark.asyncio
+    async def test_effort_omitted_on_model_that_rejects_it(self) -> None:
+        """Haiku 4.5 — this client's own default — errors on ``effort``.
+
+        Sending it anyway would break every default internal call, so the
+        parameter must be absent rather than merely ignored.
+        """
+        mock_async_client, client = _make_wired_client("Response")
+
+        await client.ask("test")  # default model is haiku
+
+        call_kwargs = mock_async_client.messages.create.call_args[1]
+        assert "output_config" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_rejected_model_id_is_logged_distinctly(self) -> None:
+        """A 404 must not read as "the SDK isn't installed".
+
+        Both return ``None`` to the caller, so the log line is the only thing
+        that distinguishes a stale ``_MODEL_MAP`` entry — the failure most
+        likely to be introduced by an edit — from an unconfigured environment.
+        """
+        import structlog.testing
+
+        class NotFoundError(Exception):
+            pass
+
+        ac = MagicMock()
+        ac.messages.create = AsyncMock(side_effect=NotFoundError("model not found"))
+        client = _make_client(ac)
+
+        with structlog.testing.capture_logs() as logs:
+            assert await client.ask("test", model="claude-does-not-exist") is None
+
+        events = [entry.get("event") for entry in logs]
+        assert "llm_model_unknown" in events
+        assert "llm_call_failed" not in events
+
+    @pytest.mark.asyncio
+    async def test_other_api_errors_keep_the_generic_warning(self) -> None:
+        """Only 404s are reclassified; everything else stays on the old path."""
+        import structlog.testing
+
+        ac = MagicMock()
+        ac.messages.create = AsyncMock(side_effect=RuntimeError("connection reset"))
+        client = _make_client(ac)
+
+        with structlog.testing.capture_logs() as logs:
+            assert await client.ask("test") is None
+
+        events = [entry.get("event") for entry in logs]
+        assert "llm_call_failed" in events
+        assert "llm_model_unknown" not in events
+
+    @pytest.mark.asyncio
+    async def test_effort_omitted_on_unknown_model(self) -> None:
+        """An unrecognised or future model gets the conservative request shape."""
+        mock_async_client, client = _make_wired_client("Response")
+
+        await client.ask("test", model="some-future-model-6-0")
+
+        call_kwargs = mock_async_client.messages.create.call_args[1]
+        assert "output_config" not in call_kwargs
 
 
 # ---------------------------------------------------------------------------

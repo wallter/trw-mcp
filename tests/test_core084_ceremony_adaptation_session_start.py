@@ -37,7 +37,10 @@ class TestSessionStartLightMode:
         with (
             patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
             patch("trw_mcp.models.config.get_config", return_value=cfg),
-            patch("trw_mcp.tools._ceremony_helpers.get_config", create=True, return_value=cfg),
+            # (`patch("..._ceremony_helpers.get_config", create=True, ...)` was
+            # removed: that module has no `get_config`, so create=True invented
+            # an attribute nothing reads. The two live patches above are what
+            # actually route the config.)
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),

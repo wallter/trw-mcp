@@ -11,18 +11,6 @@ PRD-DIST-2400.
 
 from __future__ import annotations
 
-from trw_mcp.channels._cleanup import (
-    cleanup_channel,
-    is_t0_beacon,
-    tombstone_content,
-)
-from trw_mcp.channels._conflict import (
-    RenderLog,
-    RenderLogEntry,
-    detect_human_edit,
-    reconcile,
-    write_atomic,
-)
 from trw_mcp.channels._distill_telemetry import (
     emit_tool_call,
     resolve_client_profile,
@@ -93,14 +81,6 @@ from trw_mcp.channels._telemetry import (
     prune_channel_events,
     validate_record_id,
 )
-from trw_mcp.channels._ttl import (
-    CheckResult,
-    check_staleness,
-)
-from trw_mcp.channels.instruction_segment import (
-    InstructionSegmentResult,
-    render_instruction_segment,
-)
 
 __all__ = [
     "CHANNEL_EVENT_SCHEMA_VERSION",
@@ -121,41 +101,31 @@ __all__ = [
     "ChannelState",
     "ChannelStatus",
     "ChannelSurface",
-    "CheckResult",
     "CleanupAction",
     "CleanupConfig",
     "CleanupTrigger",
     "HumanEditDetection",
-    "InstructionSegmentResult",
     "ManifestMissingError",
     "ManifestValidationError",
     "MarkerCollisionError",
     "MarkersConfig",
     "ProvenanceConfig",
-    "RenderLog",
-    "RenderLogEntry",
     "WriteStrategy",
     "add_gitignore_entry",
     "append_channel_event",
     "auto_recreate_empty",
     "check_marker_collisions",
     "check_quota",
-    "check_staleness",
-    "cleanup_channel",
-    "detect_human_edit",
     "emit_tool_call",
     "enforce_quota_with_tier_down",
     "extract_segment_interior",
-    "is_t0_beacon",
     "list_gitignore_entries",
     "load",
     "now_utc_iso8601",
     "parse_provenance_comment",
     "prune_channel_events",
     "read_state",
-    "reconcile",
     "remove_gitignore_entry",
-    "render_instruction_segment",
     "render_provenance_comment",
     "render_provenance_frontmatter",
     "replace_distill_segment",
@@ -163,9 +133,7 @@ __all__ = [
     "state_path_for",
     "tier_down",
     "tier_index",
-    "tombstone_content",
     "validate_record_id",
     "write",
-    "write_atomic",
     "write_state",
 ]

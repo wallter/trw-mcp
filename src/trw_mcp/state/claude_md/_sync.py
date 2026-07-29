@@ -293,6 +293,7 @@ def execute_claude_md_sync(
     reader: FileStateReader,
     llm: LLMClient,
     client: str = "auto",
+    instruction_manifest_hashes: dict[str, str] | None = None,
 ) -> ClaudeMdSyncResultDict:
     """Thin facade over ``dispatch_for_profile`` — see that function for docs."""
     return _dispatch_for_profile(
@@ -302,4 +303,5 @@ def execute_claude_md_sync(
         reader=reader,
         llm=llm,
         client=client,
+        instruction_manifest_hashes=instruction_manifest_hashes,
     )

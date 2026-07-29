@@ -233,6 +233,36 @@ _UNPINNED_BUILD_WARNING = (
 )
 
 
+def write_session_deliver_marker(trw_dir: Path, session_id: str) -> None:
+    """Append a session-scoped ``trw_deliver_complete`` marker on every deliver.
+
+    A PINNED ``trw_deliver`` records its completion marker in the run's
+    ``meta/events.jsonl`` (see ``_log_deliver_event``). An UNPINNED deliver has
+    no run directory, so that marker lands nowhere — and the Stop hook, which
+    attributes the newest *foreign* run to an unpinned session, then cannot see
+    that deliver succeeded and nags falsely (the reported false-positive).
+
+    Writing the marker to the session-scoped
+    ``.trw/context/session-events.jsonl`` — which persists independently of pin
+    state — gives the Stop hook a recency-bounded signal it can trust for both
+    pinned and unpinned sessions. ``FileEventLogger.log_event`` stamps an ISO
+    ``ts`` automatically; ``session_id`` is carried so the marker is
+    attributable. Fail-open: a marker-write failure must never break delivery.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
+
+        context_dir = trw_dir / get_config().context_dir
+        FileEventLogger(FileStateWriter()).log_event(
+            context_dir / "session-events.jsonl",
+            "trw_deliver_complete",
+            {"session_id": session_id},
+        )
+    except Exception:  # justified: fail-open — marker write must never break deliver
+        logger.debug("session_deliver_marker_write_failed", exc_info=True)
+
+
 def _check_no_active_run_build_gate(
     trw_dir: Path | None, reader: FileStateReader, session_id: str | None = None
 ) -> str | None:

@@ -220,7 +220,6 @@ class TRWConfig(_TRWConfigFields):
             recall=RecallConfig(
                 enabled=self.effective_learning_recall_enabled,
                 max_results=self.recall_max_results,
-                injection_preview_chars=self.learning_injection_preview_chars,
                 session_start_recall=self.session_start_recall_enabled
                 if self.session_start_recall_enabled is not None
                 else True,
@@ -261,11 +260,10 @@ class TRWConfig(_TRWConfigFields):
     def effective_nudge_messenger(self) -> str:
         """PRD-CORE-145 FR01: resolve messenger name (None → "standard").
 
-        Returns one of {"standard", "minimal", "learning_injection", "contextual",
+        Returns one of {"standard", "minimal", "contextual",
         "contextual_action"}.
         "standard" preserves the pre-PRD pool-based dispatch. "minimal"
-        routes through compute_nudge_minimal. "learning_injection" surfaces
-        task-relevant prior learnings via the ceremony-status nudge surface.
+        routes through compute_nudge_minimal.
         "contextual" preserves the workflow scaffold while adding one
         phase-aware next-step instruction and an optional relevant caution.
         "contextual_action" keeps the same next-step scaffold but omits the

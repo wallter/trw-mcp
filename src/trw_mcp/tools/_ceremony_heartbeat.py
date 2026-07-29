@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from trw_mcp.models.config import get_config
-from trw_mcp.state._paths import TRWCallContext, resolve_pin_key
+from trw_mcp.state._paths import resolve_pin_key
 from trw_mcp.state._pin_store import _iso_now, get_pin_entry, upsert_pin_entry
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools._ceremony_runtime_helpers import (
@@ -47,16 +47,11 @@ def compute_heartbeat_result(
     Otherwise returns a full HeartbeatResultDict — short-circuits when
     ``now - last_heartbeat_ts < 60s`` to avoid spamming events.jsonl.
     """
+    # Heartbeat resolves the pin key directly: it reads and refreshes an
+    # EXISTING pin rather than resolving a run, so it needs no TRWCallContext.
+    # (One was constructed here and discarded "for shape parity / future
+    # analytics hooks" — a computed-and-never-consumed value, removed.)
     pin_key = resolve_pin_key(ctx=ctx, explicit=None)
-    raw_session = getattr(ctx, "session_id", None) if ctx is not None else None
-    # PRD-CORE-141: construct TRWCallContext for shape parity with other
-    # ctx-aware tools.  Reserved for future analytics hooks.
-    _ = TRWCallContext(
-        session_id=pin_key,
-        client_hint=None,
-        explicit=False,
-        fastmcp_session=raw_session if isinstance(raw_session, str) else None,
-    )
 
     entry = get_pin_entry(pin_key)
     if entry is None:

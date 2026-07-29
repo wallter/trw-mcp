@@ -424,10 +424,7 @@ class TestConcurrentActivationLock:
             with result_lock:
                 outcomes[prd_id] = verdict
 
-        threads = [
-            threading.Thread(target=_activate, args=(prd_id,))
-            for prd_id in ("PRD-CORE-001", "PRD-CORE-002")
-        ]
+        threads = [threading.Thread(target=_activate, args=(prd_id,)) for prd_id in ("PRD-CORE-001", "PRD-CORE-002")]
         for thread in threads:
             thread.start()
         for thread in threads:
@@ -437,9 +434,7 @@ class TestConcurrentActivationLock:
         registry = build_registry(prds, ledger)
         assert registry.status == "ok"
         active = [
-            entry.prd_id
-            for entry in registry.entries
-            if str(entry.execution_state) == ExecutionState.ACTIVE.value
+            entry.prd_id for entry in registry.entries if str(entry.execution_state) == ExecutionState.ACTIVE.value
         ]
         assert active == [outcome for outcome, verdict in outcomes.items() if verdict == "activated"]
         assert len(active) == 1, f"WIP invariant violated under contention: {active}"

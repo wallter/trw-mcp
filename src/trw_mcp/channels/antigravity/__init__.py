@@ -23,24 +23,6 @@ PRD-DIST-2404.
 
 from __future__ import annotations
 
-from trw_mcp.channels.antigravity._antigravity_md_segment import (
-    AG01_CHANNEL_ID as AG01_CHANNEL_ID,
-)
-from trw_mcp.channels.antigravity._antigravity_md_segment import (
-    AG01_DISTILL_BEGIN as AG01_DISTILL_BEGIN,
-)
-from trw_mcp.channels.antigravity._antigravity_md_segment import (
-    AG01_DISTILL_END as AG01_DISTILL_END,
-)
-from trw_mcp.channels.antigravity._antigravity_md_segment import (
-    SegmentRenderResult as SegmentRenderResult,
-)
-from trw_mcp.channels.antigravity._antigravity_md_segment import (
-    build_ag01_channel_entry as build_ag01_channel_entry,
-)
-from trw_mcp.channels.antigravity._antigravity_md_segment import (
-    render_antigravity_distill_segment as render_antigravity_distill_segment,
-)
 from trw_mcp.channels.antigravity._before_edit_hook import (
     AG03_CHANNEL_ID as AG03_CHANNEL_ID,
 )
@@ -67,18 +49,12 @@ from trw_mcp.channels.antigravity._explorer_subagent import (
 )
 
 __all__ = [
-    "AG01_CHANNEL_ID",
-    "AG01_DISTILL_BEGIN",
-    "AG01_DISTILL_END",
     "AG02_CHANNEL_ID",
     "AG03_CHANNEL_ID",
     "AG03_HOOKS_PATH",
     "HOOK_SCRIPT_CONTENT",
     "AgentWriteResult",
-    "SegmentRenderResult",
-    "build_ag01_channel_entry",
     "generate_distill_explorer_agent",
     "generate_hook_script",
     "install_before_edit_hook",
-    "render_antigravity_distill_segment",
 ]

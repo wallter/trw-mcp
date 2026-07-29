@@ -97,7 +97,7 @@ class ProtocolRenderer:
         """Render compact ceremony quick-reference card for CLAUDE.md.
 
         PRD-CORE-131-FR02: Generated from ``CEREMONY_TOOLS`` with
-        client-specific notes injection (e.g., Gemini 1M token advice).
+        client-specific notes injection (e.g., large-context token advice).
         Only the 4 highest-signal tools are shown in the compact table;
         the full table is in ``render_ceremony_table()``.
         """

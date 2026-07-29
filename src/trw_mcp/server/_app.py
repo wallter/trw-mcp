@@ -68,7 +68,7 @@ def _check_memory_version() -> None:
 _DEFAULT_INSTRUCTIONS = (
     "TRW turns session history into reusable engineering context. "
     "Call trw_session_start() first: it restores prior learnings and any active run, "
-    "cutting repeat investigation by ~30%. "
+    "so you start from what the team already learned instead of re-deriving it. "
     "Workflow: plan, implement, verify, deliver. "
     "Read .trw/frameworks/FRAMEWORK-CORE.md after startup or compaction for phase gates. "
     "Use trw_learn() when you discover a root cause or durable pattern. "

@@ -1,7 +1,6 @@
 """Tests for PRD-FIX-072: Infrastructure Hardening — Analytics & Installer.
 
 FR01: Turn-scoped analytics cache (contextvars-based)
-FR02: Absolute path resolution for Gemini MCP config
 FR03: Specific exception handling for analytics loading
 """
 

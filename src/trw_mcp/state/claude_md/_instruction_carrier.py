@@ -58,9 +58,23 @@ logger = structlog.get_logger(__name__)
 
 AT_IMPORT_PREFIX = "@"
 
+# The include-incapable registry lives in ``_instruction_clients`` with the
+# other client-tier data; re-exported here so existing importers are unchanged.
+from trw_mcp.state.claude_md._instruction_clients import (  # noqa: E402
+    INCLUDE_INCAPABLE_CLIENTS as INCLUDE_INCAPABLE_CLIENTS,
+)
+
 # Externalize knob values (mirror config Literal; centralized so the write path
 # carries no magic strings).
 EXTERNALIZE_OFF = "off"
+
+#: Import syntaxes that can resolve an externalized sidecar. Both are in-file
+#: ``@path`` directives resolved eagerly at session start; they differ only in
+#: what paths are legal. ``at_path_repo_relative`` (Copilot) rejects absolute and
+#: ``~``-rooted references, which is satisfied here because the sidecar path is
+#: always repo-relative (``.trw/INSTRUCTIONS.md``) and containment is enforced by
+#: :func:`is_path_within` before any write.
+IMPORT_CAPABLE_SYNTAXES: frozenset[str] = frozenset({"at_path", "at_path_repo_relative"})
 
 
 class CarrierMode(str, Enum):
@@ -92,21 +106,30 @@ def resolve_carrier_mode(
     """Pure decision: which carrier mode applies for a target (FR04/FR05)."""
     if classification.kind is InstructionFileClass.POINTER:
         return CarrierMode.POINTER_SKIP
-    if externalize != EXTERNALIZE_OFF and import_syntax == "at_path" and scope == "root":
+    if externalize != EXTERNALIZE_OFF and import_syntax in IMPORT_CAPABLE_SYNTAXES and scope == "root":
         return CarrierMode.IMPORT
     return CarrierMode.INLINE
 
 
-def _extract_marker_inner(block: str) -> str:
-    """Return the content BETWEEN the TRW markers (for the sidecar body)."""
+def _extract_marker_inner(
+    block: str,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> str:
+    """Return the content BETWEEN the TRW markers (for the sidecar body).
+
+    Takes the marker pair so a client with its own sentinel vocabulary does not
+    fall through to "return the whole block", which would copy that client's
+    markers into the sidecar and leave them duplicated on both surfaces.
+    """
+    marker_start, marker_end = markers
     lines = block.splitlines()
     start: int | None = None
     end: int | None = None
     for i, line in enumerate(lines):
         stripped = line.strip()
-        if stripped == TRW_MARKER_START and start is None:
+        if stripped == marker_start and start is None:
             start = i
-        elif stripped == TRW_MARKER_END:
+        elif stripped == marker_end:
             end = i
             break
     if start is not None and end is not None and end > start:
@@ -114,9 +137,13 @@ def _extract_marker_inner(block: str) -> str:
     return block.strip()
 
 
-def _sidecar_document(rendered_block: str, sidecar_relpath: str) -> str:
+def _sidecar_document(
+    rendered_block: str,
+    sidecar_relpath: str,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> str:
     """Build the externalized sidecar document from the rendered TRW block."""
-    inner = _extract_marker_inner(rendered_block)
+    inner = _extract_marker_inner(rendered_block, markers)
     header = (
         f"<!-- TRW AUTO-GENERATED — do not edit. "
         f"Imported into your instruction file via {AT_IMPORT_PREFIX}{sidecar_relpath} (PRD-CORE-203). -->"
@@ -124,9 +151,19 @@ def _sidecar_document(rendered_block: str, sidecar_relpath: str) -> str:
     return f"{header}\n\n{inner}\n"
 
 
-def render_import_region(sidecar_relpath: str) -> str:
-    """Render the marker-wrapped one-line import region placed into the file."""
-    return f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n{AT_IMPORT_PREFIX}{sidecar_relpath}\n{TRW_MARKER_END}\n"
+def render_import_region(
+    sidecar_relpath: str,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> str:
+    """Render the marker-wrapped one-line import region placed into the file.
+
+    *markers* lets a client keep its OWN sentinel vocabulary. Copilot's surface
+    is delimited by ``trw:copilot:start/end``, and the uninstall registry plus
+    doctor key on those — emitting the generic pair there would orphan the block
+    from both (PRD-CORE-240-FR03).
+    """
+    marker_start, marker_end = markers
+    return f"{TRW_AUTO_COMMENT}\n{marker_start}\n{AT_IMPORT_PREFIX}{sidecar_relpath}\n{marker_end}\n"
 
 
 def is_path_within(root: Path, candidate: Path) -> bool:
@@ -151,6 +188,7 @@ def externalize_block(
     sidecar_path: Path,
     sidecar_relpath: str,
     max_lines: int,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
 ) -> int:
     """Externalize the TRW block: sidecar FIRST, then the import region (FR05).
 
@@ -164,13 +202,13 @@ def externalize_block(
     """
     sidecar_path.parent.mkdir(parents=True, exist_ok=True)
     writer = FileStateWriter()
-    writer.write_text(sidecar_path, _sidecar_document(rendered_block, sidecar_relpath))
+    writer.write_text(sidecar_path, _sidecar_document(rendered_block, sidecar_relpath, markers))
 
     # Lazy import breaks the _parser <-> _instruction_carrier cycle.
     from trw_mcp.state.claude_md._parser import merge_trw_section
 
     try:
-        return merge_trw_section(target, render_import_region(sidecar_relpath), max_lines)
+        return merge_trw_section(target, render_import_region(sidecar_relpath, markers), max_lines, markers)
     except Exception:
         # The import line never landed — drop the now-orphaned sidecar so it does
         # not linger unreferenced, then re-raise for the inline fallback.
@@ -232,6 +270,7 @@ def apply_carrier(
     scope: str,
     external_filename: str,
     project_root: Path,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
 ) -> CarrierOutcome:
     """Resolve and apply the carrier mode for *target* (FR04/FR05/FR06).
 
@@ -241,7 +280,7 @@ def apply_carrier(
     ``merge_trw_section``.
     """
     classification = (
-        classify_instruction_file(target)
+        classify_instruction_file(target, markers)
         if target.exists()
         else InstructionFileClassification(InstructionFileClass.EMPTY)
     )
@@ -286,6 +325,7 @@ def apply_carrier(
                     sidecar_path=sidecar_path,
                     sidecar_relpath=external_filename,
                     max_lines=max_lines,
+                    markers=markers,
                 )
                 logger.info("instruction_externalized", target=str(target), sidecar=external_filename)
                 return CarrierOutcome(mode=mode, total_lines=lines, external_path=external_filename)
@@ -299,5 +339,5 @@ def apply_carrier(
     # INLINE — also the IMPORT fallback path.
     from trw_mcp.state.claude_md._parser import merge_trw_section
 
-    lines = merge_trw_section(target, rendered_block, max_lines)
+    lines = merge_trw_section(target, rendered_block, max_lines, markers)
     return CarrierOutcome(mode=CarrierMode.INLINE, total_lines=lines)

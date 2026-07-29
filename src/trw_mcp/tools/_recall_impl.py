@@ -63,7 +63,6 @@ def execute_recall(
     tags: list[str] | None = None,
     min_impact: float = 0.0,
     status: str | None = None,
-    shard_id: str | None = None,
     max_results: int | None = None,
     token_budget: int | None = None,
     deprioritized_ids: set[str] | None = None,
@@ -92,7 +91,6 @@ def execute_recall(
         tags: Optional tag filter.
         min_impact: Minimum impact score filter (0.0-1.0).
         status: Optional status filter.
-        shard_id: Optional shard identifier.
         max_results: Maximum learnings to return (default from config, 0 = unlimited).
         compact: When True, return only essential fields per learning.
         ultra_compact: When True, return only learning IDs, compact summaries,
@@ -214,7 +212,15 @@ def execute_recall(
         context=recall_context,
     )
 
-    # Capture pre-cap counts for the total_available response field
+    # Capture pre-cap counts for the total_available response field.
+    #
+    # KNOWN LIMITATION (do not read this as a corpus size): F-001 caps the DB
+    # fetch at ``max_results * PREFETCH_MULTIPLIER``, so when the store holds
+    # more matches than that ceiling this is a FLOOR, not a total — a default
+    # recall over a 1.9k-entry active corpus reports ~125. PRD-CORE-236 FR05
+    # proposes collapsing this and ``total_matches`` (which are numerically
+    # identical whenever nothing was capped) into one field plus ``capped``;
+    # that FR is not approved, so the wire shape is left alone here.
     total_available = len(ranked_learnings) + len(matching_patterns)
 
     # Move already-in-context learnings behind fresh results before truncation.
@@ -313,6 +319,16 @@ def execute_recall(
     if topic is not None:
         recall_result["topic_filter_ignored"] = topic_filter_ignored
         recall_result["topic_filter_warning"] = topic_filter_warning
+
+    # Ledger UF-043: trw_recall's ceremony-status injection was dropped by merge
+    # 70bb84843f (2026-04-11), leaving ToolName.RECALL with no production
+    # producer. Restored through the ``_ceremony_status_context`` seam, which
+    # owns the nudge-model import so this module keeps none (see
+    # tests/test_nudge_isolation.py). Skipped on the ultra_compact path above,
+    # which returns a deliberately minimal payload.
+    from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
+
+    append_ceremony_status_for_tool(cast("dict[str, object]", recall_result), trw_dir, tool_name="recall")
 
     return recall_result
 

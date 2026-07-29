@@ -86,7 +86,7 @@ def test_config_absent_warn(tmp_path: Path) -> None:
 def test_config_valid_pass(tmp_path: Path) -> None:
     trw = tmp_path / ".trw"
     trw.mkdir()
-    (trw / "config.yaml").write_text("framework_version: v26.1_TRW\n", encoding="utf-8")
+    (trw / "config.yaml").write_text("framework_version: v26.2_TRW\n", encoding="utf-8")
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     cfg = _status_of(results, "config")
     assert cfg.status == "PASS"
@@ -414,3 +414,106 @@ def test_no_production_endpoint_in_messages(tmp_path: Path) -> None:
     joined = " ".join(r.message for r in results)
     assert "api.trwframework.com" not in joined
     assert "://trwframework.com" not in joined
+
+
+class TestInstructionGateUnderImportCarrier:
+    """Doctor must resolve the @-import before asserting the deliver gate.
+
+    Under the PRD-CORE-203 IMPORT carrier -- the shipped default for claude-code,
+    since ``instruction_externalize`` defaults to ``auto`` -- the marker region
+    holds a single ``@.trw/INSTRUCTIONS.md`` line and the ceremony text lives in
+    the sidecar. Asserting against the raw block reported FAIL for a *correctly*
+    externalized project: doctor told users their instruction surface was broken
+    exactly when it was right.
+
+    The pre-existing POINTER exemption cannot cover this. It fires only when the
+    WHOLE file is import directives; a real CLAUDE.md carries user prose and so
+    classifies CONTENT.
+    """
+
+    _RENDERED = (
+        "<!-- TRW AUTO-GENERATED — do not edit between markers -->\n"
+        "<!-- trw:start -->\n"
+        "Do NOT call `trw_deliver` unless\nbody\n"
+        "<!-- trw:end -->\n"
+    )
+
+    def _externalize(self, root: Path) -> None:
+        from trw_mcp.state.claude_md._instruction_carrier import CarrierMode, apply_carrier
+
+        target = root / "CLAUDE.md"
+        target.write_text("# Project\n\nUser prose.\n", encoding="utf-8")
+        outcome = apply_carrier(
+            target,
+            self._RENDERED,
+            500,
+            import_syntax="at_path",
+            externalize="auto",
+            scope="root",
+            external_filename=".trw/INSTRUCTIONS.md",
+            project_root=root,
+        )
+        assert outcome.mode is CarrierMode.IMPORT, "precondition: carrier must externalize"
+
+    def test_externalized_surface_passes(self, tmp_path: Path) -> None:
+        self._externalize(tmp_path)
+
+        result = doctor._check_instruction_gate(tmp_path, TRWConfig())
+
+        assert result.status == "PASS", result.message
+
+    def test_dangling_import_still_fails(self, tmp_path: Path) -> None:
+        """Resolving imports must not weaken the check into an unconditional pass."""
+        self._externalize(tmp_path)
+        (tmp_path / ".trw" / "INSTRUCTIONS.md").unlink()
+
+        result = doctor._check_instruction_gate(tmp_path, TRWConfig())
+
+        assert result.status == "FAIL"
+        assert "CLAUDE.md" in result.message
+
+    def test_import_escaping_the_project_is_not_followed(self, tmp_path: Path) -> None:
+        """A traversal import must not be read, and must not satisfy the gate."""
+        outside = tmp_path.parent / "outside-gate.md"
+        outside.write_text("Do NOT call `trw_deliver` unless\n", encoding="utf-8")
+        try:
+            (tmp_path / "CLAUDE.md").write_text(
+                "# Project\n\nUser prose.\n\n"
+                "<!-- trw:start -->\n"
+                f"@../{outside.name}\n"
+                "<!-- trw:end -->\n",
+                encoding="utf-8",
+            )
+
+            result = doctor._check_instruction_gate(tmp_path, TRWConfig())
+
+            assert result.status == "FAIL", "an import outside the project must not satisfy the gate"
+        finally:
+            outside.unlink(missing_ok=True)
+
+
+class TestInstructionSurfaceDerivation:
+    """The scanned surface set is derived, never hand-copied.
+
+    The hand-maintained tuple had drifted to five entries against a registry of
+    six, so ANTIGRAVITY.md was never inspected and an antigravity-cli project
+    with a broken surface reported PASS.
+    """
+
+    def test_every_root_registry_surface_is_scanned_or_excluded(self) -> None:
+        from trw_mcp.client_profiles.catalog import _ROOT_INSTRUCTION_SURFACES
+
+        scanned = set(doctor._instruction_surfaces())
+        for _flag, relpath in _ROOT_INSTRUCTION_SURFACES:
+            assert relpath in scanned or relpath in doctor._GATE_SCAN_EXCLUSIONS, (
+                f"{relpath} is in the canonical registry but is neither scanned "
+                "nor listed in _GATE_SCAN_EXCLUSIONS with a reason"
+            )
+
+    def test_antigravity_surface_is_scanned(self) -> None:
+        """Regression: the specific surface the hand-copied list omitted."""
+        assert "ANTIGRAVITY.md" in doctor._instruction_surfaces()
+
+    def test_every_exclusion_states_a_reason(self) -> None:
+        for relpath, reason in doctor._GATE_SCAN_EXCLUSIONS.items():
+            assert reason.strip(), f"{relpath} is excluded with no stated reason"

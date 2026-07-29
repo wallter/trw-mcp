@@ -182,22 +182,19 @@ def register_skill_discovery_tools(server: FastMCP) -> None:
         include_private: bool = False,
         active_cap: int | None = None,
     ) -> dict[str, object]:
-        """Rank eligible SKILL.md files without executing them.
+        """Rank SKILL.md candidates by query relevance, without executing any.
 
-        Use when an agent needs safe skill recommendations from explicit
-        SKILL.md paths before invoking any workflow.
+        Use when: choosing which skill to invoke.
+
+        Output: ranked candidates with per-skill scores, plus any issues found
+        while reading them.
 
         Args:
-            skill_paths: Explicit SKILL.md paths to inspect.
-            query: Natural-language search terms.
-            mode: Manifest validation mode, either "compat" or "strict".
-            include_private: Include non-user-invocable skills when true.
-            active_cap: Optional PRD-QUAL-111-FR03 bound. ``None`` (default) is a
-                no-op (all eligible candidates returned). A positive integer
-                truncates to the top-N after the existing sort.
-
-        Returns:
-            {"candidates": list, "warnings": list, "executed": false}
+            skill_paths: SKILL.md FILE paths, not the directories holding them.
+            query: free text matched against skill name and description.
+            mode: validation strictness for malformed SKILL.md files.
+            include_private: also rank skills marked private.
+            active_cap: top-N cutoff after ranking; None returns all.
         """
 
         return discover_meta_skills(

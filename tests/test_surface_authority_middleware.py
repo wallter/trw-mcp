@@ -131,7 +131,10 @@ async def test_coding_run_exposes_coding_packs(
     assert names == expected
     assert "trw_code_search" in names  # code_navigation pack (coding)
     assert "trw_build_check" in names  # verification pack
-    assert "trw_entity_risk_map" not in names  # code_risk pack NOT in coding standard
+    # Repointed 2026-07-29: this named trw_entity_risk_map, which UF-011
+    # removed, so the assertion had become trivially true and would pass
+    # forever whether or not the code_risk pack was actually excluded.
+    assert "trw_codebase_risk_report" not in names  # code_risk pack NOT in coding standard
 
 
 # ── FR04: explicit all is a strict no-op (operator escape) ──────────────
@@ -396,7 +399,7 @@ async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeyp
     (run_dir / "meta" / "run.yaml").write_text(
         "run_id: 20260101T000000Z-rca00001\n"
         "task: rca-task\n"
-        "framework: v26.1_TRW\n"
+        "framework: v26.2_TRW\n"
         "status: active\n"
         "phase: implement\n"
         "task_type: rca\n",
@@ -418,7 +421,8 @@ async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeyp
     assert "trw_build_check" in listed  # verification (rca)
     assert "trw_init" in listed  # bootstrap-critical (P2b)
     assert "trw_prd_create" not in listed  # requirements pack NOT in rca
-    assert "trw_entity_risk_map" not in listed  # code_risk pack NOT in rca
+    # Same repoint as above — the old subject no longer exists.
+    assert "trw_codebase_risk_report" not in listed  # code_risk pack NOT in rca
 
     # Real denial through the call path.
     async def call_next_deny(_ctx: Any) -> Any:

@@ -20,26 +20,16 @@ def register_pipeline_health_tools(server: FastMCP) -> None:
 
     @server.tool(output_schema=None)
     def trw_pipeline_health() -> PipelineHealthResult:
-        """Probe the five compounding-pipeline signals (sync_push, graph_edges,
-        embedding_coverage, recall_feedback, bandit_state). Returns a structured
-        report with degraded flag and advisory.
+        """Probe 5 compounding-pipeline signals; report the degraded ones.
 
-        Use when:
-        - ``trw_session_start`` returns a ``pipeline_health_advisory`` and you need
-          the full per-signal breakdown to diagnose which subsystem is degraded.
-        - Performing a routine operator health check outside of ceremony.
-
-        Checks: sync_push (consecutive_failures + last_push_at age),
-        graph_edges (knowledge graph empty?), embedding_coverage (< 10%?),
-        recall_feedback (all recall_count=0?), and bandit_state (mtime stale?).
-
-        Returns a structured report with:
-        - ``degraded``: True if any signal is degraded.
-        - ``advisory``: Compact single-line string naming degraded signals.
-        - Per-signal sub-dicts with detailed status.
-
-        All probes are read-only and fail-open individually.
+        Use when: trw_session_start returned a pipeline_health_advisory, or
+        for a routine health check. Read-only, fail-open per signal.
         """
+        # Signals: sync_push, graph_edges, embedding_coverage,
+        # recall_feedback, bandit_state. Thresholds: sync_push =
+        # consecutive_failures + last_push_at age; graph_edges = knowledge
+        # graph empty; embedding_coverage < 10%; recall_feedback = all
+        # recall_count == 0; bandit_state = mtime stale.
         try:
             from trw_mcp.state._paths import resolve_trw_dir
 

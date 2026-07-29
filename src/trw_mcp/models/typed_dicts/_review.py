@@ -13,6 +13,42 @@ class ReviewResultBase(TypedDict):
     total_findings: int
 
 
+class RejectedFindingsMixin(TypedDict, total=False):
+    """Caller-facing record of findings the validator refused.
+
+    Present ONLY when at least one supplied finding was dropped (omit-when-empty,
+    per the response token budget). ``rejected_findings_count`` is the exact
+    total; ``rejected_findings`` is the capped itemization, each entry
+    ``{"index", "reason"}`` plus ``"value"`` when a short offending label exists.
+
+    This exists because the accept-list incident (every ``P0``/``P1``/``P2``
+    finding silently dropped, ``substantive: false``, nothing in the response
+    naming the offending field) was as much a SILENCE defect as a vocabulary
+    defect. Fixing the vocabulary alone would leave the next unrecognized shape
+    equally invisible.
+    """
+
+    rejected_findings_count: int
+    rejected_findings: list[dict[str, object]]
+
+
+class SuppressedFindingsMixin(TypedDict, total=False):
+    """Caller-facing record of schema-valid findings the confidence gate removed.
+
+    Distinct from :class:`RejectedFindingsMixin`: a REJECTED finding was
+    malformed, a SUPPRESSED one was well-formed and filtered out below
+    ``review_confidence_threshold`` before the verdict was computed. The two need
+    different fixes, so they are never folded into one count.
+
+    Present ONLY when at least one finding was suppressed (omit-when-empty, per
+    the response token budget). ``suppressed_findings_count`` is exact;
+    ``suppressed_findings`` is the capped itemization.
+    """
+
+    suppressed_findings_count: int
+    suppressed_findings: list[dict[str, object]]
+
+
 class ReviewFindingDict(TypedDict, total=False):
     """One finding from ``trw_review``."""
 
@@ -51,7 +87,7 @@ class ReviewModeResult(TypedDict, total=False):
     cross_model_provider: str
 
 
-class ManualReviewResult(ReviewResultBase, total=False):
+class ManualReviewResult(ReviewResultBase, RejectedFindingsMixin, total=False):
     """Return shape of ``handle_manual_mode()``.
 
     ``run_path`` and ``review_yaml`` are added after initial construction
@@ -77,7 +113,7 @@ class ManualReviewResult(ReviewResultBase, total=False):
     typed_receipt_reason: str
 
 
-class CrossModelReviewResult(ReviewResultBase, total=False):
+class CrossModelReviewResult(ReviewResultBase, RejectedFindingsMixin, total=False):
     """Return shape of ``handle_cross_model_mode()``.
 
     Cross-family coverage fields (PRD-QUAL-108):
@@ -88,7 +124,8 @@ class CrossModelReviewResult(ReviewResultBase, total=False):
       configuration intent).
     - ``single_family_caveat``: when single_family, a fixed-template string naming
       a closed-set reason token (``cross_model_disabled`` | ``provider_unreachable``
-      | ``provider_returned_empty`` | ``no_diff``) and the configured provider
+      | ``provider_integration_absent`` | ``provider_returned_empty`` | ``no_diff``)
+      and the configured provider
       name. Empty/absent when cross_family. Never embeds provider response bodies
       or secrets (NFR03).
     - ``honeypots_present``: whether the same-family fallback pass included any
@@ -98,6 +135,11 @@ class CrossModelReviewResult(ReviewResultBase, total=False):
       findings (0 on the degraded path), so a consumer seeing ``verdict='block'``
       with ``total_findings=0`` reads this field to find the findings the verdict
       was actually computed from. 0 on the cross-family path.
+    - ``critical_count``: critical findings among the SAME list the verdict was
+      computed from, so ``critical_count > 0`` iff ``verdict == "block"``. The
+      delivery gate and the ceremony P0 counter both read this key and treat a
+      missing one as 0, so omitting it made this mode's ``block`` verdicts
+      unenforceable — it is required, not advisory.
     - ``auto_analysis_limited`` / ``limited_reason`` / ``substantive`` preserve
       the fallback analysis honesty labels. A pattern-scan-only degradation is
       non-substantive; realized cross-family or substantive same-family evidence
@@ -113,6 +155,7 @@ class CrossModelReviewResult(ReviewResultBase, total=False):
     single_family_caveat: str
     honeypots_present: bool
     same_family_findings_count: int
+    critical_count: int
     auto_analysis_limited: bool
     limited_reason: str
     substantive: bool
@@ -134,8 +177,13 @@ class ReconcileReviewResult(TypedDict, total=False):
     - ``fr_not_checkable``: FRs with no extractable identifier. These are
       surfaced here instead of being silently counted as covered.
     - ``not_checkable_count``: count of ``fr_not_checkable`` entries.
-    - ``no_governing_prd`` / ``reason``: set when no governing PRD was found,
-      so a ``'clean'`` verdict is not misread as "FRs verified covered".
+    - ``no_governing_prd`` / ``reason``: set when no governing PRD was found, or
+      when every requested PRD was unreadable, so a ``'clean'`` verdict is not
+      misread as "FRs verified covered".
+    - ``prds_read_count`` vs ``prd_count``: requested versus actually opened.
+      They differ exactly when a PRD could not be read; ``prds_not_read`` names
+      those PRDs (present only when non-empty). Without this an unreadable PRD
+      was skipped with a log line while ``prd_count`` still counted it.
     """
 
     review_id: str
@@ -143,6 +191,9 @@ class ReconcileReviewResult(TypedDict, total=False):
     mismatches: list[dict[str, str]]
     message: str
     prd_count: int
+    prds_read_count: int
+    prds_not_read: list[str]
+    prds_not_read_count: int
     total_frs: int
     mismatch_count: int
     reconciliation_yaml: str
@@ -171,7 +222,7 @@ class MultiReviewerAnalysisResult(TypedDict, total=False):
     limited_reason: str
 
 
-class AutoReviewResult(TypedDict, total=False):
+class AutoReviewResult(RejectedFindingsMixin, SuppressedFindingsMixin, total=False):
     """Return shape of ``handle_auto_mode()``.
 
     ``auto_analysis_limited``/``limited_reason`` propagate the honest-labeling

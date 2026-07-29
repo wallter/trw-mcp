@@ -7,6 +7,8 @@ tool. NFR03 requires a non-empty reason >= 20 chars; NFR02 caps the TTL at
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from trw_mcp.tools import phase_overrides
@@ -110,9 +112,13 @@ def test_request_tool_access_rejects_when_session_unavailable(
 
     server = make_test_server("phase_overrides")
     fn = extract_tool_fn(server, "trw_request_tool_access")
-    result = fn(
-        tool_name="trw_review",
-        reason="emergency cross-phase debugging session",
+    # The tool is async since it now emits notifications/tools/list_changed after
+    # a grant (a grant that never refreshes the client leaves the tool uncallable).
+    result = asyncio.run(
+        fn(
+            tool_name="trw_review",
+            reason="emergency cross-phase debugging session",
+        )
     )
 
     assert result["granted"] is False
@@ -120,3 +126,71 @@ def test_request_tool_access_rejects_when_session_unavailable(
     # No grant landed under any sentinel bucket.
     assert has_active_override("unknown", "trw_review") is False
     assert has_active_override("", "trw_review") is False
+
+
+def test_grant_notifies_the_client_to_refresh_its_tool_list(monkeypatch) -> None:
+    """A grant that does not refresh the client leaves the tool UNCALLABLE.
+
+    `on_list_tools` unions `_active_override_tools`, so the server WOULD advertise
+    the tool on the next `tools/list`. But nothing told the client to re-list, so
+    a capable client kept its cached view and the single-use, 5-minute grant
+    expired unused — `granted: true` while the tool never became callable.
+    Observed live 2026-07-25: a grant for `trw_prd_validate` returned
+    `granted: true` and the tool remained unreachable.
+    """
+    monkeypatch.setattr(
+        "trw_mcp.middleware._phase_session.safe_session_id_from_context",
+        lambda ctx: "sess-1",
+    )
+    monkeypatch.setattr("fastmcp.server.dependencies.get_context", lambda: object())
+    monkeypatch.setattr(
+        "trw_mcp.middleware._phase_transitions.client_supports_list_changed",
+        lambda sid: True,
+    )
+    emitted: list[object] = []
+
+    async def _fake_emit(ctx: object) -> bool:
+        emitted.append(ctx)
+        return True
+
+    monkeypatch.setattr("trw_mcp.middleware._phase_transitions.emit_list_changed", _fake_emit)
+
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    server = make_test_server("phase_overrides")
+    fn = extract_tool_fn(server, "trw_request_tool_access")
+    result = asyncio.run(fn(tool_name="trw_review", reason="emergency cross-phase debugging session"))
+
+    assert result["granted"] is True
+    assert emitted, "a grant must emit notifications/tools/list_changed"
+    assert result["client_notified"] is True
+    assert "action_required" not in result
+
+
+def test_grant_says_so_when_the_client_cannot_be_notified(monkeypatch) -> None:
+    """A client that never advertised list_changed must be told to reconnect.
+
+    Returning a bare `granted: true` there is the same reports-success shape:
+    the caller reads it as "the tool is now callable" and it is not.
+    """
+    monkeypatch.setattr(
+        "trw_mcp.middleware._phase_session.safe_session_id_from_context",
+        lambda ctx: "sess-2",
+    )
+    monkeypatch.setattr("fastmcp.server.dependencies.get_context", lambda: object())
+    monkeypatch.setattr(
+        "trw_mcp.middleware._phase_transitions.client_supports_list_changed",
+        lambda sid: False,
+    )
+
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    server = make_test_server("phase_overrides")
+    fn = extract_tool_fn(server, "trw_request_tool_access")
+    result = asyncio.run(fn(tool_name="trw_review", reason="emergency cross-phase debugging session"))
+
+    assert result["granted"] is True
+    assert result["client_notified"] is False
+    assert "reconnect" in str(result["action_required"]), (
+        "the caller must be told the tool will not appear until it reconnects"
+    )

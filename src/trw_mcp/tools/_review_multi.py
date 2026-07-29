@@ -22,7 +22,6 @@ from trw_mcp.models.typed_dicts import (
     MultiReviewerAnalysisResult,
     ReviewFindingDict,
 )
-from trw_mcp.tools import _review_helpers as _helpers
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -35,6 +34,10 @@ logger = structlog.get_logger(__name__)
 # flag lets downstream consumers (deliver gate, eval scoring) distinguish a
 # limited marker scan from a substantive code-quality review.
 # trw:intentional pattern-scan is deliberately limited; the flag is the honest fix.
+#: The ONE reviewer role the marker scan can honestly claim. Every finding it
+#: emits is stamped with this role, so the realized-role list must match it.
+_PATTERN_SCAN_ROLE = "style"
+
 PATTERN_SCAN_LIMITED_REASON: str = (
     "pattern-scan only: no cross-model reviewer findings; "
     "verdict reflects TODO/FIXME markers, not code-quality analysis"
@@ -65,7 +68,12 @@ def _run_multi_reviewer_analysis(
         ``auto_analysis_limited`` / ``limited_reason`` honesty labels.
     """
     result: MultiReviewerAnalysisResult = {
-        "reviewer_roles_run": list(_helpers.REVIEWER_ROLES),
+        # The marker scan realizes exactly ONE perspective and only when it finds
+        # something. Reporting the full six-role list here (as this did) was a
+        # claim that six reviewer perspectives ran, persisted verbatim into the
+        # receipt's realized_reviewer_roles — fabricated coverage for a
+        # TODO/FIXME grep. Empty is the honest floor.
+        "reviewer_roles_run": [],
         "reviewer_errors": [],
         "findings": [],
         "auto_analysis_limited": True,
@@ -89,7 +97,7 @@ def _run_multi_reviewer_analysis(
                 if marker in stripped.upper():
                     findings.append(
                         {
-                            "reviewer_role": "style",
+                            "reviewer_role": _PATTERN_SCAN_ROLE,
                             "confidence": 60,
                             "category": "placeholder",
                             "severity": "info",
@@ -100,4 +108,6 @@ def _run_multi_reviewer_analysis(
                     break
 
     result["findings"] = cast("list[dict[str, object]]", findings)
+    if findings:
+        result["reviewer_roles_run"] = [_PATTERN_SCAN_ROLE]
     return result

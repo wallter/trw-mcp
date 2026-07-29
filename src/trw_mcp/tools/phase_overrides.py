@@ -174,26 +174,24 @@ def register_phase_override_tools(server: FastMCP) -> None:
     """Register the ``trw_request_tool_access`` override tool (FR06)."""
 
     @server.tool(output_schema=None)
-    def trw_request_tool_access(
+    async def trw_request_tool_access(
         tool_name: str,
         reason: str,
         ttl_seconds: int = _MAX_TTL_SECONDS,
     ) -> dict[str, object]:
-        """Grant this session single-use access to a phase-masked tool.
+        """Grant single-use, TTL-capped access to one phase-masked tool.
 
-        Use when a genuine cross-phase or emergency-debug need requires a tool
-        the current phase masks — and only then, since every grant is logged to
-        telemetry. The grant is single-use (one subsequent call) and the TTL is
-        capped at 5 minutes regardless of ``ttl_seconds``.
+        Use when: a genuine cross-phase or emergency need requires a tool
+        the phase masks — every grant is logged.
+
+        Output: {"granted": bool}; on denial also "error". "action_required"
+        means reconnect to refresh your client's tool list before the grant
+        expires.
 
         Args:
-            tool_name: The masked tool to temporarily expose.
-            reason: Non-empty audit reason (>= 20 chars).
-            ttl_seconds: Requested TTL; clamped to a 5-minute maximum.
-
-        Returns:
-            {"granted": bool, "override_id"?: str, "expires_at"?: float,
-             "error"?: str}
+            tool_name: masked tool; must be a registered MCP tool.
+            reason: audit justification, >= 20 characters.
+            ttl_seconds: requested TTL; clamped to 300s.
         """
         from trw_mcp.middleware._phase_session import safe_session_id_from_context
 
@@ -215,7 +213,48 @@ def register_phase_override_tools(server: FastMCP) -> None:
                 "granted": False,
                 "error": "session_id_unavailable",
             }
-        return request_tool_access(session_id, tool_name, reason=reason, ttl_seconds=ttl_seconds)
+        result = request_tool_access(session_id, tool_name, reason=reason, ttl_seconds=ttl_seconds)
+        if not result.get("granted"):
+            return result
+
+        # A grant updates SERVER state only. `on_list_tools` already unions
+        # `_active_override_tools`, so the tool WOULD be advertised on the next
+        # `tools/list` — but nothing told the client to re-list, so a capable
+        # client kept its cached view and the single-use, 5-minute grant expired
+        # unused. `granted: true` while the tool stayed uncallable is the exact
+        # reports-success-without-doing-its-job shape this codebase keeps
+        # finding. Emit the same refresh signal the phase-transition path uses.
+        notified = False
+        try:
+            from fastmcp.server.dependencies import get_context
+
+            from trw_mcp.middleware._phase_transitions import (
+                client_supports_list_changed,
+                emit_list_changed,
+            )
+
+            if client_supports_list_changed(session_id):
+                notified = await emit_list_changed(get_context())
+        except Exception:  # justified: fail-open — the grant itself stands
+            logger.warning("override_list_changed_failed", exc_info=True)
+
+        result["client_notified"] = notified
+        if not notified:
+            # Say so, rather than returning a bare granted:true the caller will
+            # read as "the tool is now callable".
+            result["action_required"] = (
+                "granted, but this client was not notified to refresh its tool list — "
+                "reconnect (e.g. /mcp) to see the tool before the TTL expires"
+            )
+        logger.info(
+            "phase_override_granted",
+            component="phase_overrides",
+            op="request_tool_access",
+            tool=tool_name,
+            client_notified=notified,
+            outcome="granted",
+        )
+        return result
 
 
 __all__ = [

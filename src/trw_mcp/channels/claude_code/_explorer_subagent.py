@@ -50,7 +50,7 @@ _EXPLORER_CONTENT = """\
 name: trw-distill-explorer
 description: >
   Read-only codebase intelligence specialist powered by trw-distill.
-  Use when you need: full codebase risk analysis, entity risk map, ordering comparison,
+  Use when you need: full codebase risk analysis, ordering comparison,
   top-N hotspot ranking, and convention summaries.
   Do NOT use for single-file pre-edit hints — use the PreToolUse hook instead.
 model: {model}
@@ -65,7 +65,6 @@ tools:
   - mcp__trw__trw_before_edit_hint
   - mcp__trw__trw_before_edit_hint_batch
   - mcp__trw__trw_codebase_risk_report
-  - mcp__trw__trw_entity_risk_map
   - mcp__trw__trw_code_search
   - mcp__trw__trw_code_symbol
   - mcp__trw__trw_recall
@@ -91,7 +90,6 @@ trw-distill risk data via MCP tools and return structured Markdown reports.
 
 Invoke this subagent when asked for:
 - **Full codebase risk analysis** — use `trw_codebase_risk_report`
-- **Entity risk map** — use `trw_entity_risk_map`
 - **Ordering comparison** — compare risk scores across files
 - **Hotspot ranking** — top-N files by risk score
 - **Convention summaries** — use `trw_recall` for code patterns
@@ -110,7 +108,7 @@ Invoke this subagent when asked for:
 ## Tool Usage Protocol
 
 1. Read the user's risk-analysis request.
-2. Call the most specific MCP tool (e.g., `trw_entity_risk_map` for entity maps).
+2. Call the most specific MCP tool (e.g., `trw_codebase_risk_report` for a repo-wide ranking).
 3. If the sidecar is missing, surface the action from `distill_action` field.
 4. Format the response using the return format below.
 5. Never expand scope beyond what was requested.

@@ -36,7 +36,7 @@ def test_render_ceremony_table() -> None:
 
 def test_render_ceremony_quick_ref_generated_from_ceremony_tools() -> None:
     """FR02: Quick ref is generated from CEREMONY_TOOLS, not hardcoded."""
-    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="gemini", display_name="gemini"))
+    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="codex", display_name="codex"))
     table = renderer.render_ceremony_quick_ref()
     # All 4 quick-ref tools should appear (from CEREMONY_TOOLS data)
     for tool_name in ("trw_session_start", "trw_learn", "trw_checkpoint", "trw_deliver"):
@@ -279,6 +279,6 @@ def test_session_boundary_text_is_canonical() -> None:
 
 def test_legacy_platform_kwarg() -> None:
     """Legacy: platform= kwarg creates a ClientProfile automatically."""
-    renderer = ProtocolRenderer(platform="gemini")
-    assert renderer.platform == "gemini"
-    assert renderer.client_profile.client_id == "gemini"
+    renderer = ProtocolRenderer(platform="codex")
+    assert renderer.platform == "codex"
+    assert renderer.client_profile.client_id == "codex"

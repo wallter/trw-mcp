@@ -26,12 +26,67 @@ if [ "${TRW_LOOP_WORKER:-}" = "1" ]; then
   exit 0
 fi
 
+# Resolve this session's identity so enforcement is attributed to its OWN run,
+# not a parallel instance's newest run. TRW_SESSION_ID wins; otherwise parse the
+# session_id out of the Stop-hook stdin JSON. Must consume stdin before any other
+# stdin-reading command.
+_session_id="${TRW_SESSION_ID:-}"
+if [ -z "$_session_id" ] && ! [ -t 0 ]; then
+  _stdin_payload=$(cat 2>/dev/null) || _stdin_payload=""
+  if [ -n "$_stdin_payload" ]; then
+    _session_id=$(printf '%s' "$_stdin_payload" \
+      | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -1 \
+      | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || _session_id=""
+  fi
+fi
+
 _project_root="$(get_repo_root)" || exit 0
 _context_dir="$_project_root/.trw/context"
 _block_file="$_context_dir/stop_block_count"
 _lock_dir="$_context_dir/stop_hook.lock"
 
-_run_dir=$(find_active_run) || exit 0
+# FOREIGN-run hardening (PRD ceremony-nudge false-positive fix): attribute
+# enforcement to THIS session's own pinned run when resolvable. An unpinned
+# session must never be nagged based on a parallel instance's newest run.
+#   - own pin resolvable   -> enforce against that run (correct attribution)
+#   - no own pin + recent session-scoped deliver -> clear (unpinned deliver marker)
+#   - no own pin + known unpinned identity        -> nothing run-scoped to enforce
+#   - identity unknown                             -> legacy global-newest fallback
+# The session-scoped check is two-shaped on purpose (PRD-FIX-117 FR01): an
+# unpinned delivery lands in session-events.jsonl as
+# {"event":"tool_invocation","tool_name":"trw_deliver","success":true}, never as
+# the trw_deliver_complete type the first predicate greps for.
+# PRD-FIX-117 FR02: consume PRD-FIX-118's single run-ownership primitive rather
+# than reading the pin store directly. resolve_owned_run adds the project-root
+# CONTAINMENT check this site lacked (a pin whose run_path escapes the project is
+# rejected) and routes through trw_pin_key, so TRW_SESSION_ID wins over the
+# stdin-parsed id. Ownership is never established by recency.
+_own_run_dir=""
+if [ -n "$_session_id" ]; then
+  _own_run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _own_run_dir=""
+fi
+
+if [ -n "$_own_run_dir" ] && [ -d "$_own_run_dir" ]; then
+  case "$_own_run_dir" in
+    */) _run_dir="$_own_run_dir" ;;
+    *) _run_dir="$_own_run_dir/" ;;
+  esac
+elif has_recent_session_deliver 240 || has_recent_session_tool_deliver; then
+  # Unpinned (or unresolved-pin) session with a recent session-scoped deliver —
+  # its completion marker lands only in session-events. Trust it and clear.
+  rm -f "$_block_file" 2>/dev/null || true
+  rm -rf "$_lock_dir" 2>/dev/null || true
+  exit 0
+elif [ -n "$_session_id" ]; then
+  # Positively unpinned: this session owns no run, so a foreign run's events must
+  # not drive a block. There is no run-scoped work to enforce against here.
+  exit 0
+else
+  # Identity unknown (no stdin/env session id) — preserve legacy single-instance
+  # behavior by enforcing against the global-newest run.
+  _run_dir=$(find_active_run) || exit 0
+fi
 [ -n "$_run_dir" ] || exit 0
 
 _events_path="${_run_dir}meta/events.jsonl"
@@ -41,14 +96,21 @@ _events_path="${_run_dir}meta/events.jsonl"
 _event_count=$(wc -l < "$_events_path" 2>/dev/null | tr -d ' ') || _event_count=0
 [ "$_event_count" -gt 0 ] 2>/dev/null || exit 0
 
-# Check for ceremony completion — if present, clear block count and allow
-# Check: (1) newest run events, (2) fallback session-events, (3) any recent run
-# Step 3 handles parallel instances where this session's run isn't the newest
-_session_events="$_context_dir/session-events.jsonl"
+# Check for ceremony completion — if present, clear block count and allow.
+# Sources, in order: (1) this run's own events, (2) a RECENT session-scoped
+# deliver marker (recency-bounded so a persisted marker cannot clear every
+# future session), (3) a RECENT successful trw_deliver TOOL INVOCATION in the
+# session log, (4) any parallel instance's recent run.
 _deliver_found=false
 if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" "trw_reflect_complete" || has_event "$_events_path" "trw_deliver_complete"; then
   _deliver_found=true
-elif [ -f "$_session_events" ] && has_event "$_session_events" "trw_deliver_complete"; then
+elif has_recent_session_deliver 240; then
+  _deliver_found=true
+elif has_recent_session_tool_deliver; then
+  # PRD-FIX-117 FR01. The branch above greps session-events.jsonl for the event
+  # type "trw_deliver_complete", which the unpinned write path never emits: it
+  # writes {"event":"tool_invocation","tool_name":"trw_deliver","success":true}.
+  # Match the shape the writer actually emits, bounded by the row's own ts.
   _deliver_found=true
 elif has_recent_deliver 240; then
   # Another parallel instance delivered recently — don't block this one

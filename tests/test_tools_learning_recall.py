@@ -183,13 +183,19 @@ class TestTrwRecallAccessTracking:
         tools["trw_recall"].fn(query="database pooling xray")
 
         entries_dir = _entries_dir(tmp_path)
+        checked = False
         for entry_file in entries_dir.glob("*.yaml"):
             data = reader.read_yaml(entry_file)
             if data.get("id") == r2["learning_id"]:
                 # Unmatched entry should have access_count 0 and no last_accessed_at
                 assert int(str(data.get("access_count", 0))) == 0
                 assert data.get("last_accessed_at") is None
+                checked = True
                 break
+        # Non-vacuity: every assertion above lives inside the loop, so an empty
+        # entries dir or a changed id field would skip them all and report the
+        # access-tracking isolation as verified without ever looking at it.
+        assert checked, f"unmatched entry {r2['learning_id']} not found under {entries_dir}"
 
     def test_recall_no_match_no_access_update(self, tmp_path: Path) -> None:
         """When query has no matches, no access tracking updates occur."""
