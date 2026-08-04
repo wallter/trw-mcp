@@ -139,34 +139,118 @@ def _recorded_targets(project_root: Path) -> list[str]:
     return []
 
 
+# Project-scoped paths whose presence would indicate a client is in use here.
+# TOTAL over ``SUPPORTED_IDES`` — every installable client declares a candidate
+# marker, including the ones that turn out to be unusable. That is the point:
+# which candidates survive is DERIVED (:func:`_trw_scaffolds_marker`), not
+# hand-listed, so the exclusion cannot silently fall out of date the way a
+# module-local subset does (wiring-defect pattern P11).
+_CLIENT_EVIDENCE_MARKERS: dict[str, tuple[str, ...]] = {
+    "claude-code": (".claude",),
+    "cursor-ide": (".cursor",),
+    "cursor-cli": (".cursor/cli.json",),
+    "opencode": (".opencode", "opencode.json"),
+    "codex": (".codex",),
+    "copilot": (".github/agents",),
+    "antigravity-cli": ("ANTIGRAVITY.md",),
+}
+
+
+def _paths_overlap(one: str, other: str) -> bool:
+    """True when the two repo-relative paths are the same file or nest."""
+    return one == other or one.startswith(f"{other}/") or other.startswith(f"{one}/")
+
+
+def _trw_scaffolds_marker(client_id: str, marker: str) -> bool:
+    """True when TRW itself creates *marker* without the user choosing *client_id*.
+
+    Two ways that happens, and the uninstall registry — TRW's own record of what
+    it installs — answers both:
+
+    * the marker is (or contains) a **core** surface, written into every project
+      whatever the client. ``.claude/`` is the case that matters: hooks, skills
+      and agents are universal artifacts, so ``.claude/`` is our output in a
+      codex-only project too.
+    * the marker is (or contains) a surface TRW installs for a **different**
+      client. ``.cursor/`` is that case: a cursor-cli install writes
+      ``.cursor/cli.json`` and ``.cursor/hooks/`` under it, so the directory says
+      "some cursor surface was installed", never "this developer uses the IDE".
+
+    Deriving it is what makes it durable. The predecessor hand-listed a single
+    exclusion (claude-code) with the right reasoning in its docstring and no
+    mechanism behind it, so ``.cursor/`` — created by TRW on any machine with the
+    ``cursor`` binary on PATH — voted cursor-ide into an append-only record it
+    can never leave. A new client that starts writing under ``.codex/`` now
+    retires codex's marker automatically instead of repeating that.
+    """
+    from trw_mcp.client_profiles.catalog import client_scaffold_relpaths, core_scaffold_relpaths
+
+    from ._utils import SUPPORTED_IDES
+
+    scaffolded: set[str] = set(core_scaffold_relpaths())
+    for other in SUPPORTED_IDES:
+        if other != client_id:
+            scaffolded |= client_scaffold_relpaths(other)
+    return any(_paths_overlap(marker, path) for path in scaffolded)
+
+
 def _file_evidenced_clients(project_root: Path) -> list[str]:
     """Clients with project-scoped evidence TRW did not fabricate.
 
     ``detect_ide`` deliberately also fires on machine-global signals — ``which
-    cursor``, ``which cursor-agent``, ``CURSOR_*`` env — and on ``.claude/``,
-    which TRW creates in EVERY project because hooks and skills are universal
-    artifacts. Those signals are right for a first install (they answer "what
-    could this developer use?") and wrong for maintaining a project's recorded
-    client list (which answers "what does THIS project use?").
+    cursor``, ``which cursor-agent``, ``CURSOR_*`` env — and TRW then scaffolds
+    whatever it detected. Those signals are right for a first install (they
+    answer "what could this developer use?") and wrong for maintaining a
+    project's recorded client list (which answers "what does THIS project
+    use?"), because our own output becomes the next run's input.
 
-    claude-code is deliberately absent: in a project TRW has already installed
-    into, ``.claude/`` is our own output and can never be evidence. Adopting
-    Claude Code later is an explicit ``update-project --ide claude-code``.
+    So a marker only counts when TRW could not have written it while installing
+    something else. claude-code and cursor-ide currently have no such marker and
+    are therefore never adopted from disk; adopting either later is an explicit
+    ``update-project --ide <client>``.
+
+    **Read the summary line as narrower than it sounds.** "TRW did not fabricate"
+    is true of *installing something else*, which is what the predicate tests. It
+    is NOT true of installing the client the marker evidences: measured against the
+    catalog, 7 of the 8 markers in the table are paths TRW writes for that same
+    client — ``.github/agents`` for copilot, ``.codex`` for codex, and so on. The
+    predicate has no arm for that case.
+
+    That gap is **latent, not live**: reaching it needs TRW to write client X's
+    marker in a project where X is not recorded, and ``_run_post_update_phases``
+    now derives its write targets from ``recorded or ide_targets`` rather than from
+    detection, which closes it. Reproduced at HEAD — ``init-project --ide codex``
+    plus three bare updates leaves the record ``['codex']``.
+
+    It is not closed here because closing it honestly would reject every marker in
+    the table and make this function permanently empty, which is a decision about
+    whether the mechanism should exist at all. The measurement is pinned in
+    ``tests/test_client_evidence_self_scaffolding.py`` so it cannot drift quietly.
     """
     found: list[str] = []
-    if (project_root / ".cursor" / "cli.json").is_file():
-        found.append("cursor-cli")
-    if (project_root / ".cursor").is_dir():
-        found.append("cursor-ide")
-    if (project_root / ".opencode").is_dir() or (project_root / "opencode.json").is_file():
-        found.append("opencode")
-    if (project_root / ".codex").is_dir():
-        found.append("codex")
-    if (project_root / ".github" / "agents").is_dir():
-        found.append("copilot")
-    if (project_root / "ANTIGRAVITY.md").is_file():
-        found.append("antigravity-cli")
+    for client_id, markers in _CLIENT_EVIDENCE_MARKERS.items():
+        usable = [m for m in markers if not _trw_scaffolds_marker(client_id, m)]
+        if any((project_root / marker).exists() for marker in usable):
+            found.append(client_id)
     return found
+
+
+def clients_with_markers_on_disk(project_root: Path) -> list[str]:
+    """Clients whose on-disk marker is present, WITHOUT the scaffolding exclusion.
+
+    The sibling :func:`_file_evidenced_clients` drops markers TRW writes itself,
+    because on the update path our own output would otherwise be read back as
+    the user's choice. At INSTALL time that exclusion is wrong: nothing has been
+    scaffolded yet, so a ``.claude/`` or ``.cursor/`` already on disk really is
+    the user's. What still must not count at install is the machine-global half
+    of detection — ``shutil.which("cursor")`` and the ``CURSOR_*`` env vars —
+    which is exactly what this table-driven check leaves out.
+    """
+    return [
+        client_id
+        for client_id, markers in _CLIENT_EVIDENCE_MARKERS.items()
+        if any((project_root / marker).exists() for marker in markers)
+    ]
 
 
 def _recorded_plus_newly_adopted(project_root: Path) -> list[str]:
@@ -180,28 +264,6 @@ def _recorded_plus_newly_adopted(project_root: Path) -> list[str]:
     if not recorded:
         return []
     return recorded + [c for c in _file_evidenced_clients(project_root) if c not in recorded]
-
-
-def _recorded_evidenced_targets(project_root: Path) -> list[str]:
-    """The recorded clients, minus any with no project-scoped evidence.
-
-    ``target_platforms`` is recorded at install from RESOLVED targets, which is
-    a mix: an explicit ``--ide`` choice, or detection when none was given. So the
-    record alone is not proof a client is really here — ``detect_ide`` reports
-    cursor-ide from ``shutil.which("cursor")``, and that name then persists in
-    the record forever.
-
-    Requiring evidence separates the two without needing to know which way the
-    record was written. claude-code is kept on the record alone: it is excluded
-    from :func:`_file_evidenced_clients` precisely because TRW creates
-    ``.claude/`` itself, so absence of evidence is expected rather than
-    meaningful for that one client.
-    """
-    recorded = _recorded_targets(project_root)
-    if not recorded:
-        return []
-    evidenced = set(_file_evidenced_clients(project_root))
-    return [client for client in recorded if client == "claude-code" or client in evidenced]
 
 
 def _recorded_or_detected_targets(project_root: Path) -> list[str]:

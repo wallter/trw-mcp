@@ -31,9 +31,8 @@ def _licensed_project(monkeypatch: pytest.MonkeyPatch) -> None:
     `tests/test_distill_entitlement_gate.py` — this fixture must not become the
     only statement about the gate.
     """
-    monkeypatch.setattr(
-        "trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True
-    )
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+
 
 # ---------------------------------------------------------------------------
 # Helpers

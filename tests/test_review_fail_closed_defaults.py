@@ -246,9 +246,7 @@ class TestAnEmptyVerdictIsNotAConclusion:
         from trw_mcp.state._ceremony_state_model import CeremonyState
         from trw_mcp.tools._ceremony_status import build_ceremony_status_line
 
-        line = build_ceremony_status_line(
-            CeremonyState(review_called=True, review_verdict="", review_p0_count=2)
-        )
+        line = build_ceremony_status_line(CeremonyState(review_called=True, review_verdict="", review_p0_count=2))
 
         assert "review=verdict_unrecorded" in line
         # The exact word the old fallback produced. Asserting its absence is the
@@ -265,16 +263,12 @@ class TestAnEmptyVerdictIsNotAConclusion:
         from trw_mcp.state._ceremony_state_model import CeremonyState
         from trw_mcp.tools._ceremony_status import build_ceremony_status_line
 
-        line = build_ceremony_status_line(
-            CeremonyState(review_called=True, review_verdict="pass", review_p0_count=0)
-        )
+        line = build_ceremony_status_line(CeremonyState(review_called=True, review_verdict="pass", review_p0_count=0))
 
         assert "review=pass" in line
         assert "verdict_unrecorded" not in line
 
-    def test_mark_review_persists_the_absence_rather_than_an_empty_string(
-        self, tmp_path: Path
-    ) -> None:
+    def test_mark_review_persists_the_absence_rather_than_an_empty_string(self, tmp_path: Path) -> None:
         """Fix the state, not just the rendering.
 
         Every consumer of ``review_verdict`` — not only the status line — sees a

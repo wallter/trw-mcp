@@ -106,7 +106,7 @@ class TestUpdateProjectMultiIDE:
         assert "trw_session_start" in instructions_content or "TRW" in instructions_content
 
     def test_fr15_init_with_ide_codex(self, tmp_path: Path) -> None:
-        """init_project(ide='codex') creates Codex config, AGENTS.md, and per-client instructions."""
+        """init_project(ide='codex') creates Codex config and its own instruction file."""
         (tmp_path / ".git").mkdir()
 
         result = init_project(tmp_path, ide="codex")
@@ -129,7 +129,9 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / ".codex" / "INSTRUCTIONS.md").exists()
         instructions_content = (tmp_path / ".codex" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         assert "trw_deliver" in instructions_content
-        assert (tmp_path / "AGENTS.md").exists()
+        # codex's AGENTS.md was withdrawn (PRD-CORE-240-FR04); `.codex/INSTRUCTIONS.md`,
+        # which `.codex/config.toml` points at, is its whole carrier now.
+        assert (tmp_path / ".codex" / "INSTRUCTIONS.md").exists()
 
     def test_fr15_init_codex_migrates_legacy_hook_opt_in_and_warns(self, tmp_path: Path) -> None:
         """init_project(ide='codex') migrates legacy hook opt-in and tells users to review hooks."""

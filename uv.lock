@@ -2737,7 +2737,7 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "1.0.0"
+version = "1.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -2831,7 +2831,7 @@ provides-extras = ["vectors", "meta-tune", "otel", "dev", "ai"]
 
 [[package]]
 name = "trw-memory"
-version = "0.13.2"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -2843,9 +2843,9 @@ dependencies = [
     { name = "structlog" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/68/ba/4cc73089b4a62289adf3bbd1091c4cc7f8fa819b331b4fc8b4e357af29f4/trw_memory-0.13.2.tar.gz", hash = "sha256:9d146041da0e8df789686d3ed6b7c500ed25c968d5a5d953637d17da5738de24", size = 996872, upload-time = "2026-07-29T18:07:09.004Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/95/8c3385da9ae6b0d56d15c490263b494974f41665b5efcd229bf2000e1bca/trw_memory-0.15.0.tar.gz", hash = "sha256:3d093d9aebed1ecc3b2eb0331b620254a986a1db5e9cbf186c3ee59611d33c15", size = 1037049, upload-time = "2026-08-04T18:12:20.953Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/62/ed5e0c5c0f92422428597b4803aa69d328961930980ef9443a936b25ef6b/trw_memory-0.13.2-py3-none-any.whl", hash = "sha256:c12078f6a51cf4dd5c26f01e2a554eed0dee22bcf569e0d810dfae18d150286b", size = 530188, upload-time = "2026-07-29T18:07:07.173Z" },
+    { url = "https://files.pythonhosted.org/packages/87/48/86f71876a32889f0ddb70c8559059cb86098bd32c332de030c450b001e29/trw_memory-0.15.0-py3-none-any.whl", hash = "sha256:72e07f8c31589293861665a0024a0a6fd191674f0af4b48992b7b4e7f11e6ed9", size = 541552, upload-time = "2026-08-04T18:12:19.185Z" },
 ]
 
 [[package]]

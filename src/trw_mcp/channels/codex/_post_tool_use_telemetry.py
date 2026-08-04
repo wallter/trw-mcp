@@ -215,39 +215,78 @@ def install_hook_script(
     target_dir: Path,
     *,
     overwrite: bool = True,
+    rewrite_unchanged: bool = False,
 ) -> dict[str, Any]:
     """Install the PostToolUse hook script at target_dir/.codex/hooks/.
 
     Validates no {{ }} tokens before writing (audit P0-02, FR07 AC).
 
+    An existing hook whose bytes already equal the generated script is left
+    alone and reported ``outcome="preserved"``. That is what makes the caller's
+    ``preserved`` bucket reachable at all: it used to be filled only when a
+    write was SKIPPED, and the only production caller passed
+    ``overwrite=force or True`` — always ``True`` — so no install could ever
+    report it, and every run claimed ``created`` even when nothing changed.
+
+    Note what is deliberately NOT gated: an existing hook whose bytes DIFFER is
+    still rewritten. A stale hook script that stays registered is how commit
+    ``1fc4be8850`` shipped a security fix that could not reach an existing
+    install, and content-equality is the check that distinguishes "already
+    current" from "never refreshed" without reopening that hole.
+
     Args:
         target_dir: Repository root (hook installed at target_dir/.codex/hooks/).
-        overwrite: If False, skip if the file already exists.
+        overwrite: If False, an existing file whose content DIFFERS is left in
+            place rather than refreshed.
+        rewrite_unchanged: If True, rewrite even when the content is identical.
 
     Returns:
-        Dict with keys: installed (bool), path (str), skipped (bool).
+        Dict with keys: installed (bool), path (str), skipped (bool),
+        outcome (``"created"`` | ``"updated"`` | ``"preserved"``).
     """
     hook_dir = target_dir / ".codex" / "hooks"
     hook_dir.mkdir(parents=True, exist_ok=True)
 
     hook_path = hook_dir / "trw_post_edit_telemetry.py"
-
-    if not overwrite and hook_path.exists():
-        log.debug(
-            "codex_hook_install_skipped",
-            path=str(hook_path),
-            outcome="skipped_exists",
-        )
-        return {"installed": False, "path": str(hook_path), "skipped": True}
-
     content = generate_hook_script()
+    existed = hook_path.exists()
+
+    if existed:
+        try:
+            current: str | None = hook_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            # Unreadable but present: treat as differing so a refresh is
+            # attempted. "We could not check" must not degrade to "it is fine".
+            #
+            # UnicodeDecodeError is NOT an OSError — it subclasses ValueError —
+            # so catching OSError alone left the one unreadable case this guard
+            # exists for. A corrupt or partially-written hook raised out of
+            # install_hook_script, the caller swallowed it into result["errors"],
+            # and the stale file stayed registered in .codex/hooks.json: exactly
+            # the "shipped fix cannot reach an existing install" defect
+            # 1fc4be8850 fixed. Found by an independent reviewer.
+            current = None
+        unchanged = current == content
+        if (unchanged and not rewrite_unchanged) or (not unchanged and not overwrite):
+            log.debug(
+                "codex_hook_install_skipped",
+                path=str(hook_path),
+                outcome="preserved_unchanged" if unchanged else "preserved_existing",
+            )
+            return {"installed": False, "path": str(hook_path), "skipped": True, "outcome": "preserved"}
+
     hook_path.write_text(content, encoding="utf-8")
 
     log.debug(
         "codex_hook_installed",
         path=str(hook_path),
         bytes_written=len(content.encode("utf-8")),
-        outcome="installed",
+        outcome="updated" if existed else "created",
     )
 
-    return {"installed": True, "path": str(hook_path), "skipped": False}
+    return {
+        "installed": True,
+        "path": str(hook_path),
+        "skipped": False,
+        "outcome": "updated" if existed else "created",
+    }

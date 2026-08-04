@@ -161,7 +161,7 @@ The table below covers the most-used tools out of the full <!-- inv:tools -->45<
 | **Learning** | `learn`, `learn_update`, `recall`, `instructions_sync` | Knowledge capture, retrieval, and instruction-file refresh |
 | **Quality** | `build_check`, `review`, `deliver` | Verification and delivery |
 | **Requirements** | `prd_create`, `prd_validate`, `prd_diff` | [Spec-driven development](https://trwframework.com/docs) with AARE-F PRDs |
-| **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `codebase_risk_report`, `entity_risk_map` | Repo-aware search, symbol lookup, and risk signals |
+| **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `before_edit_hint_batch`, `codebase_risk_report` | Repo-aware search, symbol lookup, and risk signals |
 | **Observability** | `query_events`, `surface_diff`, `mcp_security_status` | Event history, surface diffs, and security status |
 
 ## Skills (<!-- inv:skills -->26<!-- /inv -->)
@@ -172,7 +172,7 @@ Slash-command workflows — zero tokens until triggered. Full skill reference at
 
 **Requirements**: `/trw-prd-new` · `/trw-prd-ready` · `/trw-prd-groom` · `/trw-prd-review` · `/trw-exec-plan`
 
-**Quality**: `/trw-audit` · `/trw-self-review` · `/trw-delegate` · `/trw-simplify` · `/trw-dry-check` · `/trw-security-check` · `/trw-test-strategy`
+**Quality**: `/trw-audit` · `/trw-self-review` · `/trw-delegate` · `/trw-dry-check` · `/trw-security-check` · `/trw-test-strategy`
 
 **Framework**: `/trw-framework-check` · `/trw-project-health` · `/trw-memory-audit` · `/trw-memory-optimize`
 
@@ -184,7 +184,7 @@ Optional specialized agent definitions for clients and harnesses that support de
 |------|-------|---------|
 | **Core Team** | trw-lead, trw-implementer, trw-tester, trw-researcher, trw-reviewer, trw-auditor, trw-adversarial-auditor | Orchestration, TDD, testing, research, review, audit, spec-vs-code audit |
 | **Requirements** | trw-prd-groomer, trw-requirement-writer, trw-requirement-reviewer | PRD lifecycle specialists |
-| **Quality** | trw-traceability-checker, trw-code-simplifier | Traceability and code health |
+| **Quality** | trw-traceability-checker | Requirement-to-code-and-test traceability verification |
 
 ## The 6-Phase Model
 

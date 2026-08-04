@@ -21,8 +21,6 @@ calls trw-mcp's own ``recall_learnings`` only — no trw_distill import.
 
 from __future__ import annotations
 
-from typing import Literal
-
 import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -108,19 +106,22 @@ def collect_learnings(
     return out
 
 
-_FILE_QUERY_KIND = Literal["file_path_basename", "explicit"]
-
-
-def build_file_queries(
-    file_path: str,
-    *,
-    kind: _FILE_QUERY_KIND = "file_path_basename",
-) -> list[str]:
+def build_file_queries(file_path: str) -> list[str]:
     """Build the standard query list for a file-targeted tool.
 
-    Default: ``[file_path, basename(file_path)]``. Basename is added
-    only when it differs from the full path. Maintained as a helper so
-    the convention is centralized for all file-targeted tools.
+    Returns ``[file_path, basename(file_path)]``, with the basename added only when
+    it differs from the full path. Centralized so the convention is one thing for
+    every file-targeted tool.
+
+    This used to accept ``kind: Literal["file_path_basename", "explicit"]`` — a
+    typed, defaulted routing option that the body **never read**. Passing
+    ``kind="explicit"``, the only reason the parameter existed, silently produced
+    the basename fan-out it was asking to avoid. All three call sites used the
+    default, so nothing was harmed; it was a knob that did nothing, which this
+    project has a standing rule against (PRD-QUAL-131 deleted 45 of them for the
+    same reason). Deleted rather than implemented: no caller wants the other
+    behaviour, and a dormant option is worse than no option because a reader
+    reasonably assumes a declared Literal is honoured.
     """
     import os
 

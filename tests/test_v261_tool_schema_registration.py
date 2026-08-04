@@ -88,9 +88,7 @@ def test_fresh_production_process_exposes_v261_evidence_and_recovery_schema(tmp_
     # position keeps this contract honest across the collapse; asserting only
     # that "reviewer_identity" exists would pass for an opaque object with no
     # documented keys, which is the failure this line exists to catch.
-    reviewer_identity_desc = _production_param_descriptions(
-        tmp_path, "trw_review", "reviewer_identity"
-    )
+    reviewer_identity_desc = _production_param_descriptions(tmp_path, "trw_review", "reviewer_identity")
     assert "reviewer_source" in reviewer_identity_desc
     assert "reviewer_receipt_id" in reviewer_identity_desc
     assert {"delivery_id", "capability_token"} <= schemas["trw_deliver"]

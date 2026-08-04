@@ -100,9 +100,7 @@ class TestSuppressedFindingsAreReported:
         assert result["verdict"] == "pass"
         assert result["surfaced_findings_count"] == 0
         assert result["suppressed_findings_count"] == 1
-        assert result["suppressed_findings"] == [
-            {"index": 0, "reason": SUPPRESSED_BELOW_THRESHOLD, "value": "20.0"}
-        ]
+        assert result["suppressed_findings"] == [{"index": 0, "reason": SUPPRESSED_BELOW_THRESHOLD, "value": "20.0"}]
 
     def test_unscorable_confidence_is_reported_not_dropped(self, run_dir: Path) -> None:
         """A non-numeric confidence must not vanish between the two counts."""

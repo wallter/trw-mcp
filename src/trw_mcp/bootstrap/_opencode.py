@@ -7,17 +7,13 @@ FR16: opencode.json Smart Merge (PRD-CORE-074)
 from __future__ import annotations
 
 import json
-import re
 import shutil
-import sys
 from pathlib import Path
-from typing import cast
 
 import structlog
 
 from trw_mcp.channels.opencode._shared_lock import ChannelLockSkip, agents_md_lock
 from trw_mcp.models.typed_dicts._opencode import (
-    OpencodeConfig,
     OpencodeServerEntry,
     OpencodeTemplateDict,
 )
@@ -32,6 +28,20 @@ from ._opencode_instructions import (
 from ._opencode_instructions import (
     generate_opencode_instructions as generate_opencode_instructions,
 )
+from ._opencode_jsonc import (
+    _parse_jsonc as _parse_jsonc,
+)
+from ._opencode_jsonc import (
+    _read_existing_opencode_config as _read_existing_opencode_config,
+)
+from ._opencode_jsonc import (
+    _strip_jsonc_comments as _strip_jsonc_comments,
+)
+from ._opencode_merge import _DEFAULT_PERMISSIONS as _DEFAULT_PERMISSIONS
+from ._opencode_merge import (
+    OPENCODE_INSTRUCTIONS_ENTRY as _OPENCODE_INSTRUCTIONS_ENTRY,
+)
+from ._opencode_merge import merge_opencode_json as merge_opencode_json
 from ._utils import _DATA_DIR
 
 logger = structlog.get_logger(__name__)
@@ -39,13 +49,6 @@ logger = structlog.get_logger(__name__)
 _TRW_START_MARKER = "<!-- trw:start -->"
 _TRW_END_MARKER = "<!-- trw:end -->"
 _TRW_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
-
-#: The TRW-owned instruction file opencode must be told to load. Single source
-#: for both the fresh-install seed and the merge path, so the two cannot drift
-#: into referencing different files (PRD-CORE-240-FR05).
-_OPENCODE_INSTRUCTIONS_ENTRY = ".opencode/INSTRUCTIONS.md"
-
-_DEFAULT_PERMISSIONS: dict[str, str] = {"bash": "ask", "write": "ask", "edit": "ask"}
 
 _OPENCODE_DATA_DIR = _DATA_DIR / "opencode"
 _OPENCODE_COMMANDS_DIR = _OPENCODE_DATA_DIR / "commands"
@@ -63,7 +66,11 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
     """Return the TRW MCP server entry for opencode.json.
 
     Uses local stdio transport (one trw-mcp process per instance).
-    Falls back to absolute Python path if trw-mcp not on PATH.
+    Falls back to a bare ``python3 -m trw_mcp.server`` when trw-mcp is not on
+    PATH — NOT an absolute interpreter path (PRD-SEC-006, audit
+    installer-client-12). ``opencode.json`` is committed config, so
+    ``sys.executable`` would bake in the build machine's interpreter and break
+    the entry for every teammate; a bare ``python3`` resolves per-machine.
 
     No ``--debug``: log verbosity is protocol, not per-client surface density,
     so every profile now generates the same command. Verbose logging is opted
@@ -72,7 +79,7 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
     if shutil.which("trw-mcp"):
         command: list[str] = ["trw-mcp"]
     else:
-        command = [sys.executable, "-m", "trw_mcp.server"]
+        command = ["python3", "-m", "trw_mcp.server"]
 
     return {
         "type": "local",
@@ -81,133 +88,9 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
     }
 
 
-def _strip_jsonc_comments(content: str) -> str:
-    """Strip ``//`` line and ``/* */`` block comments from a JSONC string.
-
-    The string-aware core shared by :func:`_parse_jsonc` (which then parses the
-    result) and :func:`_read_existing_opencode_config` (which parses through
-    ``json.loads`` so the parsed value is genuinely untyped and its top-level
-    shape can be validated). Comment delimiters inside JSON string literals are
-    preserved.
-    """
-    # Remove block comments /* ... */ (including multi-line)
-    content = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
-    # Remove line comments // ... (but not inside strings)
-    # Simple approach: remove // comments that are on their own segment
-    # Uses a regex that skips strings
-    result_parts: list[str] = []
-    i = 0
-    in_string = False
-    escape_next = False
-    while i < len(content):
-        ch = content[i]
-        if escape_next:
-            result_parts.append(ch)
-            escape_next = False
-            i += 1
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            result_parts.append(ch)
-            i += 1
-            continue
-        if ch == '"':
-            in_string = not in_string
-            result_parts.append(ch)
-            i += 1
-            continue
-        if not in_string and ch == "/" and i + 1 < len(content) and content[i + 1] == "/":
-            # Skip to end of line
-            while i < len(content) and content[i] != "\n":
-                i += 1
-            continue
-        result_parts.append(ch)
-        i += 1
-    return "".join(result_parts)
-
-
-def _parse_jsonc(content: str) -> OpencodeConfig:
-    """Parse JSONC (JSON with comments) by stripping comments.
-
-    Handles // line comments and /* block comments */.
-    Returns parsed dict. Raises json.JSONDecodeError on invalid JSON.
-    """
-    result: OpencodeConfig = json.loads(_strip_jsonc_comments(content))
-    return result
-
-
-def _read_existing_opencode_config(
-    path: Path,
-    *,
-    result: dict[str, list[str]],
-) -> OpencodeConfig | None:
-    """Read an existing ``opencode.json`` as a JSONC object, or return ``None``.
-
-    The deep seam behind the FR16 smart-merge read. It is JSONC-aware (the
-    OpenCode config permits ``//`` and ``/* */`` comments, so it cannot reuse
-    the plain-JSON :func:`read_json_object` seam) yet shares that seam's
-    fail-closed, content-free policy: every malformed-input outcome collapses to
-    ``None`` plus a structural diagnostic, never a crash.
-
-    Outcomes (the prior call site read text + parsed inline and caught only
-    ``json.JSONDecodeError`` / ``OSError``, so the first two below escaped or
-    surfaced raw parser context):
-
-      - **unreadable** — ``OSError`` (permission, race, is-a-directory, ...).
-      - **non_utf8** — bytes are not valid UTF-8. ``bytes.decode("utf-8")``
-        raises ``UnicodeDecodeError`` (a ``ValueError`` subclass, *not* an
-        ``OSError``), which the prior call site let escape and crash bootstrap.
-      - **malformed_json** — valid UTF-8 but the JSONC payload will not parse.
-      - **non_object** — parses, but the top level is an array or scalar;
-        :func:`merge_opencode_json` would then ``.get(...)`` on a non-mapping
-        and raise ``AttributeError``.
-
-    On every failure a *content-free* reason category
-    (``unreadable`` / ``non_utf8`` / ``malformed_json`` / ``non_object``) is
-    appended to ``result["errors"]`` against the stable rel-name
-    ``opencode.json`` — never an absolute path, the raw bytes, a secret marker,
-    the decode offset, or ``str(exc)``. A malformed config that happens to hold
-    a token therefore never leaks into the result or logs.
-
-    Returns the parsed mapping on success, else ``None`` (the caller reports the
-    recorded error and leaves the user's file untouched).
-    """
-    rel = path.name  # stable "opencode.json"; never the absolute path
-
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        logger.warning("opencode_json_unreadable", path=str(path), reason="unreadable")
-        result["errors"].append(f"Failed to read {rel}: unreadable")
-        return None
-
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        logger.warning("opencode_json_non_utf8", path=str(path), reason="non_utf8")
-        result["errors"].append(f"Failed to read {rel}: non_utf8")
-        return None
-
-    parsed: object
-    try:
-        parsed = json.loads(_strip_jsonc_comments(text))
-    except json.JSONDecodeError:
-        logger.warning("opencode_json_malformed", path=str(path), reason="malformed_json")
-        result["errors"].append(f"Failed to read {rel}: malformed_json")
-        return None
-
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "opencode_json_non_object",
-            path=str(path),
-            reason="non_object",
-            json_kind=type(parsed).__name__,
-        )
-        result["errors"].append(f"Failed to read {rel}: non_object")
-        return None
-
-    return cast("OpencodeConfig", parsed)
-
+# JSONC parsing (_strip_jsonc_comments, _parse_jsonc,
+# _read_existing_opencode_config) lives in ._opencode_jsonc and is
+# re-exported above.
 
 # opencode's private ``_is_user_modified`` was deleted in favour of the shared
 # ``_managed_client_artifacts.artifact_user_edited``. It consulted only the
@@ -367,64 +250,8 @@ def install_opencode_skills(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Smart merge (FR16)
-# ---------------------------------------------------------------------------
-
-
-def merge_opencode_json(
-    existing: OpencodeConfig,
-    trw_entry: OpencodeServerEntry,
-) -> OpencodeConfig:
-    """Smart merge TRW config into existing opencode.json (FR16).
-
-    Rules:
-    - Add/update "trw" entry under "mcp" without removing other servers.
-    - Add "permission" defaults only if "permission" key doesn't exist.
-    - NEVER overwrite user's "model", "small_model", "agent".
-    - APPEND the TRW instructions artifact to "instructions", preserving every
-      user entry at its original index (PRD-CORE-240-FR05).
-    - Preserve all other keys.
-    """
-    # Start from existing config via unpacking — preserves all user keys
-    # (model, small_model, agent, instructions) without dynamic key access.
-    result: OpencodeConfig = {**existing}
-
-    # Update "mcp" section: add/update "trw" key, preserve others
-    mcp: dict[str, OpencodeServerEntry] = dict(result.get("mcp", {}))
-    mcp["trw"] = trw_entry
-    result["mcp"] = mcp
-
-    # Add default permissions only when the key is absent
-    if "permission" not in result:
-        result["permission"] = dict(_DEFAULT_PERMISSIONS)
-
-    result["instructions"] = _merge_instructions(result.get("instructions"))
-
-    return result
-
-
-def _merge_instructions(existing: list[str] | None) -> list[str]:
-    """Return the user's ``instructions`` array with the TRW artifact appended once.
-
-    OpenCode has no in-file include syntax; ``opencode.json``'s ``instructions``
-    array is how a file gets loaded. TRW writes ``.opencode/INSTRUCTIONS.md``
-    unconditionally, but only the FRESH-INSTALL branch ever seeded the array —
-    this merge path documented that it "never overwrites the user's instructions
-    key" and, correctly, never did, but it never *added* to it either. So for any
-    project that had an ``opencode.json`` before TRW was installed, the
-    instructions file was written and referenced by nothing: a file loaded by
-    nobody, with every surface reporting success (PRD-CORE-240-FR05).
-
-    Appending is safe precisely because the array is multi-valued — unlike
-    codex's single-valued ``model_instructions_file``, which is why that client
-    is deliberately NOT repointed. User entries keep their original order and
-    index; the TRW entry goes last; a re-run appends nothing.
-    """
-    entries = list(existing) if existing else []
-    if _OPENCODE_INSTRUCTIONS_ENTRY not in entries:
-        entries.append(_OPENCODE_INSTRUCTIONS_ENTRY)
-    return entries
+# Smart merge (FR16): merge_opencode_json + _merge_instructions live in
+# ._opencode_merge and are re-exported above.
 
 
 # ---------------------------------------------------------------------------
@@ -596,8 +423,3 @@ def generate_agents_md(
         updated=result["updated"],
     )
     return result
-
-
-# ---------------------------------------------------------------------------
-# Model family detection
-# ---------------------------------------------------------------------------

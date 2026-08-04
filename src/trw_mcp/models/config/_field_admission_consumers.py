@@ -21,10 +21,24 @@ a blanket ban on the string:
   suppressed within a week -- the same reasoning that made
   ``check_config_field_consumers`` a ratchet rather than a zero-tolerance gate.
 
-The unread half is grandfathered against the published set rather than recomputed,
-so the 72 fields already recorded as debt do not fail twice for one defect. A NEW
-field that copies the pattern is not in that set and IS rejected, which is the
-forward-looking guarantee.
+The unread half is grandfathered against a CURATED set -- the dated
+``classifications`` map in ``.trw/compliance/config-field-consumers-baseline.json``
+-- so the fields already recorded as debt do not fail twice for one defect, while a
+new field that copies the pattern IS rejected.
+
+**That guarantee used to be false, and the way it was false is worth recording.**
+``grandfathered`` defaulted to ``unread``: the same set the rejection subtracts.
+``(self_referential & unread) - unread`` is empty for every possible input, so
+``rejected`` could not be non-empty on the default path, and the only live caller
+took that path. The forward-looking guarantee this docstring advertised was
+delivered by an expression that had no reachable failing branch (wiring-defect
+pattern P4). Aggravating it, ``--write-baseline`` regenerates the published unread
+set together with the ratchet, so even a hand-passed live measurement would have
+absorbed each new offender on the next regeneration.
+
+The parameter is therefore REQUIRED now. A grandfather set has to be something a
+person decided and dated; deriving it from the measurement it is supposed to
+constrain is what made the gate unfalsifiable.
 """
 
 from __future__ import annotations
@@ -63,7 +77,7 @@ def verify_consumer_claims(
     admissions: Mapping[str, ConfigAdmission],
     *,
     unread: Iterable[str],
-    grandfathered: Iterable[str] | None = None,
+    grandfathered: Iterable[str],
 ) -> ConsumerClaimReport:
     """Split self-referential consumer claims into rejections and warnings.
 
@@ -71,18 +85,18 @@ def verify_consumer_claims(
         admissions: The live admission records, keyed by field name.
         unread: Field names with no production reader.
         grandfathered: Field names whose unread state is already recorded as
-            debt elsewhere. Defaults to *unread*, which makes the rejection set
-            empty for today's known backlog and non-empty for anything new.
+            debt elsewhere -- in practice the dated ``classifications`` map from
+            the compliance baseline. REQUIRED, and it must not be derived from
+            *unread*: passing the same set makes the rejection set empty for
+            every possible input. See the module docstring.
 
     Returns:
         A report whose ``ok`` is False when any admission claims the config model
         as its consumer for a field nothing reads and that is not grandfathered.
     """
     unread_set = set(unread)
-    exempt = unread_set if grandfathered is None else set(grandfathered)
-    self_referential = {
-        name for name, record in admissions.items() if record.consumer.strip() == CONFIG_MODEL_NAME
-    }
+    exempt = set(grandfathered)
+    self_referential = {name for name, record in admissions.items() if record.consumer.strip() == CONFIG_MODEL_NAME}
     rejected = tuple(sorted((self_referential & unread_set) - exempt))
     warned = tuple(sorted(self_referential - unread_set))
 

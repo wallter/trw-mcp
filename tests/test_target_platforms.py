@@ -531,12 +531,14 @@ class TestDetermineWriteTargets:
         assert write_agents is False
         assert instruction_path == ".opencode/INSTRUCTIONS.md"
 
-    def test_codex_client_writes_agents_only(self, tmp_path: Path) -> None:
+    def test_codex_client_writes_its_own_file_only(self, tmp_path: Path) -> None:
         """client='codex' writes AGENTS.md only."""
         cfg = TRWConfig()
         write_claude, write_agents, instruction_path = _determine_write_targets("codex", cfg, tmp_path, "root")
         assert write_claude is False
-        assert write_agents is True
+        # WITHDRAWN (PRD-CORE-240-FR04): codex's own `.codex/INSTRUCTIONS.md`
+        # carries the whole protocol, so TRW writes nothing into AGENTS.md.
+        assert write_agents is False
         assert instruction_path == ".codex/INSTRUCTIONS.md"
 
     def test_all_client_writes_both(self, tmp_path: Path) -> None:

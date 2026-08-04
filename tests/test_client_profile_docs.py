@@ -80,7 +80,9 @@ def test_codex_profile_contract_is_explicit() -> None:
 
     assert profile.display_name == "Codex CLI"
     assert profile.ceremony_mode == "light"
-    assert profile.write_targets.agents_md is True
+    # WITHDRAWN (PRD-CORE-240-FR04): codex's own file carries the whole protocol,
+    # so TRW writes nothing into the user-owned AGENTS.md.
+    assert profile.write_targets.agents_md is False
     assert profile.write_targets.instruction_path == ".codex/INSTRUCTIONS.md"
     assert profile.context_window_tokens == 32_000
     assert profile.instruction_max_lines == 200

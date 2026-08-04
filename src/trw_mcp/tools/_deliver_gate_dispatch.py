@@ -59,7 +59,14 @@ from trw_mcp.models.gate_decision import (
     GateOverridePolicy,
     GateStatus,
 )
-from trw_mcp.models.typed_dicts import DeliverResultDict
+from trw_mcp.models.typed_dicts import DeliverResultDict, DeliveryGatesDict
+
+# ``_ceremony_deliver_steps.unpack_gate_result`` runs BEFORE this dispatcher (see
+# ``_ceremony_deliver_tool.run_trw_deliver``) and hand-copies a subset of
+# DeliveryGatesDict keys onto the result. Read-only reference (never mutated
+# here) so this module's own bridge (below) can derive the COMPLEMENT instead
+# of re-hand-copying a second, independently-drifting list.
+from trw_mcp.tools._ceremony_deliver_steps import _GATE_KEYS as _RESULT_BRIDGED_ELSEWHERE_KEYS
 
 logger = structlog.get_logger(__name__)
 
@@ -80,6 +87,47 @@ class GateDescriptor:
     policy: OverridePolicy
     result_block_key: str
     gate_type: str
+
+
+# Keys whose presence in the RESULT dict is decided entirely by this dispatcher's
+# own block/override resolution -- never a raw passthrough of gate_result -- so a
+# blind bridge must skip them:
+#   - delivery_blocked / intent_violation_block: written by ``_emit_block`` ONLY
+#     when the hard block stands. A successful STRUCTURED override leaves these
+#     ABSENT from the result; copying gate_result's raw value regardless of the
+#     override outcome would resurrect a block message after delivery proceeded.
+#   - missing_gate / blocked_task_type: written by ``_evaluate_structured`` with a
+#     dispatch-supplied DEFAULT ("build_check" / "unknown") whenever the
+#     delivery_blocked descriptor fires -- dispatch, not gate_result, owns the
+#     value (a raw ``.get`` would drop the default for an absent gate_result key).
+_DISPATCH_OWNED_KEYS: frozenset[str] = frozenset(
+    {"delivery_blocked", "missing_gate", "blocked_task_type", "intent_violation_block"}
+)
+
+
+def _bridge_advisory_gate_keys(gate_result: Mapping[str, object], results: DeliverResultDict) -> None:
+    """Carry every DeliveryGatesDict key neither dispatch-owned nor already
+    hand-bridged elsewhere onto ``results``.
+
+    Fixes a P5 success-shaped failure: ``check_delivery_gates`` computes
+    ``instruction_parity_warning`` (R-08, PRD-CORE-135-FR03) on every deliver, but
+    no bridge carried it from the gate_result dict to the caller-visible result --
+    it was silently dropped even though the advisory aggregate claimed to count it.
+    Derived from ``DeliveryGatesDict.__annotations__`` (never a hand-copied tuple)
+    so a future TypedDict field that nobody bridges fails the totality test in
+    ``tests/test_deliver_gate_dispatch.py`` instead of vanishing the same way.
+
+    Runs unconditionally at the top of :func:`evaluate_delivery_gates` -- before
+    the block/override cascade -- so a surviving warning shows up whether or not a
+    later gate blocks, matching how ``unpack_gate_result`` (which runs even
+    earlier, in the caller) already treats its own subset of soft warnings.
+    """
+    for key in DeliveryGatesDict.__annotations__:
+        if key in _DISPATCH_OWNED_KEYS or key in _RESULT_BRIDGED_ELSEWHERE_KEYS:
+            continue
+        value = gate_result.get(key)
+        if value:
+            results[key] = value  # type: ignore[literal-required]
 
 
 # Precedence order is load-bearing — see module docstring. Iterated top-to-bottom.
@@ -123,6 +171,7 @@ def evaluate_delivery_gates(
 
     if not gate_decision_enabled():
         raise RuntimeError("GateDecision dispatch requires the v26.1 receipt closure")
+    _bridge_advisory_gate_keys(gate_result, results)
     decision_set = _build_decision_set(gate_result)
     _persist_decision_set(resolved_run, decision_set)
     typed_gate_result: Mapping[str, object] = decision_set.project_public_keys()

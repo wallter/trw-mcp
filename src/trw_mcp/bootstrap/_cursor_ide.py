@@ -458,6 +458,7 @@ def generate_cursor_ide_hooks(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
     """Install IDE hook scripts and merge the 8-event IDE event list into hooks.json (FR08).
 
@@ -488,6 +489,7 @@ def generate_cursor_ide_hooks(
         target_dir,
         _IDE_HOOK_SCRIPTS,
         force=force,
+        manifest_hashes=manifest_hashes,
     )
     result["created"].extend(script_result.get("created") or [])
     result["updated"].extend(script_result.get("updated") or [])

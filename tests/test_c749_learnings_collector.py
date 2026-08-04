@@ -141,10 +141,8 @@ class TestCollectLearnings:
         self._stub_recall(monkeypatch, {"a.py": [row], "b.py": [row]})
         assert [item.id for item in collect_learnings(["a.py", "b.py"])] == ["L-dup"]
 
-    def test_recall_failure_on_one_query_does_not_abort_the_rest(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """"NEVER raises" must mean the remaining queries still run."""
+    def test_recall_failure_on_one_query_does_not_abort_the_rest(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ "NEVER raises" must mean the remaining queries still run."""
 
         def fake_recall(query: str, max_results: int = 5, **_: object) -> list[dict[str, object]]:
             if query == "boom.py":

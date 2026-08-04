@@ -161,7 +161,11 @@ def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry
     elif shutil.which("trw-mcp"):
         command = "trw-mcp"
     else:
-        command = sys.executable
+        # PRD-SEC-006 / audit installer-client-12: a bare ``python3`` resolves
+        # per-machine via PATH. ``sys.executable`` would bake this machine's
+        # interpreter path into ``.codex/config.toml``, which is committed
+        # config — broken for every teammate, and a leaked host path.
+        command = "python3"
         args = ["-m", "trw_mcp.server"]
     return {"command": command, "args": args, "enabled": True}
 

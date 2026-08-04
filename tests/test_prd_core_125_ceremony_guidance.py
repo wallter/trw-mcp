@@ -139,9 +139,9 @@ class TestFR02ServerInstructions:
 
         instr = _DEFAULT_INSTRUCTIONS.lower()
         assert "trw_session_start" in instr
-        assert any(
-            phrase in instr for phrase in ("already learned", "prior learnings", "instead of", "restores")
-        ), f"instructions must say what calling it gains the caller: {_DEFAULT_INSTRUCTIONS!r}"
+        assert any(phrase in instr for phrase in ("already learned", "prior learnings", "instead of", "restores")), (
+            f"instructions must say what calling it gains the caller: {_DEFAULT_INSTRUCTIONS!r}"
+        )
         assert "%" not in _DEFAULT_INSTRUCTIONS, "no unsourced percentage — see the docstring"
 
     def test_fr02_instructions_under_100_words(self) -> None:

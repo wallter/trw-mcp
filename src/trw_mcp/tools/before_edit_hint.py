@@ -17,9 +17,12 @@ IP boundary (trw-distill is PROPRIETARY; trw-mcp is PUBLIC):
   field-by-field Pydantic mirror via :class:`BeforeYouEditHintPayload`.
 
 Honest scope per CONSTITUTION §1:
-- v0 reads only the single-file ``before-edit-hint-<sha>.json`` artifact
-  (c743). Batch artifact ``before-edit-batch-<sha>.json`` consumption
-  is deferred to v1.
+- Reads the single-file ``before-edit-hint-<sha>.json`` artifact (c743) and
+  falls back to ``before-edit-batch-<sha>.json`` when that artifact does not
+  describe the requested file. The fallback is not a convenience: the
+  single-file name has NO per-file discriminator, so every producer writing it
+  overwrites the last, and a commit touching N files can serve at most one of
+  them from it. The post-commit refresh accordingly emits the batch artifact.
 - Stale-SHA detection compares sidecar SHA literal to current git HEAD.
   No version-range / fuzzy-match fallback.
 - Learnings half always returns even when distill_sidecar feature is
@@ -55,7 +58,14 @@ from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus
 # the two drifted in the first place.
 _SCHEMA_VERSION_ACCEPTED: str = _sidecar_substrate.SCHEMA_VERSION_ACCEPTED
 _ARTIFACT_NAME_SINGLE: str = "before-edit-hint"
+_ARTIFACT_NAME_BATCH: str = "before-edit-batch"
 _TIER_FEATURE: str = "trw_before_edit_hint:distill_sidecar"
+
+#: Statuses in which the substrate returned BEFORE consulting any artifact, so
+#: a second lookup would repeat the same negative at the cost of two more git
+#: subprocesses. Every other status means an artifact path was actually
+#: examined, and the batch artifact is then worth examining too.
+_NO_ARTIFACT_CONSULTED: frozenset[str] = frozenset({"tier_required", "no_repo_root", "no_git_sha"})
 
 #: This tool adds exactly one status to the shared vocabulary: the sidecar
 #: loaded cleanly but describes a DIFFERENT file. Everything else is the
@@ -121,6 +131,20 @@ def _cli_remediation(file_path: str) -> str:
     return f"cd <repo> && trw-distill self-improve before-edit --repo . --file {file_path} --persist-sidecar"
 
 
+def _batch_miss_action(file_path: str) -> str:
+    """Remediation when a batch artifact exists but does not cover *file_path*.
+
+    Names the batch artifact explicitly. "Regenerate the sidecar" is not
+    actionable when the reader cannot tell which of two artifacts was read, and
+    the post-commit refresh only covers the files a commit touched — so a file
+    absent from the batch is the expected, not the broken, case.
+    """
+    return (
+        f"Batch sidecar does not cover {file_path!r} (it covers the files the last commit touched) — "
+        f"run: {_cli_remediation(file_path)}"
+    )
+
+
 def _select_distill_hint(
     payload: Any,
     file_path: str,
@@ -161,6 +185,32 @@ def _select_distill_hint(
             "Sidecar payload does not match BeforeYouEditHintPayload schema; check trw-distill version compatibility",
         )
     return (hint, "hint_available", None)
+
+
+def _select_from_batch(
+    payload: Any,
+    file_path: str,
+) -> tuple[BeforeYouEditHintPayload | None, Literal["hint_available", "sidecar_malformed", "target_not_in_sidecar"]]:
+    """Pick this file's hint out of an already-loaded ``before-edit-batch`` payload.
+
+    NEVER raises. The two negative statuses are kept apart deliberately: "the
+    batch does not mention this file" and "the batch mentions it but the entry
+    does not parse" are different operator problems, and collapsing the second
+    into the first would report a schema break as an absent target.
+    """
+    if not isinstance(payload, dict):
+        return (None, "sidecar_malformed")
+    hints = payload.get("hints")
+    if not isinstance(hints, list):
+        return (None, "sidecar_malformed")
+    for entry in hints:
+        if not isinstance(entry, dict) or entry.get("target_path") != file_path:
+            continue
+        try:
+            return (BeforeYouEditHintPayload.model_validate(entry), "hint_available")
+        except Exception:
+            return (None, "sidecar_malformed")
+    return (None, "target_not_in_sidecar")
 
 
 def _collect_learnings(file_path: str) -> list[LearningSummary]:
@@ -210,8 +260,35 @@ def compute_before_edit_hint(
     # tier.
     distill_status: BeforeEditHintStatus = sidecar.status
     distill_action: str | None = sidecar.action
+    distill_sidecar_path: str | None = sidecar.sidecar_path
     if sidecar.status == "hint_available":
         distill_hint, distill_status, distill_action = _select_distill_hint(sidecar.payload, file_path)
+
+    # The single-file artifact holds ONE hint for the whole repo at a given sha
+    # — `before-edit-hint-<sha>.json` carries no per-file discriminator — so on
+    # any commit touching more than one file at most one target can be served
+    # from it. The post-commit refresh therefore emits the BATCH artifact, which
+    # holds one hint per target, and this is where it gets consumed. The module
+    # docstring listed batch consumption as deferred v1 scope; without it the
+    # producer fix would have written artifacts nothing reads.
+    if distill_status != "hint_available" and sidecar.status not in _NO_ARTIFACT_CONSULTED:
+        batch = _sidecar_substrate.resolve_current_sidecar(
+            repo_root=repo_root,
+            cache_dir=cache_dir,
+            feature=_TIER_FEATURE,
+            artifact_name=_ARTIFACT_NAME_BATCH,
+            cli_remediation=_cli_remediation(file_path),
+        )
+        if batch.status == "hint_available":
+            batch_hint, batch_status = _select_from_batch(batch.payload, file_path)
+            # Only ADOPT the batch outcome — never let a batch miss overwrite a
+            # more specific single-file finding with a vaguer one. A batch that
+            # cannot answer leaves the single-file status exactly as it was.
+            if batch_hint is not None or distill_status == "sidecar_missing":
+                distill_hint = batch_hint
+                distill_status = batch_status
+                distill_action = None if batch_hint is not None else _batch_miss_action(file_path)
+                distill_sidecar_path = batch.sidecar_path
 
     # PRD-CORE-231-FR01: record every ELIGIBLE edit in durable telemetry.
     # "Eligible" == the entitlement gate ran AND allowed the feature. Misses are
@@ -235,7 +312,11 @@ def compute_before_edit_hint(
         distill_hint=distill_hint,
         distill_status=distill_status,
         distill_action=distill_action,
-        distill_sidecar_path=sidecar.sidecar_path,
+        # Which artifact answered is visible here — the filename carries
+        # `before-edit-hint-` or `before-edit-batch-`. That is the only way an
+        # operator can tell a single-file hit from a batch hit, and it costs no
+        # extra response field.
+        distill_sidecar_path=distill_sidecar_path,
         distill_sidecar_sha=sidecar.sidecar_sha,
         learnings=learnings,
         learnings_count=len(learnings),

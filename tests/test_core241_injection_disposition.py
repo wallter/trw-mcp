@@ -30,10 +30,15 @@ _SECTION_CHAR_CEILING = 4_000
 
 def _profile_matrix() -> dict[str, dict[str, bool]]:
     """Write-target and surface-flag matrix for the profiles FR01 governs."""
+    # DERIVED over every supported client, not the hand-listed three this used to
+    # carry. The disposition argument below turns on whether SOME light client
+    # shares AGENTS.md, so a matrix that cannot see a client cannot answer it — and
+    # that is exactly how this test went stale when codex was withdrawn.
+    from trw_mcp.bootstrap._utils import SUPPORTED_IDES
     from trw_mcp.models.config import resolve_client_profile
 
     matrix: dict[str, dict[str, bool]] = {}
-    for name in ("claude-code", "opencode", "codex"):
+    for name in sorted(SUPPORTED_IDES):
         profile = resolve_client_profile(name)
         # write_targets is a sequence of (flag, value) pairs, not paths — reading
         # it as text and searching for "AGENTS.md" finds nothing and looks like a
@@ -60,15 +65,27 @@ class TestAgentsMdInjectionIsNotRedundant:
             "and PRD-CORE-093's redundancy argument might transfer — re-open the disposition"
         )
 
-        # PRD-CORE-240-FR04 withdrew opencode's shared AGENTS.md, so codex is now
-        # the light client that shares the surface. The disposition argument is
-        # unchanged — it turns on SOME light client sharing AGENTS.md with the
-        # injection consumer, not on which one.
-        assert matrix["codex"]["agents_md"] is True, "codex is expected to write AGENTS.md"
-        assert matrix["opencode"]["agents_md"] is False, (
-            "opencode was withdrawn from the shared surface (PRD-CORE-240-FR04); if this "
-            "flips back, re-check whether the disposition argument still holds for it"
+        # The disposition turns on SOME client sharing AGENTS.md with the injection
+        # consumer, not on which one. This asserted that client was codex. It is
+        # not, any more: PRD-CORE-240-FR04 withdrew opencode, and 5866130528 then
+        # withdrew codex too, so BOTH light clients are off the shared surface.
+        #
+        # Rather than delete the premise, name the client that carries it now.
+        # cursor-cli is the only client whose instruction_path IS AGENTS.md, so it
+        # is the one the argument rests on — and the assertion is derived from that
+        # property rather than from a name, so the next withdrawal moves it again
+        # instead of silently emptying it.
+        assert matrix["codex"]["agents_md"] is False, "PRD-CORE-240-FR04: codex is off the shared surface"
+        assert matrix["opencode"]["agents_md"] is False, "PRD-CORE-240-FR04: opencode is off the shared surface"
+
+        sharers = sorted(name for name, flags in matrix.items() if flags["agents_md"])
+        assert sharers, (
+            "NO client writes AGENTS.md any more. PRD-CORE-241's KEEP verdict for the "
+            "learning injection rests on some client sharing that surface with the "
+            "injection consumer — if this fires, the premise is gone and the disposition "
+            "must be re-measured rather than assumed to still hold."
         )
+        assert "cursor-cli" in sharers, f"cursor-cli was expected to carry the premise; sharers are {sharers}"
 
         # The reach argument still applies to BOTH light clients, whether or not
         # they share AGENTS.md: it is about how the client reaches trw_session_start.

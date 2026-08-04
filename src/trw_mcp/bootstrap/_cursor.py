@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 from pathlib import Path
 from typing import Final
 
@@ -67,8 +66,14 @@ from trw_mcp.bootstrap._cursor_models import (
 def _get_trw_mcp_entry_cursor() -> CursorServerEntry:
     """Return TRW MCP server entry for Cursor's mcp.json format.
 
-    Uses the installed ``trw-mcp`` binary when available; falls back to
-    the current Python interpreter invoking the module directly.
+    Uses the installed ``trw-mcp`` binary when available; falls back to a bare
+    ``python3`` invoking the module directly.
+
+    The fallback is deliberately NOT ``sys.executable`` (PRD-SEC-006, audit
+    installer-client-12): ``.cursor/mcp.json`` is committed config, so an
+    absolute interpreter path bakes in the build machine and breaks the entry
+    for every teammate who clones the repo. A bare ``python3`` resolves
+    per-machine via PATH.
 
     No ``--debug``: log verbosity is protocol, not per-client surface density,
     so every profile now generates the same args. Verbose logging is opted into
@@ -77,7 +82,7 @@ def _get_trw_mcp_entry_cursor() -> CursorServerEntry:
     if shutil.which("trw-mcp"):
         command: str | list[str] = "trw-mcp"
     else:
-        command = [sys.executable, "-m", "trw_mcp.server"]
+        command = ["python3", "-m", "trw_mcp.server"]
     return {"command": command, "args": []}
 
 
@@ -321,6 +326,20 @@ the resumption point across the compression boundary.
 """
 
 
+def _has_ide_appendix(rules_file: Path) -> bool:
+    """True when the on-disk rule file still carries the cursor-ide appendix.
+
+    Keyed on the appendix CONSTANT rather than on a copied heading, so the test
+    tracks whatever the appendix becomes. An unreadable file answers False: the
+    guard must not turn an I/O fault into a silent refusal to install.
+    """
+    try:
+        return _CURSOR_IDE_APPENDIX.strip() in rules_file.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("cursor_rules_mdc_unreadable", path=str(rules_file))
+        return False
+
+
 def generate_cursor_rules_mdc(
     target_dir: Path,
     trw_section: str,
@@ -351,7 +370,9 @@ def generate_cursor_rules_mdc(
         Dict with 'created'/'updated'/'preserved' lists. A file that existed
         before this call is reported as ``updated``; otherwise ``created``.
         The ``force`` flag does not change this classification — a forced
-        rewrite of an existing file is still an update.
+        rewrite of an existing file is still an update. A write that would strip
+        the cursor-ide appendix off an existing file is refused and reported as
+        ``preserved`` (see the downgrade guard below).
     """
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
     rules_dir = target_dir / ".cursor" / "rules"
@@ -373,6 +394,29 @@ def generate_cursor_rules_mdc(
     # ``force`` is reserved for future smart-merge variants; here the file is
     # always rewritten so classification is driven by prior existence only.
     existed = rules_file.exists()
+
+    # Downgrade guard. ONE file serves two clients with two different bodies, and
+    # "always rewrites" meant the last caller won: ``init-project --ide all`` ran
+    # the cursor-ide write (full protocol + appendix) and then the cursor-cli
+    # write, which passes a light section and no appendix — so a Cursor IDE user
+    # was shipped 50 lines where 158 had just been written, losing the trigger-
+    # phrase table, verification-pass gate, drift-recovery hints, Plan Mode note
+    # and pre-compaction reminder from an ``alwaysApply: true`` carrier, with both
+    # writes reported as success. The caller ordering is fixed too
+    # (``_init_project_ide``), but ordering is a property of one call site while
+    # this is a property of the writer, and the writer is what the next call site
+    # will reuse. Refuse to be the operation that removes the richer body.
+    if existed and not appendix and _has_ide_appendix(rules_file):
+        result["preserved"].append(".cursor/rules/trw-ceremony.mdc")
+        logger.info(
+            "generate_cursor_rules_mdc",
+            outcome="preserved",
+            client_id=client_id,
+            force=force,
+            reason="would_drop_cursor_ide_appendix",
+        )
+        return result
+
     rules_file.write_text(content, encoding="utf-8")
 
     if existed:

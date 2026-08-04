@@ -552,9 +552,7 @@ class TestMergeMarkerMatchingIsLineAnchored:
     ``find_marker_line_span``; this copy never was.
     """
 
-    def test_prose_mention_of_start_marker_does_not_eat_user_content(
-        self, tmp_path: Path
-    ) -> None:
+    def test_prose_mention_of_start_marker_does_not_eat_user_content(self, tmp_path: Path) -> None:
         target = tmp_path / "CLAUDE.md"
         target.write_text(
             "# Doc\n\n"
@@ -564,9 +562,7 @@ class TestMergeMarkerMatchingIsLineAnchored:
             encoding="utf-8",
         )
 
-        merge_trw_section(
-            target, f"{TRW_MARKER_START}\nNEW BLOCK\n{TRW_MARKER_END}\n", max_lines=500
-        )
+        merge_trw_section(target, f"{TRW_MARKER_START}\nNEW BLOCK\n{TRW_MARKER_END}\n", max_lines=500)
 
         out = target.read_text(encoding="utf-8")
         assert f"Prose mentioning `{TRW_MARKER_START}` inline should be ignored." in out
@@ -574,20 +570,15 @@ class TestMergeMarkerMatchingIsLineAnchored:
         assert "NEW BLOCK" in out
         assert "OLD BLOCK" not in out
 
-    def test_prose_mention_with_no_real_block_appends_rather_than_replaces(
-        self, tmp_path: Path
-    ) -> None:
+    def test_prose_mention_with_no_real_block_appends_rather_than_replaces(self, tmp_path: Path) -> None:
         """With only a prose mention and no real block, nothing may be consumed."""
         target = tmp_path / "CLAUDE.md"
         target.write_text(
-            f"# Doc\n\nWe use `{TRW_MARKER_START}` to delimit the block.\n\n"
-            "Important user paragraph.\n",
+            f"# Doc\n\nWe use `{TRW_MARKER_START}` to delimit the block.\n\nImportant user paragraph.\n",
             encoding="utf-8",
         )
 
-        merge_trw_section(
-            target, f"{TRW_MARKER_START}\nNEW BLOCK\n{TRW_MARKER_END}\n", max_lines=500
-        )
+        merge_trw_section(target, f"{TRW_MARKER_START}\nNEW BLOCK\n{TRW_MARKER_END}\n", max_lines=500)
 
         out = target.read_text(encoding="utf-8")
         assert "Important user paragraph." in out

@@ -167,14 +167,27 @@ def render_codex_instructions() -> str:
     block (bundled-source derived) so the Codex protocol carrier states the
     gate verbatim regardless of ceremony/deliver-gate config.
 
-    Deliberately does NOT carry the client-integration appendix (transport-loss
-    retry + resolved capability listing). Relocating it here to free the shared
-    AGENTS.md — PRD-CORE-240-FR04 — takes this file from 2,019 to 5,043 bytes
-    against the 2,025-byte cap that PRD-QUAL-113-FR03 sets, and that PRD's design
-    is explicit: "Codex deltas stay small; AGENTS.md owns generic workflow".
-    The appendix stays in AGENTS.md; see the FR04 note in
-    ``models/config/_profiles.py::_light_profile``.
+    Carries the FULL protocol — generic workflow and the client-integration
+    appendix included — because this file is now codex's only TRW surface.
+
+    PRD-QUAL-113-FR03 originally capped it at 2,025 bytes on the reasoning that
+    "Codex deltas stay small; AGENTS.md owns generic workflow". That cap was a
+    token-budget choice, not a vendor limit, and its premise was that AGENTS.md
+    carried the rest. PRD-CORE-240-FR04 removes that premise: TRW no longer
+    writes into codex's AGENTS.md, a file the user owns. With nothing else
+    carrying the protocol, a cap that forces content OUT of the only carrier
+    would push it nowhere.
+
+    This file IS read: ``.codex/config.toml`` sets
+    ``model_instructions_file = "INSTRUCTIONS.md"``, project-scoped
+    ``.codex/config.toml`` is documented as supported, and relative paths
+    "resolve from the config file that declares the role" — so it resolves to
+    ``.codex/INSTRUCTIONS.md``. Corroborated by this repo's own provider
+    research (``docs/research/providers/codex/codex-cli.md``: "Codex-relative
+    path ... resolved from ``.codex/``").
     """
+    from trw_mcp.state.claude_md.sections._delegation import render_codex_trw_section
+
     return (
         "# Codex TRW Instructions\n"
         "\n"
@@ -198,7 +211,7 @@ def render_codex_instructions() -> str:
         "- **Hooks and nudges are optional**: treat them as additive hints, not correctness gates\n"
         "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
         "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
-        "\n" + render_deliver_gate_statement()
+        "\n" + render_deliver_gate_statement() + "\n" + render_codex_trw_section()
     )
 
 

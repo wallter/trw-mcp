@@ -97,6 +97,106 @@ def test_run_yaml_run_id_mismatch_with_dirname_is_rejected(tmp_path: Path, write
     assert _resolve(tmp_path, run_id="run-other") is None
 
 
+def test_run_claim_recorded_under_the_delivering_session_is_rejected(tmp_path: Path, writer: FileStateWriter) -> None:
+    """One session holding two runs is one actor, not a second reviewer.
+
+    Every long-lived session accumulates spare runs (a prior task, a scratch
+    investigation, or one made seconds earlier on purpose). Before this guard
+    the run_claim branch checked only ``recorded.run_id != delivering.run_id``,
+    so naming a spare run the SAME session owns verified as independent —
+    self-certification with a receipt, the exact thing OQ-001 exists to stop.
+    The session-only branch has always rejected the mirror image of this (a pin
+    whose run resolves back to the delivering run).
+    """
+    _make_run(tmp_path / "runs", writer, run_id="run-other", session_id="sess-deliver")
+    assert _resolve(tmp_path, run_id="run-other") is None
+
+
+def test_run_claim_under_a_different_session_still_resolves(tmp_path: Path, writer: FileStateWriter) -> None:
+    """Control for the test above — the guard must not reject genuine reviewers."""
+    _make_run(tmp_path / "runs", writer, run_id="run-other", session_id="sess-reviewer")
+    assert _resolve(tmp_path, run_id="run-other") == RunIdentity(run_id="run-other", session_id="sess-reviewer")
+
+
+def test_run_claim_whose_run_records_no_owner_session_is_rejected(tmp_path: Path, writer: FileStateWriter) -> None:
+    """A same-session guard that reads a missing field grants what it meant to deny.
+
+    The first version of the fix above was
+    ``if recorded.session_id and delivering.session_id and recorded.session_id
+    == delivering.session_id``, which short-circuits whenever the claimed run's
+    run.yaml has no ``owner_session_id``. An independent reviewer found the hole
+    and it is not a corner case: **14 of 205** run.yaml files in this repo carry
+    no owner session, and the claimed run need not belong to the delivering
+    session at all. A run id alone cannot establish a second actor.
+    """
+    _make_run(tmp_path / "runs", writer, run_id="run-spare")  # no session_id
+    assert _resolve(tmp_path, run_id="run-spare") is None
+
+
+def test_run_claim_with_no_recorded_session_resolves_on_an_explicit_pinned_claim(
+    tmp_path: Path, writer: FileStateWriter
+) -> None:
+    """Control: a genuine second session can still claim a session-less run.
+
+    The rejection above must be "independence was not established", not
+    "independence is impossible" — otherwise the guard passes by refusing
+    everything, which is its own failure mode.
+    """
+    _make_run(tmp_path / "runs", writer, run_id="run-spare")
+    _make_pins(tmp_path, {"sess-reviewer": str(tmp_path / "runs" / "some-task" / "run-spare")})
+    assert _resolve(tmp_path, run_id="run-spare", session_id="sess-reviewer") == RunIdentity(
+        run_id="run-spare", session_id="sess-reviewer"
+    )
+
+
+def test_session_claim_naming_the_delivering_session_is_rejected_on_the_run_branch(
+    tmp_path: Path, writer: FileStateWriter
+) -> None:
+    """A self-claim is a self-claim however it is anchored.
+
+    With an empty recorded session the branch validated ``session_claim`` only
+    for pin registration — and the delivering session's own id is pin-registered
+    by construction. The classifier still downgraded it, so this was a
+    truthfulness defect rather than a gate bypass: ``review.yaml`` persisted
+    ``identity_verified: true`` for a review the delivering session wrote itself.
+    """
+    _make_run(tmp_path / "runs", writer, run_id="run-spare")
+    _make_pins(tmp_path, {"sess-deliver": str(tmp_path / "runs" / "some-task" / "run-spare")})
+    assert _resolve(tmp_path, run_id="run-spare", session_id="sess-deliver") is None
+
+
+def test_two_runs_in_one_session_do_not_classify_as_independent() -> None:
+    """The classifier needs the same rule as the resolver, on its own axis.
+
+    ``_identity_differs`` short-circuited on ``run_id``: two differing run ids
+    returned True without ever looking at the session, so a reviewer block
+    stamped with a same-session run classified ``independent`` even if it had
+    reached the classifier by another route.
+    """
+    same_session_block: dict[str, object] = {
+        "run_id": "run-other",
+        "session_id": "sess-deliver",
+        "source": "subagent",
+        "identity_verified": True,
+    }
+    review_data: dict[str, object] = {"reviewer": same_session_block}
+    assert classify_review_independence(review_data, DELIVERING) != "independent"
+    assert review_receipt_satisfied("P0", review_data, DELIVERING, gate_mode="block") is False
+
+
+def test_different_run_and_different_session_still_classifies_independent() -> None:
+    """Control: the tightened classifier must still pass a real second reviewer."""
+    block: dict[str, object] = {
+        "run_id": "run-other",
+        "session_id": "sess-reviewer",
+        "source": "subagent",
+        "identity_verified": True,
+    }
+    review_data: dict[str, object] = {"reviewer": block}
+    assert classify_review_independence(review_data, DELIVERING) == "independent"
+    assert review_receipt_satisfied("P0", review_data, DELIVERING, gate_mode="block") is True
+
+
 def test_session_claim_conflicting_with_recorded_session_is_rejected(tmp_path: Path, writer: FileStateWriter) -> None:
     _make_run(tmp_path / "runs", writer, run_id="run-reviewer", session_id="sess-reviewer")
     assert _resolve(tmp_path, run_id="run-reviewer", session_id="sess-imposter") is None

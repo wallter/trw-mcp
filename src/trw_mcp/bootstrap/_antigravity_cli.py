@@ -25,18 +25,30 @@ logger = structlog.get_logger(__name__)
 
 
 def _resolve_trw_mcp_command() -> tuple[str, list[str]]:
-    """Resolve fully-qualified trw-mcp command and args.
+    """Resolve the ``trw-mcp`` command and args for the antigravity entry.
+
+    Delegates to the single hardened builder in ``_utils`` rather than carrying
+    a sixth hand-copy. The copy this replaced had both defects PRD-SEC-006 fixed
+    for the other five clients, and one of its own:
+
+    * PATH hit returned the ABSOLUTE ``shutil.which()`` result, so the committed
+      ``.antigravitycli/settings.json`` carried the build machine's binary path
+      and was broken for every teammate who cloned the repo;
+    * PATH miss returned ``sys.executable`` — the same machine-absolute leak;
+    * and its module target was ``-m trw_mcp``, which cannot execute at all.
+      There is no ``trw_mcp/__main__.py``, so the entry died with "No module
+      named trw_mcp.__main__" and the antigravity MCP server never started.
+      Every sibling uses ``-m trw_mcp.server``.
 
     Returns:
         Tuple of (command, args) for the MCP server entry.
     """
-    import shutil
-    import sys
+    from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
 
-    resolved = shutil.which("trw-mcp")
-    if resolved is not None:
-        return resolved, ["serve"]
-    return sys.executable, ["-m", "trw_mcp", "serve"]
+    entry = _trw_mcp_server_entry()
+    command = str(entry["command"])
+    args = entry["args"]
+    return command, [str(a) for a in args] if isinstance(args, list) else []
 
 
 # ---------------------------------------------------------------------------

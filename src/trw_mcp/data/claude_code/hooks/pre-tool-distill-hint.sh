@@ -71,7 +71,14 @@ fi
 _repo="${TRW_PROJECT_DIR:-$(pwd)}"
 _debounce_dir="${_repo}/.trw/context/cc03-debounce"
 if [ -d "$_debounce_dir" ]; then
+    # Sanitized name PLUS a checksum of the exact path. The sanitizer alone is
+    # lossy -- it deletes every character outside [A-Za-z0-9_.-], so 'src/a.py'
+    # and 'src/\u03b1.py' both collapse to 'src_.py'-ish forms and the second file
+    # edited was silently debounced for 180s as if it were the first. cksum is
+    # POSIX, present everywhere this runs, and costs no interpreter start.
     _safe_name=$(printf '%s' "$_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
+    _path_ck=$(printf '%s' "$_file_path" | cksum | cut -d' ' -f1)
+    _safe_name="${_safe_name}-${_path_ck}"
     _debounce_file="${_debounce_dir}/${_safe_name}.ts"
     if [ -f "$_debounce_file" ]; then
         _now=$(date +%s 2>/dev/null) || _now=0
@@ -85,7 +92,14 @@ if [ -d "$_debounce_dir" ]; then
     date +%s > "$_debounce_file" 2>/dev/null || true
 else
     mkdir -p "$_debounce_dir" 2>/dev/null || true
+    # Sanitized name PLUS a checksum of the exact path. The sanitizer alone is
+    # lossy -- it deletes every character outside [A-Za-z0-9_.-], so 'src/a.py'
+    # and 'src/\u03b1.py' both collapse to 'src_.py'-ish forms and the second file
+    # edited was silently debounced for 180s as if it were the first. cksum is
+    # POSIX, present everywhere this runs, and costs no interpreter start.
     _safe_name=$(printf '%s' "$_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
+    _path_ck=$(printf '%s' "$_file_path" | cksum | cut -d' ' -f1)
+    _safe_name="${_safe_name}-${_path_ck}"
     date +%s > "${_debounce_dir}/${_safe_name}.ts" 2>/dev/null || true
 fi
 
@@ -132,44 +146,76 @@ if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
 ' >/dev/null 2>&1 || true
 fi
 
+# TRW_EMBEDDINGS_ENABLED=false is load-bearing, not a tuning preference.
+# Measured on a warm dev box (7 runs each, seconds):
+#   embedding cold start in a FRESH process   14.48  (torch 1.76 + sentence-
+#                                                    transformers 5.95 + MiniLM
+#                                                    load 6.56 + encode 0.22)
+#   compute_before_edit_hint, embeddings ON   14.2 - 14.6
+#   compute_before_edit_hint, embeddings OFF   0.68 - 1.04
+#   the sidecar read this hook exists for      0.003
+# Every PreToolUse call spawns a NEW interpreter, so the model load is paid in
+# full every time and is never amortized. Against the 2.5s budget that made
+# distill_status="timeout_fallback" the only reachable outcome — T1 and T2 were
+# unreachable here, and the T2 work is 3ms. Raising the budget is not the fix:
+# it is capped by the 3000ms registered hook timeout (NFR06), and covering a
+# 14.5s model load would add ~15s of latency to EVERY edit. Lexical recall still
+# returns learnings (measured 0.44s first query, 0.03s after), so T1 survives.
+# Scope is this subprocess only — the long-lived MCP server keeps hybrid recall,
+# where the model is warm and a query costs 0.23s.
 _hint_output=$(
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
+    TRW_EMBEDDINGS_ENABLED=false \
     TRW_CC04_HINTS_DIR="$_hints_dir" \
     TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
     TRW_CC04_FILE_PATH="$_file_path" \
-    timeout 2.5 "$_py" -c "
-import sys, json
+    timeout 2.5 "$_py" -c '
+# SINGLE-quoted on purpose. This program used to be double-quoted, so ${_file_path}
+# — a model-controlled PreToolUse field — was spliced into Python SOURCE. A payload
+# with file_path = x.py"+__import__("os").system("...")+".py executed as the
+# developer, under a hook that needs no tool approval, and the hook still printed
+# the ordinary beacon and exited 0. Reproduced before the fix; see CHANGELOG.
+#
+# The env vars below were already being exported for this subprocess and simply
+# were not used on this path. The single quoting is what makes the mistake
+# unrepeatable: no $ can be expanded here, so a future edit cannot reintroduce the
+# interpolation without visibly changing the quoting. Every Python string below
+# therefore uses double quotes. Same invariant as the sibling hooks —
+# hooks/cursor/trw-before-edit-hint.sh and git_hooks/trw-post-commit.sh.
+import os
 try:
     from trw_mcp.tools.before_edit_hint import compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
         format_t0_beacon, format_t1_hint, format_t2_hint
     )
-    result = compute_before_edit_hint(file_path='${_file_path}')
+    file_path = os.environ.get("TRW_CC04_FILE_PATH", "")
+    tool_use_id = os.environ.get("TRW_CC04_TOOL_USE_ID", "")
+    result = compute_before_edit_hint(file_path=file_path)
     hint = result.distill_hint
-    learnings = [{'summary': l.summary} for l in result.learnings]
-    if hint and result.distill_status == 'hint_available':
+    learnings = [{"summary": l.summary} for l in result.learnings]
+    if hint and result.distill_status == "hint_available":
         output = format_t2_hint(
-            file_path='${_file_path}',
+            file_path=file_path,
             risk_score=hint.risk_score,
             hotspot_warnings=hint.hotspot_warnings,
             co_change_neighbors=hint.co_change_neighbors,
             inferred_tests=hint.inferred_tests,
         )
-        tier = 'T2'
+        tier = "T2"
     elif learnings:
         output = format_t1_hint(learnings)
-        tier = 'T1'
+        tier = "T1"
     else:
         output = format_t0_beacon()
-        tier = 'T0'
+        tier = "T0"
     # FR29: write hint file with tool_use_id
-    if '${_tool_use_id}':
+    if tool_use_id:
         from trw_mcp.channels.claude_code._hook_helpers import write_hint_file
         from pathlib import Path
         write_hint_file(
-            hints_dir=Path('${_hints_dir}'),
-            tool_use_id='${_tool_use_id}',
-            file_path='${_file_path}',
+            hints_dir=Path(os.environ["TRW_CC04_HINTS_DIR"]),
+            tool_use_id=tool_use_id,
+            file_path=file_path,
             tier=tier,
             hint_emitted=True,
             tokens_emitted=len(output.split()),
@@ -187,31 +233,32 @@ except Exception:
     #
     # Deliberately stdlib-only and self-contained: the import that just failed
     # must not be a precondition for recording that it failed. Untrusted hook
-    # fields arrive via the environment, never interpolated into source.
+    # fields arrive via the environment, never interpolated into source — which
+    # is now true of the whole program, not only of this handler.
     try:
-        import datetime, json, os, pathlib, re
-        _tuid = os.environ.get('TRW_CC04_TOOL_USE_ID', '')
-        if _tuid and re.fullmatch(r'[A-Za-z0-9_.-]+', _tuid):
-            _dir = pathlib.Path(os.environ['TRW_CC04_HINTS_DIR'])
+        import datetime, json, pathlib, re
+        _tuid = os.environ.get("TRW_CC04_TOOL_USE_ID", "")
+        if _tuid and re.fullmatch(r"[A-Za-z0-9_.-]+", _tuid):
+            _dir = pathlib.Path(os.environ["TRW_CC04_HINTS_DIR"])
             _dir.mkdir(parents=True, exist_ok=True)
-            (_dir / (_tuid + '.json')).write_text(json.dumps({
-                'ts': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
-                'file_path': os.environ.get('TRW_CC04_FILE_PATH', ''),
-                'tier': 'T0',
-                'hint_emitted': True,
-                'tokens_emitted': 9,
-                'distill_status': 'exception_fallback',
-                'tool_use_id': _tuid,
-                'outcome_captured': False,
-                'was_edited': None,
-                'edit_survived': None,
-                'test_outcome': 'unknown',
-                'hint_acknowledged': None,
-            }), encoding='utf-8')
+            (_dir / (_tuid + ".json")).write_text(json.dumps({
+                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+                "file_path": os.environ.get("TRW_CC04_FILE_PATH", ""),
+                "tier": "T0",
+                "hint_emitted": True,
+                "tokens_emitted": 9,
+                "distill_status": "exception_fallback",
+                "tool_use_id": _tuid,
+                "outcome_captured": False,
+                "was_edited": None,
+                "edit_survived": None,
+                "test_outcome": "unknown",
+                "hint_acknowledged": None,
+            }), encoding="utf-8")
     except Exception:
         pass
-    print('[TRW] Distill intelligence available — run trw_before_edit_hint for details.')
-" 2>/dev/null
+    print("[TRW] Distill intelligence available — run trw_before_edit_hint for details.")
+' 2>/dev/null
 ) || {
     # Timeout or error: fall back to T0 beacon (FR30, FR31)
     _format_t0_beacon

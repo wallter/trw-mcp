@@ -189,12 +189,7 @@ def load_protocol() -> Protocol:
         f"agent:{p.name}": expand_markers(p.read_text(encoding="utf-8"))
         for p in sorted(BUNDLED_AGENTS_DIR.glob("*.md"))
     }
-    surfaces.update(
-        {
-            f"skill:{p.relative_to(REPO_ROOT)}": p.read_text(encoding="utf-8")
-            for p in SKILL_PROJECTIONS
-        }
-    )
+    surfaces.update({f"skill:{p.relative_to(REPO_ROOT)}": p.read_text(encoding="utf-8") for p in SKILL_PROJECTIONS})
     return Protocol(
         framework=FRAMEWORK_PATH.read_text(encoding="utf-8"),
         auditor=expand_markers(AUDITOR_PATH.read_text(encoding="utf-8")),

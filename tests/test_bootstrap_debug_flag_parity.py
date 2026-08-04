@@ -51,6 +51,7 @@ def _all_profile_entries(*, on_path: bool) -> dict[str, Any]:
     because the fallback branches historically carried their own copy of the
     flag (``_opencode.py`` and ``_codex.py`` each hardcoded it twice).
     """
+    from trw_mcp.bootstrap._antigravity_cli import _resolve_trw_mcp_command as antigravity_entry
     from trw_mcp.bootstrap._codex import _trw_mcp_server_entry as codex_entry
     from trw_mcp.bootstrap._cursor import _get_trw_mcp_entry_cursor as cursor_entry
     from trw_mcp.bootstrap._opencode import _get_trw_mcp_entry as opencode_entry
@@ -64,11 +65,17 @@ def _all_profile_entries(*, on_path: bool) -> dict[str, Any]:
         patch("trw_mcp.bootstrap._cursor.shutil.which", return_value=resolved),
         patch("trw_mcp.bootstrap._opencode.shutil.which", return_value=resolved),
     ):
+        ag_command, ag_args = antigravity_entry()
         entries: dict[str, Any] = {
             "claude-code (.mcp.json)": generic_entry(),
             "codex": codex_entry(),
             "cursor": cursor_entry(),
             "opencode": opencode_entry(),
+            # antigravity-cli built its command through a separate resolver that
+            # was excluded from this harness, which is exactly why it kept both
+            # defects PRD-SEC-006 fixed everywhere else plus a non-importable
+            # ``-m trw_mcp`` target. It is a member here now, not a special case.
+            "antigravity-cli": {"command": ag_command, "args": ag_args},
         }
     # copilot's entry is a module constant, not PATH-dependent.
     entries["copilot (.vscode/mcp.json)"] = copilot_entry
@@ -106,12 +113,51 @@ def test_profiles_agree_on_flags_beyond_the_launcher(on_path: bool) -> None:
 
 
 @pytest.mark.unit
-def test_antigravity_profile_passes_no_verbosity_flag() -> None:
-    """antigravity-cli builds its command through a separate resolver."""
-    from trw_mcp.bootstrap._antigravity_cli import _resolve_trw_mcp_command
+@pytest.mark.parametrize("on_path", [True, False], ids=["binary-on-path", "python-module-fallback"])
+def test_no_profile_writes_a_machine_absolute_path(on_path: bool) -> None:
+    """A generated entry is committed config — it must be portable.
 
-    command, args = _resolve_trw_mcp_command()
-    assert not ({command, *args} & _VERBOSITY_FLAGS)
+    PRD-SEC-006 / audit installer-client-12: writing ``shutil.which()``'s
+    absolute result or ``sys.executable`` into a project's client config bakes
+    in the build machine's interpreter path, so the config is broken for every
+    teammate who clones the repo and leaks a host path. antigravity-cli did
+    both, on both branches, until it was folded into the shared builder.
+    """
+    for name, entry in _all_profile_entries(on_path=on_path).items():
+        absolute = [tok for tok in _entry_tokens(entry) if tok.startswith("/") or (len(tok) > 1 and tok[1] == ":")]
+        assert not absolute, (
+            f"client profile {name!r} writes machine-absolute path(s) {absolute} into its "
+            "generated MCP entry. Use the bare console-script name or a bare `python3` so "
+            "the committed config resolves per-machine via PATH."
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("on_path", [True, False], ids=["binary-on-path", "python-module-fallback"])
+def test_every_module_target_is_actually_importable(on_path: bool) -> None:
+    """``-m X`` must name a module Python can execute, not merely a package.
+
+    antigravity-cli emitted ``-m trw_mcp``. There is no ``trw_mcp/__main__.py``,
+    so the entry died with "No module named trw_mcp.__main__" and its MCP server
+    never started — a whole client's integration was dead on arrival, and
+    nothing in bootstrap noticed. The sibling profiles all use
+    ``-m trw_mcp.server``, which has a ``__main__``.
+    """
+    import importlib.util
+
+    for name, entry in _all_profile_entries(on_path=on_path).items():
+        tokens = _entry_tokens(entry)
+        for i, tok in enumerate(tokens):
+            if tok != "-m" or i + 1 >= len(tokens):
+                continue
+            target = tokens[i + 1]
+            spec = importlib.util.find_spec(target)
+            assert spec is not None, f"client profile {name!r} runs `-m {target}`, which does not exist"
+            runnable = importlib.util.find_spec(f"{target}.__main__") if spec.submodule_search_locations else spec
+            assert runnable is not None, (
+                f"client profile {name!r} runs `-m {target}`, but {target} is a package with no "
+                f"__main__.py — `python -m {target}` fails with 'No module named {target}.__main__'."
+            )
 
 
 @pytest.mark.unit

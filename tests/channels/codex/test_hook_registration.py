@@ -402,29 +402,69 @@ def test_install_codex_distill_channels_hooks_json_exception(tmp_path: Path) -> 
 
 
 def test_install_codex_distill_channels_hook_skipped_path(tmp_path: Path) -> None:
-    """install_codex_distill_channels adds to preserved when hook already exists."""
+    """A second install of an unchanged hook reports `preserved`, without mocks.
+
+    This test used to patch ``install_hook_script`` to *return* a skip, with a
+    comment explaining that production could not reach the branch: the only
+    caller passed ``overwrite=force or True``, which is ``True`` for every
+    input, so ``preserved`` was unreachable and every install reported
+    ``created`` even when nothing changed. Asserting a bucket that production
+    cannot fill is the "test encodes the defect as expected behaviour" shape —
+    so the mock is gone and the real path is exercised instead.
+    """
     import subprocess
-    from unittest.mock import patch
 
     subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
 
     from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
 
-    # First install so the hook exists
+    rel = ".codex/hooks/trw_post_edit_telemetry.py"
+    first = install_codex_distill_channels(tmp_path)
+    assert rel in first["created"], f"first install should create the hook, got: {first}"
+
+    second = install_codex_distill_channels(tmp_path)
+    assert rel in second["preserved"], f"an unchanged re-install should preserve, got: {second}"
+    assert rel not in second["created"], "an unchanged re-install must not claim it created the hook"
+
+
+def test_a_stale_hook_is_still_refreshed_without_force(tmp_path: Path) -> None:
+    """The security property the `preserved` fix must not cost.
+
+    A registered-but-stale hook script is exactly how commit 1fc4be8850 shipped
+    a security fix that could not reach an existing install. Making `preserved`
+    reachable must therefore key on CONTENT EQUALITY, never on mere existence —
+    otherwise the fix for one defect reintroduces the other.
+    """
+    import subprocess
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+
+    from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
+
+    rel = ".codex/hooks/trw_post_edit_telemetry.py"
+    install_codex_distill_channels(tmp_path)
+    hook = tmp_path / rel
+    hook.write_text("# stale pre-fix body\n", encoding="utf-8")
+
+    result = install_codex_distill_channels(tmp_path)
+
+    assert rel in result["updated"], f"a stale hook must be refreshed, got: {result}"
+    assert "stale pre-fix body" not in hook.read_text(encoding="utf-8")
+
+
+def test_force_rewrites_an_already_identical_hook(tmp_path: Path) -> None:
+    """`force` now decides something — it used to be `force or True`, a tautology."""
+    import subprocess
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+
+    from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
+
+    rel = ".codex/hooks/trw_post_edit_telemetry.py"
     install_codex_distill_channels(tmp_path)
 
-    # The hook now already exists; with force=False it gets skipped
-    # But install_codex_distill_channels always uses overwrite=force or True
-    # so skipped can only happen if we patch install_hook_script to return skipped
-    with patch(
-        "trw_mcp.channels.codex._post_tool_use_telemetry.install_hook_script",
-        return_value={"installed": False, "path": str(tmp_path), "skipped": True},
-    ):
-        result = install_codex_distill_channels(tmp_path)
-
-    assert ".codex/hooks/trw_post_edit_telemetry.py" in result["preserved"], (
-        f"Expected hook in preserved, got: {result}"
-    )
+    assert rel in install_codex_distill_channels(tmp_path, force=False)["preserved"]
+    assert rel in install_codex_distill_channels(tmp_path, force=True)["updated"]
 
 
 def test_merge_distill_hook_with_non_dict_hooks_section(tmp_path: Path) -> None:
@@ -520,3 +560,31 @@ def test_install_adds_gitignore_entries_for_state_files(tmp_path: Path) -> None:
     assert any("channel-events.jsonl" in e for e in entries), (
         f"channel-events.jsonl not in gitignore entries: {entries}"
     )
+
+
+def test_a_non_utf8_hook_is_refreshed_not_left_stale(tmp_path: Path) -> None:
+    """The unreadable case the content check exists for must not raise past it.
+
+    `UnicodeDecodeError` subclasses `ValueError`, not `OSError`, so the first
+    version of the guard caught only permission-style failures. A corrupt or
+    partially-written hook raised out of `install_hook_script`, the caller
+    swallowed it into `errors`, and the stale file stayed registered in
+    `.codex/hooks.json` — the "shipped fix cannot reach an existing install"
+    defect commit 1fc4be8850 fixed, reopened by the fix for a different one.
+    """
+    import subprocess
+
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+
+    from trw_mcp.bootstrap._codex_distill_channels import install_codex_distill_channels
+
+    rel = ".codex/hooks/trw_post_edit_telemetry.py"
+    install_codex_distill_channels(tmp_path)
+    hook = tmp_path / rel
+    hook.write_bytes(b"\x80\x81 not valid utf-8 and definitely stale\n")
+
+    result = install_codex_distill_channels(tmp_path)
+
+    assert rel in result["updated"], f"an undecodable hook must be refreshed, got: {result}"
+    assert not result["errors"], f"and it must not surface as an install error: {result['errors']}"
+    assert hook.read_text(encoding="utf-8").startswith("#!")

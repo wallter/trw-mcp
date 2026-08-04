@@ -14,6 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from trw_mcp.bootstrap._git_hooks import _resolve_hooks_dir
 from trw_mcp.server._subcommands_uninstall_config import (
     _remove_managed_block_file as _remove_managed_block_file,
 )
@@ -131,6 +132,23 @@ def _run_uninstall(args: argparse.Namespace) -> None:
             managed_paths.append(path)
         else:
             plain_paths.append(path)
+
+    # The `.git/hooks/post-commit` surface above names the DEFAULT hooks directory,
+    # and the catalog entry says so. But git honours `core.hooksPath`, and install
+    # follows it (`bootstrap/_git_hooks.py` resolves the same setting before
+    # writing), so a project that redirects its hooks — common in monorepos and in
+    # teams that share a checked-in `.githooks/` — received a TRW dispatch block at
+    # a path no project-relative manifest can name. Uninstall then reported success
+    # while leaving an ACTIVE hook that runs on every commit.
+    #
+    # A static registry entry cannot fix this because the destination is decided at
+    # runtime by git config. So uninstall resolves it exactly the way install did,
+    # through the same function, and strips the managed block wherever that lands.
+    # `_resolve_hooks_dir` already fails open to the default directory, so a repo
+    # without the setting, or without git on PATH, is unchanged.
+    configured_hook = (_resolve_hooks_dir(target, target / ".git", probe=True) / "post-commit").resolve()
+    if configured_hook.is_file() and configured_hook not in managed_paths:
+        managed_paths.append(configured_hook)
 
     user_trw = (Path.home() / ".trw").resolve()
     remove_user_trw = user_tier and user_trw.exists() and user_trw not in plain_paths

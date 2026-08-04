@@ -163,7 +163,15 @@ def _make_run(
             r_run = run_id
         else:
             r_run = f"{run_id}-REVIEWER"
-        reviewer: dict[str, object] = {"source": reviewer_source, "run_id": r_run, "session_id": "S1"}
+        # The session must track the run. This fixture used to hardcode
+        # session_id="S1" — the delivering run's own owner_session_id — for
+        # EVERY reviewer, so its "independent reviewer" was a second run under
+        # the same session. That is exactly the shape OQ-001 exists to reject:
+        # one actor holding two runs is not two reviewers. The fixture was
+        # asserting the bypass as the canonical happy path, which is why
+        # tightening classify_review_independence turned it red.
+        r_session = "S1" if r_run == run_id else "S2"
+        reviewer: dict[str, object] = {"source": reviewer_source, "run_id": r_run, "session_id": r_session}
         if reviewer_source in ("subagent", "cross_model", "operator"):
             reviewer["receipt_id"] = "tok"
         review: dict[str, object] = {"review_id": "r1", "verdict": "pass", "substantive": True, "reviewer": reviewer}
@@ -655,7 +663,7 @@ def test_prd_qual_119_fr05(tmp_path: Path) -> None:
     depend on where the suite happens to run: the proof-file existence check is
     covered on its own in ``tests/test_prd_proof_paths.py``.
     """
-    from trw_mcp.tools._prd_transition_gate import (
+    from trw_mcp.tools._prd_proof_paths import (
         MISSING_DEFAULT_PATH_PROOF,
         default_path_proof_blocking,
     )

@@ -31,10 +31,18 @@ Use when: You need token-efficient code context from a repository without readin
 
 ## Verification
 
-Run the focused checks from `trw-mcp`:
+Check the search results against the repository you are working in, using that
+repository's own toolchain — this skill makes no assumption about its language,
+test runner, or build system.
 
-```bash
-../.venv/bin/python -m pytest tests/test_code_chunking.py tests/test_code_search_lexical.py tests/test_code_search_tool.py tests/test_code_search_embeddings_optional.py -q
-../.venv/bin/ruff check src/trw_mcp/code_index/chunking.py src/trw_mcp/code_index/search.py src/trw_mcp/code_index/embeddings.py src/trw_mcp/tools/code_search.py tests/test_code_chunking.py tests/test_code_search_lexical.py tests/test_code_search_tool.py tests/test_code_search_embeddings_optional.py
-../.venv/bin/python -m mypy --strict src/trw_mcp/code_index/chunking.py src/trw_mcp/code_index/search.py src/trw_mcp/code_index/embeddings.py src/trw_mcp/tools/code_search.py
-```
+1. Round trip: after `trw_code_index_update`, a symbol you can see in a file you
+   have open must come back from `trw_code_symbol` with that file and a line
+   range that actually contains it.
+2. Fallback: with no local embedder configured, `mode="semantic"` must return a
+   structured `dependency_missing` result with remediation, not an exception.
+3. Negative cases: an invalid repo root and a path filter outside the repo must
+   return structured failures, not partial results.
+4. Then run the target project's own checks — read its task file or manifest
+   (`Makefile`, `pyproject.toml`, `package.json`, `go.mod`, `Cargo.toml`, and so
+   on) for the commands it defines. Never assume a command this skill did not
+   read from the project.

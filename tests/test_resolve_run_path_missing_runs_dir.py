@@ -78,9 +78,7 @@ def test_missing_runs_dir_still_names_the_actual_cause(
 
 
 @pytest.mark.unit
-def test_absent_and_empty_runs_dir_agree_on_the_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_absent_and_empty_runs_dir_agree_on_the_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The two spellings of "no run available" must not diverge.
 
     This is the property the fix restores: whether ``runs/`` is missing or

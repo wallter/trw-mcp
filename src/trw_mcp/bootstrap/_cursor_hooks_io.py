@@ -23,6 +23,8 @@ from trw_mcp.bootstrap._cursor_models import CursorHooksV1Config, HookHandlerEnt
 from trw_mcp.bootstrap._file_ops import read_json_object
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
+from ._version_manifest import _is_user_modified
+
 logger = structlog.get_logger(__name__)
 
 # Data directory mirror — kept in sync with the parent _cursor.py constant
@@ -36,6 +38,7 @@ def generate_cursor_hook_scripts(
     scripts: list[str],
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
     """Copy bundled hook scripts to .cursor/hooks/ with mode 0755 (PRD-CORE-136-FR02).
 
@@ -62,7 +65,27 @@ def generate_cursor_hook_scripts(
             continue
 
         existed = dst.exists()
-        if not existed or force:
+        # An existing hook used to be preserved unconditionally, which meant a
+        # SECURITY fix to a bundled hook could never reach anyone who already had
+        # TRW installed: hooks.json was refreshed around a stale script that stayed
+        # the registered handler. That is how two commits hardening the failClosed
+        # secret-scan gate shipped without reaching a single existing install.
+        #
+        # "Always overwrite" is the wrong correction — it would clobber a hook the
+        # user edited. This is the guarded refresh the .claude/hooks surface already
+        # uses: refresh only when the on-disk content is something TRW itself
+        # shipped, per the manifest recorded at the last install.
+        #
+        # The `manifest_hashes is not None` half is load-bearing and was missing in
+        # the first draft of this fix. `_is_user_modified` returns False when it has
+        # NO baseline — it cannot see a modification it has nothing to compare
+        # against — so relying on it alone made an absent manifest mean "refresh
+        # everything", which is precisely the clobbering this guard exists to
+        # prevent. A repo test asserting idempotency without force caught it.
+        # No baseline therefore means preserve, and behaviour is unchanged for every
+        # caller that passes nothing.
+        refreshable = existed and manifest_hashes is not None and not _is_user_modified(dst, name, manifest_hashes)
+        if not existed or force or refreshable:
             shutil.copy2(str(src), str(dst))
             os.chmod(str(dst), 0o755)  # noqa: S103 -- hook scripts must be executable
             rel = f".cursor/hooks/{name}"
@@ -169,9 +192,28 @@ def smart_merge_cursor_json(
             return result
         existing: dict[str, Any] = existing_obj
 
-        # Handle hooks.json shape: remove prior TRW entries by command prefix
+        # Handle hooks.json shape: remove prior TRW entries by command prefix, but
+        # ONLY for events this caller is about to rewrite.
+        #
+        # The strip used to walk EVERY event in the file. Two callers pass the same
+        # identity_prefix ('.cursor/hooks/trw-') with DISJOINT event maps — the
+        # cursor-ide pass writes 8 events, the cursor-cli pass 5. So on a project
+        # listing both surfaces the second pass cleared all 8 and re-added only its
+        # own 5, silently unregistering the other surface's hooks while the
+        # installer reported success. In the mirror direction that left
+        # "beforeShellExecution": [] — the failClosed secret-scan gate deregistered
+        # entirely, which is the one hook where "does nothing" is indistinguishable
+        # from "scanned and allowed".
+        #
+        # Scoping to the caller's own keys means a pass can only clear what it is
+        # replacing. A prefix is an identity for TRW as a whole, not for either
+        # surface within it, so it cannot be the sole authority for deletion.
+        _owned = trw_entries.get("hooks")
+        owned_events: set[str] = {str(k) for k in _owned} if isinstance(_owned, dict) else set()
         if "hooks" in existing and isinstance(existing["hooks"], dict) and identity_prefix:
             for event, handlers in existing["hooks"].items():
+                if event not in owned_events:
+                    continue
                 if isinstance(handlers, list):
                     existing["hooks"][event] = [
                         h

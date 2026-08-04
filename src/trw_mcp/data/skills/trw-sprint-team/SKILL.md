@@ -5,7 +5,7 @@ description: "Plan sprint-scale coordination from a sprint document. Produces a 
 
 # TRW Sprint Coordination
 
-Use when a sprint plan exists and you need to divide work safely across one or more humans, subagents, or sequential local passes.
+**Use when:** a sprint plan exists and you need to divide work safely across one or more humans, subagents, or sequential local passes.
 
 ## Rules
 

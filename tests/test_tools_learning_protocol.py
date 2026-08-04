@@ -352,8 +352,6 @@ class TestBehavioralProtocol:
         directive_lines = [line for line in result.strip().split("\n") if line.startswith("- ")]
         assert len(directive_lines) == 12
 
-
-
     def test_claude_md_sync_includes_behavioral_protocol(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Full trw_claude_md_sync includes compact behavioral protocol (CORE-093)."""
         tools = _get_tools()

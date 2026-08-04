@@ -41,7 +41,15 @@ class PostCommitReceipt:
 
     ran_at: str = ""
     head_sha: str = ""
+    #: Targets a sidecar on disk demonstrably describes after the refresh —
+    #: NOT the number of files the refresh was asked to cover, and not a count
+    #: of exit codes. It used to be ``len(plan.files)``, so a 13-file commit
+    #: that left one usable artifact reported ``sidecar_files: 13``.
     sidecar_files: int = 0
+    #: What the refresh was asked to cover. Kept beside the achieved count so
+    #: the shortfall is legible in the receipt instead of requiring a log dig:
+    #: ``13 planned / 1 refreshed`` is a fact an operator can act on.
+    sidecar_files_planned: int = 0
     sidecar_skipped_reason: str = ""
     verify_entries_processed: int = 0
     verify_stale_transitions: int = 0
@@ -54,6 +62,7 @@ class PostCommitReceipt:
             "ran_at": self.ran_at,
             "head_sha": self.head_sha,
             "sidecar_files": self.sidecar_files,
+            "sidecar_files_planned": self.sidecar_files_planned,
             "sidecar_skipped_reason": self.sidecar_skipped_reason,
             "verify_entries_processed": self.verify_entries_processed,
             "verify_stale_transitions": self.verify_stale_transitions,
@@ -91,9 +100,10 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
     try:
         from trw_mcp.tools._hint_sidecar_refresh import run_post_commit_refresh
 
-        plan = run_post_commit_refresh(repo_root, dict(source_env if source_env is not None else os.environ))
-        receipt.sidecar_files = len(plan.files)
-        receipt.sidecar_skipped_reason = plan.skipped_reason
+        outcome = run_post_commit_refresh(repo_root, dict(source_env if source_env is not None else os.environ))
+        receipt.sidecar_files = outcome.refreshed_files
+        receipt.sidecar_files_planned = len(outcome.plan.files)
+        receipt.sidecar_skipped_reason = outcome.plan.skipped_reason
     except Exception as exc:  # justified: fail-open, must never block git commit
         logger.debug("post_commit_sidecar_refresh_failed", exc_info=True)
         receipt.errors.append(f"sidecar_refresh: {exc}")
@@ -116,6 +126,7 @@ def run_post_commit(repo_root: Path, source_env: dict[str, str] | None = None) -
         "post_commit_maintenance_complete",
         head_sha=receipt.head_sha,
         sidecar_files=receipt.sidecar_files,
+        sidecar_files_planned=receipt.sidecar_files_planned,
         verify_entries_processed=receipt.verify_entries_processed,
         errors=len(receipt.errors),
     )

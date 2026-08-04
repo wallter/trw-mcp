@@ -188,9 +188,7 @@ class TestExistingInstallMigrates:
         # The whole point: TRW's text leaves, the user's stays.
         assert "My own rules. Keep these." in after
         assert "lots of injected protocol text" not in after
-        assert [ln.strip() for ln in after.splitlines() if ln.strip().startswith("@")] == [
-            "@.trw/INSTRUCTIONS.md"
-        ]
+        assert [ln.strip() for ln in after.splitlines() if ln.strip().startswith("@")] == ["@.trw/INSTRUCTIONS.md"]
         assert "trw_session_start" in (tmp_path / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
 
     def test_migration_is_idempotent(self, tmp_path: Path) -> None:
@@ -227,18 +225,27 @@ class TestOrphanStripSurfaceIsClaudeMdOnly:
     _S = "<!-- trw:start -->"
     _E = "<!-- trw:end -->"
 
-    def test_the_agents_md_orphan_strip_symbol_is_gone(self) -> None:
-        """Absence test, with the live sibling as its non-vacuity control.
+    def test_the_agents_md_orphan_strip_is_wired_not_merely_defined(self) -> None:
+        """It was deleted for having zero callers. It is back — with a caller.
 
-        Without the control this would pass against a typo'd module path or a
-        rename of the whole facade.
+        The original shipped with six passing tests and no production call site:
+        every test invoked the helper directly, so they proved the code worked
+        and said nothing about whether it ran. Deleting it was correct. The NEED
+        was real though (a project installed before opencode's AGENTS.md was
+        withdrawn keeps a frozen block forever), so it is restored and called
+        from the update path. This asserts the CALL SITE, since that is the part
+        that was missing; the behavior itself is covered end-to-end through
+        `update_project` in test_instruction_include_matrix.py.
         """
-        from trw_mcp.state.claude_md import _agents_md, _orphan_strip
+        import inspect
 
-        for module in (_orphan_strip, _agents_md):
-            assert not hasattr(module, "strip_orphaned_agents_md_block")
-            assert hasattr(module, "strip_orphaned_claude_md_block")
-        assert "strip_orphaned_agents_md_block" not in _orphan_strip.__all__
+        from trw_mcp.bootstrap import _template_updater
+        from trw_mcp.state.claude_md import _orphan_strip
+
+        assert hasattr(_orphan_strip, "strip_orphaned_agents_md_block")
+        assert "strip_orphaned_agents_md_block(" in inspect.getsource(_template_updater._update_mcp_config), (
+            "restored but unwired again"
+        )
 
     def test_the_surviving_sibling_has_production_call_sites(self) -> None:
         """The distinction FR06 turns on: called vs merely defined.

@@ -76,7 +76,7 @@ def test_a_key_warns_at_most_once_per_process(capsys: pytest.CaptureFixture[str]
 def test_a_retired_key_names_its_replacement(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """"Retired, use X instead" and "retired, no replacement" must be distinguishable.
+    """ "Retired, use X instead" and "retired, no replacement" must be distinguishable.
 
     Both are more useful than "unknown key": the first tells the operator where
     their setting went, the second tells them it is not coming back.
@@ -163,9 +163,7 @@ class TestExternallyOwnedKeysAreNotWarnedAbout:
         )
 
         _reset_warned_keys()
-        warned = warn_unrecognised_config_keys(
-            ["platform_org_name", "platform_user_email"], defined=["trw_dir"]
-        )
+        warned = warn_unrecognised_config_keys(["platform_org_name", "platform_user_email"], defined=["trw_dir"])
 
         assert warned == []
 
@@ -182,9 +180,7 @@ class TestExternallyOwnedKeysAreNotWarnedAbout:
         )
 
         _reset_warned_keys()
-        warned = warn_unrecognised_config_keys(
-            ["platform_org_name", "definitely_not_a_real_key"], defined=["trw_dir"]
-        )
+        warned = warn_unrecognised_config_keys(["platform_org_name", "definitely_not_a_real_key"], defined=["trw_dir"])
 
         assert warned == ["definitely_not_a_real_key"]
 

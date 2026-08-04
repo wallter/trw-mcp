@@ -2,7 +2,7 @@
 
 Phase A + Phase B + Phase C + Phase D1 exports — ChannelEntry schema,
 locking, provenance, manifest loader, conflict detection, state
-persistence, telemetry, marker-replace, quota enforcement, TTL staleness,
+persistence, telemetry, marker-replace, the tier ladder, TTL staleness,
 cleanup actions, gitignore management, tool-return telemetry, and the
 generic instruction-segment renderer.
 
@@ -62,10 +62,6 @@ from trw_mcp.channels._provenance import (
 )
 from trw_mcp.channels._quota import (
     TIER_DOWN_LADDER,
-    check_quota,
-    enforce_quota_with_tier_down,
-    tier_down,
-    tier_index,
 )
 from trw_mcp.channels._state import (
     ChannelState,
@@ -115,9 +111,7 @@ __all__ = [
     "append_channel_event",
     "auto_recreate_empty",
     "check_marker_collisions",
-    "check_quota",
     "emit_tool_call",
-    "enforce_quota_with_tier_down",
     "extract_segment_interior",
     "list_gitignore_entries",
     "load",
@@ -131,8 +125,6 @@ __all__ = [
     "replace_distill_segment",
     "resolve_client_profile",
     "state_path_for",
-    "tier_down",
-    "tier_index",
     "validate_record_id",
     "write",
     "write_state",

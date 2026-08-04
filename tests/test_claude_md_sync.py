@@ -167,33 +167,38 @@ class TestInstructionsSync:
         assert not (tmp_path / "AGENTS.md").exists()
         assert (tmp_path / ".opencode" / "INSTRUCTIONS.md").is_file()
 
-    def test_fr13_writes_agents_md_when_codex_dir_present(self, tmp_path: Path) -> None:
-        """With .codex/ directory, AGENTS.md is written on auto-detection."""
+    def test_fr13_codex_dir_detected_does_not_write_shared_agents_md(self, tmp_path: Path) -> None:
+        """With .codex/ auto-detected, the shared AGENTS.md is NOT written.
+
+        PRD-CORE-240-FR04 withdrew codex's claim, the same way it withdrew
+        opencode's above. Codex owns `.codex/INSTRUCTIONS.md`, which
+        `.codex/config.toml` points at via `model_instructions_file`. It was kept
+        on the shared surface only because PRD-QUAL-113-FR03 capped its own file
+        at 2,025 bytes — a token budget whose premise was "AGENTS.md owns generic
+        workflow", i.e. the injection itself.
+        """
         (tmp_path / ".codex").mkdir()
 
         result = _run_sync(tmp_path, client="auto")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "AGENTS.md should be created when .codex/ is detected"
-        content = agents_md.read_text(encoding="utf-8")
-        assert "OpenAI developer docs MCP server" in content
-        assert result["agents_md_synced"] is True
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists(), "codex no longer claims the shared AGENTS.md"
+        codex_file = tmp_path / ".codex" / "INSTRUCTIONS.md"
+        assert codex_file.is_file(), "codex still gets its own file"
+        assert "OpenAI developer docs MCP server" in codex_file.read_text(encoding="utf-8")
 
-    def test_fr13_writes_both_when_both_detected(self, tmp_path: Path) -> None:
-        """With both .claude/ and .codex/, both CLAUDE.md and AGENTS.md are written."""
+    def test_fr13_claude_plus_codex_writes_claude_md_and_the_codex_file(self, tmp_path: Path) -> None:
+        """Each client gets ITS surface, and neither drags in the shared AGENTS.md."""
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".codex").mkdir()
         (tmp_path / "CLAUDE.md").write_text("# Project\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="auto")
 
-        claude_md = tmp_path / "CLAUDE.md"
-        agents_md = tmp_path / "AGENTS.md"
-        assert claude_md.exists()
-        assert agents_md.exists()
-        assert TRW_MARKER_START in claude_md.read_text(encoding="utf-8")
-        assert TRW_MARKER_START in agents_md.read_text(encoding="utf-8")
-        assert result["agents_md_synced"] is True
+        assert TRW_MARKER_START in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert (tmp_path / ".codex" / "INSTRUCTIONS.md").is_file()
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists()
 
     def test_fr13_claude_plus_opencode_writes_claude_md_only(self, tmp_path: Path) -> None:
         """A co-detected client that has NO AGENTS.md claim must not drag the surface in.
@@ -231,22 +236,21 @@ class TestInstructionsSync:
         assert TRW_MARKER_START not in claude_content, "CLAUDE.md should NOT be modified when client='opencode'"
 
     def test_fr13_client_override_codex_only(self, tmp_path: Path) -> None:
-        """client='codex' writes Codex-specific AGENTS.md only, not CLAUDE.md."""
+        """client='codex' writes its OWN instruction file, not CLAUDE.md or AGENTS.md."""
         (tmp_path / "CLAUDE.md").write_text("# Existing\n", encoding="utf-8")
 
         result = _run_sync(tmp_path, client="codex")
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "AGENTS.md must be written with client='codex'"
-        content = agents_md.read_text(encoding="utf-8")
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists()
+
+        content = (tmp_path / ".codex" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         assert "OpenAI developer docs MCP server" in content
         assert ("Agent " + "Teams") not in content
-        assert result["agents_md_synced"] is True
 
-        claude_content = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-        assert TRW_MARKER_START not in claude_content
+        assert TRW_MARKER_START not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
 
-    def test_fr13_codex_profile_keeps_codex_specific_agents_md(self, tmp_path: Path) -> None:
+    def test_fr13_codex_profile_keeps_its_codex_specific_template(self, tmp_path: Path) -> None:
         """A real Codex profile should still render the Codex-specific AGENTS.md template."""
         from trw_mcp.models.config import TRWConfig
 
@@ -262,12 +266,41 @@ class TestInstructionsSync:
 
         result = _run_sync(tmp_path, client="codex", config=config)
 
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists(), "AGENTS.md must be written for Codex projects"
-        content = agents_md.read_text(encoding="utf-8")
+        # The Codex-specific template still renders — into codex's OWN file now.
+        # This is the assertion that proves withdrawing AGENTS.md moved the
+        # content rather than dropping it.
+        content = (tmp_path / ".codex" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
         assert "## Codex Workflow" in content
         assert "OpenAI developer docs MCP server" in content
-        assert result["agents_md_synced"] is True
+        assert result["agents_md_synced"] is False
+
+    def test_no_sync_capable_client_claims_the_shared_agents_md(self) -> None:
+        """The end state of PRD-CORE-240-FR04 — and a live dead-code warning.
+
+        Three tests here used to exercise the sync path's AGENTS.md writer
+        (markers, result path, user-content preservation) using whichever client
+        still claimed the surface as the trigger: codex, then antigravity-cli.
+        Both are now withdrawn, along with opencode and copilot, so NO
+        sync-capable client claims it and that writer is unreachable from
+        `client="auto"` or from any per-client override.
+
+        cursor-cli still gets an AGENTS.md, but through the INSTALL path
+        (`generate_cursor_cli_agents_md`), not this one — so those tests were
+        asserting behavior no caller can reach, which is worse than no test.
+        They are replaced by this invariant. If a client ever re-claims the
+        shared surface, this fails and the writer's coverage must come back with
+        it.
+        """
+        from trw_mcp.models.config._profiles import resolve_client_profile
+        from trw_mcp.state.claude_md._instruction_clients import INSTRUCTION_SYNC_CLIENT_IDS
+
+        claimers = [
+            client for client in INSTRUCTION_SYNC_CLIENT_IDS if resolve_client_profile(client).write_targets.agents_md
+        ]
+        assert claimers == [], (
+            f"{claimers} re-claimed the shared AGENTS.md; the sync-path writer is reachable again "
+            "and needs the marker/result-path/preservation coverage restored"
+        )
 
     def test_fr13_client_override_claude_code_only(self, tmp_path: Path) -> None:
         """client='claude-code' writes only CLAUDE.md, not AGENTS.md."""
@@ -292,17 +325,6 @@ class TestInstructionsSync:
         assert (tmp_path / "CLAUDE.md").exists()
         assert (tmp_path / "AGENTS.md").exists()
         assert result["agents_md_synced"] is True
-
-    def test_fr13_same_markers_in_agents_md(self, tmp_path: Path) -> None:
-        """AGENTS.md uses <!-- trw:start --> / <!-- trw:end --> markers."""
-        (tmp_path / ".codex").mkdir()
-
-        _run_sync(tmp_path, client="auto")
-
-        agents_md = tmp_path / "AGENTS.md"
-        content = agents_md.read_text(encoding="utf-8")
-        assert TRW_MARKER_START in content, f"Missing {TRW_MARKER_START!r} in AGENTS.md"
-        assert TRW_MARKER_END in content, f"Missing {TRW_MARKER_END!r} in AGENTS.md"
 
     def test_fr13_agents_md_has_platform_generic_content(self, tmp_path: Path) -> None:
         """AGENTS.md gets platform-generic content, distinct from CLAUDE.md."""
@@ -355,36 +377,11 @@ class TestInstructionsSync:
         assert not (tmp_path / "AGENTS.md").exists()
         assert result["agents_md_synced"] is False
 
-    def test_fr13_result_includes_agents_md_path(self, tmp_path: Path) -> None:
-        """Result includes agents_md_path when AGENTS.md is written."""
-        (tmp_path / ".codex").mkdir()
-
-        result = _run_sync(tmp_path, client="auto")
-
-        assert result["agents_md_path"] is not None
-        assert "AGENTS.md" in str(result["agents_md_path"])
-
     def test_fr13_result_agents_md_path_none_when_not_written(self, tmp_path: Path) -> None:
         """Result has agents_md_path=None when AGENTS.md is not written."""
         result = _run_sync(tmp_path, client="claude-code")
 
         assert result["agents_md_path"] is None
-
-    def test_fr13_agents_md_preserves_user_content(self, tmp_path: Path) -> None:
-        """Existing AGENTS.md user content outside TRW markers is preserved."""
-        agents_md = tmp_path / "AGENTS.md"
-        agents_md.write_text(
-            f"# AGENTS.md\n\nUser content here.\n\n{TRW_MARKER_START}\nOld TRW section\n{TRW_MARKER_END}\n",
-            encoding="utf-8",
-        )
-        (tmp_path / ".codex").mkdir()
-
-        _run_sync(tmp_path, client="auto")
-
-        content = agents_md.read_text(encoding="utf-8")
-        assert "User content here." in content, "User content should be preserved in AGENTS.md"
-        assert "Old TRW section" not in content, "Old TRW section should be replaced"
-        assert TRW_MARKER_START in content
 
     def test_fr13_tool_accepts_client_parameter(self, tmp_path: Path) -> None:
         """The MCP tool trw_claude_md_sync accepts a client parameter."""

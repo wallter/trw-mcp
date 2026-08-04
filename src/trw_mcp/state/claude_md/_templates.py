@@ -128,4 +128,3 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "trw_deliver()",
     ),
 ]
-

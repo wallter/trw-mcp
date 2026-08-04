@@ -45,7 +45,6 @@ def resolve_copilot_instructions(root: Path) -> str:
     return "\n".join(parts)
 
 
-
 def _merge(existing: str, trw_content: str) -> str:
     """Exercise the live production merge path with the Copilot markers.
 
@@ -78,15 +77,29 @@ class TestCopilotInstructions:
         assert _COPILOT_TRW_END_MARKER in content
 
     def test_instructions_contains_ceremony_protocol(self, fake_git_repo: Path) -> None:
+        """The protocol moved to the file Copilot loads itself; the gate did not.
+
+        `.github/copilot-instructions.md` is user-owned and admits no include
+        syntax, so the goal there is minimal injection, not zero. The full
+        protocol now renders into `.github/instructions/trw-ceremony.instructions.md`
+        with `applyTo: "**"` — a TRW-owned file. What stays inline is the deliver
+        gate, because GitHub documents copilot-instructions.md as always-on
+        while `.instructions.md` files apply by pattern match.
+        """
+        from trw_mcp.bootstrap._copilot_artifacts import generate_copilot_path_instructions
+        from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
+
         generate_copilot_instructions(fake_git_repo)
-        # Protocol reachable through the carrier (inline, or a resolved @-import).
-        content = resolve_copilot_instructions(fake_git_repo)
-        assert "TRW Framework Integration" in content
-        assert "Session Protocol" in content
-        assert "trw_session_start" in content
-        assert "trw_learn" in content
-        assert "trw_checkpoint" in content
-        assert "trw_deliver" in content
+        generate_copilot_path_instructions(fake_git_repo)
+
+        carrier = resolve_copilot_instructions(fake_git_repo)
+        assert "TRW Framework Integration" in carrier
+        assert DELIVER_GATE_PHRASE in carrier, "the gate must stay where inclusion is unconditional"
+
+        rule = (fake_git_repo / ".github" / "instructions" / "trw-ceremony.instructions.md").read_text(encoding="utf-8")
+        assert 'applyTo: "**"' in rule
+        for tool in ("trw_session_start", "trw_learn", "trw_checkpoint", "trw_deliver"):
+            assert tool in rule, tool
 
     def test_instructions_smart_merge_preserves_user_content(self, fake_git_repo: Path) -> None:
         """Existing file with user content + TRW markers → user content preserved."""

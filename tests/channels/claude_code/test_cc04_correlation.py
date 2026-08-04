@@ -195,16 +195,26 @@ class TestHintFileKeyedByToolUseId:
         data = json.loads((hints_dir / f"{tool_use_id}.json").read_text(encoding="utf-8"))
         assert data["file_path"] == file_path
 
-    def test_shell_hint_file_written_within_aligned_timeout(self, tmp_path: Path) -> None:
-        """FR33/FR29: hint file IS written via shell hook within the aligned 2.5s timeout.
+    def test_shell_hook_always_leaves_a_well_formed_correlation_record(self, tmp_path: Path) -> None:
+        """FR33/FR29: the hook never leaves CC-04 correlation without a record.
 
-        The shell hook was fixed to use `timeout 2.5` (from buggy `timeout 2`).
-        compute_before_edit_hint does NOT import the embedding stack at module level
-        (~0.76s warm import), so write_hint_file executes within budget.
+        **Renamed and re-scoped, because the old name claimed something the body
+        could not show.** It was
+        ``test_shell_hint_file_written_within_aligned_timeout`` and its only
+        assertions were ``returncode == 0`` and ``hint_file.exists()``. The hook
+        writes a *provisional* record **before** starting the bounded subprocess
+        precisely so correlation survives a timeout — so the file exists whether the
+        computation finished or timed out entirely. The assertion could not
+        distinguish the two, which is the one thing its name promised.
 
-        The shell writes a dependency-free provisional T0 record before starting
-        the bounded intelligence subprocess, so cold imports cannot erase CC-04
-        correlation evidence.
+        Deliberately NOT asserting that the computation completed. That depends on
+        interpreter start and import cost on the host, so pinning it would make this
+        a wall-clock test that passes on a fast box and fails under load — the same
+        trap as the eval-side parallelism test fixed in this run.
+
+        What is asserted instead is what holds on every host: a record exists, it is
+        valid JSON, it identifies the right edit, and its ``distill_status`` is a
+        member of the known vocabulary rather than arbitrary text.
         """
         _enable_cc03(tmp_path)
         tool_use_id = "toolu-aligned-timeout"
@@ -216,7 +226,23 @@ class TestHintFileKeyedByToolUseId:
         assert result.returncode == 0
         hints_dir = tmp_path / ".trw" / "context" / "cc03-hints"
         hint_file = hints_dir / f"{tool_use_id}.json"
-        assert hint_file.exists(), "warm invocation must write the correlation hint within the aligned timeout"
+        assert hint_file.exists(), "the hook must never leave CC-04 correlation without a record"
+
+        record = json.loads(hint_file.read_text(encoding="utf-8"))
+        assert record["tool_use_id"] == tool_use_id, "the record does not identify the edit it belongs to"
+        assert record["file_path"] == "src/module.py"
+        # The vocabulary, not one member of it. A status outside this set means the
+        # writer invented one, which is the failure a bare exists() check misses.
+        assert record["distill_status"] in {
+            "hint_available",
+            "sidecar_missing",
+            "target_not_in_sidecar",
+            "timeout_fallback",
+            "exception_fallback",
+            "tier_required",
+            "no_repo_root",
+            "no_git_sha",
+        }, f"unknown distill_status {record['distill_status']!r}"
 
 
 # ---------------------------------------------------------------------------

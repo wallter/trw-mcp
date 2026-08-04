@@ -53,26 +53,52 @@ class TestRenderCodexInstructions:
         assert "trw_session_start" in result
         assert "trw_deliver" in result
 
-    def test_codex_instruction_budget_avoids_duplicate_generic_workflow(self) -> None:
-        """QUAL-113 FR03: Codex deltas stay small; AGENTS.md owns generic workflow."""
+    def test_codex_instruction_file_carries_the_whole_protocol(self) -> None:
+        """QUAL-113-FR03's 2,025-byte cap is retired, and the reason matters.
+
+        The cap was a token budget whose stated premise was "Codex deltas stay
+        small; AGENTS.md owns generic workflow". PRD-CORE-240-FR04 removes that
+        premise: TRW no longer writes into codex's AGENTS.md, which the USER
+        owns. A cap that forces content out of the only remaining carrier would
+        push it nowhere, so the budget is replaced by a completeness assertion.
+
+        Kept generous rather than removed: this file is loaded on every Codex
+        turn, so unbounded growth is still a real cost.
+        """
         result = render_codex_instructions()
 
-        assert len(result.encode("utf-8")) <= 2_025
-        assert len(result.splitlines()) <= 42
-        assert "## Codex Workflow" not in result
-        assert "Generic TRW lifecycle/project rules come from `AGENTS.md`" in result
+        assert "trw_session_start" in result
+        assert render_deliver_gate_statement().strip() in result
+        assert "## Runtime Guardrails" in result, "codex-specific deltas must survive the merge"
+        assert len(result.encode("utf-8")) <= 16_000, "carrier grew past its ceiling — re-measure before raising"
 
-    def test_combined_codex_surfaces_only_duplicate_protected_lines(self) -> None:
-        """QUAL-113 FR02: exact duplicate prose is limited to standalone gate anchors."""
-        root_agents = (Path(__file__).resolve().parents[2] / "AGENTS.md").read_text(encoding="utf-8")
-        codex = render_codex_instructions()
-        gate = render_deliver_gate_statement()
+    def test_codex_only_project_has_no_second_surface_to_duplicate(self, tmp_path: Path) -> None:
+        """QUAL-113-FR02 guarded duplication across codex's TWO surfaces. It has one.
 
-        root_lines = {line.strip() for line in root_agents.splitlines() if line.strip() and not line.startswith("#")}
-        codex_lines = {line.strip() for line in codex.splitlines() if line.strip() and not line.startswith("#")}
-        allowed = {line.strip() for line in gate.splitlines() if line.strip() and not line.startswith("#")}
+        The old assertion compared the codex file against the repo's root
+        AGENTS.md and allowed only the gate to appear in both. That was the right
+        property while TRW wrote BOTH files for codex. Now it writes only
+        `.codex/INSTRUCTIONS.md`, so the duplication it guarded cannot occur:
+        there is no TRW-authored AGENTS.md in a codex project to duplicate.
 
-        assert root_lines & codex_lines <= allowed
+        The honest residue, recorded rather than hidden: codex still READS a
+        user's AGENTS.md as its project doc. In a MIXED project — say codex plus
+        cursor-cli, where cursor-cli's carrier is AGENTS.md — a codex session
+        loads both and does see the protocol twice. That is a token cost in a
+        multi-client repo, accepted deliberately as the price of not injecting
+        into a file the user owns.
+        """
+        import subprocess
+
+        from trw_mcp.bootstrap import init_project
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        init_project(tmp_path, ide="codex")
+
+        agents = tmp_path / "AGENTS.md"
+        if agents.is_file():
+            assert "<!-- trw:start -->" not in agents.read_text(encoding="utf-8")
+        assert (tmp_path / ".codex" / "INSTRUCTIONS.md").is_file()
 
     def test_codex_guidance_avoids_stale_budget_and_framework_claims(self) -> None:
         """Codex instructions should not claim a fixed 200K budget or require FRAMEWORK.md."""

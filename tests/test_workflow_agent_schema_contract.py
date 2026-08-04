@@ -133,8 +133,7 @@ def test_workflow_schemas_honor_agent_mandatory_fields() -> None:
     )
     assert not violations, (
         "workflow schema(s) fight their paired agent's mandatory output contract "
-        "(will burn StructuredOutput retries the way commit 9700e9b709 diagnosed):\n"
-        + "\n".join(violations)
+        "(will burn StructuredOutput retries the way commit 9700e9b709 diagnosed):\n" + "\n".join(violations)
     )
 
 

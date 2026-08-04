@@ -326,4 +326,3 @@ def create_app(
 # fail-open). Transports consult this for per-dispatch security events.
 _mcp_security: object | None = None
 mcp = create_app()
-_middleware_list: list[object] = list(mcp.middleware)  # backward compat for _tools.py

@@ -201,7 +201,11 @@ def test_module_skips_cleanly_without_repo_root_scripts(tmp_path: Path) -> None:
         "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).parent))\n", encoding="utf-8"
     )
     here = Path(__file__).parent
-    for name in ("_audit_protocol_support.py", "test_audit_protocol_single_source.py", "test_audit_protocol_contracts.py"):
+    for name in (
+        "_audit_protocol_support.py",
+        "test_audit_protocol_single_source.py",
+        "test_audit_protocol_contracts.py",
+    ):
         (tests / name).write_text((here / name).read_text(encoding="utf-8"), encoding="utf-8")
     assert not (tmp_path / "scripts").exists(), "the fixture must reproduce a scripts-less tree"
 

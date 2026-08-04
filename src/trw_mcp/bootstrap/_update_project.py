@@ -337,7 +337,14 @@ def _run_post_update_phases(
     from ._template_claude_md import _recorded_plus_newly_adopted
 
     recorded = [] if ide else _recorded_plus_newly_adopted(target_dir)
-    _update_config_target_platforms(target_dir, recorded or ide_targets, result)
+    # ONE authority for both halves of the decision. The record used to govern
+    # only what was RECORDED while raw detection still governed what was
+    # WRITTEN, so a bare update on a codex project scaffolded `.cursor/` off a
+    # binary on the developer's PATH — and that directory then became the
+    # "evidence" the next bare update adopted. Detection stays the answer only
+    # where there is no record to honour (a pre-record install).
+    write_targets = recorded or ide_targets
+    _update_config_target_platforms(target_dir, write_targets, result)
 
     if on_progress:
         on_progress("Phase", "Syncing CLAUDE.md...")
@@ -355,7 +362,7 @@ def _run_post_update_phases(
         on_progress("Phase", "Updating IDE configs...")
     run_update_integrations(
         target_dir,
-        ide_targets,
+        write_targets,
         ide_override=ide,
         result=result,
         manifest_hashes=manifest_hashes,

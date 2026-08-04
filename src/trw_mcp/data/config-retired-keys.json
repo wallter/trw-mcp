@@ -47,9 +47,12 @@
     "velocity_sign_test_alpha": "",
     "velocity_stable_threshold": ""
   },
-  "_comment_owned_elsewhere": "Keys that live in .trw/config.yaml but are owned by a subsystem OTHER than TRWConfig, mapped to their owner. They are legitimate and must NOT be warned about: the warning compares against TRWConfig's field set, which is not the whole of what the file legitimately holds. Warning on a working key trains an operator to ignore the warning, which costs more than the silence it was built to fix. Add an entry when a subsystem starts reading or writing its own key here, and name the read site so the claim is checkable.",
+  "_comment_owned_elsewhere": "Keys that live in .trw/config.yaml but are owned by a subsystem OTHER than TRWConfig, mapped to their owner. They are legitimate and must NOT be warned about: the warning compares against TRWConfig's field set, which is not the whole of what the file legitimately holds. Warning on a working key trains an operator to ignore the warning, which costs more than the silence it was built to fix. Add an entry when a subsystem starts reading or writing its own key here, and name the read site so the claim is checkable. The SHELL-HOOK entries below are derived, not trusted: tests/test_config_owned_key_derivation.py rescans the bundled hooks and fails if any config.yaml key they read is absent from this map, so a new hook knob cannot ship as a false 'typo' warning.",
   "owned_elsewhere": {
+    "cc03_hook_enabled": "bundled shell hooks (top-level CC-03 enable override, read at claude_code/hooks/lib-distill-hint.sh:122, copilot/hooks/lib-copilot-distill-hint.sh:127, hooks/cursor/lib-distill-hint.sh — it is the HIGHEST-priority path, ahead of both channels.* spellings)",
     "platform_org_name": "trw_mcp.cli.auth (written at auth.py:351, read back at auth.py:300 to render auth status)",
-    "platform_user_email": "trw_mcp.cli.auth (written at auth.py:353, read back at auth.py:302 to render auth status)"
+    "platform_user_email": "trw_mcp.cli.auth (written at auth.py:353, read back at auth.py:302 to render auth status)",
+    "sqlite_vec_enabled": "install-trw.py optional-features memo (written at install-trw.template.py:1534 on the rewrite path and :1580 on the append-missing path; read back at :696-697 by _load_prior_config so a reinstall skips the prompt)",
+    "stop_deliver_window_minutes": "bundled shell hooks (documented project-level override for the PRD-FIX-117/118 stop-deliver reminder window, read at hooks/lib-trw.sh:317)"
   }
 }

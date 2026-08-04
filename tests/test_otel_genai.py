@@ -12,6 +12,11 @@ These tests patch/mock only — no filesystem I/O — so the file is classified
 from __future__ import annotations
 
 from pathlib import Path
+
+#: Anchored to this file, not to the process cwd. The source reads below used to
+#: be bare relative paths, so they resolved only when pytest ran with
+#: ``cwd=trw-mcp/`` and raised FileNotFoundError from the repo root.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -435,8 +440,8 @@ class TestFailOpenAndUnknown:
 class TestNfrAndPackageCleanliness:
     def test_no_event_kwarg(self) -> None:
         """NFR02: the wrapper sources use no reserved structlog event= kwarg."""
-        src = Path("src/trw_mcp/state/otel_wrapper.py").read_text()
-        src += Path("src/trw_mcp/state/_otel_genai.py").read_text()
+        src = (_PACKAGE_ROOT / "src/trw_mcp/state/otel_wrapper.py").read_text(encoding="utf-8")
+        src += (_PACKAGE_ROOT / "src/trw_mcp/state/_otel_genai.py").read_text(encoding="utf-8")
         assert "event=" not in src
 
     def test_no_proprietary_imports(self) -> None:
@@ -446,7 +451,7 @@ class TestNfrAndPackageCleanliness:
             "src/trw_mcp/state/otel_wrapper.py",
             "src/trw_mcp/state/_otel_genai.py",
         ):
-            src = Path(rel).read_text()
+            src = (_PACKAGE_ROOT / rel).read_text(encoding="utf-8")
             for pkg in proprietary:
                 assert pkg not in src
 

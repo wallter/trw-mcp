@@ -254,7 +254,27 @@ def mark_local_delivered(
     *,
     run_path: Path | None = None,
 ) -> LocalStatusResult:
-    """Mark the active local run delivered and append a delivery event."""
+    """Mark the active local run delivered and append a delivery event.
+
+    **This path evaluates no deliver gate, and now says so in the record.**
+
+    The MCP ``trw_deliver`` runs a six-gate table with three override policies and
+    validates a structured ``AcceptableFailureRecord``. This offline fallback does
+    none of that: it sets ``status`` and stamps a time. Measured — ``local init``
+    followed immediately by ``local deliver`` exits 0 with no warning and leaves a
+    run marked ``delivered`` while still in ``phase: research``.
+
+    That is defensible as a fallback; what was not defensible is that the resulting
+    ``run.yaml`` was **byte-identical** to a gated delivery. An unevaluated gate
+    that reads exactly like a passed gate is the same shape this codebase has now
+    fixed in a shell allow/deny gate, a PRD proof-path check, a config-consumer
+    check and a sidecar refresh count. Recording ``gate_evaluated: false`` makes
+    the two distinguishable by anyone reading the run afterwards.
+
+    It does NOT weaken the obligation. CONSTITUTION §1.a binds the agent whichever
+    surface records the delivery; this stamp is what lets a reader tell which
+    surface did.
+    """
     resolved = _resolve_run_path(run_path)
     meta = resolved / "meta"
     run_yaml = meta / "run.yaml"
@@ -263,9 +283,17 @@ def mark_local_delivered(
     run_data = FileStateReader().read_yaml(run_yaml)
     run_data["status"] = "delivered"
     run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
+    # Explicit False, never omitted: an absent key is indistinguishable from an
+    # older record, and "we did not check" has to be positively stated.
+    run_data["gate_evaluated"] = False
+    run_data["delivery_surface"] = "local_cli"
     FileStateWriter().write_yaml(run_yaml, run_data)
     write_checkpoint(message, run_path=resolved)
-    _append_event(meta / "events.jsonl", "deliver", {"message": message, "source": "local_cli"})
+    _append_event(
+        meta / "events.jsonl",
+        "deliver",
+        {"message": message, "source": "local_cli", "gate_evaluated": False},
+    )
     return read_local_status(run_path=resolved)
 
 

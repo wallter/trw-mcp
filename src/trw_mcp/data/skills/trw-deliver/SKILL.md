@@ -5,7 +5,7 @@ description: "Persist the session's work with validation evidence, durable learn
 
 # TRW Deliver
 
-Run the delivery ceremony before ending a work session.
+**Use when:** ending a work session. Run the delivery ceremony so validation evidence, durable learnings, and client instruction sync persist beyond this context.
 
 ## Steps
 

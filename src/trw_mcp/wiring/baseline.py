@@ -84,8 +84,8 @@ BASELINE: tuple[BaselineEntry, ...] = (
     ),
     BaselineEntry(
         key="PREDICATE_COVERAGE::gate:prd-core-190-wiring",
-        ledger_id="PRD-CORE-231",
-        rationale="the wiring gate's activation covers 0.33% of the PRD corpus; widening it is owned by CORE-231 R4 and this detector must not modify it",
+        ledger_id="UF-074",
+        rationale="the wiring gate's activation covers 0.33% of the PRD corpus; widening it is owned by PRD-CORE-231 R4 and this detector must not modify it",
     ),
 )
 

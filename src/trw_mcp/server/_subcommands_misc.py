@@ -101,6 +101,12 @@ def _run_local(args: argparse.Namespace) -> None:
             status = mark_local_delivered(str(getattr(args, "message", "") or "local delivery"), run_path=run_path)
             print(f"Run delivered: {status['run_id']}")
             print(f"  Path: {status['run_path']}")
+            # Said out loud, not only stamped in run.yaml. The operator reading
+            # this line is the one who can still supply the evidence; a field in a
+            # file they may never open is a record, not a notice.
+            print("  NOTE: offline path — no deliver gate was evaluated (gate_evaluated: false).")
+            print("        CONSTITUTION 1.a still binds: a passing build check, a durable")
+            print("        acceptable-failure record, or a recorded override.")
         except FileNotFoundError as exc:
             print(f"Error: {exc}")
             sys.exit(1)

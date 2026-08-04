@@ -13,9 +13,7 @@ from trw_mcp.models.config import TRWConfig
 class TestLoadClaudeMdTemplateInlineFallback:
     """Cover line 99: inline fallback when no project-local or bundled template."""
 
-    def test_inline_fallback_when_no_templates(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_inline_fallback_when_no_templates(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Resolution step 3: neither a project-local nor a bundled template exists.
 
         The previous version of this test never reached step 3. It patched
@@ -40,9 +38,9 @@ class TestLoadClaudeMdTemplateInlineFallback:
         monkeypatch.setattr(_parser, "__file__", str(elsewhere / "_parser.py"))
 
         with patch("trw_mcp.state.claude_md._parser.get_config", return_value=TRWConfig()):
-            assert not (
-                Path(_parser.__file__).parent.parent.parent / "data" / "templates" / "claude_md.md"
-            ).exists(), "bundled template still resolvable — step 3 would not be reached"
+            assert not (Path(_parser.__file__).parent.parent.parent / "data" / "templates" / "claude_md.md").exists(), (
+                "bundled template still resolvable — step 3 would not be reached"
+            )
             result = load_claude_md_template(trw_dir)
 
         # The inline fallback is placeholder-only: it carries the markers AND the
@@ -66,14 +64,7 @@ class TestLoadClaudeMdTemplateInlineFallback:
         with patch("trw_mcp.state.claude_md._parser.get_config", return_value=TRWConfig()):
             result = load_claude_md_template(trw_dir)
 
-        bundled = (
-            Path(__file__).resolve().parent.parent
-            / "src"
-            / "trw_mcp"
-            / "data"
-            / "templates"
-            / "claude_md.md"
-        )
+        bundled = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "data" / "templates" / "claude_md.md"
         assert bundled.is_file(), f"bundled template missing at {bundled}"
         assert result == bundled.read_text(encoding="utf-8")
 
@@ -90,4 +81,3 @@ class TestLoadClaudeMdTemplateInlineFallback:
         with patch("trw_mcp.state.claude_md._parser.get_config", return_value=TRWConfig()):
             result = load_claude_md_template(trw_dir)
         assert result == custom
-

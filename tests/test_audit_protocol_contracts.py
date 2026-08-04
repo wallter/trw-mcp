@@ -163,7 +163,10 @@ def assert_report_schema_contract(protocol: Protocol) -> None:
             f"Section E and Section G disagree on the `{enum_field}` enum"
         )
 
-    normalized = {re.sub(r"\s*\(.*?\)\s*$", "", h.removeprefix("## ")).casefold() for h in level_two_headings(protocol.implementer)}
+    normalized = {
+        re.sub(r"\s*\(.*?\)\s*$", "", h.removeprefix("## ")).casefold()
+        for h in level_two_headings(protocol.implementer)
+    }
     assert "pre-implementation checklist" in normalized, (
         "trw-implementer lost its pre-implementation checklist heading (normalized name, PRD id free)"
     )
@@ -282,12 +285,12 @@ def assert_adapter_disjoint(protocol: Protocol) -> None:
 BASELINE_NEVER_CLAUSES: dict[str, tuple[str, ...]] = {
     "auditor": (
         "NEVER modify code files",
-        "NEVER accept \"tests pass\" as evidence of spec compliance",
+        'NEVER accept "tests pass" as evidence of spec compliance',
         "NEVER downgrade severity to avoid blocking delivery",
     ),
     "skill": (
         "NEVER modify code files",
-        "NEVER accept \"tests pass\" as evidence of spec compliance",
+        'NEVER accept "tests pass" as evidence of spec compliance',
         "NEVER use PARTIAL to soften a failed acceptance criterion",
         "NEVER skip NFR checklist items",
         "NEVER downgrade severity to avoid blocking",
@@ -364,13 +367,22 @@ CONVERSIONS: dict[str, Conversion] = {
         lambda p: p.with_section_g("\nprior_learning_verification:\n", "\nunrelated_block:\n"),
     ),
     "C11-known-patterns": Conversion(
-        11, "known_patterns: []", assert_report_schema_contract, lambda p: p.with_section_g("  known_patterns: []\n", "")
+        11,
+        "known_patterns: []",
+        assert_report_schema_contract,
+        lambda p: p.with_section_g("  known_patterns: []\n", ""),
     ),
     "C12-verified-patterns": Conversion(
-        12, "verified_patterns: []", assert_report_schema_contract, lambda p: p.with_section_g("  verified_patterns: []\n", "")
+        12,
+        "verified_patterns: []",
+        assert_report_schema_contract,
+        lambda p: p.with_section_g("  verified_patterns: []\n", ""),
     ),
     "C13-missed-patterns": Conversion(
-        13, "missed_patterns: []", assert_report_schema_contract, lambda p: p.with_section_g("  missed_patterns: []\n", "")
+        13,
+        "missed_patterns: []",
+        assert_report_schema_contract,
+        lambda p: p.with_section_g("  missed_patterns: []\n", ""),
     ),
     "C14-recall-call": Conversion(
         14,
@@ -431,7 +443,9 @@ CONVERSIONS: dict[str, Conversion] = {
         21,
         "Maximum audit cycles before escalation: 3 (...)",
         assert_verdict_parity,
-        lambda p: p.with_framework("Maximum audit cycles before escalation: 3.", "Maximum audit cycles before escalation: 5."),
+        lambda p: p.with_framework(
+            "Maximum audit cycles before escalation: 3.", "Maximum audit cycles before escalation: 5."
+        ),
     ),
     "C22-pass-comment": Conversion(
         22,

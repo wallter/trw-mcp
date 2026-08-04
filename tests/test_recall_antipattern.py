@@ -269,9 +269,7 @@ class TestAntipatternAlertFailOpen:
         )
         assert learnings == [bad_learning]
 
-    def test_missing_id_field_is_dropped_not_raised(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_missing_id_field_is_dropped_not_raised(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls
 
         bad_learning: dict[str, object] = {"summary": "facade pattern", "impact": 0.5}

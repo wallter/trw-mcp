@@ -16,17 +16,30 @@ class TestAgentsMdCreation:
     """Test AGENTS.md file creation via trw_claude_md_sync."""
 
     def test_agents_md_created_on_root_sync(self, tmp_project: Path) -> None:
-        """AGENTS.md is created when scope='root', agents_md_enabled=True, and opencode detected."""
+        """The auto path no longer writes AGENTS.md for ANY detected client.
+
+        Was: create ``.opencode/`` and assert AGENTS.md appears. Three withdrawals
+        have since removed the premise. On the auto branch ``write_agents`` requires
+        both a non-empty ``instruction_targets`` and a detected client whose profile
+        claims ``agents_md``. The sync set is
+        ``{antigravity-cli, codex, copilot, opencode}`` and **none of them claims
+        agents_md** any more; the two clients that do (cursor-cli, cursor-ide) are in
+        ``INSTRUCTION_SYNC_EXCLUSIONS``, so they contribute no targets.
+
+        The test kept passing only because cursor-ide still carried a stray
+        ``agents_md=True`` alongside its own carrier — the defect this change fixes.
+        So it now asserts the withdrawal is complete, which is what
+        PRD-CORE-240-FR04 requires, instead of asserting a write that should no
+        longer happen. ``trw_instructions_sync(client="cursor-cli")`` still writes
+        AGENTS.md through the explicit-client branch; that is cursor-cli's own
+        carrier and is covered elsewhere.
+        """
         (tmp_project / ".opencode").mkdir(exist_ok=True)
         with _patched_learning_env(tmp_project, agents_md_enabled=True) as tools:
             result = tools["trw_claude_md_sync"].fn(scope="root")
 
-        assert result["agents_md_synced"] is True
-        agents_path = tmp_project / "AGENTS.md"
-        assert agents_path.exists()
-        content = agents_path.read_text(encoding="utf-8")
-        assert TRW_MARKER_START in content
-        assert TRW_MARKER_END in content
+        assert result["agents_md_synced"] is False
+        assert not (tmp_project / "AGENTS.md").exists()
 
     def test_agents_md_content_matches_claude_md(self, tmp_project: Path) -> None:
         """AGENTS.md TRW section matches CLAUDE.md TRW section."""

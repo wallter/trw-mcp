@@ -92,15 +92,35 @@ def test_generated_agents_md_carries_transport_loss_and_capabilities(tmp_path: P
     assert "trw_session_start" in content
 
 
-def test_generated_codex_agents_md_carries_both_blocks(tmp_path: Path) -> None:
-    """The Codex AGENTS.md surface carries both FR06 blocks with a codex marker."""
+def test_generated_codex_carrier_carries_both_blocks(tmp_path: Path) -> None:
+    """Codex gets both FR06 blocks — in its OWN carrier, not in AGENTS.md.
+
+    **Retargeted, not weakened.** This asserted the blocks were in ``AGENTS.md``
+    and that ``agents_md_synced`` was True. PRD-CORE-240-FR04 then required the
+    opposite in terms that leave no room: *"Given client opencode or codex, When
+    init-project or update-project runs, Then AGENTS.md receives zero TRW-authored
+    bytes"*, with pass condition *"AGENTS.md is byte-identical before and after, or
+    absent in both states"*. So the old assertion contradicted an approved
+    requirement, and FR04's own evidence test
+    (``test_instruction_include_matrix.py::test_t2_clients_write_no_agents_md_bytes``)
+    passes — the two could not both be right.
+
+    What FR06 actually requires is that codex *carries* both blocks. It still does:
+    measured, ``.codex/INSTRUCTIONS.md`` is 11 KB and contains both markers, while
+    ``AGENTS.md`` is absent. The requirement is satisfied; only the carrier moved.
+    This now checks the requirement at the carrier that exists, and pins FR04's
+    absence in the same test so the two can never drift apart again.
+    """
     (tmp_path / ".codex").mkdir()
 
     result = _run_sync(tmp_path, client="codex")
 
-    agents_md = tmp_path / "AGENTS.md"
-    assert agents_md.exists()
-    content = agents_md.read_text(encoding="utf-8")
+    assert not (tmp_path / "AGENTS.md").exists(), "PRD-CORE-240-FR04: codex must receive zero AGENTS.md bytes"
+    assert result["agents_md_synced"] is False
+
+    carrier = tmp_path / ".codex" / "INSTRUCTIONS.md"
+    assert carrier.exists(), "codex lost its instruction carrier entirely"
+    content = carrier.read_text(encoding="utf-8")
 
     assert "<!-- trw:transport-loss:codex -->" in content
     assert "<!-- trw:capabilities:codex -->" in content
@@ -108,7 +128,6 @@ def test_generated_codex_agents_md_carries_both_blocks(tmp_path: Path) -> None:
         assert boundary in content
     for label in _THREE_CLASSES:
         assert label in content
-    assert result["agents_md_synced"] is True
 
 
 def test_sync_result_surfaces_capability_parity_check(tmp_path: Path) -> None:

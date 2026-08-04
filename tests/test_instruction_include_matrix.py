@@ -65,18 +65,24 @@ class TestT2ClientsOwnTheirInstructionFile:
         """
         assert resolve_client_profile("opencode").write_targets.agents_md is False
 
-    def test_codex_retains_agents_md_because_its_appendix_has_nowhere_else(self) -> None:
-        """codex is RETAINED, and the reason is a reachability fact, not a preference.
+    def test_codex_no_longer_receives_the_shared_agents_md(self) -> None:
+        """WITHDRAWN — and the blocker turned out to be TRW's own budget.
 
-        Its capability appendix (PRD-CORE-218-FR06) needs a slot codex actually
-        reads. `model_instructions_file` is single-valued and points at
-        `.codex/INSTRUCTIONS.md`, which PRD-QUAL-113-FR03 caps at 2,025 bytes — the
-        appendix measures 5,043. `project_doc_fallback_filenames` is NOT a third
-        slot: per official Codex docs it lists filenames consulted only *when
-        AGENTS.md is absent*, so anything registered there is read conditionally at
-        best. Freeing codex's AGENTS.md therefore requires raising the QUAL-113 cap.
+        This previously asserted the opposite, on the grounds that codex's
+        capability appendix (PRD-CORE-218-FR06) had nowhere else to go:
+        `model_instructions_file` is single-valued and points at
+        `.codex/INSTRUCTIONS.md`, which PRD-QUAL-113-FR03 capped at 2,025 bytes
+        against a 5,043-byte appendix. That cap was a token budget, not a vendor
+        limit, and its stated premise was "AGENTS.md owns generic workflow" —
+        i.e. it presupposed the very injection this PRD removes. Retiring the
+        cap frees the appendix, and codex's own file carries everything.
+
+        Still true and still the reason no include is used: neither the AGENTS.md
+        spec nor Codex's config reference documents any import syntax, and
+        `project_doc_fallback_filenames` is "additional filenames to try when
+        AGENTS.md is missing" — not a third slot.
         """
-        assert resolve_client_profile("codex").write_targets.agents_md is True
+        assert resolve_client_profile("codex").write_targets.agents_md is False
 
     def test_codex_is_not_repointed_away_from_its_own_file(self) -> None:
         """FR04 guard: codex's key is single-valued, so repointing destroys user content.
@@ -86,7 +92,6 @@ class TestT2ClientsOwnTheirInstructionFile:
         CONSTITUTION HB-2. Codex keeps its own generated file instead.
         """
         assert resolve_client_profile("codex").write_targets.instruction_path == ".codex/INSTRUCTIONS.md"
-
 
 
 class TestOpencodeInstructionsArrayRegistration:
@@ -234,9 +239,7 @@ class TestT1ClientsResolveToImport:
             scope="root",
         )
 
-        assert mode is CarrierMode.IMPORT, (
-            f"{client} declares an include syntax but the carrier still inlines for it"
-        )
+        assert mode is CarrierMode.IMPORT, f"{client} declares an include syntax but the carrier still inlines for it"
 
     def test_copilot_declares_no_include_because_its_ide_surface_has_none(self) -> None:
         """Capability is per-SURFACE here, and the profile is per-CLIENT.
@@ -438,10 +441,11 @@ class TestClaudeMdWrittenOnlyWhereRead:
         assert "alwaysApply: true" in rule
         assert DELIVER_GATE_PHRASE in rule
         assert "trw_session_start" in rule
-        # The block is still written — a redundancy, not a necessity. See the
-        # carve-out note in `_any_client_writes_claude_md` for what retiring it
-        # requires (provenance the config schema cannot yet record).
-        assert TRW_MARKER_START in text
+        # Assert the replacement BEFORE the removal, in that order: withdrawing
+        # the CLAUDE.md block is only safe because the rule above carries the
+        # protocol. Retiring this needed the record to become trustworthy first
+        # — install used to launder `which cursor` into `target_platforms`.
+        assert TRW_MARKER_START not in text
 
     def test_the_decision_is_derived_from_profiles(self) -> None:
         """No hardcoded client name: a profile flag flip must be honoured here."""
@@ -646,3 +650,122 @@ class TestReviewerFoundReinjection:
 
         assert any(entry.get("event") == "trw_block_duplicate_markers" for entry in logs)
         assert "User text." in target.read_text(encoding="utf-8")
+
+
+class TestOrphanedAgentsMdBlockIsRemovedByUpdate:
+    """Drives `update_project`, deliberately — the first version tested the helper.
+
+    `strip_orphaned_agents_md_block` shipped once with six passing tests and ZERO
+    production callers. Every test called the function directly, so they proved
+    the code worked and said nothing about whether it ever ran; it was later
+    deleted for exactly that. These tests call the entry point a user calls, so
+    they fail if the wiring is ever dropped again.
+    """
+
+    def _opencode_project_with_a_stale_block(self, tmp_path: Path) -> Path:
+        import subprocess
+
+        from trw_mcp.bootstrap import init_project
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        init_project(tmp_path, ide="opencode")
+        # What a project installed BEFORE the withdrawal looks like: TRW's block
+        # frozen in AGENTS.md, with user content on both sides of it.
+        agents = tmp_path / "AGENTS.md"
+        agents.write_text(
+            f"# House rules\n\nKeep this.\n\n{TRW_MARKER_START}\nstale protocol\n{TRW_MARKER_END}\n\nAnd this.\n",
+            encoding="utf-8",
+        )
+        return agents
+
+    def test_update_removes_the_block_no_client_claims(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap import update_project
+
+        agents = self._opencode_project_with_a_stale_block(tmp_path)
+        update_project(tmp_path, ide="opencode")
+
+        assert "stale protocol" not in agents.read_text(encoding="utf-8")
+
+    def test_update_keeps_user_content_on_both_sides(self, tmp_path: Path) -> None:
+        """HB-2: only the marked region goes."""
+        from trw_mcp.bootstrap import update_project
+
+        agents = self._opencode_project_with_a_stale_block(tmp_path)
+        update_project(tmp_path, ide="opencode")
+
+        text = agents.read_text(encoding="utf-8")
+        assert "Keep this." in text
+        assert "And this." in text
+
+    def test_update_leaves_a_claimed_surface_alone(self, tmp_path: Path) -> None:
+        """cursor-cli still declares AGENTS.md, so its block must survive an update.
+
+        The control for the strip above: without a client that still claims the
+        surface, "removes the block" would pass even if the code removed it
+        unconditionally. cursor-cli is the example because codex was withdrawn.
+        """
+        import subprocess
+
+        from trw_mcp.bootstrap import init_project, update_project
+        from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        init_project(tmp_path, ide="cursor-cli")
+        update_project(tmp_path, ide="cursor-cli")
+
+        # Asserted on the protocol, not the marker: TRW owns cursor-cli's
+        # AGENTS.md wholesale and writes it without a trw:start/end pair, so a
+        # marker assertion would pass vacuously whatever the strip did.
+        assert DELIVER_GATE_PHRASE in (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+
+
+class TestUpdateDoesNotScaffoldFromPath:
+    """A binary on the developer's PATH must not add surfaces to a project.
+
+    Closes the residual left open by 6430e79d61. All five `_update_*_artifacts`
+    functions re-resolved their own targets through `resolve_ide_targets`, which
+    falls through to `detect_ide` when no `--ide` is given — and detection fires
+    on `shutil.which("cursor")`. So a bare `update-project` in a codex-only
+    project scaffolded `.cursor/`, and that TRW-created directory then became the
+    next run's "evidence", appending cursor-ide to an append-only record forever.
+    """
+
+    def test_bare_update_does_not_create_another_clients_directory(self, tmp_path: Path) -> None:
+        import subprocess
+
+        from trw_mcp.bootstrap import init_project, update_project
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        init_project(tmp_path, ide="codex")
+        update_project(tmp_path)
+        update_project(tmp_path)
+
+        assert not (tmp_path / ".cursor").exists(), "PATH detection scaffolded a surface this project never chose"
+
+    def test_the_record_stays_what_the_user_chose(self, tmp_path: Path) -> None:
+        """target_platforms is append-only, so one bad append is permanent."""
+        import subprocess
+
+        import yaml
+
+        from trw_mcp.bootstrap import init_project, update_project
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        init_project(tmp_path, ide="codex")
+        update_project(tmp_path)
+        update_project(tmp_path)
+
+        recorded = yaml.safe_load((tmp_path / ".trw" / "config.yaml").read_text(encoding="utf-8"))
+        assert recorded["target_platforms"] == ["codex"]
+
+    def test_an_explicit_override_still_wins(self, tmp_path: Path) -> None:
+        """Record-first must not stop a user deliberately adding a client."""
+        import subprocess
+
+        from trw_mcp.bootstrap import init_project, update_project
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        init_project(tmp_path, ide="codex")
+        update_project(tmp_path, ide="cursor-ide")
+
+        assert (tmp_path / ".cursor" / "rules" / "trw-ceremony.mdc").is_file()

@@ -148,9 +148,7 @@ class TestTrwInitReviewMandateAdvisory:
         assert "trw_review" in advisory
         assert "trw_deliver" in advisory
 
-    def test_advisory_does_not_claim_delivery_blocks_under_the_default_gate(
-        self, orch_tools: dict[str, Any]
-    ) -> None:
+    def test_advisory_does_not_claim_delivery_blocks_under_the_default_gate(self, orch_tools: dict[str, Any]) -> None:
         """review_gate_mode defaults to "warn" — a blocking claim would be false.
 
         The 2026-07-27 compaction of this advisory introduced the clause "or

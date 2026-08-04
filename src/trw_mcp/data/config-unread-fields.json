@@ -27,6 +27,7 @@
     "compliance_warning_threshold",
     "consensus_quorum",
     "cross_model_review_timeout_secs",
+    "enforcement_variant",
     "finding_dedup_threshold",
     "framework_md_enabled",
     "framework_overhead_threshold",
@@ -64,13 +65,17 @@
     "security_check_enabled",
     "self_review_blocking",
     "skill_active_cap",
+    "source_package_name",
     "source_package_path",
     "test_map_filename",
     "test_skeleton_dir",
+    "tests_relative_path",
     "tool_descriptions_variant",
+    "validation_ears_weight",
     "validation_fk_optimal_max",
     "validation_fk_optimal_min",
     "validation_readability_weight",
+    "validation_smell_weight",
     "worktree_dir"
   ]
 }

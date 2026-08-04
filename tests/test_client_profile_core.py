@@ -251,10 +251,10 @@ def test_opencode_profile_writes_no_shared_agents_md() -> None:
 
 @pytest.mark.unit
 def test_cursor_ide_profile_writes_cursor_rules() -> None:
-    """cursor-ide profile has write_targets.cursor_rules=True and agents_md=True."""
+    """cursor-ide writes cursor_rules only — its carrier is its own, not AGENTS.md."""
     profile = resolve_client_profile("cursor-ide")
     assert profile.write_targets.cursor_rules is True
-    assert profile.write_targets.agents_md is True
+    assert profile.write_targets.agents_md is False
     assert profile.write_targets.claude_md is False
 
 

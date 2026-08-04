@@ -318,8 +318,16 @@ def test_manifest_validation_error_propagates(tmp_path: Path) -> None:
     assert not target_manifest.exists()
 
 
-def test_gitignore_error_is_swallowed(tmp_path: Path) -> None:
-    """FR28: gitignore entry errors are swallowed (fail-open)."""
+def test_gitignore_error_is_fail_open_but_not_silent(tmp_path: Path) -> None:
+    """FR28: a gitignore entry error must not raise — and must not vanish either.
+
+    This test used to assert ``result["gitignore"] == "updated"`` after making
+    every write fail, i.e. it pinned the defect: fail-open was implemented as
+    fail-silent, so a run that wrote nothing was indistinguishable from a clean
+    one. Fail-open is about not aborting the install; it is not a licence to
+    report success. The install still must not raise — that half is unchanged
+    and asserted below.
+    """
     from trw_mcp.bootstrap._opencode_distill_channels import (
         install_opencode_distill_channels,
     )
@@ -328,7 +336,58 @@ def test_gitignore_error_is_swallowed(tmp_path: Path) -> None:
         "trw_mcp.bootstrap._opencode_distill_channels.add_gitignore_entry",
         side_effect=OSError("permission denied"),
     ):
-        # Should NOT raise — gitignore errors are fail-open
-        result = install_opencode_distill_channels(tmp_path)
+        result = install_opencode_distill_channels(tmp_path)  # must NOT raise
 
-    assert result["gitignore"] == "updated"
+    assert result["gitignore"] != "updated", "a run that wrote no entries must not claim it updated them"
+    errors = result.get("errors")
+    assert isinstance(errors, list) and any("permission denied" in e for e in errors)
+
+
+# --------------------------------------------------------------------------- #
+# The `errors` bucket both call sites read (PRD-QUAL-133)
+# --------------------------------------------------------------------------- #
+
+
+def test_install_errors_reach_the_caller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both production call sites read `dc_result["errors"]`; the key must exist.
+
+    `_init_project_ide.py` and `_ide_targets_distill.py` each do
+    `errors = dc_result.get("errors"); if isinstance(errors, list): result["errors"].extend(errors)`.
+    The producer returned only {agents_md_segment, custom_commands, explorer_agent,
+    client_profile_env, manifest, gitignore} — no `errors` key on any path — so a
+    manifest rejection and a .gitignore write that threw were both invisible to
+    the installer. Wiring-defect pattern P9: a lookup whose key space never
+    intersects its producer's output space, reported as a legitimate value.
+    """
+    from trw_mcp.bootstrap import _opencode_distill_channels as mod
+
+    def _boom(_repo_root: Path, entry: str) -> None:
+        raise OSError(f"disk full writing {entry}")
+
+    monkeypatch.setattr(mod, "add_gitignore_entry", _boom)
+    result = mod.install_opencode_distill_channels(tmp_path)
+
+    errors = result.get("errors")
+    assert isinstance(errors, list), f"the key both call sites read must exist: {sorted(result)}"
+    assert errors, "a .gitignore write that raised on every entry must surface an error"
+    assert any("disk full" in e for e in errors)
+
+
+def test_gitignore_status_distinguishes_written_from_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`gitignore: "updated"` used to be set unconditionally after a swallowing loop.
+
+    The status was assigned immediately below a `try/except` that logged and
+    continued, so a run in which not one entry was written was byte-identical to
+    a clean one — the caller could not distinguish "wrote them" from "wrote none".
+    """
+    from trw_mcp.bootstrap import _opencode_distill_channels as mod
+
+    clean = mod.install_opencode_distill_channels(tmp_path)
+    assert clean["gitignore"] == "updated"
+
+    def _boom(_repo_root: Path, entry: str) -> None:
+        raise OSError("nope")
+
+    monkeypatch.setattr(mod, "add_gitignore_entry", _boom)
+    failed = mod.install_opencode_distill_channels(tmp_path)
+    assert failed["gitignore"] != "updated", "a run that wrote nothing must not report 'updated'"

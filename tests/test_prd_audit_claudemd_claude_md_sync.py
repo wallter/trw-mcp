@@ -42,15 +42,18 @@ class TestExecuteClaudeMdSyncAgentsMd:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         _reset_config()
 
-        # FR13: AGENTS.md requires opencode IDE detection
+        # The auto path no longer writes AGENTS.md for any detected client: the sync
+        # set is {antigravity-cli, codex, copilot, opencode} and none of them claims
+        # agents_md after PRD-CORE-240-FR04, while the two that do (cursor-cli,
+        # cursor-ide) are in INSTRUCTION_SYNC_EXCLUSIONS and contribute no targets.
+        # This asserted the opposite and passed only via cursor-ide's stray
+        # agents_md=True, which is the defect being fixed.
         (tmp_path / ".opencode").mkdir(exist_ok=True)
 
         result = _run_sync(tmp_path)
 
-        assert result["agents_md_synced"] is True
-        assert result["agents_md_path"] is not None
-        agents_md = tmp_path / "AGENTS.md"
-        assert agents_md.exists()
+        assert result["agents_md_synced"] is False
+        assert not (tmp_path / "AGENTS.md").exists()
 
     def test_agents_md_not_synced_for_sub_scope(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))

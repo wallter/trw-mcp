@@ -66,4 +66,21 @@ def test_trw_code_search_skill_has_valid_frontmatter_and_usage_text() -> None:
     assert "trw_code_index_update" in content
     assert "trw_code_search" in content
     assert "trw_code_symbol" in content
-    assert "pytest tests/test_code_chunking.py" in content
+
+    # This used to assert the skill contained the literal
+    # `pytest tests/test_code_chunking.py`. The skill was deliberately rewritten to
+    # make no assumption about the host repository's language, test runner or build
+    # system, which is what a BUNDLED skill must do — it ships to arbitrary user
+    # projects, and CLAUDE.md's own rule is to "choose validation commands from
+    # repo/package config, not framework defaults". The old assertion pinned this
+    # monorepo's pytest invocation into a portable artifact, so it went red the
+    # moment the artifact became portable, blaming the fix rather than the defect.
+    #
+    # Assert the PROPERTY the skill must now have instead of the string it must
+    # not: it tells the reader to use the host project's own toolchain.
+    assert "repository you are working in" in content, (
+        "the bundled skill must direct the reader to the host project's toolchain"
+    )
+    assert "pytest tests/test_code_chunking.py" not in content, (
+        "a bundled skill must not hardcode this monorepo's test invocation"
+    )

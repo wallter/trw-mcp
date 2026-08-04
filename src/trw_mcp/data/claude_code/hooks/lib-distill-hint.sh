@@ -201,10 +201,17 @@ _write_distill_snapshot_bg() {
     _repo="${TRW_PROJECT_DIR:-$(pwd)}"
     (
         PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
-        "$_py" -c "
-from trw_mcp.channels.claude_code import write_distill_snapshot
+        TRW_CC01_REPO_ROOT="$_repo" \
+        "$_py" -c '
+# Single-quoted, repo root via the environment. $_repo is not model-controlled,
+# but git_hooks/trw-post-commit.sh states the invariant for every hook in this
+# tree: "a repo path containing quotes or newlines must not be able to inject
+# code into the -c program". A checkout under a directory with an apostrophe was
+# enough to break this one.
+import os
 from pathlib import Path
-write_distill_snapshot(repo_root=Path('$_repo'), tier='T2')
-" >/dev/null 2>&1
+from trw_mcp.channels.claude_code import write_distill_snapshot
+write_distill_snapshot(repo_root=Path(os.environ["TRW_CC01_REPO_ROOT"]), tier="T2")
+' >/dev/null 2>&1
     ) &
 }

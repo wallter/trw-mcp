@@ -294,6 +294,39 @@ from trw_mcp.bootstrap._init_project_skills import (
 )
 
 
+def _recordable_targets(target_dir: Path, ide_targets: list[str], *, explicit: bool) -> list[str]:
+    """What ``target_platforms`` may record at install time.
+
+    The record is consulted for the rest of the project's life as "what this
+    project uses", and it is append-only, so anything written here is permanent.
+    That makes it the wrong place for a guess.
+
+    An explicit ``--ide`` is the user speaking: recorded verbatim. Without one,
+    ``resolve_ide_targets`` falls through to ``detect_ide``, which fires on
+    machine-global signals — ``shutil.which("cursor")`` and friends — so a bare
+    ``init-project`` on a machine that merely HAS Cursor would permanently record
+    cursor-ide for a project that never chose it. Detected clients are therefore
+    kept only when the project carries evidence TRW could not have fabricated
+    (``.opencode/``, ``.codex/`` and the like); ``_file_evidenced_clients``
+    derives that from the same marker table the update path uses.
+
+    An empty result means nothing identified the project, which is the default
+    scaffold — not "no clients".
+    """
+    if explicit:
+        return ide_targets
+
+    from ._template_claude_md import clients_with_markers_on_disk
+
+    # `clients_with_markers_on_disk`, not `_file_evidenced_clients`: the latter
+    # ignores markers TRW scaffolds, which is right on the update path and wrong
+    # here — at install nothing has been scaffolded yet, so a `.claude/` on disk
+    # is the user's own. Only the machine-global half of detection is dropped.
+    on_disk = set(clients_with_markers_on_disk(target_dir))
+    kept = [client for client in ide_targets if client in on_disk]
+    return kept or ["claude-code"]
+
+
 def _generate_root_files(
     target_dir: Path,
     force: bool,
@@ -502,7 +535,7 @@ def _run_init_phases(
         source_package=source_package,
         test_path=test_path,
         runs_root=runs_root,
-        target_platforms=ide_targets,
+        target_platforms=_recordable_targets(target_dir, ide_targets, explicit=ide is not None),
         on_progress=on_progress,
     )
 

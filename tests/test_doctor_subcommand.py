@@ -478,10 +478,7 @@ class TestInstructionGateUnderImportCarrier:
         outside.write_text("Do NOT call `trw_deliver` unless\n", encoding="utf-8")
         try:
             (tmp_path / "CLAUDE.md").write_text(
-                "# Project\n\nUser prose.\n\n"
-                "<!-- trw:start -->\n"
-                f"@../{outside.name}\n"
-                "<!-- trw:end -->\n",
+                f"# Project\n\nUser prose.\n\n<!-- trw:start -->\n@../{outside.name}\n<!-- trw:end -->\n",
                 encoding="utf-8",
             )
 

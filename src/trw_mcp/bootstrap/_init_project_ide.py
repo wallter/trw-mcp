@@ -189,7 +189,7 @@ def _install_cursor_artifacts(
 
     # CLI-specific artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a)
     if "cursor-cli" in resolved_targets:
-        _install_cursor_cli_artifacts(target_dir, force=force, result=result)
+        _install_cursor_cli_artifacts(target_dir, force=force, result=result, ide_targets=resolved_targets)
 
     # Distill channel bootstrap (FR41-FR43)
     try:
@@ -206,12 +206,16 @@ def _install_cursor_cli_artifacts(
     *,
     force: bool,
     result: dict[str, list[str]],
+    ide_targets: list[str] | None = None,
 ) -> None:
     """Install cursor-cli-only artifacts (PRD-CORE-137-FR03, FR04, FR05, FR08a).
 
     Called from ``_install_cursor_artifacts`` when cursor-cli is in ide_targets.
     Fail-open: each generator is wrapped in try/except so one failure doesn't
     abort the others.
+
+    *ide_targets* is the resolved selection, needed because ``.cursor/rules/
+    trw-ceremony.mdc`` is a SHARED file both cursor surfaces read.
     """
 
     from ._cursor_cli import (
@@ -234,19 +238,36 @@ def _install_cursor_cli_artifacts(
     # cursor-cli fell back to AGENTS.md — and the profile then described AGENTS.md
     # as its "ONLY instruction carrier", which was TRW's own omission written up
     # as a vendor limitation.
-    try:
-        from ._cursor import generate_cursor_rules_mdc
-        from ._cursor_cli import _cursor_cli_trw_section
-
-        rules_result = generate_cursor_rules_mdc(
-            target_dir,
-            _cursor_cli_trw_section(),
-            client_id="cursor-cli",
-            force=force,
+    #
+    # Both surfaces read the SAME file, so on a dual-surface install only one
+    # body can exist and it must be the IDE's: that body is the shared protocol
+    # PLUS the cursor-ide appendix, a strict superset of what the CLI section
+    # carries, and the CLI reads the same `.cursor/rules` directory. Writing the
+    # CLI body second is how a Cursor IDE user ended up with 50 lines of an
+    # `alwaysApply: true` carrier instead of 158. A second filename was the
+    # alternative and was rejected: it would duplicate always-applied content for
+    # every dual-surface user, and the update path (`_ide_targets`) has only the
+    # cursor-ide writer, so the IDE body is already the steady state after any
+    # `update-project` — matching it here makes install and update agree instead
+    # of alternating.
+    if "cursor-ide" in (ide_targets or []):
+        result.setdefault("info", []).append(
+            ".cursor/rules/trw-ceremony.mdc: cursor-cli shares the cursor-ide rule body (superset)"
         )
-        _extend_result(result, rules_result, include_updated=True)
-    except Exception as exc:  # justified: fail-open, rule generation is best-effort
-        result.setdefault("warnings", []).append(f".cursor/rules (cursor-cli) generation skipped: {exc}")
+    else:
+        try:
+            from ._cursor import generate_cursor_rules_mdc
+            from ._cursor_cli import _cursor_cli_trw_section
+
+            rules_result = generate_cursor_rules_mdc(
+                target_dir,
+                _cursor_cli_trw_section(),
+                client_id="cursor-cli",
+                force=force,
+            )
+            _extend_result(result, rules_result, include_updated=True)
+        except Exception as exc:  # justified: fail-open, rule generation is best-effort
+            result.setdefault("warnings", []).append(f".cursor/rules (cursor-cli) generation skipped: {exc}")
 
     # FR04: AGENTS.md with TRW sentinel block
     try:

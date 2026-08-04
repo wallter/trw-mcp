@@ -75,18 +75,14 @@ def test_migration_inventory_covers_every_frozen_canon_span() -> None:
         # 100% non-blank source coverage: every non-blank source line is owned by
         # exactly one span (spans are contiguous, markers are the only added lines).
         span_nonblank = sum(len(s.nonblank) for s in result.spans)
-        source_nonblank = sum(
-            1 for line in source.split("\n") if line.strip() and not _MARKER_RE.match(line.strip())
-        )
+        source_nonblank = sum(1 for line in source.split("\n") if line.strip() and not _MARKER_RE.match(line.strip()))
         assert span_nonblank == source_nonblank
 
         # The combined view accounts for every span EXCEPT core_stub bodies, which
         # exist only in the compact core (they stand in for reference detail the
         # core omits). Comparing spans against the baseline directly would silently
         # forbid core_stub spans — the mechanism the compiler ships for exactly this.
-        combined_nonblank = sum(
-            len(s.nonblank) for s in result.spans if s.dest is not SpanDest.CORE_STUB
-        )
+        combined_nonblank = sum(len(s.nonblank) for s in result.spans if s.dest is not SpanDest.CORE_STUB)
         baseline_nonblank = sum(1 for line in baseline.split("\n") if line.strip())
         assert combined_nonblank == baseline_nonblank
 
@@ -288,8 +284,7 @@ def test_compact_canon_promotion_is_atomic_and_fail_closed() -> None:
     ceremony = (_REPO_ROOT / "trw-mcp/src/trw_mcp/models/config/_fields_ceremony.py").read_text(encoding="utf-8")
     declared = _config_default_framework_version(ceremony)
     assert declared == _canon_header_framework_version(), (
-        f"config default {declared} disagrees with the canon header; "
-        "check-aaref-sync.py owns this binding"
+        f"config default {declared} disagrees with the canon header; check-aaref-sync.py owns this binding"
     )
 
     authorizing = [

@@ -240,11 +240,33 @@ def resolve_verified_reviewer_identity(
                 return None
             if not delivering.run_id or recorded.run_id == delivering.run_id:
                 return None
+            # Symmetric to the session-only branch below, which rejects a pin
+            # whose run resolves back to the delivering run: a run whose
+            # recorded session IS the delivering session is one actor holding
+            # two runs, not a second reviewer. Without this, any session that
+            # has ever called trw_init twice can name its own spare run_id and
+            # mint a verified "independent" receipt for its own work.
+            if recorded.session_id and delivering.session_id and recorded.session_id == delivering.session_id:
+                return None
             if session_claim:
                 if recorded.session_id and recorded.session_id != session_claim:
                     return None
                 if not recorded.session_id and not _pin_registered(pins_path, session_claim):
                     return None
+                # A claim naming the DELIVERING session is a self-claim however
+                # it is anchored. Without this, an empty recorded session let a
+                # caller pass its own (pin-registered by construction) session
+                # id and have the receipt persist identity_verified=true.
+                if delivering.session_id and session_claim == delivering.session_id:
+                    return None
+            elif delivering.session_id and not recorded.session_id:
+                # The claimed run records NO owner session, so the run id alone
+                # cannot establish a second actor — the guard above silently
+                # short-circuits on the falsy session. Measured 2026-07-30: 14
+                # of 205 run.yaml files in this repo carry no owner_session_id,
+                # so this is the common case, not a corner. Independence has to
+                # be claimed explicitly and anchored to the pin store.
+                return None
             return RunIdentity(run_id=recorded.run_id, session_id=recorded.session_id or session_claim)
 
         # Session-only claim: anchor to the pin store.
@@ -375,11 +397,20 @@ def _identity_differs(reviewer: dict[str, object], delivering_run: RunIdentity) 
     Returns True/False when a comparison is possible on either the ``run_id`` or
     (``run_id`` empty) the ``session_id`` axis; None when neither axis is present
     on both sides so no honest comparison can be made.
+
+    A differing ``run_id`` is necessary but NOT sufficient. When both sides also
+    carry a ``session_id``, the sessions must differ too — one session holding
+    two runs is one actor, and treating that as two reviewers is exactly the
+    self-certification OQ-001 exists to stop.
     """
     review_run = str(reviewer.get("run_id", "") or "")
     review_session = str(reviewer.get("session_id", "") or "")
     if review_run and delivering_run.run_id:
-        return review_run != delivering_run.run_id
+        if review_run == delivering_run.run_id:
+            return False
+        if review_session and delivering_run.session_id:
+            return review_session != delivering_run.session_id
+        return True
     if review_session and delivering_run.session_id:
         return review_session != delivering_run.session_id
     return None

@@ -323,9 +323,7 @@ def _run_throttle(args: argparse.Namespace, project_dir: Path) -> None:
         held: list[str] = []
 
         for entry in report.channels:
-            decision = evaluate_throttle(
-                entry.channel_id, entry.client, throttle_stats_for(entry)
-            )
+            decision = evaluate_throttle(entry.channel_id, entry.client, throttle_stats_for(entry))
             label = f"{entry.client}:{entry.channel_id}"
 
             if decision.verdict in (

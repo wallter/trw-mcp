@@ -42,10 +42,17 @@ def test_cursor_ide_profile_ceremony_mode_full() -> None:
 
 @pytest.mark.unit
 def test_cursor_ide_write_targets_set_correctly() -> None:
-    """cursor-ide write_targets has cursor_rules=True and agents_md=True."""
+    """cursor-ide writes its OWN carrier and must not also claim AGENTS.md.
+
+    ``agents_md`` was True here alongside a dedicated ``instruction_path``. A
+    client with somewhere of its own to read from must not also write a file the
+    user owns — the rule PRD-CORE-240 applied to copilot and antigravity-cli, and
+    which cursor-ide was missed by. cursor-cli legitimately keeps the flag,
+    because ``AGENTS.md`` IS its ``instruction_path``.
+    """
     profile = resolve_client_profile("cursor-ide")
     assert profile.write_targets.cursor_rules is True
-    assert profile.write_targets.agents_md is True
+    assert profile.write_targets.agents_md is False
     assert profile.write_targets.instruction_path == ".cursor/rules/trw-ceremony.mdc"
 
 
@@ -116,7 +123,7 @@ def test_cursor_ide_profile_resolves() -> None:
     assert profile.client_id == "cursor-ide"
     assert profile.ceremony_mode == "full"
     assert profile.write_targets.cursor_rules is True
-    assert profile.write_targets.agents_md is True
+    assert profile.write_targets.agents_md is False
     assert profile.write_targets.cli_config is False
     assert profile.write_targets.instruction_path == ".cursor/rules/trw-ceremony.mdc"
 

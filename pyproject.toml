@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "1.0.0"
+version = "1.0.5"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -55,9 +55,10 @@ dependencies = [
     # at runtime; the floor makes the skew fail fast at install instead. When adding an
     # import from a new trw-memory symbol, bump this floor IN THE SAME PR.
     #
-    # RELEASE ORDER (docs/deployment/CLAUDE.md): trw-memory ships FIRST. As of
-    # 2026-07-26 PyPI's latest trw-memory is 0.11.0, so this floor is unsatisfiable
-    # from PyPI and `uv lock` cannot resolve until trw-memory >=0.12.0 is published.
+    # RELEASE ORDER (docs/deployment/CLAUDE.md): trw-memory ships FIRST. This floor
+    # resolves from PyPI as of 2026-07-30 — the 0.11.0-era block described here
+    # earlier has cleared. Read the current published version from PyPI rather than
+    # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
     "trw-memory>=0.12.0,<1.0.0",

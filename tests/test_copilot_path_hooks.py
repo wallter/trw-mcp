@@ -24,6 +24,7 @@ from trw_mcp.bootstrap._copilot import (
     generate_copilot_hooks,
     generate_copilot_path_instructions,
 )
+from trw_mcp.bootstrap._copilot_artifacts import _all_path_scoped_templates
 
 from ._copilot_test_support import fake_git_repo  # noqa: F401
 
@@ -43,7 +44,9 @@ class TestCopilotPathInstructions:
         instructions_dir = fake_git_repo / _COPILOT_INSTRUCTIONS_DIR
         md_files = list(instructions_dir.glob("*.instructions.md"))
         assert len(md_files) >= 1
-        assert len(md_files) == len(_PATH_SCOPED_TEMPLATES)
+        # Includes the rendered always-applied `trw-ceremony.instructions.md`, which
+        # is assembled rather than declared in the static dict.
+        assert len(md_files) == len(_all_path_scoped_templates())
 
     def test_path_instructions_yaml_frontmatter(self, fake_git_repo: Path) -> None:
         generate_copilot_path_instructions(fake_git_repo)
@@ -84,7 +87,7 @@ class TestCopilotPathInstructions:
 
     def test_path_instructions_created_list(self, fake_git_repo: Path) -> None:
         result = generate_copilot_path_instructions(fake_git_repo)
-        assert len(result["created"]) == len(_PATH_SCOPED_TEMPLATES)
+        assert len(result["created"]) == len(_all_path_scoped_templates())
         for name in _PATH_SCOPED_TEMPLATES:
             assert f"{_COPILOT_INSTRUCTIONS_DIR}/{name}" in result["created"]
 

@@ -875,9 +875,7 @@ class TestUninstallInstructionSurfaces:
 
         assert not target.exists(), "TRW-generated opencode instructions survived uninstall"
 
-    def test_reported_surfaces_all_actually_disappear(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_reported_surfaces_all_actually_disappear(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Truthfulness: every path uninstall lists is really acted on.
 
         Seeds the two generated instruction files plus a CLAUDE.md TRW block,
@@ -1090,6 +1088,26 @@ _UNINSTALL_EXEMPT_PREFIXES: tuple[tuple[str, str], ...] = (
     ("docs/", "user documentation directory scaffolded, never populated by TRW"),
 )
 
+# Plain surfaces (rmtree/unlink, no managed block, no config merge) that a
+# current install deliberately does NOT produce. Every entry here is a
+# LEGACY-CLEANUP surface: a path some earlier TRW version wrote and which
+# uninstall must still be able to remove. The list exists so that a surface
+# with no producer is a *decision* rather than an oversight — an unjustified
+# entry is how `.claude/commands` came to be rmtree'd when TRW had never
+# written it.
+_PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER: tuple[tuple[str, str], ...] = (
+    (
+        ".aider.conf.yml",
+        "aider was retired 2026-07-11; the surface is retained so existing "
+        "installs stay removable (see the comment above _CLIENT_ORDER)",
+    ),
+    (
+        ".github/instructions/trw-distill-hotspots.instructions.md",
+        "PRD-CORE-239 stopped writing the copilot C2 path-instructions stub; "
+        "the surface is retained to clean up installs that predate it",
+    ),
+)
+
 
 @pytest.mark.slow
 @pytest.mark.integration
@@ -1128,6 +1146,58 @@ class TestInstallUninstallParity:
             "install writes these paths but no uninstall surface covers them "
             f"(register them in client_profiles/catalog.py): {uncovered}"
         )
+
+    def test_every_plain_surface_has_a_producer(self, tmp_path: Path) -> None:
+        """The mirror of the test above: whatever uninstall deletes, install must write.
+
+        ``test_every_installed_file_is_covered_by_a_surface`` only closes the
+        install-to-uninstall direction, so a surface registered for wholesale
+        deletion that TRW never produces passes every gate. That is how
+        ``UninstallSurface(".claude/commands")`` shipped: TRW's command surface
+        is skills plus MCP-prompt registration and no bootstrap writer has ever
+        targeted that path, but it was classified plain, so ``trw-mcp
+        uninstall`` ``rmtree``'d a directory containing only the user's own
+        Claude Code slash commands and reported it as clean TRW cleanup.
+
+        Only *plain* surfaces are checked. A managed-block or merged-config
+        surface edits a file it does not own, so its absence after install is
+        normal and its removal strategy is non-destructive by construction.
+        """
+        from trw_mcp.bootstrap import init_project
+        from trw_mcp.bootstrap._git_hooks import install_git_post_commit_hook
+        from trw_mcp.client_profiles.catalog import uninstall_surfaces
+
+        (tmp_path / ".git" / "hooks").mkdir(parents=True)
+        result = init_project(tmp_path, ide="all")
+        assert not result["errors"], result["errors"]
+        install_git_post_commit_hook(tmp_path)
+
+        legacy = {rel for rel, _reason in _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER}
+        plain = [s for s in uninstall_surfaces() if not s.managed_block and not s.merged_config]
+        assert plain, "precondition: there are plain surfaces to check"
+
+        unproduced = sorted(s.relpath for s in plain if s.relpath not in legacy and not (tmp_path / s.relpath).exists())
+        assert not unproduced, (
+            "these surfaces are registered for wholesale deletion but a full "
+            "`init_project(ide='all')` never creates them — either TRW does not "
+            "own the path (drop the surface) or it is a legacy-cleanup surface "
+            "(add it to _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER with a "
+            f"reason): {unproduced}"
+        )
+
+    def test_legacy_cleanup_exemptions_are_still_needed(self) -> None:
+        """An exemption that stops being necessary must not linger silently.
+
+        The exclusion set is the mechanism that makes the test above honest, so
+        it needs its own ratchet: once a legacy surface is dropped from the
+        registry, its exemption is dead weight that would silently re-admit the
+        path if someone re-registered it.
+        """
+        from trw_mcp.client_profiles.catalog import uninstall_surfaces
+
+        registered = {s.relpath for s in uninstall_surfaces()}
+        stale = sorted(rel for rel, _reason in _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER if rel not in registered)
+        assert not stale, f"exempted surfaces that are no longer registered — drop the exemption: {stale}"
 
     def test_uninstall_leaves_no_trw_artifact_behind(self, tmp_path: Path) -> None:
         """End-to-end: install everything, uninstall, assert nothing TRW remains.
@@ -1322,9 +1392,7 @@ class TestUninstallMarkerTableDerivation:
         assert "distill hint" not in text
         assert "trw:distill" not in text
 
-    def test_distill_only_file_is_listed_and_cleaned(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_distill_only_file_is_listed_and_cleaned(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """A file whose ONLY TRW content is a distill block is still handled."""
         agents = tmp_path / "AGENTS.md"
         agents.write_text("# Project\n\n<!-- trw:distill:start -->\nhint\n<!-- trw:distill:end -->\n")

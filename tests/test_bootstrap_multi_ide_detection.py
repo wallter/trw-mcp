@@ -88,7 +88,9 @@ class TestUpdateProjectMultiIDE:
         assert "Open /hooks" not in "\n".join(result.get("warnings", []))
         assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
-        assert (tmp_path / "AGENTS.md").exists()
+        # codex's AGENTS.md was withdrawn (PRD-CORE-240-FR04); `.codex/INSTRUCTIONS.md`,
+        # which `.codex/config.toml` points at, is its whole carrier now.
+        assert (tmp_path / ".codex" / "INSTRUCTIONS.md").exists()
 
     def test_fr15_update_codex_generates_hooks_when_opted_in(self, tmp_path: Path) -> None:
         """update_project honors explicit Codex hook opt-in instead of forcing hooks."""

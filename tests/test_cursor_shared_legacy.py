@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -157,16 +156,25 @@ def test_get_trw_mcp_entry_cursor_uses_binary_when_on_path() -> None:
 
 
 @pytest.mark.unit
-def test_get_trw_mcp_entry_cursor_falls_back_to_python_module() -> None:
-    """_get_trw_mcp_entry_cursor falls back to sys.executable when binary absent."""
+def test_get_trw_mcp_entry_cursor_falls_back_to_a_portable_python() -> None:
+    """The fallback must be a bare ``python3``, never ``sys.executable``.
+
+    This test previously asserted ``entry["command"][0] == sys.executable`` —
+    it encoded the defect as the contract. ``.cursor/mcp.json`` is committed
+    config, so an absolute interpreter path bakes in the machine that ran the
+    installer and breaks the entry for everyone else (PRD-SEC-006, audit
+    installer-client-12). The hardening had landed only in
+    ``bootstrap/_utils.py``; cursor, opencode, codex and antigravity-cli each
+    kept their own copy of the old behaviour.
+    """
     from trw_mcp.bootstrap._cursor import _get_trw_mcp_entry_cursor
 
     with patch("trw_mcp.bootstrap._cursor.shutil.which", return_value=None):
         entry = _get_trw_mcp_entry_cursor()
 
     assert isinstance(entry["command"], list)
-    assert entry["command"][0] == sys.executable
-    assert "-m" in entry["command"]
+    assert entry["command"] == ["python3", "-m", "trw_mcp.server"]
+    assert not entry["command"][0].startswith("/"), "committed config must not carry a machine-absolute path"
 
 
 @pytest.mark.unit

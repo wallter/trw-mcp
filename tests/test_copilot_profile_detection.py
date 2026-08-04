@@ -29,9 +29,16 @@ class TestCopilotProfile:
         profile = _PROFILES["copilot"]
         assert profile.skills_enabled is True
 
-    def test_copilot_agents_md_enabled(self) -> None:
-        profile = _PROFILES["copilot"]
-        assert profile.write_targets.agents_md is True
+    def test_copilot_agents_md_withdrawn(self) -> None:
+        """PRD-CORE-240-FR04: copilot has two carriers of its own, so no third.
+
+        Copilot does read AGENTS.md — VS Code documents it as always-on — but TRW
+        already writes the always-on `.github/copilot-instructions.md` (stating
+        the deliver gate) and `.github/instructions/trw-ceremony.instructions.md`
+        at `applyTo: "**"` (carrying the full protocol). A third copy in a file
+        the user owns buys nothing.
+        """
+        assert resolve_client_profile("copilot").write_targets.agents_md is False
 
     def test_copilot_context_window(self) -> None:
         profile = _PROFILES["copilot"]

@@ -8,9 +8,21 @@ from __future__ import annotations
 
 import argparse
 
+from trw_mcp.bootstrap._utils import SUPPORTED_IDES
+
 __all__ = ["add_project_subcommands"]
 
-_IDE_CHOICES = ["claude-code", "cursor-ide", "cursor-cli", "opencode", "codex", "copilot", "antigravity-cli", "all"]
+#: DERIVED from the canonical client set, not hand-copied. This was a literal list
+#: of the seven ids plus "all". It happened to be in sync, which is the point:
+#: a module-local copy of a closed set is correct the day it is written and wrong
+#: the moment the set grows, and the person adding a client has no reason to look
+#: in the argparse builder. Two other instances of the same shape were found and
+#: fixed in the same sweep — the agent-contract linter's client-tree list and the
+#: config-key exemption map — so this is a pattern, not an incident.
+#:
+#: Sorted so `--help` output is stable; "all" is appended because it is a CLI
+#: affordance, not a client, and must not leak into the canonical set.
+_IDE_CHOICES = [*sorted(SUPPORTED_IDES), "all"]
 
 # Retired client identifiers (2026-07-11): recognized at the CLI so ``--ide
 # aider`` reports a 'retired' message with a migration hint instead of a

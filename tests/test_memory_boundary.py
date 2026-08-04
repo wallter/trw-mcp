@@ -148,9 +148,7 @@ class TestStorageErrorPropagation:
             "backend.search is now on the hybrid recall path; its StorageError "
             "translation seam is reachable and needs real coverage"
         )
-        assert [entry["id"] for entry in result] == ["L-p1a002"], (
-            f"hybrid recall lost the stored entry: {result}"
-        )
+        assert [entry["id"] for entry in result] == ["L-p1a002"], f"hybrid recall lost the stored entry: {result}"
 
     def test_recall_learnings_list_entries_error_returns_empty(
         self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch

@@ -452,9 +452,7 @@ class TestReviewTool:
         assert review_yaml.is_file(), f"review.yaml not written: {review_yaml}"
         assert "test finding" in review_yaml.read_text(encoding="utf-8")
 
-    def test_manual_review_malformed_finding_is_reported_not_silently_dropped(
-        self, tmp_project: Path
-    ) -> None:
+    def test_manual_review_malformed_finding_is_reported_not_silently_dropped(self, tmp_project: Path) -> None:
         """7.2: A finding missing the required schema fields is REJECTED loudly.
 
         Regression guard for the shape this file used to ship: the original 7.1

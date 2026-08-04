@@ -740,14 +740,12 @@ class TestCarrierRespectsClientImportCapability:
 
         imports, inline = self._shape(fake_git_repo)
         assert imports == [], "post-install .claude/ must not re-enable externalization"
-        # cursor-ide still gets an inline CLAUDE.md block, and it is now a
-        # REDUNDANCY rather than a necessity: `.cursor/rules/trw-ceremony.mdc` is
-        # `alwaysApply: true` and carries the full protocol including the deliver
-        # gate. Retiring the block requires distinguishing "cursor-ide because
-        # the user chose it" from "cursor-ide because `which cursor` succeeded",
-        # which `target_platforms` cannot express — see
-        # `_any_client_writes_claude_md`.
-        assert inline
+        # No inline block either. cursor-ide's protocol lives in the file Cursor
+        # documents and always applies; the CLAUDE.md copy was redundant. The
+        # distinction that unblocked this — "chose cursor-ide" vs "`which cursor`
+        # succeeded" — is now expressible because install records only an explicit
+        # --ide or a client with an on-disk marker.
+        assert not inline
 
         rule = (fake_git_repo / ".cursor" / "rules" / "trw-ceremony.mdc").read_text(encoding="utf-8")
         assert "alwaysApply: true" in rule

@@ -129,9 +129,7 @@ def warn_unrecognised_config_keys(keys: Iterable[str], defined: Iterable[str]) -
         if key in retired:
             replacement = retired[key]
             detail = (
-                f"it was retired; use {replacement} instead"
-                if replacement
-                else "it was retired and has no replacement"
+                f"it was retired; use {replacement} instead" if replacement else "it was retired and has no replacement"
             )
         else:
             detail = "TRWConfig does not define it; check for a typo"

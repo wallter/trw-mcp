@@ -151,6 +151,14 @@ def install_opencode_distill_channels(
     del sidecar_data, sidecar_sha  # see Args — retained, not used
 
     results: dict[str, object] = {}
+    # Both production call sites (_init_project_ide.py and _ide_targets_distill.py)
+    # do `errors = dc_result.get("errors"); if isinstance(errors, list): ...`.
+    # This key never existed, so every install failure below was collected into
+    # a value nobody could read and then dropped — the caller could not tell a
+    # clean install from one where the manifest was rejected and no .gitignore
+    # entry was written. The five sibling installers all return this bucket.
+    errors: list[str] = []
+    results["errors"] = errors
 
     # 1. Load managed artifacts (for user-edit detection)
     managed = _load_managed_artifacts(repo_root)
@@ -210,32 +218,40 @@ def install_opencode_distill_channels(
         manifest_result = bootstrap_channel_manifest(repo_root)
         results["manifest"] = manifest_result
     except ManifestValidationError as exc:
-        log.debug(
+        log.info(
             "opencode_manifest_validation_error",
             error=str(exc),
             outcome="error",
         )
         results["manifest"] = {"status": "error", "error": str(exc)}
+        errors.append(f"opencode channel manifest invalid: {exc}")
     except Exception as exc:  # justified: fail-open, manifest is best-effort
-        log.debug(
+        log.info(
             "opencode_manifest_bootstrap_failed",
             error=str(exc),
             outcome="error",
         )
         results["manifest"] = {"status": "error", "error": str(exc)}
+        errors.append(f"opencode channel manifest bootstrap failed: {exc}")
 
     # 8. Gitignore entries (FR28)
+    failed_entries: list[str] = []
     for entry_str in _GITIGNORE_ENTRIES:
         try:
             add_gitignore_entry(repo_root, entry_str)
         except Exception as exc:
-            log.debug(
+            log.info(
                 "opencode_gitignore_entry_error",
                 entry=entry_str,
                 error=str(exc),
                 outcome="error",
             )
-    results["gitignore"] = "updated"
+            failed_entries.append(entry_str)
+            errors.append(f"opencode .gitignore entry {entry_str!r} failed: {exc}")
+    # ``results["gitignore"]`` used to be set to "updated" unconditionally,
+    # immediately after a loop that swallows every write failure — so a run in
+    # which no entry was written at all was byte-identical to a clean one.
+    results["gitignore"] = "updated" if not failed_entries else "partial"
 
     log.debug(
         "opencode_distill_channels_installed",

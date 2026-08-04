@@ -33,4 +33,3 @@ class TestBuildConfig:
         config = TRWConfig()
         assert config.build_check_enabled is False
         assert config.build_gate_enforcement == "strict"
-

@@ -90,7 +90,14 @@ fi
 
 # --- Skip 4: debounce (same file within last 180s) => plain allow ---
 _debounce_dir="${_repo}/.trw/context/cur06-debounce"
-_safe_name=$(printf '%s' "$_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
+# Sanitized name PLUS a checksum of the exact path. The sanitizer alone is
+    # lossy -- it deletes every character outside [A-Za-z0-9_.-], so 'src/a.py'
+    # and 'src/\u03b1.py' both collapse to 'src_.py'-ish forms and the second file
+    # edited was silently debounced for 180s as if it were the first. cksum is
+    # POSIX, present everywhere this runs, and costs no interpreter start.
+    _safe_name=$(printf '%s' "$_file_path" | tr '/' '_' | tr -cd 'a-zA-Z0-9_.-')
+    _path_ck=$(printf '%s' "$_file_path" | cksum | cut -d' ' -f1)
+    _safe_name="${_safe_name}-${_path_ck}"
 if [ -d "$_debounce_dir" ]; then
     _debounce_file="${_debounce_dir}/${_safe_name}.ts"
     if [ -f "$_debounce_file" ]; then
@@ -114,8 +121,14 @@ _py=$(_get_python_path 2>/dev/null) || _allow_and_exit
 # The Python emits the full Cursor JSON envelope itself via json.dumps so the
 # hint text is correctly escaped into agent_message. On no hint it prints the
 # plain allow envelope. Timeout matches the hook latency budget.
+# TRW_EMBEDDINGS_ENABLED=false: a fresh interpreter per edit pays the full
+# embedding cold start (measured 14.48s: torch + sentence-transformers + MiniLM
+# load), which no PreToolUse budget can cover, while the sidecar read this hook
+# exists for costs 3ms. Lexical recall keeps T1 alive at ~0.44s. Full
+# measurement table: claude_code/hooks/pre-tool-distill-hint.sh.
 _response=$(
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
+    TRW_EMBEDDINGS_ENABLED=false \
     TRW_CUR06_FILE_PATH="$_file_path" \
     timeout 2.5 "$_py" -c '
 import os, json

@@ -5,7 +5,7 @@ description: "Generate portable coordination playbooks with file ownership and i
 
 # TRW Coordination Playbook
 
-Use when sprint work needs explicit ownership, contracts, and verification instructions before implementation.
+**Use when:** sprint work needs explicit ownership, contracts, and verification instructions before implementation.
 
 ## Rules
 

@@ -18,11 +18,17 @@ _PROFILE_OUTPUT_CASES: tuple[tuple[str, frozenset[str], tuple[str, ...]], ...] =
     # PRD-CORE-240-FR04: opencode writes no shared surface flag — its primary
     # artifact is .opencode/INSTRUCTIONS.md, referenced from opencode.json.
     ("opencode", frozenset(), (".opencode/INSTRUCTIONS.md",)),
-    ("cursor-ide", frozenset({"agents_md", "cursor_rules"}), (".cursor/rules/trw-ceremony.mdc",)),
+    # cursor-ide dropped agents_md: it has its own carrier and must not write a
+    # file the user owns. cursor-cli below keeps it because AGENTS.md IS its carrier.
+    ("cursor-ide", frozenset({"cursor_rules"}), (".cursor/rules/trw-ceremony.mdc",)),
     ("cursor-cli", frozenset({"agents_md", "cli_config"}), ("AGENTS.md", ".cursor/cli.json")),
-    ("codex", frozenset({"agents_md"}), (".codex/INSTRUCTIONS.md",)),
-    ("copilot", frozenset({"agents_md", "copilot_instructions"}), (".github/copilot-instructions.md",)),
-    ("antigravity-cli", frozenset({"agents_md", "antigravitycli_md"}), ("ANTIGRAVITY.md",)),
+    ("codex", frozenset(), (".codex/INSTRUCTIONS.md",)),
+    # PRD-CORE-240-FR04: both withdrew the shared AGENTS.md. copilot already has
+    # two carriers of its own (the always-on copilot-instructions.md plus
+    # .github/instructions/*.instructions.md at applyTo:"**"); antigravity-cli now
+    # writes .agents/rules/, the path Antigravity documents.
+    ("copilot", frozenset({"copilot_instructions"}), (".github/copilot-instructions.md",)),
+    ("antigravity-cli", frozenset({"antigravitycli_md"}), ("ANTIGRAVITY.md",)),
 )
 
 

@@ -397,6 +397,7 @@ def generate_cursor_cli_hooks(
     target_dir: Path,
     *,
     force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> BootstrapFileResult:
     """Install CLI hook scripts and merge the CLI event subset into hooks.json.
 
@@ -424,7 +425,9 @@ def generate_cursor_cli_hooks(
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": [], "info": []}
 
     # 1. Install bash adapters via shared helper (idempotent; missing scripts warned+skipped)
-    script_result = generate_cursor_hook_scripts(target_dir, list(_CLI_HOOK_SCRIPTS), force=force)
+    script_result = generate_cursor_hook_scripts(
+        target_dir, list(_CLI_HOOK_SCRIPTS), force=force, manifest_hashes=manifest_hashes
+    )
     result["created"].extend(script_result.get("created", []))
     result["updated"].extend(script_result.get("updated", []))
     result["preserved"].extend(script_result.get("preserved", []))

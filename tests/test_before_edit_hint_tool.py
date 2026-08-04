@@ -433,3 +433,143 @@ class TestModelContracts:
         ls = LearningSummary(id="L-abc", summary="hi")
         assert ls.impact == 0.0
         assert ls.tags == []
+
+
+def _write_batch_sidecar(cache_dir: Path, sha: str, target_paths: list[str]) -> Path:
+    """Write a ``before-edit-batch-<sha>.json`` covering *target_paths*."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    hints = [
+        {
+            "target_path": target,
+            "target_exists_in_map": True,
+            "importers": [f"importer_of_{target}"],
+            "inferred_tests": [],
+            "doc_references": [],
+            "co_change_neighbors": [],
+            "hotspot_warnings": [],
+            "risk_score": 0.5,
+        }
+        for target in target_paths
+    ]
+    envelope = {
+        "schema_version": _SCHEMA_VERSION_ACCEPTED,
+        "sha": sha,
+        "generated_at_unix": 1714000000.0,
+        "payload": {
+            "total_files": len(hints),
+            "files_in_map": len(hints),
+            "total_hotspot_warnings": 0,
+            "hints": hints,
+        },
+    }
+    path = cache_dir / f"before-edit-batch-{sha}.json"
+    path.write_text(json.dumps(envelope, indent=2))
+    return path
+
+
+class TestBatchArtifactFallback:
+    """The single-file artifact holds ONE hint per sha, so a multi-file commit
+    can serve at most one of its files from it. Everything else must come from
+    the batch artifact, which the post-commit refresh now writes.
+    """
+
+    def test_batch_serves_a_file_the_single_artifact_cannot(self, tmp_path: Path) -> None:
+        # Exactly the reproduced production shape: a 3-file commit ran three
+        # single-file invocations, all exiting 0, and the last one won.
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_sidecar(cache_dir, sha, target_path="c.py")
+        _write_batch_sidecar(cache_dir, sha, ["a.py", "b.py", "c.py"])
+        _write_entitlement(tmp_path / ".trw", "pro")
+
+        for losing_file in ("a.py", "b.py"):
+            result = compute_before_edit_hint(file_path=losing_file, repo_root=str(tmp_path))
+
+            assert result.distill_status == "hint_available", losing_file
+            assert result.distill_hint is not None
+            assert result.distill_hint.target_path == losing_file
+            assert result.distill_hint.importers == [f"importer_of_{losing_file}"]
+            # Provenance is legible without a new response field.
+            assert "before-edit-batch-" in (result.distill_sidecar_path or "")
+
+    def test_absent_target_is_still_a_miss(self, tmp_path: Path) -> None:
+        """Non-vacuity control.
+
+        A fallback that returned the first batch entry, or that reported
+        ``hint_available`` whenever a batch artifact existed, would pass the
+        test above. A file the batch does not cover must still miss.
+        """
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_batch_sidecar(cache_dir, sha, ["a.py", "b.py"])
+        _write_entitlement(tmp_path / ".trw", "pro")
+
+        result = compute_before_edit_hint(file_path="never_committed.py", repo_root=str(tmp_path))
+
+        assert result.distill_status == "target_not_in_sidecar"
+        assert result.distill_hint is None
+        # The remediation must say WHICH artifact was consulted, or the reader
+        # cannot tell an absent file from a broken one.
+        assert "Batch sidecar does not cover" in (result.distill_action or "")
+
+    def test_matching_single_artifact_still_wins(self, tmp_path: Path) -> None:
+        """The batch path must not displace a correct single-file answer."""
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_sidecar(cache_dir, sha, target_path="foo.py")
+        _write_batch_sidecar(cache_dir, sha, ["foo.py"])
+        _write_entitlement(tmp_path / ".trw", "pro")
+
+        result = compute_before_edit_hint(file_path="foo.py", repo_root=str(tmp_path))
+
+        assert result.distill_status == "hint_available"
+        assert result.distill_hint is not None
+        # _write_sidecar's importers, not _write_batch_sidecar's.
+        assert result.distill_hint.importers == ["bar.py", "baz.py"]
+        assert "before-edit-hint-" in (result.distill_sidecar_path or "")
+
+    def test_batch_only_and_no_single_artifact(self, tmp_path: Path) -> None:
+        """The common case after the producer fix: only the batch artifact exists."""
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_batch_sidecar(cache_dir, sha, ["a.py", "b.py", "c.py"])
+        _write_entitlement(tmp_path / ".trw", "pro")
+
+        result = compute_before_edit_hint(file_path="b.py", repo_root=str(tmp_path))
+
+        assert result.distill_status == "hint_available"
+
+    def test_stale_batch_does_not_answer(self, tmp_path: Path) -> None:
+        """A batch artifact from an older commit is not a fallback.
+
+        Non-vacuity for the sha check: without it this test's batch file would
+        satisfy the lookup and a hint from a previous commit's map would be
+        served as current.
+        """
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_batch_sidecar(cache_dir, "0" * 40, ["a.py"])
+        _write_entitlement(tmp_path / ".trw", "pro")
+        assert (cache_dir / f"before-edit-batch-{'0' * 40}.json").exists()
+        assert not (cache_dir / f"before-edit-batch-{sha}.json").exists()
+
+        result = compute_before_edit_hint(file_path="a.py", repo_root=str(tmp_path))
+
+        assert result.distill_status == "sidecar_missing"
+        assert result.distill_hint is None
+
+    def test_tier_gate_is_not_reopened_by_the_fallback(self, tmp_path: Path) -> None:
+        """A denied entitlement must not get a second lookup.
+
+        ``tier_required`` means the gate ran and said no; retrying the batch
+        artifact would both leak the feature and burn two more git subprocesses
+        on every ungated edit.
+        """
+        sha = _make_git_repo(tmp_path)
+        cache_dir = tmp_path / ".trw" / "distill" / "map-cache"
+        _write_batch_sidecar(cache_dir, sha, ["a.py"])
+
+        result = compute_before_edit_hint(file_path="a.py", repo_root=str(tmp_path))
+
+        assert result.distill_status == "tier_required"
+        assert result.distill_hint is None

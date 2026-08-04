@@ -52,6 +52,27 @@ def _copilot_skills_source_dir() -> Path:
 # Path-scoped instructions
 # ---------------------------------------------------------------------------
 
+# ``applyTo: "**"`` is the include-free way to externalize Copilot's protocol.
+# `.github/copilot-instructions.md` has NO file-inclusion syntax — GitHub's
+# repository-instructions docs and VS Code's custom-instructions docs both
+# describe inline Markdown only, which is why the `@`-include TRW briefly
+# emitted there was inert text for every Chat user. An `.instructions.md` file
+# is a different mechanism: Copilot loads it itself, and VS Code documents
+# "Use `**` to apply to all files". So the protocol lives in a TRW-OWNED file
+# that Copilot reads, instead of being injected into one the user owns.
+#
+# The content is rendered, not hand-written, so it cannot drift from the
+# protocol every other client gets.
+_TRW_CEREMONY_INSTRUCTIONS_FILENAME = "trw-ceremony.instructions.md"
+
+
+def _trw_ceremony_instruction_template() -> PathScopedTemplate:
+    """Build the always-applied TRW protocol rule for Copilot."""
+    from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+    return {"applyTo": "**", "content": render_agents_trw_section()}
+
+
 _PATH_SCOPED_TEMPLATES: dict[str, PathScopedTemplate] = {
     "python-testing.instructions.md": {
         "applyTo": "**/*test*.py,**/tests/**/*.py",
@@ -85,6 +106,14 @@ applyTo: "{template["applyTo"]}"
 {template["content"]}"""
 
 
+def _all_path_scoped_templates() -> dict[str, PathScopedTemplate]:
+    """Static path-scoped templates plus the rendered always-applied protocol."""
+    return {
+        **_PATH_SCOPED_TEMPLATES,
+        _TRW_CEREMONY_INSTRUCTIONS_FILENAME: _trw_ceremony_instruction_template(),
+    }
+
+
 def copilot_path_instruction_contents() -> dict[str, bytes]:
     """Bundled ``.github/instructions/*`` content, keyed by repo-relative path.
 
@@ -94,7 +123,7 @@ def copilot_path_instruction_contents() -> dict[str, bytes]:
     """
     return {
         f"{_COPILOT_INSTRUCTIONS_DIR}/{filename}": _render_path_instruction(template).encode("utf-8")
-        for filename, template in _PATH_SCOPED_TEMPLATES.items()
+        for filename, template in _all_path_scoped_templates().items()
     }
 
 

@@ -11,6 +11,9 @@ instead of breaking the build.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 
@@ -108,17 +111,72 @@ def test_the_recorded_backlog_is_grandfathered_but_a_new_field_is_not() -> None:
     assert not report.ok
 
 
+#: Monorepo-only governance state — the dated classifications ledger lives in the
+#: repo-root ``.trw/`` tree, which the standalone trw-mcp mirror does not carry.
+#: The two tests that read it skip cleanly there; every other test in this module
+#: is pure logic and still runs. In the monorepo the file is present, so nothing
+#: here can silently stop enforcing.
+_CONSUMERS_BASELINE = (
+    Path(__file__).resolve().parents[2] / ".trw" / "compliance" / "config-field-consumers-baseline.json"
+)
+
+_requires_baseline = pytest.mark.skipif(
+    not _CONSUMERS_BASELINE.is_file(),
+    reason="monorepo-only invariant (.trw/compliance ledger absent in mirror)",
+)
+
+
+def _curated_grandfather_set() -> set[str]:
+    """The DATED classifications map — the only legitimate grandfather source.
+
+    Deliberately not ``unread_config_fields()``. These two used to be the same
+    set, and ``rejected`` is ``(self_referential & unread) - grandfathered``, so
+    passing the measurement as its own exemption made the rejection set empty for
+    every possible input. The test below could not have failed for any registry
+    content, and the two live tests here were taking exactly that path.
+    """
+    return set(json.loads(_CONSUMERS_BASELINE.read_text(encoding="utf-8"))["classifications"])
+
+
 @pytest.mark.unit
-def test_the_live_registry_passes_against_the_published_unread_set() -> None:
-    """HEAD is clean: nothing unread claims the config model outside the ledger."""
+def test_the_default_grandfather_set_cannot_swallow_a_new_offender() -> None:
+    """The forward-looking guarantee, now actually testable.
+
+    ``grandfathered`` is a REQUIRED argument precisely so this case is reachable.
+    Before, it defaulted to ``unread`` and this assertion was unwritable: any
+    field unread enough to be rejected was, by construction, already exempt.
+    """
+    from trw_mcp.models.config._field_admission import build_field_admissions, verify_consumer_claims
+
+    admissions = build_field_admissions()
+    victim = next(name for name, rec in admissions.items() if rec.consumer.strip() == "TRWConfig")
+
+    report = verify_consumer_claims(admissions, unread={victim}, grandfathered=set())
+
+    assert report.rejected == (victim,), "a self-referential unread field escaped rejection"
+    assert not report.ok
+
+
+@pytest.mark.unit
+@_requires_baseline
+def test_the_live_registry_passes_against_the_curated_grandfather_set() -> None:
+    """HEAD is clean: nothing unread claims the config model outside the ledger.
+
+    Grandfathered against the dated classifications map, so this can genuinely go
+    red — a new self-referential unread field is not in that map until a person
+    triages and dates it.
+    """
     from trw_mcp.models.config import unread_config_fields
     from trw_mcp.models.config._field_admission import build_field_admissions, verify_consumer_claims
 
-    report = verify_consumer_claims(build_field_admissions(), unread=unread_config_fields())
+    report = verify_consumer_claims(
+        build_field_admissions(), unread=unread_config_fields(), grandfathered=_curated_grandfather_set()
+    )
     assert report.ok, report.message
 
 
 @pytest.mark.unit
+@_requires_baseline
 def test_the_self_referential_ratchet_may_only_shrink() -> None:
     """The count of lazy-but-backed consumer claims is a ceiling, never a floor.
 
@@ -132,7 +190,9 @@ def test_the_self_referential_ratchet_may_only_shrink() -> None:
         verify_consumer_claims,
     )
 
-    report = verify_consumer_claims(build_field_admissions(), unread=unread_config_fields())
+    report = verify_consumer_claims(
+        build_field_admissions(), unread=unread_config_fields(), grandfathered=_curated_grandfather_set()
+    )
     assert len(report.warned) <= SELF_REFERENTIAL_WITH_READER_CEILING, (
         f"{len(report.warned)} admissions name the config model as their own consumer, above the "
         f"recorded ceiling of {SELF_REFERENTIAL_WITH_READER_CEILING}. A new field copied the pattern."

@@ -38,9 +38,7 @@ class TestReplaceMarkerRegion:
             "Trailing user note.\n"
         )
 
-        out = replace_marker_region(
-            existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n"
-        )
+        out = replace_marker_region(existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n")
 
         assert out is not None
         assert f"We delimit the block with `{START}` and `{END}`." in out
@@ -64,9 +62,7 @@ class TestReplaceMarkerRegion:
         header = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
         existing = f"# Doc\n\nUser text.\n\n{header}\n{START}\nOLD\n{END}\n"
 
-        out = replace_marker_region(
-            existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n", header=header
-        )
+        out = replace_marker_region(existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n", header=header)
 
         assert out is not None
         assert "User text." in out
@@ -94,9 +90,7 @@ class TestReplaceMarkerRegion:
         body = mention.format(start=START)
         existing = f"# Doc\n\n{body}\n\nKeep me.\n\n{START}\nOLD\n{END}\n"
 
-        out = replace_marker_region(
-            existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n"
-        )
+        out = replace_marker_region(existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n")
 
         assert out is not None, "the real block below the mention must still be found"
         assert "Keep me." in out, f"content after the mention was deleted: {out!r}"
@@ -126,9 +120,7 @@ class TestReplaceMarkerRegion:
         header = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
         existing = f"{header}\n\n## My section\n\nUser prose.\n\n{START}\nOLD\n{END}\n"
 
-        out = replace_marker_region(
-            existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n", header=header
-        )
+        out = replace_marker_region(existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n", header=header)
 
         assert out is not None
         assert "## My section" in out
@@ -138,9 +130,7 @@ class TestReplaceMarkerRegion:
         header = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
         existing = f"# Doc\n\nUser text.\n\n{header}\n{START}\nOLD\n{END}\n"
 
-        out = replace_marker_region(
-            existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n", header=header
-        )
+        out = replace_marker_region(existing, start=START, end=END, new_block=f"{START}\nNEW\n{END}\n", header=header)
 
         assert out is not None
         assert "User text." in out
@@ -158,9 +148,7 @@ class TestCursorCliMergeAgentsMd:
             "Trailing note.\n"
         )
 
-        out = _merge_agents_md(
-            existing, f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n", CURSOR_BEGIN, CURSOR_END
-        )
+        out = _merge_agents_md(existing, f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n", CURSOR_BEGIN, CURSOR_END)
 
         assert f"Sentinels are `{CURSOR_BEGIN}` and `{CURSOR_END}`." in out
         assert "Trailing note." in out
@@ -170,9 +158,7 @@ class TestCursorCliMergeAgentsMd:
     def test_mention_without_a_real_block_prepends_and_keeps_everything(self) -> None:
         existing = f"# Agents\n\nWe reference `{CURSOR_BEGIN}` in docs.\n\nUser paragraph.\n"
 
-        out = _merge_agents_md(
-            existing, f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n", CURSOR_BEGIN, CURSOR_END
-        )
+        out = _merge_agents_md(existing, f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n", CURSOR_BEGIN, CURSOR_END)
 
         assert "User paragraph." in out
         assert f"We reference `{CURSOR_BEGIN}` in docs." in out

@@ -233,7 +233,6 @@ def test_nudge_dedup_enabled_default() -> None:
 
 
 @pytest.mark.unit
-
 def test_framework_md_enabled_default_is_none() -> None:
     """framework_md_enabled defaults to None (sentinel)."""
     cfg = TRWConfig()

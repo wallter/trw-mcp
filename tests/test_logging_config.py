@@ -279,9 +279,7 @@ class TestConfigDebugEndToEnd:
             handler.flush()
         return tmp_path / ".trw" / "logs"
 
-    def test_debug_true_writes_debug_event_to_file_sink(
-        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_debug_true_writes_debug_event_to_file_sink(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         log_dir = self._boot(tmp_path, monkeypatch, debug_yaml="true")
         assert log_dir.is_dir(), "config debug:true must open the .trw/logs file sink"
         written = "".join(f.read_text(encoding="utf-8") for f in log_dir.glob("*.jsonl"))

@@ -29,8 +29,12 @@ import structlog
 from trw_mcp.state.persistence import FileStateReader
 
 # FR05 default-path-proof validation lives in the sibling module (it also
-# resolves the files a proof names); re-exported so callers/tests keep one
-# import point.
+# resolves the files a proof names). Only the two shortfall TOKENS are
+# re-exported here — they are this gate's vocabulary. Functions and the advisory
+# tokens are imported from `_prd_proof_paths` directly: ruff cannot merge
+# `X as X` re-exports into one statement, so each costs three lines in a file
+# that sits just under the 350 effective-LOC gate, and a re-export nothing in
+# production reads is not worth that.
 from trw_mcp.tools._prd_proof_paths import (
     DEFAULT_PATH_PROOF_FILE_MISSING as DEFAULT_PATH_PROOF_FILE_MISSING,
 )
@@ -38,7 +42,7 @@ from trw_mcp.tools._prd_proof_paths import (
     MISSING_DEFAULT_PATH_PROOF as MISSING_DEFAULT_PATH_PROOF,
 )
 from trw_mcp.tools._prd_proof_paths import (
-    default_path_proof_blocking as default_path_proof_blocking,
+    default_path_proof_findings,
 )
 
 logger = structlog.get_logger(__name__)
@@ -283,8 +287,14 @@ def evaluate_prd_coherence(
     # 5. rollout state is not completion (PRD-QUAL-119-FR03).
     blocking.extend(rollout_blocking(frontmatter))
 
-    # 6. vertical default-path proof for live claims (PRD-QUAL-119-FR05).
-    blocking.extend(default_path_proof_blocking(frontmatter, level))
+    # 6. vertical default-path proof for live claims (PRD-QUAL-119-FR05). The
+    # advisory half is what stops a green verdict from overstating its own
+    # coverage: paths the resolver could not adjudicate (unrecognised extension,
+    # absolute, non-durable .trw/ artifact) or a resolver fault are surfaced as
+    # findings instead of dropped. project_root is already resolved above.
+    proof_findings = default_path_proof_findings(frontmatter, level, project_root)
+    blocking.extend(proof_findings.blocking)
+    advisory.extend(proof_findings.advisory)
 
     # 7. typed activation gates (PRD-QUAL-119-FR02): a repository-controllable
     # open gate is a hard shortfall the repo must close before completion;

@@ -204,7 +204,10 @@ def install_codex_distill_channels(
 
     Args:
         target_dir: Repository root directory.
-        force: When True, overwrite existing hook script unconditionally.
+        force: When True, rewrite artifacts even when their content is already
+            identical. A hook script whose content DIFFERS is refreshed either
+            way — a stale registered hook is a security problem, not a
+            preference.
 
     Returns:
         Dict with ``created``, ``updated``, ``preserved``, ``errors``, and
@@ -228,10 +231,21 @@ def install_codex_distill_channels(
     try:
         from trw_mcp.channels.codex._post_tool_use_telemetry import install_hook_script
 
-        hook_result = install_hook_script(target_dir, overwrite=force or True)
+        # ``overwrite=True`` is deliberate and must not become ``force``: a
+        # registered-but-stale hook script is the defect commit 1fc4be8850
+        # fixed, so a differing hook is always refreshed. ``force`` means
+        # "rewrite even when the bytes already match" — the only decision left
+        # once security mandates the refresh. It used to read
+        # ``overwrite=force or True``, which is ``True`` for every input, so
+        # ``force`` decided nothing and the ``preserved`` bucket below was
+        # unreachable from production.
+        hook_result = install_hook_script(target_dir, overwrite=True, rewrite_unchanged=force)
         rel = ".codex/hooks/trw_post_edit_telemetry.py"
-        if hook_result.get("skipped"):
+        outcome = hook_result.get("outcome")
+        if outcome == "preserved" or hook_result.get("skipped"):
             result["preserved"].append(rel)
+        elif outcome == "updated":
+            result["updated"].append(rel)
         else:
             result["created"].append(rel)
     except Exception as exc:  # justified: fail-open, hook is best-effort

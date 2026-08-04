@@ -622,8 +622,7 @@ def resolve_run_path(
         # state got a dead end while the semantically identical case 20 lines
         # below got the full recovery path. Same condition, same typed answer.
         raise StateError(
-            f"Cannot auto-detect run path: {config.runs_root}/ directory not found. "
-            + no_active_run_remedy(),
+            f"Cannot auto-detect run path: {config.runs_root}/ directory not found. " + no_active_run_remedy(),
             suggestion=no_active_run_remedy(),
             project_root=str(project_root),
             reason=NO_ACTIVE_RUN_REASON,

@@ -227,7 +227,12 @@ _CORE_SURFACES: tuple[UninstallSurface, ...] = (
     UninstallSurface(".claude/skills"),
     UninstallSurface(".claude/agents"),
     UninstallSurface(".claude/hooks"),
-    UninstallSurface(".claude/commands"),
+    # NOTE: ``.claude/commands`` is deliberately NOT registered. TRW has never
+    # written it — its command surface is skills plus MCP-prompt registration —
+    # but it was listed here as a plain surface, so uninstall ``rmtree``'d a
+    # directory that only the user's own Claude Code slash commands live in.
+    # ``test_every_plain_surface_has_a_producer`` is what keeps a speculative
+    # entry like that from being re-added.
     # Bundled TRW file copied verbatim by ``_init_project`` (step 7a-1).
     UninstallSurface(".claude/loop.md"),
     # Written by ``_init_project._generate_root_files``. Its own header says
@@ -260,6 +265,7 @@ def _canon_root_surfaces() -> tuple[UninstallSurface, ...]:
         for _resource, destination in install_view(load_registry())
         if "/" not in destination
     )
+
 
 # Per-profile config-directory surfaces TRW provisions. Standalone instruction
 # files written into a SHARED root file (AGENTS.md, CLAUDE.md, ANTIGRAVITY.md,
@@ -329,6 +335,14 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         UninstallSurface(".github/instructions/python-testing.instructions.md"),
         UninstallSurface(".github/instructions/typescript-react.instructions.md"),
         UninstallSurface(".github/instructions/trw-distill-hotspots.instructions.md"),
+        # The ceremony protocol carrier. It was the ONE of these four that install
+        # wrote and uninstall never removed, so `trw-mcp uninstall` reported success
+        # and left TRW's protocol text in the user's repo permanently. Per-file
+        # registration is the mechanism that makes this class recurrable, so the
+        # totality assertion in tests/test_uninstall.py::TestInstallUninstallParity
+        # is what actually holds the line -- it compares what install WROTE against
+        # what the surfaces COVER, which is how this one was caught.
+        UninstallSurface(".github/instructions/trw-ceremony.instructions.md"),
         # VS Code MCP config written by the copilot distill channel (C3):
         # ``{"servers": {"trw": ...}}`` -- a different container key from the
         # ``mcpServers`` maps, and .vscode/ is the user's editor config.
@@ -430,6 +444,58 @@ def _instruction_surfaces(profile: ClientProfile, generated: frozenset[str]) -> 
     return tuple(surfaces)
 
 
+def client_surfaces(client_id: str, generated: frozenset[str] | None = None) -> tuple[UninstallSurface, ...]:
+    """Surfaces TRW provisions when it installs *client_id*, in registry order.
+
+    The per-client half of :func:`uninstall_surfaces`, which composes this with
+    the core surfaces. Split out because "what does TRW create for client X?" is
+    a question the installer side needs too -- ``bootstrap/_template_claude_md``
+    asks it to decide whether an on-disk path is the user's evidence of a client
+    or TRW's own scaffolding. Answering it from a hand-written second list is the
+    P11 shape (a module-local subset of a registry that exists elsewhere), so the
+    two callers share this one derivation.
+
+    *generated* is the ``_generated_instruction_relpaths()`` set, accepted so a
+    loop over every client resolves it once.
+    """
+    if generated is None:
+        generated = _generated_instruction_relpaths()
+    surfaces: list[UninstallSurface] = list(_PROFILE_DIR_SURFACES.get(client_id, ()))
+    if client_id in _RETIRED_CLIENTS:
+        # Retired clients no longer resolve to their own profile
+        # (resolve_client_profile returns the claude-code fallback), so use
+        # the explicit retired-instruction map to preserve their cleanup.
+        retired_instr = _RETIRED_INSTRUCTION_SURFACES.get(client_id)
+        if retired_instr is not None:
+            surfaces.append(retired_instr)
+        return tuple(surfaces)
+    surfaces.extend(_instruction_surfaces(resolve_client_profile(client_id), generated))
+    return tuple(surfaces)
+
+
+def client_scaffold_relpaths(client_id: str) -> frozenset[str]:
+    """Repo-relative paths TRW creates when installing *client_id*.
+
+    A projection of :func:`client_surfaces`. Note what it does NOT include: the
+    ``_CORE_SURFACES`` (``.claude/``, ``.trw/``, ``.mcp.json``, ...) that
+    init-project writes for every project whatever the client -- those are
+    :func:`core_scaffold_relpaths`. The distinction is the whole point for a
+    caller asking "could TRW have created this path without the user choosing
+    this client?", so keeping them separate is deliberate.
+    """
+    return frozenset(surface.relpath for surface in client_surfaces(client_id))
+
+
+def core_scaffold_relpaths() -> frozenset[str]:
+    """Repo-relative paths init-project creates for EVERY project.
+
+    Client-independent by construction: these land in a codex-only project and a
+    cursor-only project alike, which is why their presence can never evidence a
+    particular client.
+    """
+    return frozenset(surface.relpath for surface in (*_CORE_SURFACES, *_canon_root_surfaces()))
+
+
 def uninstall_surfaces() -> tuple[UninstallSurface, ...]:
     """Return the de-duplicated set of project-scope uninstall surfaces.
 
@@ -453,17 +519,7 @@ def uninstall_surfaces() -> tuple[UninstallSurface, ...]:
 
     generated = _generated_instruction_relpaths()
     for client_id in _CLIENT_ORDER:
-        for surface in _PROFILE_DIR_SURFACES.get(client_id, ()):
+        for surface in client_surfaces(client_id, generated):
             _add(surface)
-        if client_id in _RETIRED_CLIENTS:
-            # Retired clients no longer resolve to their own profile
-            # (resolve_client_profile returns the claude-code fallback), so use
-            # the explicit retired-instruction map to preserve their cleanup.
-            retired_instr = _RETIRED_INSTRUCTION_SURFACES.get(client_id)
-            if retired_instr is not None:
-                _add(retired_instr)
-            continue
-        for instr in _instruction_surfaces(resolve_client_profile(client_id), generated):
-            _add(instr)
 
     return tuple(seen.values())

@@ -200,7 +200,9 @@ class TestUpdateOverwritesFrameworkFiles:
 
         PRD-FIX-121-FR04; same fixture migration as :meth:`test_updates_hooks`.
         """
-        old_bundle = _bundle_with_override(tmp_path_factory.mktemp("bundle-n"), "skills/trw-deliver/SKILL.md", "old skill")
+        old_bundle = _bundle_with_override(
+            tmp_path_factory.mktemp("bundle-n"), "skills/trw-deliver/SKILL.md", "old skill"
+        )
         skill_path = initialized_repo / ".claude" / "skills" / "trw-deliver" / "SKILL.md"
 
         update_project(initialized_repo, data_dir=old_bundle)

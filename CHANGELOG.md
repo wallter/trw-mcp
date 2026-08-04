@@ -2,7 +2,659 @@
 
 All notable changes to the TRW MCP server package.
 
-## [1.0.0] — 2026-07-28
+## [Unreleased]
+
+## [1.0.5] — 2026-07-30
+
+An audit release. Everything in the seven days to 2026-07-30 — 421 commits and
+231 new source files — was put to ten independent subsystem reviewers, and every
+finding they raised was then handed to a second reviewer told to refute it. 27
+survived; the 13 below are the ones fixed here. The other 17 are tracked as
+`UF-074`–`UF-091` in the project's defect ledger with a disposition each,
+because a finding nobody dispositions is how an earlier audit rotted.
+
+Every fix was verified by attribution: revert the change, watch the new test go
+red, restore. That caught real mistakes — including **four tests that had encoded
+a defect as their expected behaviour** and had to be rewritten rather than
+extended.
+
+### Security
+
+- **A session could mint an "independent" review receipt for its own work.**
+  `resolve_verified_reviewer_identity`'s run-claim branch checked only that the
+  claimed run id differed from the delivering run's. It never checked the
+  *session*, while the sibling session-only branch beside it had always rejected
+  the mirror image. So any session that had ever called `trw_init` twice could
+  name its own spare `run_id` and pass verification with
+  `identity_verified=True`. `_identity_differs` compounded it by short-circuiting
+  on `run_id` — two differing run ids returned "independent" without consulting
+  the session at all — which satisfied the PRD-CORE-213 hard block on P0/P1 PRD
+  status transitions. `trw_review`'s own docstring promises these ids are "never
+  self-mintable"; they were. A differing `run_id` is now necessary but not
+  sufficient: where both sides carry a session, the sessions must differ too.
+
+  **The first version of that fix was incomplete, and an independent reviewer
+  caught it before release.** The guard read
+  `if recorded.session_id and delivering.session_id and ...`, which
+  short-circuits whenever the claimed run's `run.yaml` has no
+  `owner_session_id` — 14 of 205 run files in this repo, so the common case, not
+  a corner. Naming any session-less run still minted a verified receipt. A run
+  id alone can no longer establish a second actor: independence must be claimed
+  explicitly and anchored to the pin store, and a claim naming the delivering
+  session is rejected however it is anchored.
+
+  The regression test for this is why `test_core213_transition_gate.py` changed:
+  its fixture hardcoded the reviewer's `session_id` to the delivering run's own
+  `owner_session_id`, so its "independent reviewer" *was* the bypass, asserted as
+  the canonical happy path.
+
+- **Four clients wrote a machine-absolute interpreter path into committed
+  config.** PRD-SEC-006 hardened the MCP server entry against `sys.executable`,
+  but the fix reached only `bootstrap/_utils.py`. codex, cursor, opencode and
+  antigravity-cli each kept their own copy of the old behaviour — opencode's
+  docstring documented the leak as intended — so a non-PATH install baked the
+  build machine's interpreter into `.codex/config.toml`, `.cursor/mcp.json`,
+  `opencode.json` and `.antigravitycli/settings.json`, broken for every teammate
+  who clones the repo.
+
+  **Known trade-off, stated rather than discovered later.** The fallback is now
+  a bare `python3`, which resolves per machine via PATH. On a host where
+  `trw-mcp` lives in a virtualenv that is not active at bootstrap time, the
+  previous `sys.executable` form would have worked and `python3` will not —
+  the client launches the system interpreter, which has no `trw_mcp`. That is
+  the deliberate PRD-SEC-006 trade (a committed absolute path is broken for
+  *everyone else*, permanently, and leaks a host path), and it is the behaviour
+  the flagship `.mcp.json` entry has had since that PRD. These four clients were
+  the outliers, not the standard.
+
+### Fixed
+
+- **`trw-mcp uninstall` deleted the user's own `.claude/commands/` directory.**
+  It was registered as a plain surface — `shutil.rmtree`, gated only on
+  `exists()` — but TRW has never written that path: `git log -S` over
+  `bootstrap/` returns zero writers, ever, and TRW's command surface is skills
+  plus MCP-prompt registration. So uninstall destroyed user-authored Claude Code
+  slash commands and reported it as clean TRW cleanup. Every sibling entry in the
+  registry cites its writer in a comment; this one had none, which was the tell.
+
+- **antigravity-cli's MCP server could never start.** Its entry emitted
+  `-m trw_mcp`, and there is no `trw_mcp/__main__.py`, so it died with
+  `No module named trw_mcp.__main__`. Every other client uses `-m trw_mcp.server`.
+  A whole client integration was dead on arrival and nothing in bootstrap noticed.
+
+- **The config-consumer gate counted a comment as a reader.** The scan tokenized
+  raw source text, so a `#` comment or docstring naming a field was
+  indistinguishable from a real read — a gate whose entire job is making the
+  `consumer=` claim falsifiable, defeated by a comment. Reproduced: one comment
+  naming `adaptation_auto_approve_threshold` flipped it to "now read at". It now
+  walks the AST, which excludes comments and prose while keeping the string
+  literals that dynamic `getattr(config, "…")` access depends on. The correction
+  revealed five fields hiding behind prose; two of them
+  (`source_package_name`, `tests_relative_path`) are written into the user's own
+  `.trw/config.yaml` by TRW and read by nothing.
+
+- **The codex distill hook's `force` flag was a tautology.** `overwrite=force or
+  True` is `True` for every input, so `force` decided nothing, the skip branch
+  was unreachable from production, and every install claimed `created` even when
+  the file was byte-identical. The fix keys on content equality rather than
+  existence, so a *stale* hook is still refreshed — a plain `overwrite=force`
+  would have reintroduced the defect fixed in 1.0.4, where a shipped security fix
+  could not reach an existing install.
+
+- **opencode install errors were read from a key nothing wrote.** Both call sites
+  do `dc_result.get("errors")`; the producer never emitted that key, so a
+  rejected channel manifest and a `.gitignore` write that raised were both
+  invisible. `gitignore` was also set to `"updated"` unconditionally immediately
+  below a loop that swallows every write failure, so a run that wrote nothing was
+  byte-identical to a clean one.
+
+- **A delivery gate warning was computed on every call and dropped.**
+  `instruction_parity_warning` never reached the caller because the gate→result
+  bridge iterated a hand-copied subset of `DeliveryGatesDict`, while the advisory
+  aggregate claimed to count it. The bridge is now derived from the TypedDict
+  minus a named exclusion set, with a totality test.
+
+- **The wiring detector's own baseline could waive a finding against a
+  disposition that did not exist.** `ledger_id` was validated for regex shape and
+  never cross-checked, so a fabricated `UF-999999` would permanently silence any
+  new finding. Checking it found that one of the two live waivers cited
+  `PRD-CORE-231`, a string appearing nowhere in the defect ledger; that gap is
+  closed rather than tolerated (`UF-074`).
+
+- **Three tests read repository source through the process cwd** and passed only
+  when pytest ran from `trw-mcp/`, failing from the repo root — a test reporting
+  on where it was started rather than on the code.
+
+### Removed
+
+- `trw_mcp.channels.check_quota`, `enforce_quota_with_tier_down`, `tier_down` and
+  `tier_index`. Commit `b5d104f080` removed the 12 instruction-file injection
+  channels — every caller — and the enforcement code survived, still exported and
+  still covered by 18 unit tests, so an orphan read as maintained. Full coverage
+  on unreachable code is the most expensive kind of green. `TIER_DOWN_LADDER`
+  stays: `channels/meta_tune/_throttle.py` derives from it, and its own index
+  helpers are deliberately *not* consolidated with the removed pair because they
+  resolve an unknown tier in the opposite direction.
+- `server/_app._middleware_list`, a module-level global whose comment claimed
+  `_tools.py` consumed it. Nothing referenced it anywhere.
+
+### Guards added
+
+Each closes the *derivation* rather than the instance, so the next occurrence
+fails loudly instead of shipping:
+
+- every plain uninstall surface must have a live bootstrap writer, with a
+  per-element-justified exclusion set for the two genuine legacy-cleanup paths;
+- no client profile may emit a machine-absolute path, and every `-m` target must
+  be import-probed for a `__main__` — the assertion that would have caught the
+  antigravity entry the day it shipped;
+- the root channel manifest must equal the union of the six bundled per-client
+  manifests (it silently lost two entries once already);
+- every wiring-baseline `ledger_id` must be a real row in the defect ledger.
+
+### Fixed
+
+- **The README advertised two bundled items that do not exist.** `README.md` listed a
+  `/trw-simplify` skill under Quality and a `trw-code-simplifier` agent in the agents
+  table; both were retired in 0.62.0 and neither ships in `data/skills/` or
+  `data/agents/`. This is the public PyPI and GitHub README, so a reader who typed
+  either got nothing. The monorepo README carried the same two plus a third — the
+  `trw_knowledge_sync` tool, removed by PRD-FIX-076.
+
+  A repository guard now fails when any published copy — including this README —
+  names a `trw_*` tool, `/trw-*` skill or `trw-*` agent that is absent from the
+  generated bundled-item inventory. The previous pass at this defect deleted
+  instances without adding a check, which is why the same names survived here.
+
+- **The public repository's CI lint job had been red since 1.0.0.**
+  `models/agent_work_evidence.py` declares `JsonValue` with `None` in the middle of
+  the union, which RUF036 rejects. The monorepo never saw it: its pinned ruff
+  (0.15.11) predates the rule, while the public CI installs from an unpinned
+  `ruff>=0.15.0` and resolves 0.16.1. `None` now sits at the end of the union —
+  the same type, accepted by both versions. Fixed forward rather than by capping
+  ruff, per the ratchet documented in `scripts/toolchain-baseline.yaml`.
+
+- **Ten tests in the shipped suite could not pass outside the monorepo.**
+  `test_agent_contract_unsatisfiable_precondition.py` loads a repo-root lint script
+  and `test_config_consumer_claims.py` reads a repo-root `.trw/compliance` ledger —
+  neither exists in the standalone package, so anyone running the suite from an
+  sdist got errors rather than skips, and the public repo's test job had been red
+  since 1.0.0. Both now carry the guard its sibling `test_agent_contract_lint.py`
+  has had since PRD-QUAL-128: skip when the monorepo-only artifact is absent, run
+  normally when it is present. Verified against an exported subtree — 1918 unit
+  tests pass there, and all 15 still run in the monorepo.
+
+## [1.0.4] — 2026-07-30
+
+A correctness release for the Cursor surfaces, plus the release-note correction below. Everything
+here came out of a second audit pass in which an independent reviewer (a different vendor's model)
+was pointed at the previous release's own claims and asked to refute them.
+
+### Security
+
+- **A shipped security fix could not reach an existing install.** `.cursor/hooks/trw-before-shell.sh`
+  is the `failClosed: true` gate that scans a command for secrets before it runs; 1.0.3 hardened it
+  twice after it was found emitting `allow` on macOS/BSD. Neither fix landed on an upgrade: the hook
+  copier wrote a bundled script only when the destination did not exist, so `hooks.json` was
+  refreshed around a **stale** script that stayed the registered handler. Measured — a 78-byte
+  pre-fix body survives where the bundled source is 6377 bytes.
+
+  Fixed with the guarded refresh the `.claude/hooks` surface already used: refresh only when the
+  on-disk content is something TRW itself shipped, per the manifest recorded at the last install.
+  A hook you edited is still preserved, and so is every hook in a project with no manifest baseline.
+
+- **One Cursor bootstrap pass deregistered the other's hooks.** The hook merge stripped every
+  handler whose command began with `.cursor/hooks/trw-` from *every* event — but the cursor-ide and
+  cursor-cli passes write **disjoint** event sets, so on a project using both, the second pass
+  cleared all of the first's registrations and re-added only its own. In one direction that left
+  `beforeShellExecution: []` — the secret-scan gate unregistered entirely, which is the one hook
+  where "did nothing" and "scanned and allowed" look identical. The strip is now scoped to the
+  events the caller is actually rewriting.
+
+### Fixed
+
+- **cursor-ide claimed `AGENTS.md` while already having its own carrier.** 1.0.3 moved copilot and
+  antigravity-cli off the shared file and missed cursor-ide. Two consumers read that flag and both
+  did the wrong thing: the `AGENTS.md` cleanup **declined**, so the migration could never run in a
+  project listing cursor-ide, and `trw_instructions_sync(client="cursor-ide")` **created** a 5.7 KB
+  `AGENTS.md` in a project that had none. A codex + cursor-ide project had its codex block rewritten
+  rather than removed. cursor-cli is unchanged and still writes `AGENTS.md`, because that file *is*
+  its carrier.
+
+- **An ungated offline delivery was byte-identical to a gated one.** `trw-mcp local deliver` — the
+  fallback when the MCP server is unreachable — evaluates no deliver gate, which is fine; what was
+  not fine is that its `run.yaml` was indistinguishable from a delivery that passed every gate. It
+  now records `gate_evaluated: false` and says so on stdout.
+
+- An active TRW git hook survived `uninstall` whenever `core.hooksPath` was set; uninstall now
+  resolves that setting the same way install does.
+
+- Two different files could share one pre-edit debounce key — the sanitizer deleted every character
+  outside `[A-Za-z0-9_.-]`, so two distinct non-ASCII filenames collapsed together and the second was
+  silently suppressed for 180 seconds. The key now includes a checksum of the exact path.
+
+- The post-commit sidecar refresh credited itself with artifacts it had not written: it counted any
+  current-SHA artifact on disk, so a run whose producer failed still reported them as refreshed.
+
+## [1.0.3] — 2026-07-29
+
+Instruction-file delivery: TRW stops writing its protocol into files you own, wherever the client
+provides somewhere of its own to put it.
+
+**Correction (2026-07-30).** An earlier revision of this header said these entries "were briefly
+misfiled under `[1.0.0]`, which was already published — the work postdates it." That was wrong, and
+it used the version-bump commit (2026-07-27 23:49) as the moment 1.0.0 shipped. 1.0.0 was **uploaded
+to PyPI on 2026-07-29 at 12:13 (−0600)**, so five of the moved entries describe code that IS inside
+the published wheel. They are listed under [1.0.0](#100--2026-07-29) — verified by unpacking
+`trw_mcp-1.0.0-py3-none-any.whl` from PyPI, not by reading commit dates. Only the four entries whose
+commits land after 12:13 belong here.
+
+### Fixed — quality defects from an audit's unread observations
+
+The 72h audit that produced 1.0.2 collected 50 observations alongside its findings, and only the
+findings had been mined. These are the actionable remainder.
+
+- **A dead routing option.** `build_file_queries` accepted
+  `kind: Literal["file_path_basename", "explicit"]` with a default, and the body never read it —
+  so passing `"explicit"`, the only reason the parameter existed, silently produced the basename
+  fan-out it was asking to avoid. All three call sites used the default, so nothing was harmed.
+  Deleted rather than implemented: a dormant option is worse than none, because a reader
+  reasonably assumes a declared `Literal` is honoured.
+
+- **A hand-copied client list in the CLI.** `--ide`'s choices were a literal list of the seven
+  client ids. It happened to be in sync, which is the point — a module-local copy of a closed set
+  is correct the day it is written and wrong the moment the set grows, and whoever adds a client has
+  no reason to look in an argparse builder. Now derived from the canonical set. Third instance of
+  this shape in one sweep, after the agent-contract linter's tree list and the config-key exemption
+  map.
+
+- **A test whose name promised what its body could not show.**
+  `test_shell_hint_file_written_within_aligned_timeout` asserted only exit 0 and
+  `hint_file.exists()`. The hook writes a *provisional* record before starting the bounded
+  subprocess precisely so correlation survives a timeout, so the file exists either way. Renamed to
+  what it verifies, and strengthened to check that the record identifies the right edit and that its
+  `distill_status` is a member of the known vocabulary. Deliberately *not* asserting the computation
+  completed — that depends on host import cost, and pinning it would recreate the wall-clock trap.
+
+- **The config-consumer gate scanned the production tree twice per run**, once inside `evaluate()`
+  and once for the published-set drift check. The module's own comments record that the scan is the
+  entire cost of the gate and that a slow gate is one people disable. Now 0.54s.
+
+- `docs/documentation/nudge-system.md` documented four **deleted** `TRWConfig` fields as live
+  operator overrides — a prose paragraph plus four schema rows. An operator following it would set
+  four keys that do nothing.
+
+### Changed — where the protocol lives
+
+- **Cursor IDE stops getting a duplicate protocol block in `CLAUDE.md`.** Its `.cursor/rules/trw-ceremony.mdc` is `alwaysApply: true` and carries the full protocol, so the `CLAUDE.md` copy was redundant. Retiring it required making the client record trustworthy first: **`init-project` now records only an explicit `--ide` or a client with a marker on disk**, so `shutil.which("cursor")` can no longer write "this is a Cursor project" into a permanent, append-only record.
+
+- **A binary on your PATH can no longer scaffold surfaces your project never chose.** All five per-client update paths re-resolved their own targets through detection, so a bare `update-project` in a Codex-only project created `.cursor/` because Cursor happened to be installed on the machine. They now share one resolver: an explicit `--ide` wins, otherwise the project's recorded clients answer.
+
+- **Copilot and Antigravity stop receiving the shared `AGENTS.md`.** Both now have carriers of their own — Copilot's always-on instructions file plus an `applyTo: "**"` rule, Antigravity's `.agents/rules/`. Cursor CLI is the one client that still gets an `AGENTS.md`, because it is the only carrier we can currently guarantee for it: Cursor documents `alwaysApply` for the editor, and no primary source states whether the CLI honours it.
+
+- **Codex no longer has its protocol injected into `AGENTS.md`.** All 9.5 KB of it now renders into `.codex/INSTRUCTIONS.md` — the file `.codex/config.toml` already points Codex at via `model_instructions_file`. It was split across two files for one reason: an internal 2,025-byte cap on the Codex file, whose own stated rationale was *"AGENTS.md owns generic workflow"* — i.e. it presupposed the injection. That cap was a token budget, not a Codex limit, so it is retired in favour of a completeness check plus a generous ceiling. **TRW now writes zero bytes into a Codex project's `AGENTS.md`.**
+
+- **Copilot's repo instructions shrink by 40%** (2,040 → 1,217 bytes). `.github/copilot-instructions.md` admits no include syntax, so the protocol moved to `.github/instructions/trw-ceremony.instructions.md` with `applyTo: "**"` — a TRW-owned file Copilot loads itself. The deliver gate stays inline, because GitHub documents `copilot-instructions.md` as always-on while `.instructions.md` files apply by pattern match.
+
+- **A stale `AGENTS.md` block left by the OpenCode withdrawal is now actually removed on upgrade.** The cleanup shipped previously but was never called from anywhere, so it never ran.
+
+- **Antigravity and Cursor CLI now get their protocol where the vendor documents reading it.** `ANTIGRAVITY.md` appears in no Antigravity primary source — its rules documentation names `~/.gemini/GEMINI.md` globally and `.agents/rules/` per workspace, and nothing else — so TRW was writing to a filename the vendor never documents loading. The workspace rule is now written as well (and checked against Antigravity's documented 12,000-character rule limit, since a silent truncation would drop the deliver gate off the end). `ANTIGRAVITY.md` is still written, in case some undocumented path does read it.
+
+  Cursor CLI's profile described `AGENTS.md` as its *only* carrier. That was TRW's own omission: Cursor documents that the CLI *"supports the same rules system as the editor"*, and TRW was generating `.cursor/rules/trw-ceremony.mdc` for the IDE only. Cursor CLI now gets it too. Both files are TRW-owned, so this is a generated artifact rather than injection into a file you authored.
+
+- **Copilot's instruction file no longer emits an `@`-include it cannot resolve.** The include was added on the strength of GitHub's Copilot **CLI** docs, which do document `@relpath`. But one TRW profile serves both surfaces — it also writes `.vscode/mcp.json` — and neither GitHub's repository-instructions page nor VS Code's custom-instructions page describes any file-inclusion syntax for `.github/copilot-instructions.md`; Markdown links are references a human follows, not content pulled into the prompt. So Copilot Chat users were getting a 5-line file whose body was the literal text `@.trw/COPILOT-INSTRUCTIONS.md` — a file that exists, parses, reports success and carries nothing, which is worse than the injection it replaced. The protocol is inline again in that always-on file (GitHub: "automatically included in every chat request"), the orphaned sidecar is gone, and the include-free route for a future change is `.github/instructions/*.instructions.md` with `applyTo: "**"`.
+
+  Also fixed while there: the installer reported `preserved` for a `.github/copilot-instructions.md` it had just created, because the carrier wrote the file before the capability check that rejected it.
+
+- **Cursor IDE's always-applied rule was missing the deliver gate.** `.cursor/rules/trw-ceremony.mdc` is `alwaysApply: true`, so Cursor loads it eagerly and it *is* that client's protocol carrier — but it was built by slicing the TRW block out of the `CLAUDE.md` scaffold template instead of the shared renderer, making cursor-ide the one client whose protocol came from a hardcoded second copy. That copy omitted the deliver-gate statement every other client's carrier states. It now comes from the shared renderer (115 → 159 lines), so cursor-ide gets the same protocol as everyone else.
+
+- **TRW no longer writes its protocol into `CLAUDE.md` for clients that do not read it.** Only Claude Code declares `CLAUDE.md`. The MCP sync path already honoured that; the installer did not, and injected the full block for every client — so a Codex project carried a *third* copy of the framework text, after its `AGENTS.md` and `.codex/INSTRUCTIONS.md`, in a file none of its clients load. That copy then froze in place while the surfaces those clients do read moved on. **`CLAUDE.md` drops from 80 lines to 17** (the scaffold, no TRW block) for codex, opencode, copilot, cursor-cli, and antigravity-cli; Claude Code is unchanged and cursor-ide keeps its documented fallback. An existing project's stale block is removed on upgrade — only between the TRW markers.
+
+  Two things had to change for that decision to *stay* made. `update-project` held two more unconditional writers, so it re-injected on the next run what the installer had just declined. And client detection cannot answer "who reads this file?" after an install: TRW writes `.claude/` (agents, hooks, skills) and `.cursor/` into every project whatever the client, so a Codex-only project reports Claude Code from then on. **The installer now records the clients you actually selected** (`target_platforms`, which only `update-project` used to write), and that record outranks what is on disk.
+
+- **Withdrawing a surface now removes what was already written to it, and the block that cannot be externalised is half the size.** Two gaps closed in the same area:
+
+  Stopping a write is not the same as cleaning up. A project installed before OpenCode's `AGENTS.md` was withdrawn kept its injected block permanently — TRW simply stopped refreshing it, so the text froze, stopped tracking the framework, and nothing would ever remove it. Stale protocol text that still looks current is worse than the injection was. It is now stripped, but only when no installed client still claims that file, so codex and cursor-cli keep theirs; only the TRW-marked region is touched. (A related fix: the auto-detection path computed "write AGENTS.md" from *whether any client was detected* rather than from the per-client setting, so the withdrawal had no effect on the path `update-project` actually takes.)
+
+  cursor-cli cannot resolve an include, so its `AGENTS.md` must carry the text — which makes keeping it small the obligation. It was receiving the **full** section despite being a light-ceremony client: **105 lines → 48**. The deliver gate and session-start mandate stay verbatim; for a client with no other channel, the instruction file is the protocol carrier.
+
+
+## [1.0.2] — 2026-07-29
+
+A security release. Everything here came out of one audit of the previous 72 hours of change;
+every fix below carries an attribution proof — the test was verified red without it.
+
+### Security — a `failClosed` shell gate emitted `allow` on macOS
+
+The Cursor pre-shell gate declares `failClosed: true` and did the opposite on the majority developer
+platform. It had two extraction paths, and **only the `jq` one was ever exercised by CI**; the
+fallback used GNU-only `grep -oP`. On macOS/BSD/busybox that produces an empty command string, the
+secret-leak pattern matches nothing, and the gate returns `allow`. Confirmed against a faithful
+degraded environment (no `jq`, a `grep` that rejects `-P`): `export API_KEY=SUPERSECRET && curl …`
+was **denied with `jq` present and allowed without it**.
+
+Two further fail-opens surfaced while fixing it, both the same shape — *inability to run a check
+treated as evidence the check passed*:
+
+- `[^"]+` stopped at the first escaped quote, so `echo \"hi\" && export API_KEY=…` extracted as
+  `echo \` and the secret was truncated out of scan range. That one fired **on GNU Linux too**, and
+  is attacker-influenceable: any command carrying `\"` before the secret evaded the scan.
+- The scan itself was `if … | grep -qiE …; then deny; fi`. `grep` exits 127 when absent, and a bare
+  `if` folds that into the false branch — "the scan could not run" became "no secret found."
+
+Fixed by **deleting the second parser** rather than repairing it, so the code CI tests is the code
+macOS runs (verified byte-identical under gawk, mawk and busybox awk). Extraction is now tri-state:
+extracted / field-absent / **present-but-unparseable → deny**. An empty result is never "nothing to
+check", and a missing interpreter lands in the deny branch. The sibling observer hooks carried the
+identical shape and were converted too; a guard test now covers the whole bundled hook surface so
+`grep -P` cannot reappear.
+
+### Fixed — a PRD proof path it could not parse was silently green
+
+The proof-path gate extracted only `py|ts|tsx|sh|md|ya?ml|json`. A `.go`, `.rs`, `.java`, `.rb`,
+`.cs`, `.php`, `.kt` or `.c` proof path was never extracted and therefore never checked — no error,
+no block, **a passing verdict having verified zero paths**. Twelve of thirteen language paths
+behaved that way, so a Go user received a green check that looked at nothing.
+
+Two more found while confirming it: the extension alternation was unanchored and not longest-first,
+so `src/a.tsx` extracted as `src/a.ts` — the gate resolving a file the proof never named. And a scan
+of the real corpus found that **both `.trw` receipts cited by shipped PRDs are already deleted on
+disk** — precisely the evaporated-proof incident this module exists to catch, hidden by the silent
+skip.
+
+Now two tiers: a widened blocking allowlist (48 extensions, word-boundaried, longest-first) and an
+advisory tier so nothing path-shaped is dropped in silence. Advisory rather than blocking because
+absence genuinely proves nothing there — an ephemeral run receipt is *expected* to be gone from a
+fresh clone, and hard-failing would have immediately blocked 2 of the 5 shipped PRDs carrying such a
+proof. The unrun-check branch previously returned an empty list after a debug log, making an unrun
+check byte-identical to a passing one.
+
+### Fixed — a bundled skill shipped this repository's own commands to every user
+
+`trw-code-search`'s SKILL.md carried `../.venv/bin/python -m pytest tests/test_code_chunking.py`
+verbatim and unscoped into every installed project's `.claude/skills/`. A user on a Go or TypeScript
+project was told to run trw-mcp's Python suite against their own tree. Rewritten as things to
+*verify*, with commands drawn from the target project's own manifest. A class-level guard now scans
+all four bundled skill roots for repo-local patterns, with a non-vacuity floor so it cannot pass by
+finding nothing.
+
+### Security
+
+- **CRITICAL — the CC-03 pre-edit hook executed model-controlled input as Python.**
+  `data/claude_code/hooks/pre-tool-distill-hint.sh` built its `python -c` program as a
+  **double-quoted** shell string and interpolated the PreToolUse `tool_input.file_path` straight
+  into Python source at four sites. `file_path` is whatever the model asked to edit, so a payload
+  that closes the string literal ran arbitrary code **as the developer**. A PreToolUse hook needs
+  no tool approval, so this bypassed the harness permission prompt entirely, and the hook then
+  printed its ordinary beacon and exited 0 — leaving no trace.
+
+  Reproduced, not inferred: against the pre-fix hook the new test creates its marker file while
+  stdout shows only `Distill intelligence available`.
+
+  **Who was exposed:** only operators who had turned CC-03 on. `cc03_hook_enabled` defaults to
+  `false` in shipped data. The interpolation predates this window (introduced 2026-05-28).
+
+  Two things kept it alive, and both are worth naming because they generalise. Three sibling
+  hooks already passed this exact field through the **environment** into a single-quoted program,
+  and `git_hooks/trw-post-commit.sh` states the invariant outright — *"a path containing quotes or
+  newlines must not be able to inject code into the `-c` program"*. Only the Claude Code hook
+  interpolated: the hardening comment lived on the copies that had been audited. And
+  `TRW_CC04_FILE_PATH` was **already exported for that very subprocess** and simply unused on the
+  vulnerable path, while a comment six lines below the injection claimed *"Untrusted hook fields
+  arrive via the environment, never interpolated into source"* — true of the handler it annotated,
+  false of the program around it.
+
+  Fixed by single-quoting the program and reading `os.environ`, so no `$` can be expanded at all.
+  That makes the mistake **unrepeatable rather than merely absent**: reintroducing it now requires
+  visibly changing the quoting. The same treatment was applied to the CC-01 snapshot subprocess in
+  `lib-distill-hint.sh`, which interpolated the repo root — a checkout under a directory with an
+  apostrophe was enough to break it.
+
+  A benign half of the same bug is fixed with it: a real filename containing an apostrophe made
+  the program a *compile-time* `SyntaxError`, so its own `except` handler never ran and the
+  failure was recorded as a timeout — by the very correlation record that exists to stop
+  mislabelling timeouts.
+
+### Fixed
+
+- **The 1.0.0 README advertised a tool 1.0.0 does not contain.** `pyproject.toml` sets
+  `readme = "README.md"`, so that file *is* the PyPI long_description — the page a prospective
+  user reads before installing. It still listed `entity_risk_map`, removed earlier in the same
+  window. The sting: the removal's own changelog entry justifies the deletion because the tool was
+  "advertised to every calling LLM" while unable to return data, and then the release shipped a
+  README that advertised it.
+
+  Nothing could have caught it — `make inventory` syncs the `<!-- inv:tools -->` **count** in the
+  heading, not the tool **names** in the table below it, so the count stayed truthful while the
+  list went stale. `tests/test_readme_tool_table_is_real.py` now checks the names against the same
+  registry the agent-contract linter uses.
+
+- **A shipped Antigravity agent's first mandated action called a tool that no longer exists.**
+  `.antigravitycli/agents/trw-distill-explorer.md` granted `mcp_trw_trw_entity_risk_map` and
+  instructed *"Before reading any file, call `mcp_trw_trw_entity_risk_map`"*. The generator was
+  already correct in source; only the on-disk artifact was stale — which is the finding worth
+  keeping. Regenerating it also cleared two other references it had carried since 2026-05-29,
+  including a `regenerate:` command naming a subcommand that PRD-CORE-239 removed.
+
+- **The agent-contract linter could not have caught either of the above.** Two independent blind
+  spots, either of which alone would have hidden it:
+  - **One directory of six.** `MIRROR_AGENTS_DIR` named `.claude/agents` alone, while
+    `client_profiles/catalog.py` already enumerates all six installed agent trees as uninstall
+    surfaces. A shorter hand-written list sat beside a canonical registry. Now derived from
+    `uninstall_surfaces()`, so a client added to the catalog is linted the day it lands.
+    Coverage went from 14 agents to 40.
+  - **One grant spelling of two.** The dead-grant rule tested `entry.startswith("mcp__trw__")`.
+    Antigravity writes `mcp_trw_trw_recall`, so every Antigravity grant fell through the filter —
+    even pointing the linter at that directory by hand reported zero dead grants.
+
+  The other five trees get a **grants-only** pass, deliberately: Antigravity's `max_turns` /
+  `temperature` / `timeout_mins` are correct frontmatter there and unknown to the Claude Code
+  sub-agent schema, so running the full rule set would emit three false positives per file — and a
+  gate that cries wolf gets suppressed rather than fixed.
+
+- **The new "this config key does nothing" warning cried wolf on four working knobs.** It compared
+  against `TRWConfig.model_fields` and treated *"not a TRWConfig field"* as *"does nothing"*.
+  `.trw/config.yaml` has at least **three** owning subsystems, and the exemption list covered one:
+  - `cc03_hook_enabled` — read by three bundled hook libraries as the **highest-priority** CC-03
+    enable path, ahead of both nested spellings. An operator who believed the warning and deleted
+    the key would have silently turned the hint hook off.
+  - `stop_deliver_window_minutes` — the documented project-level override for the stop-deliver
+    reminder window.
+  - `sqlite_vec_enabled` — written *and read back* by the published installer so a reinstall skips
+    the Optional-Features prompt. Deleting it makes a later non-interactive reinstall silently drop
+    sqlite-vec.
+
+  The list was hand-written, so it was incomplete the day it landed.
+  `tests/test_config_owned_key_derivation.py` now **derives** it: it rescans the bundled hooks (two
+  read shapes) and the installer (three shapes) and fails when a knob is neither a `TRWConfig`
+  field nor exempted. A precision control asserts it does *not* collect run-state fields the hooks
+  grep with identical syntax.
+
+- **The post-commit refresh wrote N sidecars into a one-slot artifact and reported N successes.**
+  One CLI invocation was issued per changed file, but the CLI writes every one to
+  `before-edit-hint-<sha>.json` — a name with no per-file discriminator. Each overwrote the last;
+  only the file git emitted last survived. A 13-path commit logged `files=13 succeeded=13
+  failed=0` and a receipt saying `sidecar_files: 13`, while the cache held **one** artifact and
+  the other twelve files got `target_not_in_sidecar` — no T2 hint at all.
+
+  Worth naming what this says about the previous fix: the release before this one corrected
+  exactly this accounting by counting **exit codes**, which are all genuinely `0`. The wrong
+  inference survived the fix written to remove it. The count is now re-derived from artifacts
+  actually on disk for the target set, never from process outcomes, and the receipt carries
+  `sidecar_files_planned` beside `sidecar_files` so "13 planned / 1 refreshed" is *visible*
+  rather than inferable. Targets travel newline-separated in a temp file rather than
+  comma-joined on the command line — a git path may contain a comma, and this keeps paths out of
+  `argv` entirely.
+
+- **The pre-edit hook's 2.5s budget could not cover its own work, so T1 and T2 were unreachable.**
+  Measured on a warm dev box, 7 runs each: embedding cold start **14.48s** (torch 1.76 +
+  sentence-transformers 5.95 + model load 6.56 + encode 0.22); `compute_before_edit_hint` 14.2–14.6s
+  with embeddings on versus **0.68–1.04s** off; and the sidecar read the hook exists for costs
+  **0.003s**. Every PreToolUse call spawns a fresh interpreter, so the model load is paid in full
+  every time and never amortizes. `timeout_fallback` was the only reachable outcome.
+
+  The budget was not raised — it is capped by the 3000ms registered hook timeout, and covering a
+  14.5s load would add ~15s of latency to **every edit**. Embeddings are disabled for the bounded
+  subprocess only, in all three client hooks; the long-lived MCP server keeps hybrid recall, where
+  the model is warm. The tier vocabulary is now reachable for the first time: T2 at 1.32–1.50s,
+  T1 at 1.65–1.78s. Trade-off stated plainly: in-hook recall is lexical-only, which on one probe
+  took a full-path query from 10 results to 0 while leaving the basename query and the hook's
+  final learning count unchanged.
+
+- **A dual-surface Cursor install destroyed most of the IDE's protocol carrier.**
+  `init_project` wrote `.cursor/rules/trw-ceremony.mdc` twice: the cursor-ide writer produced the
+  full 158-line body, then the cursor-cli writer overwrote it with a 50-line one — and the
+  installer reported **both** writes as success. A Cursor IDE user lost 108 of 158 lines of their
+  `alwaysApply: true` carrier: the trigger-phrase table, verification-pass guidance,
+  drift-recovery hints, the Plan Mode note, the pre-compaction checkpoint reminder. One
+  `update-project` restored it, which is what made the install/update disagreement visible at all.
+
+  cursor-cli no longer writes that file when cursor-ide is present — the IDE body is a strict
+  superset, and the update path already had only the IDE writer, so this makes install agree with
+  the steady state instead of inventing a third one. Independently of that call site, the writer
+  now **refuses any write that would drop an existing IDE appendix**, keyed on the appendix
+  constant rather than a copied heading.
+
+- **TRW counted its own scaffolding as user evidence, and the record was append-only.** On any
+  machine with `cursor` on `PATH`, a bare `update-project` created `.cursor/` in a codex-only
+  project; the *next* bare update read that TRW-created directory as evidence the user wanted
+  cursor-ide and appended it permanently to `target_platforms`. Measured end to end: `['codex']`
+  → `['codex']` + `.cursor/` created → `['codex', 'cursor-ide']`, plus a 6.5 KB `AGENTS.md`
+  carrying the TRW marker block — reintroducing exactly the shared `AGENTS.md` that
+  PRD-CORE-240-FR04 withdrew, driven entirely by a binary on the developer's `PATH`.
+
+  The evidence check excluded claude-code by hand *"precisely because TRW creates `.claude/`
+  itself"* — an exclusion set of size one. It is now **computed**: the marker map is total over
+  every supported client, and a marker overlapping a framework-core surface or a surface TRW
+  installs for a *different* client is rejected. `.cursor/cli.json` still evidences cursor-cli, so
+  detection survives; only the directory TRW creates stopped counting.
+
+  Residual, stated rather than implied: the cursor update path still re-resolves detection
+  internally, so a cursor-on-`PATH` machine still **over-installs** `.cursor/agents|commands|skills`.
+  The record no longer drifts; closing the over-install means changing the update signature for
+  every client adapter.
+
+- **FR03's rejection branch had no reachable failing state, and nothing called it.**
+  `verify_consumer_claims` computes `rejected = (self_referential & unread) - grandfathered`, and
+  `grandfathered` **defaulted to `unread`**. Subtracting a set from its own superset is empty for
+  every possible input, so the gate could not fail — and both live tests took that path, making
+  *"the live registry passes"* a tautology. The module docstring's promise that a new field copying
+  the pattern *is* rejected was false as written.
+
+  `grandfathered` is now required, and the gate runs inside
+  `scripts/check_config_field_consumers.py` — until now `verify_consumer_claims` had **zero call
+  sites** outside its own test, so the falsification FR03 advertises was delivered by nothing. The
+  legitimate grandfather source already existed: the dated `classifications` map in the compliance
+  baseline, whose entries carry a class, an expiry and evidence.
+
+### Documentation
+
+- `docs/evidence/v26.2-independent-audit-2026-07-27.md` said *"the promotion did not proceed and
+  `framework_version` remains `v26.1_TRW`"*. It did proceed. `FRAMEWORK-CORE.md` honestly sends
+  readers there to learn the gates were unmet, and they arrived at a sentence contradicting
+  reality. A dated addendum, explicitly attributed to TRW rather than the reviewer, corrects it
+  while preserving the BLOCK verdict and leaving the reviewer's own text untouched.
+- Three hand-authored pages still described the removed tool in the present tense.
+
+### Known issues
+
+- The repo-root `tests/` tree (915 tests) is executed by no `make` target and no CI workflow — every
+  pytest invocation in `test-python` and `test-fast` `cd`s into a package first. Eleven of those
+  tests currently fail, including four where the installer's API drifted from its own tests. Being
+  addressed separately; recorded here rather than left silent.
+- The unread-config-field scan counts identifiers appearing only in comments, docstrings, or
+  config-write f-strings as production readers. Measured impact: the unread set is 70 where a
+  tokenizing scan measures 75. It under-reports and never over-reports, and no downstream
+  ablation configuration currently sets any of the five, so no measurement arm is null because of
+  it. Full triage is recorded in the monorepo improvement backlog.
+
+## [1.0.1] — 2026-07-28
+
+Documentation-only. No code changes — this entry records work that **shipped in 1.0.0 without
+being written down**, which is its own kind of defect in a release note.
+
+### The intent-contract control (PRD-SEC-013) ships, and 1.0.0 never said so
+
+1.0.0 contains the full intent-contract layer including a hardening round that closed **seven
+bypasses, two of which had been introduced by the previous round's own fix** — an
+arbitrary-file-write primitive reachable through the installer, and a planted-file denial of
+service that permanently armed a project nobody had opted into. Those are recorded in the
+[0.65.1](#0651--2026-07-25) entry, which was written before the fixes landed; the release that
+actually carries them said nothing at all. Correcting that here.
+
+### What a 1.0.0 user should know
+
+The bundled `settings.json` registers both intent hooks on `Write|Edit|MultiEdit` **for every
+installed project**, so it is worth being precise about what that costs a user who never opts in.
+Measured on the shipped hooks in a clean project with no contract and no enrollment:
+
+```
+pre-tool-intent-guard.sh    exit=0   18 ms
+post-tool-intent-check.sh   exit=0    4 ms
+python3 invocations on that path: 0
+```
+
+Inert, cheap, and — because python is never reached — never exposed to the 1-second fail-closed
+budget that governs the enrolled path. **If you do not enroll, this control does nothing to you.**
+
+### Honest posture, unchanged and worth repeating in a 1.0 line
+
+An independent council (an advisory model, a code-reading model, and a prior-art research pass)
+returned a **unanimous verdict that this control's threat model is unsatisfiable as designed**: it
+runs in the same privilege domain as the adversary it is meant to stop, failing the reference-monitor
+tamperproofness criterion by construction. Five consecutive adversarial rounds each found new
+bypasses in the previous round's fixes.
+
+**It is not an enforcement boundary and must not be deployed as one.** `git config core.hooksPath
+/dev/null` disables it outright. What it is genuinely good for is catching *accidental* weakening —
+an agent refactoring a defense away without adversarial intent, which is the common case — and
+producing a tamper-evident record.
+
+A known structural denial of service remains, deliberately unpatched because every candidate fix is
+worse: in a project that never enrolled, `touch .trw/intent-enrollment-evidence.yaml` causes every
+`Write`/`Edit` to be refused. It is loud (an unsuppressible warning names the file) and reversible
+(`enrollment unenroll`). The operator direction is to re-scope this layer to advisory plus
+tamper-evident and move enforcement to a required status check where the agent has no shell; that
+work is not in this release.
+
+- Operator runbook: [`intent-contract-enablement.md`](../docs/documentation/operational-knowledge/intent-contract-enablement.md)
+- Full analysis and citations are held in the TRW monorepo's requirements-engineering research set.
+
+### Verified at 1.0.1
+
+414 intent-contract tests pass; a lead-run adversarial harness scores 24/24 against the real shipped
+hooks with all three bystander controls green (never-enrolled inert, defended code not blocked,
+violated code blocked); the downstream evaluation corpus tooling reports 142 passed. All re-run against this tree after 476
+commits of concurrent work by other sessions.
+
+## [1.0.0] — 2026-07-29
+
+> **Amendment (2026-07-30) — what this release actually ships.** This entry was dated from its
+> version-bump commit (2026-07-27 23:49). The wheel went to PyPI on **2026-07-29 12:13 (−0600)**, and
+> 1.0.0 is currently the **only installable** trw-mcp — 1.0.1, 1.0.2 and 1.0.3 exist as tags and
+> notes, not on PyPI. A later re-file moved five entries out of this section on the belief that they
+> postdated the release. They do not. Unpacking the published wheel confirms each one is in it, so
+> they are named here; their full text is under [1.0.3](#103--2026-07-29).
+>
+> If you installed 1.0.0, **these behaviour changes are in your copy**:
+>
+> - **TRW no longer writes its protocol into `CLAUDE.md` for clients that do not read it.**
+>   `CLAUDE.md` drops from 80 lines to 17 for codex, opencode, copilot, cursor-cli and
+>   antigravity-cli. An existing project's stale block is removed on upgrade — only between the TRW
+>   markers.
+> - **Withdrawing a surface now removes what was already written to it.** Text is deleted from a
+>   file you own, strictly inside TRW's markers.
+> - **Cursor IDE's always-applied rule gains the deliver gate.** `.cursor/rules/trw-ceremony.mdc`
+>   now comes from the shared renderer (115 → 159 lines) instead of a hardcoded second copy that
+>   omitted the gate.
+> - **Copilot's instruction file stops emitting an `@`-include it cannot resolve.** The protocol is
+>   inline again in the always-on file; the orphaned sidecar is gone.
+> - **Antigravity and Cursor CLI get their protocol where the vendor documents reading it** —
+>   `.agents/rules/`, checked against Antigravity's 12,000-character rule limit.
+>
+> Two of these delete text from files the user owns. A release note has to say so, and for two days
+> the only installable version's notes did not.
+
 
 **Why 1.0.0 and not 0.67.0.** This is the first release that breaks the
 **tool-call contract** — the surface every consumer's agent actually invokes.
@@ -667,26 +1319,6 @@ draft should expect that.
   Both required amending a requirement, not just code. `PRD-QUAL-104-FR03` required the deliver gate *literally* in each per-client file; it now accepts an **eagerly-resolved** include, because such an include is exactly the "other channel into the gate" whose absence was the original rationale. The gate must still be **reachable** — verification resolves the import before asserting, so a dangling include fails where a raw substring check could not tell it from success. Clients with no working include (cursor-cli, cursor-ide, antigravity-cli) still carry the text literally. `PRD-CORE-074`'s mandate to write opencode's `AGENTS.md` is withdrawn; it predated the fix that made opencode's own file loadable.
 
   **Codex is unchanged**, and the reason is a reachability fact: it has only two reliably-read slots. `model_instructions_file` is single-valued and points at `.codex/INSTRUCTIONS.md`, which is capped at 2,025 bytes (its capability appendix measures 5,043), and `project_doc_fallback_filenames` lists files consulted only *when AGENTS.md is absent*. Freeing codex's AGENTS.md requires raising that cap.
-
-- **Antigravity and Cursor CLI now get their protocol where the vendor documents reading it.** `ANTIGRAVITY.md` appears in no Antigravity primary source — its rules documentation names `~/.gemini/GEMINI.md` globally and `.agents/rules/` per workspace, and nothing else — so TRW was writing to a filename the vendor never documents loading. The workspace rule is now written as well (and checked against Antigravity's documented 12,000-character rule limit, since a silent truncation would drop the deliver gate off the end). `ANTIGRAVITY.md` is still written, in case some undocumented path does read it.
-
-  Cursor CLI's profile described `AGENTS.md` as its *only* carrier. That was TRW's own omission: Cursor documents that the CLI *"supports the same rules system as the editor"*, and TRW was generating `.cursor/rules/trw-ceremony.mdc` for the IDE only. Cursor CLI now gets it too. Both files are TRW-owned, so this is a generated artifact rather than injection into a file you authored.
-
-- **Copilot's instruction file no longer emits an `@`-include it cannot resolve.** The include was added on the strength of GitHub's Copilot **CLI** docs, which do document `@relpath`. But one TRW profile serves both surfaces — it also writes `.vscode/mcp.json` — and neither GitHub's repository-instructions page nor VS Code's custom-instructions page describes any file-inclusion syntax for `.github/copilot-instructions.md`; Markdown links are references a human follows, not content pulled into the prompt. So Copilot Chat users were getting a 5-line file whose body was the literal text `@.trw/COPILOT-INSTRUCTIONS.md` — a file that exists, parses, reports success and carries nothing, which is worse than the injection it replaced. The protocol is inline again in that always-on file (GitHub: "automatically included in every chat request"), the orphaned sidecar is gone, and the include-free route for a future change is `.github/instructions/*.instructions.md` with `applyTo: "**"`.
-
-  Also fixed while there: the installer reported `preserved` for a `.github/copilot-instructions.md` it had just created, because the carrier wrote the file before the capability check that rejected it.
-
-- **Cursor IDE's always-applied rule was missing the deliver gate.** `.cursor/rules/trw-ceremony.mdc` is `alwaysApply: true`, so Cursor loads it eagerly and it *is* that client's protocol carrier — but it was built by slicing the TRW block out of the `CLAUDE.md` scaffold template instead of the shared renderer, making cursor-ide the one client whose protocol came from a hardcoded second copy. That copy omitted the deliver-gate statement every other client's carrier states. It now comes from the shared renderer (115 → 159 lines), so cursor-ide gets the same protocol as everyone else.
-
-- **TRW no longer writes its protocol into `CLAUDE.md` for clients that do not read it.** Only Claude Code declares `CLAUDE.md`. The MCP sync path already honoured that; the installer did not, and injected the full block for every client — so a Codex project carried a *third* copy of the framework text, after its `AGENTS.md` and `.codex/INSTRUCTIONS.md`, in a file none of its clients load. That copy then froze in place while the surfaces those clients do read moved on. **`CLAUDE.md` drops from 80 lines to 17** (the scaffold, no TRW block) for codex, opencode, copilot, cursor-cli, and antigravity-cli; Claude Code is unchanged and cursor-ide keeps its documented fallback. An existing project's stale block is removed on upgrade — only between the TRW markers.
-
-  Two things had to change for that decision to *stay* made. `update-project` held two more unconditional writers, so it re-injected on the next run what the installer had just declined. And client detection cannot answer "who reads this file?" after an install: TRW writes `.claude/` (agents, hooks, skills) and `.cursor/` into every project whatever the client, so a Codex-only project reports Claude Code from then on. **The installer now records the clients you actually selected** (`target_platforms`, which only `update-project` used to write), and that record outranks what is on disk.
-
-- **Withdrawing a surface now removes what was already written to it, and the block that cannot be externalised is half the size.** Two gaps closed in the same area:
-
-  Stopping a write is not the same as cleaning up. A project installed before OpenCode's `AGENTS.md` was withdrawn kept its injected block permanently — TRW simply stopped refreshing it, so the text froze, stopped tracking the framework, and nothing would ever remove it. Stale protocol text that still looks current is worse than the injection was. It is now stripped, but only when no installed client still claims that file, so codex and cursor-cli keep theirs; only the TRW-marked region is touched. (A related fix: the auto-detection path computed "write AGENTS.md" from *whether any client was detected* rather than from the per-client setting, so the withdrawal had no effect on the path `update-project` actually takes.)
-
-  cursor-cli cannot resolve an include, so its `AGENTS.md` must carry the text — which makes keeping it small the obligation. It was receiving the **full** section despite being a light-ceremony client: **105 lines → 48**. The deliver gate and session-start mandate stay verbatim; for a client with no other channel, the instruction file is the protocol carrier.
 
 - **`trw-mcp doctor` now tells you whether your instruction files still carry injected framework text.** A project installed before externalization shipped is sitting on that text with no way to know. The new `instruction_carrier` check reports each surface as *referencing* (its TRW block is a single `@`-import), *inline*, or carrying no TRW block — and a legacy-only project warns with the command that converts it. Inline is reported, never failed: it is correct for the clients that cannot resolve an include, and failing it would train you to ignore the check.
 

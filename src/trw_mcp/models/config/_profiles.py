@@ -157,7 +157,23 @@ _PROFILES: dict[str, ClientProfile] = {
         display_name="Cursor IDE",
         write_targets=WriteTargets(
             cursor_rules=True,
-            agents_md=True,
+            # cursor-ide has its own TRW-owned carrier (instruction_path below), so
+            # it must not also claim AGENTS.md. 2ca279054f flipped copilot and
+            # antigravity-cli to False and missed this one, while asserting "only
+            # cursor-cli has TRW text in a file the user owns".
+            #
+            # Two live consumers read the flag and both did the wrong thing with a
+            # True: the AGENTS.md orphan-strip DECLINED, so the migration cleanup
+            # could never run in a project listing cursor-ide; and
+            # trw_instructions_sync(client="cursor-ide") CREATED a 5.7 KB AGENTS.md
+            # in a project that had none. A codex+cursor-ide project had its codex
+            # block rewritten rather than removed — the injection PRD-CORE-240-FR04
+            # forbids in terms that leave no room.
+            #
+            # cursor-cli keeps agents_md=True and that is correct: AGENTS.md IS its
+            # instruction_path. The distinction is whether the client has somewhere
+            # of its own to read from, not whether it is a Cursor surface.
+            agents_md=False,
             instruction_path=".cursor/rules/trw-ceremony.mdc",
         ),
         instruction_max_lines=400,
@@ -192,6 +208,19 @@ _PROFILES: dict[str, ClientProfile] = {
         # there, and a second copy of the protocol in a third file is what this
         # work removes. Do not "correct" it to True on the strength of the reader
         # list alone.
+        #
+        # `agents_md` stays TRUE, and this is the LAST client for which TRW writes
+        # into a user-owned file. codex, copilot, opencode and antigravity-cli were
+        # all withdrawn once they had a carrier the vendor documents. cursor-cli is
+        # held back by one unverified fact: whether cursor-agent honours
+        # `alwaysApply` in `.cursor/rules/*.mdc`. Cursor documents the rules system
+        # as shared with the editor and documents `alwaysApply` semantics FOR THE
+        # EDITOR, but no primary source states the CLI's metadata handling, and
+        # `cursor.com/docs/cli/reference/rules` does not exist. Only blog posts
+        # assert it -- the same evidence class that shipped a copilot `@`-include
+        # no IDE could resolve. Since AGENTS.md is cursor-cli's only GUARANTEED
+        # carrier, a redundant copy is the recoverable error and a missing protocol
+        # is not. Withdraw this when a primary source confirms CLI alwaysApply.
         # Source: cursor.com/docs/cli/using
         write_targets=WriteTargets(
             agents_md=True,
@@ -233,6 +262,16 @@ _PROFILES: dict[str, ClientProfile] = {
         "codex",
         "Codex CLI",
         ".codex/INSTRUCTIONS.md",
+        # WITHDRAWN (PRD-CORE-240-FR04). codex owns `.codex/INSTRUCTIONS.md`,
+        # which `.codex/config.toml` points at via `model_instructions_file`, so
+        # it needs nothing from the shared AGENTS.md — a file the USER owns.
+        # It was kept only because PRD-QUAL-113-FR03 capped the codex file at
+        # 2,025 bytes, which forced the generic workflow and the capability
+        # appendix to live in AGENTS.md. That cap was a token budget, not a
+        # vendor limit, and its own premise was "AGENTS.md owns generic
+        # workflow" — so removing the injection removes the reason for the cap.
+        # The full protocol now renders into codex's own file.
+        writes_shared_agents_md=False,
         default_model_tier="balanced",
         nudge_enabled=True,
         on_transition="silent",
@@ -266,9 +305,16 @@ _PROFILES: dict[str, ClientProfile] = {
         #          code.visualstudio.com/docs/copilot/customization/custom-instructions
         #          docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions (CLI only)
         instruction_import_syntax="none",
+        # AGENTS.md WITHDRAWN (PRD-CORE-240-FR04). Copilot does read AGENTS.md —
+        # VS Code documents it as always-on alongside copilot-instructions.md —
+        # but TRW already writes TWO carriers of its own for this client: the
+        # always-on `.github/copilot-instructions.md` (which states the deliver
+        # gate) and `.github/instructions/trw-ceremony.instructions.md` with
+        # `applyTo: "**"` (which carries the full protocol). A third copy in a
+        # file the USER owns buys nothing and is what this PRD removes.
         write_targets=WriteTargets(
             claude_md=False,
-            agents_md=True,
+            agents_md=False,
             copilot_instructions=True,
             instruction_path=".github/copilot-instructions.md",
         ),
@@ -290,7 +336,11 @@ _PROFILES: dict[str, ClientProfile] = {
         display_name="Antigravity CLI",
         write_targets=WriteTargets(
             claude_md=False,
-            agents_md=True,
+            # WITHDRAWN (PRD-CORE-240-FR04). Antigravity's documented
+            # workspace-rule path is `.agents/rules/`, which TRW now writes
+            # and which carries the full protocol. AGENTS.md is read too, but
+            # it is a file the USER owns and a third copy buys nothing.
+            agents_md=False,
             antigravitycli_md=True,
             instruction_path="ANTIGRAVITY.md",
         ),

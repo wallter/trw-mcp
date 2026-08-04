@@ -66,6 +66,29 @@ def _absorb_sub_result(
 # ---------------------------------------------------------------------------
 
 
+def _update_targets(target_dir: Path, ide_override: str | None) -> list[str]:
+    """Which clients an update should touch — the RECORD first, detection last.
+
+    Every ``_update_*_artifacts`` function re-resolved this independently via
+    ``resolve_ide_targets``, which falls through to ``detect_ide`` when no
+    ``--ide`` is given — and detection fires on machine-global signals like
+    ``shutil.which("cursor")``. So a bare ``update-project`` in a codex-only
+    project scaffolded ``.cursor/`` because of a binary on the developer's PATH,
+    and that TRW-created directory then became the next run's "evidence".
+
+    An explicit override is the user speaking and wins outright. Otherwise the
+    project's recorded ``target_platforms`` answers, because it says what THIS
+    project uses rather than what this machine has. Detection remains the
+    fallback for projects predating the record.
+    """
+    if ide_override:
+        return resolve_ide_targets(target_dir, ide_override=ide_override)
+
+    from ._template_claude_md import _recorded_targets
+
+    return _recorded_targets(target_dir) or resolve_ide_targets(target_dir)
+
+
 def _update_opencode_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
@@ -91,7 +114,7 @@ def _update_opencode_artifacts(
         install_opencode_skills,
     )
 
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    ide_targets = _update_targets(target_dir, ide_override)
     if "opencode" not in ide_targets:
         return
 
@@ -202,7 +225,7 @@ def _update_codex_artifacts(
         generate_agents_md,
     )
 
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    ide_targets = _update_targets(target_dir, ide_override)
     if "codex" not in ide_targets:
         return
 
@@ -301,7 +324,7 @@ def _update_copilot_artifacts(
         install_copilot_skills,
     )
 
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    ide_targets = _update_targets(target_dir, ide_override)
     if "copilot" not in ide_targets:
         return
 
@@ -366,7 +389,7 @@ def _update_antigravity_artifacts(
         generate_antigravity_mcp_config,
     )
 
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    ide_targets = _update_targets(target_dir, ide_override)
     if "antigravity-cli" not in ide_targets:
         return
 
@@ -460,7 +483,7 @@ def _update_cursor_artifacts(
         generate_cursor_rules_mdc,
     )
 
-    ide_targets = resolve_ide_targets(target_dir, ide_override=ide_override)
+    ide_targets = _update_targets(target_dir, ide_override)
     if "cursor-ide" not in ide_targets and "cursor-cli" not in ide_targets:
         return
 
@@ -517,7 +540,7 @@ def _update_cursor_artifacts(
 
         # FR08: .cursor/hooks/ (8-event set) + hooks.json
         try:
-            hooks_result = generate_cursor_ide_hooks(target_dir)
+            hooks_result = generate_cursor_ide_hooks(target_dir, manifest_hashes=manifest_hashes)
             _absorb_sub_result(result, hooks_result)
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(f".cursor/hooks/ update skipped: {type(exc).__name__}: {exc}")
@@ -540,7 +563,7 @@ def _update_cursor_artifacts(
     # cursor-cli specific steps — dispatched to existing helper
     # ------------------------------------------------------------------
     if "cursor-cli" in ide_targets:
-        _update_cursor_cli_artifacts(target_dir, result)
+        _update_cursor_cli_artifacts(target_dir, result, manifest_hashes=manifest_hashes)
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_cursor_distill_channels
@@ -551,6 +574,8 @@ def _update_cursor_artifacts(
 def _update_cursor_cli_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
+    *,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Update cursor-cli-specific artifacts (PRD-CORE-137-FR07).
 
@@ -592,7 +617,7 @@ def _update_cursor_cli_artifacts(
 
     # FR05: 5-event CLI hook subset (composes shared helpers; idempotent with IDE pass)
     try:
-        hooks_result = generate_cursor_cli_hooks(target_dir)
+        hooks_result = generate_cursor_cli_hooks(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, hooks_result)
     except Exception as exc:  # justified: fail-open, hooks.json update is best-effort
         result.setdefault("warnings", []).append(

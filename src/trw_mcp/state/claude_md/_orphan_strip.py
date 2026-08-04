@@ -30,6 +30,7 @@ __all__ = [
     "_any_client_writes_agents_md",
     "_any_client_writes_claude_md",
     "_strip_trw_section",
+    "strip_orphaned_agents_md_block",
     "strip_orphaned_claude_md_block",
 ]
 
@@ -65,26 +66,27 @@ def _any_client_writes_claude_md(client_ids: Sequence[str], *, from_record: bool
     An EMPTY set is the default scaffold (no client identified yet — write it),
     not an unclaimed surface.
 
-    cursor-ide is carved out too, and this is now a REDUNDANCY rather than a
-    necessity: its ``.cursor/rules/trw-ceremony.mdc`` is ``alwaysApply: true``
-    and carries the full protocol including the deliver gate, so the CLAUDE.md
-    block is a second copy.
+    cursor-ide is carved out only for a DETECTED list, and that asymmetry is the
+    point. Detection reports cursor-ide from ``shutil.which("cursor")``, so on any
+    machine with Cursor installed an unrelated project looks like a Cursor
+    project; treating that as "claimed" would withhold CLAUDE.md over a binary on
+    someone's PATH.
 
-    Removing it needs one thing this codebase cannot express yet. The decision
-    turns on whether cursor-ide is here because the USER chose it or because
-    ``detect_ide`` saw ``shutil.which("cursor")`` — and ``target_platforms`` is
-    written from resolved targets at install, so it records both the same way
-    (``TestInitTargetPlatforms`` pins that it must keep recording detected ones).
-    Withdrawing the carve-out on the record alone therefore strips CLAUDE.md from
-    any project merely installed on a machine that has Cursor. Separating the two
-    is a config-schema change: record provenance alongside the client list.
-
-    *from_record* is threaded and accurate for callers that need it; it
-    deliberately does NOT gate this carve-out until that distinction exists.
+    A RECORDED cursor-ide is different, and only recently so. ``target_platforms``
+    used to be written from raw resolved targets at install, which laundered PATH
+    detection into a permanent claim — so the record could not be trusted and this
+    carve-out had to be unconditional. Install now records only an explicit
+    ``--ide`` or a client with an on-disk marker, so a recorded cursor-ide means
+    the user really has one. There the answer is a clean no:
+    ``.cursor/rules/trw-ceremony.mdc`` is ``alwaysApply: true`` and carries the
+    full protocol including the deliver gate, so a CLAUDE.md block on top is a
+    second copy in a file cursor-ide's own profile says TRW must not write.
     """
     from trw_mcp.models.config._profiles import resolve_client_profile
 
-    if not client_ids or list(client_ids) == ["cursor-ide"]:
+    if not client_ids:
+        return True
+    if not from_record and list(client_ids) == ["cursor-ide"]:
         return True
     for client_id in client_ids:
         try:
@@ -149,14 +151,33 @@ def _strip_orphaned_block(path: Path, *, surface: str) -> bool:
     return True
 
 
-# ``strip_orphaned_agents_md_block`` was removed 2026-07-28 (PRD-QUAL-131-FR06).
-# It had ZERO production call sites: nothing in trw_mcp ever invoked it, so the
-# AGENTS.md orphan-strip it described never ran. Its commit message claimed
-# "Verified: opencode-only detection strips and is idempotent" -- a property
-# verified of a function nothing calls, which is why its six passing tests were
-# never evidence that the behavior existed. The CLAUDE.md sibling below IS
-# called (from bootstrap/_template_updater.py and bootstrap/_init_project.py)
-# and is the control that proves the census grep works.
+def strip_orphaned_agents_md_block(project_root: Path, client_ids: Sequence[str] | None = None) -> bool:
+    """Remove a stale TRW block from AGENTS.md when no client here writes it.
+
+    Restored 2026-07-29, WIRED this time. The first version of this function was
+    deleted (PRD-QUAL-131-FR06) for having zero production call sites: it was
+    defined, given six passing tests, and described in a commit message as
+    "verified" — of a function nothing called. The tests exercised the helper
+    directly, so they proved the code worked and said nothing about whether it
+    ran. Deleting it was right; the NEED it addressed was still real.
+
+    That need: PRD-CORE-240-FR04 withdrew opencode's shared AGENTS.md. Ceasing
+    to write a surface does not remove what was already written, so a project
+    installed BEFORE the withdrawal keeps its injected block forever — frozen,
+    unowned, tracking a framework version that has moved on, and looking current.
+
+    Called from ``_update_mcp_config`` on the update path. Its test drives
+    ``update_project`` rather than this function, which is the difference
+    between testing the behavior and testing the code.
+    """
+    # *client_ids* should be the project's resolved targets. Detection is the
+    # fallback and over-claims: `detect_ide` reports the cursor clients from
+    # `shutil.which("cursor")`, and both declare AGENTS.md — so on any machine
+    # with Cursor installed this would decline to clean up every project.
+    ids = list(client_ids) if client_ids is not None else _detect_ide(project_root)
+    if _any_client_writes_agents_md(ids):
+        return False
+    return _strip_orphaned_block(project_root / "AGENTS.md", surface="agents_md")
 
 
 def strip_orphaned_claude_md_block(project_root: Path, client_ids: Sequence[str] | None = None) -> bool:

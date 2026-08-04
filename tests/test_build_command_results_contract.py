@@ -310,8 +310,7 @@ class TestZSuffixedTimestampsAreMeasurements:
         )
         assert parsed is not None
         assert _build_check_helpers.derive_duration_secs(parsed) == pytest.approx(7.0), (
-            "on the declared Python floor the Z-suffixed measurement is discarded unless "
-            "_parse_iso normalizes it first"
+            "on the declared Python floor the Z-suffixed measurement is discarded unless _parse_iso normalizes it first"
         )
 
     def test_z_suffixed_span_is_derived(self) -> None:

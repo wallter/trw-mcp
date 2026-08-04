@@ -115,39 +115,30 @@ def _copilot_deliver_gate_block() -> str:
 
 
 def _copilot_instructions_content() -> str:
-    """Generate repo-wide Copilot instruction content with TRW ceremony guidance.
+    """Generate the minimal repo-wide Copilot block.
 
-    PRD-QUAL-104 FR03: injects the non-negotiable session-start + deliver-gate
-    block so the Copilot protocol carrier always states the gate verbatim.
+    `.github/copilot-instructions.md` is a file the USER owns, and Copilot has
+    no syntax to include content into it — GitHub's repository-instructions docs
+    and VS Code's custom-instructions docs both describe inline Markdown only.
+    So the goal here is not "reference instead of inject" (impossible) but
+    "inject as little as correctness allows".
+
+    The full protocol now lives in `.github/instructions/trw-ceremony.instructions.md`,
+    a TRW-owned file Copilot loads itself via `applyTo: "**"`. What stays here is
+    only what that mechanism cannot guarantee: GitHub documents this file as
+    always-on and "automatically included in every chat request", whereas
+    `.instructions.md` files apply by pattern match. PRD-QUAL-104-FR03 requires
+    the deliver gate stated verbatim in the carrier, so the gate stays where
+    inclusion is unconditional.
     """
     return f"""{_COPILOT_TRW_START_MARKER}
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 
 # TRW Framework Integration
 
-This project uses the TRW (The Real Work) framework for structured AI-assisted development.
-
-## Session Protocol
-
-| Tool | When | Why |
-|------|------|-----|
-| `trw_session_start()` | First action | Loads prior learnings |
-| `trw_learn(summary, detail)` | On discoveries | Saves findings for future sessions |
-| `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action after validation | Persists work after build evidence or a valid structured acceptable-failure record |
-
-## Available MCP Tools
-
-TRW tools are available via MCP server. Key tools: `trw_session_start`, `trw_learn`,
-`trw_checkpoint`, `trw_deliver`, `trw_init`, `trw_status`, `trw_recall`,
-`trw_build_check`, `trw_review`, `trw_prd_create`, `trw_prd_validate`.
-
-## Conventions
-
-- Run tests after each change — fix failures before moving on
-- Use `trw_learn()` to record discoveries, patterns, and gotchas
-- Use `trw_checkpoint()` after working milestones
-- Commit messages: `feat(scope): msg` (Conventional Commits)
+This project uses the TRW (The Real Work) framework. The full protocol — session
+lifecycle, tool reference, and conventions — is in
+`.github/instructions/trw-ceremony.instructions.md`, which applies to every request.
 
 {_copilot_deliver_gate_block()}
 {_COPILOT_TRW_END_MARKER}
