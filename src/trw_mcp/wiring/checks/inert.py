@@ -1,14 +1,22 @@
 """FR05 — inert-branch check. ``INERT_BRANCH``.
 
 A reachable path that is structurally incapable of producing a result. The
-fixture is ``trw-mcp/src/trw_mcp/tools/code_search.py`` line 24::
+specimen this check was built against was
+``trw-mcp/src/trw_mcp/tools/code_search.py`` line 24::
 
     return response_to_dict(rank_semantic_chunks(query=query, chunks=(), embedder=None))
 
-``mode="semantic"`` is registered, callable, statically live, listed in four
+``mode="semantic"`` was registered, callable, statically live, listed in four
 agents' frontmatter — and permanently empty. **No reachability analysis can see
 this, because the branch is reachable.** That is precisely why the signature has
 to be structural rather than graph-based.
+
+That specimen was FIXED in 2.0.0 (UF-031, decided by removal), so the check now
+has no live instance in this repository. Its positive control is therefore
+synthetic and always available:
+``tests/wiring/test_inert_branch.py::test_synthetic_inert_call_is_detected``
+builds the call on demand. Keeping a real defect alive to prove a detector works
+is the trade this file explicitly refuses.
 
 Three independent conditions must all hold before anything is reported, and each
 one exists to kill a specific false-positive family:

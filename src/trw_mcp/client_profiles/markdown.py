@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from trw_mcp.client_profiles.catalog import build_client_profile_rows
+from trw_mcp.dispatch._client_specs import CLIENT_SPECS
 
 
 def _enabled_label(value: bool) -> str:
@@ -107,6 +108,58 @@ def render_nudge_matrix() -> str:
     )
 
 
+def _agent_surface_label(value: bool | None) -> str:
+    """Render a derived agent surface, keeping "absent" distinct from "false".
+
+    ``None`` means the client has no entry in the client-profile registry at all,
+    which is a different fact from a registered client that documents no agent
+    surface. Collapsing the two to `off` would report an unmeasured gap as a
+    measured absence.
+    """
+    if value is None:
+        return "no client profile"
+    return _enabled_label(value)
+
+
+def render_dispatch_targets_table() -> str:
+    """Render the per-client dispatch capability table (PRD-CORE-266-FR07).
+
+    Every cell is read from ``CLIENT_SPECS``; nothing here is restated. That is
+    the point: a hand-written per-client capability value is census data that
+    stops enforcing anything the moment the registry changes, without announcing
+    that it has stopped (PRD-INFRA-174). Adding a registry entry grows this table
+    by exactly one row with no edit to this function.
+    """
+    table_rows = [
+        [
+            f"`{spec.client_id}`",
+            f"`{spec.binary}`",
+            f"`{spec.prompt_flag}`" if spec.prompt_flag else "positional",
+            " ".join(f"`{tok}`" for tok in spec.structured_output_argv) or "none",
+            spec.sandbox,
+            spec.sub_agents,
+            _agent_surface_label(spec.agent_surface),
+            spec.verification.method,
+            spec.verification.verified_at.isoformat(),
+        ]
+        for spec in CLIENT_SPECS.values()
+    ]
+    return _render_table(
+        [
+            "Client",
+            "Binary",
+            "Headless prompt",
+            "Structured output",
+            "Sandbox",
+            "Sub-agents",
+            "Agent surface",
+            "Verification",
+            "Verified",
+        ],
+        table_rows,
+    )
+
+
 def render_matrix_page() -> str:
     return "\n".join(
         [
@@ -131,6 +184,14 @@ def render_matrix_page() -> str:
             render_nudge_matrix(),
             "",
             "Light profiles use `ceremony=0` in nudge pool weights because ceremony reminders arrive through bootstrap and instruction files rather than mid-tool nudges.",
+            "",
+            "## Dispatch Targets",
+            "",
+            render_dispatch_targets_table(),
+            "",
+            "Generated from the `trw_mcp.dispatch` client-spec registry. `Verification` records HOW each row was established — `executable` means the binary was run on a box and its own output read, `primary_source` means a dated vendor page stated it and the binary was not run, and `unverified` means neither, in which case `trw-mcp dispatch` REFUSES that client rather than launching it on provisional data.",
+            "",
+            "`Sandbox` is a tri-state, not a boolean: `enforced` means TRW emits an explicit sandbox flag on the read-only path, `available_default_off` means the client has a sandbox that TRW does not turn on (so the row is not a protection claim), and `none` means the client exposes no sandbox flag TRW can use. `Sub-agents` of `unknown` is a recorded state, not a `no`.",
             "",
         ]
     )

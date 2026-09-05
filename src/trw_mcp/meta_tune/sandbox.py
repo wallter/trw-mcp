@@ -3,8 +3,9 @@
 
 This module defines :class:`ProbeIsolationContext` — a reusable subprocess +
 seccomp-bpf sandbox primitive shared between meta-tune candidate replay
-(PRD-HPO-SAFE-001) and the empirical probe harness (PRD-CORE-144). See
-``docs/research/agentic-hpo/sandbox-isolation-design-2026-04-17.md``.
+(PRD-HPO-SAFE-001) and the empirical probe harness (PRD-CORE-144). The layering
+below IS the design record — each layer is independently defeatable, which is why
+none of them is treated as sufficient alone.
 
 Defense-in-depth layers (v1):
     1. subprocess (separate PID).

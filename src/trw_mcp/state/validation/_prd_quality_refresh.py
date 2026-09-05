@@ -14,6 +14,7 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResultV2,
 )
+from trw_mcp.state.validation._prd_validation_findings import enforce_valid_invariant, has_blocking_failure
 from trw_mcp.state.validation.prd_integrity import build_path_index_partial_warning, run_prd_integrity_checks
 from trw_mcp.state.validation.prd_quality import (
     _build_smell_suggestion,
@@ -257,7 +258,12 @@ def refresh_dynamic_prd_validation(
 
     result.improvement_suggestions = suggestions
     result.failures = [*result.failures, *integrity_failures, *wiring_failures]
-    result.valid = result.valid and not integrity_failures and not wiring_failures
+    # Only an error-severity finding may flip `valid`. Advisory integrity
+    # warnings (e.g. an ambiguous bare filename) used to reject a PRD while
+    # naming no error at all — a verdict the reader could not act on.
+    result.valid = (
+        result.valid and not has_blocking_failure(integrity_failures) and not has_blocking_failure(wiring_failures)
+    )
 
     # PRD-FIX-112: a partial result is ALWAYS visibly partial (never a silent
     # pass). Prepend a loud marker naming the cause and expose the machine-
@@ -285,6 +291,7 @@ def refresh_dynamic_prd_validation(
                 "grounding for the skipped groups was NOT performed."
             )
         result.integrity_warnings = [marker, *result.integrity_warnings]
+    enforce_valid_invariant(result)
     if budget_report is not None:
         budget_report["validation_partial"] = validation_partial
         budget_report["checks_skipped"] = list(checks_skipped)

@@ -127,7 +127,7 @@ class TestLocalModelScoping:
             phase="implement",
             files_modified_since_checkpoint=2,
         )
-        recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
+        recall_context = type("RecallContext", (), {"modified_files": ["api/services/parsers.py"]})()
 
         with (
             patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
@@ -163,7 +163,7 @@ class TestLocalModelScoping:
             phase="implement",
             files_modified_since_checkpoint=2,
         )
-        recall_context = type("RecallContext", (), {"modified_files": ["backend/services/parsers.py"]})()
+        recall_context = type("RecallContext", (), {"modified_files": ["api/services/parsers.py"]})()
 
         with (
             patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),

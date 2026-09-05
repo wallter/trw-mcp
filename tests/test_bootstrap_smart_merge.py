@@ -227,6 +227,114 @@ class TestWriteInstructionFileWithMerge:
                 assert "FOO.md" in result["preserved"]
 
 
+class TestWriteInstructionFileWithMergeIsGuarded:
+    """PRD-CORE-247: the Copilot/Antigravity writer routes through the FIX-123 guard.
+
+    This helper was the one bare, non-atomic ``Path.write_text`` left outside the
+    guard after PRD-FIX-123, and it targets ``.github/copilot-instructions.md``
+    and ``ANTIGRAVITY.md`` — files a USER owns. The FR06 AST totality scan could
+    not see it: it writes to a bare ``target_path`` PARAMETER, so neither the
+    surface-filename predicate nor the ``agents_md``/``claude_md`` name hints
+    matched. Behaviour is asserted on the real path instead.
+    """
+
+    def test_a_destructive_rewrite_is_refused_and_the_file_is_untouched(self, tmp_path: Path) -> None:
+        """The non-generated shrink floor now applies to this writer.
+
+        Fails before the change: the bare ``write_text`` had no floor, so this
+        wrote and destroyed every hand-written line.
+        """
+        target = tmp_path / "AGENTS.md"
+        original = "\n".join(f"# hand-written rule {i}" for i in range(400)) + "\n"
+        target.write_text(original, encoding="utf-8")
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
+
+        write_instruction_file_with_merge(
+            target_path=target,
+            rel_path="AGENTS.md",
+            trw_section=_section("tiny"),
+            start_marker=_START,
+            end_marker=_END,
+            force=True,
+            result=result,
+        )
+
+        # ``force`` bypasses the shrink floors by design, but the guard still
+        # takes a backup — which is what makes the loss recoverable.
+        backups = list((tmp_path / ".trw" / "backups" / "instructions").rglob("*"))
+        assert any(b.is_file() for b in backups), (
+            "a forced overwrite of user content must leave a backup; before this change the writer "
+            "called Path.write_text directly and no backup existed"
+        )
+
+    def test_a_refusal_is_reported_as_an_error_not_a_silent_success(self, tmp_path: Path) -> None:
+        """A guard refusal must not be recorded as ``created``/``updated``.
+
+        Reporting a refused write as a success is the "unevaluated gate that
+        reads like a passed gate" shape; this helper's contract is to append to
+        ``errors`` and leave the bookkeeping keys empty.
+        """
+        from trw_mcp.models.typed_dicts._ceremony import InstructionWriteRefusalDict
+        from trw_mcp.state.claude_md import _write_guard
+
+        target = tmp_path / "AGENTS.md"
+        target.write_text("# user content\n", encoding="utf-8")
+        result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
+
+        refusal: InstructionWriteRefusalDict = {  # type: ignore[typeddict-item]
+            "path": str(target),
+            "reason": "non_generated_shrink",
+            "detail": "induced",
+        }
+        original = _write_guard.guarded_instruction_write
+
+        def _refuse(*_args: object, **_kwargs: object) -> object:
+            return _write_guard.InstructionWriteVerdict(written=False, refusal=refusal)
+
+        _write_guard.guarded_instruction_write = _refuse  # type: ignore[assignment]
+        try:
+            write_instruction_file_with_merge(
+                target_path=target,
+                rel_path="AGENTS.md",
+                trw_section=_section("new"),
+                start_marker=_START,
+                end_marker=_END,
+                force=False,
+                result=result,
+            )
+        finally:
+            _write_guard.guarded_instruction_write = original  # type: ignore[assignment]
+
+        assert result["created"] == [] and result["updated"] == []
+        assert any("non_generated_shrink" in err for err in result["errors"]), result["errors"]
+
+    def test_the_writer_reaches_the_guard_symbol(self) -> None:
+        """Wiring assertion: the module names the sanctioned seam.
+
+        Paired with the behavioural tests above rather than standing alone — a
+        referenced-but-uncalled import would satisfy this and fail those.
+        """
+        import ast
+
+        source = (Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "bootstrap" / "_file_ops.py").read_text(
+            encoding="utf-8"
+        )
+        fn = next(
+            node
+            for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "write_instruction_file_with_merge"
+        )
+        called = {
+            node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute))
+        }
+        assert "guarded_instruction_write" in called
+        # Scoped to THIS function: the module legitimately writes non-instruction
+        # scaffold files and the generated hook-env script elsewhere.
+        assert "write_text" not in called, "the bare writer must be gone, not merely joined by the guard"
+
+
 # ── Cross-client parity check ────────────────────────────────────────────
 
 

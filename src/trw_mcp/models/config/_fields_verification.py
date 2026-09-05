@@ -39,18 +39,28 @@ class _VerificationFields:
         description="Max changed files the post-commit sidecar refresh processes per commit.",
     )
 
-    #: Delivery-rate gate for the T2 tier (FR01 / NFR02). 0.90 is the
-    #: synthesis-specified >=90% of eligible edits.
-    hint_delivery_rate_min: float = Field(
-        default=0.90,
+    # -- PRD-CORE-244-FR03: a positive verification verdict ----------------
+    #: Lowest recomputed anchor score a "verified" verdict tolerates. At the
+    #: default 1.0 a single moved anchor is enough to withhold the positive
+    #: verdict, which is the conservative reading: "verified" is a claim the
+    #: pass makes on the operator's behalf, so it must not survive a partially
+    #: drifted anchor set. Lower it only with evidence that partial drift is
+    #: acceptable in a given repo.
+    anchor_validity_verified_floor: float = Field(
+        default=1.0,
         ge=0.0,
         le=1.0,
-        description="Minimum share of eligible edits that must receive a T2 hint.",
+        description="Minimum recomputed anchor_validity for a 'verified' verification verdict.",
     )
 
-    #: Trailing window over which the delivery rate is measured.
-    hint_delivery_measurement_window_days: int = Field(
-        default=14,
-        ge=1,
-        description="Trailing-window length (days) for the hint-delivery rate measurement.",
+    #: How long a persisted verification verdict stays reusable. Within this
+    #: window the recall pass reuses ``verification_checked_at``'s verdict and
+    #: performs NO filesystem verification for that entry. 3600s bounds the
+    #: staleness of a reused verdict to an hour while removing the repeated
+    #: per-recall filesystem scan that dominated the pass. 0 disables reuse.
+    verification_cache_ttl_seconds: int = Field(
+        default=3600,
+        ge=0,
+        le=604_800,
+        description="Seconds a persisted verification verdict is reused before the pass re-checks an entry.",
     )

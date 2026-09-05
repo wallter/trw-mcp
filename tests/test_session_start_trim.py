@@ -228,7 +228,20 @@ class TestFoldDeferredBlocks:
     """Compact mode folds repetitive *_deferred advisory blocks (2026-07-12)."""
 
     def _pressure_payload(self) -> dict:  # type: ignore[type-arg]
-        block = {"reason": "writer_pressure", "writer_count": 9, "threshold": 2}
+        # PRD-CORE-257-FR04: the advisory gained the streak's age, its count and
+        # the two measurement states, and dropped the legacy ``defer_reason``.
+        # This fixture must track ``writer_pressure_details`` or the fold is
+        # being exercised against a shape the code no longer emits.
+        block = {
+            "reason": "writer_pressure",
+            "writer_count": 9,
+            "peer_writer_count": 8,
+            "threshold": 8,
+            "deferral_age_hours": 1.5,
+            "deferred_count": 3,
+            "census_state": "measured",
+            "ledger_state": "ok",
+        }
         return {
             "learnings": [],
             "run": {"active_run": None},
@@ -238,7 +251,10 @@ class TestFoldDeferredBlocks:
             "auto_upgrade_check_deferred": dict(block),
             "stale_runs_deferred": dict(block),
             "embeddings_backfill_deferred": dict(block),
-            "wal_checkpoint_deferred": dict(block),
+            # PRD-CORE-248 FR04 deleted wal_checkpoint_deferred; the fold is
+            # generic over any *_deferred key, so this uses a step that still
+            # defers rather than pinning the shape of one that cannot.
+            "pending_learns_deferred": dict(block),
             "auto_recall_deferred": {"reason": "session_start_compacted", "detail": "optional"},
         }
 
@@ -246,16 +262,22 @@ class TestFoldDeferredBlocks:
         result = trim_session_start_payload(self._pressure_payload(), verbose=False)
 
         assert "side_effects_deferred" not in result
-        assert "wal_checkpoint_deferred" not in result
+        assert "pending_learns_deferred" not in result
         assert result["deferred"]["writer_pressure"] == [
             "auto_upgrade_check",
             "embeddings_backfill",
+            "pending_learns",
             "side_effects",
             "stale_runs",
-            "wal_checkpoint",
         ]
         assert result["deferred"]["session_start_compacted"] == ["auto_recall"]
         assert result["deferred_writer_count"] == 9
+        # FR11: the compact response keeps the bar the work was deferred against
+        # and how long it has been held, instead of stating only that it was.
+        assert result["deferred_threshold"] == 8
+        assert result["deferred_max_age_hours"] == 1.5
+        assert result["deferred_census_state"] == "measured"
+        assert result["deferred_ledger_state"] == "ok"
 
     def test_verbose_keeps_individual_blocks(self) -> None:
         result = trim_session_start_payload(self._pressure_payload(), verbose=True)
@@ -270,6 +292,18 @@ class TestFoldDeferredBlocks:
 
         assert result["custom_deferred"] == {"reason": "writer_pressure", "payload": {"x": 1}}
         assert "custom" not in result["deferred"]["writer_pressure"]
+
+    def test_fold_reports_the_worst_age_and_the_least_reassuring_states(self) -> None:
+        """Folding must never launder a degraded read into the healthiest one."""
+        payload = self._pressure_payload()
+        older = dict(payload["side_effects_deferred"])
+        older.update({"deferral_age_hours": 5.75, "ledger_state": "degraded", "census_state": "unreadable"})
+        payload["side_effects_deferred"] = older
+        result = trim_session_start_payload(payload, verbose=False)
+
+        assert result["deferred_max_age_hours"] == 5.75
+        assert result["deferred_ledger_state"] == "degraded"
+        assert result["deferred_census_state"] == "unreadable"
 
     def test_no_deferred_blocks_no_summary_key(self) -> None:
         result = trim_session_start_payload({"learnings": [], "run": {}, "errors": [], "success": True}, verbose=False)
@@ -324,3 +358,97 @@ class TestCompactDropKeys:
         after = trim_session_start_payload(payload, verbose=False)["payload_token_estimate"]
 
         assert after < before, "dropping five stamps did not shrink the payload"
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-263-NFR04 — backward compatibility of the new health keys
+# ---------------------------------------------------------------------------
+
+
+def test_new_health_keys_survive_trim_when_not_healthy() -> None:
+    """PRD-CORE-263-NFR04 — a degraded or unmeasured result keeps its reason.
+
+    The added keys are ``sync_health.status``/``reason`` (FR02) and the per-probe
+    ``measured`` flag plus the aggregate ``unmeasured`` list (FR03). The trim may
+    FOLD the sync block for a fully healthy result — it already does, into
+    ``health_summary`` — but the not-measured state must remain readable, and the
+    pipeline block is not a trimmed diagnostic at all.
+    """
+    payload = cast(
+        "SessionStartResultDict",
+        {
+            "success": True,
+            "errors": [],
+            "run": {"active_run": None, "status": "no_active_run"},
+            "framework_reminder": "read the framework",
+            "timestamp": "2026-09-04T00:00:00+00:00",
+            "learnings": [],
+            "sync_health": {
+                "status": "not_measured",
+                "reason": "sync_state_absent",
+                "consecutive_failures": 0,
+                "last_push_at": None,
+                "advisory": "sync health not measured: sync_state_absent",
+            },
+            "pipeline_health": {
+                "degraded": False,
+                "advisory": "",
+                "unmeasured": ["sync_push"],
+                "sync_push": {
+                    "degraded": False,
+                    "measured": False,
+                    "advisory": "sync_push not measured: RuntimeError",
+                },
+            },
+            "degradations": [{"step": "sync_health", "error_class": "OSError", "message": "io", "severity": "warn"}],
+            "degraded_steps": 1,
+        },
+    )
+
+    trimmed = trim_session_start_payload(payload, verbose=False)
+
+    # The sync block is a declared diagnostic and IS folded — but into a summary
+    # that carries the not-measured state rather than dropping it silently.
+    assert "not_measured" in str(trimmed["health_summary"])
+    # The pipeline block is not a trimmed diagnostic; the flags survive whole.
+    pipeline = cast("dict[str, object]", trimmed["pipeline_health"])
+    assert pipeline["unmeasured"] == ["sync_push"]
+    assert cast("dict[str, object]", pipeline["sync_push"])["measured"] is False
+    assert "RuntimeError" in str(cast("dict[str, object]", pipeline["sync_push"])["advisory"])
+    # Degradations are never trimmed — they are the enumeration of what failed.
+    assert trimmed["degradations"] == payload["degradations"]
+    assert trimmed["degraded_steps"] == 1
+
+
+def test_pre_change_payload_keys_are_a_subset_of_the_post_change_ones() -> None:
+    """PRD-CORE-263-NFR04 — the new information arrives as ADDED keys only."""
+    pre_change = _make_results(3)
+    post_change = cast("dict[str, object]", dict(cast("dict[str, object]", _make_results(3))))
+    post_change["pipeline_health"] = {"degraded": False, "advisory": "", "sync_push": {"measured": True}}
+    post_change["wal_checkpoint"] = {"checkpointed": True}
+
+    before = trim_session_start_payload(pre_change, verbose=True)
+    after = trim_session_start_payload(cast("SessionStartResultDict", post_change), verbose=True)
+
+    assert set(cast("dict[str, object]", before)) <= set(cast("dict[str, object]", after))
+    for key, value in cast("dict[str, object]", before).items():
+        if key == "payload_token_estimate":
+            continue
+        assert cast("dict[str, object]", after)[key] == value, key
+
+
+def test_a_pre_change_config_still_loads_with_unchanged_defaults() -> None:
+    """PRD-CORE-263-NFR04 / FR09 — retiring a field is silent to a config that sets it.
+
+    ``TRWConfig`` carries ``extra="ignore"``, so a project still setting the
+    retired ``run_auto_close_age_days`` loads without error. That silence is the
+    P12 shape the pattern document names and cannot be closed from inside the
+    config model, which is why the changelog states the removal outright.
+    """
+    from trw_mcp.models.config import TRWConfig
+
+    cfg = TRWConfig(run_auto_close_age_days=14)  # type: ignore[call-arg]
+    assert not hasattr(cfg, "run_auto_close_age_days")
+    assert cfg.run_stale_ttl_hours == 48
+    assert cfg.run_auto_close_enabled is True
+    assert cfg.assertion_stale_threshold_days == 30

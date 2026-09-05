@@ -4,8 +4,9 @@ Guards against the regressions that produced this PRD in the first place:
   - root ``CLAUDE.md`` accreting past 200 effective lines.
   - ``trw-mcp/CLAUDE.md`` re-growing past 40 lines (duplicated prose).
   - ``.opencode/INSTRUCTIONS.md`` (when present) exceeding 100 lines.
-  - Stale "Five built-in profiles" phrasing lingering after the profile
-    registry expanded to 8 built-in profiles.
+  - Stale "Five built-in profiles" phrasing lingering after the client-profile
+    registry changed shape (the live count comes from the registry, never from
+    a number written down here).
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ROOT_CLAUDE_MD = _REPO_ROOT / "CLAUDE.md"
 _TRW_MCP_CLAUDE_MD = _REPO_ROOT / "trw-mcp" / "CLAUDE.md"
 _OPENCODE_INSTRUCTIONS = _REPO_ROOT / ".opencode" / "INSTRUCTIONS.md"
-_PROFILES_DIR = _REPO_ROOT / "trw-mcp" / "data" / "profiles"
 _CLIENT_PROFILES_DOC = _REPO_ROOT / "docs" / "CLIENT-PROFILES.md"
 
 
@@ -79,40 +79,59 @@ def test_client_profiles_doc_no_stale_count() -> None:
     )
 
 
+_SPELLED_COUNTS: dict[int, str] = {
+    1: "One",
+    2: "Two",
+    3: "Three",
+    4: "Four",
+    5: "Five",
+    6: "Six",
+    7: "Seven",
+    8: "Eight",
+    9: "Nine",
+    10: "Ten",
+}
+
+
 def test_profile_count_matches_registry() -> None:
-    """FR12: a prose-bearing CLAUDE.md states the registry count.
+    """FR12: every built-in-profile count in CLAUDE.md matches the live registry.
 
-    Pointer-only client instruction files deliberately carry no duplicated
-    framework prose. Their imported instruction surface owns the dynamic
-    guidance, so forcing a count into the pointer defeats the LOC/de-dup goal.
+    Two things this test used to get wrong, both fixed here:
+
+    * It treated the presence of ``@.trw/INSTRUCTIONS.md`` as proof the whole
+      file was a pointer and then FORBADE any profile-count prose. PRD-CORE-247
+      collapsed the generated TRW block down to exactly that one import line, so
+      the marker now appears in a root CLAUDE.md whose hand-written project prose
+      above it still documents the client surface. The heuristic fired on prose
+      the instruction budget never claimed.
+    * It counted ``.yaml`` files in ``trw-mcp/data/profiles``. Those are bundled
+      per-client CONFIG OVERLAYS, not the profile registry: the directory still
+      carries a retired ``aider.yaml`` and carries no ``antigravity-cli.yaml``,
+      so its file count matches the supported-profile count only by coincidence.
+
+    Authority is the runtime registry — ``build_client_profile_rows()``, which
+    iterates the active client order with retired ids excluded. Every occurrence
+    of the phrase is checked, so a second stale count elsewhere in the file
+    cannot hide behind a correct first one.
     """
-    if not _PROFILES_DIR.is_dir():
-        pytest.skip(f"profile registry not found at {_PROFILES_DIR}")
-    count = sum(1 for p in _PROFILES_DIR.iterdir() if p.suffix == ".yaml")
-    assert count > 0, "no profiles discovered"
-    content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
-    if "@.trw/INSTRUCTIONS.md" in content:
-        assert "built-in profiles" not in content, "pointer-only CLAUDE.md must not duplicate profile-count prose"
-        return
+    import re
 
-    spelled = {
-        1: "One",
-        2: "Two",
-        3: "Three",
-        4: "Four",
-        5: "Five",
-        6: "Six",
-        7: "Seven",
-        8: "Eight",
-        9: "Nine",
-        10: "Ten",
-    }
-    digit_phrase = f"{count} built-in profiles"
-    spelled_phrase = f"{spelled.get(count, str(count))} built-in profiles"
-    assert digit_phrase in content or spelled_phrase in content, (
-        f"CLAUDE.md must state the current count ({count}) of built-in profiles; "
-        f"expected '{digit_phrase}' or '{spelled_phrase}'."
+    from trw_mcp.client_profiles.catalog import build_client_profile_rows
+
+    count = len(build_client_profile_rows())
+    assert count > 0, "no built-in client profiles discovered"
+    content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
+
+    accepted = {str(count), _SPELLED_COUNTS.get(count, str(count))}
+    stated = re.findall(r"(\S+)\s+built-in profiles", content)
+    assert stated, (
+        f"CLAUDE.md states no built-in-profile count; expected one of {sorted(accepted)} before 'built-in profiles'."
     )
+    for word in stated:
+        assert word in accepted, (
+            f"CLAUDE.md says '{word} built-in profiles' but the registry has {count}. "
+            f"Expected one of {sorted(accepted)}."
+        )
 
 
 def test_loc_lint_fails_at_201(tmp_path: Path) -> None:

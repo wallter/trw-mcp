@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
-from trw_mcp.models.config import get_config
-from trw_mcp.state.persistence import FileStateWriter
+from trw_mcp.models.config import TRWConfig, get_config
+
+if TYPE_CHECKING:
+    from trw_mcp.state.claude_md._write_guard import InstructionWriteVerdict
 
 logger = structlog.get_logger(__name__)
 
@@ -16,6 +19,15 @@ logger = structlog.get_logger(__name__)
 TRW_AUTO_COMMENT = "<!-- TRW AUTO-GENERATED \u2014 do not edit between markers -->"
 TRW_MARKER_START = "<!-- trw:start -->"
 TRW_MARKER_END = "<!-- trw:end -->"
+
+# PRD-CORE-243-FR06/FR08: the retired legacy dialect cursor-cli's install-time
+# writer used to emit as ITS OWN block instead of merging into TRW_MARKER_START
+# above. No writer emits this pair anymore -- it is recognised only so
+# ``_migrate_legacy_marker_block`` (below) and ``non_generated_bytes`` (in
+# ``_write_measure.py``) can heal a file a pre-fix release left with a dead
+# second block, without either treating that dead block as user content.
+LEGACY_TRW_MARKER_START = "<!-- TRW:BEGIN -->"
+LEGACY_TRW_MARKER_END = "<!-- TRW:END -->"
 
 
 def load_claude_md_template(trw_dir: Path) -> str:
@@ -150,66 +162,42 @@ def _block_cut_index(lines: list[str], start_idx: int) -> int:
     return cut
 
 
-def _truncate_with_markers(
-    content_lines: list[str],
-    max_lines: int,
-    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
-) -> list[str]:
-    """Truncate content while preserving TRW marker boundaries.
-
-    QUAL-018: Finds the TRW start/end markers and truncates user content
-    before them rather than cutting inside the auto-generated section.
-    Falls back to simple truncation if markers are not intact.
-
-    Args:
-        content_lines: Lines of the CLAUDE.md file.
-        max_lines: Maximum allowed line count.
-
-    Returns:
-        Truncated list of lines.
-    """
-    # Line-anchored, like every other marker scan in this module (see
-    # _marker_line_index); the previous ``marker in line`` form matched a marker
-    # mentioned inside prose or backticks and mis-sited the truncation boundary.
-    marker_start, marker_end = markers
-    start_idx = _marker_line_index(content_lines, marker_start)
-    end_idx = _marker_line_index(content_lines, marker_end, after=start_idx) if start_idx is not None else None
-
-    if start_idx is not None and end_idx is not None and end_idx < len(content_lines):
-        user_lines = content_lines[:start_idx]
-        trw_lines = content_lines[start_idx : end_idx + 1]
-        after_lines = content_lines[end_idx + 1 :]
-        trw_size = len(trw_lines) + len(after_lines)
-        user_budget = max(0, max_lines - trw_size - 1)
-        truncated_user = user_lines[:user_budget]
-        truncated_user.append("<!-- trw: user content truncated to line limit -->")
-        return truncated_user + trw_lines + after_lines
-
-    # No intact markers — fall back to simple truncation
-    result = content_lines[:max_lines]
-    result.append("<!-- trw: truncated to line limit -->")
-    return result
-
-
 def merge_trw_section(
     target: Path,
     trw_section: str,
-    max_lines: int,
+    max_lines: int | None,
     markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
-) -> int:
-    """Merge TRW auto-generated section into a CLAUDE.md file.
+    *,
+    force: bool = False,
+    dry_run: bool = False,
+    config: TRWConfig | None = None,
+    project_root: Path | None = None,
+) -> InstructionWriteVerdict:
+    """Merge the TRW auto-generated section into an instruction file.
 
-    Preserves user-written content outside the TRW markers.
-    Replaces existing TRW section if markers are present,
-    otherwise appends.
+    Preserves user-written content outside the TRW markers. Replaces an existing
+    TRW section when markers are present, otherwise appends.
+
+    This function only COMPUTES the candidate content; whether it lands is
+    decided by ``guarded_instruction_write`` (PRD-FIX-123-FR06). Overflow past
+    *max_lines* is refused, never truncated: the pre-FIX-123 code sliced the
+    user's region to fit (PRD-QUAL-018-FR02, now superseded) and destroyed 128
+    hand-written lines in a reported incident.
 
     Args:
-        target: Path to the CLAUDE.md file.
+        target: Path to the instruction file.
         trw_section: The generated TRW section markdown.
-        max_lines: Maximum allowed lines in the output file.
+        max_lines: Maximum allowed lines in the output file, or ``None`` for a
+            writer that declares no ceiling (e.g. cursor-cli's AGENTS.md merge,
+            which never had one before PRD-CORE-243 unified it onto this seam).
+        markers: Marker pair delimiting the generated block.
+        force: Bypass the guard's shrink floors (call argument only).
+        dry_run: Return a unified diff and write nothing.
+        config: Active configuration; resolved by the guard when absent.
+        project_root: Root used to contain the backup directory.
 
     Returns:
-        Total line count of the written file.
+        The guard's verdict: written, refused, or a dry-run diff.
     """
     # More than one well-formed block: we update the FIRST and the others go
     # stale. Refusing here is not better — the caller's malformed path appends,
@@ -225,12 +213,6 @@ def merge_trw_section(
             note="only the first block is updated; the others will not track the framework",
         )
 
-    # A blank-line separator is inserted before the TRW section whenever there is
-    # preceding user content. ``before`` is rstripped and ``trw_section`` is
-    # left-stripped of newlines, so the join can never glue the leading
-    # ``<!-- TRW AUTO-GENERATED -->`` comment onto the end of a prose line — the
-    # exact defect that corrupted AGENTS.md, whose section (unlike the CLAUDE.md
-    # renderer's) does not start with a newline (PRD-QUAL-112).
     if target.exists():
         # PRD-CORE-203 FR04: never clobber a single-source pointer file (e.g. a
         # CLAUDE.md whose only substantive line is ``@AGENTS.md``). The shared
@@ -240,8 +222,83 @@ def merge_trw_section(
         from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
 
         if pointer_skip_guard(target) is not None:
-            return len(target.read_text(encoding="utf-8").split("\n"))
-        existing = target.read_text(encoding="utf-8")
+            from trw_mcp.state.claude_md._write_guard import InstructionWriteVerdict as _Verdict
+
+            return _Verdict(written=False, total_lines=len(target.read_text(encoding="utf-8").split("\n")))
+
+    new_content = render_merged_content(target, trw_section, markers)
+
+    # Lazy import: ``_write_guard`` imports this module's marker helpers at
+    # module scope, so the seam is resolved at call time to keep that one-way.
+    from trw_mcp.state.claude_md._write_guard import guarded_instruction_write
+
+    return guarded_instruction_write(
+        target,
+        new_content,
+        markers=markers,
+        max_lines=max_lines,
+        force=force,
+        dry_run=dry_run,
+        config=config,
+        project_root=project_root,
+    )
+
+
+def _migrate_legacy_marker_block(content: str) -> str:
+    """Strip a dead legacy ``<!-- TRW:BEGIN -->``...``<!-- TRW:END -->`` block.
+
+    PRD-CORE-243-FR06/FR08: cursor-cli's AGENTS.md install writer used to emit
+    this uppercase dialect as ITS OWN block instead of merging into the shared
+    ``TRW_MARKER_START`` block every other writer uses. A file written before
+    that fix can therefore still carry a dead legacy block -- alone, or
+    alongside the live shared block (the two-writer/two-dialect duplicate this
+    migration exists to heal). Removing it here, ahead of every merge below,
+    means every ``render_merged_content`` caller heals the file it touches
+    rather than requiring a one-off migration script.
+
+    Only the FIRST legacy block is removed -- a second one is a fossil the
+    ``duplicate_block`` lint (``scripts/lint-instruction-surfaces.py``) still
+    flags, same as it does for any other stray duplicate.
+
+    Byte-preserving for everything outside the legacy markers: the same
+    blank-line trimming applied to the live block below is applied here so the
+    two strips compose without leaving a stray blank run.
+    """
+    lines = content.splitlines()
+    start_idx = _marker_line_index(lines, LEGACY_TRW_MARKER_START)
+    if start_idx is None:
+        return content
+    end_idx = _marker_line_index(lines, LEGACY_TRW_MARKER_END, after=start_idx)
+    if end_idx is None:
+        return content
+    cut = _block_cut_index(lines, start_idx)
+    before = "\n".join(lines[:cut]).rstrip()
+    after = "\n".join(lines[end_idx + 1 :]).lstrip("\n")
+    if before and after:
+        return before + "\n\n" + after
+    return before or after
+
+
+def render_merged_content(
+    target: Path,
+    trw_section: str,
+    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+) -> str:
+    """Return the exact content a merge WOULD write, without writing it.
+
+    Pure with respect to *target* (read only). PRD-FIX-123-FR07 needs this so
+    the size gate can measure the same MERGED total the writer enforces on,
+    rather than the rendered section alone — the mismatch that let a 104-line
+    section pass the gate and then truncate a 322-line file.
+    """
+    # A blank-line separator is inserted before the TRW section whenever there is
+    # preceding user content. ``before`` is rstripped and ``trw_section`` is
+    # left-stripped of newlines, so the join can never glue the leading
+    # ``<!-- TRW AUTO-GENERATED -->`` comment onto the end of a prose line — the
+    # exact defect that corrupted AGENTS.md, whose section (unlike the CLAUDE.md
+    # renderer's) does not start with a newline (PRD-QUAL-112).
+    if target.exists():
+        existing = _migrate_legacy_marker_block(target.read_text(encoding="utf-8"))
         # Line-anchored whole-line marker matching. The previous substring form
         # (``existing.index(TRW_MARKER_START)``) resolved to the FIRST occurrence
         # anywhere in the file — including a marker mentioned inside prose or
@@ -265,17 +322,15 @@ def merge_trw_section(
         else:
             before = existing.rstrip()
             separator = "\n\n" if before else ""
-            new_content = before + separator + trw_section.lstrip("\n") + "\n"
+            # ``.strip("\n")`` (not ``.lstrip``): every real caller's
+            # trw_section already ends with its own trailing newline (it is
+            # built as ``...{TRW_MARKER_END}\n``), so appending a bare "\n"
+            # unconditionally left an extra blank line at EOF on the write
+            # that first created this branch's shape, self-correcting only on
+            # the NEXT merge (idempotent from run 2 onward, not run 1) —
+            # surfaced by PRD-CORE-243's cursor-cli legacy-block migration,
+            # which lands a file in exactly this markerless-but-existing state.
+            new_content = before + separator + trw_section.strip("\n") + "\n"
     else:
-        new_content = trw_section.lstrip() + "\n"
-
-    content_lines = new_content.split("\n")
-    if len(content_lines) > max_lines:
-        content_lines = _truncate_with_markers(content_lines, max_lines, markers)
-        new_content = "\n".join(content_lines)
-
-    writer = FileStateWriter()
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    writer.write_text(target, new_content)
-    return len(new_content.split("\n"))
+        new_content = trw_section.lstrip().rstrip("\n") + "\n"
+    return new_content

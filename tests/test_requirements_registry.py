@@ -159,6 +159,7 @@ class TestRegistryBuild:
         prds = tmp_path / "prds"
         _write_prd(prds, "PRD-CORE-001")
         writer, ledger = _writer(tmp_path)
+        writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
         writer.set_execution_state(
             "PRD-CORE-001",
             ExecutionState.ACTIVE,
@@ -199,6 +200,7 @@ class TestRegistryBuild:
         prds = tmp_path / "prds"
         _write_prd(prds, "PRD-CORE-001")
         writer, ledger = _writer(tmp_path, today="2026-07-01")
+        writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
         writer.set_execution_state(
             "PRD-CORE-001", ExecutionState.BLOCKED_EXTERNAL, prds_dir=prds, authorization_receipt=AUTH, actor="operator"
         )
@@ -234,6 +236,9 @@ def _registry_with_wip(
 ) -> object:
     prds = tmp_path / "prds"
     writer, ledger = _writer(tmp_path)
+    # PRD-CORE-244-FR07: activation is fail-closed on an unevaluated registry,
+    # so the WIP matrix must start from an authorized epoch.
+    writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
     for prd_id, priority, owner in active:
         _write_prd(prds, prd_id, priority=priority)
         writer.set_execution_state(
@@ -308,6 +313,7 @@ class TestWipLimits:
 
         prds = tmp_path / "prds"
         writer, ledger = _writer(tmp_path)
+        writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
         _write_prd(prds, "PRD-CORE-001", priority="P0")
         writer.set_execution_state(
             "PRD-CORE-001",
@@ -402,6 +408,9 @@ class TestConcurrentActivationLock:
         _write_prd(prds, "PRD-CORE-001", priority="P0", owner="team-a")
         _write_prd(prds, "PRD-CORE-002", priority="P0", owner="team-a")
         writer, ledger = _writer(tmp_path)
+        # PRD-CORE-244-FR07: an unevaluated registry refuses every activation, so
+        # the race would otherwise be won by nobody rather than by exactly one.
+        writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
 
         barrier = threading.Barrier(2)
         result_lock = threading.Lock()
@@ -460,3 +469,78 @@ class TestConcurrentActivationLock:
 
         actions = load_ledger(ledger)  # raises SchedulingLedgerError on gap/fork
         assert [action.sequence for action in actions] == [1, 2, 3, 4, 5]
+
+
+class TestGenesisEpochExpiryReporting:
+    """PRD-CORE-244 FR07 — an unevaluated expiry must never read as an empty list.
+
+    Measured at HEAD before this change: epoch 1970-01-01, ``expired: []``,
+    ``hot path: 350 of 350 executable``, and 261 of those 350 entries carrying a
+    past-dated renewal date. The positive-looking statement was produced by an
+    evaluator that had never run.
+    """
+
+    def test_genesis_epoch_reports_expiry_not_evaluated(self, tmp_path: Path) -> None:
+        prds = tmp_path / "prds"
+        # 41 days stale — WOULD be expired under any real epoch.
+        _write_prd(prds, "PRD-CORE-001", status="draft", updated="2026-05-01")
+        _, ledger = _writer(tmp_path, today="2026-06-11")
+
+        registry = build_registry(prds, ledger)
+
+        assert registry.status == "epoch_unset"
+        assert registry.expiry_evaluated is False
+        assert registry.expired == []
+        assert registry.hot_path == ["PRD-CORE-001"]
+        assert registry.canonical_document()["expiry_evaluated"] is False
+
+    def test_authorized_epoch_evaluates_expiry_exactly_as_before(self, tmp_path: Path) -> None:
+        """The evaluated path is behaviour-preserving."""
+        prds = tmp_path / "prds"
+        _write_prd(prds, "PRD-CORE-001", status="draft", updated="2026-05-01")
+        writer, ledger = _writer(tmp_path, today="2026-06-11")
+        writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
+
+        registry = build_registry(prds, ledger)
+
+        assert registry.status == "ok"
+        assert registry.expiry_evaluated is True
+        assert registry.expired == ["PRD-CORE-001"]
+        assert registry.hot_path == []
+
+    def test_unevaluated_registry_cannot_activate(self, tmp_path: Path) -> None:
+        """FR07: fail-closed for activation, exactly like stale_scheduling_head."""
+        prds = tmp_path / "prds"
+        _write_prd(prds, "PRD-CORE-001", priority="P0")
+        _, ledger = _writer(tmp_path)
+
+        decision = evaluate_activation(build_registry(prds, ledger), "PRD-CORE-001")
+
+        assert decision.allowed is False
+        assert "epoch_unset" in decision.reason
+
+    def test_render_block_states_expiry_not_evaluated(self, tmp_path: Path) -> None:
+        """The projection SAYS it did not evaluate, rather than omitting the line."""
+        from trw_mcp.state._registry_block import render_registry_block
+
+        prds = tmp_path / "prds"
+        _write_prd(prds, "PRD-CORE-001", status="draft", updated="2026-05-01")
+        _, ledger = _writer(tmp_path, today="2026-06-11")
+
+        rendered = render_registry_block(build_registry(prds, ledger))
+
+        assert "- expiry: not evaluated (no authorized evaluation epoch)" in rendered
+        assert not any(line.startswith("- expired (left hot path)") for line in rendered)
+
+    def test_render_block_still_prints_the_expired_list_when_evaluated(self, tmp_path: Path) -> None:
+        from trw_mcp.state._registry_block import render_registry_block
+
+        prds = tmp_path / "prds"
+        _write_prd(prds, "PRD-CORE-001", status="draft", updated="2026-05-01")
+        writer, ledger = _writer(tmp_path, today="2026-06-11")
+        writer.advance_evaluation_epoch(authorization_receipt=AUTH, actor="operator")
+
+        rendered = render_registry_block(build_registry(prds, ledger))
+
+        assert "- expired (left hot path): PRD-CORE-001" in rendered
+        assert not any(line.startswith("- expiry: not evaluated") for line in rendered)

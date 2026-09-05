@@ -24,8 +24,8 @@ FEEDBACK_MARKER_END = "<!-- END: feedback-reporting -->"
 # Public llms.txt anchor — single source of truth for the light-mode link.
 _LLMS_TXT_ANCHOR = "https://trwframework.com/llms.txt#reporting-issues-to-trw"
 
-# The 6 SubmissionCategory enum values (PRD-CORE-182 — canonical backend
-# enum at backend/routers/submissions.py::SubmissionCategory). The full-mode
+# The 6 submission-category values accepted by the TRW platform's feedback API
+# (PRD-CORE-182; the API's SubmissionCategory enum is canonical). The full-mode
 # block names each one so an agent answering "how do I file a bug?" can
 # quote the valid categories without a second lookup.
 _CATEGORIES: tuple[str, ...] = (

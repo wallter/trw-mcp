@@ -360,13 +360,13 @@ def test_portable_write_lands_in_user_store(tmp_path: Path) -> None:
     assert result["status"] == "recorded"
 
     user_backend = get_user_backend()
-    entry = user_backend.get("L-portable1")
+    entry = user_backend.get("L-portable1", namespace=USER_NAMESPACE)
     assert entry is not None
     assert entry.namespace == USER_NAMESPACE
 
     # NOT in the project store.
     project_backend = memory_adapter.get_backend(trw_dir)
-    assert project_backend.get("L-portable1") is None
+    assert project_backend.get("L-portable1", namespace="default") is None
 
 
 def test_project_write_lands_in_project_store(tmp_path: Path) -> None:
@@ -380,12 +380,12 @@ def test_project_write_lands_in_project_store(tmp_path: Path) -> None:
         tags=["directive"],  # portable tag, but the path overrides -> project
     )
     project_backend = memory_adapter.get_backend(trw_dir)
-    entry = project_backend.get("L-projspecific")
+    entry = project_backend.get("L-projspecific", namespace="default")
     assert entry is not None
     assert entry.namespace == "default"
 
     user_backend = get_user_backend()
-    assert user_backend.get("L-projspecific") is None
+    assert user_backend.get("L-projspecific", namespace=USER_NAMESPACE) is None
 
 
 def test_native_user_entry_stamps_metadata_tier(tmp_path: Path) -> None:
@@ -404,7 +404,7 @@ def test_native_user_entry_stamps_metadata_tier(tmp_path: Path) -> None:
         tags=["directive"],
         source_type="human",
     )
-    entry = get_user_backend().get("L-native-tier")
+    entry = get_user_backend().get("L-native-tier", namespace=USER_NAMESPACE)
     assert entry is not None
     assert entry.metadata.get("tier") == "user"
 
@@ -419,7 +419,7 @@ def test_project_entry_does_not_stamp_metadata_tier(tmp_path: Path) -> None:
         "repo-local detail",
         scope="project",
     )
-    entry = memory_adapter.get_backend(trw_dir).get("L-proj-no-tier")
+    entry = memory_adapter.get_backend(trw_dir).get("L-proj-no-tier", namespace="default")
     assert entry is not None
     assert "tier" not in entry.metadata
 
@@ -442,11 +442,11 @@ def test_caller_metadata_tier_injection_overridden_on_project_route(tmp_path: Pa
         metadata={"tier": "user"},  # injection attempt on project-routed content
     )
     project_backend = memory_adapter.get_backend(trw_dir)
-    entry = project_backend.get("L-inject")
+    entry = project_backend.get("L-inject", namespace="default")
     assert entry is not None, "project-routed entry must land in the project store"
     # The injected user tier must be stripped (project entries carry no tier key).
     assert entry.metadata.get("tier") != "user"
-    assert get_user_backend().get("L-inject") is None
+    assert get_user_backend().get("L-inject", namespace=USER_NAMESPACE) is None
 
 
 def test_explicit_scope_user_override(tmp_path: Path) -> None:
@@ -458,7 +458,7 @@ def test_explicit_scope_user_override(tmp_path: Path) -> None:
         "detail",
         scope="user",
     )
-    assert get_user_backend().get("L-forceuser") is not None
+    assert get_user_backend().get("L-forceuser", namespace=USER_NAMESPACE) is not None
 
 
 def test_explicit_scope_project_override(tmp_path: Path) -> None:
@@ -472,8 +472,8 @@ def test_explicit_scope_project_override(tmp_path: Path) -> None:
         source_type="human",
         scope="project",
     )
-    assert memory_adapter.get_backend(trw_dir).get("L-forceproj") is not None
-    assert get_user_backend().get("L-forceproj") is None
+    assert memory_adapter.get_backend(trw_dir).get("L-forceproj", namespace="default") is not None
+    assert get_user_backend().get("L-forceproj", namespace=USER_NAMESPACE) is None
 
 
 def test_no_user_scope_all_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -489,4 +489,4 @@ def test_no_user_scope_all_project(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         tags=["directive"],
         source_type="human",
     )
-    assert memory_adapter.get_backend(trw_dir).get("L-noscope") is not None
+    assert memory_adapter.get_backend(trw_dir).get("L-noscope", namespace="default") is not None

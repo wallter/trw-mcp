@@ -20,7 +20,19 @@ class TestAutoRecallFailOpen:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When search_entries raises in auto-recall step, session_start still succeeds."""
+        """When search_entries raises in the phase-recall step, the payload degrades.
+
+        PRD-CORE-263-FR01: the second (and later) ``recall_learnings`` call lands
+        inside ``phase_recall``, one of the five steps the session-start table
+        declares ``critical``. Before this PRD the step swallowed its own
+        exception and returned a plausible default, so the failure was invisible
+        and ``success`` stayed true. The step now raises a typed
+        ``SessionStartStepError`` and the runner's critical branch degrades the
+        payload instead: ``success`` is false and ``errors`` names the step,
+        while ``trw_session_start`` itself still returns a payload rather than
+        propagating the exception (DR-001) — the mandated first tool call is
+        never taken down by a diagnostic failure.
+        """
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = _setup_trw_dir(tmp_path)
 
@@ -46,7 +58,11 @@ class TestAutoRecallFailOpen:
             result = tools["trw_session_start"].fn()
 
         assert "auto_recalled" not in result
-        assert result["success"] is True
+        assert result["success"] is False
+        assert any("phase_recall" in e for e in result["errors"])
+        phase_recall_degradations = [d for d in result.get("degradations", []) if d["step"] == "phase_recall"]
+        assert len(phase_recall_degradations) == 1
+        assert "search engine down" in phase_recall_degradations[0]["message"]
         assert "timestamp" in result
 
     def test_error_failopen_with_active_run(

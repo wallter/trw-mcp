@@ -9,12 +9,8 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 
-#: Every live copy of the hook. The vendored `trw-eval/trw-mcp-local/` copy was
-#: dropped here because that whole tree was deliberately deleted in
-#: `a77650f238` ("delete stale vendored trw-mcp-local (342 files, trw-mcp
-#: 0.39.2)"). This tuple kept naming it, so both tests in this module raised
-#: FileNotFoundError against a path removed on purpose — a stale reference, not
-#: a missing artifact.
+#: Every live copy of the hook (a formerly-vendored third mirror was deleted
+#: wholesale in `a77650f238`; only these two remain).
 #:
 #: Deliberately NOT filtered with `if path.exists()`: these two copies MUST both
 #: be present, and skipping absent ones would turn a deleted hook into a silent
@@ -27,12 +23,7 @@ _HOOK_PATHS = (
 
 def _copy_hook_to_temp(tmp_path: Path, source_hook: Path) -> tuple[Path, Path]:
     source_path = source_hook.as_posix()
-    if "/trw-eval/trw-mcp-local/" in source_path:
-        hook_label = "vendored"
-    elif "/src/trw_mcp/data/hooks/" in source_path:
-        hook_label = "bundled"
-    else:
-        hook_label = "dev"
+    hook_label = "bundled" if "/src/trw_mcp/data/hooks/" in source_path else "dev"
     project_root = tmp_path / hook_label
     hooks_dir = project_root / ".claude" / "hooks"
     context_dir = project_root / ".trw" / "context"

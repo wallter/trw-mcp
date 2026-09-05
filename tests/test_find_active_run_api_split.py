@@ -1,10 +1,11 @@
-"""PRD-FIX-085 FR01: find_active_run() is pin-only by default.
+"""PRD-FIX-085 FR01: find_active_run() is pin-only.
 
-The legacy mtime-scan fallback that previously kicked in when context
-is None has been moved to find_run_via_mtime_scan(). Five hot-path
-regressions in one week shared the root cause "caller forgot context=
-and fell through to the slow scan." Removing the implicit fallback
-eliminates the regression class mechanically.
+The legacy mtime-scan fallback that previously kicked in when context is
+None was split behind an explicit opt-in and then deleted outright by
+PRD-FIX-132, which found it had never acquired a production caller. Five
+hot-path regressions in one week shared the root cause "caller forgot
+context= and fell through to the slow scan." Removing the implicit
+fallback eliminates the regression class mechanically.
 """
 
 from __future__ import annotations
@@ -15,10 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from trw_mcp.state._paths import (
-    find_active_run,
-    find_run_via_mtime_scan,
-)
+from trw_mcp.state._paths import find_active_run
 from trw_mcp.state.persistence import FileStateWriter
 
 _writer = FileStateWriter()
@@ -87,58 +85,6 @@ def test_find_active_run_does_not_read_run_yaml_on_miss(
     assert result is None
     yaml_reads = [p for p in read_paths if p.name == "run.yaml"]
     assert yaml_reads == [], f"find_active_run() with no pin must NOT scan run.yaml; got {yaml_reads}"
-
-
-def test_find_run_via_mtime_scan_does_scan(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """find_run_via_mtime_scan() preserves the legacy scan behavior.
-
-    One-shot CLI tools that have no session context and genuinely need
-    the latest active run still get it via this explicit entry point.
-    """
-    run_dir_a = _make_run_dir(tmp_path, task="t1", run_id="20260101T000000Z-aaaaaaaa")
-    _make_run_dir(tmp_path, task="t2", run_id="20260102T000000Z-bbbbbbbb")
-    run_dir_c = _make_run_dir(tmp_path, task="t3", run_id="20260103T000000Z-cccccccc")
-
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setattr(
-        "trw_mcp.state._paths.resolve_project_root",
-        lambda: tmp_path,
-    )
-
-    # Without HOT_PATH set, the scan runs and returns the highest lexicographic
-    # active run.
-    result = find_run_via_mtime_scan()
-    assert result is not None
-    assert result.name == run_dir_c.name  # 20260103 > 20260102 > 20260101
-
-
-def test_find_run_via_mtime_scan_skips_terminal_runs(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The scan filters out runs with status complete/failed/abandoned/delivered."""
-    active = _make_run_dir(tmp_path, task="t1", run_id="20260101T000000Z-aaaaaaaa")
-    # Terminal run with later id.
-    later = tmp_path / ".trw" / "runs" / "t2" / "20260102T000000Z-bbbbbbbb"
-    later_meta = later / "meta"
-    later_meta.mkdir(parents=True)
-    _writer.write_yaml(
-        later_meta / "run.yaml",
-        {"run_id": later.name, "task": "t2", "status": "complete", "phase": "deliver"},
-    )
-
-    monkeypatch.setattr(
-        "trw_mcp.state._paths.resolve_project_root",
-        lambda: tmp_path,
-    )
-
-    result = find_run_via_mtime_scan()
-    # Active run is selected even though terminal run has later id.
-    assert result is not None
-    assert result.name == active.name
 
 
 def test_find_active_run_passes_context_through_to_pin_lookup() -> None:

@@ -230,29 +230,37 @@ class TestInstallAgentsUnknownTier:
 class TestInstallAgentsClientPassthrough:
     """FR-02 + FR-09: passing a non-claude-code client.
 
-    NOTE: Cursor IDE has its own dedicated installer at
-    ``bootstrap/_cursor_ide.py`` so the installer is never called with
-    ``client="cursor-ide"`` in production. We still verify the parameter
-    is honored.
+    Since PRD-CORE-252-FR03 the client argument is a LIST and it selects the
+    destination as well as the tier vocabulary, so these assertions read from
+    the client's own directory. The previous version of
+    ``test_passthrough_client_keeps_tier`` asserted that an opencode install
+    landed under ``.claude/agents`` — it pinned the defect this PRD closes, and
+    its inverted form below fails against HEAD.
     """
 
     def test_cursor_ide_client_resolves_to_inherit(self, empty_target: Path) -> None:
+        import yaml
+
         result = _empty_result()
-        _install_agents(empty_target, force=False, result=result, client="cursor-ide")
+        _install_agents(empty_target, force=False, result=result, clients=["cursor-ide"])
 
         for agent in [
             "trw-traceability-checker.md",
             "trw-auditor.md",
             "trw-reviewer.md",
         ]:
-            path = empty_target / ".claude" / "agents" / agent
-            assert _read_model_line(path) == "inherit"
+            path = empty_target / ".cursor" / "agents" / agent
+            block = path.read_text(encoding="utf-8")[4:].split("\n---\n", 1)[0]
+            assert yaml.safe_load(block)["model"] == "inherit"
 
-    def test_passthrough_client_keeps_tier(self, empty_target: Path) -> None:
-        """An adapter-less client (e.g. ``opencode``) preserves the
-        original tier vocabulary at the destination."""
+    def test_opencode_install_lands_in_the_opencode_destination(self, empty_target: Path) -> None:
+        """The inverted assertion. It asserted ``.claude/agents`` at HEAD."""
         result = _empty_result()
-        _install_agents(empty_target, force=False, result=result, client="opencode")
+        _install_agents(empty_target, force=False, result=result, clients=["opencode"])
 
-        path = empty_target / ".claude" / "agents" / "trw-traceability-checker.md"
-        assert _read_model_line(path) == "local-small"
+        assert (empty_target / ".opencode" / "agents" / "trw-traceability-checker.md").is_file()
+        # The fixture pre-creates `.claude/agents`, so absence of the DIRECTORY
+        # proves nothing; absence of any agent inside it is the assertion.
+        assert not list((empty_target / ".claude" / "agents").iterdir()), (
+            "an opencode install must not write into Claude Code's agent directory"
+        )

@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 import structlog
 
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -41,7 +43,7 @@ class _TransactionalBackend(Protocol):
 
     def transaction(self) -> AbstractContextManager[object]: ...
 
-    def update(self, entry_id: str, /, **fields: object) -> object: ...
+    def update(self, entry_id: str, /, *, namespace: str, **fields: object) -> object: ...
 
 
 def _sync_to_sqlite(
@@ -58,6 +60,16 @@ def _sync_to_sqlite(
         backend = get_backend(trw_dir)
         backend.update(
             lid,
+            # Not a guess: this is the SAME namespace the lookup used. The
+            # Q-learning chain resolves an entry through
+            # ``_default_lookup_entry`` -> ``find_entry_by_id``, which reads the
+            # PROJECT backend at ``namespace=DEFAULT_NAMESPACE``. A ``user:``
+            # tier entry therefore returns no data and never becomes a pending
+            # update, so no id reaching here can live elsewhere. The coupling is
+            # pinned by ``test_q_learning_sync_namespace_matches_the_lookup``;
+            # if the lookup ever federates, that test goes red and this must
+            # carry the real namespace instead.
+            namespace=DEFAULT_NAMESPACE,
             q_value=round(q_new, 4),
             q_observations=q_obs,  # already incremented by _update_entry_q_values
             outcome_history=history,
@@ -150,6 +162,7 @@ def _sync_chunk(
                 try:
                     backend.update(
                         lid,
+                        namespace=DEFAULT_NAMESPACE,
                         q_value=round(q_new, 4),
                         q_observations=q_obs,
                         outcome_history=history,

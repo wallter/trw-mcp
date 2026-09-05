@@ -1,8 +1,9 @@
 """The shipped delivery skills must treat `trw_build_check` as a REPORTER.
 
 Replaces `test_eval_deliver_skill_build_contract.py`, deleted in `69abca6cfc`.
-That module guarded this same property, but only on the `trw-eval/trw-mcp-local/`
-copies — a vendored tree deleted wholesale by `a77650f238`. Because its paths
+That module guarded this same property, but only on a vendored trw-mcp mirror
+kept inside the (proprietary) eval package — a tree deleted wholesale by
+`a77650f238`. Because its paths
 sat behind `skipif(not all(p.exists()))`, it had already degraded to a permanent
 skip asserting nothing, and its assertion strings appear nowhere in the canonical
 skills, so it could not simply be repointed.

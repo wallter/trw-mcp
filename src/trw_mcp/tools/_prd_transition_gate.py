@@ -438,8 +438,16 @@ def _gate_mode_blocks_task(config: TRWConfig, task_type: str) -> bool:
     """True when deliver_gate_mode resolves to a block posture for this task_type.
 
     Reuses the ``_BUILD_ARTIFACT_TASK_TYPES`` classification (coding/rca/eval) and
-    the per-task-type override map so the acceptance-integrity gate is scoped
-    identically to the build gate — docs/research/planning/unknown never block.
+    the per-task-type override map. This is NO LONGER identical to the build
+    gate: PRD-CORE-246-FR03 widened ``resolve_deliver_gate_decision`` to also
+    block on recorded file modifications, so the build gate now fires for a
+    docs | research | planning | unknown run that changed code while this gate still
+    does not. The narrower scope is deliberate and unchanged here — this gate
+    keys on a PRD ``->implemented`` transition, which is a claim only a
+    build-bearing regime makes — and inheriting the evidence rule is
+    PRD-CORE-213's own work, not a silent side effect of CORE-246. The stale
+    "scoped identically" claim was corrected rather than left standing
+    (PRD-CORE-246-FR09).
 
     ``deliver_gate_mode`` is read straight off the config, matching
     ``_orchestration_gate_scan``. It used to come through

@@ -86,7 +86,11 @@ class TestUpdateProjectMultiIDE:
         hooks_doc = json.loads(codex_hooks.read_text(encoding="utf-8"))
         assert "PostToolUse" in hooks_doc["hooks"]
         assert "Open /hooks" not in "\n".join(result.get("warnings", []))
-        assert (tmp_path / ".codex" / "agents" / "trw-reviewer.toml").exists()
+        # Agents are NOT asserted here: since PRD-CORE-252-FR03 the update path
+        # installs every client's agents through ``_update_framework_files``,
+        # which ``patch_update_project_internals`` stubs out for these focused
+        # per-client integration tests. The real update wiring is asserted in
+        # ``tests/test_install_agents_destinations.py``.
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         # codex's AGENTS.md was withdrawn (PRD-CORE-240-FR04); `.codex/INSTRUCTIONS.md`,
         # which `.codex/config.toml` points at, is its whole carrier now.
@@ -115,21 +119,22 @@ class TestUpdateProjectMultiIDE:
         assert "[features].codex_hooks" in warnings
 
     def test_fr15_update_codex_preserves_customized_agents_and_skills(self, tmp_path: Path) -> None:
-        """update_project preserves Codex agent and skill edits in protected paths."""
+        """update_project preserves Codex skill edits in protected paths."""
         (tmp_path / ".git").mkdir()
         init_project(tmp_path, ide="codex")
 
-        agent_path = tmp_path / ".codex" / "agents" / "trw-explorer.toml"
+        # The agent half moved to
+        # ``tests/test_install_agents_destinations.py::test_a_user_edited_agent_survives_update``:
+        # per-client agent preservation now runs inside ``_update_framework_files``,
+        # which this helper stubs, and the retired ``trw-explorer`` stub this used
+        # to name is no longer an agent TRW ships (PRD-CORE-252-FR04).
         skill_path = tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md"
-        agent_path.write_text("custom agent", encoding="utf-8")
         skill_path.write_text("custom skill", encoding="utf-8")
 
         with patch_update_project_internals():
             result = update_project(tmp_path, ide="codex")
 
-        assert ".codex/agents/trw-explorer.toml" in result["preserved"]
         assert ".agents/skills/trw-deliver/SKILL.md" in result["preserved"]
-        assert agent_path.read_text(encoding="utf-8") == "custom agent"
         assert skill_path.read_text(encoding="utf-8") == "custom skill"
 
     def test_fr15_update_no_opencode_skips(self, tmp_path: Path) -> None:

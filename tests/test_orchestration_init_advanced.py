@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from tests._formation_test_support import FormationFixture, formation_env, make_run_dir  # noqa: F401
 from tests._tools_orchestration_support import orch_tools  # noqa: F401
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateReader
@@ -38,11 +39,18 @@ def _run_yaml(result: dict[str, str]) -> dict[str, Any]:
 
 
 def test_accepted_keys_match_the_flat_parameter_names_they_replaced() -> None:
-    """Byte-identical keys are the whole migration story — pin them literally."""
+    """Byte-identical keys are the whole migration story — pin them literally.
+
+    ``formation`` / ``join_formation`` (PRD-CORE-265-FR03/FR04) are listed
+    separately because they replaced no flat parameter: they are new keys added
+    to the bag precisely so the formation surface costs no new MCP tool.
+    """
     assert set(ADVANCED_KEYS) == {
         "artifacts",
         "complexity_signals",
         "config_overrides",
+        "formation",
+        "join_formation",
         "planning_mode",
         "protected",
         "task_root",
@@ -166,3 +174,129 @@ def test_unknown_advanced_key_creates_no_run(orch_tools: dict[str, Any], tmp_pat
         orch_tools["trw_init"].fn(task_name="advrejected", advanced={"protectd": True})
 
     assert not list(tmp_path.rglob("advrejected"))
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-265-FR03 / FR04: formation creation and join
+# ---------------------------------------------------------------------------
+
+
+def test_formation_init_tool_and_cli_write_the_same_manifest(
+    formation_env: FormationFixture,
+    tmp_path: Path,
+) -> None:
+    """FR03. Two entry points, one facade — so neither can drift from the other.
+
+    ATTRIBUTION. Guards ``tools/_orchestration_formation.apply_formation_init``
+    and ``tools/_formation_cli._run_init``: both call
+    ``trw_mcp.formation.create``. Point either at its own writer and the two
+    manifests stop matching. The tool-set assertion guards the "no new MCP tool"
+    commitment in the same breath.
+    """
+    import argparse
+
+    import yaml
+
+    from trw_mcp.tools._formation_cli import run_formation
+    from trw_mcp.tools._orchestration_formation import apply_formation_init
+
+    result: dict[str, str] = {}
+    apply_formation_init(formation_env.payload(), None, formation_env.orchestrator_run, None, result)
+    assert result["formation_id"] == "release-train"
+    assert result["formation_revision"] == "1"
+    via_tool = yaml.safe_load(formation_env.manifest_path().read_text(encoding="utf-8"))
+    assert [m["status"] for m in via_tool["members"]] == ["pending", "pending"]
+
+    second_run = make_run_dir(formation_env.trw_dir / "runs", "orchestrator-2")
+    payload_file = tmp_path / "payload.yaml"
+    payload_file.write_text(yaml.safe_dump(formation_env.payload(formation_id="release-train-2")), encoding="utf-8")
+    args = argparse.Namespace(
+        formation_command="init", from_file=str(payload_file), run_path=str(second_run), as_json=False
+    )
+    with pytest.raises(SystemExit) as exited:
+        run_formation(args)
+    assert exited.value.code == 0
+    via_cli = yaml.safe_load((second_run / "formation.yaml").read_text(encoding="utf-8"))
+
+    volatile = ("created_utc", "updated_utc", "orchestrator_run_path", "formation_id")
+    assert {k: v for k, v in via_tool.items() if k not in volatile} == {
+        k: v for k, v in via_cli.items() if k not in volatile
+    }, "the tool path and the CLI path must produce identical manifests apart from timestamps and roots"
+
+    with pytest.raises(StateError, match="already exists"):
+        apply_formation_init(formation_env.payload(), None, formation_env.orchestrator_run, None, {})
+
+
+def test_formation_init_refuses_both_keys_and_an_already_allocated_prd_id(
+    formation_env: FormationFixture,
+) -> None:
+    """FR01 (as amended) + FR03. Two refusals a silent default would have hidden."""
+    from trw_mcp.tools._orchestration_formation import apply_formation_init
+
+    with pytest.raises(StateError, match="not both"):
+        apply_formation_init(
+            formation_env.payload(),
+            {"formation_id": "x", "member_id": "y"},
+            tmp_run := formation_env.orchestrator_run,
+            None,
+            {},
+        )
+    assert not (tmp_run / "formation.yaml").exists()
+
+    from trw_mcp.formation import FormationError, create
+
+    prds = formation_env.project_root / "prds"
+    prds.mkdir()
+    (prds / "PRD-CORE-900-something.md").write_text("x", encoding="utf-8")
+    with pytest.raises(FormationError, match="PRD-CORE-900"):
+        create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=prds)
+
+
+def test_join_formation_is_atomic_and_refuses_unknown_member(formation_env: FormationFixture) -> None:
+    """FR04. N concurrent joins => N joined members and a revision delta of N.
+
+    ATTRIBUTION. The revision assertion guards the locked read-modify-write in
+    ``formation/_store.rewrite_manifest`` plus the ``revision + 1`` in
+    ``formation/_join.join``: drop the lock and two threads read the same
+    revision, so the delta falls below N. The stamping assertion guards
+    ``_stamp_run_record``; the rebind assertion guards the refusal that stops a
+    misresolved run from orphaning the first run's evidence.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from trw_mcp.formation import FormationError, create, join, load
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(
+            pool.map(
+                lambda item: join("release-train", item[0], item[1], pin_key=f"pin-{item[0]}"),
+                sorted(formation_env.member_runs.items()),
+            )
+        )
+
+    context = load(formation_env.orchestrator_run)
+    assert context is not None
+    assert context.manifest.revision == 3, "revision must advance by exactly one per join"
+    assert [m.status for m in context.manifest.members] == ["joined", "joined"]
+    assert {m.member_id: m.pin_key for m in context.manifest.members} == {
+        "impl-1": "pin-impl-1",
+        "impl-2": "pin-impl-2",
+    }
+
+    member_yaml = (formation_env.member_runs["impl-1"] / "meta" / "run.yaml").read_text(encoding="utf-8")
+    assert "formation_id: release-train" in member_yaml and "member_id: impl-1" in member_yaml
+
+    # Idempotent re-join: same run path, no revision bump.
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-impl-1")
+    again = load(formation_env.orchestrator_run)
+    assert again is not None and again.manifest.revision == 3
+
+    with pytest.raises(FormationError) as unknown:
+        join("release-train", "impl-9", formation_env.member_runs["impl-1"])
+    assert "impl-1" in str(unknown.value) and "impl-2" in str(unknown.value), "the refusal must list declared ids"
+
+    elsewhere = make_run_dir(formation_env.trw_dir / "runs", "impl-1-restarted")
+    with pytest.raises(FormationError, match="refusing to rebind"):
+        join("release-train", "impl-1", elsewhere)

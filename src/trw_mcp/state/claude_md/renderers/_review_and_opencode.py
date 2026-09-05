@@ -11,8 +11,24 @@ _ANTIGRAVITY_TRW_START_MARKER = "<!-- trw:antigravity:start -->"
 _ANTIGRAVITY_TRW_END_MARKER = "<!-- trw:antigravity:end -->"
 
 
+def _antigravity_delegation_block() -> str:
+    """Return the delegation block iff antigravity-cli's profile enables it.
+
+    PRD-CORE-252 OQ-3 wiring-defect fix (2026-09-04): antigravity-cli's
+    ``include_delegation`` has been True since the profile was added, but
+    this renderer never called ``render_delegation_protocol()`` — the flag
+    had no consumer. Function-local imports avoid a module-import cycle with
+    ``sections`` (established pattern in this package).
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+    from trw_mcp.state.claude_md.sections._delegation import render_delegation_protocol
+
+    return render_delegation_protocol(resolve_client_profile("antigravity-cli"))
+
+
 def render_antigravity_instructions() -> str:
     """Render ANTIGRAVITY.md TRW ceremony section."""
+    delegation = _antigravity_delegation_block()
     return f"""{_ANTIGRAVITY_TRW_START_MARKER}
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 
@@ -41,8 +57,9 @@ Do NOT call `trw_deliver` unless at least one of:
 - (c) an authorized operator/config override is recorded with technical rationale.
 
 A review-verdict label or free-text reason alone is not an acceptable-failure record.
-For task types `coding`, `rca`, `eval` the gate blocks by default. Docs, research,
-planning, and unknown types remain advisory.
+Under the default `block_coding` mode a missing build check blocks when the task type
+expects a build artifact (`coding`, `rca`, `eval`) OR when the session modified files —
+whatever the task type. A run that changed nothing stays advisory.
 
 ### MCP Tools
 
@@ -73,6 +90,7 @@ TRW provides specialized agents in `.antigravitycli/agents/`:
 - Use `trw_checkpoint()` after working milestones
 - Commit messages: `feat(scope): msg` (Conventional Commits)
 
+{delegation}
 {_ANTIGRAVITY_TRW_END_MARKER}
 """
 

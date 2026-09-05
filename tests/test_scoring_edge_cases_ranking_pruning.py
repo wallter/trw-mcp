@@ -163,3 +163,144 @@ class TestUtilityBasedPruneCandidatesEdgeCases:
         result_low = utility_based_prune_candidates([low_rec])
         result_high = utility_based_prune_candidates([high_rec])
         assert len(result_high) <= len(result_low)
+
+
+class TestProtectionTierProtects:
+    """PRD-CORE-244 FR10 — ``protection_tier`` is a guarantee, not a data field.
+
+    The pre-existing coverage at ``tests/test_learn.py`` only asserted that the
+    value survives a round trip, which is exactly why the gap was invisible: the
+    field was tested as DATA and never as a PROMISE. Every test here asserts the
+    protective EFFECT on the real ``utility_based_prune_candidates`` path, and
+    each pairs a protected fixture with an otherwise byte-identical ``normal``
+    one so the exemption cannot be credited to the fixture.
+    """
+
+    @staticmethod
+    def _worthless(entry_id: str, tier: str) -> tuple[Path, dict[str, object]]:
+        """An entry far below every prune threshold, differing only in tier."""
+        old = (datetime.now(tz=timezone.utc).date() - timedelta(days=900)).isoformat()
+        return (
+            Path("/dev/null"),
+            {
+                "id": entry_id,
+                "summary": "a forgotten entry",
+                "impact": 0.01,
+                "q_value": 0.01,
+                "q_observations": 10,
+                "recurrence": 1,
+                "access_count": 0,
+                "source_type": "agent",
+                "type": "hypothesis",
+                "confidence": "verified",
+                "status": "active",
+                "created": old,
+                "last_accessed_at": old,
+                "protection_tier": tier,
+            },
+        )
+
+    def _nominated(self, tier: str) -> bool:
+        candidates = utility_based_prune_candidates([self._worthless(f"L-{tier}", tier)])
+        return any(c["id"] == f"L-{tier}" for c in candidates)
+
+    def test_protection_tier_exempts_permanent_from_auto_prune(self) -> None:
+        assert self._nominated("permanent") is False
+
+    def test_protection_tier_exempts_protected_from_auto_prune(self) -> None:
+        assert self._nominated("protected") is False
+
+    def test_the_same_entry_marked_normal_is_nominated(self) -> None:
+        """Proves the exemption came from the TIER, not from the fixture."""
+        assert self._nominated("normal") is True
+
+    def test_an_unmarked_entry_is_nominated_exactly_as_before(self) -> None:
+        _path, data = self._worthless("L-unmarked", "normal")
+        del data["protection_tier"]
+        candidates = utility_based_prune_candidates([(Path("/dev/null"), data)])
+        assert [c["id"] for c in candidates] == ["L-unmarked"]
+
+    def test_middle_tiers_are_discounted_not_exempted(self) -> None:
+        """A ``critical`` entry must be far less useful than a ``normal`` one.
+
+        Built as an entry whose utility sits BETWEEN the normal threshold and the
+        critical (0.25x) threshold: normal nominates it, critical does not, and
+        neither outcome is an exemption.
+        """
+        from trw_mcp.models.config import get_config
+        from trw_mcp.scoring._decay import entry_utility
+
+        cfg = get_config()
+        today = datetime.now(tz=timezone.utc).date()
+        # Age it until its utility lands under the normal prune threshold but
+        # above the critical-discounted one.
+        for days in range(30, 2000, 10):
+            _path, probe = self._worthless("L-probe", "normal")
+            aged = (today - timedelta(days=days)).isoformat()
+            probe["created"] = aged
+            probe["last_accessed_at"] = aged
+            probe["impact"] = 0.5
+            probe["q_value"] = 0.5
+            utility = entry_utility(dict(probe), today)
+            lower = cfg.learning_utility_prune_threshold * cfg.protection_tier_prune_discount["critical"]
+            if lower <= utility < cfg.learning_utility_prune_threshold:
+                break
+        else:  # pragma: no cover - a band this wide always contains a sample
+            raise AssertionError("no age produced a utility inside the critical/normal band")
+
+        def _nominate(tier: str) -> bool:
+            _p, data = self._worthless(f"L-{tier}-band", tier)
+            data.update({"created": aged, "last_accessed_at": aged, "impact": 0.5, "q_value": 0.5})
+            return any(c["id"] == f"L-{tier}-band" for c in utility_based_prune_candidates([(Path("/dev/null"), data)]))
+
+        assert _nominate("normal") is True
+        assert _nominate("critical") is False
+
+    def test_status_tier_cleanup_also_honours_the_exemption(self) -> None:
+        """ "Already marked obsolete" is still AUTOMATIC removal."""
+        _path, permanent = self._worthless("L-obsolete-permanent", "permanent")
+        permanent["status"] = "obsolete"
+        _path2, normal = self._worthless("L-obsolete-normal", "normal")
+        normal["status"] = "obsolete"
+
+        ids = {
+            c["id"]
+            for c in utility_based_prune_candidates([(Path("/dev/null"), permanent), (Path("/dev/null"), normal)])
+        }
+        assert ids == {"L-obsolete-normal"}
+
+
+class TestAutoPruneHonoursProtectionTier:
+    """FR10 on the SECOND removal source: the Jaccard duplicate scan.
+
+    ``auto_prune_excess_entries`` nominates from two independent sources. The
+    utility scan is covered above; the duplicate scan never read the tier at all,
+    so an older ``permanent`` entry that merely LOOKED like a newer one was
+    marked obsolete on similarity alone.
+    """
+
+    def test_duplicate_scan_skips_a_permanent_entry(self) -> None:
+        from trw_mcp.state.analytics.dedup import _protected_entry_ids, _select_removal_candidates
+
+        entries = [
+            {"id": "L-old-permanent", "protection_tier": "permanent"},
+            {"id": "L-old-normal", "protection_tier": "normal"},
+        ]
+        duplicates = [("L-old-permanent", "L-new", 0.95), ("L-old-normal", "L-new", 0.95)]
+
+        pairs = _select_removal_candidates(duplicates, [], _protected_entry_ids(entries))
+
+        assert [pid for pid, _status in pairs] == ["L-old-normal"]
+
+    def test_utility_candidates_are_filtered_by_the_same_exempt_set(self) -> None:
+        from trw_mcp.state.analytics.dedup import _protected_entry_ids, _select_removal_candidates
+
+        entries = [{"id": "L-p", "protection_tier": "protected"}, {"id": "L-n", "protection_tier": "low"}]
+        candidates = [
+            {"id": "L-p", "suggested_status": "obsolete"},
+            {"id": "L-n", "suggested_status": "obsolete"},
+        ]
+
+        pairs = _select_removal_candidates([], candidates, _protected_entry_ids(entries))  # type: ignore[arg-type]
+
+        assert [pid for pid, _status in pairs] == ["L-n"]

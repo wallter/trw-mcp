@@ -189,6 +189,45 @@ class TestLivePipelineEventsFileIsNeverWritten:
         )
 
 
+class TestIsolatedResolverHonorsEnvVarOverride:
+    """The stand-in must mirror the genuine resolver's TRW_PROJECT_ROOT precedence.
+
+    The incident this guards against
+    ---------------------------------
+    The isolated ``resolve_project_root()`` used to unconditionally return
+    the fixture's ``tmp_path`` (via ``current_root()``), ignoring
+    ``TRW_PROJECT_ROOT`` even when a test set it explicitly to a *different*
+    directory to exercise env-var-based resolution. That silently defeated
+    every such test: it passed or failed against the wrong root, for the
+    wrong reason. ``tests/test_core205_review_producers_enforce.py`` routed
+    around it by rooting its fixture at ``tmp_path`` itself rather than
+    fixing the harness (see its ``_project_run`` docstring, which still
+    reads "the env var is still set so the fixture stays correct if the
+    harness ever honors it again" — this test is that fix.
+    """
+
+    def test_env_var_override_wins_over_the_fixture_tmp_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.state._paths import resolve_project_root
+
+        override = tmp_path / "override-root"
+        override.mkdir()
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(override))
+
+        assert resolve_project_root() == override.resolve()
+
+    def test_absent_env_var_still_falls_back_to_the_fixture_tmp_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unset (the common case) must keep resolving to the isolated tmp dir."""
+        from trw_mcp.state._paths import resolve_project_root
+
+        monkeypatch.delenv("TRW_PROJECT_ROOT", raising=False)
+
+        assert resolve_project_root() == tmp_path
+
+
 class TestPipelineInstancesAreStopped:
     """Both leak vectors of an unstopped pipeline must be closed at teardown."""
 

@@ -28,6 +28,20 @@ Use the harness's safe concurrency limit, the fewest independent evidence axes t
 
 ---
 
+## DEGENERATE-RESULT CHECK (manual equivalent)
+
+Every adapter MUST have a tool/manual equivalent. This is the one for the bundled `post-tool-degenerate-result.sh` PostToolUse adapter — run it by hand in any harness that does not run the adapter, and in any harness that does, when you are about to conclude something load-bearing from a single result.
+
+Before a tool result becomes a fact about the world, check its SHAPE:
+
+1. **Empty.** Is the rendered result empty or whitespace-only? A search that matched nothing and a search that never ran look identical.
+2. **Truncated.** Does it carry a truncation marker — a "more lines", "output too large", or clipped-response notice? Then what you did not see is unbounded, not absent.
+3. **Undated on a freshness-sensitive read.** Was it a log, a listing, or a remote fetch whose output carries no date or timestamp? Then it cannot tell you whether it is current.
+
+Any of the three means the result does not distinguish "absent" from "could not look". Issue one more command to settle it, or record the step as *not measured* with the reason — never as a finding of nothing. This is the CONFIDENCE rule above applied to your own reading, and it is the step most often skipped while confidence is highest.
+
+---
+
 ### Inline Comment Markers
 
 A learning can be anchored to the code it describes by leaving a marker in a

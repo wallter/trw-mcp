@@ -35,9 +35,19 @@ def _seed_run(tmp_path: Path, task_type: str) -> Path:
 
 
 def _use_config(monkeypatch: pytest.MonkeyPatch, **overrides: object) -> None:
-    """Pin the config the gate-mode predicate reads, at its own import site."""
+    """Pin the config the gate-mode predicate reads, at its own import site.
+
+    Both seams are patched on purpose. The preview no longer reads
+    ``deliver_gate_mode`` itself — it calls
+    ``_deliver_gate_mode.resolve_gate_mode_with_source``, the single resolver the
+    deliver gate uses (WD-05) — and that module binds ``get_config`` at import
+    time, so patching only ``trw_mcp.models.config.get_config`` would leave the
+    predicate reading the real config singleton and make this parity suite
+    order-dependent.
+    """
     config = TRWConfig().model_copy(update=overrides)
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: config)
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: config)
 
 
 # ---------------------------------------------------------------------------

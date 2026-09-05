@@ -174,3 +174,74 @@ class TestTrwCheckpoint:
 
         cp_path = Path(init_result["run_path"]) / "meta" / "checkpoints.jsonl"
         assert cp_path.exists()
+
+
+class TestStatusWriterPressure:
+    """PRD-CORE-257-FR05: pressure is first-class status, not a nudge side effect."""
+
+    def _registry(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch, *, peers: int) -> None:
+        import os
+        import time
+
+        import trw_mcp.state.memory_pressure as mp
+
+        writers = trw_dir / "memory" / "memory.db.writers"
+        writers.mkdir(parents=True, exist_ok=True)
+        (writers / "self.lock").write_text(f"{os.getpid()}\n{time.time():.6f}\n", encoding="utf-8")
+        for index in range(peers):
+            pid = 900_000 + index
+            (writers / f"peer-{pid}.lock").write_text(f"{pid}\n{time.time():.6f}\n", encoding="utf-8")
+        monkeypatch.setattr(mp, "_pid_is_alive", lambda pid: True)
+
+    def test_status_reports_writer_pressure_with_nudges_disabled(
+        self, orch_tools: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The block is present, and its counts come from the injected registry.
+
+        Before this, ``trw_status`` had no pressure field at all: the only signal
+        was a ``nudge_deferred`` block attached as a side effect of the nudge
+        path, and when nudges were disabled the census was skipped outright — so
+        the signal disappeared exactly where an operator would look for it.
+        """
+        from trw_mcp.models.config import TRWConfig, get_config
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        trw_dir = resolve_trw_dir()
+        self._registry(trw_dir, monkeypatch, peers=8)
+        base = get_config().model_dump()
+        base.update({"nudge_enabled": False, "session_start_writer_pressure_threshold": 8})
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: TRWConfig.model_validate(base), raising=False)
+
+        init_result = orch_tools["trw_init"].fn(task_name="pressure-status-task")
+        status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
+
+        pressure = status["writer_pressure"]
+        assert pressure["peer_writer_count"] == 8
+        assert pressure["writer_count"] == 9
+        assert pressure["threshold"] == 8
+        assert pressure["under_pressure"] is True
+        assert pressure["census_state"] == "measured"
+        assert pressure["ledger_state"] in {"ok", "degraded"}
+        assert "heartbeat_state" in pressure
+        assert "identity_state" in pressure
+        assert isinstance(pressure["deferred_steps"], dict)
+        # Open question 4: deferral_expired_ran stays off trw_status.
+        assert "deferral_expired_ran" not in status
+
+    def test_unreadable_registry_is_not_reported_as_a_healthy_census(
+        self, orch_tools: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An absence of measurement is not a measurement of absence."""
+        import trw_mcp.state.memory_pressure as mp
+
+        def _explode(_writers_dir: Path) -> list[Path]:
+            raise OSError("registry unreadable")
+
+        monkeypatch.setattr(mp, "_iter_lock_paths", _explode)
+        init_result = orch_tools["trw_init"].fn(task_name="unreadable-status-task")
+        status = orch_tools["trw_status"].fn(run_path=init_result["run_path"])
+
+        pressure = status["writer_pressure"]
+        assert pressure["census_state"] == "unreadable"
+        assert pressure["under_pressure"] is False
+        assert pressure["writer_count"] == 0

@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests._structlog_capture import captured_structlog  # noqa: F401
 
 
@@ -103,3 +104,78 @@ def test_not_recorded_outcome_is_logged_for_the_monitoring_signal(
     events = [e for e in captured_structlog if e.get("event") == "checkpoint_not_recorded"]
     assert events, f"no checkpoint_not_recorded event; logs were {captured_structlog!r}"
     assert events[0].get("pin_key") == "observed-session"
+
+
+# --- PRD-CORE-265-FR05: membership authority is structural, never textual ----
+
+
+def test_member_cannot_mutate_formation_membership(formation_env: FormationFixture) -> None:
+    """FR05. Only the orchestrator RUN PATH may revise membership.
+
+    ATTRIBUTION. Guards ``formation/_join._require_orchestrator``. Delete the
+    equality check (or replace it with a payload/role read) and both refusals
+    below become successes. The second case is the one that matters: a caller
+    that ASSERTS orchestrator status is refused identically, because
+    ``docs/CONSTITUTION.md`` makes a delegated agent's claim untrusted input.
+    The revision assertion proves the refusal happened before any write, not
+    after one that was then rolled back.
+    """
+    from trw_mcp.formation import FormationError, create, join, load, revise
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+
+    member_run = formation_env.member_runs["impl-1"]
+    with pytest.raises(FormationError) as refused:
+        revise("release-train", member_run, {"impl-2": {"status": "abandoned"}})
+    assert str(formation_env.orchestrator_run) in str(refused.value), (
+        "the refusal must name the orchestrator run path so the caller can see what authority it lacks"
+    )
+
+    # The same attempt carrying an orchestrator ASSERTION is refused identically:
+    # `role` is manifest data, and data carries no authority.
+    with pytest.raises(FormationError):
+        revise("release-train", member_run, {"impl-2": {"role": "orchestrator", "status": "abandoned"}})
+
+    # And an unresolvable caller is refused too — "I could not tell who you are"
+    # must never resolve to "you are the orchestrator".
+    with pytest.raises(FormationError):
+        revise("release-train", None, {"impl-2": {"status": "abandoned"}})
+
+    unchanged = load(formation_env.orchestrator_run)
+    assert unchanged is not None
+    assert unchanged.manifest.revision == 2, "a refused mutation must leave the revision untouched"
+    assert unchanged.manifest.member("impl-2").status == "pending"
+
+    revised = revise("release-train", formation_env.orchestrator_run, {"impl-2": {"status": "abandoned"}})
+    assert revised.revision == 3
+    assert revised.member("impl-2").status == "abandoned"
+
+
+def test_member_may_report_only_its_own_delivery(formation_env: FormationFixture) -> None:
+    """FR05/FR11. A self-report is authority over yourself and nothing else."""
+    from trw_mcp.formation import FormationError, create, join
+    from trw_mcp.formation._join import mark_member_delivered
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+    join("release-train", "impl-2", formation_env.member_runs["impl-2"], pin_key="pin-2")
+
+    with pytest.raises(FormationError, match="only from its joined run"):
+        mark_member_delivered(
+            trw_dir=formation_env.trw_dir,
+            formation_id="release-train",
+            member_id="impl-2",
+            run_path=formation_env.member_runs["impl-1"],
+            lock_timeout_seconds=5.0,
+        )
+
+    stamped = mark_member_delivered(
+        trw_dir=formation_env.trw_dir,
+        formation_id="release-train",
+        member_id="impl-1",
+        run_path=formation_env.member_runs["impl-1"],
+        lock_timeout_seconds=5.0,
+    )
+    assert stamped.member("impl-1").status == "delivered"
+    assert stamped.member("impl-2").status == "joined"

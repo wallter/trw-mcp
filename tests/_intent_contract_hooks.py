@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ PROTECTED = "protected/module.py"
 HOOK_SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks"
 PRE_HOOK = "pre-tool-intent-guard.sh"
 POST_HOOK = "post-tool-intent-check.sh"
+INTENT_LIB = "lib-intent-guard.sh"
 MARKER_REL = ".trw/contracts/enrollment.yaml"
 EVIDENCE_REL = ".trw/intent-enrollment-evidence.yaml"
 
@@ -82,7 +84,7 @@ def hook_project(tmp_path: Path, name: str, *, enroll: bool = True) -> Path:
     """A project with the REAL bundled hooks installed, optionally enrolled."""
     root = tmp_path / name
     (root / ".claude" / "hooks").mkdir(parents=True)
-    for hook in (PRE_HOOK, POST_HOOK, "lib-trw.sh"):
+    for hook in (PRE_HOOK, POST_HOOK, "lib-trw.sh", INTENT_LIB):
         shutil.copy2(HOOK_SRC / hook, root / ".claude" / "hooks" / hook)
     make_project(root, enroll=False)
     if enroll:
@@ -96,10 +98,44 @@ def run_hook(
     *,
     extra_env: dict[str, str] | None = None,
     timeout: float = 60,
+    cwd: Path | None = None,
+    tool_input: dict[str, object] | None = None,
+    tool: str = "Edit",
 ) -> subprocess.CompletedProcess[str]:
-    """Drive a REAL shipped hook over sh + stdin JSON, as a client would."""
+    """Drive a REAL shipped hook over sh + stdin JSON, as a client would.
+
+    ``cwd`` defaults to the project root; pass a subdirectory to model a hook
+    fired from a shell that ``cd``-ed into a package (a sub-agent's Edit).
+
+    ``tool_input``/``tool`` override the payload body. The default is the
+    anchored path, which every pre-PRD-CORE-254 caller relied on; the fast-path
+    tests need to name their own path (and their own tool) because the shortcut
+    is decided FROM the payload.
+
+    INTERPRETER CONTRACT (PRD-CORE-250-FR05, `lib-intent-guard.sh`
+    `_trw_resolve_and_run_python`). The hook picks its interpreter in a fixed
+    order -- ``$TRW_PYTHON`` -> ``$CLAUDE_PROJECT_DIR/.venv/bin/python`` -> the
+    shebang behind ``.mcp.json``'s ``trw`` entry -> ``python3`` on PATH -- and,
+    once enrolled, fails CLOSED when every candidate fails to import
+    ``trw_mcp``. These fixtures are bare temp directories: no ``.venv``, no
+    ``.mcp.json``, and ``run_hook`` deliberately unsets ``CLAUDE_PROJECT_DIR``,
+    so the only candidate left is PATH ``python3`` -- ``/usr/bin/python3`` on a
+    clean box, and on a developer machine whatever venv happens to sit first on
+    PATH. Neither has this package importable with its dependencies, so every
+    enrolled case came back as exit 2 from the resolver's own no-interpreter
+    branch: the allow-path tests failed outright and the block-path tests
+    passed for a reason that had nothing to do with the claim under test.
+
+    So the operator override names the interpreter running this suite. It is a
+    `setdefault`, so the tests that measure resolution ITSELF opt out with
+    ``extra_env={"TRW_PYTHON": ""}`` -- an empty value is skipped by the `-n`
+    test in the resolver exactly as an unset one is. See
+    ``test_intent_contract_hook_shell_integrity`` and
+    ``test_intent_contract_inert_under_broken_git``.
+    """
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env.setdefault("TRW_PYTHON", sys.executable)
     env.pop("CLAUDE_PROJECT_DIR", None)
     env.pop("HOOKS_ENABLED", None)
     env.pop("TRW_HOOKS_ENABLED", None)
@@ -114,10 +150,10 @@ def run_hook(
     env.update(extra_env or {})
     return subprocess.run(
         ["sh", str(project / ".claude" / "hooks" / hook)],
-        input=json.dumps({"tool_name": "Edit", "tool_input": {"file_path": PROTECTED}}),
+        input=json.dumps({"tool_name": tool, "tool_input": tool_input or {"file_path": PROTECTED}}),
         text=True,
         capture_output=True,
-        cwd=project,
+        cwd=cwd or project,
         env=env,
         timeout=timeout,
         check=False,

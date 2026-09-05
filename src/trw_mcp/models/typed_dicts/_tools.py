@@ -6,7 +6,12 @@ from typing import Literal
 
 from typing_extensions import NotRequired, TypedDict
 
-from trw_mcp.models.typed_dicts._ceremony import AutoRecalledItemDict
+from trw_mcp.models.typed_dicts._ceremony import (
+    AutoRecalledItemDict,
+    MovedCheckoutDict,
+    OpenHandoffDict,
+    ReconciledLocalWritesDict,
+)
 
 
 class Degradation(TypedDict):
@@ -45,6 +50,8 @@ class RecallContextDict(TypedDict, total=False):
 class RecallResultDict(TypedDict, total=False):
     """Return shape of ``trw_recall`` MCP tool."""
 
+    remote_recall: dict[str, object]  # present only when the remote leg was incomplete or failed (P5)
+
     query: str
     learnings: list[dict[str, object]]
     patterns: list[dict[str, object]]
@@ -73,6 +80,13 @@ class RunStatusDict(TypedDict, total=False):
     phase: str
     status: str
     task_name: str
+    # PRD-CORE-246-FR04: the run's behavioral regime AND where it came from.
+    # ``task_type_source`` has exactly three values — ``run_yaml`` (the key was
+    # present), ``default_unknown`` (the key was absent and RunState supplied its
+    # default) and ``unresolved`` (the run could not be read). Keeping the three
+    # distinguishable is the requirement: a silent default is the failure class.
+    task_type: str
+    task_type_source: str
     capability_tier: str
     recommended_effort: str
     effort_source: str
@@ -104,7 +118,6 @@ class SessionStartResultDict(TypedDict, total=False):
     connection_fingerprint: dict[str, object]
     response_compacted: bool
     side_effects_deferred: dict[str, object]
-    recall_degraded: dict[str, object]
     run: RunStatusDict
     first_session_emitted: bool
     embeddings_advisory: str
@@ -126,6 +139,22 @@ class SessionStartResultDict(TypedDict, total=False):
     # Knowledge-graph health advisory (PRD-FIX-COMPOUNDING-2 FR04) — present
     # only when the graph is empty AND there are >10 memories.
     graph_health: dict[str, object]
+    # Offline-write reconciliation report (PRD-CORE-247-FR05) — always present:
+    # a zero count is the honest answer to "what bypassed the online path", and
+    # an absent field would be indistinguishable from a step that never ran.
+    reconciled_local_writes: ReconciledLocalWritesDict
+    # PRD-CORE-249-FR03: project-scoped open handoff rows, read back from the
+    # managed block of the configured handoff file. Always present: ``status`` is
+    # measured / absent / not_measured, ``total`` is the UNTRUNCATED count and is
+    # present only when measured, and ``items`` is oldest-first and capped. A
+    # block over the parse cap reports ``not_measured`` with a reason and is
+    # never reported as zero open items.
+    open_handoff: OpenHandoffDict
+    # PRD-CORE-253-FR01: evidence that this checkout was moved or renamed --
+    # the current project identity has zero rows while a same-slug sibling has
+    # some. Present ONLY when that signal fires, so a normal session pays no
+    # tokens for it. Carries ``repair_command``; nothing here re-labels a row.
+    moved_checkout: MovedCheckoutDict
     # Unified compounding-pipeline health advisory (PRD-FIX-COMPOUNDING-6 FR03).
     # Compact single-line string injected ONLY when any of the five pipeline
     # signals is degraded (PRD-INFRA-068 lesson: absent on healthy sessions
@@ -139,15 +168,28 @@ class SessionStartResultDict(TypedDict, total=False):
     auto_upgrade_check_deferred: dict[str, object]
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
+    embeddings_backfill_not_performed: dict[str, object]  # PRD-CORE-263 DEF-11
     embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01
-    wal_checkpoint_deferred: dict[str, object]
-    auto_recall_deferred: dict[str, object]
-    ceremony_status_deferred: dict[str, object]
+    # PRD-CORE-263 DEF-12: named ``_skipped``, not ``_deferred`` — nothing
+    # journals or later performs either while ``response_compacted`` is true.
+    auto_recall_skipped: dict[str, object]
+    ceremony_status_skipped: dict[str, object]
     # Compact-mode fold of the individual ``*_deferred`` blocks above:
     # ``{reason: [step, ...]}`` plus a single writer_count. The per-step
     # blocks are only present with ``verbose=True``.
     deferred: dict[str, list[str]]
     deferred_writer_count: int
+    # PRD-CORE-257-FR11: the compact response is the one an agent reads, so the
+    # fold keeps the bar the work was deferred against, the worst streak age and
+    # both measurement states rather than discarding them.
+    deferred_threshold: int
+    deferred_max_age_hours: float
+    deferred_census_state: str
+    deferred_ledger_state: str
+    # PRD-CORE-257-FR03: steps that ran despite pressure because their bound
+    # expired. Present only when a bound actually fired.
+    deferral_expired_ran: list[str]
+    step_outcomes: dict[str, str]
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.
@@ -342,6 +384,9 @@ class LearnResultDict(TypedDict, total=False):
     # Present on rejection (noise filter):
     reason: str
     message: str
+    # PRD-CORE-244-FR05: advisory window proposal for a state-asserting learning.
+    # Advisory ONLY — the persisted ``expires`` is exactly what the caller supplied.
+    validity_window_nudge: str
 
 
 class CheckpointResultDict(TypedDict, total=False):
@@ -383,6 +428,14 @@ class DeliverResultDict(TypedDict, total=False):
     review_block: str
     review_warning: str
     review_advisory: str
+    # PRD-CORE-255-FR05: {receipt_id, scope_digest, age_seconds} of the typed
+    # ReviewReceipt that satisfied the review gate. Absent when none did.
+    review_evidence: dict[str, object]
+    # PRD-CORE-255-FR04: safety-critical adversarial-audit gate outcome, plus the
+    # FR03 resolution word when the run declared no PRD scope (``not_declared``).
+    safety_critical_adversarial_block: str
+    safety_critical_adversarial_advisory: str
+    safety_critical: str
     # PRD-CORE-192-FR04: pre-deliver REVIEW nudge surfaced before the gate result.
     review_nudge: str
     review_scope_block: str
@@ -481,6 +534,29 @@ class DeliverResultDict(TypedDict, total=False):
     # reason_code, effect_calls: 0, caller_recoverable}. ABSENT when
     # delivery_operations_mode="off".
     delivery_operation: dict[str, object]
+    # PRD-CORE-249-FR04: plan-acceptance gate. ``plan_acceptance_block`` is the
+    # STRUCTURED hard block (present only when the block STANDS — a successful
+    # acceptable-failure override leaves it absent); ``plan_acceptance_warning``
+    # is the advisory form under a non-blocking mode or task type;
+    # ``unresolved_scope_entries`` names every ``prd_scope`` entry that resolved
+    # to no PRD file, so zero enumerated identifiers is never reported as a pass.
+    # These are set by the self-computing gate directly on the result and are
+    # deliberately NOT DeliveryGatesDict keys: ``check_delivery_gates`` does not
+    # compute them, and a key there with no producer is the presence-unconsumed
+    # pattern this PRD exists to close.
+    plan_acceptance_block: str
+    plan_acceptance_warning: str
+    # PRD-CORE-265-FR11: formation gate on the ORCHESTRATOR run.
+    # ``formation_gate_block`` is present only when the hard block STANDS (a
+    # valid acceptable-failure record leaves it absent); ``formation_gate_warning``
+    # is the same condition under ``formation_deliver_gate: advisory``.
+    formation_gate_block: str
+    formation_gate_warning: str
+    unresolved_scope_entries: list[str]
+    # PRD-CORE-249-FR02: outcome of the deliver-time handoff write. Fail-open —
+    # ``{"status": "failed", "error": ...}`` records the failure and delivery
+    # still succeeds, so this is never absent-meaning-succeeded.
+    project_handoff: dict[str, object]
 
 
 class ToolEventDataDict(TypedDict, total=False):

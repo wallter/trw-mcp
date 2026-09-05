@@ -67,17 +67,44 @@ class TestMaybeCheckpointWal:
         assert result.get("skipped") is True
         assert result.get("reason") == "no_wal_file"
 
-    def test_skips_under_threshold(self, trw_dir: Path) -> None:
-        """When WAL file exists but is under threshold, returns skipped."""
+    def test_skips_under_threshold_when_recently_checkpointed(self, trw_dir: Path) -> None:
+        """Under the size threshold AND recently checkpointed returns skipped.
+
+        PRD-CORE-248 FR04 made the trigger size OR age, so this test now records
+        the fresh checkpoint timestamp its "skipped" expectation always assumed.
+        """
+        import time
+
+        from trw_mcp.state._wal_triggers import record_checkpoint_attempt
         from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
         # Create a small WAL file (1 KB, well under 10 MB default)
         wal_path = trw_dir / "memory" / "memory.db-wal"
         wal_path.write_bytes(b"\x00" * 1024)
+        record_checkpoint_attempt(trw_dir / "memory" / "memory.db", now=time.time())
 
         result = maybe_checkpoint_wal(trw_dir)
         assert result.get("skipped") is True
-        assert result.get("reason") == "under_threshold"
+        assert result.get("reason") == "not_due"
+
+    def test_stale_checkpoint_triggers_below_the_size_threshold(self, trw_dir: Path) -> None:
+        """PRD-CORE-248 FR04 clause 1: age alone makes a small WAL due."""
+        import time
+
+        from trw_mcp.models.config import TRWConfig as _Cfg
+        from trw_mcp.state._wal_triggers import evaluate_wal_trigger, record_checkpoint_attempt
+
+        wal_path = trw_dir / "memory" / "memory.db-wal"
+        wal_path.write_bytes(b"\x00" * 1024)
+        cfg = _Cfg()
+        record_checkpoint_attempt(
+            trw_dir / "memory" / "memory.db",
+            now=time.time() - cfg.wal_checkpoint_max_age_seconds - 1,
+        )
+
+        trigger = evaluate_wal_trigger(trw_dir, cfg)
+        assert trigger.due is True
+        assert trigger.reason == "age"
 
     def test_triggers_above_threshold(self, trw_dir: Path) -> None:
         """When WAL file exceeds threshold, checkpoint is attempted."""
@@ -128,7 +155,12 @@ class TestMaybeCheckpointWal:
         wal_path = trw_dir / "memory" / "memory.db-wal"
         wal_path.write_bytes(b"\x00" * (5 * 1024 * 1024))
 
-        # With default threshold (10 MB), this should be skipped
+        # With default threshold (10 MB) and a fresh checkpoint clock, skipped.
+        import time
+
+        from trw_mcp.state._wal_triggers import record_checkpoint_attempt
+
+        record_checkpoint_attempt(trw_dir / "memory" / "memory.db", now=time.time())
         result_default = maybe_checkpoint_wal(trw_dir)
         assert result_default.get("skipped") is True
 

@@ -2,8 +2,8 @@
 
 Mixed into ``_TRWConfigFields`` via multiple inheritance. Kept as its own small
 mixin (well under the 200-raw-line domain-mixin gate enforced by
-``tests/test_config_fields.py``); ``_fields_ceremony.py`` is at its 199/200 cap
-so a new mixin is required.
+``tests/test_config_fields.py``); one concern per mixin keeps every file under
+that gate without bin-packing unrelated fields together.
 
 ``phase_exposure_enabled`` gates ``PhaseExposureMiddleware`` filtering. Default
 ``False`` for the v1 rollout (PRD §9 Stage 1 — opt-in for eval runs only); the

@@ -120,7 +120,7 @@ def reclassify_to_user_tier(
         _promote_entry(entry, user_backend, USER_NAMESPACE)
         report["promoted"].append(entry.id)
         if move:
-            project_backend.delete(entry.id)
+            project_backend.delete(entry.id, namespace=entry.namespace)
 
     logger.info(
         "user_tier_backfill_done",

@@ -1,0 +1,15 @@
+# PRD-FIX-126-FR05 fixture: RunStatus member "delivered".
+# One file per member. The contract test asserts len(fixtures) ==
+# len(RunStatus) + len(_STATUS_ALIASES), so adding a member without adding its
+# fixture fails the build rather than passing silently.
+run_id: 20260903T000000Z-fixture
+task: run-status-fixture
+framework: v26.2_TRW
+status: delivered
+phase: review
+confidence: medium
+objective: Schema-complete run record used to pin the run-status vocabulary.
+run_type: implementation
+task_type: coding
+recall_policy: similarity
+protected: false

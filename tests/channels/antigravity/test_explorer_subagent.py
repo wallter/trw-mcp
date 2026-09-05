@@ -40,7 +40,9 @@ def _make_sidecar(
 
 
 def test_yaml_frontmatter_valid_strict_parser(tmp_path: Path) -> None:
-    """FR07: generated agent has YAML frontmatter parseable by yaml.safe_load."""
+    """FR07 + PRD-CORE-252 follow-up: frontmatter is the registry's antigravity-cli
+    shape -- name/description/model only, nothing that client's own subagent
+    reference (antigravity.google/docs/subagents) does not document."""
     from trw_mcp.channels.antigravity._explorer_subagent import (
         generate_distill_explorer_agent,
     )
@@ -53,7 +55,7 @@ def test_yaml_frontmatter_valid_strict_parser(tmp_path: Path) -> None:
     )
 
     assert result.status == "written"
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     assert agent_path.exists()
 
     content = agent_path.read_text()
@@ -64,8 +66,13 @@ def test_yaml_frontmatter_valid_strict_parser(tmp_path: Path) -> None:
 
     parsed = yaml.safe_load(frontmatter_text)
     assert isinstance(parsed, dict)
-    for field in ("name", "description", "tools", "model", "temperature", "max_turns", "timeout_mins"):
+    for field in ("name", "description", "model"):
         assert field in parsed, f"Missing required frontmatter field: {field}"
+    # The registry drops these for antigravity-cli: literal Gemini ids and
+    # per-agent timing/tool knobs that client's reference does not accept.
+    for field in ("tools", "temperature", "max_turns", "timeout_mins", "disallowedTools", "effort", "memory"):
+        assert field not in parsed, f"Unsupported frontmatter field {field!r} leaked into antigravity-cli output"
+    assert parsed["model"] in {"inherit", "flash", "pro"}, f"model {parsed['model']!r} not in the documented set"
 
 
 def test_frontmatter_name_is_trw_distill_explorer(tmp_path: Path) -> None:
@@ -79,7 +86,7 @@ def test_frontmatter_name_is_trw_distill_explorer(tmp_path: Path) -> None:
         sidecar_sha="sha_name",
     )
 
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     content = agent_path.read_text()
     parts = content.split("---")
     parsed = yaml.safe_load(parts[1])
@@ -169,7 +176,15 @@ def test_no_mutation_tools(tmp_path: Path) -> None:
 
 
 def test_no_mutation_tools_in_generated_file(tmp_path: Path) -> None:
-    """FR10: generated agent file must not list write_file, edit_file, trw_deliver."""
+    """FR10: generated agent file must not name write_file, edit_file, trw_deliver.
+
+    The antigravity-cli format registry drops the bundled ``tools`` grant
+    entirely for this client (its documented frontmatter has no such field —
+    see ``test_yaml_frontmatter_valid_strict_parser``), so the read-only
+    guarantee now rests on the body never instructing the mutation tools
+    rather than on a host-enforced allowlist. This asserts that body-level
+    property directly.
+    """
     from trw_mcp.channels.antigravity._explorer_subagent import (
         _MUTATION_TOOLS,
         generate_distill_explorer_agent,
@@ -182,14 +197,14 @@ def test_no_mutation_tools_in_generated_file(tmp_path: Path) -> None:
         sidecar_sha="sha_nomut",
     )
 
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     content = agent_path.read_text()
     parts = content.split("---")
     parsed = yaml.safe_load(parts[1])
-    tools_list = parsed.get("tools", [])
+    assert "tools" not in parsed, "antigravity-cli's registry entry drops the tools key; it must not resurface"
 
     for mut in _MUTATION_TOOLS:
-        assert mut not in tools_list, f"Mutation tool {mut!r} found in generated tools list"
+        assert mut not in content, f"Mutation tool {mut!r} found in generated agent content"
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +223,7 @@ def test_description_contains_read_only(tmp_path: Path) -> None:
         sidecar_sha="sha_ro",
     )
 
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     content = agent_path.read_text()
     parts = content.split("---")
     parsed = yaml.safe_load(parts[1])
@@ -232,7 +247,7 @@ def test_no_unsubstituted_template_vars(tmp_path: Path) -> None:
         sidecar_sha="sha_tmpl",
     )
 
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     content = agent_path.read_text()
     assert "{{ " not in content, "Unsubstituted template vars found"
 
@@ -253,7 +268,7 @@ def test_sidecar_absent_writes_placeholder_subagent(tmp_path: Path) -> None:
     )
 
     assert result.status == "written", f"Expected written, got {result.status}: {result.error}"
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     assert agent_path.exists()
 
     content = agent_path.read_text()
@@ -267,21 +282,73 @@ def test_sidecar_absent_writes_placeholder_subagent(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# FR21 — trw-explorer.md cross-reference to trw-distill-explorer
+# PRD-CORE-252 follow-up: routed through the FR01 format registry
 # ---------------------------------------------------------------------------
 
 
-def test_trw_explorer_description_cross_reference(tmp_path: Path) -> None:
-    """FR21: trw-explorer.md description mentions trw-distill-explorer (cross-reference).
+def test_lands_at_the_registrys_antigravity_destination(tmp_path: Path) -> None:
+    """The writer's destination is the registry's, not a second hardcoded path.
 
-    The description must direct users toward @trw-distill-explorer for
-    risk-scored exploration. Verified against the template in _antigravity_cli.py.
+    Before this fix ``_AGENT_RELATIVE_PATH`` was a module-level literal
+    (``.antigravitycli/agents/...``) independent of
+    ``agent_format_for("antigravity-cli").destination_dir`` (``.agents/agents``,
+    PRD-CORE-252-FR03) -- the two could drift, and had: the bundled specialists
+    already moved, this dynamically-rendered subagent had not.
     """
-    from trw_mcp.bootstrap._antigravity_cli import _ANTIGRAVITY_AGENT_TEMPLATES
-
-    trw_explorer_content = _ANTIGRAVITY_AGENT_TEMPLATES.get("trw-explorer.md", "")
-    assert trw_explorer_content, "trw-explorer.md template not found in _ANTIGRAVITY_AGENT_TEMPLATES"
-    assert "trw-distill-explorer" in trw_explorer_content, (
-        "FR21: trw-explorer.md description must cross-reference @trw-distill-explorer. "
-        f"Got description: {trw_explorer_content[:300]}"
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.channels.antigravity._explorer_subagent import (
+        _AGENT_RELATIVE_PATH,
+        generate_distill_explorer_agent,
     )
+
+    registry_destination = agent_format_for("antigravity-cli").destination_for("trw-distill-explorer")
+    assert _AGENT_RELATIVE_PATH == registry_destination
+
+    result = generate_distill_explorer_agent(
+        repo_root=tmp_path,
+        sidecar_data=_make_sidecar(),
+        sidecar_sha="sha_dest",
+    )
+
+    assert result.status == "written"
+    assert result.path == registry_destination
+    assert (tmp_path / registry_destination).is_file()
+    # And the file did NOT land at the retired location.
+    assert not (tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md").exists()
+
+
+def test_retired_location_is_swept_on_update(tmp_path: Path) -> None:
+    """A stale pre-move copy at ``.antigravitycli/agents`` is cleaned up.
+
+    ``trw-distill-explorer.md`` joined ``RELOCATED_CLIENT_AGENTS`` alongside the
+    other three antigravity agent names PRD-CORE-252 already relocated, so an
+    existing install's stale copy is removed the same way theirs is.
+    """
+    from trw_mcp.bootstrap._version_migration import RELOCATED_CLIENT_AGENTS
+
+    assert "trw-distill-explorer.md" in RELOCATED_CLIENT_AGENTS[".antigravitycli/agents"]
+
+
+# ---------------------------------------------------------------------------
+# FR21 — cross-reference to trw-distill-explorer
+#
+# ``test_trw_explorer_description_cross_reference`` is REMOVED, not relaxed.
+# FR21's carrier was the ``trw-explorer.md`` entry of
+# ``_ANTIGRAVITY_AGENT_TEMPLATES``: a hand-written antigravity stub whose
+# description pointed at ``@trw-distill-explorer``. PRD-CORE-252-FR04 deleted
+# that template set and retired the ``trw-explorer`` name with it
+# (bundled-or-discard, OQ-1), so the sentence has no carrier on this client.
+#
+# Re-homing it onto a bundled specialist's description was considered and
+# rejected here: PRD-CORE-252 §2 lists "changing what any agent does — the
+# bodies, tool grants, and behavioural contracts" as an explicit non-goal, and
+# the bundled corpus is client-neutral while this cross-reference is
+# antigravity-specific. Restoring the pointer is the distill channel's call and
+# belongs in the PRD that owns FR21 — it is NOT delivered by PRD-CORE-252, and
+# asserting a weaker version of it here would misreport that.
+#
+# Everything else FR21 depends on — the channel's own explorer subagent (now
+# ``.agents/agents/trw-distill-explorer.md``, per the registry-routing tests
+# above), its content and its preservation — is asserted by the tests above
+# and is untouched.
+# ---------------------------------------------------------------------------

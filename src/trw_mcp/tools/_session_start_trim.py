@@ -83,7 +83,26 @@ _FINGERPRINT_COMPACT_FIELDS = ("build_identity", "connection_nonce")
 # A ``*_deferred`` block is folded in compact mode only when its keys are a
 # subset of this known advisory shape — anything richer stays untouched so a
 # block carrying real payload can never be silently summarized away.
-_DEFERRED_SHAPE_KEYS = frozenset({"reason", "writer_pids", "writer_count", "threshold", "defer_reason", "detail"})
+# PRD-CORE-257-FR04 replaced ``defer_reason`` (the legacy two-tier reason) with
+# the streak's age, its count and the two measurement states. This set MUST stay
+# a superset of every key ``writer_pressure_details`` emits — a new advisory key
+# that is not admitted here silently stops folding and returns five
+# near-identical blocks to the response (RISK-004). A test asserts the
+# superset relation rather than leaving it to inspection.
+_DEFERRED_SHAPE_KEYS = frozenset(
+    {
+        "reason",
+        "writer_pids",
+        "writer_count",
+        "peer_writer_count",
+        "threshold",
+        "deferral_age_hours",
+        "deferred_count",
+        "census_state",
+        "ledger_state",
+        "detail",
+    }
+)
 
 # Identity/provenance stamps dropped outright in compact mode — not folded into
 # health_summary, because they carry no health signal to summarize.
@@ -185,6 +204,10 @@ def _fold_deferred_blocks(results: SessionStartResultDict) -> None:
     """
     folded: dict[str, list[str]] = {}
     writer_counts: list[int] = []
+    thresholds: list[int] = []
+    ages: list[float] = []
+    census_states: set[str] = set()
+    ledger_states: set[str] = set()
     for key in [k for k in results if k.endswith("_deferred")]:
         block = results.get(key)
         if not isinstance(block, dict) or not set(block) <= _DEFERRED_SHAPE_KEYS:
@@ -194,11 +217,45 @@ def _fold_deferred_blocks(results: SessionStartResultDict) -> None:
         count = block.get("writer_count")
         if isinstance(count, int):
             writer_counts.append(count)
+        threshold = block.get("threshold")
+        if isinstance(threshold, int):
+            thresholds.append(threshold)
+        age = block.get("deferral_age_hours")
+        if isinstance(age, (int, float)):
+            ages.append(float(age))
+        for state_key, sink in (("census_state", census_states), ("ledger_state", ledger_states)):
+            state = block.get(state_key)
+            if isinstance(state, str) and state:
+                sink.add(state)
         results.pop(key, None)  # type: ignore[misc]
     if folded:
         results["deferred"] = {reason: sorted(steps) for reason, steps in folded.items()}
         if writer_counts:
             results["deferred_writer_count"] = max(writer_counts)
+        # PRD-CORE-257-FR11: the compact response is the one an agent actually
+        # reads. Stating that work was deferred without stating the bar it was
+        # deferred against, how long it has been held, or whether either
+        # measurement was trustworthy is what made a permanent skip invisible.
+        if thresholds:
+            results["deferred_threshold"] = max(thresholds)
+        if ages:
+            results["deferred_max_age_hours"] = round(max(ages), 2)
+        if census_states:
+            results["deferred_census_state"] = _worst_state(census_states, ("unreadable", "measured"))
+        if ledger_states:
+            results["deferred_ledger_state"] = _worst_state(ledger_states, ("degraded", "ok"))
+
+
+def _worst_state(seen: set[str], ranked: tuple[str, ...]) -> str:
+    """Return the least reassuring state present, so a fold cannot launder one.
+
+    Folding several blocks into one summary must never report the healthiest of
+    them: one degraded ledger read among six is still a degraded ledger.
+    """
+    for candidate in ranked:
+        if candidate in seen:
+            return candidate
+    return sorted(seen)[0]
 
 
 def _compact_connection_fingerprint(results: SessionStartResultDict) -> None:

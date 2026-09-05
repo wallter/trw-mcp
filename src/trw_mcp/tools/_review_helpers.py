@@ -30,6 +30,7 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.tools._review_provenance import RunIdentity
+    from trw_mcp.tools._review_receipt_writer import ReviewReceiptWriteResult
 
 logger = structlog.get_logger(__name__)
 
@@ -151,6 +152,25 @@ def _compute_verdict(findings: list[dict[str, str]]) -> str:
     return "pass"
 
 
+def _stamp_reviewer_family(payload: dict[str, object], outcome: ReviewReceiptWriteResult) -> None:
+    """PRD-CORE-255-FR02 — record the DERIVED reviewer family on a payload.
+
+    ``review_family_coverage`` is upgraded to ``cross_family`` only when the
+    family verified to ``cross_model``; it is never written by a caller claim.
+    ``family_downgraded_reason`` is present only when a claim was refused, so an
+    absent key means "nothing was refused", never "a refusal went unreported".
+    """
+    from trw_mcp.tools._review_reviewer_family import COVERAGE_CROSS_FAMILY
+
+    if not outcome.reviewer_family:
+        return
+    payload["reviewer_family"] = outcome.reviewer_family
+    if outcome.verified_cross_model:
+        payload["review_family_coverage"] = COVERAGE_CROSS_FAMILY
+    if outcome.family_downgraded_reason:
+        payload["family_downgraded_reason"] = outcome.family_downgraded_reason
+
+
 def _persist_review_artifact(
     resolved_run: Path | None,
     review_data: dict[str, object],
@@ -212,6 +232,11 @@ def _persist_review_artifact(
     if evidence_mode == "enforce" and not receipt_outcome.ok:
         review_payload["substantive"] = False
         review_payload["non_substantive_reason"] = receipt_outcome.reason_code
+    # PRD-CORE-255-FR02: the family the SERVER derived (not the one the caller
+    # claimed) and, on a refusal, which verification condition refused it. Both
+    # are surfaced in the response — a downgrade that only reached structlog is
+    # invisible to the agent whose claim was refused.
+    _stamp_reviewer_family(review_payload, receipt_outcome)
     if result_payload is not None:
         result_payload["review_receipt_id"] = receipt_outcome.receipt_id
         result_payload["review_plan_id"] = receipt_outcome.plan_id
@@ -220,6 +245,7 @@ def _persist_review_artifact(
         if evidence_mode == "enforce" and not receipt_outcome.ok:
             result_payload["substantive"] = False
             result_payload["non_substantive_reason"] = receipt_outcome.reason_code
+        _stamp_reviewer_family(result_payload, receipt_outcome)
 
     review_path = resolved_run / "meta" / "review.yaml"
     writer.write_yaml(review_path, review_payload)

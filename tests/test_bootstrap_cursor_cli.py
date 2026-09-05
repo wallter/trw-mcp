@@ -85,8 +85,10 @@ class TestInitProjectCursorCliFullBootstrap:
         repo = _make_git_repo(tmp_path)
         init_project(repo, ide="cursor-cli")
         content = (repo / "AGENTS.md").read_text()
-        assert "<!-- TRW:BEGIN -->" in content
-        assert "<!-- TRW:END -->" in content
+        # PRD-CORE-243-FR06/FR08: the shared dialect, not the retired
+        # cursor-cli-only <!-- TRW:BEGIN --> pair.
+        assert "<!-- trw:start -->" in content
+        assert "<!-- trw:end -->" in content
 
     def test_cli_json_has_permissions(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._init_project import init_project

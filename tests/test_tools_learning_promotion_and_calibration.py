@@ -26,7 +26,7 @@ class TestClaudeMdSyncQValuePromotion:
 
         trw_dir = tmp_path / _CFG.trw_dir
         backend = get_backend(trw_dir)
-        backend.update(learning_id, q_value=0.9, q_observations=5)
+        backend.update(learning_id, q_value=0.9, q_observations=5, namespace="default")
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         # CORE-093: learnings_promoted always 0
@@ -60,7 +60,7 @@ class TestClaudeMdSyncQValuePromotion:
         # Update q_value and q_observations in SQLite (where list_active_learnings reads from)
         trw_dir = tmp_path / _CFG.trw_dir
         backend = get_backend(trw_dir)
-        backend.update(learning_id, q_value=0.2, q_observations=5)
+        backend.update(learning_id, q_value=0.2, q_observations=5, namespace="default")
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         # Should use q_value (0.2) — not promoted

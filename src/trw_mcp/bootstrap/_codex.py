@@ -106,7 +106,6 @@ __all__ = [
     "_trw_hook_group",
     "codex_hooks_review_warning",
     "codex_trw_hook_count",
-    "generate_codex_agents",
     "generate_codex_config",
     "generate_codex_hooks",
     "install_codex_skills",
@@ -202,6 +201,26 @@ def _registered_trw_tool_names() -> list[str]:
     SSOT). The union ensures Codex always sees the full curated set regardless of
     the resolved surface, while still surfacing any registered tool beyond the
     manifest that appears in the live view.
+
+    Why no REVIEWER variant is generated here (PRD-SEC-015-FR10). The reviewer
+    bound is a per-lane containment applied at the two dispatch call sites
+    (``dispatch/_commands.py`` and ``scripts/audit-external.sh``), not a property
+    of the interactive install, for three reasons:
+
+    * this lane is INTERACTIVE and intentionally mirrors Claude Code's
+      full-but-server-masked surface — ``SurfaceAuthorityMiddleware`` narrows it
+      per session, so a narrower generated allowlist would only desynchronise the
+      two layers;
+    * TOML comments do not survive the merge-and-rewrite this module performs on
+      an existing config, so an in-file warning explaining a reviewer table would
+      be silently dropped on the next ``update-project``;
+    * Codex **0.134.0 removed ``[profiles.<name>]`` tables**. Profiles are now
+      user-scoped standalone ``$CODEX_HOME/<name>.config.toml`` files selected by
+      ``--profile``, so a repository *cannot* ship a reviewer profile at all —
+      emitting one would be rejected by the client this file targets.
+
+    ``tests/test_bootstrap_codex_split.py::TestCodexNoReviewerProfile`` asserts
+    that no ``profiles`` key is ever emitted, so nobody re-adds one.
     """
     from trw_mcp.server._app import mcp
     from trw_mcp.server._surface_manifest_registry import eligible_tool_names
@@ -360,48 +379,6 @@ def generate_codex_config(
     return result
 
 
-_CODEX_AGENT_TEMPLATES: dict[str, str] = {
-    "trw-explorer.toml": '''name = "trw_explorer"
-description = "Read-only codebase explorer for gathering evidence before edits."
-model_reasoning_effort = "medium"
-sandbox_mode = "read-only"
-developer_instructions = """
-Stay in exploration mode.
-Trace the real execution path, cite files and symbols, and avoid proposing fixes unless asked.
-Prefer fast search and targeted reads over broad scans.
-"""
-''',
-    "trw-implementer.toml": '''name = "trw_implementer"
-description = "Implementation-focused agent for bounded code changes in the current repository."
-model_reasoning_effort = "medium"
-sandbox_mode = "workspace-write"
-developer_instructions = """
-Own the requested fix or feature slice.
-Make the smallest defensible change, keep unrelated files untouched, and validate the behavior you changed.
-"""
-''',
-    "trw-reviewer.toml": '''name = "trw_reviewer"
-description = "Read-only reviewer focused on correctness, regressions, security, and missing tests."
-model_reasoning_effort = "high"
-sandbox_mode = "read-only"
-developer_instructions = """
-Review like an owner.
-Lead with concrete findings, prioritize correctness and missing tests, and avoid style-only feedback unless it hides a real defect.
-"""
-''',
-    "trw-docs-researcher.toml": '''name = "trw_docs_researcher"
-description = "Documentation specialist that uses docs MCP servers to verify APIs and runtime behavior."
-model_reasoning_effort = "medium"
-sandbox_mode = "read-only"
-developer_instructions = """
-Use configured docs MCP servers to confirm APIs, options, and version-specific behavior.
-Return concise answers with links or exact references when available.
-Do not make code changes.
-"""
-''',
-}
-
-
 def _codex_user_edited(dest: Path, rel: str, incoming: bytes, manifest_hashes: dict[str, str] | None) -> bool:
     """Return True when *dest* is a user edit that must be preserved (FIX B).
 
@@ -420,41 +397,6 @@ def _codex_user_edited(dest: Path, rel: str, incoming: bytes, manifest_hashes: d
     from ._managed_client_artifacts import artifact_user_edited
 
     return artifact_user_edited(dest, rel, incoming, manifest_hashes)
-
-
-def generate_codex_agents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> BootstrapFileResult:
-    """Generate `.codex/agents/*.toml`.
-
-    FIX B: an UNMODIFIED agent is refreshed when the bundled template changes;
-    a user-edited one is preserved (content-aware, mirroring the opencode path).
-    """
-    result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
-    agents_dir = target_dir / _CODEX_AGENTS_DIR
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    for filename, content in _CODEX_AGENT_TEMPLATES.items():
-        path = agents_dir / filename
-        rel = f"{_CODEX_AGENTS_DIR}/{filename}"
-        try:
-            existed = path.exists()
-            if existed and not force:
-                if _codex_user_edited(path, rel, content.encode("utf-8"), manifest_hashes):
-                    result["preserved"].append(rel)
-                    continue
-                if path.read_text(encoding="utf-8") == content:
-                    result["preserved"].append(rel)
-                    continue
-            path.write_text(content, encoding="utf-8")
-            _record_write(cast("dict[str, list[str]]", result), rel, existed=existed)
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {path}: {exc}")
-
-    return result
 
 
 def install_codex_skills(

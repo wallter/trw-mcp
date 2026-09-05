@@ -14,12 +14,12 @@ from pathlib import Path
 # Stems are matched case-insensitively against each path component.
 #
 # Two coverage groups:
-# - TRW-internal directories (backend/routers/trw-mcp/etc.) — original set.
+# - Common service-layout directory names (backend, routers, auth, ...) — original set.
 # - External eval-corpus roots (sphinx/pylint/astropy/etc.) — added 2026-04-27
 #   after the iter-22 root-cause investigation found that empty tag sets on
 #   external repos collapsed the relevance ranker to pure-impact, surfacing
-#   off-domain TRW-framework learnings against SWE-bench tasks. See
-#   docs/research/trw-distill/ITER-22-NAIVE-INJECTION-INVESTIGATION-2026-04-27.md.
+#   off-domain framework learnings against SWE-bench tasks. Keep the external
+#   roots: dropping them re-collapses the ranker on any repo this table misses.
 _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "backend": {"backend", "fastapi", "api"},
     "routers": {"api", "endpoints"},

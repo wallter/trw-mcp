@@ -63,6 +63,8 @@ def _register_review_tool(server: FastMCP) -> None:
         prd_ids: list[str] | None = None,
         reviewer_identity: dict[str, object] | str = "",
         review_completed: bool = False,
+        external_receipt_path: str | None = None,
+        adversarial_pass: bool = False,
     ) -> dict[str, object]:
         """Compute a pass/warn/block review verdict and persist review.yaml.
 
@@ -71,20 +73,22 @@ def _register_review_tool(server: FastMCP) -> None:
         Modes: manual (default, findings=[...]; empty is non-substantive
         unless review_completed=True), auto (reviewer_findings), cross_model,
         reconcile (prd_ids vs diff; not code-quality). severity accepts
-        critical|error|high|P0|P1|warning|medium|P2|info|low|P3. Findings that
-        fail validation come back in rejected_findings, and findings filtered
-        below the confidence threshold in suppressed_findings — never dropped.
+        critical|error|high|P0|P1|warning|medium|P2|info|low|P3. Invalid findings
+        return in rejected_findings, low-confidence ones in suppressed_findings —
+        never dropped.
 
         Output: verdict, findings_count, review_path, substantive.
 
         Args:
             findings: list of {category, severity, description}; passing this selects manual mode.
-            reviewer_identity: accepts ONLY these four keys: reviewer_source
-                (self|subagent|cross_model|operator), reviewer_receipt_id,
-                reviewer_run_id, reviewer_session_id. Any other key is rejected;
-                reviewer_source=operator requires a non-empty reviewer_receipt_id.
-                run/session ids are verified against recorded state and are
-                never self-mintable.
+            reviewer_identity: ONLY reviewer_source (self|subagent|cross_model|
+                operator), reviewer_receipt_id, reviewer_run_id,
+                reviewer_session_id. run/session ids are verified, never mintable.
+            external_receipt_path: the auditor's own output file, under the project
+                root. reviewer_family=cross_model needs reviewer_receipt_id == its
+                SHA-256; otherwise family_downgraded_reason says why not.
+            adversarial_pass: audit found nothing blocking; honored only on a
+                verified cross_model or receipted operator review.
         """
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._review_auto import handle_auto_mode, handle_cross_model_mode
@@ -92,6 +96,8 @@ def _register_review_tool(server: FastMCP) -> None:
         from trw_mcp.tools._review_provenance import parse_reviewer_identity
 
         config = get_config()
+        # reviewer_source="operator" requires a non-empty reviewer_receipt_id --
+        # build_reviewer_block raises otherwise (PRD-CORE-213-FR01).
         claim = parse_reviewer_identity(reviewer_identity)
         reviewer_source = claim.reviewer_source
         reviewer_receipt_id = claim.reviewer_receipt_id
@@ -173,6 +179,8 @@ def _register_review_tool(server: FastMCP) -> None:
                     reviewer_receipt_id=reviewer_receipt_id,
                     review_completed=review_completed,
                     verified_reviewer_identity=verified_reviewer_identity,
+                    external_receipt_path=external_receipt_path,
+                    adversarial_pass=adversarial_pass,
                 ),
             )
         elif effective_mode == "reconcile":

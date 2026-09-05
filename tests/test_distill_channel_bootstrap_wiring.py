@@ -287,8 +287,46 @@ def test_install_antigravity_distill_channels_installs_subagent(
     monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
     install_antigravity_distill_channels(tmp_path)
 
-    agent_path = tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md"
+    # PRD-CORE-252 follow-up: routed through the FR01 format registry, whose
+    # antigravity-cli destination is `.agents/agents` (not the retired
+    # `.antigravitycli/agents`).
+    agent_path = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
     assert agent_path.exists(), f"AG-02 subagent not found at {agent_path}"
+
+
+def test_install_antigravity_distill_channels_reports_write_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-FIX-127 P4: an AG-02 write failure must land in ``errors``, never ``created``.
+
+    ``AgentWriteResult.status`` is ``Literal["written", "skipped_same_sha",
+    "error"]``. The bootstrap layer used to compare it against the string
+    ``"skipped"``, which the type can never equal, so every non-skip outcome
+    -- including a real write failure -- fell into the catch-all ``else``
+    branch and was reported as a successful create. This drives the real
+    installer through a genuine ``OSError`` (the agent's target directory is
+    pre-occupied by a file) to prove the failure now surfaces truthfully.
+    """
+    from trw_mcp.bootstrap._antigravity_distill_channels import (
+        install_antigravity_distill_channels,
+    )
+
+    monkeypatch.setattr("trw_mcp.tools._sidecar_substrate.distill_installed", lambda: True)
+
+    # Occupy the agent's parent directory with a plain file so
+    # ``agent_path.parent.mkdir(parents=True, exist_ok=True)`` raises a real
+    # OSError inside ``generate_distill_explorer_agent``.
+    agents_dir = tmp_path / ".agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "agents").write_text("not a directory", encoding="utf-8")
+
+    result = install_antigravity_distill_channels(tmp_path)
+
+    agent_rel = ".agents/agents/trw-distill-explorer.md"
+    assert agent_rel not in result["created"], "a write failure must never be reported as a successful create"
+    assert any("AG-02 subagent install failed" in e for e in result["errors"]), (
+        f"write failure was not reported in errors: {result['errors']!r}"
+    )
 
 
 def test_antigravity_subagent_withheld_without_a_licence(tmp_path: Path) -> None:
@@ -303,6 +341,7 @@ def test_antigravity_subagent_withheld_without_a_licence(tmp_path: Path) -> None
 
     install_antigravity_distill_channels(tmp_path)
 
+    assert not (tmp_path / ".agents" / "agents" / "trw-distill-explorer.md").exists()
     assert not (tmp_path / ".antigravitycli" / "agents" / "trw-distill-explorer.md").exists()
     # ...while the distill-FREE before-edit hook still installs. The manifest
     # calls ag-03 "aspirational / no implementation"; it is neither.

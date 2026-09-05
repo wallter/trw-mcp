@@ -85,8 +85,8 @@ def test_recall_persists_anchor_validity(
 
     _wire(monkeypatch, backend, project)
     _store_anchored(backend, "L-anchor")
-    assert backend.get("L-anchor") is not None
-    assert backend.get("L-anchor").anchor_validity == 1.0  # type: ignore[union-attr]
+    assert backend.get("L-anchor", namespace="default") is not None
+    assert backend.get("L-anchor", namespace="default").anchor_validity == 1.0  # type: ignore[union-attr]
 
     # The anchored file goes away — the classic "memory was for the line above".
     (project / "src" / "mod.py").unlink()
@@ -94,7 +94,7 @@ def test_recall_persists_anchor_validity(
     result = _verify_assertions([_learning("L-anchor")], ["q"], TRWConfig(), _rank)
 
     assert result[0]["anchor_validity"] == 0.0
-    persisted = backend.get("L-anchor")
+    persisted = backend.get("L-anchor", namespace="default")
     assert persisted is not None
     assert persisted.anchor_validity == 0.0
 
@@ -113,7 +113,7 @@ def test_recall_reverifies_entries_without_assertions(
 
     _verify_assertions([_learning("L-anchor-only")], ["q"], TRWConfig(), _rank)
 
-    persisted = backend.get("L-anchor-only")
+    persisted = backend.get("L-anchor-only", namespace="default")
     assert persisted is not None
     assert persisted.anchor_validity == 0.0
 
@@ -131,7 +131,7 @@ def test_intact_anchor_keeps_full_validity(
 
     _verify_assertions([_learning("L-intact")], ["q"], TRWConfig(), _rank)
 
-    persisted = backend.get("L-intact")
+    persisted = backend.get("L-intact", namespace="default")
     assert persisted is not None
     assert persisted.anchor_validity == 1.0
 
@@ -171,9 +171,12 @@ def test_unanchored_entry_is_untouched(
     result = _verify_assertions([{"id": "L-plain", "summary": "unanchored"}], ["q"], TRWConfig(), _rank)
 
     assert "anchor_validity" not in result[0]
-    persisted = backend.get("L-plain")
+    persisted = backend.get("L-plain", namespace="default")
     assert persisted is not None
-    assert persisted.anchor_validity == 1.0
+    # PRD-CORE-244 FR01: "untouched" now means None (never assessed) rather
+    # than the old 1.0 default, which claimed a perfect score for an entry with
+    # no anchors to score.
+    assert persisted.anchor_validity is None
 
 
 def test_anchor_and_assertion_share_one_write(
@@ -194,7 +197,7 @@ def test_anchor_and_assertion_share_one_write(
     class _RecordingBackend:
         def update(self, entry_id: str, **fields: object) -> MemoryEntry | None:
             calls.append(fields)
-            return backend.update(entry_id, **fields)
+            return backend.update(entry_id, **fields, namespace="default")
 
     monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda _trw_dir: _RecordingBackend())
 

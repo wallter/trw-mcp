@@ -278,6 +278,11 @@ class PRDFrontmatter(BaseModel):
     category: str = ""
     risk_level: RiskLevel | None = None
     complexity: ComplexityFactor | None = None
+    # PRD-CORE-255-FR03: an independent adversarial audit is a BLOCKING deliver
+    # gate for any run whose PRD scope names a PRD carrying this flag. Additive
+    # with a false default, so no existing PRD changes behavior; which PRDs opt
+    # in is a maintainer decision, never inferred from priority or risk_level.
+    safety_critical: bool = False
 
     # AARE-F nested metadata
     # Deprecated: aaref_components — never validated or consumed by any tool (PRD-CORE-080-FR07).

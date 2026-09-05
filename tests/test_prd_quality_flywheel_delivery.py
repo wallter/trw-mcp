@@ -15,6 +15,24 @@ from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 from trw_mcp.tools._review_helpers import _persist_review_artifact
 
 
+def _write_scoped_prd(project_root: Path, prd_id: str = "PRD-QUAL-056") -> str:
+    """Write the PRD file this fixture's run names in ``prd_scope``.
+
+    PRD-CORE-255-FR03 (2026-09-04 amendment): declaring NO scope is inert, but
+    declaring a scope whose PRD file cannot be read resolves ``unknown`` and
+    fails closed into the FR04 adversarial gate. These fixtures genuinely are
+    scoped -- the flywheel report correlates on ``prd_scope`` -- so they must be
+    able to show the PRD they claim.
+    """
+    prds = project_root / "docs" / "requirements-aare-f" / "prds"
+    prds.mkdir(parents=True, exist_ok=True)
+    (prds / f"{prd_id}.md").write_text(
+        f'---\nprd:\n  id: {prd_id}\n  title: "flywheel fixture"\n  safety_critical: false\n---\n\n# {prd_id}\n',
+        encoding="utf-8",
+    )
+    return prd_id
+
+
 def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     writer = FileStateWriter()
     reader = FileStateReader()
@@ -31,7 +49,7 @@ def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.Monk
             "task": "task-a",
             "status": "active",
             "phase": "deliver",
-            "prd_scope": ["PRD-QUAL-056"],
+            "prd_scope": [_write_scoped_prd(tmp_path)],
         },
     )
     _persist_review_artifact(
@@ -172,7 +190,7 @@ def test_deliver_does_not_persist_dead_promotion_candidate_keys(
             "task": "task-a",
             "status": "active",
             "phase": "deliver",
-            "prd_scope": ["PRD-QUAL-056"],
+            "prd_scope": [_write_scoped_prd(tmp_path)],
         },
     )
     # PRD-DIST-1865 hardened the deliver build gate (2026-05-17): an empty

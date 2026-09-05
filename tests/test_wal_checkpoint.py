@@ -128,12 +128,20 @@ def test_passive_fallback_when_truncate_busy(
         assert result.get("mode") in {"truncate", "passive"}
 
 
-def test_skipped_when_under_threshold(
+def test_skipped_when_under_threshold_and_recently_checkpointed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When WAL is under threshold, function returns skipped without opening a connection."""
+    """Under threshold AND recently checkpointed -> skipped, no connection opened.
+
+    PRD-CORE-248 FR04 made the trigger size OR age, so "under threshold" alone
+    is no longer sufficient to skip: the test now records a fresh checkpoint
+    timestamp, which is what the size-only assertion was implicitly assuming.
+    """
+    import time
+
     from trw_mcp.models.config import get_config
+    from trw_mcp.state._wal_triggers import record_checkpoint_attempt
     from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
     trw_dir = tmp_path / ".trw"
@@ -145,14 +153,36 @@ def test_skipped_when_under_threshold(
     monkeypatch.setattr(cfg, "wal_checkpoint_threshold_mb", 100)
 
     _, holder = _seed_db_with_wal(db_path, n_writes=10)
+    record_checkpoint_attempt(db_path, now=time.time())
     try:
         result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
     finally:
         holder.close()
-    # Either under_threshold (most likely) or no_wal_file (if the small
-    # seed produced no WAL frames to begin with) is acceptable.
     assert result.get("skipped") is True
-    assert result.get("reason") in {"under_threshold", "no_wal_file"}
+    assert result.get("reason") in {"not_due", "no_wal_file"}
+
+
+def test_age_trigger_fires_below_the_size_threshold(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PRD-CORE-248 FR04 clause 1: a never-checkpointed store is due on age alone."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    db_path = trw_dir / "memory" / "memory.db"
+
+    cfg = get_config()
+    monkeypatch.setattr(cfg, "wal_checkpoint_threshold_mb", 100)
+
+    _, holder = _seed_db_with_wal(db_path, n_writes=10)
+    try:
+        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
+    finally:
+        holder.close()
+    assert result.get("checkpointed") is True, "no recorded checkpoint means due"
 
 
 def test_skipped_when_no_wal_file(tmp_path: Path) -> None:
@@ -199,7 +229,7 @@ def test_routes_through_existing_backend_not_bare_connection(tmp_path: Path, mon
         calls: dict[str, object] = {"backend_checkpoint": 0, "modes": []}
         real = backend.checkpoint_wal
 
-        def spy(mode: str = "TRUNCATE") -> dict[str, object]:
+        def spy(mode: str = "TRUNCATE", **kwargs: object) -> dict[str, object]:
             calls["backend_checkpoint"] = cast("int", calls["backend_checkpoint"]) + 1
             cast("list[str]", calls["modes"]).append(mode)
             return cast("dict[str, object]", real(mode))
@@ -215,8 +245,12 @@ def test_routes_through_existing_backend_not_bare_connection(tmp_path: Path, mon
         result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
 
         assert calls["backend_checkpoint"] == 1, "must checkpoint via the owning backend"
-        # The owning-backend path requests the resetting TRUNCATE mode (which
-        # the backend safely downgrades internally as needed).
+        # PRD-CORE-248 FR04 clause 4: the owning-backend path requests the
+        # resetting TRUNCATE mode ONLY when this process is the certified sole
+        # live writer. Constructing the SQLiteBackend above registered THIS pid
+        # in the writer registry and nothing else did, so the certification
+        # holds here. The peer-writer arm (PASSIVE requested) is covered by
+        # test_wal_checkpoint_triggers.py.
         assert calls["modes"] == ["TRUNCATE"]
         assert result.get("checkpointed") is True
         # mode is lowercased at the boundary (FR03): truncate when it actually

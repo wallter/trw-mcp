@@ -28,6 +28,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.exceptions import StateError
+from trw_mcp.models.run import RunStatus
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state.analytics import report as _report
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -392,13 +393,13 @@ def auto_close_stale_runs(
             # parsing on those takes seconds, and they are typically already
             # terminal so the parse is wasted work.
             prefilter_status = _prefilter_status(run_yaml)
-            if prefilter_status is not None and prefilter_status != "active":
+            if prefilter_status is not None and prefilter_status != RunStatus.ACTIVE.value:
                 continue
 
             try:
                 data = reader.read_yaml(run_yaml)
                 status = str(data.get("status", ""))
-                if status != "active":
+                if status != RunStatus.ACTIVE.value:
                     continue
 
                 if not _is_run_stale(run_dir, data, threshold_hours, now):
@@ -406,7 +407,7 @@ def auto_close_stale_runs(
 
                 run_id = str(data.get("run_id", run_dir.name))
                 original_phase = str(data.get("phase", ""))
-                data["status"] = "abandoned"
+                data["status"] = RunStatus.ABANDONED.value
                 data["abandoned_at"] = now.isoformat()
                 data["original_phase"] = original_phase
                 data["abandoned_reason"] = f"Stale timeout \u2014 exceeded threshold: {threshold_hours}h"

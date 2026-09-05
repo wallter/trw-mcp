@@ -74,3 +74,20 @@ def test_implementer_keeps_evidence_and_simplification_without_harness_folklore(
         "JSONL with ts",
     ):
         assert forbidden not in content
+
+
+def test_prd_groomer_and_requirement_reviewer_grant_prd_validate() -> None:
+    """2026-09-04 wiring-defect fix companion: both agents that call
+    trw_prd_validate in their body must also GRANT it in frontmatter `tools:`,
+    or the grant/usage pair silently diverges (PRD P12 "presence, unconsumed"
+    pattern applied in reverse — usage with no grant). Prior to the
+    surface-authority fix, the grant alone was insufficient because
+    SurfaceAuthorityMiddleware masked the tool for coding-task sessions
+    regardless of the agent's own frontmatter; this test only proves the
+    grant/usage pair stays wired, not the runtime surface (see
+    test_surface_authority_middleware.py::test_coding_run_exposes_coding_packs
+    for that)."""
+    for name in ("trw-prd-groomer.md", "trw-requirement-reviewer.md"):
+        content = (AGENTS / name).read_text(encoding="utf-8")
+        assert "mcp__trw__trw_prd_validate" in content, f"{name} does not grant trw_prd_validate"
+        assert "trw_prd_validate" in content.split("---", 2)[2], f"{name} grants but never calls trw_prd_validate"

@@ -189,7 +189,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # local (PRD-FIX-073: offline ceremony fallback)
     local_parser = subparsers.add_parser(
         "local",
-        help="Offline ceremony fallback — init/status/learn/deliver without MCP server",
+        help="Offline ceremony fallback — init/checkpoint/status/learn/recall/feedback/deliver without MCP server",
     )
     local_sub = local_parser.add_subparsers(dest="local_command")
     local_init = local_sub.add_parser("init", help="Create a run directory")
@@ -220,6 +220,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     local_learn.add_argument("--summary", required=True, help="One-line learning summary")
     local_learn.add_argument("--detail", required=True, help="Learning detail")
     local_learn.add_argument("--tag", action="append", default=[], help="Learning tag; may be passed more than once")
+    # PRD-CORE-247-FR03: the two offline surfaces the fallback lacked. Both bind
+    # to the SAME top-level callables the MCP tools use — no second
+    # redaction/ranking/persistence path exists to drift from them.
+    local_recall = local_sub.add_parser("recall", help="Recall learnings without MCP transport")
+    local_recall.add_argument("--query", "-q", required=True, help="Search query matched against summaries/details")
+    local_recall.add_argument("--tag", action="append", default=[], help="Filter by tag; may be passed more than once")
+    local_recall.add_argument(
+        "--max-results",
+        type=int,
+        default=None,
+        help="Maximum learnings to print (default: services.local_surface_service default)",
+    )
+    local_feedback = local_sub.add_parser("feedback", help="Submit feedback without MCP transport")
+    local_feedback.add_argument("--category", required=True, help="Feedback category")
+    local_feedback.add_argument("--subject", required=True, help="One-line subject")
+    local_feedback.add_argument("--message", "-m", required=True, help="Feedback body (redacted before validation)")
+    local_feedback.add_argument("--contact-email", default=None, help="Optional reply address")
     local_deliver = local_sub.add_parser("deliver", help="Mark the active local run delivered")
     local_deliver.add_argument("--message", "-m", default="local delivery", help="Delivery checkpoint message")
     local_deliver.add_argument(

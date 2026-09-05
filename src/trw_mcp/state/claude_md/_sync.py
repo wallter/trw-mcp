@@ -20,7 +20,9 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts._ceremony import (
     ClaudeMdSyncResultDict,
+    InstructionDiffDict,
     InstructionPointerSkipDict,
+    InstructionWriteRefusalDict,
     ReviewMdResultDict,
 )
 
@@ -110,7 +112,7 @@ def _build_sync_result(
     *,
     path: str,
     scope: str,
-    status: Literal["synced", "unchanged"],
+    status: Literal["synced", "unchanged", "dry_run", "refused"],
     total_lines: int,
     agents_md_synced: bool,
     agents_md_path: str | None,
@@ -123,6 +125,8 @@ def _build_sync_result(
     pointer_skips: list[InstructionPointerSkipDict] | None = None,
     external_path: str | None = None,
     capability_parity_drift: list[str] | None = None,
+    diffs: list[InstructionDiffDict] | None = None,
+    refusals: list[InstructionWriteRefusalDict] | None = None,
 ) -> ClaudeMdSyncResultDict:
     """Construct the stable sync result shape used by the tool and tests."""
     result: ClaudeMdSyncResultDict = {
@@ -153,6 +157,12 @@ def _build_sync_result(
     # PRD-CORE-218-FR06: present (possibly empty) whenever AGENTS.md is written.
     if capability_parity_drift is not None:
         result["capability_parity_drift"] = capability_parity_drift
+    # PRD-FIX-123 FR03/FR01: dry-run diffs and policy refusals, omitted when the
+    # write path produced neither.
+    if diffs is not None:
+        result["diffs"] = diffs
+    if refusals is not None:
+        result["refusals"] = refusals
     return result
 
 
@@ -294,6 +304,9 @@ def execute_claude_md_sync(
     llm: LLMClient,
     client: str = "auto",
     instruction_manifest_hashes: dict[str, str] | None = None,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
 ) -> ClaudeMdSyncResultDict:
     """Thin facade over ``dispatch_for_profile`` — see that function for docs."""
     return _dispatch_for_profile(
@@ -304,4 +317,6 @@ def execute_claude_md_sync(
         llm=llm,
         client=client,
         instruction_manifest_hashes=instruction_manifest_hashes,
+        dry_run=dry_run,
+        force=force,
     )

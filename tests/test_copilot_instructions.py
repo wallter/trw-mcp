@@ -171,6 +171,106 @@ class TestCopilotInstructions:
 
 
 @pytest.mark.unit
+class TestCopilotForceExternalizeAtomicity:
+    """PRD-CORE-247 diag-canon finding: ``force`` must never leave the
+    user-owned instruction file truncated on disk, even transiently.
+
+    Copilot's shipped profile declares ``instruction_import_syntax="none"``
+    (PRD-CORE-240-FR03), so ``_externalize_copilot_block`` never reaches its
+    write path in production today. It is still shipped code exercised by this
+    generic carrier-application logic, and the bug it carried — truncating
+    ``target_path`` to ``""`` before computing the carrier, then restoring on
+    failure — has a window where a crash between the truncate and the restore
+    loses the file for good. These tests patch the profile to be import-capable
+    so the write path executes, the way it would if ``instruction_import_syntax``
+    were ever re-enabled for this client (as its own docstring notes it once was).
+    """
+
+    @pytest.fixture()
+    def _import_capable_copilot(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp.models.config import _profiles as _profiles_module
+
+        real_resolve = _profiles_module.resolve_client_profile
+
+        def _patched(client_id: str, model_tier: object = None) -> object:
+            profile = real_resolve(client_id, model_tier)  # type: ignore[arg-type]
+            if client_id == "copilot":
+                profile = profile.model_copy(update={"instruction_import_syntax": "at_path_repo_relative"})
+            return profile
+
+        monkeypatch.setattr(_profiles_module, "resolve_client_profile", _patched)
+        monkeypatch.setattr("trw_mcp.bootstrap._copilot.resolve_client_profile", _patched, raising=False)
+
+    def test_force_never_writes_empty_content_to_the_real_target_file(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch, _import_capable_copilot: None
+    ) -> None:
+        """No call ever truncates ``target_path`` to empty, even transiently."""
+        instructions_path = fake_git_repo / _COPILOT_INSTRUCTIONS_PATH
+        instructions_path.parent.mkdir(parents=True, exist_ok=True)
+        original = "# User-owned instructions\n\nDo not lose this line.\n"
+        instructions_path.write_text(original, encoding="utf-8")
+
+        empty_writes_to_target: list[str] = []
+        real_write_text = Path.write_text
+
+        def _spy_write_text(self: Path, data: str, *args: object, **kwargs: object) -> int:
+            if self == instructions_path and data == "":
+                empty_writes_to_target.append(data)
+            return real_write_text(self, data, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(Path, "write_text", _spy_write_text)
+
+        result = generate_copilot_instructions(fake_git_repo, force=True)
+
+        assert not empty_writes_to_target, "target_path was truncated to empty mid-write"
+        assert not result["errors"]
+        assert original not in instructions_path.read_text(encoding="utf-8")
+
+    def test_swap_failure_leaves_the_original_file_untouched(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch, _import_capable_copilot: None
+    ) -> None:
+        """A failure at the atomic swap point never corrupts ``target_path``.
+
+        Simulates the crash the truncate-then-restore approach could not
+        recover from: something goes wrong exactly where the new content would
+        land. Only the staging-to-target swap is made to fail (not every
+        ``Path.replace`` call in the process), so the assertion isolates
+        ``_externalize_copilot_block``'s own atomicity rather than the
+        caller's separate INLINE fallback.
+        """
+        from trw_mcp.bootstrap._copilot import _copilot_instructions_content, _externalize_copilot_block
+        from trw_mcp.bootstrap._file_ops import _new_result
+
+        instructions_path = fake_git_repo / _COPILOT_INSTRUCTIONS_PATH
+        instructions_path.parent.mkdir(parents=True, exist_ok=True)
+        original = "# User-owned instructions\n\nDo not lose this line.\n"
+        instructions_path.write_text(original, encoding="utf-8")
+
+        real_replace = Path.replace
+
+        def _boom_replace(self: Path, target: Path) -> Path:
+            if self.name.endswith(".trw-force-staging"):
+                raise OSError("simulated crash during the atomic swap")
+            return real_replace(self, target)
+
+        monkeypatch.setattr(Path, "replace", _boom_replace)
+
+        result = _new_result()
+        handled = _externalize_copilot_block(
+            instructions_path,
+            fake_git_repo,
+            _copilot_instructions_content(),
+            result,
+            force=True,
+        )
+
+        assert handled is False
+        assert instructions_path.read_text(encoding="utf-8") == original, (
+            "a failed atomic swap must leave the original file exactly as it was"
+        )
+
+
+@pytest.mark.unit
 class TestSmartMergeInstructions:
     """Unit tests for the shared ``smart_merge_marker_section`` production path.
 

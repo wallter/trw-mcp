@@ -44,6 +44,9 @@ from trw_mcp.tools._deliver_gate_mode import (
     apply_deliver_gate_mode as _apply_deliver_gate_mode,
 )
 from trw_mcp.tools._deliver_gate_mode import (
+    count_session_changed_files as count_session_changed_files,
+)
+from trw_mcp.tools._deliver_gate_mode import (
     resolve_deliver_gate_decision as resolve_deliver_gate_decision,
 )
 from trw_mcp.tools._delivery_build_gates import (
@@ -59,6 +62,9 @@ from trw_mcp.tools._delivery_build_gates import (
 # _read_complexity_class through THIS facade so test monkeypatches propagate.
 from trw_mcp.tools._delivery_review_gate import (
     _check_review_gate as _check_review_gate,
+)
+from trw_mcp.tools._delivery_review_gate import (
+    evaluate_review_gate as _evaluate_review_gate,
 )
 from trw_mcp.tools._delivery_review_gate import (
     _review_artifact_is_substantive as _review_artifact_is_substantive,
@@ -183,7 +189,7 @@ def _check_untracked_files(run_path: Path) -> str | None:
 
 def _check_review_file_count_gate(
     run_path: Path,
-    events: list[dict[str, object]],
+    events: list[dict[str, object]] | None,
     session_id: str | None = None,
 ) -> str | None:
     """Block delivery when >REVIEW_SCOPE_FILE_THRESHOLD file_modified events and no review (R-01).
@@ -195,12 +201,34 @@ def _check_review_file_count_gate(
 
     Uses pre-read ``events`` list (shared with other gate checks).
 
-    Fail-open: if anything goes wrong, returns None.
+    ``events=None`` means the run's event log could not be read (WD-03). The
+    change surface is then UNKNOWN, so this gate cannot establish that it is
+    under the threshold — it blocks and names the unreadable file. Treating an
+    unreadable log as zero modified files was the fail-open hole: the >N-file
+    review-scope hard block could never fire for exactly the runs whose evidence
+    was damaged. A substantive review artifact still satisfies the gate first,
+    because that is direct evidence the review happened.
+
+    Fail-open otherwise: if anything goes wrong INSIDE the count, returns None.
     """
     try:
         review_path = run_path / "meta" / "review.yaml"
         if _review_artifact_is_substantive(review_path, FileStateReader()):
             return None
+
+        if events is None:
+            events_path = run_path / "meta" / "events.jsonl"
+            logger.warning(
+                "review_scope_gate_events_unreadable",
+                run_path=str(run_path),
+                outcome="fail_closed",
+            )
+            return (
+                f"Delivery blocked: the run's event log ({events_path}) could not be read, so the number "
+                "of files modified this session is UNKNOWN and the review-scope gate cannot confirm it is "
+                f"at or below {REVIEW_SCOPE_FILE_THRESHOLD}. Repair or remove the event log, or run "
+                "trw_review() so the review evidence stands on its own."
+            )
 
         file_modified_count = _count_file_modified_current_session(
             events,
@@ -304,6 +332,8 @@ def check_delivery_gates(
       - checkpoint_blocker_warning: last checkpoint mentions 'blocker' (R-07, soft gate)
       - build_gate_warning: no successful build check found
       - warning: premature delivery (only ceremony events)
+      - retraction_nudge: this session contradicted a learning and did not
+        retract it (PRD-CORE-244-FR06, advisory only)
     """
     result: DeliveryGatesDict = {}
 
@@ -318,6 +348,24 @@ def check_delivery_gates(
         if intent_block:
             result["intent_violation_block"] = intent_block
 
+    # PRD-CORE-255-FR04: a safety-critical PRD scope — or one naming a PRD whose
+    # file cannot be read — with no settled adversarial-audit receipt is a
+    # BLOCK-class gate. Evaluated here, before the no-active-run early return, for
+    # the same reason the intent gate is: omitting a run pin must not be a way to
+    # skip it. Its decision is both logged (inside the gate) and returned (here) —
+    # never diagnostic-only (NFR02). A run that declares NO scope is inert by
+    # operator policy (2026-09-04 amendment) and reports `safety_critical:
+    # not_declared` instead of blocking.
+    from trw_mcp.tools._delivery_safety_critical_gate import NOT_DECLARED, safety_critical_gate_result
+
+    safety_critical = safety_critical_gate_result(run_path)
+    if safety_critical.should_block:
+        result["safety_critical_adversarial_block"] = safety_critical.message
+    elif safety_critical.advisory:
+        result["safety_critical_adversarial_advisory"] = safety_critical.advisory
+        if safety_critical.resolution == NOT_DECLARED:
+            result["safety_critical"] = NOT_DECLARED
+
     if run_path is None:
         build_warning = _check_no_active_run_build_gate(trw_dir, reader, session_id=session_id)
         if build_warning:
@@ -331,13 +379,16 @@ def check_delivery_gates(
     # Review gate (PRD-QUAL-022). A verdict=block + critical findings on a
     # STANDARD/COMPREHENSIVE run is a HARD block (the primary truthfulness gate),
     # surfaced as review_block; MINIMAL/light complexity keeps the soft warning.
-    review_block, review_warning, review_advisory = _check_review_gate(run_path, reader)
-    if review_block:
-        result["review_block"] = review_block
-    elif review_warning:
-        result["review_warning"] = review_warning
-    elif review_advisory:
-        result["review_advisory"] = review_advisory
+    review_outcome = _evaluate_review_gate(run_path, reader)
+    if review_outcome.block:
+        result["review_block"] = review_outcome.block
+    elif review_outcome.warning:
+        result["review_warning"] = review_outcome.warning
+    elif review_outcome.advisory:
+        result["review_advisory"] = review_outcome.advisory
+    # PRD-CORE-255-FR05: name the receipt this delivery actually trusted.
+    if review_outcome.evidence:
+        result["review_evidence"] = review_outcome.evidence
 
     # PRD-CORE-192-FR04: pre-deliver REVIEW nudge — surfaced for any STANDARD+
     # run with no review.yaml, regardless of review_gate_mode, so the prompt is
@@ -395,15 +446,25 @@ def check_delivery_gates(
     if premature_warning:
         result["warning"] = premature_warning
 
-    # PRD-CORE-184-FR03: task-type-aware deliver gate mode. Promote the
-    # advisory build_gate_warning to a structural block when the configured
-    # mode + the run's task_type require it. Fail-open on any error so the
-    # gate never wedges delivery.
+    # PRD-CORE-184-FR03 + PRD-CORE-246-FR03: evidence-keyed deliver gate mode.
+    # Promote the advisory build_gate_warning to a structural block when the
+    # configured mode requires it for this run's task_type OR when this session
+    # recorded file modifications. The change count is derived from the events
+    # list already materialised above via the SAME helper the review-scope gate
+    # uses, so the framework keeps one notion of "code changed"; ``None`` means
+    # the count was uncomputable and the gate fails CLOSED (NFR02).
     if build_warning:
-        _apply_deliver_gate_mode(result, run_data)
+        _apply_deliver_gate_mode(
+            result,
+            run_data,
+            count_session_changed_files(events=events, run_path=run_path, session_id=session_id),
+        )
 
     # Complexity drift detection (R-02 + R-05, uses shared events + run_data)
-    drift_warning = _check_complexity_drift(run_data, events, session_id)
+    # Complexity drift is a WARNING-only heuristic; an unreadable log simply
+    # leaves it unable to observe drift. The blocking consequences of ``None``
+    # live in the review-scope gate and the deliver-gate-mode decision above.
+    drift_warning = _check_complexity_drift(run_data, events or [], session_id)
     if drift_warning:
         result["complexity_drift_warning"] = drift_warning
 
@@ -411,6 +472,16 @@ def check_delivery_gates(
     instruction_parity = _check_instruction_tool_parity_gate(run_path)
     if instruction_parity:
         result["instruction_parity_warning"] = instruction_parity
+
+    # PRD-CORE-244-FR06: name any learning this session contradicted and did not
+    # retract. Advisory beside review_nudge; it sets NO blocking condition,
+    # because an assertion can fail for reasons that are not the learning's fault.
+    if trw_dir is not None:
+        from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
+
+        retraction_nudge = unretracted_contradiction_nudge(trw_dir)
+        if retraction_nudge:
+            result["retraction_nudge"] = retraction_nudge
 
     return result
 

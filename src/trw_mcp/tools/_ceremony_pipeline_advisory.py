@@ -26,6 +26,24 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _primary_target_identity(trw_dir: Path) -> tuple[str | None, str | None]:
+    """Return ``(primary target label, its last success timestamp)`` from sync state.
+
+    PRD-FIX-125-FR02. Read through :class:`SyncCoordinator` rather than a second
+    JSON parser so there is one reader of the sync-state schema. Both values are
+    ``None`` on a pre-FR01 state file or an unreadable one — this surface is
+    fail-open, so a missing identity degrades the warning's detail and never the
+    warning itself.
+
+    NFR03: ``primary_target_label`` is the hostname-style label produced by
+    ``_label_for_url`` — never a URL with userinfo, never the api key.
+    """
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coordinator = SyncCoordinator(trw_dir=trw_dir)
+    return coordinator.get_primary_target_label(), coordinator.get_last_push_at()
+
+
 def step_pipeline_health_advisory(
     trw_dir: Path,
     results: dict[str, object],
@@ -46,17 +64,22 @@ def step_pipeline_health_advisory(
     breakage is surfaced, not buried in the compact advisory string.
 
     This session-start surface is intentionally fail-OPEN (it never blocks the
-    hot path); the fail-CLOSED enforcement lives in ``check_pipeline_health``,
-    reachable only through the dedicated ``make pipeline-health`` target.
+    hot path); the fail-CLOSED enforcement lives in ``check_pipeline_health``.
 
-    The warning therefore names ``make pipeline-health`` and NOT delivery.
+    The warning therefore names ``make check`` and NOT delivery.
     ``check_pipeline_health`` has exactly two consumers — this function and its
-    own ``__main__`` behind that Make target — so no deliver gate reads pipeline
-    health, ``make pipeline-health`` is deliberately excluded from ``make check``
-    (it is expected to exit non-zero while the pipeline is pre-activation), and
-    the earlier ``"enforce": True`` / "fix before delivery" wording asserted an
-    enforcement point that does not exist. ``enforced_by`` states where the
-    fail-closed check actually lives instead of claiming one here.
+    own ``__main__`` behind the ``pipeline-health`` Make target — so no deliver
+    gate reads pipeline health, and the earlier ``"enforce": True`` / "fix before
+    delivery" wording asserted an enforcement point that does not exist.
+    ``enforced_by`` states where the fail-closed check actually lives instead of
+    claiming one here. Since PRD-FIX-125-FR02 that target is a prerequisite of
+    ``make check``, so the warning names the aggregate developers actually run.
+
+    PRD-FIX-125-FR02 also enriches the warning with the PRIMARY sync target's
+    label and its last observed success, read from ``.trw/sync-state.json``. A
+    bare "push staleness" reason cannot distinguish "never worked" from "worked
+    until <date>", and the target it describes was ambiguous while the counter
+    quantified over every configured target.
 
     Args:
         trw_dir: The resolved .trw directory path.
@@ -80,6 +103,25 @@ def step_pipeline_health_advisory(
                     "session_start_pipeline_degraded",
                     advisory=advisory,
                 )
+        else:
+            # DEF-05: ``degraded`` is False for BOTH a fully healthy pipeline
+            # AND a pipeline where every probe crashed unmeasured (PRD-CORE-
+            # 263-FR03 deliberately excludes an unmeasured probe from the
+            # degraded verdict). This branch used to omit the advisory in
+            # both cases, so an operator reading a clean session_start could
+            # not tell "confirmed healthy" from "we could not check". Only
+            # fires when something was genuinely unmeasured — a healthy
+            # session pays zero tokens for it, per PRD-INFRA-068.
+            unmeasured = health.get("unmeasured")
+            if isinstance(unmeasured, list) and unmeasured:
+                names = ", ".join(str(name) for name in unmeasured)
+                advisory = f"pipeline health: {names} could not be measured — call trw_pipeline_health() for detail"
+                results["pipeline_health_advisory"] = advisory
+                logger.warning(
+                    "session_start_pipeline_unmeasured",
+                    signals=unmeasured,
+                    count=len(unmeasured),
+                )
     except Exception as exc:  # justified: fail-open, pipeline health must not block session start
         record_into(cast("MutableMapping[str, object]", results), "pipeline_health", exc)
 
@@ -91,13 +133,16 @@ def step_pipeline_health_advisory(
         verdict = check_pipeline_health(trw_dir, config)
         if not bool(verdict.get("healthy")) and verdict.get("status") == "degraded":
             reasons = [str(r) for r in verdict.get("reasons", [])]
+            primary_label, primary_last_success_at = _primary_target_identity(trw_dir)
             results["pipeline_health_warning"] = {
                 "severity": "error",
                 "reasons": reasons,
-                "enforced_by": "make pipeline-health",
+                "primary_target_label": primary_label,
+                "primary_last_success_at": primary_last_success_at,
+                "enforced_by": "make check (pipeline-health)",
                 "advisory": (
                     "Compounding pipeline is broken — call trw_pipeline_health() for detail. "
-                    "The fail-closed check is `make pipeline-health`; no TRW tool blocks on this."
+                    "The fail-closed check runs inside `make check`; no TRW tool blocks on this."
                 ),
             }
             logger.error(

@@ -235,9 +235,21 @@ def test_prd_qual_121_fr04(tmp_path: Path) -> None:
         )
 
     def fresh(name: str) -> tuple[Path, RegistryWriter, Path]:
+        """A ledger whose evaluation epoch has been advanced, as production requires.
+
+        PRD-CORE-244-FR07 made activation FAIL-CLOSED on ``epoch_unset``: a
+        ledger with no authorized ``advance_evaluation_epoch`` action has never
+        evaluated expiry, and ``set_execution_state`` refuses to activate against
+        that unknown. Seeding the epoch is what a real operator does (via
+        ``trw-mcp prd-epoch``) before any WIP-consuming transition -- without it
+        every case below would refuse for the epoch, never reaching the WIP
+        limits this test exists to prove.
+        """
         base = tmp_path / name
         ledger = base / "ledger.jsonl"
-        return base / "prds", RegistryWriter(ledger, utc_today=lambda: date(2026, 7, 11)), ledger
+        writer = RegistryWriter(ledger, utc_today=lambda: date(2026, 7, 11))
+        writer.advance_evaluation_epoch(authorization_receipt="r1", actor="op")
+        return base / "prds", writer, ledger
 
     def activate(writer: RegistryWriter, prds: Path, prd_id: str, owner: str) -> None:
         writer.set_execution_state(
@@ -375,6 +387,28 @@ def test_prd_qual_121_fr04_cli_production_caller(tmp_path: Path, capsys) -> None
             project_root=str(tmp_path),
             prds_dir="docs/requirements-aare-f/prds",
         )
+
+    # PRD-CORE-244-FR07: with no epoch, activation is refused as an unknown --
+    # expiry has never been evaluated, so no WIP slot may be consumed.
+    with pytest.raises(SystemExit) as exit_info:
+        handler(namespace("PRD-CORE-900", "owner-0"))
+    assert exit_info.value.code == 1
+    assert "epoch_unset" in _last_json(capsys.readouterr().out)["error"]
+
+    # ...and `prd-epoch` is the operator exit from it. This is the only caller
+    # outside the library that can append the action, so without it every
+    # activation below stays refused forever.
+    epoch_handler = SUBCOMMAND_HANDLERS["prd-epoch"]
+    epoch_handler(
+        argparse.Namespace(
+            receipt="op-authorization",
+            actor="op",
+            project_root=str(tmp_path),
+            prds_dir="docs/requirements-aare-f/prds",
+        )
+    )
+    epoch = _last_json(capsys.readouterr().out)
+    assert epoch["registry_status"] == "ok" and epoch["expiry_evaluated"] is True
 
     # Three P0 activations fill the global P0 WIP limit.
     for index in range(3):

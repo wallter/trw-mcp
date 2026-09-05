@@ -71,7 +71,7 @@ def _make_assertion_result(passed: bool | None, evidence: str = "") -> MagicMock
 
 
 def _persisted_assertions(call_args: Any) -> list[dict[str, Any]]:
-    """Return the assertion payload handed to ``backend.update()`` as plain dicts."""
+    """Return the assertion payload handed to ``backend.update(namespace="default")`` as plain dicts."""
     written = call_args[1]["assertions"]
     assert isinstance(written, list)
     return [json.loads(a.model_dump_json()) for a in written]
@@ -215,7 +215,7 @@ class TestVerifyAssertionsNoProjectRoot:
 
 
 class TestVerifyAssertionsPersistsResults:
-    """After verification, backend.update() is called with updated assertion JSON."""
+    """After verification, backend.update(namespace="default") is called with updated assertion JSON."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
     @patch("trw_mcp.state.memory_adapter.get_backend")
@@ -231,7 +231,7 @@ class TestVerifyAssertionsPersistsResults:
         mock_rank_fn: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Backend.update() is called with updated assertions JSON after verification."""
+        """Backend.update(namespace="default") is called with updated assertions JSON after verification."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = tmp_path
@@ -354,3 +354,162 @@ class TestFirstFailedAtClearedOnPass:
 
         parsed = _persisted_assertions(mock_backend.update.call_args)
         assert parsed[0]["first_failed_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-244 FR03 — a verification verdict gains a positive value + a stamp.
+#
+# These run against a REAL SQLiteBackend and the REAL assertion/anchor
+# verification: the whole point of the FR is that the verdict survives storage,
+# and a mocked backend cannot show that.
+# ---------------------------------------------------------------------------
+
+
+def _real_store(tmp_path: Path, entry_id: str, assertions: list[dict[str, Any]], anchors: list[dict[str, str]]) -> Any:
+    """Create a real backend holding one entry with *assertions* and *anchors*."""
+    from trw_memory.models.memory import Anchor, Assertion, MemoryEntry
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    backend = SQLiteBackend(tmp_path / ".trw" / "memory.db")
+    backend.store(
+        MemoryEntry(
+            id=entry_id,
+            content="verified verdict round trip",
+            namespace="default",
+            assertions=[Assertion.model_validate(a, strict=False) for a in assertions],
+            anchors=[Anchor.model_validate(a, strict=True) for a in anchors],
+        )
+    )
+    return backend
+
+
+def _source_tree(tmp_path: Path, body: str = "def my_func():\n    return 1\n") -> None:
+    """Write the source file the grep_present assertion + anchors resolve against."""
+    src = tmp_path / "src"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "main.py").write_text(body, encoding="utf-8")
+
+
+def _run_pass(tmp_path: Path, backend: Any, learning: dict[str, object], config: TRWConfig) -> None:
+    from trw_mcp.tools._recall_impl import _verify_assertions
+
+    def _rank(entries: list[dict[str, object]], *args: Any, **kwargs: Any) -> list[dict[str, object]]:
+        return entries
+
+    with (
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
+        patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
+        patch("trw_mcp.state.memory_adapter.get_backend", return_value=backend),
+    ):
+        _verify_assertions([learning], ["verified"], config, MagicMock(side_effect=_rank))
+
+
+@pytest.mark.unit
+def test_positive_verdict_and_checked_at_persisted(tmp_path: Path, config: TRWConfig) -> None:
+    """FR03: a clean pass persists ``verified`` AND the timestamp that proves it ran.
+
+    Before FR03 the vocabulary had no positive value at all, so this entry came
+    back with ``verification_status=None`` — indistinguishable from an entry no
+    pass had ever looked at.
+    """
+    _source_tree(tmp_path)
+    assertion = _make_assertion_dict(target="src/*.py")
+    backend = _real_store(tmp_path, "L-verified", [assertion], [])
+
+    learning = _make_learning("L-verified", assertions=[assertion])
+    learning["namespace"] = "default"
+    _run_pass(tmp_path, backend, learning, config)
+
+    assert learning["verification_status"] == "verified"
+
+    stored = backend.get("L-verified", namespace="default")
+    assert stored is not None
+    assert stored.verification_status == "verified"
+    assert stored.verification_checked_at != ""
+    datetime.fromisoformat(stored.verification_checked_at)  # a real ISO-8601 stamp
+
+
+@pytest.mark.unit
+def test_anchor_drift_below_floor_withholds_verified(tmp_path: Path, config: TRWConfig) -> None:
+    """FR03: a drifted anchor set is not a clean bill of health.
+
+    Half the anchors resolve, so the recomputed score lands under
+    ``anchor_validity_verified_floor`` and the positive verdict is withheld —
+    without inventing a ``stale`` conviction the staleness rule never reached.
+    """
+    _source_tree(tmp_path)
+    assertion = _make_assertion_dict(target="src/*.py")
+    anchors = [
+        {"file": "src/main.py", "symbol_name": "my_func"},
+        {"file": "src/main.py", "symbol_name": "deleted_func"},
+    ]
+    backend = _real_store(tmp_path, "L-drift", [assertion], anchors)
+
+    learning = _make_learning("L-drift", assertions=[assertion])
+    learning["namespace"] = "default"
+    learning["anchors"] = anchors
+    _run_pass(tmp_path, backend, learning, config)
+
+    stored = backend.get("L-drift", namespace="default")
+    assert stored is not None
+    assert stored.anchor_validity is not None
+    assert stored.anchor_validity < config.anchor_validity_verified_floor
+    assert stored.verification_status is None
+    # It WAS examined — the stamp is what distinguishes this from "never checked".
+    assert stored.verification_checked_at != ""
+    assert "verification_status" not in learning
+
+
+@pytest.mark.unit
+def test_warm_verdict_is_reused_within_ttl(tmp_path: Path, config: TRWConfig) -> None:
+    """FR03: inside the TTL the persisted verdict is reused and nothing is re-checked.
+
+    The assertion here would FAIL if it ran (the symbol is gone), so a reused
+    ``verified`` verdict and an untouched ``last_verified_at`` together prove no
+    filesystem verification happened for this entry.
+    """
+    _source_tree(tmp_path, body="def something_else():\n    return 1\n")
+    assertion = _make_assertion_dict(target="src/*.py")
+    backend = _real_store(tmp_path, "L-warm", [assertion], [])
+    backend.update(
+        "L-warm",
+        namespace="default",
+        verification_status="verified",
+        verification_checked_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    learning = _make_learning("L-warm", assertions=[assertion])
+    learning["namespace"] = "default"
+    _run_pass(tmp_path, backend, learning, config)
+
+    assert learning["verification_status"] == "verified"
+    stored = backend.get("L-warm", namespace="default")
+    assert stored is not None
+    assert stored.verification_status == "verified"
+    assert stored.assertions[0].last_verified_at is None  # the pass never ran
+
+
+@pytest.mark.unit
+def test_expired_verdict_is_re_verified(tmp_path: Path, config: TRWConfig) -> None:
+    """The falsification of the cache: outside the TTL the pass runs again."""
+    from datetime import timedelta
+
+    _source_tree(tmp_path, body="def something_else():\n    return 1\n")
+    assertion = _make_assertion_dict(target="src/*.py")
+    backend = _real_store(tmp_path, "L-cold", [assertion], [])
+    stale_stamp = datetime.now(timezone.utc) - timedelta(seconds=config.verification_cache_ttl_seconds + 60)
+    backend.update(
+        "L-cold",
+        namespace="default",
+        verification_status="verified",
+        verification_checked_at=stale_stamp.isoformat(),
+    )
+
+    learning = _make_learning("L-cold", assertions=[assertion])
+    learning["namespace"] = "default"
+    _run_pass(tmp_path, backend, learning, config)
+
+    stored = backend.get("L-cold", namespace="default")
+    assert stored is not None
+    assert stored.assertions[0].last_verified_at is not None  # it really re-ran
+    assert stored.verification_status is None  # the failing assertion withdrew it

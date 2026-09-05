@@ -128,7 +128,7 @@ class TestCheckDuplicateViaBackend:
         assert result is None
 
     def test_backend_skips_entries_not_in_db(self, tmp_path: Path) -> None:
-        """Backend skips entries where backend.get() returns None."""
+        """Backend skips entries where backend.get(namespace="default") returns None."""
         from unittest.mock import MagicMock
 
         from trw_mcp.state.dedup import _check_duplicate_via_backend

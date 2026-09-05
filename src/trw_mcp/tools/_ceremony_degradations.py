@@ -33,6 +33,31 @@ logger = structlog.get_logger(__name__)
 Severity = Literal["info", "warn"]
 
 
+class SessionStartStepError(Exception):
+    """A session-start step reporting a failure it refuses to classify itself.
+
+    PRD-CORE-263-FR01. Five steps in the session-start table are declared
+    ``critical``, and every one of them used to wrap its whole body in a broad
+    handler and return a plausible default — so the runner's ``if step.critical``
+    branch was unreachable and four of the five failed with ``success: true``.
+
+    A step's job is to do its work or say plainly that it could not. Whether that
+    failure is fatal is the runner's decision, because the runner is the only
+    place that holds the ``critical`` flag. A step therefore wraps the exception
+    it caught in this type and raises; it never decides on the caller's behalf.
+
+    ``cause`` keeps the original exception so the degradation entry can report
+    the REAL error class rather than this wrapper — an ``error_class`` of
+    ``SessionStartStepError`` on every entry would erase the only field an
+    operator triages by.
+    """
+
+    def __init__(self, step: str, cause: BaseException) -> None:
+        super().__init__(f"{step} failed: {type(cause).__name__}: {cause}")
+        self.step = step
+        self.cause = cause
+
+
 class DegradationCollector:
     """Accumulates typed fail-open degradations for one ceremony call.
 

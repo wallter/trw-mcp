@@ -46,15 +46,31 @@ class TestResolveTier:
         of ``model: inherit`` for every tier (NFR-COMPAT-02 contract)."""
         assert resolve_tier(tier, client="cursor-ide") == "inherit"
 
+    def test_resolve_antigravity_maps_to_its_two_tokens(self) -> None:
+        """PRD-CORE-252: antigravity accepts inherit|flash|pro and nothing else.
+
+        Before this, every tier reached that harness as a raw token
+        (``model: frontier``), which its schema rejects, while TRW's retired
+        stub templates wrote literal Gemini model ids — also outside the schema.
+        """
+        for tier in KNOWN_TIERS:
+            assert resolve_tier(tier, client="antigravity-cli") in {"inherit", "flash", "pro"}
+        assert resolve_tier("frontier", client="antigravity-cli") == "pro"
+        assert resolve_tier("local-small", client="antigravity-cli") == "flash"
+
     def test_resolve_unknown_tier_cursor_ide_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown tier 'garbage'"):
             resolve_tier("garbage", client="cursor-ide")
 
     # --- Passthrough clients --------------------------------------------------
 
+    # ``antigravity-cli`` left this list in PRD-CORE-252: its subagent reference
+    # admits only ``inherit``/``flash``/``pro``, so a raw tier token there is a
+    # schema violation rather than a benign passthrough. It now has a map, and
+    # is asserted below in ``test_resolve_antigravity_maps_to_its_two_tokens``.
     @pytest.mark.parametrize(
         "client",
-        ["opencode", "codex", "copilot", "cursor-cli", "antigravity-cli"],
+        ["opencode", "codex", "copilot", "cursor-cli"],
     )
     def test_resolve_passthrough_for_unadapted_clients(self, client: str) -> None:
         """Clients without an adapter map but in KNOWN_CLIENTS fall through

@@ -3,8 +3,9 @@
 This test catches the stale-mock class of bugs by asserting the authoritative
 values in a test that lives next to the source, not in the consumer.
 
-Placed in trw-mcp/tests/ (not trw-eval/tests/) because trw-mcp IS installed
-here — trw-eval imports via stubs. (Final Audit Fix A)
+Placed in trw-mcp/tests/ (not the proprietary eval package's test tree) because
+trw-mcp IS installed here — the eval package imports via stubs. (Final Audit
+Fix A)
 """
 
 from __future__ import annotations

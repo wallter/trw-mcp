@@ -109,3 +109,51 @@ def test_runner_env_omits_passthrough_when_absent() -> None:
     env = build_runner_env("codex", source_env={"PATH": "/bin", "OPENAI_API_KEY": "k"})
     assert "PYTHONPATH" not in env
     assert "VIRTUAL_ENV" not in env
+
+
+# --------------------------------------------------------------------------- #
+# PRD-CORE-266-NFR03: new-client env allowlists and the per-client token union
+# --------------------------------------------------------------------------- #
+
+
+def test_new_client_env_allowlists_and_token_union_hold() -> None:
+    """The two security invariants PRD-CORE-266 must not weaken.
+
+    1. A client with no RECORDED provider credential receives the base allowlist
+       alone — never a wholesale environment, and never another client's key.
+    2. The shared forbidden-token floor is a SUBSET of every registered client's
+       effective set, so a per-client set can only add restrictions.
+    """
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS, SUPPORTED_CLIENTS
+    from trw_mcp.dispatch._env import build_subprocess_env
+    from trw_mcp.dispatch._types import _FORBIDDEN_EXTRA_ARG_TOKENS, effective_forbidden_tokens
+
+    planted = {
+        "PATH": "/usr/bin",
+        "HOME": "/home/tester",
+        "ANTHROPIC_API_KEY": "sk-anthropic",
+        "OPENAI_API_KEY": "sk-openai",
+        "XAI_API_KEY": "sk-xai",
+        "AWS_SECRET_ACCESS_KEY": "should-never-travel",
+    }
+    for client in SUPPORTED_CLIENTS:
+        spec = CLIENT_SPECS[client]
+        env = build_subprocess_env(client, source_env=planted)
+        # Only the base allowlist plus this client's OWN recorded credentials.
+        assert set(env) <= {"PATH", "HOME"} | set(spec.credential_env)
+        assert "AWS_SECRET_ACCESS_KEY" not in env
+        if not spec.credential_env:
+            assert env == {"PATH": "/usr/bin", "HOME": "/home/tester"}, f"{client} received an unrecorded credential"
+
+        effective = effective_forbidden_tokens(client)
+        assert _FORBIDDEN_EXTRA_ARG_TOKENS <= effective, f"{client} narrowed the shared floor"
+        assert spec.forbidden_tokens <= effective
+
+
+def test_an_unregistered_client_gets_the_base_allowlist_not_a_wider_one() -> None:
+    """Fail-closed: an id TRW does not know receives FEWER variables, never more."""
+    from trw_mcp.dispatch._env import build_subprocess_env
+
+    planted = {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "sk-anthropic"}
+    env = build_subprocess_env("ghost-cli", source_env=planted)  # type: ignore[arg-type]
+    assert env == {"PATH": "/usr/bin"}

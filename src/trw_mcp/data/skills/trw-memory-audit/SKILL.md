@@ -17,7 +17,7 @@ Assessment of learning retrieval quality, redundancy, staleness, assertion healt
 
 ## Evidence paths
 
-1. Prefer a verified read-only primary-store diagnostic. If the optional `trw-distill` package is installed, `maintain audit --no-llm --format json` may provide that inventory; verify the command/version and label the source.
+1. Prefer a verified read-only primary-store diagnostic. If the optional `trw-distill` package is installed, `trw-distill maintain audit --no-llm --format json` may provide that inventory; verify the command/version and label the source.
 2. Reuse existing `trw_session_start(verbose=true)` diagnostics when available. Its assertion health is aggregate only and does not identify failing learning IDs.
 3. Use targeted, bounded `trw_recall` only to inspect retrieval utility or candidate duplicates. Recall updates access counts/timestamps, so record the audit start time and never use post-recall access metadata as staleness evidence.
 4. Never run wildcard `max_results=0` inside the model context; it can overload context and alters access metadata for every match.

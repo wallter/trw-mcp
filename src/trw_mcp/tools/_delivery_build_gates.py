@@ -23,17 +23,74 @@ def _build_event_payload(ev: dict[str, object]) -> dict[str, object]:
     return data if isinstance(data, dict) else ev
 
 
-def _build_passed(ev: dict[str, object]) -> bool:
+def _reported_test_count(data: dict[str, object]) -> int:
+    """The event's ``test_count``, or 0 when absent or unparseable.
+
+    Absence is deliberately 0, not "unknown, assume fine": ``_log_build_event``
+    always writes the field, so a ``build_check_complete`` without it either
+    predates that writer or was not written by it. Neither is proof that tests
+    ran.
+    """
+    try:
+        return int(str(data.get("test_count", 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _build_pass_rejection(ev: dict[str, object]) -> str | None:
+    """Why ``ev`` is NOT passing build evidence, or ``None`` when it is.
+
+    WD-01: ``tests_passed=True`` alone was accepted as a passing artifact, so
+    ``trw_build_check(tests_passed=True, test_count=0, scope="")`` — a report
+    that no tests ran, against no named scope — satisfied the deliver-time build
+    gate. Under ``evidence_receipt_mode: enforce`` the typed BuildReceipt
+    requirement caught it, but under the default ``observe`` mode
+    ``build_receipt_content_stale_warning`` short-circuits on
+    ``typed_present=False`` and this predicate was the only thing left.
+
+    A build check that ran zero tests is not a pass, and neither is one that
+    cannot name what it validated. Both are now rejected regardless of evidence
+    mode, and the reason is returned so the gate's warning names the actual
+    fault instead of reporting a generic "no successful build check".
+    """
     if str(ev.get("event", "")) != "build_check_complete":
-        return False
+        return "not a build check"
     data = _build_event_payload(ev)
     if not _truthy(data.get("tests_passed")):
-        return False
+        return "tests_passed is not true"
     if "static_checks_clean" in data:
-        return _truthy(data.get("static_checks_clean"))
-    if "mypy_clean" in data:
-        return _truthy(data.get("mypy_clean"))
-    return True
+        if not _truthy(data.get("static_checks_clean")):
+            return "static_checks_clean is not true"
+    elif "mypy_clean" in data and not _truthy(data.get("mypy_clean")):
+        return "mypy_clean is not true"
+    if _reported_test_count(data) <= 0:
+        return "it recorded test_count=0 — a check that ran no tests is not a pass"
+    if not str(data.get("scope", "")).strip():
+        return "it recorded an empty scope — the check does not name what it validated"
+    return None
+
+
+def _build_passed(ev: dict[str, object]) -> bool:
+    return _build_pass_rejection(ev) is None
+
+
+def _degenerate_build_evidence_reason(events: list[dict[str, object]]) -> str | None:
+    """The reason the newest self-reported-passing build check was rejected.
+
+    Only the ``tests_passed``-true rejections are interesting here: a build
+    check the caller itself reported as failing is an ordinary missing-build
+    case, not a degenerate artifact.
+    """
+    for ev in reversed(events):
+        if str(ev.get("event", "")) != "build_check_complete":
+            continue
+        if not _truthy(_build_event_payload(ev).get("tests_passed")):
+            continue
+        reason = _build_pass_rejection(ev)
+        if reason is not None:
+            return reason
+        return None
+    return None
 
 
 def _event_ts(ev: dict[str, object]) -> datetime | None:
@@ -48,18 +105,37 @@ def _event_ts(ev: dict[str, object]) -> datetime | None:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
 
 
-def _latest_ts_for(events: list[dict[str, object]], predicate: object) -> datetime | None:
-    """Latest valid timestamp among matching events; ``None`` if absent."""
+def _latest_ts_for(events: list[dict[str, object]], predicate: object) -> tuple[datetime | None, bool]:
+    """``(latest valid timestamp, any_unparseable)`` among matching events.
+
+    ``any_unparseable`` is True when a matching event carries a NON-EMPTY ``ts``
+    that failed to parse. Those events used to be dropped silently, so a damaged
+    timestamp on either side of the comparison read as "no such event" and the
+    staleness check answered "fresh" — the fail-open direction (WD-09).
+
+    An ABSENT ``ts`` is not counted: legacy and hook-sourced records omit it
+    routinely, and treating that as damage would invalidate ordinary history
+    rather than catch corruption.
+    """
     from collections.abc import Callable
     from typing import cast
 
     pred = cast("Callable[[dict[str, object]], bool]", predicate)
-    stamps = [stamp for ev in events if pred(ev) and (stamp := _event_ts(ev)) is not None]
-    return max(stamps) if stamps else None
+    stamps: list[datetime] = []
+    unparseable = False
+    for ev in events:
+        if not pred(ev):
+            continue
+        stamp = _event_ts(ev)
+        if stamp is not None:
+            stamps.append(stamp)
+        elif str(ev.get("ts", "")).strip():
+            unparseable = True
+    return (max(stamps) if stamps else None), unparseable
 
 
-def _build_evidence_is_stale(events: list[dict[str, object]]) -> bool:
-    """True when a ``file_modified`` postdates the latest PASSING build check.
+def _build_evidence_staleness_reason(events: list[dict[str, object]]) -> str | None:
+    """Why the recorded build evidence does not cover the current tree, or None.
 
     FRAMEWORK.md §"Build evidence MUST postdate the last change it claims to
     cover: edit after the check -> re-run the check. Stale evidence is no
@@ -69,29 +145,69 @@ def _build_evidence_is_stale(events: list[dict[str, object]]) -> bool:
     gate with stale evidence.
 
     Compares the max ``ts`` of passing build events against the max ``ts`` of
-    ``file_modified`` events. Returns True only when BOTH exist and the latest
-    edit strictly postdates the latest passing build. No passing build (handled
+    ``file_modified`` events. Stale only when BOTH exist and the latest edit
+    strictly postdates the latest passing build. No passing build (handled
     elsewhere) or no edits -> not stale here. Equal timestamps are NOT stale
     (the edit did not happen strictly after the build).
+
+    WD-09: a NON-EMPTY but unparseable ``ts`` on either side now resolves to
+    "unknown", which is reported as stale with its own reason. The ordering this
+    check exists to establish cannot be established from a timestamp nobody can
+    read, and answering "fresh" there accepted evidence on the strength of a
+    field that had already failed. The content-hash binding in
+    ``build_receipt_content_stale_warning`` remains the primary detector; this is
+    defense in depth.
     """
-    latest_build_ts = _latest_ts_for(events, _build_passed)
-    if not latest_build_ts:
-        return False
-    latest_edit_ts = _latest_ts_for(events, lambda ev: str(ev.get("event", "")) == "file_modified")
-    if not latest_edit_ts:
-        return False
-    return latest_edit_ts > latest_build_ts
+    latest_build_ts, build_ts_damaged = _latest_ts_for(events, _build_passed)
+    latest_edit_ts, edit_ts_damaged = _latest_ts_for(events, lambda ev: str(ev.get("event", "")) == "file_modified")
+    if build_ts_damaged or edit_ts_damaged:
+        logger.warning(
+            "build_evidence_timestamp_unparseable",
+            build_ts_damaged=build_ts_damaged,
+            edit_ts_damaged=edit_ts_damaged,
+            outcome="stale_unknown",
+        )
+        return (
+            "Unverifiable build evidence: an unparseable timestamp on a build check or a file "
+            "modification means the edit order cannot be established, so the recorded build cannot be "
+            "shown to cover the current tree. Re-run project-native validation and record it with "
+            "trw_build_check()."
+        )
+    if not latest_build_ts or not latest_edit_ts:
+        return None
+    if latest_edit_ts > latest_build_ts:
+        return (
+            "Stale build evidence: a file was modified AFTER the last passing trw_build_check. "
+            "The recorded build no longer covers the current changes — re-run project-native "
+            "validation and record it with trw_build_check() before delivering."
+        )
+    return None
+
+
+def _build_evidence_is_stale(events: list[dict[str, object]]) -> bool:
+    """Boolean view of :func:`_build_evidence_staleness_reason`.
+
+    Kept so the ``trw_status`` preview (``_orchestration_gate_scan``) and the
+    deliver gate share ONE staleness predicate rather than two that can drift.
+    """
+    return _build_evidence_staleness_reason(events) is not None
 
 
 def _check_build_and_work_events(
-    events: list[dict[str, object]],
+    events: list[dict[str, object]] | None,
 ) -> tuple[str | None, str | None]:
     """Check build gate and work events, return (build_warning, premature_warning).
 
-    Uses pre-read ``events`` list (shared with other gate checks).
+    Uses pre-read ``events`` list (shared with other gate checks). ``None`` means
+    ``_read_run_events`` could not read the log at all (WD-03); it is reported
+    as unverifiable build evidence and NAMES the unreadable file, rather than
+    being folded into the generic "no events" message that an honestly empty
+    log produces.
     """
     build_warning: str | None = None
     premature_warning: str | None = None
+    events_unreadable = events is None
+    events = [] if events is None else events
 
     # When build-check is intentionally disabled (``config.build_check_enabled``
     # is False), ``trw_build_check`` returns early without ever logging a
@@ -117,6 +233,15 @@ def _check_build_and_work_events(
         if build_check_disabled:
             # Skip the build gate entirely; still evaluate the work-events guard.
             pass
+        elif events_unreadable:
+            # WD-03: the log EXISTS but could not be read. That is not evidence
+            # of a passing build, and it is not the honest-empty case below.
+            return (
+                "The run's event log could not be read (meta/events.jsonl), so no build check can be "
+                "verified for this delivery. Repair or remove the event log, then run project-native "
+                "validation and record it with trw_build_check().",
+                None,
+            )
         elif not events:
             # A-P1-07: empty/truncated events.jsonl = NO build evidence. Treat it
             # like "events present but no passing build" (symmetry) so the delivery
@@ -131,9 +256,18 @@ def _check_build_and_work_events(
 
         # Build gate (RC-003 + RC-006) — skipped when build-check is disabled.
         if not build_check_disabled and not any(_build_passed(e) for e in events):
+            degenerate = _degenerate_build_evidence_reason(events)
             build_warning = (
-                "No successful build check found before delivery. "
-                "Run project-native validation and record tests_passed/static_checks_clean with trw_build_check()."
+                (
+                    f"The last trw_build_check reported tests_passed=True but {degenerate}. "
+                    "Run project-native validation and record the real test_count and scope with trw_build_check()."
+                )
+                if degenerate
+                else (
+                    "No successful build check found before delivery. "
+                    "Run project-native validation and record tests_passed/static_checks_clean "
+                    "with trw_build_check()."
+                )
             )
         # Stale-evidence gate (codex cross-model review; FRAMEWORK.md §"Build
         # evidence MUST postdate the last change it claims to cover"). A passing
@@ -142,12 +276,8 @@ def _check_build_and_work_events(
         # build_warning is set, so the caller's _apply_deliver_gate_mode promotes
         # it to a hard delivery_blocked under block_* modes and leaves it a
         # warning under advisory mode. The allow_unverified override still applies.
-        elif not build_check_disabled and _build_evidence_is_stale(events):
-            build_warning = (
-                "Stale build evidence: a file was modified AFTER the last passing trw_build_check. "
-                "The recorded build no longer covers the current changes — re-run project-native "
-                "validation and record it with trw_build_check() before delivering."
-            )
+        elif not build_check_disabled and (stale_reason := _build_evidence_staleness_reason(events)):
+            build_warning = stale_reason
 
         # Premature delivery guard.
         # NOTE: "session_start" is the ceremony bootstrap event actually emitted
@@ -294,7 +424,9 @@ def _check_no_active_run_build_gate(
         # state -> no build gate fires" was flagged as a bypass. It is by-design,
         # and defended in DEPTH, not left open:
         #   (1) Upstream, CeremonyMiddleware.on_call_tool BLOCKS every trw_* tool
-        #       (including trw_deliver) with a ``session_start_required`` error
+        #       (including trw_deliver) with a ``post_compaction_recovery_required``
+        #       error (PRD-CORE-258 renames the key; the gate is the
+        #       post-compaction recovery gate, not session start)
         #       whenever a post-compaction recovery marker is pending — so a
         #       deliver after a dropped/compacted session cannot reach here.
         #   (2) The deliver_gate_mode task-type taxonomy classifies a delivery

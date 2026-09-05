@@ -76,7 +76,6 @@ def _install_opencode_artifacts(
 
     from ._opencode import (
         generate_opencode_instructions,
-        install_opencode_agents,
         install_opencode_commands,
         install_opencode_skills,
     )
@@ -100,7 +99,6 @@ def _install_opencode_artifacts(
         result.setdefault("warnings", []).append(f"AGENTS.md generation skipped: {exc}")
 
     _extend_result(result, install_opencode_commands(target_dir, force=force))
-    _extend_result(result, install_opencode_agents(target_dir, force=force))
     _extend_result(result, install_opencode_skills(target_dir, force=force))
 
     # Distill channel bootstrap (FR41-FR43)
@@ -145,7 +143,6 @@ def _install_cursor_artifacts(
             generate_cursor_ide_commands,
             generate_cursor_ide_hooks,
             generate_cursor_ide_skills,
-            generate_cursor_ide_subagents,
         )
 
         # FR06: .cursor/rules/trw-ceremony.mdc (IDE primary write target)
@@ -162,12 +159,6 @@ def _install_cursor_artifacts(
             )
         except Exception as exc:  # justified: fail-open
             result.setdefault("warnings", []).append(f".cursor/rules/trw-ceremony.mdc generation skipped: {exc}")
-
-        # FR03: .cursor/agents/trw-*.md
-        try:
-            _extend_result(result, generate_cursor_ide_subagents(target_dir), include_updated=True)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/agents/ generation skipped: {exc}")
 
         # FR05: .cursor/commands/trw-*.md
         try:
@@ -308,7 +299,6 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
     from ._codex import (
         codex_hooks_enabled,
         codex_hooks_review_warning,
-        generate_codex_agents,
         generate_codex_config,
         generate_codex_hooks,
         install_codex_skills,
@@ -323,7 +313,6 @@ def _install_codex_artifacts(target_dir: Path, *, force: bool, result: dict[str,
         if hooks_result.get("created") or hooks_result.get("updated"):
             result.setdefault("warnings", []).append(codex_hooks_review_warning())
 
-    _extend_result(result, generate_codex_agents(target_dir, force=force), include_updated=True)
     _extend_result(result, install_codex_skills(target_dir, force=force), include_updated=True)
 
     try:
@@ -366,7 +355,6 @@ def _run_copilot_installer(
 def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
     """Install Copilot-specific bootstrap artifacts."""
     from ._copilot import (
-        generate_copilot_agents,
         generate_copilot_hooks,
         generate_copilot_instructions,
         generate_copilot_path_instructions,
@@ -377,7 +365,6 @@ def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[st
         ("copilot-instructions.md", generate_copilot_instructions),
         ("copilot path instructions", generate_copilot_path_instructions),
         ("copilot hooks", generate_copilot_hooks),
-        ("copilot agents", generate_copilot_agents),
         ("copilot skills", install_copilot_skills),
     )
     for label, installer in installers:
@@ -396,7 +383,6 @@ def _install_copilot_artifacts(target_dir: Path, *, force: bool, result: dict[st
 def _install_antigravity_artifacts(target_dir: Path, *, force: bool, result: dict[str, list[str]]) -> None:
     """Install Antigravity CLI-specific bootstrap artifacts."""
     from ._antigravity_cli import (
-        generate_antigravity_agents,
         generate_antigravity_instructions,
         generate_antigravity_mcp_config,
     )
@@ -404,7 +390,6 @@ def _install_antigravity_artifacts(target_dir: Path, *, force: bool, result: dic
     installers = (
         ("ANTIGRAVITY.md", generate_antigravity_instructions),
         ("antigravity MCP config", generate_antigravity_mcp_config),
-        ("antigravity agents", generate_antigravity_agents),
     )
     for label, installer in installers:
         _run_copilot_installer(result, label, installer, target_dir, force=force)

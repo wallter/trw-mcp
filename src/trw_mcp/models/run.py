@@ -6,11 +6,13 @@ in the run directory structure defined by FRAMEWORK.md.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from trw_mcp.models.task_profile_types import TaskProfile
 
@@ -76,12 +78,89 @@ class Confidence(str, Enum):
 
 
 class RunStatus(str, Enum):
-    """Run lifecycle status."""
+    """Run lifecycle status — exactly the union of what production writers emit.
 
+    PRD-FIX-126-FR01. Every member names its writer and its terminal
+    disposition on the line above it, so the vocabulary table is recoverable
+    from this source rather than only from the PRD. A member may only exist
+    here once a writer produces it: ``PAUSED`` and ``FAILED`` were removed
+    because ``git log -S`` over the trw-mcp source tree found zero assignments
+    in the whole of history and zero of the 191 live run.yaml files carried
+    either value. A future explicit-failure state is re-added together with
+    the writer that produces it, never ahead of it.
+    """
+
+    #: Written by ``trw_init`` (``trw_mcp/tools/orchestration.py``). Non-terminal.
     ACTIVE = "active"
-    PAUSED = "paused"
+    #: Written by ``_mark_run_complete`` (``trw_mcp/tools/_ceremony_runtime_helpers.py``). Terminal.
     COMPLETE = "complete"
-    FAILED = "failed"
+    #: Written by ``mark_local_delivered`` (``trw_mcp/services/orchestration_service.py``). Terminal.
+    DELIVERED = "delivered"
+    #: Written by ``sweep_stale_runs`` (``trw_mcp/state/_run_gc.py``) and the analytics
+    #: stale-run closer (``trw_mcp/state/analytics/_stale_runs.py``). Terminal.
+    ABANDONED = "abandoned"
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when this status seals the run's audit trail (PRD-FIX-126-FR02).
+
+        The single terminal-status predicate. Before this existed, four modules
+        each carried a private literal set and ``_ceremony_adopt_run`` omitted
+        ``abandoned``, so every swept run was adoptable without ``force``.
+        """
+        return self in _TERMINAL_RUN_STATUSES
+
+
+#: The statuses whose audit trail is sealed. Backs :attr:`RunStatus.is_terminal`
+#: and, through it, every terminal check in the codebase (PRD-FIX-126-FR02).
+_TERMINAL_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.COMPLETE, RunStatus.DELIVERED, RunStatus.ABANDONED},
+)
+
+#: Legacy on-disk status spellings, normalised on READ only (PRD-FIX-126-FR04).
+#:
+#: Closed and forward-only. ``completed`` occupies exactly 1 of the 191 run.yaml
+#: files measured on 2026-09-03 and has no producer at HEAD or anywhere in git
+#: history, so it is an orphaned spelling of ``complete``. Matching is exact and
+#: case-sensitive on the stripped string: ``Completed`` and ``completed_`` are
+#: not aliases and still raise. A canonical member may never appear as a key,
+#: and a new key requires the same measured file count that justified this one
+#: (PRD-FIX-126 OQ-002). The contract test pins this key set.
+_STATUS_ALIASES: Mapping[str, RunStatus] = MappingProxyType({"completed": RunStatus.COMPLETE})
+
+
+def coerce_run_status(value: str | RunStatus) -> RunStatus | None:
+    """Return the canonical :class:`RunStatus` for *value*, or ``None``.
+
+    The one normalisation path shared by :class:`RunState`'s status validator
+    and :func:`is_terminal_status`, so a value the model accepts and a value a
+    gate calls terminal can never be decided by two different rules. Applies
+    the closed alias map by exact match on the stripped string and nothing
+    else — no regex, prefix rule, or case folding, so a corrupt or hostile
+    run.yaml cannot widen the accepted vocabulary (PRD-FIX-126-NFR03).
+    """
+    if isinstance(value, RunStatus):
+        return value
+    stripped = value.strip()
+    alias = _STATUS_ALIASES.get(stripped)
+    if alias is not None:
+        return alias
+    try:
+        return RunStatus(stripped)
+    except ValueError:
+        return None
+
+
+def is_terminal_status(value: str | RunStatus) -> bool:
+    """True when *value* names a terminal run status (PRD-FIX-126-FR02).
+
+    The string-facing entry point onto :attr:`RunStatus.is_terminal`, for the
+    read-modify-write call sites that hold a raw ``status`` string off disk. An
+    unrecognised value is NOT terminal: a run whose status we cannot name is
+    treated as live, so no gate seals a record on the strength of a typo.
+    """
+    member = coerce_run_status(value)
+    return member is not None and member.is_terminal
 
 
 class ShardStatus(str, Enum):
@@ -209,6 +288,20 @@ class RunState(BaseModel):
         default=False,
         description=("If True, this run is preserved by the stale-run sweep regardless of age (PRD-CORE-141 FR10)."),
     )
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _normalise_legacy_status(cls, value: object) -> object:
+        """Rewrite an exact legacy alias to its canonical member (PRD-FIX-126-FR04).
+
+        Read-only: nothing on disk is rewritten, and a value that is neither a
+        canonical member nor an exact alias falls straight through to normal
+        enum coercion so it still raises a ``ValidationError`` naming it. The
+        alias map is not a fallback that accepts unknown input.
+        """
+        if isinstance(value, str):
+            return _STATUS_ALIASES.get(value.strip(), value)
+        return value
 
 
 class EventType(str, Enum):

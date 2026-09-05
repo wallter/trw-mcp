@@ -16,8 +16,6 @@ _NEW_FIELDS = (
     "maintain_verify_batch_limit",
     "hint_sidecar_refresh_enabled",
     "hint_sidecar_refresh_file_cap",
-    "hint_delivery_rate_min",
-    "hint_delivery_measurement_window_days",
     "wiring_gate_mode_overrides",
 )
 
@@ -26,33 +24,30 @@ def test_defaults_match_the_prd() -> None:
     """The shipped defaults are the ones the PRD specifies."""
     config = TRWConfig()
 
-    assert config.hint_delivery_rate_min == 0.90
-    assert config.hint_delivery_measurement_window_days == 14
     assert config.hint_sidecar_refresh_file_cap == 20
     assert config.hint_sidecar_refresh_enabled is True
     assert config.maintain_verify_batch_limit == 1000
     assert config.wiring_gate_mode_overrides == {}
 
 
-def test_hint_delivery_rate_min_bounds() -> None:
-    """A delivery rate is a probability — outside [0.0, 1.0] is meaningless."""
-    assert TRWConfig(hint_delivery_rate_min=0.0).hint_delivery_rate_min == 0.0
-    assert TRWConfig(hint_delivery_rate_min=1.0).hint_delivery_rate_min == 1.0
+def test_hint_delivery_fields_are_gone() -> None:
+    """PRD-FIX-125-FR04: the two reader-less hint-delivery knobs are deleted outright.
 
-    with pytest.raises(ValidationError):
-        TRWConfig(hint_delivery_rate_min=-0.01)
-    with pytest.raises(ValidationError):
-        TRWConfig(hint_delivery_rate_min=1.01)
+    They were admitted with a ``consumer=`` naming a telemetry aggregation over
+    ``.trw/telemetry/channel-events.jsonl`` that never existed, and their
+    admission grandfather expired 2026-08-31. Per the operator rule on dormant
+    knobs there is no alias and no default-preserving stub: an intentional
+    breaking change to a surface with zero readers.
+    """
+    config = TRWConfig()
 
+    with pytest.raises(AttributeError):
+        _ = config.hint_delivery_rate_min
+    with pytest.raises(AttributeError):
+        _ = config.hint_delivery_measurement_window_days
 
-def test_hint_delivery_window_bounds() -> None:
-    """A zero-length measurement window would make the gate undefined."""
-    assert TRWConfig(hint_delivery_measurement_window_days=1).hint_delivery_measurement_window_days == 1
-
-    with pytest.raises(ValidationError):
-        TRWConfig(hint_delivery_measurement_window_days=0)
-    with pytest.raises(ValidationError):
-        TRWConfig(hint_delivery_measurement_window_days=-1)
+    assert "hint_delivery_rate_min" not in build_field_admissions()
+    assert "hint_delivery_measurement_window_days" not in build_field_admissions()
 
 
 def test_hint_sidecar_refresh_file_cap_bounds() -> None:

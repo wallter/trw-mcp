@@ -17,6 +17,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
+
 from ._client_integrations import run_update_integrations
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,7 @@ from ._utils import (
     _write_installer_metadata,
     _write_version_yaml,
     is_git_repo,
+    resolve_client_write_targets,
     resolve_ide_targets,
 )
 
@@ -264,9 +267,15 @@ def _run_core_update_phases(
     overwritten. The NEW manifest is still written later in the post-update phase.
     """
     if not dry_run:
-        from . import _TRW_DIRS
+        # PRD-CORE-262-FR05 split ``_TRW_DIRS`` into a client-neutral set plus
+        # Claude Code's own scaffold dirs. Containment is an INIT-path
+        # requirement (and only excludes an explicit codex-only selection);
+        # the update path keeps ensuring the Claude Code directories
+        # unconditionally so an existing install's hook/skill refresh cannot
+        # start failing on a missing parent.
+        from . import _CLAUDE_SCAFFOLD_DIRS, _TRW_DIRS
 
-        for rel_dir in _TRW_DIRS:
+        for rel_dir in [*_TRW_DIRS, *_CLAUDE_SCAFFOLD_DIRS]:
             _ensure_dir(target_dir / rel_dir, result, on_progress)
 
     if on_progress:
@@ -334,16 +343,14 @@ def _run_post_update_phases(
     # permanently, and the CLAUDE.md block came back on the next run. The
     # append-only rule exists to protect a USER's list, not to let our own
     # scaffolding vote itself into it.
-    from ._template_claude_md import _recorded_plus_newly_adopted
-
-    recorded = [] if ide else _recorded_plus_newly_adopted(target_dir)
-    # ONE authority for both halves of the decision. The record used to govern
-    # only what was RECORDED while raw detection still governed what was
-    # WRITTEN, so a bare update on a codex project scaffolded `.cursor/` off a
-    # binary on the developer's PATH — and that directory then became the
-    # "evidence" the next bare update adopted. Detection stays the answer only
-    # where there is no record to honour (a pre-record install).
-    write_targets = recorded or ide_targets
+    # ONE authority for both halves of the decision, and the SAME one the agent
+    # update path consults. The record used to govern only what was RECORDED
+    # while raw detection still governed what was WRITTEN, so a bare update on
+    # a codex project scaffolded `.cursor/` off a binary on the developer's
+    # PATH — and that directory then became the "evidence" the next bare update
+    # adopted. Detection stays the answer only where there is no record to
+    # honour (a pre-record install).
+    write_targets = resolve_client_write_targets(target_dir, ide_override=ide)
     _update_config_target_platforms(target_dir, write_targets, result)
 
     if on_progress:
@@ -409,6 +416,7 @@ def _rewrite_hook_env_for_primary_profile(target_dir: Path, ide_targets: list[st
         logger.warning("hook_env_rewrite_failed", error=str(exc), primary=primary)
 
 
+@with_instruction_write_trigger("bootstrap_update", "update-project")
 def update_project(
     target_dir: Path,
     *,

@@ -155,6 +155,11 @@ def test_update_post_phases_dispatches_registry_before_distill_channels(tmp_path
         patch.object(update_mod, "_write_installer_metadata"),
         patch.object(update_mod, "_write_version_yaml"),
         patch.object(update_mod, "resolve_ide_targets", return_value=["claude-code", "copilot"]),
+        # PRD-CORE-252-FR03 gave the "which clients does this update WRITE for"
+        # decision one named function, shared with the agent update path, so
+        # that is the seam to pin. `resolve_ide_targets` is still patched above
+        # because the distill-channel branch below reads it directly.
+        patch.object(update_mod, "resolve_client_write_targets", return_value=["claude-code", "copilot"]),
         patch.object(update_mod, "_update_config_target_platforms"),
         patch.object(update_mod, "_run_claude_md_sync"),
         patch.object(update_mod, "_run_auto_maintenance"),

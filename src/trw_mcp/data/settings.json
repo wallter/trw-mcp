@@ -190,6 +190,16 @@
             "timeout": 10000
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-tool-degenerate-result.sh\"",
+            "timeout": 3000
+          }
+        ]
       }
     ]
   },

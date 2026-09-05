@@ -7,11 +7,10 @@
 #   - Reads the preToolUse stdin JSON (tool_name + tool_input.file_path).
 #   - Emits a Cursor permission response on stdout as JSON:
 #       {"permission": "allow", "agent_message": "<hint text>"}
-#     (per docs/research/providers/cursor/cursor-cli/integration-research.md §4 —
-#      the preToolUse permission shape supports an optional agent_message field
-#      shown to the AI agent; "permission":"allow" is the non-blocking observer
-#      decision. NO additionalContext field exists for preToolUse — agent_message
-#      is the documented advisory-context channel.)
+#     (Cursor's preToolUse permission shape supports an optional agent_message
+#      field shown to the AI agent; "permission":"allow" is the non-blocking
+#      observer decision. NO additionalContext field exists for preToolUse —
+#      agent_message is the documented advisory-context channel.)
 #   - NEVER denies / NEVER exits 2 / NEVER emits "permission":"deny" — advisory
 #     only. exit 2 is Cursor's deny signal, so it is never used.
 #   - On absent sidecar / missing trw_mcp / timeout / no hint: emits a clean

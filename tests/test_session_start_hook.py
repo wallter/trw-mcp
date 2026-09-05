@@ -8,10 +8,8 @@ import subprocess
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-#: Every live copy of the hook. The vendored `trw-eval/trw-mcp-local/` copy was
-#: dropped here because that whole tree was deliberately deleted in
-#: `a77650f238` ("delete stale vendored trw-mcp-local (342 files, trw-mcp
-#: 0.39.2)") — a stale reference, not a missing artifact.
+#: Every live copy of the hook (a formerly-vendored third mirror was deleted
+#: wholesale in `a77650f238`; only these two remain).
 #:
 #: Deliberately NOT filtered with `if path.exists()`: every copy listed here
 #: MUST be present, and skipping absent ones would turn a deleted hook into a
@@ -24,12 +22,7 @@ _HOOK_PATHS = (
 
 def _copy_hook_to_temp(tmp_path: Path, source_hook: Path) -> tuple[Path, Path]:
     source_path = source_hook.as_posix()
-    if "/trw-eval/trw-mcp-local/" in source_path:
-        hook_label = "vendored"
-    elif "/src/trw_mcp/data/hooks/" in source_path:
-        hook_label = "bundled"
-    else:
-        hook_label = "dev"
+    hook_label = "bundled" if "/src/trw_mcp/data/hooks/" in source_path else "dev"
 
     project_root = tmp_path / hook_label
     hooks_dir = project_root / ".claude" / "hooks"
@@ -204,12 +197,15 @@ def test_mid_session_emissions_stay_within_byte_budget(tmp_path: Path) -> None:
 
 
 def test_compact_framework_directive_is_honest_about_cost(tmp_path: Path) -> None:
-    """The compact branch claimed a full FRAMEWORK-CORE.md re-read costs ~500 tokens.
+    """The framework directive must state a MEASURED cost, never a remembered one.
 
-    It is ~8k. The directive also mandated a full re-read, which is stricter
-    than FRAMEWORK-CORE.md's own § FRAMEWORK ADHERENCE rule (reload the
-    execution summary plus the phase/gate sections in play). Both are fixed;
-    this pins them.
+    History: the compact branch claimed a full FRAMEWORK-CORE.md re-read costs
+    ~500 tokens when it was ~8k, and the startup branch then claimed "~385 lines
+    / ~8k tokens" when the file measured 393 lines and 35,073 characters.
+    PRD-CORE-247-FR07 replaced both estimates with the measured figures and made
+    the directive phase-scoped, so the assertion moved with them — the invariant
+    ("the stated cost equals the measured cost") is unchanged, the numbers are
+    the current measurement.
     """
     for hook_path in _HOOK_PATHS:
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "compact-honesty", hook_path)
@@ -217,7 +213,9 @@ def test_compact_framework_directive_is_honest_about_cost(tmp_path: Path) -> Non
         stdout = _run_hook(local_hook, project_root, "compact")
 
         assert "~500 tokens" not in stdout, "restated the 17x-understated re-read cost"
-        assert "~8k tokens" in stdout, "dropped the honest re-read cost"
+        assert "~8k tokens" not in stdout, "restated the superseded whole-document estimate"
+        assert "~385 lines" not in stdout, "restated the superseded line count"
+        assert "35,073" in stdout, "dropped the measured whole-document size"
         assert "EXECUTION MODEL SUMMARY" in stdout, "dropped the targeted-reload guidance"
 
 
@@ -249,3 +247,108 @@ def test_instruction_file_that_merely_mentions_trw_still_gets_the_protocol(tmp_p
 
             assert "UNIQUE-PROTOCOL-BODY-MARKER" in stdout, f"{source}: a prose mention suppressed the protocol"
             assert "still in context" not in stdout, f"{source}: pointed at an instruction section that does not exist"
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-263-FR06 — the injected-ids file is written under pressure too
+# ---------------------------------------------------------------------------
+
+
+def test_injected_ids_are_written_even_under_writer_pressure(tmp_path: Path) -> None:
+    """PRD-CORE-263-FR06 — end to end: pressured recall, then a real hook read.
+
+    Under writer pressure ``perform_session_recalls`` returns a
+    ``side_effects_deferred`` advisory. The injected-ids write used to be gated
+    on that advisory, so the state file went stale and the auto-injection hook
+    re-injected learnings the session had just surfaced — spending the context
+    budget the deferral existed to protect. The write touches no SQLite
+    connection, so pressure was never a reason to skip it.
+
+    Attribution: restoring the ``if "side_effects_deferred" not in extra`` guard
+    turns the first assertion red, and the hook then re-injects ``L-real-id``.
+    """
+    from unittest.mock import patch
+
+    from tests._auto_recall_hook_harness import (
+        _HOOK_PATHS as _UPS_HOOK_PATHS,
+    )
+    from tests._auto_recall_hook_harness import (
+        _MATCHING_PROMPT,
+        _MATCHING_SUMMARY,
+        _copy_hook_to_temp,
+        _write_learning,
+    )
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools import _ceremony_session_start_steps as steps
+
+    for index, ups_hook in enumerate(_UPS_HOOK_PATHS):
+        project_root, hook_path, entries_dir = _copy_hook_to_temp(tmp_path / f"fr06-{index}", ups_hook)
+        trw_dir = project_root / ".trw"
+        _write_learning(
+            entries_dir,
+            "L-real-id",
+            status="active",
+            summary=_MATCHING_SUMMARY,
+            file_stem="2026-04-10-structlog-gotcha",
+        )
+
+        # A recall that returned learnings AND reported deferred side effects —
+        # i.e. writer pressure engaged.
+        pressured = (
+            [{"id": "L-real-id", "summary": _MATCHING_SUMMARY}],
+            [],
+            {"side_effects_deferred": {"reason": "writer_pressure"}, "response_compacted": True},
+        )
+        results: dict[str, object] = {}
+        with (
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.tools._ceremony_helpers.perform_session_recalls", return_value=pressured),
+        ):
+            steps.step_recall_learnings("", TRWConfig(), results, [])  # type: ignore[arg-type]
+
+        state_file = trw_dir / "context" / "injected_learning_ids.txt"
+        assert state_file.is_file(), "the injected-ids write must not be gated on writer pressure"
+        assert state_file.read_text(encoding="utf-8").split() == ["L-real-id"]
+        # The deferral advisory itself is untouched — this PRD does not change
+        # the pressure decision, only what happens after it (Non-Goal 2).
+        assert results["side_effects_deferred"] == {"reason": "writer_pressure"}
+
+        # A subsequent REAL hook read injects none of them.
+        env = os.environ.copy()
+        env.update(
+            {
+                "TRW_PROJECT_ROOT": str(project_root),
+                "TRW_TEST_PHASE": "implement",
+                "TRW_HOOK_LOG": str(project_root / "hook.log"),
+            }
+        )
+        completed = subprocess.run(
+            ["sh", str(hook_path)],
+            input=json.dumps({"prompt": _MATCHING_PROMPT}),
+            text=True,
+            capture_output=True,
+            cwd=project_root,
+            env=env,
+            check=False,
+        )
+        assert "[L-real-id]" not in completed.stdout, (
+            f"the hook re-injected a learning this session already surfaced: {completed.stdout!r}"
+        )
+
+
+def test_injected_ids_write_failure_records_a_degradation(tmp_path: Path) -> None:
+    """PRD-CORE-263-FR06 — the narrow handler stops being merely quiet."""
+    from unittest.mock import patch
+
+    from trw_mcp.tools._ceremony_session_start_steps import _write_session_start_ids
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    results: dict[str, object] = {}
+    with patch("pathlib.Path.write_text", side_effect=OSError("disk full")):
+        _write_session_start_ids(trw_dir, [{"id": "L-x"}], results)
+
+    degradations = results["degradations"]
+    assert isinstance(degradations, list)
+    assert degradations[0]["step"] == "injected_ids_write"
+    assert degradations[0]["error_class"] == "OSError"

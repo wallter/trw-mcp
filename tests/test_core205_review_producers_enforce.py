@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,17 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._delivery_review_gate import _check_review_gate
 from trw_mcp.tools._review_manual import handle_manual_mode
 from trw_mcp.tools._review_receipt_writer import load_latest_review_evidence
+
+
+def _now() -> str:
+    """A LIVE completion stamp.
+
+    PRD-CORE-255-FR01 gave receipts a TTL, and the hard-coded 2026-07-10 stamp
+    these fixtures used is now permanently outside it — the receipts would read
+    as expired and the tests would go green on the wrong non-VALID state. Real
+    ``trw_review`` stamps ``datetime.now(timezone.utc)``; so does this.
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _project_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, Path]:
@@ -54,7 +66,7 @@ def test_completed_zero_finding_manual_review_writes_current_plan_bound_receipt(
         [],
         run,
         "review-1",
-        "2026-07-10T00:00:00Z",
+        _now(),
         ["PRD-CORE-205"],
         review_completed=True,
     )
@@ -84,7 +96,7 @@ def test_enforce_mode_refuses_stale_typed_receipt_and_legacy_projection(
         [],
         run,
         "review-1",
-        "2026-07-10T00:00:00Z",
+        _now(),
         ["PRD-CORE-205"],
         review_completed=True,
     )

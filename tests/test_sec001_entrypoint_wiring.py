@@ -50,7 +50,11 @@ def test_sync_pull_merge_team_learnings_uses_sec001_gate(tmp_path: Path, monkeyp
         ]
     )
 
-    assert merged == 0
+    # The gate quarantined it: applied 0, but the batch says WHY rather than
+    # reporting the same 0 an empty pull produces.
+    assert merged.applied == 0
+    assert merged.quarantined == 1
+    assert merged.status == "partial"
 
 
 class _FakeContext:
@@ -95,7 +99,7 @@ def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, m
     from trw_mcp.state.memory_adapter import get_backend
 
     backend = get_backend(trw_dir)
-    entry = backend.get(result["learning_id"])
+    entry = backend.get(result["learning_id"], namespace="default")
     assert entry is not None
     assert entry.metadata["provenance_session_id"] == "mcp-session-456"
     assert (trw_dir / "memory" / "security" / "observe_start.yaml").exists()

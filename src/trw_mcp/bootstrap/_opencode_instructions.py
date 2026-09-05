@@ -34,6 +34,11 @@ logger = structlog.get_logger(__name__)
 OPENCODE_INSTRUCTIONS_REL = Path(".opencode") / "INSTRUCTIONS.md"
 CODEX_INSTRUCTIONS_REL = Path(".codex") / "INSTRUCTIONS.md"
 
+#: These files carry no marker block — TRW renders them whole — so the guard
+#: is handed a pair that matches nothing and measures the entire file as
+#: non-generated. The shrink floor is disabled for them explicitly instead.
+_TRW_MANAGED_MARKERS = ("<!-- trw:managed:start -->", "<!-- trw:managed:end -->")
+
 
 def _generate_instructions_file(
     target_dir: Path,
@@ -65,11 +70,21 @@ def _generate_instructions_file(
         result["preserved"].append(rel_path)
         return result
 
-    try:
-        instructions_path.write_text(content, encoding="utf-8")
-        result["updated" if existed else "created"].append(rel_path)
-    except OSError as exc:
-        result["errors"].append(f"Failed to write {instructions_path}: {exc}")
+    # PRD-FIX-123-FR06: this file is wholly TRW-rendered, so the shrink floor
+    # does not apply — but backup, provenance, and atomic replacement do. A user
+    # who hand-edited it still gets their bytes preserved under .trw/backups.
+    from trw_mcp.bootstrap._guarded_write import guarded_bootstrap_write
+
+    guarded_bootstrap_write(
+        instructions_path,
+        content,
+        project_root=target_dir,
+        markers=_TRW_MANAGED_MARKERS,
+        result=result,
+        rel_path=rel_path,
+        force=force,
+        enforce_shrink_floor=False,
+    )
 
     logger.debug(log_event, created=result["created"], updated=result["updated"])
     return result

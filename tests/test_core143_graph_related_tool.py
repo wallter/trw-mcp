@@ -26,7 +26,7 @@ def backend(tmp_path: Path) -> Iterator[SQLiteBackend]:
 
 
 def _edge(backend: SQLiteBackend, source: str, target: str, edge_type: str = "related_to") -> None:
-    _upsert_edge(backend._conn, source, target, edge_type, 0.8, "2026-07-12T00:00:00+00:00")
+    _upsert_edge(backend._conn, source, target, edge_type, 0.8, "2026-07-12T00:00:00+00:00", namespace="default")
     backend._conn.commit()
 
 

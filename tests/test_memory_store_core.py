@@ -116,6 +116,19 @@ class TestUpsertSearch:
 
 
 class TestDelete:
+    """``delete`` is addressed by entry id alone, and deliberately so.
+
+    PRD-CORE-245 made ``namespace`` a keyword-only argument of every
+    ``trw_memory`` backend read and write, because that store's composite key
+    admits the same id in two namespaces. ``MemoryStore`` is a different object:
+    the sqlite-vec warm index ``state/tiers.py`` opens under one project's
+    ``.trw/memory/``, keyed ``entries(entry_id TEXT UNIQUE)`` with no namespace
+    column -- ``state/_paths.py::resolve_memory_store_path`` says in as many
+    words that it is NOT the trw-memory backend. A ``namespace`` parameter it
+    could not honour would assert an isolation it does not have, so these tests
+    pin the single-namespace signature.
+    """
+
     def test_delete_removes_entry(self, tmp_path: Path) -> None:
         store = _make_store(tmp_path, dim=4)
         try:

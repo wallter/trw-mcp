@@ -14,6 +14,7 @@ indirection makes that patch propagate here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import structlog
@@ -22,6 +23,36 @@ from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._review_validation import normalize_review_finding
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class ReviewGateOutcome:
+    """One evaluation of the deliver-time review gate.
+
+    ``evidence`` (PRD-CORE-255-FR05) is populated ONLY when a typed receipt
+    actually satisfied the gate — it names which receipt was trusted, the scope
+    digest it was bound to, and how old it was. An empty mapping therefore means
+    "no typed receipt was trusted", never "one was trusted but unnamed".
+    """
+
+    block: str | None = None
+    warning: str | None = None
+    advisory: str | None = None
+    evidence: dict[str, object] = field(default_factory=dict)
+
+
+def _expired_review_label(receipt_id: str | None) -> str:
+    """PRD-CORE-255-FR01 — the missing-evidence label for an EXPIRED verdict.
+
+    Identical for a cold-start expiry and for a run whose review expired
+    mid-flight: there is no grace path, so there is no second message.
+    """
+    from trw_mcp.state._evidence_gates import REVIEW_VERDICT_EXPIRED_REMEDY
+
+    return (
+        f"The review verdict on receipt {receipt_id or 'unknown'} has EXPIRED "
+        f"(older than review_verdict_ttl_hours); it is treated as absent — {REVIEW_VERDICT_EXPIRED_REMEDY}"
+    )
 
 
 def _review_data_is_substantive(review_data: dict[str, object]) -> bool:
@@ -130,12 +161,28 @@ def _check_review_gate(
     run_path: Path,
     reader: FileStateReader,
 ) -> tuple[str | None, str | None, str | None]:
-    """Return the substantive review block, warning, or advisory for a run."""
+    """Legacy 3-tuple view of :func:`evaluate_review_gate` (block, warning, advisory).
+
+    Retained as the one-line projection every existing caller already unpacks;
+    the FR05 ``review_evidence`` payload is reachable only through the richer
+    :func:`evaluate_review_gate`, so there is exactly ONE implementation.
+    """
+    outcome = evaluate_review_gate(run_path, reader)
+    return outcome.block, outcome.warning, outcome.advisory
+
+
+def evaluate_review_gate(
+    run_path: Path,
+    reader: FileStateReader,
+) -> ReviewGateOutcome:
+    """Return the substantive review block/warning/advisory plus its evidence."""
     from trw_mcp.tools import _delivery_helpers as _dh
 
     block: str | None = None
     warning: str | None = None
     advisory: str | None = None
+    evidence: dict[str, object] = {}
+    expired_receipt_id: str | None = None
     review_path = run_path / "meta" / "review.yaml"
     has_substantive_review = False
 
@@ -144,6 +191,7 @@ def _check_review_gate(
     # typed absence may consult the legacy projection.  Typed-present invalid
     # evidence never falls back in either mode.
     from trw_mcp.models._evidence_core import EvidenceMode
+    from trw_mcp.state._evidence_gates import REVIEW_VERDICT_EXPIRED, review_receipt_age_seconds
     from trw_mcp.state._paths import resolve_project_root
     from trw_mcp.tools._evidence_gates import read_evidence_mode
     from trw_mcp.tools._review_receipt_writer import load_latest_review_evidence
@@ -157,7 +205,18 @@ def _check_review_gate(
 
     if typed_state is not None and typed_state.typed_present:
         has_substantive_review = typed_state.is_positive and typed_receipt is not None
+        # PRD-CORE-255-FR01: an EXPIRED verdict is absent evidence, but the
+        # message below must say WHICH receipt aged out rather than claiming no
+        # review was ever recorded.
+        if not typed_state.is_positive and typed_state.reason_code == REVIEW_VERDICT_EXPIRED:
+            expired_receipt_id = typed_state.receipt_id
         if has_substantive_review and typed_receipt is not None:
+            # PRD-CORE-255-FR05: name the receipt this delivery actually trusted.
+            evidence = {
+                "receipt_id": typed_receipt.receipt_id,
+                "scope_digest": typed_receipt.content_binding.scope_digest,
+                "age_seconds": review_receipt_age_seconds(typed_receipt.completed_at),
+            }
             verdict = typed_receipt.verdict.value
             critical = sum(1 for finding in typed_receipt.findings if finding.severity == "critical")
             if verdict == "block" and critical > 0:
@@ -200,10 +259,14 @@ def _check_review_gate(
             has_substantive_review = False
 
     if has_substantive_review:
-        return block, warning, advisory
+        return ReviewGateOutcome(block=block, warning=warning, advisory=advisory, evidence=evidence)
 
     complexity = _dh._read_complexity_class(run_path, reader)
-    missing_label = "No substantive trw_review was recorded"
+    missing_label = (
+        _expired_review_label(expired_receipt_id)
+        if expired_receipt_id is not None
+        else "No substantive trw_review was recorded"
+    )
     if complexity in ("STANDARD", "COMPREHENSIVE"):
         if _review_gate_mode_is_block(complexity):
             block = (
@@ -218,8 +281,5 @@ def _check_review_gate(
                 "for STANDARD+ work; run a substantive trw_review or /trw-audit."
             )
     else:
-        advisory = (
-            "No substantive trw_review was recorded before delivery. "
-            "Consider running a real reviewer or supplying reviewer findings."
-        )
-    return block, warning, advisory
+        advisory = f"{missing_label} before delivery. Consider running a real reviewer or supplying reviewer findings."
+    return ReviewGateOutcome(block=block, warning=warning, advisory=advisory, evidence=evidence)

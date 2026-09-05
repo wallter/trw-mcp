@@ -113,9 +113,10 @@ class TestMemoryToLearningDict:
             "team_origin",
             "protection_tier",
             "anchor_validity",
-            "sessions_surfaced",
-            "avg_rework_delta",
-            "outcome_correlation",
+            # PRD-CORE-244 FR08 / trw-memory 0.16.0: sessions_surfaced,
+            # avg_rework_delta and outcome_correlation are NOT here. They were
+            # removed from MemoryEntry, from Learning, and from
+            # LearningEntryDict -- no producer ever wrote them.
             "session_count",
         }
         assert expected_keys == set(result.keys())

@@ -96,6 +96,30 @@ def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -
     )
 
 
+def _register_thread_dump_signal() -> bool:
+    """Make ``kill -USR1 <pid>`` dump every thread's Python stack to stderr.
+
+    Operators diagnosing a wedged or CPU-bound server (observed 2026-09-05: one
+    worker thread at 6,321 s of user CPU while ``trw_deliver`` hung for 1,800 s)
+    cannot use ``py-spy``/``gdb`` on a box with ``ptrace_scope=1`` and no sudo.
+    ``faulthandler`` needs no ptrace. Returns True when registered; False on a
+    platform without ``SIGUSR1`` or when registration fails — never raises,
+    because a diagnostic hook must not stop the server from serving.
+    """
+    import faulthandler
+    import signal
+    import sys as _sys
+
+    signum = getattr(signal, "SIGUSR1", None)
+    if signum is None:
+        return False
+    try:
+        faulthandler.register(signum, file=_sys.stderr, all_threads=True, chain=False)
+    except (RuntimeError, ValueError, AttributeError, OSError):
+        return False
+    return True
+
+
 def main() -> None:
     """Entry point for the trw-mcp CLI command.
 
@@ -113,6 +137,8 @@ def main() -> None:
         stream=_sys.stderr,
         force=True,
     )
+
+    _register_thread_dump_signal()
 
     parser = _build_arg_parser()
     args = parser.parse_args()
@@ -198,6 +224,15 @@ def main() -> None:
         package_name="trw-mcp",
     )
 
+    # PRD-CORE-248 FR02: release the buffered boot-phase events now that logging
+    # has a real sink. They are buffered rather than emitted at import because
+    # structlog's unconfigured default writes to STDOUT, which on this process is
+    # the JSON-RPC channel — an unbuffered boot event there would corrupt the
+    # MCP stream.
+    from trw_mcp.server._boot_timeline import enable_boot_timeline_emission
+
+    enable_boot_timeline_emission()
+
     # PRD-FIX-037: Warn if .mcp.json has a stale absolute path
     _check_mcp_json_portability()
 
@@ -211,9 +246,27 @@ def main() -> None:
     # failure MUST NOT block server startup.
     _start_boot_sequence(config, log, deferred=config.boot_gc_deferred)
 
+    # PRD-CORE-248 FR04 clause 2: the idle checkpoint sweep. A server that never
+    # runs trw_session_start used to never checkpoint at all; this named daemon
+    # thread evaluates the size-or-age trigger every
+    # wal_checkpoint_idle_interval_seconds and costs one stat when nothing is due.
+    _start_wal_sweeper(log)
+
     from trw_mcp.server._transport import resolve_and_run_transport
 
     resolve_and_run_transport(debug=debug, log=log)
+
+
+def _start_wal_sweeper(log: structlog.stdlib.BoundLogger) -> threading.Thread | None:
+    """Start the PRD-CORE-248 FR04 idle WAL-checkpoint sweeper; fail-open (NFR02)."""
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state._wal_idle_sweep import start_wal_checkpoint_sweeper
+
+        return start_wal_checkpoint_sweeper(resolve_trw_dir())
+    except Exception:  # justified: NFR02 — sweeper start must never block server start
+        log.warning("wal_sweeper_start_failed", exc_info=True)
+        return None
 
 
 def _start_boot_sequence(

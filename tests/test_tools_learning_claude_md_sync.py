@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests._tools_learning_shared import _get_tools
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -41,7 +42,7 @@ class TestTrwClaudeMdSync:
         claude_md = tmp_path / "CLAUDE.md"
         assert claude_md.exists()
         content = claude_md.read_text(encoding="utf-8")
-        assert "trw:start" in content
+        assert "trw:start" in content, content[:800]
         assert "trw:end" in content
 
     def test_preserves_existing_content(self, tmp_path: Path) -> None:
@@ -80,7 +81,7 @@ class TestTrwClaudeMdSync:
         content = claude_md.read_text(encoding="utf-8")
         assert "Old content" not in content
         # CORE-093: static behavioral protocol, no individual learnings
-        assert "trw:start" in content
+        assert "trw:start" in content, content[:800]
         assert "Other section" in content  # Preserved
 
     def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path) -> None:
@@ -103,16 +104,20 @@ class TestTrwClaudeMdSync:
         assert result["scope"] == "sub"
 
         sub_claude_md = sub_dir / "CLAUDE.md"
-        assert sub_claude_md.exists()
+        assert sub_claude_md.exists(), str(result)[:3000]
         content = sub_claude_md.read_text(encoding="utf-8")
-        assert "trw:start" in content
+        assert "trw:start" in content, content[:800]
+        # The generated section must fit the budget the writer enforces on it.
+        # Before the ``_section_budget`` collapse, the 94-line block refused
+        # itself against the 50-line default and no file was created at all.
+        limit = get_config().sub_claude_md_max_lines
+        assert len(content.split("\n")) <= limit, content
 
     def test_enforces_line_limit(self, tmp_path: Path) -> None:
-        """CLAUDE.md content is truncated when exceeding line limit."""
+        """An oversized merge is REFUSED, never truncated (PRD-FIX-123 FR01)."""
 
         tools = _get_tools()
 
-        # Create existing CLAUDE.md with many lines
         claude_md = tmp_path / "CLAUDE.md"
         long_content = "\n".join(f"Line {i}" for i in range(300))
         claude_md.write_text(long_content, encoding="utf-8")
@@ -122,12 +127,11 @@ class TestTrwClaudeMdSync:
             detail="Trigger sync",
             impact=0.9,
         )
-        tools["trw_claude_md_sync"].fn(scope="root")
+        with pytest.raises(StateError, match="will not truncate"):
+            tools["trw_claude_md_sync"].fn(scope="root")
 
-        content = claude_md.read_text(encoding="utf-8")
-        line_count = len(content.split("\n"))
-        # Should be at or below the configured max (200) + 1 for truncation comment
-        assert line_count <= get_config().claude_md_max_lines + 1
+        # The user's content is byte-identical after the refusal.
+        assert claude_md.read_text(encoding="utf-8") == long_content
 
     def test_wildcard_returns_all_learnings(self, tmp_path: Path) -> None:
         """Query '*' or empty returns all learnings (filtered by other params)."""
@@ -177,7 +181,7 @@ class TestTrwClaudeMdSyncLLM:
 
         claude_md = tmp_path / "CLAUDE.md"
         content = claude_md.read_text(encoding="utf-8")
-        assert "trw:start" in content
+        assert "trw:start" in content, content[:800]
 
     def test_sync_llm_flag_present(self, tmp_path: Path) -> None:
         """Verify llm_used field is in return value."""
@@ -206,7 +210,7 @@ class TestClaudeMdSyncAtomicWrite:
 
         real_writer = FileStateWriter()
         with patch(
-            "trw_mcp.state.claude_md._parser.FileStateWriter",
+            "trw_mcp.state.claude_md._write_guard.FileStateWriter",
         ) as mock_cls:
             mock_instance = mock_cls.return_value
             mock_instance.write_text = MagicMock(wraps=real_writer.write_text)

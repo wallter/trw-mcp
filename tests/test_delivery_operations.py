@@ -144,7 +144,7 @@ def _succeeded_operation(coord, did, cap):  # type: ignore[no-untyped-def]
 
     coord.claim(delivery_id=did, capability_token=cap, run_identity="task/run-1", owner="w", pid=1)
     coord.begin_step(did, "S01", owner="w", pid=1)
-    coord.finalize_step(did, "S01", state=_SS.SUCCEEDED, proof_digest="d1")
+    coord.finalize_step(did, "S01", state=_SS.SUCCEEDED)
     coord.mark_operation_state(did, _OS.SUCCEEDED)
 
 

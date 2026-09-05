@@ -123,7 +123,13 @@ class TestUpdateProjectMultiIDE:
         assert codex_hooks.exists()
         hooks_doc = json.loads(codex_hooks.read_text(encoding="utf-8"))
         assert "PostToolUse" in hooks_doc["hooks"]
-        assert (tmp_path / ".codex" / "agents" / "trw-docs-researcher.toml").exists()
+        # A stem READ from the bundle: `trw-docs-researcher` was a codex-only
+        # stub and was retired with the stub set (PRD-CORE-252-FR04), and a new
+        # literal here would go stale the same way.
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        bundled_stem = sorted(path.stem for path in (_DATA_DIR / "agents").glob("*.md"))[0]
+        assert (tmp_path / ".codex" / "agents" / f"{bundled_stem}.toml").exists()
         assert (tmp_path / ".agents" / "skills" / "trw-deliver" / "SKILL.md").exists()
         # Per-client instruction file (PRD-CORE-115)
         assert (tmp_path / ".codex" / "INSTRUCTIONS.md").exists()

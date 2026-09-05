@@ -30,7 +30,6 @@ def _make_entry(
         "domain": [],
         "phase_affinity": [],
         "team_origin": "",
-        "outcome_correlation": 0.0,
         "anchor_validity": 1.0,
     }
 

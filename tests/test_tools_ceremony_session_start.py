@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
+from trw_mcp.tools._ceremony_step_table import SESSION_START_STEPS, SessionStartContext, Step, run_steps
 
 
 def test_connection_fingerprint_exposes_frozen_loaded_module_identity() -> None:
@@ -42,11 +44,14 @@ class TestSessionStartPartialFailure:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """If recall raises, status step still runs and result is returned.
+        """If recall raises, the later steps still run and a payload is returned.
 
-        Recall is fail-open by contract: a recall-only failure must NOT flip
-        ``success`` (which would mislead agents into needless retries). The
-        failure is surfaced under the non-fatal ``warnings`` channel instead.
+        PRD-CORE-263-FR01 / DR-001. ``recall`` is declared critical, so the
+        failure now reaches the runner and makes the verdict false — the prior
+        assertion (``success is True``) is the defect this PRD exists to remove.
+        What is preserved is availability: the tool still RETURNS a payload with
+        the run block resolved, rather than propagating the exception out of the
+        mandated first call.
         """
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = tmp_path / ".trw"
@@ -65,12 +70,13 @@ class TestSessionStartPartialFailure:
         ):
             result = tools["trw_session_start"].fn()
 
-        # Recall-only failure no longer flips success; it lands in warnings.
-        assert result["success"] is True
+        assert result["success"] is False
+        assert any("recall" in err for err in result["errors"])
         assert "run" in result
-        warnings = result.get("warnings", [])
-        assert any("recall" in w for w in warnings), f"expected recall warning, got {warnings}"
-        assert "recall" not in " ".join(result.get("errors", []))
+        # The failure is enumerable in the typed degradation array too, so a
+        # consumer that reads structure rather than error strings still sees it.
+        degradations = result.get("degradations", [])
+        assert any(item["step"] == "recall" for item in degradations)
 
     def test_returns_result_when_status_fails(
         self,
@@ -504,3 +510,176 @@ class TestSessionStartPayloadTrimming:
         assert "run" in result
         assert "framework_reminder" in result
         assert "timestamp" in result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-263-FR01 — the critical flag decides the payload
+# ---------------------------------------------------------------------------
+
+
+def _step_table_context() -> SessionStartContext:
+    """A minimal SessionStartContext for driving ``run_steps`` directly."""
+    results: dict[str, object] = {}
+    return SessionStartContext(
+        query="",
+        config=cast("object", None),  # type: ignore[arg-type]  # unused by the boom step
+        ctx=None,
+        is_focused=False,
+        results=cast("object", results),  # type: ignore[arg-type]
+        errors=[],
+    )
+
+
+@pytest.mark.parametrize("step", list(SESSION_START_STEPS), ids=lambda step: step.key)
+def test_every_critical_step_failure_degrades_the_payload(step: Step) -> None:
+    """PRD-CORE-263-FR01 — parametrised over the WHOLE table, not one entry.
+
+    Attribution: reverting the FR01 change (restoring the broad handler in any of
+    the five critical step bodies, or restoring the runner's bare ``raise``)
+    turns this red on ``recall``, ``surface_stamp``, ``profile_resolve`` and
+    ``phase_recall`` — the four that fail with ``success: true`` at HEAD — and on
+    ``run_resolve`` for the reason wording.
+
+    Parametrising over the whole table rather than one representative entry is
+    deliberate: ``wiring-defect-patterns.md`` §5 records a fix that reintroduced
+    the defect it was fixing and was caught only by covering every case.
+    """
+    sctx = _step_table_context()
+
+    def _boom(_sctx: SessionStartContext) -> None:
+        raise RuntimeError("injected")
+
+    facade = type("Facade", (), {step.attr: staticmethod(_boom)})
+
+    run_steps((step,), sctx, cast("object", facade))  # type: ignore[arg-type]
+
+    errors = sctx.errors
+    results = cast("dict[str, object]", sctx.results)
+    degradations = cast("list[dict[str, object]]", results["degradations"])
+    # Every entry — critical or not — is enumerable.
+    assert [item["step"] for item in degradations] == [step.key]
+    assert degradations[0]["error_class"] == "RuntimeError"
+
+    if step.critical:
+        # success = len(errors) == 0 in finalize_session_start, so a non-empty
+        # errors list IS the false verdict.
+        assert len(errors) == 1, f"{step.key} is declared critical but produced no error"
+        assert step.key in errors[0]
+        assert "RuntimeError" in errors[0]
+    else:
+        assert errors == [], f"{step.key} is not critical and must not flip the verdict"
+
+
+def test_critical_step_failure_never_propagates_out_of_the_tool(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PRD-CORE-263-FR01 / DR-001 — availability is preserved.
+
+    A diagnostic failure inside the mandated first call must not remove the
+    agent's only path to run state, recall and the framework reminder.
+    """
+    tools = _make_ceremony_server(monkeypatch, tmp_path)
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "learnings" / "entries").mkdir(parents=True)
+    (trw_dir / "context").mkdir(parents=True)
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        patch(
+            "trw_mcp.tools.ceremony.step_resolve_profile",
+            side_effect=RuntimeError("profile exploded"),
+        ),
+    ):
+        result = tools["trw_session_start"].fn(verbose=True)
+
+    assert result["success"] is False
+    assert any("profile_resolve" in err for err in result["errors"])
+    assert "framework_reminder" in result
+    assert "run" in result
+
+
+def test_canary_tamper_through_real_recall_dependency_degrades_the_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PRD-CORE-263-FR01 / DEF-01 + DEF-15 attribution.
+
+    Drives the REAL ``recall`` critical step through ``trw_session_start`` with
+    a failure injected at the leaf recall dependency (not a mocked facade
+    method), exercising the actual step-error translation
+    (``perform_session_recalls`` -> ``step_recall_learnings`` ->
+    ``SessionStartStepError`` -> ``run_steps``' critical branch) rather than a
+    synthetic ``_boom`` step. Reverting DEF-01 (restoring the canary-tamper
+    carve-out in ``perform_session_recalls``) turns this red: the payload would
+    read ``success: True`` with a ``recall_degraded`` block and no error.
+    """
+    from trw_memory.exceptions import CanaryTamperError
+
+    tools = _make_ceremony_server(monkeypatch, tmp_path)
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "learnings" / "entries").mkdir(parents=True)
+    (trw_dir / "context").mkdir(parents=True)
+
+    def _raise_tamper(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise CanaryTamperError("recall halted after canary tamper")
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        patch("trw_mcp.state.recall_factories.recall_baseline_high_impact", _raise_tamper),
+    ):
+        result = tools["trw_session_start"].fn(verbose=True)
+
+    assert result["success"] is False
+    assert any("recall" in err and "CanaryTamperError" in err for err in result["errors"]), result["errors"]
+    degradations = cast("list[dict[str, object]]", result["degradations"])
+    recall_entries = [d for d in degradations if d["step"] == "recall"]
+    assert len(recall_entries) == 1
+    assert recall_entries[0]["error_class"] == "CanaryTamperError"
+    assert "recall_degraded" not in result
+    # DR-001: the mandated first call still returns a payload.
+    assert "framework_reminder" in result
+
+
+def test_phase_recall_inner_failure_is_not_double_wrapped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PRD-CORE-263 DEF-03 attribution.
+
+    Drives the REAL ``phase_recall`` critical step through
+    ``trw_session_start`` with a failure injected at
+    ``_phase_contextual_recall`` (the dependency ``step_phase_auto_recall``
+    wraps into ``SessionStartStepError`` BEFORE returning to
+    ``step_auto_recall_orchestrated``, which used to catch-and-rewrap that
+    already-typed error a second time). The degradation's ``error_class`` must
+    name the real failure (``RuntimeError``), not ``SessionStartStepError``.
+    Reverting the DEF-03 fix (removing the ``except SessionStartStepError:
+    raise`` re-raise-as-is branch) turns this red.
+    """
+    tools = _make_ceremony_server(monkeypatch, tmp_path)
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "learnings" / "entries").mkdir(parents=True)
+    (trw_dir / "context").mkdir(parents=True)
+
+    with (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
+        patch(
+            "trw_mcp.tools._ceremony_helpers._phase_contextual_recall",
+            side_effect=RuntimeError("phase recall backend unavailable"),
+        ),
+    ):
+        result = tools["trw_session_start"].fn(verbose=True)
+
+    assert result["success"] is False
+    degradations = cast("list[dict[str, object]]", result["degradations"])
+    phase_entries = [d for d in degradations if d["step"] == "phase_recall"]
+    assert len(phase_entries) == 1
+    assert phase_entries[0]["error_class"] == "RuntimeError", (
+        f"expected the ORIGINAL error class, got {phase_entries[0]['error_class']!r} "
+        "(a SessionStartStepError here means the runner unwrapped a double-wrapped cause)"
+    )
+    assert any("phase_recall" in err and "RuntimeError" in err for err in result["errors"]), result["errors"]

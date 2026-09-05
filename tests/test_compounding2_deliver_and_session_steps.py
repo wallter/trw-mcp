@@ -9,10 +9,14 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
 import pytest
+from trw_memory.models.config import MemoryConfig
+from trw_memory.models.memory import MemoryEntry
+from trw_memory.retrieval.tag_derivation import derive_tag_neighbours
 
 from trw_mcp.state.memory_adapter import get_backend, store_learning
 from trw_mcp.tools._ceremony_deliver_steps import step_knowledge_sync
@@ -34,6 +38,13 @@ def _wipe_edges(trw_dir: Path) -> None:
     assert isinstance(conn, sqlite3.Connection)
     conn.execute("DELETE FROM memory_graph_edges")
     conn.commit()
+
+
+def _count_edges(trw_dir: Path) -> int:
+    backend = get_backend(trw_dir)
+    conn = backend._conn
+    assert isinstance(conn, sqlite3.Connection)
+    return int(conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0])
 
 
 class TestStepKnowledgeSyncFR03:
@@ -93,30 +104,38 @@ class TestStepKnowledgeSyncGraphBackfillF5:
     """F5 suggestion 2: opportunistic time-boxed graph backfill on deliver."""
 
     def test_deliver_backfills_ungraphed_corpus(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Entries stored without edges get graphed on deliver (singleton conn)."""
+        """Entries stored without edges get graphed on deliver (singleton conn).
+
+        The corpus is joined by consolidation lineage rather than shared tags:
+        PRD-CORE-245 FR07 derives tag co-occurrence from ``memory_tags`` at query
+        time and materialises nothing, so tag overlap is no longer an edge a
+        backfill can build.
+        """
         cfg = _config_with_threshold(2)
         monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
-        # Store two tag-sharing entries but suppress edge creation on the store
-        # path so the corpus mirrors the historical un-graphed state.
-        monkeypatch.setattr(
-            "trw_mcp.state.memory_adapter.update_entry_graph",
-            lambda *a, **k: {"similarity_edges": 0, "tag_edges": 0, "consolidation_edges": 0},
+        # backend.store is the durable write WITHOUT the store path's graph
+        # enrichment — the historical un-graphed state the backfill exists for.
+        backend = get_backend(trw_dir)
+        base = datetime(2026, 9, 3, tzinfo=timezone.utc)
+        backend.store(MemoryEntry(id="L-bk-1", content="alpha topic note", created_at=base, updated_at=base))
+        backend.store(
+            MemoryEntry(
+                id="L-bk-2",
+                content="beta topic detail",
+                created_at=base + timedelta(minutes=1),
+                updated_at=base + timedelta(minutes=1),
+                consolidated_from=["L-bk-1"],
+            )
         )
-        store_learning(trw_dir, "L-bk-1", "alpha topic note", "x", tags=["t", "u"])
-        store_learning(trw_dir, "L-bk-2", "beta topic detail", "y", tags=["t", "u"])
-        monkeypatch.undo()
-        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
-        _wipe_edges(trw_dir)
+        assert _count_edges(trw_dir) == 0
 
         results: dict[str, object] = {}
         step_knowledge_sync(trw_dir, cast("dict", results))  # type: ignore[arg-type]
 
         backfill = cast("dict[str, int]", results["graph_backfill"])
-        assert backfill["edges_built"] > 0
-        backend = get_backend(trw_dir)
-        conn = backend._conn
-        assert isinstance(conn, sqlite3.Connection)
-        assert int(conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]) > 0
+        assert backfill["processed"] == 2
+        assert backfill["edges_built"] == 1
+        assert _count_edges(trw_dir) == 1
 
     def test_deliver_backfill_disabled_by_config(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """deliver_graph_backfill_enabled=False skips the backfill entirely."""
@@ -174,8 +193,14 @@ class TestStepGraphHealthFR04:
         assert step_graph_health(trw_dir) is None
 
     def test_populated_graph_no_advisory(self, trw_dir: Path) -> None:
-        """Edges present → no advisory regardless of memory count."""
-        # entries that DO share tags → edges get created by store_learning.
+        """A DERIVED tag relation is a populated graph → no advisory (CORE-245 FR07).
+
+        This is the case the old probe got wrong. Entries related purely by
+        shared tags materialise no ``memory_graph_edges`` row at all now — the
+        relation is derived from ``memory_tags`` at query time — so a probe that
+        counted edges called this healthy corpus empty and would have said so on
+        every session for the rest of the project's life.
+        """
         words = _distinct_words()
         for i, w in enumerate(words):
             store_learning(trw_dir, f"L-pop-{i}", f"{w} shared subject {i}", f"{w} body {i}", tags=["shared", "topic"])
@@ -184,7 +209,14 @@ class TestStepGraphHealthFR04:
         conn = backend._conn
         assert isinstance(conn, sqlite3.Connection)
         edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
-        assert edge_count > 0, "precondition: shared-tag stores must create edges"
+        assert edge_count == 0, "precondition: tag co-occurrence must materialise no edge"
+        neighbours = derive_tag_neighbours(
+            conn,
+            "L-pop-0",
+            namespace="default",
+            config=MemoryConfig(storage_path=str(trw_dir / "memory")),
+        )
+        assert neighbours, "precondition: shared-tag stores must be derivable as neighbours"
 
         assert step_graph_health(trw_dir) is None
 

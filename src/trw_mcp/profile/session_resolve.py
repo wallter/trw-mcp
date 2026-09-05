@@ -152,7 +152,11 @@ def resolve_session_profile(
     session + client only). Raises ``LayerLoadError`` if a persistent layer is
     malformed (FR-12) — the wiring layer decides how to surface it.
     """
-    resolved_domain = infer_domain(explicit=domain, prd_path=prd_path)
+    resolved_domain = infer_domain(
+        explicit=domain,
+        prd_path=prd_path,
+        path_domain_map=config.profile_domain_path_map,
+    )
     resolved_task = infer_task_type(explicit=task_type, task_name=task_name, prd_category=prd_category)
 
     layers: list[ProfileLayer] = [_defaults_layer(config)]

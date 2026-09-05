@@ -9,6 +9,8 @@ Covers sections 8-10, 12 of the original _main_fields.py:
 
 from __future__ import annotations
 
+from pydantic import Field
+
 from trw_mcp.models.config._defaults import DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
 
 
@@ -34,6 +36,15 @@ class _ScoringFields:
     q_cold_start_threshold: int = 3
     source_human_utility_boost: float = 0.1
     access_count_utility_boost_cap: float = 0.15
+
+    # -- Contradiction as a reward signal (PRD-CORE-244 FR04) --
+    # Magnitude of the NEGATIVE Q observation applied to an entry whose stored
+    # assertion failed against the current repository. It sits between the
+    # existing ``tests_failed`` magnitude of 0.3 and ``phase_gate_failed`` at 0.5
+    # in ``scoring/_reward_resolution.py`` — a placement argument, not a
+    # calibrated value (PRD-CORE-244 OQ-02). Bounded so an operator-supplied
+    # .trw/config.yaml cannot invert the sign or exceed a full reward.
+    contradiction_penalty_reward: float = Field(default=0.4, ge=0.0, le=1.0)
 
     # -- Outcome correlation --
 

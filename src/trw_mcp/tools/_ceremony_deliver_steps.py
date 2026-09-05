@@ -35,6 +35,9 @@ from trw_mcp.state._session_changelog import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from trw_mcp.models.plan_acceptance import AcceptanceStatus
     from trw_mcp.models.typed_dicts import DeliverResultDict, DeliveryGatesDict
 
 logger = structlog.get_logger(__name__)
@@ -179,6 +182,90 @@ def step_session_changelog(resolved_run: Path, results: DeliverResultDict) -> No
     except Exception as exc:  # justified: fail-open — session changelog must not block deliver
         logger.warning("deliver_session_changelog_failed", error=str(exc), exc_info=True)
         results["session_changelog"] = {"status": "failed", "error": str(exc)}
+
+
+#: PRD-CORE-249-FR05 markers for the managed remaining-work section in
+#: ``{RUN_ROOT}/reports/final.md``. Same whole-line marker discipline as the
+#: FR02 handoff block, so a human-authored final report survives around it.
+REMAINING_WORK_START_MARKER = "<!-- trw:remaining-work:start -->"
+REMAINING_WORK_END_MARKER = "<!-- trw:remaining-work:end -->"
+
+
+def _render_remaining_work(rows: Sequence[AcceptanceStatus], handoff_path: str) -> str:
+    """Render the managed ``## Remaining work handoff`` section.
+
+    When nothing was deferred the section says so explicitly rather than being
+    absent: an absent section is indistinguishable from a step that did not run,
+    which is the ambiguity the un-suppressible escalation exists to remove.
+    """
+    from trw_mcp.tools._project_handoff import neutralise
+
+    lines = [
+        REMAINING_WORK_START_MARKER,
+        "",
+        "## Remaining work handoff",
+        "",
+    ]
+    if rows:
+        lines.append(f"These items were declared blocked and now live in `{handoff_path}`:")
+        lines.append("")
+        lines.append("| Gate | Class | Owner | Reason |")
+        lines.append("| --- | --- | --- | --- |")
+        for row in rows:
+            owner = neutralise(row.owner) or "-"
+            reason = neutralise(row.reason) or "-"
+            lines.append(f"| {neutralise(row.gate_id)} | {neutralise(row.blocking_class)} | {owner} | {reason} |")
+    else:
+        lines.append("No work was deferred by this run.")
+    lines.extend(["", REMAINING_WORK_END_MARKER])
+    return "\n".join(lines)
+
+
+def step_project_handoff(resolved_run: Path, results: DeliverResultDict) -> None:
+    """PRD-CORE-249-FR02 + FR05 — durable handoff rows, and the run's own record.
+
+    Runs after the gate cascade passed and the critical synchronous steps
+    completed. Re-evaluates the plan-acceptance declaration (two small bounded
+    file reads, so the gate itself stays free of side effects), merges every
+    accepted-blocked row into the configured project handoff file keyed on
+    ``(run_id, gate_id)``, and writes the managed ``## Remaining work handoff``
+    section into ``reports/final.md``.
+
+    Fail-open (NFR02), modelled on :func:`step_session_changelog`: a failure
+    records ``project_handoff: {"status": "failed", ...}`` and delivery still
+    succeeds. It is never absent-meaning-succeeded.
+    """
+    try:
+        from trw_mcp.state.persistence import FileStateReader
+        from trw_mcp.tools._plan_acceptance_gate import evaluate_plan_acceptance
+        from trw_mcp.tools._project_handoff import merge_marked_section, resolve_handoff_path, write_handoff_rows
+
+        run_yaml = resolved_run / "meta" / "run.yaml"
+        run_data = FileStateReader().read_yaml(run_yaml) if run_yaml.is_file() else {}
+        run_id = str(run_data.get("run_id") or resolved_run.name)
+        outcome = evaluate_plan_acceptance(resolved_run, run_data)
+        accepted = list(outcome.accepted_blocked)
+        unmet_ids = {status.gate_id for status in outcome.unmet}
+        accepted_ids = {status.gate_id for status in accepted}
+        # Everything enumerated that is neither unmet nor accepted-blocked was
+        # declared satisfied — its row for THIS run is resolved and removed.
+        resolved_ids = [g for g in outcome.enumerated if g not in unmet_ids and g not in accepted_ids]
+        status = write_handoff_rows(run_id=run_id, accepted=accepted, resolved_gate_ids=resolved_ids)
+        results["project_handoff"] = status
+        handoff_path = str(status.get("path") or resolve_handoff_path())
+        final_md = resolved_run / "reports" / "final.md"
+        existing = final_md.read_text(encoding="utf-8") if final_md.is_file() else ""
+        merged = merge_marked_section(
+            existing,
+            _render_remaining_work(accepted, handoff_path),
+            REMAINING_WORK_START_MARKER,
+            REMAINING_WORK_END_MARKER,
+        )
+        final_md.parent.mkdir(parents=True, exist_ok=True)
+        final_md.write_text(merged, encoding="utf-8")
+    except Exception as exc:  # justified: fail-open — the handoff write must not block deliver
+        logger.warning("deliver_project_handoff_failed", error=str(exc), exc_info=True)
+        results["project_handoff"] = {"status": "failed", "error": str(exc)}
 
 
 def log_deliver_complete(

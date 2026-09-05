@@ -36,12 +36,22 @@ from trw_mcp.models.typed_dicts import (
     SessionStartResultDict,
 )
 from trw_mcp.state._paths import TRWCallContext
-from trw_mcp.tools._ceremony_degradations import DegradationCollector, record_into
+from trw_mcp.tools._ceremony_degradations import (
+    DegradationCollector,
+    SessionStartStepError,
+    record_into,
+)
 from trw_mcp.tools._ceremony_pipeline_advisory import (
     step_pipeline_health_advisory as step_pipeline_health_advisory,
 )
 from trw_mcp.tools._ceremony_runtime_helpers import _persist_surface_snapshot_pointer
 from trw_mcp.tools._connection_fingerprint import build_connection_fingerprint
+from trw_mcp.tools._injected_ids import (
+    _MAX_INJECTED_IDS as _MAX_INJECTED_IDS,
+)
+from trw_mcp.tools._injected_ids import (
+    _write_session_start_ids as _write_session_start_ids,
+)
 from trw_mcp.tools._pipeline_health import step_pipeline_health as step_pipeline_health
 
 if TYPE_CHECKING:
@@ -50,51 +60,6 @@ if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
 
 logger = structlog.get_logger(__name__)
-
-
-# Bound for injected_learning_ids.txt. Each session appends the IDs it
-# surfaced; without a cap the file grows without limit across every session of
-# a long-lived project, slowing the auto-injection hook's read and wasting
-# disk. The most recent IDs are the ones the hook needs (older surfaced
-# learnings age out of relevance), so keep a recency-ordered tail.
-_MAX_INJECTED_IDS = 500
-
-
-def _write_session_start_ids(trw_dir: Path, learnings: list[dict[str, object]]) -> None:
-    """Write learning IDs from session_start to the injected-IDs state file.
-
-    PRD-CORE-095 FR16: Prevents the auto-injection hook from re-injecting
-    learnings that session_start already surfaced.
-
-    The file is bounded: existing IDs are merged with the new ones, de-duplicated
-    preserving recency (last occurrence wins), and truncated to the most recent
-    ``_MAX_INJECTED_IDS`` so it cannot grow without limit.
-    """
-    ids = [str(e.get("id", "")) for e in learnings if e.get("id")]
-    if not ids:
-        return
-    state_file = trw_dir / "context" / "injected_learning_ids.txt"
-    try:
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        existing: list[str] = []
-        if state_file.exists():
-            existing = [line.strip() for line in state_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        # Merge old + new, de-dup preserving recency (newest occurrence wins),
-        # then keep only the most-recent tail.
-        merged = existing + ids
-        seen: set[str] = set()
-        deduped_reversed: list[str] = []
-        for lid in reversed(merged):
-            if lid not in seen:
-                seen.add(lid)
-                deduped_reversed.append(lid)
-        capped = list(reversed(deduped_reversed[:_MAX_INJECTED_IDS]))
-        # Atomic rewrite so a crash mid-write can't corrupt the bounded file.
-        tmp = state_file.with_suffix(state_file.suffix + ".tmp")
-        tmp.write_text("".join(lid + "\n" for lid in capped), encoding="utf-8")
-        tmp.replace(state_file)
-    except OSError:  # justified: fail-open, missing/unreadable heartbeat falls back to checkpoint-only
-        logger.debug("injected_ids_write_failed", exc_info=True)
 
 
 def step_run_resolve(
@@ -150,10 +115,14 @@ def step_run_resolve(
             results["hint"] = _no_active_run_hint(candidate_runs)
             if candidate_runs:
                 results["candidate_runs"] = candidate_runs
-    except Exception as exc:  # justified: fail-open, run status check must not block session start
-        run_dir = None
-        errors.append(f"status: {exc}")
+    except Exception as exc:
+        # PRD-CORE-263-FR01. The error-state ``run`` block stays (NFR04: a
+        # consumer reading ``results["run"]["status"]`` still finds it), but the
+        # verdict is no longer this step's to set — it raises and the runner's
+        # critical branch appends the typed reason. ``errors`` is left alone
+        # here so one failure produces ONE entry, not two (NFR03).
         results["run"] = {"active_run": None, "status": "error"}
+        raise SessionStartStepError("run_resolve", exc) from exc
     return run_dir, call_ctx
 
 
@@ -191,24 +160,22 @@ def step_recall_learnings(
             results["response_compacted"] = bool(extra["response_compacted"])
         if "side_effects_deferred" in extra:
             results["side_effects_deferred"] = extra["side_effects_deferred"]
-        if "recall_degraded" in extra:
-            results["recall_degraded"] = extra["recall_degraded"]
-        if "side_effects_deferred" not in extra:
-            _write_session_start_ids(trw_dir, learnings)
-    except Exception as exc:  # justified: fail-open, recall failure must not block session start
-        # Recall is fail-open by contract: a recall failure must NOT flip the
-        # overall session_start ``success`` (which would mislead agents into
-        # retrying an otherwise-successful session_start). Surface it as a
-        # non-fatal warning instead of an error. ``errors`` is reserved for
-        # failures that genuinely break the session_start contract.
-        warnings = results.setdefault("warnings", [])
-        warnings.append(f"recall: {exc}")
-        # Also record as a typed degradation (mcp-x-failopen) so recall failures
-        # are enumerable alongside every other swallowed step, not just in the
-        # free-standing ``warnings`` list. Still non-fatal — success unchanged.
-        record_into(cast("MutableMapping[str, object]", results), "recall", exc)
+        # PRD-CORE-257-FR09: NOT gated on the deferral advisory. This writes a
+        # bounded, de-duplicated text file under the context directory and opens
+        # no SQLite connection, so writer pressure is not a reason to skip it —
+        # skipping it let the auto-injection hook re-inject learnings this
+        # session had already surfaced, paying correctness to save nothing.
+        _write_session_start_ids(trw_dir, learnings, cast("MutableMapping[str, object]", results))
+    except Exception as exc:
+        # PRD-CORE-263-FR01. This handler used to swallow into a warning and a
+        # degradation, which made the ``recall`` step's ``critical=True`` flag
+        # unreachable: an agent read ``success: true`` on a session whose recall
+        # returned nothing. The step no longer decides. It leaves the payload
+        # keys an existing consumer reads (NFR04) and hands the failure to the
+        # runner, which is the only place that holds the ``critical`` flag.
         results["learnings"] = []
         results["learnings_count"] = 0
+        raise SessionStartStepError("recall", exc) from exc
 
 
 def _record_or_debug(
@@ -230,9 +197,12 @@ def _record_or_debug(
 def step_surface_stamp(run_dir: Path | None, session_id: str, degradations: DegradationCollector | None = None) -> str:
     """PRD-HPO-MEAS-001 FR-1/FR-2 — resolve SurfaceRegistry + stamp run snapshot.
 
-    ``degradations`` (optional): when the caller threads its per-call collector,
-    a stamping failure is recorded as a typed degradation instead of only a
-    debug log. Behaviour is unchanged — still fails open and returns ``""``.
+    PRD-CORE-263-FR01: ``surface_stamp`` is declared critical in the
+    session-start table, so a stamping failure raises a typed
+    :class:`SessionStartStepError` rather than returning ``""`` — an empty
+    snapshot id was indistinguishable from a stamp that never happened, which is
+    exactly the ambiguity the critical flag exists to remove. ``degradations``
+    is retained for the legacy non-table callers that pass one.
     """
     try:
         from trw_mcp.telemetry.artifact_registry import SurfaceRegistry, resolve_surface_registry
@@ -257,9 +227,8 @@ def step_surface_stamp(run_dir: Path | None, session_id: str, degradations: Degr
             artifact_count=len(registry.artifacts),
         )
         return snapshot_id
-    except Exception as exc:  # justified: fail-open, surface stamping must not block session start
-        _record_or_debug(degradations, "surface_stamp", exc, "surface_snapshot_stamp_failed")
-        return ""
+    except Exception as exc:
+        raise SessionStartStepError("surface_stamp", exc) from exc
 
 
 def step_auto_recall_orchestrated(
@@ -272,14 +241,32 @@ def step_auto_recall_orchestrated(
 
     Looks up ``resolve_trw_dir`` and ``record_session_start_surfaces``
     via the parent ``ceremony`` module so test monkeypatches propagate.
-    Fail-open on every branch.
+
+    PRD-CORE-263-FR01: ``phase_recall`` is declared critical, so this body no
+    longer swallows into a degradation entry beside a ``success: true`` verdict.
+    It raises a typed :class:`SessionStartStepError` and the runner decides.
+
+    DEF-03: ``step_phase_auto_recall`` below already wraps ITS OWN failures in
+    ``SessionStartStepError("phase_recall", exc)`` before returning control
+    here. This handler used to catch that already-typed error with the same
+    broad ``except Exception`` and wrap it a SECOND time, so
+    ``run_steps``'s single ``exc.cause`` unwrap landed on the inner
+    ``SessionStartStepError`` instance instead of the real failure —
+    corrupting ``degradations[].error_class`` to ``SessionStartStepError`` on
+    every entry, which is the one field an operator triages by. A
+    ``SessionStartStepError`` raised from below is now re-raised AS-IS.
     """
     from trw_mcp.tools import ceremony as _ceremony
     from trw_mcp.tools._ceremony_helpers import record_session_start_surfaces
 
     try:
         if bool(results.get("response_compacted")):
-            results["auto_recall_deferred"] = {
+            # DEF-12: named ``*_deferred`` until this fix, with no ledger entry
+            # and no consumer that ever runs phase auto-recall for a compacted
+            # session later — "deferred" implied a resumption nothing provides.
+            # A compacted session simply never gets phase auto-recall; the key
+            # says so plainly instead of promising a catch-up that never comes.
+            results["auto_recall_skipped"] = {
                 "reason": "session_start_compacted",
                 "detail": "Phase auto-recall is optional and was left off the hot response path.",
             }
@@ -293,8 +280,11 @@ def step_auto_recall_orchestrated(
         record_session_start_surfaces(trw_dir_ar, auto_ids)
         results["auto_recalled"] = phase_recalled
         results["auto_recall_count"] = len(phase_recalled)
-    except Exception as exc:  # justified: fail-open, auto-recall must not block session start
-        record_into(cast("MutableMapping[str, object]", results), "phase_recall", exc)
+    except SessionStartStepError:
+        # DEF-03: already typed by step_phase_auto_recall — do not re-wrap.
+        raise
+    except Exception as exc:
+        raise SessionStartStepError("phase_recall", exc) from exc
 
 
 def step_phase_auto_recall(
@@ -320,21 +310,54 @@ def step_phase_auto_recall(
             if entry.get("id") and str(entry.get("id", "")) not in primary_ids
         ]
         return phase_recalled, auto_ids
-    except Exception:  # justified: fail-open, auto-recall must not block session start
-        logger.debug("session_auto_recall_failed", exc_info=True)
-        return None
+    except Exception as exc:
+        # PRD-CORE-263-FR01. This is inside the ``phase_recall`` critical step:
+        # swallowing here made the outer raise unreachable for every failure
+        # originating in the recall itself, which is most of them.
+        raise SessionStartStepError("phase_recall", exc) from exc
 
 
-def step_assertion_health(trw_dir: Path, degradations: DegradationCollector | None = None) -> dict[str, int] | None:
+def _resolve_assertion_stale_days(config: TRWConfig | None) -> int:
+    """The configured assertion staleness window, or a raise (PRD-CORE-263-FR08).
+
+    Refuse-on-exception: there is deliberately no numeric fallback here. A
+    hardcoded default would put this surface back out of step with
+    ``_verification_pass``, which is the whole defect.
+    """
+    if config is None:
+        from trw_mcp.models.config import get_config
+
+        config = get_config()
+    return int(config.assertion_stale_threshold_days)
+
+
+def step_assertion_health(
+    trw_dir: Path,
+    degradations: DegradationCollector | None = None,
+    config: TRWConfig | None = None,
+) -> dict[str, int] | None:
     """PRD-CORE-086 FR07: assertion health summary from cached last_result fields.
 
     ``degradations`` (optional): threads the per-call collector so a probe
-    failure is recorded as a typed degradation. Behaviour unchanged.
+    failure is recorded as a typed degradation.
+
+    ``config`` (PRD-CORE-263-FR08): supplies ``assertion_stale_threshold_days``.
+    This step used to hardcode a 7-day window against a configured default of 30,
+    so session start and the maintenance verification pass reported DIFFERENT
+    stale counts from the same store and an operator who moved the knob saw one
+    of them move. Passing ``None`` resolves the live config; a config that cannot
+    be resolved records a degradation and returns no summary rather than falling
+    back to a hardcoded window, which would recreate the defect one layer down.
     """
     from trw_mcp.state._constants import DEFAULT_NAMESPACE
     from trw_mcp.state.memory_adapter import get_backend
 
     started = time.monotonic()
+    try:
+        stale_days = _resolve_assertion_stale_days(config)
+    except Exception as exc:
+        _record_or_debug(degradations, "assertion_health", exc, "assertion_health_config_unresolved")
+        return None
     try:
         backend = get_backend(trw_dir)
         if not hasattr(backend, "entries_with_assertions"):
@@ -349,7 +372,7 @@ def step_assertion_health(trw_dir: Path, degradations: DegradationCollector | No
             entries = backend.entries_with_assertions()
         if not entries:
             return None
-        stale_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+        stale_threshold = datetime.now(timezone.utc) - timedelta(days=stale_days)
         passing = failing = stale = unverifiable = 0
         for entry in entries:
             for a in entry.assertions:
@@ -378,11 +401,21 @@ def step_assertion_health(trw_dir: Path, degradations: DegradationCollector | No
 def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None = None) -> dict[str, object] | None:
     """PRD-FIX-COMPOUNDING-2 FR04 — graph-empty advisory for session_start.
 
-    Queries ``SELECT COUNT(*) FROM memory_graph_edges`` on the live backend.
-    When the graph is empty AND there are more than 10 memories, returns a
-    ``graph_health`` advisory so the wiring gap surfaces before more un-graphed
-    learnings accumulate. Returns ``None`` (advisory omitted) when the graph is
-    populated, when the corpus is small, or on any error (fail-open).
+    Asks :func:`trw_mcp.state._graph_relations.graph_has_relations` whether the
+    live backend holds any relation. When it holds none AND there are more than
+    10 memories, returns a ``graph_health`` advisory so the wiring gap surfaces
+    before more un-graphed learnings accumulate. Returns ``None`` (advisory
+    omitted) when the graph is populated, when the corpus is small, or on any
+    error (fail-open). A probe that cannot READ the store now raises out of
+    ``graph_has_relations`` into the wrapper below, so it is recorded as a
+    ``graph_health`` degradation in the payload rather than reported as an
+    empty graph — those are different facts and used to share one answer.
+
+    The question used to be ``SELECT COUNT(*) FROM memory_graph_edges``. After
+    PRD-CORE-245 FR07 that counts one half of the graph: tag co-occurrence is
+    derived from ``memory_tags`` and materialises no row, so a tag-related
+    corpus with no embeddings reads zero edges and would have drawn this
+    advisory on every session for the rest of its life.
 
     The remedy is config-derived, never asserted: ``trw_deliver`` backfills the
     graph inside ``step_knowledge_sync`` only while
@@ -392,6 +425,10 @@ def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None =
     """
     import sqlite3
 
+    from trw_memory.models.config import MemoryConfig
+
+    from trw_mcp.state._constants import DEFAULT_NAMESPACE
+    from trw_mcp.state._graph_relations import graph_has_relations
     from trw_mcp.state.memory_adapter import count_entries, get_backend
 
     try:
@@ -399,9 +436,13 @@ def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None =
         conn = getattr(backend, "_conn", None)
         if not isinstance(conn, sqlite3.Connection):
             return None
-        edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
+        has_relations = graph_has_relations(
+            conn,
+            namespace=DEFAULT_NAMESPACE,
+            config=MemoryConfig(storage_path=str(trw_dir / "memory")),
+        )
         memories = count_entries(trw_dir)
-        if edge_count == 0 and memories > 10:
+        if not has_relations and memories > 10:
             from trw_mcp.models.config import get_config
 
             backfill_on = bool(getattr(get_config(), "deliver_graph_backfill_enabled", True))
@@ -458,7 +499,10 @@ def finalize_session_start(
 
     try:
         if bool(results.get("response_compacted")):
-            results["ceremony_status_deferred"] = {
+            # DEF-12: same rename as ``auto_recall_skipped`` above — nothing
+            # journals or later performs nudge decoration for a session that
+            # skipped it while compacted, so it is not a deferral.
+            results["ceremony_status_skipped"] = {
                 "reason": "session_start_compacted",
                 "detail": "Nudge decoration is optional and was left off the hot response path.",
             }

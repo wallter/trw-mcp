@@ -58,7 +58,7 @@ def test_cross_project_transfer(tmp_path: Path) -> None:
         source_type="human",
     )
     # Project A store must NOT hold it (it went to the user tier).
-    assert memory_adapter.get_backend(repo_a).get("L-xfer") is None
+    assert memory_adapter.get_backend(repo_a).get("L-xfer", namespace="default") is None
     memory_adapter.reset_backend()  # drop project-A singleton
 
     # Recall in repo B surfaces the user-tier learning via federation.

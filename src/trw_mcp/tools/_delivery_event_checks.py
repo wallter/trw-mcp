@@ -16,18 +16,42 @@ from trw_mcp.tools._delivery_helpers import (
 logger = structlog.get_logger(__name__)
 
 
-def _read_run_events(run_path: Path, reader: FileStateReader) -> list[dict[str, object]]:
-    """Read events.jsonl for a run, returning empty list on any error.
+def _read_run_events(run_path: Path, reader: FileStateReader) -> list[dict[str, object]] | None:
+    """Read events.jsonl for a run; ``None`` when the log could not be READ.
 
     Centralised helper — called once by ``check_delivery_gates`` and passed
     to individual gate functions so events.jsonl is read at most once.
+
+    Three outcomes, and the distinction is load-bearing (WD-03):
+
+    - ``[]``   — the log is absent or genuinely empty. An honest zero.
+    - ``list`` — the parsed records.
+    - ``None`` — the log exists but could not be read or parsed.
+
+    Before this returned ``[]`` for the third case too, so an unreadable
+    events.jsonl (I/O error, a path that is not a regular file, a permissions
+    fault) was indistinguishable from "this session changed nothing". Every
+    downstream gate that COUNTS changed files — ``count_session_changed_files``
+    and ``_check_review_file_count_gate`` — then measured 0 and allowed the
+    delivery, without ever reaching its own fail-closed branch. ``None`` is the
+    uncomputable signal those callers translate into a block.
+
+    Per-line JSON damage is NOT this case: ``FileStateReader.read_jsonl`` is
+    deliberately lenient about a torn tail line and still returns the valid
+    records, which remains the right behaviour for an append-only log.
     """
     events_path = run_path / "meta" / "events.jsonl"
     try:
         if reader.exists(events_path):
             return reader.read_jsonl(events_path)
-    except Exception:  # justified: fail-open, event read must not block delivery
-        logger.warning("run_events_read_failed", run_path=str(run_path), exc_info=True)
+    except Exception:  # justified: fail-CLOSED, an unreadable log is uncomputable, not empty
+        logger.warning(
+            "run_events_read_failed",
+            run_path=str(run_path),
+            outcome="uncomputable",
+            exc_info=True,
+        )
+        return None
     return []
 
 

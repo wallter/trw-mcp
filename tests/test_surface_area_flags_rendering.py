@@ -1,4 +1,4 @@
-"""Resolver and rendering tests for TRW surface area flags."""
+"""Rendering tests for TRW surface area flags."""
 
 from __future__ import annotations
 
@@ -6,96 +6,14 @@ import pytest
 
 from trw_mcp.models.config import TRWConfig
 
-
-@pytest.mark.unit
-def test_resolve_surface_disabled_nudge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('nudge') returns '' when nudges are disabled."""
-    from trw_mcp.state import surface_resolver
-
-    cfg = TRWConfig(nudge_enabled=False)
-    monkeypatch.setattr(surface_resolver, "get_config", lambda: cfg, raising=False)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("nudge") == ""
-
-
-@pytest.mark.unit
-def test_resolve_surface_enabled_nudge(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('nudge') returns '__ENABLED__' when nudges are enabled."""
-    cfg = TRWConfig(nudge_enabled=True)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("nudge") == "__ENABLED__"
-
-
-@pytest.mark.unit
-def test_resolve_surface_disabled_recall(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('recall') returns '' when recall is disabled."""
-    cfg = TRWConfig(learning_recall_enabled=False)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("recall") == ""
-
-
-@pytest.mark.unit
-def test_resolve_surface_disabled_hooks(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('hooks') returns '' when hooks are disabled."""
-    cfg = TRWConfig(hooks_enabled=False)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("hooks") == ""
-
-
-@pytest.mark.unit
-def test_resolve_surface_disabled_skills(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('skills') returns '' when skills are disabled."""
-    cfg = TRWConfig(skills_enabled=False)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("skills") == ""
-
-
-@pytest.mark.unit
-def test_resolve_surface_disabled_agents(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('agents') returns '' when agents are disabled."""
-    cfg = TRWConfig(agents_enabled=False)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("agents") == ""
-
-
-@pytest.mark.unit
-def test_resolve_surface_disabled_framework_ref(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface('framework_ref') returns '' when disabled."""
-    cfg = TRWConfig(framework_md_enabled=False)
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("framework_ref") == ""
-
-
-@pytest.mark.unit
-def test_resolve_surface_unknown_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    """resolve_surface with unknown ID returns '__ENABLED__' (permissive)."""
-    cfg = TRWConfig()
-    monkeypatch.setattr("trw_mcp.models.config._loader.get_config", lambda: cfg)
-
-    from trw_mcp.state.surface_resolver import resolve_surface
-
-    assert resolve_surface("unknown_surface_xyz") == "__ENABLED__"
+# The eight ``resolve_surface`` tests that stood here were DELETED in 2.0.0 with
+# the function (WD-02). Each monkeypatched ``get_config`` and asserted that
+# ``resolve_surface("nudge")`` returned ``""`` or ``"__ENABLED__"`` -- a sentinel
+# nothing in production ever received, because the resolver had no production
+# call site. They were a full-coverage suite over a surface no surface used, and
+# their green was the reason the dead projection looked maintained. The flags they
+# nominally covered are asserted where they are actually READ: the ``render_*``
+# tests below drive the real client-profile gates.
 
 
 @pytest.mark.unit

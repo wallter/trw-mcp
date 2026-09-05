@@ -16,6 +16,8 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import AutoMaintenanceDict
+from trw_mcp.state.deferral_ledger import DeferralDecision
+from trw_mcp.state.memory_pressure import WriterCensus
 
 logger = structlog.get_logger(__name__)
 
@@ -55,33 +57,33 @@ def run_embeddings_maintenance(
     config: TRWConfig,
     maintenance: AutoMaintenanceDict,
     *,
+    census: WriterCensus,
     defer_memory_heavy: bool,
-    defer_reason: str,
-    writer_pids: list[int],
 ) -> None:
     """Probe embedding readiness; schedule warm-up / backfill as needed.
 
     Fail-open: any exception is logged and swallowed so the embeddings check
     never blocks ``trw_session_start``. Mutates *maintenance* in place.
+
+    PRD-CORE-257-FR08: writer pressure skips ONLY the post-recovery backfill
+    schedule. The deferral branch used to return before three downstream calls
+    while reporting one ``embeddings_backfill_deferred`` key, so a pressured
+    session silently lost the read-only coverage probe (which populates
+    ``embeddings_coverage_ratio`` and the coverage advisory) and the first-recall
+    warm-up guard as well. SQLite in WAL mode serves readers concurrently with a
+    single writer, so a read probe is not the lock-stacking risk these controls
+    were built for, and the warm-up spawns a thread without touching the store.
     """
+    from trw_mcp.tools._ceremony_maintenance_steps import (
+        _record_step_outcome,
+        _step_pressure_decision,
+        _writer_pressure_details,
+    )
+
+    # The ledger is consulted only when the backfill would actually be
+    # scheduled, so a healthy corpus never opens a phantom deferral streak.
+    decision: DeferralDecision | None = None
     try:
-        if defer_memory_heavy:
-            from trw_mcp.state.memory_pressure import writer_pressure_details
-
-            maintenance["embeddings_backfill_deferred"] = writer_pressure_details(
-                defer_reason,
-                writer_pids,
-                threshold=config.session_start_writer_pressure_threshold,
-            )
-            logger.warning(
-                "embeddings_backfill_deferred",
-                reason=defer_reason,
-                writer_pids=writer_pids,
-                writer_count=len(writer_pids),
-                threshold=config.session_start_writer_pressure_threshold,
-            )
-            return
-
         from trw_mcp.state.memory_adapter import check_embeddings_status
 
         # PRD-FIX-COMPOUNDING-3-FR02: Pass coverage_probe=True so session_start
@@ -134,19 +136,40 @@ def run_embeddings_maintenance(
             and emb_status.get("available")
             and config.embeddings_auto_backfill_on_low_coverage
         ):
-            from trw_mcp.state._memory_connection import _schedule_post_recovery_backfill
-
-            started = _schedule_post_recovery_backfill(trw_dir)
-            maintenance["embeddings_backfill_scheduled"] = {
-                "reason": "low_coverage",
-                "coverage_ratio": raw_ratio,
-                "thread_started": started,
-            }
-            logger.warning(
-                "embeddings_backfill_scheduled_low_coverage",
-                coverage_ratio=raw_ratio,
-                thread_started=started,
+            decision = _step_pressure_decision(
+                trw_dir, config, maintenance, "embeddings_backfill", defer_memory_heavy=defer_memory_heavy
             )
+            if decision.defer:
+                # Only the expensive self-heal is skipped, and the advisory says
+                # so by NAME rather than implying the whole step was skipped.
+                deferred_block = _writer_pressure_details(census, decision)
+                deferred_block["detail"] = (
+                    "Only the background post-recovery vector backfill is deferred; the coverage "
+                    "probe and the embedder warm-up ran."
+                )
+                maintenance["embeddings_backfill_deferred"] = deferred_block
+                logger.warning(
+                    "embeddings_backfill_schedule_deferred",
+                    reason="writer_pressure",
+                    writer_count=census.writer_count,
+                    peer_writer_count=census.peer_writer_count,
+                    threshold=census.threshold,
+                    deferral_age_hours=decision.age_hours,
+                )
+            else:
+                from trw_mcp.state._memory_connection import _schedule_post_recovery_backfill
+
+                started = _schedule_post_recovery_backfill(trw_dir)
+                maintenance["embeddings_backfill_scheduled"] = {
+                    "reason": "low_coverage",
+                    "coverage_ratio": raw_ratio,
+                    "thread_started": started,
+                }
+                logger.warning(
+                    "embeddings_backfill_scheduled_low_coverage",
+                    coverage_ratio=raw_ratio,
+                    thread_started=started,
+                )
 
         if not emb_status.get("advisory") and emb_status.get("enabled") and emb_status.get("available"):
             # trw_session_start is an MCP hot path. Within this stdio process
@@ -157,16 +180,33 @@ def run_embeddings_maintenance(
             # process and making its session_start time out. Leave bulk
             # embedding maintenance to explicit install/update flows, not
             # session startup.
-            maintenance["embeddings_backfill_deferred"] = {
+            #
+            # DEF-11: this used to share the ``embeddings_backfill_deferred``
+            # key with the writer-pressure branch above, which IS a real,
+            # ledger-consulted deferral (``_step_pressure_decision`` /
+            # ``_record_step_outcome`` / ``step_deferral_decision`` bound by
+            # ``session_start_max_deferral_hours``, and forced to run once the
+            # streak expires). This branch has no decision object, no ledger
+            # entry, and no consumer that EVER performs a bulk backfill from
+            # session start — coverage is healthy here, so there is nothing to
+            # catch up on; the standing architectural choice is simply that
+            # session start never does bulk backfill work. Named
+            # ``_not_performed`` so it stops claiming a resumption no
+            # consumer provides.
+            maintenance["embeddings_backfill_not_performed"] = {
                 "reason": "session_start_hot_path",
                 "detail": (
                     "Bulk embedding backfill is skipped during trw_session_start; "
                     "run project update/bootstrap maintenance to backfill vectors."
                 ),
             }
-            logger.info("embeddings_backfill_deferred", reason="session_start_hot_path")
+            logger.info("embeddings_backfill_not_performed", reason="session_start_hot_path")
+        if decision is not None:
+            _record_step_outcome(trw_dir, maintenance, "embeddings_backfill", decision)
     except Exception:  # justified: fail-open, embeddings check must not block session start
         logger.warning("maintenance_embeddings_check_failed", exc_info=True)
+        if decision is not None:
+            _record_step_outcome(trw_dir, maintenance, "embeddings_backfill", decision, failed=True)
 
 
 __all__ = ["run_embeddings_maintenance"]

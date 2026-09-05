@@ -28,11 +28,13 @@ _DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 def _builds_a_path_debounce_key(text: str) -> bool:
     """A hook in scope derives a DEBOUNCE key from the edited FILE PATH.
 
-    Scoped deliberately. ``completion-gate.sh`` and ``helper-idle.sh`` also assign
-    ``_safe_name``, but from a helper NAME and with ``tr -c ... '_'`` — a
-    replacement, not a deletion, and not a debounce key. Sweeping them in would
-    demand a checksum where the collision this test is about cannot occur, which is
-    how an over-broad guard gets suppressed instead of fixed.
+    Scoped deliberately: a hook that assigns ``_safe_name`` from something that
+    is not a file path (a helper name, say) is not in scope, because the
+    collision this test is about cannot occur there. Sweeping such a hook in
+    would demand a checksum it does not need, which is how an over-broad guard
+    gets suppressed instead of fixed. (The two hooks that motivated this caveat,
+    ``completion-gate.sh`` and ``helper-idle.sh``, were deleted by
+    PRD-CORE-250 FR01/FR02.)
     """
     return "_debounce" in text and "_safe_name=" in text
 

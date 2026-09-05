@@ -66,13 +66,23 @@ def _run_learn_drain(args: argparse.Namespace) -> None:
             sys.exit(_EXIT_TRY_AGAIN)
         return
 
-    result = learn_journal.drain_pending(
-        trw_dir,
-        lambda lid, payload: _learn_journal_wiring.replay_journaled_learn(trw_dir, config, lid, payload),
-        limit=limit,
-        learnings_dir=config.learnings_dir,
-        max_attempts=config.learn_journal_max_replay_attempts,
-    )
+    # FIX130-05: an operator drain is a SWEEP too. It used to pass a per-record
+    # replay lambda straight through, so a multi-record flush paid one whole-file
+    # learnings-index read-modify-write and one active-set materialization PER
+    # RECORD — the very costs PRD-FIX-130-FR03 removed from the session_start
+    # path. Same shared context, one flush at the end. The budget is still left
+    # unbounded: an operator-invoked drain is not a hot path.
+    sweep = _learn_journal_wiring.make_sweep_replay(trw_dir, config)
+    try:
+        result = learn_journal.drain_pending(
+            trw_dir,
+            sweep.replay,
+            limit=limit,
+            learnings_dir=config.learnings_dir,
+            max_attempts=config.learn_journal_max_replay_attempts,
+        )
+    finally:
+        index_written = sweep.flush()
     after = learn_journal.pending_count(trw_dir, learnings_dir=config.learnings_dir)
     retained = int(result.get("retained", 0))
     dead_lettered = int(result.get("dead_lettered", 0))
@@ -85,7 +95,12 @@ def _run_learn_drain(args: argparse.Namespace) -> None:
         "dead_lettered": dead_lettered,
         "retained": retained,
         "deferred": int(result.get("deferred", 0)),
+        "contended": int(result.get("contended", 0)),
     }
+    if not index_written:
+        payload["index_update_failed"] = True
+    if sweep.degraded():
+        payload["active_set_degraded"] = True
     text = (
         f"learn-drain: {payload['replayed']} replayed "
         f"({payload['recovered']} recovered, {dead_lettered} dead-lettered, {retained} retained), "

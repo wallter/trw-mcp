@@ -1,12 +1,21 @@
-"""Pure callables for local code search and symbol lookup."""
+"""Pure callables for local code search and symbol lookup.
+
+There is no ``mode`` parameter. One shipped with PRD-CORE-172 typed
+``Literal["lexical", "semantic"]``, and its semantic branch read
+``rank_semantic_chunks(query=query, chunks=(), embedder=None)`` -- a hardcoded
+empty chunk collection and no embedder, so the member was registered, callable,
+statically live, and structurally incapable of returning a result. 2.0.0 removes
+it rather than implementing it (UF-031): search is lexical. The parameter is
+GONE rather than narrowed to a one-member ``Literal``, because a knob with a
+single accepted value is the same dead surface wearing a smaller type. ``mode``
+is now refused by the tool's own input schema, which carries
+``additionalProperties: false``.
+"""
 
 from __future__ import annotations
 
-from typing import Literal
-
 from fastmcp import FastMCP
 
-from trw_mcp.code_index.embeddings import rank_semantic_chunks
 from trw_mcp.code_index.search import lexical_search, response_to_dict, symbol_search
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -14,14 +23,11 @@ from trw_mcp.tools.telemetry import log_tool_call
 def trw_code_search(
     repo_root: str,
     query: str,
-    mode: Literal["lexical", "semantic"] = "lexical",
     top_k: int = 10,
     path: str | None = None,
 ) -> dict[str, object]:
     """Search indexed code chunks and return capped, privacy-safe snippets."""
 
-    if mode == "semantic":
-        return response_to_dict(rank_semantic_chunks(query=query, chunks=(), embedder=None))
     return response_to_dict(lexical_search(repo_root, query=query, top_k=top_k, path=path))
 
 
@@ -44,7 +50,6 @@ def register_code_search_tools(server: FastMCP) -> None:
     def trw_code_search_tool(
         repo_root: str,
         query: str,
-        mode: Literal["lexical", "semantic"] = "lexical",
         top_k: int = 10,
         path: str | None = None,
     ) -> dict[str, object]:
@@ -54,7 +59,7 @@ def register_code_search_tools(server: FastMCP) -> None:
         context without grepping the tree or reading full files.
         """
 
-        return trw_code_search(repo_root=repo_root, query=query, mode=mode, top_k=top_k, path=path)
+        return trw_code_search(repo_root=repo_root, query=query, top_k=top_k, path=path)
 
     @server.tool(name="trw_code_symbol", output_schema=None)
     @log_tool_call

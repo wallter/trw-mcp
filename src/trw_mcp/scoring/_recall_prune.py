@@ -13,9 +13,10 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import structlog
+from trw_memory.lifecycle.protection import prune_threshold_multiplier
 
 from trw_mcp.models.typed_dicts import LearningEntryDict, PruneCandidateDict
-from trw_mcp.scoring._decay import _entry_utility
+from trw_mcp.scoring._decay import entry_utility
 from trw_mcp.scoring._utils import TRWConfig, get_config, safe_int
 
 _logger = structlog.get_logger(__name__)
@@ -30,6 +31,12 @@ def utility_based_prune_candidates(
     1. Status-based cleanup: entries already resolved/obsolete
     2. Delete candidates: utility < delete threshold (effectively forgotten)
     3. Obsolete candidates: utility < prune threshold and age > 14 days
+
+    PRD-CORE-244 FR10: every tier honours ``protection_tier``. A ``protected``
+    or ``permanent`` entry is never nominated — including by the status tier,
+    because "already marked obsolete" is still automatic removal. Every other
+    tier multiplies the utility threshold it must fall below, so a ``critical``
+    entry has to be four times less useful than a ``normal`` one.
 
     Backward compatible: entries without new fields use sensible defaults.
 
@@ -47,6 +54,14 @@ def utility_based_prune_candidates(
     for _, data in entries:
         entry_id = str(data.get("id", ""))
         if entry_id in seen_ids:
+            continue
+
+        # PRD-CORE-244 FR10: read the tier BEFORE any nomination branch, so the
+        # exemption cannot be reached around by an earlier tier.
+        multiplier = prune_threshold_multiplier(data, cfg.protection_tier_prune_discount)
+        if multiplier is None:
+            _logger.debug("prune_candidate_protected", entry_id=entry_id)
+            seen_ids.add(entry_id)
             continue
 
         created_str = str(data.get("created", ""))
@@ -82,10 +97,12 @@ def utility_based_prune_candidates(
             seen_ids.add(entry_id)
             continue
 
-        utility = _entry_utility(dict(data), today, fallback_days=age_days)
+        utility = entry_utility(dict(data), today, fallback_days=age_days)
+        delete_threshold = cfg.learning_utility_delete_threshold * multiplier
+        prune_threshold = cfg.learning_utility_prune_threshold * multiplier
 
         # Tier 2: Delete-level utility (effectively forgotten)
-        if utility < cfg.learning_utility_delete_threshold:
+        if utility < delete_threshold:
             candidates.append(
                 {
                     "id": entry_id,
@@ -95,7 +112,7 @@ def utility_based_prune_candidates(
                     "suggested_status": "obsolete",
                     "reason": (
                         f"Utility {utility:.3f} below delete threshold "
-                        f"({cfg.learning_utility_delete_threshold}). "
+                        f"({delete_threshold:.3f}). "
                         f"recurrence={recurrence}, age={age_days}d"
                     ),
                 }
@@ -104,7 +121,7 @@ def utility_based_prune_candidates(
             continue
 
         # Tier 3: Prune-level utility (fading, older than 14 days)
-        if utility < cfg.learning_utility_prune_threshold and age_days > 14:
+        if utility < prune_threshold and age_days > 14:
             candidates.append(
                 {
                     "id": entry_id,
@@ -113,9 +130,7 @@ def utility_based_prune_candidates(
                     "utility": round(utility, 3),
                     "suggested_status": "obsolete",
                     "reason": (
-                        f"Utility {utility:.3f} below prune threshold "
-                        f"({cfg.learning_utility_prune_threshold}) and "
-                        f"age {age_days}d > 14d"
+                        f"Utility {utility:.3f} below prune threshold ({prune_threshold:.3f}) and age {age_days}d > 14d"
                     ),
                 }
             )

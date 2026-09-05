@@ -5,8 +5,8 @@ installs them. Fail-open: network errors never block session start.
 
 PRD-DIST-124 (2026-04-30): migrated from urllib to httpx so trw-mcp
 uses one HTTP library consistently with sync/pull.py + sync/push.py.
-httpx is a transitive dependency via fastmcp — no new package install.
-See docs/research/uniformity-audit-2026-04-29.md.
+httpx is a transitive dependency via fastmcp — no new package install, and one
+HTTP client means one place to fix timeout/proxy/TLS behaviour.
 """
 
 from __future__ import annotations

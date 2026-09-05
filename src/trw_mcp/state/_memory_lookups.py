@@ -23,6 +23,7 @@ from trw_memory.storage import CheckpointResult
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import WalCheckpointResultDict
+from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
 from trw_mcp.state._memory_transforms import _memory_to_learning_dict
 
@@ -55,7 +56,9 @@ def find_entry_by_id(trw_dir: Path, learning_id: str) -> dict[str, object] | Non
     public signature consumed across scoring/tools.
     """
     backend = get_backend(trw_dir)
-    entry = backend.get(learning_id)
+    # namespace= is required since the schema-5 namespace boundary; _NAMESPACE
+    # is the same constant every sibling list_entries call in this module uses.
+    entry = backend.get(learning_id, namespace=_NAMESPACE)
     return cast("dict[str, object]", _memory_to_learning_dict(entry)) if entry is not None else None
 
 
@@ -139,12 +142,17 @@ def _increment_backend_access(backend: Any, learning_ids: list[str], now: dateti
         except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
             _warn("access_tracking_batch_update_failed", exc_info=True, entry_ids=learning_ids)
 
+    # PRD-CORE-245 FR03: the per-entry fallback resolves the row through the
+    # namespace-aware helper and then qualifies the write with the namespace it
+    # found. Reading by bare id here used to raise a TypeError that the broad
+    # ``except`` swallowed, so the fallback silently tracked nothing.
     for lid in learning_ids:
         try:
-            entry = backend.get(lid)
+            entry = resolve_entry_in_backend(backend, lid)
             if entry is not None:
                 backend.update(
                     lid,
+                    namespace=entry.namespace,
                     access_count=entry.access_count + 1,
                     recall_count=entry.recall_count + 1,
                     last_accessed_at=now,
@@ -177,7 +185,7 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str], *, federated:
     unresolved_ids: list[str] = []
     for lid in unique_ids:
         try:
-            (project_ids if project_backend.get(lid) is not None else unresolved_ids).append(lid)
+            (project_ids if resolve_entry_in_backend(project_backend, lid) is not None else unresolved_ids).append(lid)
         except Exception:  # per-item: ownership telemetry must not break recall
             _warn("access_tracking_owner_lookup_failed", exc_info=True, entry_id=lid, tier="project")
             unresolved_ids.append(lid)
@@ -191,7 +199,7 @@ def update_access_tracking(trw_dir: Path, learning_ids: list[str], *, federated:
     user_ids: list[str] = []
     for lid in unresolved_ids:
         try:
-            if user_backend.get(lid) is not None:
+            if resolve_entry_in_backend(user_backend, lid) is not None:
                 user_ids.append(lid)
         except Exception:  # per-item: ownership telemetry must not break recall
             _warn("access_tracking_owner_lookup_failed", exc_info=True, entry_id=lid, tier="user")
@@ -251,34 +259,54 @@ def _bare_passive_checkpoint(db_path: Path) -> CheckpointResult:
 
 
 def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
-    """Checkpoint the SQLite WAL when it exceeds threshold; fail-open.
+    """Checkpoint the SQLite WAL when the size OR age trigger is due; fail-open.
 
-    PRD-QUAL-050-FR05 + PRD-FIX-081: prefer a resetting TRUNCATE (to reclaim
-    WAL file space) on the backend's single owning connection, which internally
-    falls back to PASSIVE when readers hold pages (``busy=1``) or when the
-    engine lacks the WAL-reset fix. When no backend owns the db in this process
-    a bare PASSIVE checkpoint runs instead — PASSIVE never resets the WAL, so it
-    is safe even if another process is writing concurrently.
+    PRD-CORE-248 FR04 replaced the size-only trigger and the writer-pressure
+    cancellation with a trigger-and-mode split (see
+    :mod:`trw_mcp.state._wal_triggers`):
+
+    - **Trigger**: WAL at or above ``wal_checkpoint_threshold_mb`` OR the last
+      successful checkpoint older than ``wal_checkpoint_max_age_seconds``. An
+      evaluation where nothing is due costs one ``stat`` and opens no
+      connection (NFR01).
+    - **Mode**: decided by the live-writer set alone. Two or more live writers
+      still checkpoint — in ``PASSIVE``, which never resets the WAL — because
+      the concurrency this used to abort on is exactly the condition that makes
+      the checkpoint necessary. ``TRUNCATE`` is requested only when this process
+      is the sole live writer, which trw-memory re-proves with a bounded
+      ``BEGIN EXCLUSIVE`` probe before it resets anything.
+
+    PRD-QUAL-050-FR05 + PRD-FIX-081 (retained): the checkpoint runs on the
+    backend's single owning connection when one exists. When no backend owns
+    the db in this process, a bare PASSIVE checkpoint runs instead — PASSIVE
+    cannot reset the WAL, so it is safe whatever else is writing.
 
     Returns a :class:`WalCheckpointResultDict`: a skip outcome (``skipped``),
     a success outcome with FR03 telemetry (``checkpointed``/``mode``/sizes), or
     a fail-open error outcome (``error``).
     """
     try:
+        from trw_mcp.state._wal_triggers import (
+            evaluate_wal_trigger,
+            record_checkpoint_attempt,
+            record_effective_checkpoint,
+            resolve_wal_paths,
+            sole_live_writer,
+        )
+
         config = get_config()
-        threshold_bytes = config.wal_checkpoint_threshold_mb * 1024 * 1024
-        db_path = trw_dir / "memory" / "memory.db"
-        wal_path = db_path.with_suffix(".db-wal")
-        if not wal_path.exists():
-            return {"skipped": True, "reason": "no_wal_file"}
-        wal_size = wal_path.stat().st_size
-        if wal_size < threshold_bytes:
-            return {"skipped": True, "reason": "under_threshold"}
-        wal_size_mb = round(wal_size / (1024 * 1024), 1)
+        db_path, wal_path = resolve_wal_paths(trw_dir)
+        trigger = evaluate_wal_trigger(trw_dir, config)
+        if not trigger.due:
+            return {"skipped": True, "reason": trigger.reason}
+        wal_size_mb = round(trigger.wal_size_bytes / (1024 * 1024), 1)
+        is_sole_writer = sole_live_writer(trw_dir, db_path)
         logger.info(
             "wal_checkpoint_starting",
             wal_size_mb=wal_size_mb,
             threshold_mb=config.wal_checkpoint_threshold_mb,
+            trigger=trigger.reason,
+            sole_writer=is_sole_writer,
         )
         # Prefer the LIVE backend's single connection. Opening a competing bare
         # connection while the backend writer is active is exactly the
@@ -292,9 +320,14 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
         from trw_mcp.state._memory_connection import peek_backend
 
         backend = peek_backend()
-        if backend is not None and _same_db_path(backend.db_path, db_path):
+        # FR04 clause 3/4: pressure picks the MODE, never whether we run. Only a
+        # certified sole writer may ask for a resetting checkpoint.
+        if backend is not None and _same_db_path(backend.db_path, db_path) and is_sole_writer:
             requested_truncate = True
             result: CheckpointResult = backend.checkpoint_wal("TRUNCATE")
+        elif backend is not None and _same_db_path(backend.db_path, db_path):
+            requested_truncate = False
+            result = backend.checkpoint_wal("PASSIVE")
         else:
             requested_truncate = False
             result = _bare_passive_checkpoint(db_path)
@@ -314,16 +347,37 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
             )
         wal_size_after = wal_path.stat().st_size if wal_path.exists() else 0
         wal_size_after_mb = round(wal_size_after / (1024 * 1024), 1)
+        # Two clocks, because they answer different questions (review finding 4).
+        # ATTEMPT drives the age trigger: a busy=1 checkpoint still RAN, so it
+        # counts (US-001 AC3), and advancing it stops the trigger hot-looping on
+        # a store whose readers never release. EFFECTIVE drives the doctor's
+        # WARN: it advances only when the checkpoint actually accomplished
+        # something — frames written back, or the file shrank. Without the
+        # split, a store where PASSIVE runs hourly and reclaims nothing (the
+        # unsafe-engine steady state) would report a fresh checkpoint age
+        # forever and the row could never warn. The error path below advances
+        # NEITHER, so the age trigger retries next sweep (NFR02).
+        # The marker writes are fail-open, but NOT invisible: a checkpoint whose
+        # attempt clock never landed leaves the age unknown, so the age trigger
+        # is due again immediately and the hot-loop protection this pair exists
+        # for is not in force. Reporting an unqualified success there asserted a
+        # protection that had not been established.
+        attempt_recorded = record_checkpoint_attempt(db_path)
+        effective_due = checkpointed > 0 or wal_size_after < trigger.wal_size_bytes
+        effective_recorded = record_effective_checkpoint(db_path) if effective_due else True
+        markers_persisted = attempt_recorded and effective_recorded
         logger.info(
             "wal_checkpoint_complete",
             mode=mode,
+            trigger=trigger.reason,
             wal_size_before_mb=wal_size_mb,
             wal_size_after_mb=wal_size_after_mb,
             pages_checkpointed=checkpointed,
             busy=busy,
             truncate_busy=truncate_busy,
+            markers_persisted=markers_persisted,
         )
-        return {
+        result_dict: WalCheckpointResultDict = {
             "checkpointed": True,
             "mode": mode,
             "wal_size_before_mb": wal_size_mb,
@@ -331,7 +385,16 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
             "pages_checkpointed": checkpointed,
             "busy": busy,
             "truncate_busy": truncate_busy,
+            "markers_persisted": markers_persisted,
         }
+        if not markers_persisted:
+            result_dict["reason"] = "checkpoint_marker_write_failed"
+            result_dict["advisory"] = (
+                "the WAL was checkpointed but its timestamp marker could not be written, "
+                "so checkpoint age is unknown and the age trigger will fire again next evaluation"
+            )
+            _warn("wal_checkpoint_marker_not_persisted", db_path=str(db_path))
+        return result_dict
     except Exception:  # justified: fail-open, WAL checkpoint must not block session start
         _warn("wal_checkpoint_failed", exc_info=True)
         return {"error": True, "reason": "checkpoint_failed"}

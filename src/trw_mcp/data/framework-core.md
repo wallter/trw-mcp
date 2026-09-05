@@ -109,7 +109,7 @@ Rigid tools have zero discretion. Flexible tools MUST happen when their trigger 
 
 **Rigid (unconditional):**
 - `trw_session_start(query?)` — first TRW action of every session; load memory and active state
-- `trw_deliver()` — last TRW action of every session; preserve progress and maintenance state. **Gate (no fourth path)**: (1) a recorded passing `trw_build_check`, OR (2) `allow_unverified=true` with a valid, unexpired acceptable-failure record (`failed_command`, `residual_risk`, `owner`, `expiry_iso`) in `unverified_reason`, OR (3) an authorized operator/config-level override recorded with technical rationale (discouraged outside ceremony-only repositories)
+- `trw_deliver()` — last TRW action of every session; preserve progress and maintenance state. Gate: see **Deliver gate (no fourth path)** in EXECUTION MODEL SUMMARY, stated in full only there
 - `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` — record observed project-native validation at VALIDATE and before DELIVER after code/test changes; it does not run checks
 - `trw_review()` — before DELIVER for STANDARD+ complexity. The tool records an artifact; limited auto scans and empty manual/no-argument passes are stamped `substantive: false` and do not satisfy REVIEW readiness. Evidence comes from supplied reviewer findings, an independent reviewer, or—when independence is unavailable—an explicitly identified cold-context self-pass
 - Completion artifacts — before claiming done
@@ -123,7 +123,17 @@ Rigid tools have zero discretion. Flexible tools MUST happen when their trigger 
 - `trw_recall(query)` — at start or before unfamiliar/high-risk areas; prefer narrow queries over wildcard dumps
 - Phase reversion — when evidence invalidates the current phase
 
-Do NOT debate rigid tools. Execute or record why the tool was unavailable and use the manual fallback.
+Do NOT debate rigid tools. Execute, or apply WHEN THE TRANSPORT IS DOWN below.
+
+---
+
+## WHEN THE TRANSPORT IS DOWN
+
+**RIGID is an obligation, not a tool call.** Unreachable tools transfer the obligation to the offline equivalent; it does not lapse and intent does not satisfy it. Run `trw-mcp local` for them. `trw_build_check` has none: run the check, then write its exact command and exit code into the run's `reports/`.
+
+**The gate does not weaken offline.** An offline delivery records `gate_evaluated: false` and stays ungated until evidence exists; inability to evaluate is not a fourth path.
+
+**Offline writes are marked** with `source_identity=local_cli` and a transient `trw-reconcile-pending` tag the next `trw_session_start` reports, then clears.
 
 ---
 
@@ -136,7 +146,7 @@ Quality contested?         → CRITIC / independent reviewer
 None of the above          → checkpoint only
 ```
 
-**Machine-enforced at delivery** (the only gates a tool computes): the build gate blocks missing verification for coding/rca/eval under the default `block_coding` policy while docs/research/planning/unknown remain advisory; hard build or review blocks require the structured acceptable-failure record above; STANDARD+ substantive reviews with `verdict=block` plus critical findings block; integration-review and >5-file/no-substantive-review scope gates block; configured missing-review policy warns or blocks. Empty and limited-scan review artifacts do not satisfy readiness. Everything below is orchestration discipline—apply it yourself; no tool computes it for you.
+**Machine-enforced at delivery** (the only gates a tool computes): the build gate blocks missing verification under the default `block_coding` policy when the task type expects a build artifact (coding/rca/eval) OR when the session modified files, so an unclassified run that changed code still blocks; hard build or review blocks require the structured acceptable-failure record above; STANDARD+ substantive reviews with `verdict=block` plus critical findings block; integration-review and >5-file/no-substantive-review scope gates block; configured missing-review policy warns or blocks. Empty and limited-scan review artifacts do not satisfy readiness. Everything below is orchestration discipline—apply it yourself; no tool computes it for you.
 
 Manual review rubric: correctness 35, tests 20, security 15, performance 10, maintainability 10, completeness 10.
 Multi-reviewer pass: at least `ceil(2n/3)` reviewers/checks support pass, with every critical dissent resolved explicitly. Do not manufacture a correlation statistic from incomparable or too-few judgments. Use independent perspectives, instruct against length preference, and swap comparison order where the format allows. If there is only one reviewer, require explicit evidence and residual-risk notes; single-judge scores are unstable.

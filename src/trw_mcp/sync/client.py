@@ -27,6 +27,7 @@ from trw_mcp.sync._client_cycle import (
     run_one_cycle as _run_one_cycle_impl,
 )
 from trw_mcp.sync._client_push import (
+    TargetPushOutcome as TargetPushOutcome,
     _push_to_target as _push_to_target_impl,
     fanout_push as _fanout_push_impl,
 )
@@ -45,7 +46,7 @@ from trw_mcp.sync.coordinator import SyncCoordinator
 from trw_mcp.sync.identity import resolve_sync_client_id
 from trw_mcp.sync.outcomes import load_pending_outcomes as load_pending_outcomes
 from trw_mcp.sync.pull import SyncPuller
-from trw_mcp.sync.push import PushResult, SyncPusher
+from trw_mcp.sync.push import PushResult as PushResult, SyncPusher
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
@@ -213,7 +214,7 @@ class BackendSyncClient:
         self,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
-    ) -> tuple[dict[str, dict[str, object]], PushResult]:
+    ) -> tuple[dict[str, dict[str, object]], TargetPushOutcome]:
         """PRD-FIX-087 FR03: async — awaits the package-level fanout_push helper."""
         return await _fanout_push_impl(
             client_id=self._client_id,
@@ -233,7 +234,7 @@ class BackendSyncClient:
         target: SyncTarget,
         dirty: list[MemoryEntry],
         outcomes: list[dict[str, object]],
-    ) -> PushResult:
+    ) -> TargetPushOutcome:
         """PRD-FIX-087 FR03: async — awaits the package-level _push_to_target helper."""
         return await _push_to_target_impl(
             client_id=self._client_id,

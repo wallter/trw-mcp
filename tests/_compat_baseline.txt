@@ -233,7 +233,6 @@ trw-mcp/tests/test_telemetry_client.py
 trw-mcp/tests/test_telemetry_embeddings.py
 trw-mcp/tests/test_telemetry_pipeline.py
 trw-mcp/tests/test_telemetry_publisher.py
-trw-mcp/tests/test_telemetry_remote_recall.py
 trw-mcp/tests/test_telemetry_sender.py
 trw-mcp/tests/test_tiers_branches.py
 trw-mcp/tests/test_tiers.py

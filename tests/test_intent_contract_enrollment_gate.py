@@ -18,6 +18,7 @@ control, so a future refactor that breaks enforcement outright cannot pass here.
 from __future__ import annotations
 
 import io
+import shutil
 from pathlib import Path
 
 import pytest
@@ -257,3 +258,56 @@ def test_pre_push_reaches_its_checkers_once_the_marker_is_current(
 
     assert pre_push_check.main([]) == _PRE_COMMIT_BLOCK
     assert "signature gate" in capsys.readouterr().err
+
+
+# --- PRD-CORE-254-FR05: the sidecar changes latency, never the verdict --------
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="sh unavailable")
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq unavailable")
+@pytest.mark.parametrize(
+    "state",
+    ["fresh", "contract-edited", "hook-resynced", "sidecar-emptied", "sidecar-digest-forged"],
+)
+def test_stale_sidecar_falls_through_to_python_unchanged(tmp_path: Path, state: str) -> None:
+    """The fast path is behaviour-preserving, proved by DIFFERENCE, not assertion.
+
+    Each state is driven through a REAL hook twice — once with whatever sidecar
+    that state produced, once with the sidecar removed, which is exactly the
+    pre-PRD-CORE-254 code path — and the observable pair (exit code, stderr) must
+    be identical. ``fresh`` is the case that matters most: the optimization is
+    only legitimate if the fast ALLOW and the Python ALLOW are indistinguishable
+    to the client. The stale states then pin that a sidecar never rescues a
+    project the marker condemns.
+    """
+    from tests._intent_contract_hooks import hook_project, run_hook
+    from trw_mcp.security.intent_contract._sidecar import glob_sidecar_path
+
+    project = hook_project(tmp_path, f"parity-{state}", enroll=True)
+    (project / "unrelated").mkdir(exist_ok=True)
+    (project / "unrelated" / "notes.py").write_text("x = 1\n", encoding="utf-8")
+    sidecar = glob_sidecar_path(project)
+
+    if state == "contract-edited":
+        (project / CONTRACT_REL).write_text(contract_yaml(anchors="somewhere/else.py"), encoding="utf-8")
+    elif state == "hook-resynced":
+        hook = project / ".claude" / "hooks" / "lib-trw.sh"
+        hook.write_text(hook.read_text(encoding="utf-8") + "# vendor v2\n", encoding="utf-8")
+    elif state == "sidecar-emptied":
+        sidecar.write_text("", encoding="utf-8")
+    elif state == "sidecar-digest-forged":
+        lines = sidecar.read_text(encoding="utf-8").splitlines()
+        sidecar.write_text("\n".join([*lines[:-1], "sha256:" + "f" * 64]) + "\n", encoding="utf-8")
+
+    payload_input = {"file_path": "unrelated/notes.py"}
+    with_sidecar = run_hook(project, "pre-tool-intent-guard.sh", tool_input=payload_input)
+    sidecar.unlink(missing_ok=True)
+    baseline = run_hook(project, "pre-tool-intent-guard.sh", tool_input=payload_input)
+
+    assert with_sidecar.returncode == baseline.returncode, (
+        f"the sidecar changed the {state} verdict: {with_sidecar.returncode} vs baseline "
+        f"{baseline.returncode}\n{with_sidecar.stderr}"
+    )
+    assert with_sidecar.stderr == baseline.stderr, f"the sidecar changed what the {state} state reports"
+    if state in {"contract-edited", "hook-resynced"}:
+        assert baseline.returncode == 2, "the positive control is missing: a stale marker must fail closed"

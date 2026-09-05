@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 
+from trw_mcp.dispatch._client_specs import OutputShape, UnknownClientError, client_spec_for
 from trw_mcp.dispatch._types import DispatchClient
 
 # Matches CSI / SGR ANSI escape sequences (colors, cursor moves) so PTY-wrapped
@@ -106,11 +108,16 @@ def _normalize_agy(raw: str) -> tuple[str, dict[str, object] | None]:
     return _last_nonempty_lines(cleaned, count=5), None
 
 
-_NORMALIZERS = {
-    "claude": _normalize_claude,
-    "codex": _normalize_codex,
-    "opencode": _normalize_opencode,
-    "agy": _normalize_agy,
+# Keyed on the OUTPUT SHAPE the registry records for a client, not on the client
+# id (PRD-CORE-266-NFR04). A new client declares a shape and reuses a parser; it
+# does not add a row here, and this module carries no client-id literal. The
+# parser bodies stay functions because parsing genuinely is behaviour, not data
+# (PRD-CORE-266 OQ-4) — only the SELECTION became data.
+_NORMALIZERS: dict[OutputShape, Callable[[str], tuple[str, dict[str, object] | None]]] = {
+    "single_json_object": _normalize_claude,
+    "json_lines": _normalize_codex,
+    "ndjson_events": _normalize_opencode,
+    "trailing_text": _normalize_agy,
 }
 
 
@@ -120,9 +127,11 @@ def normalize_output(client: DispatchClient, raw_stdout: str) -> tuple[str, dict
     Always returns; never raises. Falls back to ``raw_stdout.strip()`` /
     ``None`` if a client-specific parser cannot extract a payload.
     """
-    normalizer = _NORMALIZERS.get(client)
-    if normalizer is None:  # pragma: no cover - guarded by the Literal upstream
+    try:
+        shape = client_spec_for(client).output_shape
+    except UnknownClientError:  # pragma: no cover - guarded by the Literal upstream
         return raw_stdout.strip(), None
+    normalizer = _NORMALIZERS[shape]
     try:
         return normalizer(raw_stdout)
     except Exception:  # justified: normalization must degrade, never raise

@@ -30,6 +30,10 @@ PUBLIC_GATE_KEYS: tuple[str, ...] = (
     # PRD-SEC-013-FR07: without this key the intent-violation block is created,
     # persisted, and then projected away — enforcement would be silently inert.
     "intent_violation_block",
+    # PRD-CORE-255-FR04: same reason as the line above — an unprojected key means
+    # the block is created, persisted, and then thrown away before dispatch reads
+    # it, leaving the gate silently inert.
+    "safety_critical_adversarial_block",
     "build_gate_warning",
     "missing_gate",
     "blocked_task_type",

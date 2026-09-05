@@ -18,6 +18,8 @@ from pathlib import Path
 import structlog
 from typing_extensions import TypedDict
 
+from trw_mcp.services._local_run_identity import resolve_owned_run_path
+
 _logger = structlog.get_logger(__name__)
 
 
@@ -147,8 +149,8 @@ def write_checkpoint(
     """Append a checkpoint record to checkpoints.jsonl.
 
     Works with any run directory that has a ``meta/`` subdirectory.
-    If ``run_path`` is not provided, attempts to auto-detect the active run
-    from ``.trw/runs/``.
+    When *run_path* is omitted the run is resolved from this session's pin
+    (PRD-FIX-132); a session with no pin gets a refusal, never a guess.
 
     Args:
         message: Checkpoint description (what was done, what comes next).
@@ -160,9 +162,11 @@ def write_checkpoint(
         Dict with ``timestamp``, ``status``, and ``message``.
 
     Raises:
-        FileNotFoundError: If ``run_path`` is given but does not exist.
+        FileNotFoundError: If ``run_path`` is given but does not exist, or --
+        as :class:`~trw_mcp.services._local_run_identity.LocalRunIdentityError`
+        -- if it is omitted and no pin resolves. Nothing is written in that case.
     """
-    resolved = _resolve_run_path(run_path)
+    resolved = resolve_owned_run_path(run_path)
     meta_path = resolved / "meta"
 
     if not meta_path.exists():
@@ -209,29 +213,49 @@ def write_local_learning(
     trw_dir: Path | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, object]:
-    """Write a local learning through the same learn implementation used by MCP."""
+    """Write a local learning through the same learn implementation used by MCP.
+
+    **The write is marked twice, with deliberately different lifetimes**
+    (PRD-CORE-247-FR04):
+
+    - ``source_identity="local_cli"`` — durable provenance. The field is a plain
+      string on the storage model with no whitelist validator, so it survives the
+      write intact and answers "where did this come from" permanently.
+    - the ``trw-reconcile-pending`` tag — a transient queue entry, removed by the
+      next successful ``trw_session_start`` once it has reported the row.
+
+    The former ``source_type="local_cli"`` argument is **gone**, not preserved.
+    ``_learning_helpers._validate_source_type`` coerces any value outside
+    ``VALID_SOURCES`` to ``"agent"`` before storage, so it was a silently erased
+    marker sitting beside a working one — the same "unevaluated gate that reads
+    like a passed gate" shape :func:`mark_local_delivered` already corrected.
+    """
     from trw_mcp.models.config import get_config
+    from trw_mcp.state._constants import LOCAL_CLI_SOURCE_IDENTITY, RECONCILE_PENDING_TAG
     from trw_mcp.tools._learn_impl import execute_learn
 
     if not summary:
         raise ValueError("summary is required")
     if not detail:
         raise ValueError("detail is required")
+    marked_tags = list(tags or [])
+    if RECONCILE_PENDING_TAG not in marked_tags:
+        marked_tags.append(RECONCILE_PENDING_TAG)
     return dict(
         execute_learn(
             summary=summary,
             detail=detail,
             trw_dir=trw_dir or (Path.cwd() / ".trw"),
             config=get_config(),
-            tags=tags,
-            source_type="local_cli",
+            tags=marked_tags,
+            source_identity=LOCAL_CLI_SOURCE_IDENTITY,
         )
     )
 
 
 def read_local_status(*, run_path: Path | None = None) -> LocalStatusResult:
     """Read status for the active local run without requiring MCP transport."""
-    resolved = _resolve_run_path(run_path)
+    resolved = resolve_owned_run_path(run_path)
     meta = resolved / "meta"
     from trw_mcp.state.persistence import FileStateReader
 
@@ -275,13 +299,14 @@ def mark_local_delivered(
     surface records the delivery; this stamp is what lets a reader tell which
     surface did.
     """
-    resolved = _resolve_run_path(run_path)
+    resolved = resolve_owned_run_path(run_path)
     meta = resolved / "meta"
     run_yaml = meta / "run.yaml"
+    from trw_mcp.models.run import RunStatus
     from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
     run_data = FileStateReader().read_yaml(run_yaml)
-    run_data["status"] = "delivered"
+    run_data["status"] = RunStatus.DELIVERED.value
     run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
     # Explicit False, never omitted: an absent key is indistinguishable from an
     # older record, and "we did not check" has to be positively stated.
@@ -300,29 +325,6 @@ def mark_local_delivered(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _resolve_run_path(run_path: Path | None) -> Path:
-    """Resolve run directory, defaulting to most recent active run."""
-    if run_path is not None:
-        p = Path(run_path)
-        if not p.exists():
-            raise FileNotFoundError(f"Run path does not exist: {p}")
-        return p
-
-    # Auto-detect: find the most recently modified run dir
-    runs_root = Path.cwd() / ".trw" / "runs"
-    if not runs_root.exists():
-        raise FileNotFoundError("No .trw/runs/ directory found. Run 'trw-mcp local init --task NAME' first.")
-
-    # Walk runs/ looking for meta/run.yaml
-    candidates = [(run_yaml.stat().st_mtime, run_yaml.parent.parent) for run_yaml in runs_root.glob("**/meta/run.yaml")]
-
-    if not candidates:
-        raise FileNotFoundError("No active runs found in .trw/runs/")
-
-    candidates.sort(reverse=True)
-    return candidates[0][1]
 
 
 def _append_jsonl(path: Path, record: dict[str, object]) -> None:

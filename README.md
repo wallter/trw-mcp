@@ -101,11 +101,15 @@ trw-mcp is **local-first**: with the default configuration it persists everythin
 
 | Surface | When | Default | Opt-out / control |
 |---------|------|---------|-------------------|
-| **Embedding model download** | First vector operation downloads `all-MiniLM-L6-v2` from huggingface.co (only when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the download and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
+| **Embedding model download** | Only when `all-MiniLM-L6-v2` is **not** already complete in your local Hugging Face cache. A complete cached snapshot makes **zero** huggingface.co requests — the loader probes the cache first and forces `local_files_only=True` (only relevant when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the fetch and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
 | **Usage telemetry** | Only if explicitly enabled | **off** (gated by `platform_telemetry_enabled`, default `false`) | leave `platform_telemetry_enabled=false`; see PRD-SEC-004 |
 | **Learning-content publishing** | Only if explicitly enabled | **off** (gated by `learning_sharing_enabled`, default `false`) | leave `learning_sharing_enabled=false`; learning content is never published off-box by default |
 
-With `TRW_OFFLINE=1` set, `session_start` makes **zero** huggingface.co calls — a testable invariant for air-gapped deployments.
+With `TRW_OFFLINE=1` set, `session_start` makes **zero** huggingface.co calls — a testable invariant for air-gapped deployments. Since the cache-first resolution landed, a **warm cache reaches the same zero-call result with no switch set at all**.
+
+**Embedding egress is independent of the consent flags.** `learning_sharing_enabled` and `platform_telemetry_enabled` govern learning-content publishing and usage telemetry only; neither one gates the model fetch. What governs embedding egress is the local cache plus the offline switches (`TRW_OFFLINE` / `HF_HUB_OFFLINE`) and trw-memory's `local_only`. Run `trw-mcp doctor` to read the current state — its `embedding_egress` row reports the cache state (`complete`/`incomplete`/`absent`) and the effective posture (`cache-first`, `offline-forced`, or `network-capable`).
+
+Loading a model that ships its own Python modules is refused unless you set trw-memory's `embedding_trust_remote_code: true`; the shipped default model does not need it.
 
 ### Environment-variable inventory
 

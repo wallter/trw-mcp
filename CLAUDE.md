@@ -9,7 +9,8 @@ MCP server for AI coding agents — part of [TRW Framework](https://trwframework
 ```bash
 pip install -e ".[dev]"                # Dev install
 pytest tests/test_specific_file.py -v  # Single file (preferred)
-pytest tests/ -m unit                  # Unit tests only
+pytest tests/ -m unit                  # Fast inner loop ONLY (~15% of the suite: 2.2k of 16k tests)
+pytest tests/ -q -n 8                  # The validation run: all markers, ~3 min with xdist
 mypy --strict src/trw_mcp/             # Type check
 ruff check src/                        # Lint
 ```

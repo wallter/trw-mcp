@@ -73,6 +73,13 @@ class InitAdvanced(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
     protected: bool = False
     planning_mode: str | None = None
+    # PRD-CORE-265-FR03/FR04. Two keys, not two tools: a tool DEFINITION is paid
+    # in every session's system prompt of every client, and the formation surface
+    # is reachable from the CLI for callers that cannot use MCP at all. ``dict``
+    # rather than a nested model for the schema reason in the module docstring —
+    # the shape is validated by ``trw_mcp.formation``, which owns it.
+    formation: dict[str, object] | None = None
+    join_formation: dict[str, str] | None = None
 
 
 #: Accepted ``advanced`` keys, byte-identical to the ``trw_init`` parameters

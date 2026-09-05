@@ -46,9 +46,22 @@ def _iso_ago(hours: float) -> str:
 
 
 def _make_memory_db(trw_dir: Path, *, corpus: int = 0, edges: int = 0, vec: int | None = None) -> Path:
+    """A minimal memory.db the graph probe can actually READ.
+
+    ``memories`` carries ``namespace``/``updated_at`` because every real store
+    does — the column predates schema 5, which only made it NOT NULL. Without
+    them the probe raises ``no such column: namespace`` and reports itself
+    not-measured, so these gate tests were asserting a "dead graph" verdict
+    against a store no migration path produces. Mirrors the helper in
+    ``test_pipeline_health.py``.
+    """
     db_path = trw_dir / "memory" / "memory.db"
     conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE IF NOT EXISTS memories (id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0)")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS memories ("
+        "id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0, "
+        "namespace TEXT DEFAULT 'default', updated_at TEXT DEFAULT '')"
+    )
     conn.execute("CREATE TABLE IF NOT EXISTS vec_memories (id TEXT PRIMARY KEY)")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS memory_graph_edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
@@ -82,10 +95,19 @@ def _make_config(*, platform_urls: list[str] | None = None, **overrides: object)
 
 
 def _healthy_pipeline(trw_dir: Path) -> None:
-    """Write a fully-healthy pipeline state (no probe degraded)."""
+    """Write a fully-healthy, fully-MEASURED pipeline state (no probe degraded).
+
+    PRD-CORE-263 DEF-08: ``bandit_state.json`` must exist (fresh mtime) too —
+    an absent file now reports ``measured: False`` (not a fabricated healthy
+    default), which would otherwise make this "healthy" fixture also trip the
+    DEF-05 unmeasured advisory.
+    """
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
     # Small corpus so graph/recall probes are suppressed (not degraded).
     _make_memory_db(trw_dir, corpus=10, edges=0)
+    meta_dir = trw_dir / "meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    (meta_dir / "bandit_state.json").write_text(json.dumps({"updated_at": _iso_ago(0.1)}), encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +189,15 @@ def test_gate_fails_on_genuinely_stale_push_with_remote(tmp_path: Path) -> None:
 
 
 def test_gate_healthy_on_fresh_install_no_sync_state_file(tmp_path: Path) -> None:
-    """Fresh install: NO sync-state.json at all => push-staleness must NOT trip."""
+    """Fresh install: NO sync-state.json at all => push-staleness must NOT trip.
+
+    DEF-04: the DEGRADATION verdict must still never trip here (``healthy`` is
+    True) — a fresh install with sync configured but not yet pushed is not a
+    confirmed breakage. But since DEF-07 made a missing ``sync-state.json``
+    report ``measured: False`` (not the same shape a healthy push reports),
+    the gate now names this as ``not_measured`` rather than folding it into
+    the identical-looking ``"healthy"`` a fully-measured clean run reports.
+    """
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
@@ -177,7 +207,8 @@ def test_gate_healthy_on_fresh_install_no_sync_state_file(tmp_path: Path) -> Non
     result = check_pipeline_health(trw_dir, _remote_config())
 
     assert result["healthy"] is True
-    assert not any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
+    assert result["status"] == "not_measured"
+    assert any("sync_push" in r for r in result["reasons"])
 
 
 def test_gate_healthy_when_last_push_at_none(tmp_path: Path) -> None:
@@ -239,6 +270,47 @@ def test_gate_healthy_when_config_none_no_remote(tmp_path: Path) -> None:
     assert not any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
 
 
+def test_gate_silent_when_sync_push_probe_is_unmeasured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unreadable sync-state.json (``measured: False``) must not read as staleness.
+
+    Mirrors the identical guard on ``_check_empty_graph``: a probe that could
+    not take its measurement is not evidence of breakage — ``healthy`` stays
+    True and the DEGRADATION reason list carries no push-staleness entry.
+    Crafts a ``sync_push`` payload with a high failure count and a stale
+    timestamp to prove the ``measured`` guard is what suppresses THAT reason —
+    not an accidental default of ``consecutive_failures=0``/``last_push_at=None``
+    that a real ``_unmeasured()`` probe result would also produce.
+
+    DEF-04: ``check_pipeline_health`` now separately surfaces the ambiguity as
+    a non-blocking ``not_measured`` status rather than the identical
+    ``"healthy"`` a fully-measured clean run reports — the fix under test here
+    is that this NAMES the gap without making the gate FAIL closed on it.
+    """
+    from trw_mcp.tools import _pipeline_health_gate
+
+    trw_dir = _make_trw_dir(tmp_path)
+    _make_memory_db(trw_dir, corpus=10)
+    unmeasured_health = {
+        "sync_push": {
+            "degraded": False,
+            "measured": False,
+            "consecutive_failures": 99,
+            "last_push_at": _iso_ago(99),
+            "advisory": "sync_push not measured: JSONDecodeError",
+        },
+        "graph_edges": {"measured": True, "edge_count": 0, "corpus_count": 5},
+    }
+    monkeypatch.setattr(_pipeline_health_gate, "step_pipeline_health", lambda _trw_dir: unmeasured_health)
+
+    result = _pipeline_health_gate.check_pipeline_health(
+        trw_dir, _make_config(platform_urls=["https://api.example.com"])
+    )
+
+    assert result["healthy"] is True
+    assert result["status"] == "not_measured"
+    assert any("sync_push" in r for r in result["reasons"])
+
+
 # ---------------------------------------------------------------------------
 # (b) Knowledge-graph dead condition
 # ---------------------------------------------------------------------------
@@ -290,8 +362,36 @@ def test_gate_fails_on_localhost_only_platform_urls(tmp_path: Path) -> None:
     assert any("localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"])
 
 
-def test_gate_silent_with_remote_platform_url(tmp_path: Path) -> None:
-    """A remote URL present (even alongside localhost) => no target reason."""
+def test_gate_silent_with_a_remote_primary_and_a_localhost_secondary(tmp_path: Path) -> None:
+    """The live topology — remote FIRST, localhost behind it — is not a degradation.
+
+    Re-keyed by PRD-FIX-125-FR02. This used to assert that a remote URL anywhere
+    in ``platform_urls`` silenced the target signature, and it was written with
+    localhost in slot 0. That premise died with FR01: slot 0 is the PRIMARY, and
+    the cycle verdict, both acknowledgement paths and ``consecutive_failures``
+    now follow it. The ordering asserted here is therefore the correct one, and
+    the inverse now has its own test below.
+    """
+    from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
+
+    trw_dir = _make_trw_dir(tmp_path)
+    _healthy_pipeline(trw_dir)
+    config = _make_config(platform_urls=["https://api.trwframework.com", "http://localhost:5002"])
+
+    result = check_pipeline_health(trw_dir, config)
+
+    assert not any("localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"])
+
+
+def test_gate_fires_when_the_primary_is_local_and_the_remote_is_behind_it(tmp_path: Path) -> None:
+    """PRD-FIX-125-FR02: a misordered platform_urls inverts the whole health signal.
+
+    With localhost in slot 0 the pipeline acknowledges against a dev box and
+    reports ITS health as the pipeline's, while the real backend is demoted to a
+    best-effort replica that may diverge indefinitely. Before FR01 this ordering
+    was nearly harmless (every target had to succeed); afterwards it is the
+    worst possible configuration, so the gate learns it in the same change.
+    """
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
@@ -300,7 +400,11 @@ def test_gate_silent_with_remote_platform_url(tmp_path: Path) -> None:
 
     result = check_pipeline_health(trw_dir, config)
 
-    assert not any("localhost" in r.lower() or "platform_urls" in r.lower() for r in result["reasons"])
+    assert result["healthy"] is False
+    assert result["status"] == "degraded"
+    reason = next(r for r in result["reasons"] if "misconfigured target order" in r)
+    assert "http://localhost:5002" in reason
+    assert "https://api.trwframework.com" in reason
 
 
 def test_gate_silent_when_no_platform_urls_configured(tmp_path: Path) -> None:
@@ -422,17 +526,23 @@ def test_session_start_escalates_to_prominent_warning_when_gate_trips(tmp_path: 
     assert isinstance(warning, dict)
     # The escalation must name WHERE the fail-closed check lives, not claim one
     # here. ``check_pipeline_health`` has exactly two consumers — the session
-    # start step below and its own __main__ behind ``make pipeline-health``,
-    # which is deliberately excluded from ``make check``. No deliver gate reads
-    # pipeline health, so the previous ``enforce: True`` + "fix before delivery"
-    # wording asserted an enforcement point that does not exist (HB-1).
-    assert warning.get("enforced_by") == "make pipeline-health"
+    # start step below and its own __main__ behind the ``pipeline-health`` Make
+    # target. No deliver gate reads pipeline health, so the previous
+    # ``enforce: True`` + "fix before delivery" wording asserted an enforcement
+    # point that does not exist (HB-1).
+    #
+    # PRD-FIX-125-FR02 re-keyed this string from "make pipeline-health" to
+    # "make check (pipeline-health)": the target is now a prerequisite of the
+    # aggregate, so naming the standalone target sent developers to the one
+    # invocation almost nobody ran — which is how a 134-day outage stayed
+    # invisible behind a correct warning.
+    assert warning.get("enforced_by") == "make check (pipeline-health)"
     assert "enforce" not in warning, "must not re-assert an enforcement this surface does not apply"
     assert warning.get("severity") in {"error", "critical", "warning"}
     assert isinstance(warning.get("reasons"), list) and warning["reasons"]
     advisory = str(warning.get("advisory", ""))
     assert "before delivery" not in advisory, "no deliver gate reads pipeline health"
-    assert "make pipeline-health" in advisory
+    assert "make check" in advisory
 
 
 def test_session_start_silent_when_healthy(tmp_path: Path) -> None:
@@ -535,3 +645,34 @@ def test_cli_fail_open_on_setup_error(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setattr(gate_mod, "check_pipeline_health", _boom)
 
     assert gate_mod.run_gate_cli() == 0
+
+
+def test_gate_fails_open_on_probe_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """PRD-FIX-125-NFR02: the whole CLI chain fails OPEN when the probe raises.
+
+    ``pipeline-health`` is a prerequisite of ``make check`` (FR02), so it is the
+    one member of that aggregate that can fail for environmental rather than
+    diff reasons. The posture that makes that safe is asserted end to end here —
+    exit 0 when the probe itself raises, exit 1 only on a positively detected
+    breakage — rather than on a stubbed verdict, because a stubbed verdict
+    cannot show that a raising probe reaches the fail-open branch at all.
+    """
+    import trw_mcp.models.config._loader as loader_mod
+    import trw_mcp.state._paths as paths_mod
+    import trw_mcp.tools._pipeline_health_gate as gate_mod
+
+    trw_dir = _make_trw_dir(tmp_path)
+    real_probe = gate_mod.step_pipeline_health
+    monkeypatch.setattr(paths_mod, "resolve_trw_dir", lambda: trw_dir)
+    monkeypatch.setattr(loader_mod, "get_config", lambda: _make_config(platform_urls=["https://api.trwframework.com"]))
+
+    def _boom(_trw_dir: Path) -> dict[str, object]:
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(gate_mod, "step_pipeline_health", _boom)
+    assert gate_mod.run_gate_cli() == 0
+
+    # ...and the same chain still fails CLOSED on a real detected breakage.
+    _write_sync_state(trw_dir, {"consecutive_failures": 10653, "last_push_at": _iso_ago(3216.0), "version": 1})
+    monkeypatch.setattr(gate_mod, "step_pipeline_health", real_probe)
+    assert gate_mod.run_gate_cli() == 1

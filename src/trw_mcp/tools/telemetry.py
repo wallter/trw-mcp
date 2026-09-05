@@ -144,6 +144,18 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         if not config.telemetry_enabled:
             return func(*args, **kwargs)
 
+        # PRD-SEC-015 round-2 audit (Row 3): trw_recall/trw_code_search/
+        # trw_code_symbol are allowlisted reviewer tools that share this
+        # decorator. Both disk sinks below (run events.jsonl / the
+        # session-events.jsonl fallback, and the detailed tool-telemetry.jsonl
+        # record) are skipped under the reviewer role -- including the
+        # pipeline enqueue, which registers an atexit drain that performs a
+        # real, delayed disk write and so does not qualify as "in-memory
+        # only". Timing/tracing/contextvars bookkeeping is unaffected.
+        from trw_mcp.state._surface_role import reviewer_role_active
+
+        _reviewer = reviewer_role_active()
+
         # PRD-CORE-141 FR03: if the wrapped handler was invoked with ctx,
         # build a TRWCallContext so telemetry events route to the caller's
         # pinned run (not a scan-hijacked one).  No ctx → legacy scan path.
@@ -178,29 +190,30 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
             raise
         finally:
             duration_ms = round((time.monotonic() - start) * 1000, 2)
-            try:
-                current_ctx = structlog.contextvars.get_contextvars()
-                current_tool_call_id = current_ctx.get("tool_call_id")
-                output_data: object = result_val if success else {"error": error_msg, "error_type": error_type_name}
-                trace_fields = build_tool_trace_fields(
-                    tool_name=func.__name__,
-                    event_id=trace_event_id,
-                    parent_event_id=parent_event_id,
-                    tool_call_id=current_tool_call_id if isinstance(current_tool_call_id, str) else None,
-                    input_data={"args": args, "kwargs": kwargs},
-                    output_data=output_data,
-                )
-                _write_tool_event(
-                    func.__name__,
-                    duration_ms,
-                    success,
-                    error_msg,
-                    error_type_name,
-                    call_ctx=call_ctx,
-                    trace_fields=trace_fields,
-                )
-            except Exception:  # justified: fail-open telemetry, never blocks tool execution
-                logger.debug("telemetry_write_failed", tool=func.__name__)
+            if not _reviewer:
+                try:
+                    current_ctx = structlog.contextvars.get_contextvars()
+                    current_tool_call_id = current_ctx.get("tool_call_id")
+                    output_data: object = result_val if success else {"error": error_msg, "error_type": error_type_name}
+                    trace_fields = build_tool_trace_fields(
+                        tool_name=func.__name__,
+                        event_id=trace_event_id,
+                        parent_event_id=parent_event_id,
+                        tool_call_id=current_tool_call_id if isinstance(current_tool_call_id, str) else None,
+                        input_data={"args": args, "kwargs": kwargs},
+                        output_data=output_data,
+                    )
+                    _write_tool_event(
+                        func.__name__,
+                        duration_ms,
+                        success,
+                        error_msg,
+                        error_type_name,
+                        call_ctx=call_ctx,
+                        trace_fields=trace_fields,
+                    )
+                except Exception:  # justified: fail-open telemetry, never blocks tool execution
+                    logger.debug("telemetry_write_failed", tool=func.__name__)
 
             # FR04 + PRD-SEC-004-FR01: detailed tool-telemetry records are richer
             # than basic events and follow the platform consent gate. The single
@@ -214,7 +227,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
                 _detailed = bool(getattr(config, "platform_telemetry_enabled", False))
             else:
                 _detailed = bool(getattr(_tel, "platform_telemetry_enabled", False))
-            if _detailed:
+            if _detailed and not _reviewer:
                 try:
                     _write_telemetry_record(
                         func.__name__,

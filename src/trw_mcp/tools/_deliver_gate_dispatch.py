@@ -30,15 +30,15 @@ build_gate_warning. The three gate policies are:
   a hard build block can only be sanctioned by the structured record.
 
 - ``ADVISORY`` — the SOFT ``build_gate_warning`` that survives ``deliver_gate_mode``
-  + task-type dispatch (PRD-CORE-184). ``check_delivery_gates`` promotes a
-  missing-build warning to the hard ``delivery_blocked`` key ONLY for the
-  build-bearing task types (coding/rca/eval under ``block_coding`` or
-  ``block_all``). Advisory task classes remain advisory under both policies. A
-  ``build_gate_warning`` that REMAINS after that dispatch is
-  intentionally advisory (docs/research/planning/unknown, or explicit advisory
-  mode, or an unpinned session): it is surfaced but NEVER promoted back into a
-  block. ``delivery_blocked`` is the hard promotion of the same condition, so
-  when it is present the ADVISORY phase is a no-op.
+  dispatch (PRD-CORE-184 + PRD-CORE-246). ``check_delivery_gates`` promotes a
+  missing-build warning to the hard ``delivery_blocked`` key when the task type
+  expects a build artifact (coding/rca/eval) OR when the session recorded file
+  modifications, under ``block_coding`` or ``block_all``. A
+  ``build_gate_warning`` that REMAINS after that dispatch is intentionally
+  advisory (a run that changed nothing, or explicit advisory mode, or an
+  unpinned session): it is surfaced but NEVER promoted back into a block.
+  ``delivery_blocked`` is the hard promotion of the same condition, so when it
+  is present the ADVISORY phase is a no-op.
 """
 
 from __future__ import annotations
@@ -68,6 +68,23 @@ from trw_mcp.models.typed_dicts import DeliverResultDict, DeliveryGatesDict
 # of re-hand-copying a second, independently-drifting list.
 from trw_mcp.tools._ceremony_deliver_steps import _GATE_KEYS as _RESULT_BRIDGED_ELSEWHERE_KEYS
 
+# PRD-CORE-213 / PRD-CORE-249: the two SELF-COMPUTING gates. They live in their
+# own sibling (see its docstring) because they are a different kind of gate from
+# every _GATE_TABLE descriptor, and holding both kinds here pushed this module
+# past the size gate. Call order and arguments are unchanged.
+# Re-exported under their pre-move private names so the existing dispatch-wiring
+# tests keep calling the seam they were written against (the move is behaviour-
+# preserving, so nothing about their assertions should have to change).
+from trw_mcp.tools._deliver_gate_selfcomputed import (
+    evaluate_acceptance_integrity as _evaluate_acceptance_integrity,
+)
+from trw_mcp.tools._deliver_gate_selfcomputed import (
+    evaluate_formation as _evaluate_formation,
+)
+from trw_mcp.tools._deliver_gate_selfcomputed import (
+    evaluate_plan_acceptance as _evaluate_plan_acceptance,
+)
+
 logger = structlog.get_logger(__name__)
 
 
@@ -81,12 +98,27 @@ class OverridePolicy(str, Enum):
 
 @dataclass(frozen=True)
 class GateDescriptor:
-    """One deliver gate: its ``gate_result`` key, override policy, and result keys."""
+    """One deliver gate: its ``gate_result`` key, override policy, result keys,
+    and the ``trw_*`` tools its message names as the REMEDY.
+
+    ``remedy_tools`` is the typed half of the "a gate demanded a tool the
+    session could not reach" defect class (PRD-CORE-246-FR08, generalising
+    PRD-FIX-119 FR02). It is read by
+    *tests/test_unknown_surface_parity.py::test_gate_demanded_tools_subset_of_every_surface*,
+    which computes the effective surface from the REAL resolver for every task
+    type plus the unresolvable and unmapped cases and fails with the offending
+    ``(gate_key, tool, task_type)`` triple. Declaring a remedy here is therefore
+    a commitment that the tool is reachable — the check runs at authoring time
+    instead of surfacing in a live session, which is how both known instances of
+    this class were actually found. An empty tuple means the remedy is an ACTION
+    (fix the code, disposition the violation), not a tool call.
+    """
 
     key: str
     policy: OverridePolicy
     result_block_key: str
     gate_type: str
+    remedy_tools: tuple[str, ...] = ()
 
 
 # Keys whose presence in the RESULT dict is decided entirely by this dispatcher's
@@ -100,8 +132,13 @@ class GateDescriptor:
 #     dispatch-supplied DEFAULT ("build_check" / "unknown") whenever the
 #     delivery_blocked descriptor fires -- dispatch, not gate_result, owns the
 #     value (a raw ``.get`` would drop the default for an absent gate_result key).
+#   - _SC_KEY (PRD-CORE-255-FR04): same shape as
+#     intent_violation_block -- a STRUCTURED gate whose result key must disappear
+#     when the override stands.
+_SC_KEY = "safety_critical_adversarial_block"
+_SC_REASON = "safety_critical_adversarial_audit_missing"
 _DISPATCH_OWNED_KEYS: frozenset[str] = frozenset(
-    {"delivery_blocked", "missing_gate", "blocked_task_type", "intent_violation_block"}
+    {"delivery_blocked", "missing_gate", "blocked_task_type", "intent_violation_block", _SC_KEY}
 )
 
 
@@ -133,18 +170,52 @@ def _bridge_advisory_gate_keys(gate_result: Mapping[str, object], results: Deliv
 # Precedence order is load-bearing — see module docstring. Iterated top-to-bottom.
 _GATE_TABLE: tuple[GateDescriptor, ...] = (
     GateDescriptor(
-        "integration_review_block", OverridePolicy.NO_ESCAPE, "integration_review_block", "integration_review_block"
+        "integration_review_block",
+        OverridePolicy.NO_ESCAPE,
+        "integration_review_block",
+        "integration_review_block",
+        remedy_tools=("trw_review",),
     ),
-    GateDescriptor("review_scope_block", OverridePolicy.NO_ESCAPE, "review_scope_block", "review_scope_block"),
-    GateDescriptor("review_block", OverridePolicy.STRUCTURED, "review_block", "review_block"),
-    GateDescriptor("delivery_blocked", OverridePolicy.STRUCTURED, "delivery_blocked", "delivery_blocked"),
+    GateDescriptor(
+        "review_scope_block",
+        OverridePolicy.NO_ESCAPE,
+        "review_scope_block",
+        "review_scope_block",
+        remedy_tools=("trw_review",),
+    ),
+    GateDescriptor(
+        "review_block",
+        OverridePolicy.STRUCTURED,
+        "review_block",
+        "review_block",
+        remedy_tools=("trw_review",),
+    ),
+    GateDescriptor(
+        "delivery_blocked",
+        OverridePolicy.STRUCTURED,
+        "delivery_blocked",
+        "delivery_blocked",
+        remedy_tools=("trw_build_check",),
+    ),
     # PRD-SEC-013-FR07: open intent-contract violation — hard until dispositioned;
     # STRUCTURED override = the same acceptable-failure record every hard gate honors,
-    # itself ledgered by the break-glass path.
+    # itself ledgered by the break-glass path. Its remedy is an ACTION (fix the
+    # code and re-pass the falsifier), not a tool call, so it names no tool.
     GateDescriptor(
         "intent_violation_block", OverridePolicy.STRUCTURED, "intent_violation_block", "intent_violation_block"
     ),
-    GateDescriptor("build_gate_warning", OverridePolicy.ADVISORY, "build_gate_warning", "build_gate_warning"),
+    # PRD-CORE-255-FR04: safety-critical PRD scope with no settled adversarial-audit
+    # receipt. STRUCTURED, matching every other hard deliver gate: the sanctioned
+    # escape is a PRD-CORE-191 acceptable-failure record, not a flag. Its remedy is
+    # a trw_review relay of the external auditor's findings.
+    GateDescriptor(_SC_KEY, OverridePolicy.STRUCTURED, _SC_KEY, _SC_REASON, remedy_tools=("trw_review",)),
+    GateDescriptor(
+        "build_gate_warning",
+        OverridePolicy.ADVISORY,
+        "build_gate_warning",
+        "build_gate_warning",
+        remedy_tools=("trw_build_check",),
+    ),
 )
 
 
@@ -173,7 +244,15 @@ def evaluate_delivery_gates(
         raise RuntimeError("GateDecision dispatch requires the v26.1 receipt closure")
     _bridge_advisory_gate_keys(gate_result, results)
     decision_set = _build_decision_set(gate_result)
-    _persist_decision_set(resolved_run, decision_set)
+    # PRD-FIX-127 FR03/FR05: census effect S23. These receipt files are durable
+    # delivery evidence and had no descriptor and no boundary until the FR05
+    # input/output tracer observed them.
+    from trw_mcp._delivery_boundary import journal_step
+
+    # Re-evaluated on every attempt (ALWAYS_REEVALUATE_EFFECTS): the receipts are
+    # evidence for THIS attempt's gate decisions, not an artifact to inherit.
+    with journal_step("S23"):
+        _persist_decision_set(resolved_run, decision_set)
     typed_gate_result: Mapping[str, object] = decision_set.project_public_keys()
 
     if _evaluate_no_escape(typed_gate_result, results, errors):
@@ -188,6 +267,18 @@ def evaluate_delivery_gates(
     # gate_result key, so it is NOT a _GATE_TABLE descriptor. Fail-open: any
     # resolution error degrades to no-block (NFR02).
     if _evaluate_acceptance_integrity(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
+        return True
+    # PRD-CORE-249-FR04: plan-acceptance gate. Same seam and same PRD-CORE-191
+    # override contract as the CORE-213 gate above; it reads the governing plan
+    # and the run's declaration rather than any gate_result key, so it is NOT a
+    # _GATE_TABLE descriptor either. Deleting this call is the FR04 rollback
+    # lever and turns the FR06 end-to-end test red.
+    if _evaluate_plan_acceptance(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
+        return True
+    # PRD-CORE-265-FR11: the orchestrator's formation gate — same seam, same
+    # PRD-CORE-191 override contract, and self-computing like the two above.
+    # Deleting this call is the FR11 rollback lever and turns its gate test red.
+    if _evaluate_formation(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
         return True
     return _evaluate_advisory(typed_gate_result, resolved_run)
 
@@ -229,58 +320,6 @@ def _persist_decision_set(resolved_run: Path | None, decision_set: DeliveryDecis
     for decision in decision_set.decisions:
         path = resolved_run / "meta" / "decisions" / f"{decision.decision_id}.json"
         writer.write_text(path, decision.model_dump_json(exclude_none=True) + "\n")
-
-
-def _evaluate_acceptance_integrity(
-    results: DeliverResultDict,
-    errors: list[str],
-    resolved_run: Path | None,
-    trw_dir: Path,
-    allow_unverified: bool,
-    unverified_reason: str,
-) -> bool:
-    """PRD-CORE-213 — block an incoherent PRD status->implemented transition.
-
-    Detects a ``->implemented`` transition in this session's path-limited PRD diff
-    and, under ``prd_transition_gate=block`` + a build-bearing task type, requires
-    functionality_level coherence, wiring/behavioral evidence, build evidence, and
-    an independent P0/P1 review receipt. A shortfall is a STRUCTURED hard block
-    overridable ONLY via a PRD-CORE-191 acceptable-failure record. Returns True
-    when delivery must BLOCK. No active run or a warn-mode / clean transition =>
-    False (never a spurious block).
-    """
-    if resolved_run is None:
-        return False
-    try:
-        from trw_mcp.tools._prd_transition_gate import evaluate_transition_gate
-
-        outcome = evaluate_transition_gate(resolved_run)
-    except Exception:  # justified: gate resolution failure degrades to no-block (NFR02)
-        logger.warning("acceptance_integrity_dispatch_degraded", run=str(resolved_run), exc_info=True)
-        return False
-    # Surface a non-blocking advisory so the delivering agent SEES it (mirrors the
-    # build_gate_warning idiom; no dormant warn path). Present whenever the gate
-    # found non-certifying items that did not hard-block.
-    if outcome.warning:
-        results["acceptance_integrity_warning"] = outcome.warning  # type: ignore[typeddict-unknown-key]
-        logger.info("acceptance_integrity_advisory", run=str(resolved_run), warning=outcome.warning)
-    # PRD-QUAL-119-FR06: surface the universal typed completion outcome per PRD
-    # so the delivering agent consumes decision vocabulary, not just token lists.
-    if outcome.decision_outcomes:
-        results["effective_completion_outcomes"] = dict(outcome.decision_outcomes)  # type: ignore[typeddict-unknown-key]
-    if not outcome.should_block:
-        return False
-    return _hard_block_override(
-        results=results,
-        errors=errors,
-        resolved_run=resolved_run,
-        trw_dir=trw_dir,
-        allow_unverified=allow_unverified,
-        unverified_reason=unverified_reason,
-        block_reason=outcome.message,
-        gate_type="acceptance_integrity",
-        result_block_key="acceptance_integrity_block",
-    )
 
 
 def _emit_block(
@@ -395,13 +434,26 @@ def _hard_block_override(
         logger.warning("deliver_hard_block", gate_type=gate_type, run=str(resolved_run))
         return True
 
-    proceed, error = apply_structured_override(
-        results=cast("dict[str, object]", results),
-        resolved_run=resolved_run,
-        trw_dir=trw_dir,
-        unverified_reason=unverified_reason,
-        gate_type=gate_type,
-    )
+    # PRD-FIX-127 FR03: census effect S06 (the acceptable-failure override ledger)
+    # is `required` and had no crash boundary. It gets one here, at the real write.
+    # S06 is DECISION-shaped: apply_structured_override REPORTS refusal by return
+    # value and never raises, and on the prose/expiry path it does not reach
+    # write_override_ledger at all. Without refuse_boundary the step would finalize
+    # `succeeded` and claim a ledger write that never happened — and because S06 is
+    # in ALWAYS_REEVALUATE_EFFECTS a resumed delivery re-validates the record here
+    # rather than inheriting that verdict (PRD-CORE-191 / PRD-SEC-013).
+    from trw_mcp._delivery_boundary import journal_step, refuse_boundary
+
+    with journal_step("S06"):
+        proceed, error = apply_structured_override(
+            results=cast("dict[str, object]", results),
+            resolved_run=resolved_run,
+            trw_dir=trw_dir,
+            unverified_reason=unverified_reason,
+            gate_type=gate_type,
+        )
+        if not proceed:
+            refuse_boundary("override_refused")
     if not proceed:
         # Override attempted but the record was prose / missing fields / expired:
         # the hard block stands (results[key]=block_reason, but the errors entry is
@@ -427,7 +479,11 @@ def _hard_block_override(
                 error_message="intent-violation override refused: the FR03 ledger record could not be written",
             )
             return True
-    _log_gate_override(resolved_run, {"gate_type": gate_type, "block": block_reason})
+    # S07 needs its OWN boundary: it runs after the S06 boundary has closed. It is
+    # the audit of an ACCEPTED override, so it is re-evaluated with S06 rather than
+    # skipped — a resumed accept that wrote no audit event would be unaudited.
+    with journal_step("S07"):
+        _log_gate_override(resolved_run, {"gate_type": gate_type, "block": block_reason})
     return False
 
 

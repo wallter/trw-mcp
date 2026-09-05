@@ -39,8 +39,6 @@ def log_recall_receipt(
     trw_dir: Path,
     query: str,
     matched_ids: list[str],
-    *,
-    shard_id: str | None = None,
 ) -> None:
     """Append a recall receipt to .trw/learnings/receipts/recall_log.jsonl.
 
@@ -51,7 +49,6 @@ def log_recall_receipt(
         trw_dir: Path to .trw directory.
         query: The recall query string.
         matched_ids: IDs of matched learning entries.
-        shard_id: Optional shard identifier for sub-agent attribution.
     """
     writer = FileStateWriter()
     path = _receipt_path(trw_dir)
@@ -62,8 +59,6 @@ def log_recall_receipt(
         "matched_ids": matched_ids,
         "match_count": len(matched_ids),
     }
-    if shard_id:
-        record["shard_id"] = shard_id
     writer.append_jsonl(path, record)
 
 

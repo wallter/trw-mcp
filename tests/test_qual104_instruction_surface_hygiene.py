@@ -859,7 +859,9 @@ class TestDriftScanScope:
 
     def test_excluded_dirs_not_scanned(self, tmp_path: Path) -> None:
         """Files under excluded dirs (node_modules, archive) are skipped."""
-        for sub in ("node_modules", "docs/requirements-aare-f/archive", "trw-eval/results"):
+        # fmt: off
+        for sub in ("node_modules", "docs/requirements-aare-f/archive", "trw-eval/results"):  # trw-leak-allow: proprietary_path real production exclusion literal from lint-instruction-surfaces.py
+            # fmt: on
             d = tmp_path / sub
             d.mkdir(parents=True)
             (d / "CLAUDE.md").write_text("Has /home/wallter/x in it.\n", encoding="utf-8")

@@ -24,7 +24,7 @@ so the suite passed green while the deadlock was live in production:
     the server.
 
 Observed live three times in one session (a ``trw_learn`` call returning
-``session_start_required`` with no way to clear it).
+``post_compaction_recovery_required`` with no way to clear it).
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ INHERITED = "shared-stdio-session"
 # clear a compaction gate.
 #
 # Since 2026-07-26 three of the four are exempt outright
-# (``EVIDENCE_RECORDING_TOOLS``): they only record what already happened, and
+# (``COMPACTION_GATE_EXEMPT_TOOLS``): they only record what already happened, and
 # gating them destroyed unrecoverable evidence. ``trw_recall`` is the sole
 # member still gated — it SHAPES the next decision — so it is the probe every
 # blocking assertion below uses. Probing with ``trw_learn``, as this module did
@@ -134,7 +134,7 @@ class TestInheritedSessionIsNotDeadlocked:
             first = await middleware.on_call_tool(_ctx(INHERITED, "trw_recall"), call_next)  # type: ignore[arg-type]
 
         assert first.structured_content is not None
-        assert first.structured_content["error"] == "session_start_required"
+        assert first.structured_content["error"] == "post_compaction_recovery_required"
         assert call_next.calls == [], "the first blocked call must not execute the tool"
 
     @pytest.mark.asyncio
@@ -208,10 +208,73 @@ class TestInheritedSessionIsNotDeadlocked:
             again = await middleware.on_call_tool(_ctx(INHERITED, "trw_recall"), call_next)  # type: ignore[arg-type]
 
         assert again.structured_content is not None
-        assert again.structured_content["error"] == "session_start_required"
+        assert again.structured_content["error"] == "post_compaction_recovery_required"
 
 
 def patch_trw_dir(trw_dir: Path) -> Any:
     from unittest.mock import patch
 
     return patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir)
+
+
+class TestTheEscapeHatchIsNotBehindTheDoorItOpens:
+    """PRD-CORE-258-FR03: ``trw_request_tool_access`` passes an armed gate.
+
+    Two other middlewares tell a caller on a restricted surface to call this tool
+    BY NAME, and this gate refused it — a loop with no documented exit. Exempting
+    it does not widen the gate: it grants one masked call, and that granted call
+    is re-evaluated here and still blocked.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _local_clean_state(self) -> Iterator[None]:
+        reset_state()
+        yield
+        reset_state()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_request_tool_access_passes_through_armed_gate(
+        self, middleware: CeremonyMiddleware, tmp_path: Path
+    ) -> None:
+        trw_dir = _seed_compaction_marker(tmp_path)
+        call_next = _Recorder()
+
+        with patch_trw_dir(trw_dir):
+            granted = await middleware.on_call_tool(_ctx(INHERITED, "trw_request_tool_access"), call_next)  # type: ignore[arg-type]
+            blocked = await middleware.on_call_tool(_ctx(INHERITED, "trw_status"), call_next)  # type: ignore[arg-type]
+
+        assert call_next.calls == ["trw_request_tool_access"], "the grant tool must reach the tool"
+        assert granted.structured_content is None
+        assert _text(granted.content[-1]) == "tool ok"
+        # ...and the gate is demonstrably still armed in the same test.
+        assert blocked.structured_content is not None
+        assert blocked.structured_content["error"] == "post_compaction_recovery_required"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_the_granted_call_is_still_blocked_by_this_gate(
+        self, middleware: CeremonyMiddleware, tmp_path: Path
+    ) -> None:
+        """RISK-001: the exemption grants one masked call, not stale-context execution."""
+        trw_dir = _seed_compaction_marker(tmp_path)
+        call_next = _Recorder()
+
+        with patch_trw_dir(trw_dir):
+            await middleware.on_call_tool(_ctx(INHERITED, "trw_request_tool_access"), call_next)  # type: ignore[arg-type]
+            delivered = await middleware.on_call_tool(_ctx(INHERITED, "trw_deliver"), call_next)  # type: ignore[arg-type]
+
+        assert delivered.structured_content is not None
+        assert delivered.structured_content["error"] == "post_compaction_recovery_required"
+        assert call_next.calls == ["trw_request_tool_access"]
+
+    @pytest.mark.unit
+    def test_the_exempt_set_is_named_for_its_predicate_and_has_four_members(self) -> None:
+        assert ceremony_module.COMPACTION_GATE_EXEMPT_TOOLS == frozenset(
+            {"trw_checkpoint", "trw_learn", "trw_build_check", "trw_request_tool_access"}
+        )
+        assert not hasattr(ceremony_module, "EVIDENCE" + "_RECORDING_TOOLS"), "the old name is deleted, not aliased"
+        # OQ-01: trw_status stays gated — it is a read of framework-derived state
+        # that shapes the next decision, not a write of caller-supplied evidence.
+        assert "trw_status" not in ceremony_module.COMPACTION_GATE_EXEMPT_TOOLS
+        assert "trw_recall" not in ceremony_module.COMPACTION_GATE_EXEMPT_TOOLS

@@ -30,8 +30,8 @@ logger = structlog.get_logger(__name__)
 
 _SYNCED_MARKER = "synced.json"
 
-# Backend `OutcomeSync.learning_ids` is declared `Field(..., max_length=50)`
-# with `model_config = ConfigDict(extra="forbid")` in `backend/routers/sync.py`.
+# The platform sync API declares `OutcomeSync.learning_ids` as
+# `Field(..., max_length=50)` under `extra="forbid"`.
 # Any payload whose `learning_ids` exceeds 50 entries is 422-rejected, and
 # because the whole batch is rejected no outcomes (or learnings) ever sync.
 # We therefore cap client-side at the same limit. Truncation keeps the FIRST

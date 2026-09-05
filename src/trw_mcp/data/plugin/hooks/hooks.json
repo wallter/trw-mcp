@@ -49,6 +49,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-event.sh"
           }
         ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-degenerate-result.sh"
+          }
+        ]
       }
     ],
     "Stop": [

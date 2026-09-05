@@ -37,24 +37,36 @@ class _BuildFields:
     build_check_timeout_secs: int = DEFAULT_BUILD_CHECK_TIMEOUT_SECS
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
-    # PRD-CORE-184-FR03: task-type-aware deliver gate mode.
+    # PRD-CORE-184-FR03 + PRD-CORE-246-FR03: evidence-keyed deliver gate mode.
     #   advisory     — warn but allow delivery
-    #   block_coding — block missing-build-check delivery ONLY for coding/rca/eval
-    #                  task types; advisory for docs/research/planning/unknown
-    #   block_all    — block for every task type that expects a build artifact
-    #                  (excludes docs/research/planning)
+    #   block_coding — block missing-build-check delivery when the task type
+    #                  expects a build artifact (coding/rca/eval) OR when the
+    #                  session recorded at least
+    #                  ``deliver_gate_unclassified_change_threshold`` distinct
+    #                  modified files, whatever the task type
+    #   block_all    — same predicate as block_coding
     # Default flipped advisory -> block_coding (2026-06-10, framework-canon
     # refinement): deliver-without-build-evidence is the dominant measured
-    # false-completion mode (iter-28: universal miss-verification), and the
-    # gate is safe by construction — docs/research/planning/unknown task types
-    # never block, ceremony-only runs (no work events) never block, and the
-    # ``allow_unverified`` + ``unverified_reason`` override path always
-    # remains open. Set ``deliver_gate_mode: advisory`` in .trw/config.yaml to
-    # restore the old warn-only posture.
+    # false-completion mode (iter-28: universal miss-verification). CORE-246
+    # then removed the never-block-on-unknown branch: the gate's strength no
+    # longer depends on the task-type heuristic being right, because a run that
+    # modified files blocks whatever it was classified as. Ceremony-only runs
+    # (no work events, no file modifications) still never block, and the
+    # ``allow_unverified`` + ``unverified_reason`` override path always remains
+    # open. Set ``deliver_gate_mode: advisory`` in .trw/config.yaml to restore
+    # the warn-only posture.
     deliver_gate_mode: Literal["advisory", "block_coding", "block_all"] = "block_coding"
     # Optional per-task-type override map, e.g. {"eval": "advisory"}. Empty by
     # default; values must be one of the three modes above.
     deliver_gate_task_type_overrides: dict[str, str] = Field(default_factory=dict)
+    # PRD-CORE-246-FR03/NFR03: how many DISTINCT files the current session must
+    # have modified before a missing build check blocks a task type that does
+    # not inherently expect a build artifact. The comparison is ``>=``, so the
+    # default of 1 means "any recorded file modification arms the gate". Bounded
+    # (never silently clamped): 0 and >1000 are rejected at config load. This is
+    # a threshold, NOT an on/off switch — the task-type clause is an OR, so no
+    # value restores the pre-CORE-246 never-block-on-unknown behavior.
+    deliver_gate_unclassified_change_threshold: int = Field(default=1, ge=1, le=1000)
     # PRD-CORE-192-FR01: review_gate_mode (warn | block). When a STANDARD /
     #   COMPREHENSIVE run reaches deliver with no recorded trw_review, ``warn``
     #   (the brownfield-safe default) emits a soft ``review_warning`` and lets
@@ -95,6 +107,9 @@ class _BuildFields:
     # external migration may temporarily opt back into observe.
     # An unknown value is treated as non-positive by readers (fail-toward-no-evidence).
     evidence_receipt_mode: Literal["observe", "enforce"] = "enforce"
+    # PRD-CORE-255-FR01: hours a typed ReviewReceipt stays positive evidence, from
+    # completed_at; independent of the CORE-205 binding, fail-closed when unreadable.
+    review_verdict_ttl_hours: int = Field(default=24, ge=1, le=8760)
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None
@@ -105,7 +120,6 @@ class _BuildFields:
     # -- Run maintenance --
 
     run_auto_close_enabled: bool = True
-    run_auto_close_age_days: int = 7
     run_stale_ttl_hours: int = 48
 
     # -- Auto-checkpoint, auto-recall, auto-prune --
@@ -116,7 +130,22 @@ class _BuildFields:
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 3
     auto_recall_max_tokens: int = 100
-    auto_recall_min_score: float = 0.7
+    # PRD-FIX-124-FR06: the minimum relevance a stored learning must reach for
+    # the UserPromptSubmit hook to inject it. This is an IDF-WEIGHTED PROMPT-
+    # COVERAGE FRACTION, not a probability: the share of the prompt's keyword
+    # mass that appears in the learning's own summary+tags token set. The
+    # previous 0.7 was picked as if it were a probability and proved
+    # unreachable (2/20 in-domain firings). Calibrated to 0.35 against this
+    # repo's live store: 13/20 in-domain, 0/10 off-domain, with 0.08 of margin
+    # over the highest off-domain score observed. See
+    # docs/documentation/operational-knowledge/auto-recall-calibration.md.
+    auto_recall_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    # PRD-FIX-124-FR07: how many learning entries one auto-recall scan reads,
+    # most-recently-modified first. The former hard-coded 500 covered 7.8% of a
+    # 6,436-entry store and excluded the rest by AGE rather than irrelevance.
+    # 10000 covers a store that size whole in ~190ms against the hook's 500ms
+    # deadline; the ordering survives only as the tie-break for a larger store.
+    auto_recall_scan_cap: int = Field(default=10000, ge=1)
     learning_auto_prune_on_deliver: bool = True
     learning_auto_prune_cap: int = 150
     # Floor between consecutive auto_prune runs. The full pass walks every

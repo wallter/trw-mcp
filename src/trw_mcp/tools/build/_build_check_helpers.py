@@ -147,6 +147,30 @@ def _parse_iso(value: str) -> datetime | None:
         return None
 
 
+def derive_test_count(
+    command_results: tuple[BuildCommandResult, ...] | None,
+    *,
+    reported: int,
+) -> int:
+    """The test count to RECORD: the caller's flat value, or the typed results'.
+
+    ``trw_build_check`` accepts a flat ``test_count`` and — in enforce mode,
+    required — typed ``command_results`` that each carry their own
+    ``test_count``. A caller supplying the typed form has already reported the
+    number, and before this the flat default of ``0`` silently won: the recorded
+    evidence then said zero tests ran, which the deliver-time build gate now
+    (correctly) refuses as a pass (WD-01). Rolling the typed value up keeps the
+    recorded count truthful instead of making enforce-mode callers repeat it.
+
+    An explicit flat value still wins — the caller's own report is never
+    overwritten by a derived one.
+    """
+    if reported > 0 or not command_results:
+        return reported
+    counts = [item.test_count for item in command_results if item.test_count is not None]
+    return sum(counts) if counts else reported
+
+
 def _require_tests_passed(tests_passed: bool | None) -> bool:
     """Require explicit tests_passed reporting with a usage example."""
     if tests_passed is None:

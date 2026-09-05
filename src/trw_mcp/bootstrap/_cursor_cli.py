@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 import structlog
 from typing_extensions import TypedDict
@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 from ._cursor import HookHandlerEntry
-from ._file_ops import read_json_object, replace_marker_region
+from ._file_ops import read_json_object
 
 logger = structlog.get_logger(__name__)
 
@@ -138,6 +138,8 @@ _CLI_HOOK_SCRIPTS: Final[tuple[str, ...]] = (
     "trw-before-mcp.sh",
     "trw-after-mcp.sh",
     "trw-stop.sh",
+    # trw-stop.sh invokes this Python helper; it must ship with the hook.
+    "_nudge_gate.py",
 )
 
 
@@ -291,29 +293,6 @@ def generate_cursor_cli_config(
 # ---------------------------------------------------------------------------
 
 
-def _merge_agents_md(existing: str, trw_block: str, begin: str, end: str) -> str:
-    """Return new AGENTS.md content with TRW block replaced/prepended.
-
-    Pure function: takes (existing_content, trw_block, begin_sentinel,
-    end_sentinel) and returns the merged document as a string.  No I/O.
-
-    If both sentinels are found, the content between them is replaced with the
-    new ``trw_block`` and everything outside is preserved.  If sentinels are
-    absent, the TRW block is prepended with a blank line before existing content.
-
-    Sentinel matching is line-anchored, never a substring scan. The previous
-    ``begin in existing`` + ``partition`` form bound to the FIRST occurrence
-    anywhere in the document, so an AGENTS.md that merely *mentioned* a sentinel
-    in prose or backticks lost everything between that mention and the real
-    block — the 705-line ROADMAP corruption shape that
-    ``.claude/rules/trw-mcp-python.md`` §Marker / Sentinel Matching forbids.
-    """
-    merged = replace_marker_region(existing, start=begin, end=end, new_block=trw_block)
-    if merged is not None:
-        return merged
-    return trw_block + "\n\n" + existing
-
-
 def _cursor_cli_trw_section() -> str:
     """Return the TRW body for cursor-cli's AGENTS.md, sized to its profile.
 
@@ -346,19 +325,30 @@ def generate_cursor_cli_agents_md(
     *,
     force: bool = False,
 ) -> BootstrapFileResult:
-    """Generate or smart-merge AGENTS.md with TRW ceremony sentinel block.
+    """Generate or merge AGENTS.md into the SHARED TRW ceremony sentinel block.
+
+    PRD-CORE-243-FR06/FR08: this writer used to own a private
+    ``<!-- TRW:BEGIN -->`` / ``<!-- TRW:END -->`` dialect, so an AGENTS.md that
+    already carried the shared ``<!-- trw:start -->`` block (written by the
+    sync writer, ``_agents_md.py::_sync_agents_md_if_needed``) ended up with
+    TWO disjoint TRW blocks in one file — one dialect per writer, only the
+    sync one ever refreshed. It now merges into that SAME shared block through
+    ``merge_trw_section``, the one guarded seam every other AGENTS.md/CLAUDE.md
+    writer uses (PRD-FIX-123). A file that still carries a dead legacy block
+    from before this fix is migrated in place: ``render_merged_content``
+    strips it (see ``_parser.py::_migrate_legacy_marker_block``) before the
+    merge runs, so the result always has exactly one TRW block.
 
     Fresh write: creates AGENTS.md containing only the TRW sentinel block.
 
-    Smart merge: finds the ``<!-- TRW:BEGIN -->`` / ``<!-- TRW:END -->``
-    markers and replaces the content between them with the new ``trw_section``.
-    Everything outside the block is preserved.  If no markers are found,
-    prepends the TRW block and preserves the original content below.
+    Smart merge: replaces the content between the shared markers with the new
+    ``trw_section`` (cursor-cli's light body). Everything outside is
+    preserved. If no shared block is found, the block is prepended.
 
     Args:
         target_dir: Root of the target repository.
         trw_section: Rendered TRW instruction content for the sentinel block.
-        force: When True, overwrite unconditionally.
+        force: When True, bypass the guard's shrink floors.
 
     Returns:
         BootstrapFileResult with created/updated lists.
@@ -366,18 +356,45 @@ def generate_cursor_cli_agents_md(
     result: BootstrapFileResult = {"created": [], "updated": [], "preserved": [], "info": []}
     agents_file = target_dir / "AGENTS.md"
 
-    begin = "<!-- TRW:BEGIN -->"
-    end = "<!-- TRW:END -->"
-    trw_block = f"{begin}\n# TRW Ceremony Protocol (cursor-cli)\n\n{trw_section}\n{end}"
+    from trw_mcp.bootstrap._file_ops import _record_write
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.claude_md._parser import (
+        TRW_AUTO_COMMENT,
+        TRW_MARKER_END,
+        TRW_MARKER_START,
+        merge_trw_section,
+    )
 
-    if agents_file.exists() and not force:
-        existing = agents_file.read_text(encoding="utf-8")
-        new_content = _merge_agents_md(existing, trw_block, begin, end)
-        agents_file.write_text(new_content, encoding="utf-8")
-        result["updated"].append("AGENTS.md")
-    else:
-        agents_file.write_text(trw_block + "\n", encoding="utf-8")
-        result["created"].append("AGENTS.md")
+    body = f"# TRW Ceremony Protocol (cursor-cli)\n\n{trw_section}"
+    trw_block = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{body}\n{TRW_MARKER_END}\n"
+
+    config = get_config()
+    existed = agents_file.exists()
+    # max_lines=None: this writer has never enforced a line ceiling (unlike the
+    # sync writer's config.max_auto_lines gate in _agents_md.py) -- unifying
+    # the marker dialect and the guarded seam is this fix's scope; adding a new
+    # size ceiling here is not (PRD-CORE-243-FR06/FR08 is the duplicate-block
+    # fix, not PRD-QUAL-104's size gate).
+    verdict = merge_trw_section(
+        agents_file,
+        trw_block,
+        None,
+        force=force,
+        config=config,
+        project_root=target_dir,
+    )
+
+    if verdict.written:
+        _record_write(cast("dict[str, list[str]]", result), "AGENTS.md", existed=existed)
+    elif verdict.refusal is not None:
+        result.setdefault("errors", []).append(
+            f"Refused to write {agents_file} ({verdict.refusal['reason']}): {verdict.refusal['detail']}"
+        )
+        logger.warning(
+            "cursor_cli_agents_md_write_refused",
+            path=str(agents_file),
+            reason=verdict.refusal["reason"],
+        )
 
     logger.info(
         "generate_cursor_cli_agents_md",

@@ -23,9 +23,14 @@ from typing import Any, Literal, cast
 
 import structlog
 
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
+
 logger = structlog.get_logger(__name__)
 
-VerificationStatus = Literal["stale"] | None
+#: PRD-CORE-244-FR03 widened this from ``Literal["stale"] | None``. ``None`` no
+#: longer doubles as "healthy": a pass that examined an entry and found it clean
+#: records ``"verified"``, and ``VerificationOutcome.checked_at`` stamps WHEN.
+VerificationStatus = Literal["verified", "stale"] | None
 
 
 @dataclass(slots=True)
@@ -33,6 +38,13 @@ class VerificationOutcome:
     """Everything one entry's verification pass computed."""
 
     entry_id: str
+    #: The namespace that owns ``entry_id``. Part of the row's identity under
+    #: trw-memory schema 5 (PRD-CORE-245 FR03), so ``persist_verification_outcome``
+    #: cannot write the verdict without it — and before it was carried, that
+    #: write raised a TypeError the best-effort handler swallowed, which meant
+    #: the FR02/FR03 verdict never landed and the NFR02 drift tripwire could
+    #: never fire.
+    namespace: str = DEFAULT_NAMESPACE
     updated_assertions: list[dict[str, object]] = field(default_factory=list)
     assertion_status: dict[str, object] = field(default_factory=dict)
     passing: int = 0
@@ -40,6 +52,10 @@ class VerificationOutcome:
     stale: int = 0
     penalty: float = 0.0
     verification_status: VerificationStatus = None
+    #: PRD-CORE-244-FR03: ISO-8601 stamp of THIS pass, set only when the pass
+    #: actually examined something. "" leaves the persisted value untouched, so
+    #: an entry nothing could be checked on never acquires a false exam record.
+    checked_at: str = ""
     anchor_validity: float | None = None
     #: False when the entry HAS assertions but none could actually be checked
     #: (e.g. project_root unresolvable => every result is ``passed=None``).
@@ -61,11 +77,15 @@ class VerificationOutcome:
         fields: dict[str, object] = {
             "assertions": [Assertion.model_validate(a, strict=False) for a in self.updated_assertions],
             # Scalar, last-write-wins: passing ``None`` is how a previously
-            # persisted 'stale' verdict is cleared (FR02 AC2).
+            # persisted 'stale' or 'verified' verdict is cleared (FR02 AC2).
             "verification_status": self.verification_status,
         }
         if self.anchor_validity is not None:
             fields["anchor_validity"] = self.anchor_validity
+        # PRD-CORE-244-FR03: the exam stamp rides the SAME batched update, so a
+        # positive verdict and the time it was reached are one write, not two.
+        if self.checked_at:
+            fields["verification_checked_at"] = self.checked_at
         return fields
 
 
@@ -113,13 +133,39 @@ def _reverify_anchors(
         return None
 
 
+def _apply_verdict(outcome: VerificationOutcome, *, moment: datetime, anchor_floor: float) -> None:
+    """Stamp the exam and record a positive verdict (PRD-CORE-244 FR03).
+
+    "Examined" is evidence-based rather than a flag: at least one assertion
+    produced a real pass/fail, or an anchor score was actually recomputed. An
+    entry where neither happened is left completely untouched — stamping it
+    would make "never checked" indistinguishable from "checked and learned
+    nothing", which is the conflation this FR exists to remove.
+
+    ``"verified"`` requires no failing assertion AND (when anchors were scored)
+    a score at or above *anchor_floor*: a partially drifted anchor set is not a
+    clean bill of health. An already-computed ``"stale"`` verdict wins.
+    """
+    examined = (outcome.passing + outcome.failing) > 0 or outcome.anchor_validity is not None
+    if not examined:
+        return
+    outcome.checked_at = moment.isoformat()
+    if outcome.verification_status == "stale":
+        return
+    anchors_clean = outcome.anchor_validity is None or outcome.anchor_validity >= anchor_floor
+    if outcome.failing == 0 and anchors_clean:
+        outcome.verification_status = "verified"
+
+
 def run_verification_pass(
     entry_id: str,
     raw_assertions: list[object],
     raw_anchors: list[object],
     *,
+    namespace: str = DEFAULT_NAMESPACE,
     assertion_failure_penalty: float,
     assertion_stale_threshold_days: int,
+    anchor_validity_verified_floor: float,
     project_root: Path | None,
     now: datetime | None = None,
 ) -> VerificationOutcome:
@@ -127,10 +173,15 @@ def run_verification_pass(
 
     Args:
         entry_id: The learning/memory id (used for result ids + marker bonus).
+        namespace: The namespace that owns *entry_id*; carried onto the outcome
+            so the persist step can address the row (PRD-CORE-245 FR03).
         raw_assertions: Serialized assertion dicts from the stored entry.
         raw_anchors: Serialized anchor dicts from the stored entry.
         assertion_failure_penalty: ``TRWConfig.assertion_failure_penalty``.
         assertion_stale_threshold_days: ``TRWConfig.assertion_stale_threshold_days``.
+        anchor_validity_verified_floor:
+            ``TRWConfig.anchor_validity_verified_floor`` — the lowest recomputed
+            anchor score a ``"verified"`` verdict tolerates (FR03).
         project_root: Repo root for filesystem-scoped verification, or ``None``.
         now: Injectable clock for tests; defaults to ``datetime.now(utc)``.
 
@@ -143,10 +194,12 @@ def run_verification_pass(
 
     moment = now or datetime.now(timezone.utc)
     stale_threshold = moment - timedelta(days=assertion_stale_threshold_days)
-    outcome = VerificationOutcome(entry_id=entry_id)
+    outcome = VerificationOutcome(entry_id=entry_id, namespace=namespace)
     outcome.anchor_validity = _reverify_anchors(raw_anchors, project_root, entry_id)
 
     if not raw_assertions:
+        # Anchors-only entry: the anchor recomputation IS the examination.
+        _apply_verdict(outcome, moment=moment, anchor_floor=anchor_validity_verified_floor)
         return outcome
 
     assertions_list = [Assertion.model_validate(a, strict=False) for a in raw_assertions if isinstance(a, dict)]
@@ -201,6 +254,7 @@ def run_verification_pass(
     )
     if all_persistently_failing:
         outcome.verification_status = "stale"
+    _apply_verdict(outcome, moment=moment, anchor_floor=anchor_validity_verified_floor)
     return outcome
 
 
@@ -219,7 +273,7 @@ def persist_verification_outcome(backend: Any, outcome: VerificationOutcome) -> 
         logger.debug("verification_pass_unverifiable_skipped", entry_id=outcome.entry_id)
         return False
     try:
-        updated = backend.update(outcome.entry_id, **outcome.update_fields())
+        updated = backend.update(outcome.entry_id, namespace=outcome.namespace, **outcome.update_fields())
     except Exception:  # justified: persist is best-effort, recall must not fail
         logger.debug("assertion_result_persist_failed", entry_id=outcome.entry_id, exc_info=True)
         return False

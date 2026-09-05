@@ -41,23 +41,28 @@ class TestRecallContextNewFields:
 
 
 class TestTypeHalfLife:
-    """Tests for _TYPE_HALF_LIFE values per PRD-CORE-116 spec."""
+    """Tests for the per-type half-life table per PRD-CORE-116 spec.
+
+    The table moved to ``trw_memory.lifecycle._utility_params`` when PRD-CORE-244
+    FR11 collapsed the two entry-utility implementations into one; the VALUES are
+    unchanged, which is what this pins.
+    """
 
     def test_type_half_life_values(self) -> None:
         """All 5 type half-life values match the PRD spec."""
-        from trw_mcp.scoring._decay import _TYPE_HALF_LIFE
+        from trw_memory.lifecycle._utility_params import DEFAULT_TYPE_HALF_LIFE_DAYS
 
-        assert _TYPE_HALF_LIFE["incident"] == 90.0
-        assert _TYPE_HALF_LIFE["pattern"] == 180.0
-        assert _TYPE_HALF_LIFE["convention"] == 9999.0
-        assert _TYPE_HALF_LIFE["hypothesis"] == 7.0
-        assert _TYPE_HALF_LIFE["workaround"] == 14.0
+        assert DEFAULT_TYPE_HALF_LIFE_DAYS["incident"] == 90.0
+        assert DEFAULT_TYPE_HALF_LIFE_DAYS["pattern"] == 180.0
+        assert DEFAULT_TYPE_HALF_LIFE_DAYS["convention"] == 9999.0
+        assert DEFAULT_TYPE_HALF_LIFE_DAYS["hypothesis"] == 7.0
+        assert DEFAULT_TYPE_HALF_LIFE_DAYS["workaround"] == 14.0
 
     def test_pattern_decay_slower_than_workaround(self) -> None:
         """200-day-old pattern retains higher utility than same-age workaround."""
         from datetime import date, timedelta
 
-        from trw_mcp.scoring._decay import _entry_utility
+        from trw_mcp.scoring._decay import entry_utility
 
         today = date(2026, 4, 1)
         created = (today - timedelta(days=200)).isoformat()
@@ -77,8 +82,8 @@ class TestTypeHalfLife:
         workaround_entry: dict[str, object] = dict(pattern_entry)
         workaround_entry["type"] = "workaround"
 
-        utility_pattern = _entry_utility(pattern_entry, today)
-        utility_workaround = _entry_utility(workaround_entry, today)
+        utility_pattern = entry_utility(pattern_entry, today)
+        utility_workaround = entry_utility(workaround_entry, today)
 
         assert utility_pattern > utility_workaround
 
@@ -86,7 +91,7 @@ class TestTypeHalfLife:
         """1000-day-old convention retains utility close to a fresh entry."""
         from datetime import date, timedelta
 
-        from trw_mcp.scoring._decay import _entry_utility
+        from trw_mcp.scoring._decay import entry_utility
 
         today = date(2026, 4, 1)
         old_created = (today - timedelta(days=1000)).isoformat()
@@ -106,8 +111,8 @@ class TestTypeHalfLife:
         old_entry = dict(base, created=old_created)
         fresh_entry = dict(base, created=fresh_created)
 
-        utility_old = _entry_utility(old_entry, today)
-        utility_fresh = _entry_utility(fresh_entry, today)
+        utility_old = entry_utility(old_entry, today)
+        utility_fresh = entry_utility(fresh_entry, today)
 
         assert utility_old > utility_fresh * 0.8
 
@@ -115,7 +120,7 @@ class TestTypeHalfLife:
         """30-day-old hypothesis has significantly lower utility than fresh one."""
         from datetime import date, timedelta
 
-        from trw_mcp.scoring._decay import _entry_utility
+        from trw_mcp.scoring._decay import entry_utility
 
         today = date(2026, 4, 1)
         old_created = (today - timedelta(days=30)).isoformat()
@@ -135,8 +140,8 @@ class TestTypeHalfLife:
         old_entry = dict(base, created=old_created)
         fresh_entry = dict(base, created=fresh_created)
 
-        utility_old = _entry_utility(old_entry, today)
-        utility_fresh = _entry_utility(fresh_entry, today)
+        utility_old = entry_utility(old_entry, today)
+        utility_fresh = entry_utility(fresh_entry, today)
 
         assert utility_old < utility_fresh * 0.5
 
@@ -144,7 +149,7 @@ class TestTypeHalfLife:
         """Unverified incident has near-zero decay (half_life=9999)."""
         from datetime import date, timedelta
 
-        from trw_mcp.scoring._decay import _entry_utility
+        from trw_mcp.scoring._decay import entry_utility
 
         today = date(2026, 4, 1)
         old_created = (today - timedelta(days=500)).isoformat()
@@ -164,7 +169,7 @@ class TestTypeHalfLife:
         old_entry = dict(base, created=old_created)
         fresh_entry = dict(base, created=fresh_created)
 
-        utility_old = _entry_utility(old_entry, today)
-        utility_fresh = _entry_utility(fresh_entry, today)
+        utility_old = entry_utility(old_entry, today)
+        utility_fresh = entry_utility(fresh_entry, today)
 
         assert utility_old > utility_fresh * 0.8

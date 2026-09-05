@@ -64,6 +64,10 @@ from trw_mcp.tools._learning_helpers import (
     check_soft_cap,
     enforce_distribution,
 )
+from trw_mcp.tools._state_assertion_hint import (
+    propose_validity_window,
+    validity_window_nudge,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +112,14 @@ def execute_learn(
     # ~10 explicit ``cast`` calls at every use site for zero added safety; the
     # real type contract is enforced by the concrete default each ``or``-falls
     # back to below. Keep ``Any`` here deliberately.
+    #
+    # PRD-FIX-130-FR03: two of these are ALSO production seams, not test-only.
+    # The journal drain injects ``_list_active_learnings`` (the sweep's shared
+    # active set, resolved once instead of once per record) and
+    # ``_save_learning_entry`` (bound to the sweep's index sink, so the learnings
+    # index is rewritten once per sweep instead of once per stored record). Both
+    # are per-sweep costs that were being paid per record; see
+    # ``tools/_learn_journal_wiring.replay_journaled_learn``.
     _adapter_store: Any = None,
     _generate_learning_id: Any = None,
     _save_learning_entry: Any = None,
@@ -199,8 +211,19 @@ def execute_learn(
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
     writer.ensure_dir(entries_dir)
 
-    # One-time batch dedup migration (PRD-CORE-042 FR05)
-    if config.dedup_enabled:
+    # One-time batch dedup migration (PRD-CORE-042 FR05).
+    #
+    # PRD-FIX-130-FR05: NEVER on the journal-replay path. This branch runs the
+    # full O(N^2) embed-and-compare scan of every active entry synchronously
+    # inside whichever learn happens to be first — and during a drain that is the
+    # FIRST REPLAY. Measured 2026-09-04: 307.7 s of a 321,050 ms session_start,
+    # against a 33,552 ms control on the same corpus with the marker present.
+    # FR01's guarantee ("the sweep overruns by at most one record's replay") is
+    # vacuous if one replay can take 307 s, so the skip is a correctness
+    # dependency of the budget, not a nicety. The migration is not LOST by being
+    # skipped: the marker is still unwritten, the drain reschedules it onto the
+    # FR02 background thread, and the interactive path below is unchanged.
+    if config.dedup_enabled and not _from_journal:
         try:
             from trw_mcp.state.dedup import batch_dedup, is_migration_needed
 
@@ -461,6 +484,18 @@ def execute_learn(
         result_dict["distribution_warning"] = distribution_warning
     if distribution_soft_cap_warning:
         result_dict["distribution_warning"] = distribution_soft_cap_warning
+
+    # PRD-CORE-244-FR05: offer a validity window for a state-asserting learning.
+    # This runs AFTER a successful store and does NOT touch the ``expires`` value
+    # forwarded above: silent stamping is prohibited, because a classifier that
+    # puts a TTL on an invariant makes the store less true than one that puts
+    # none anywhere. Fail-open — an advisory string must never fail a learn.
+    try:
+        window = propose_validity_window(summary, detail, type, config.state_learning_default_ttl_days)
+        if window is not None:
+            result_dict["validity_window_nudge"] = validity_window_nudge(learning_id, window)
+    except Exception:  # justified: fail-open, advisory text only
+        logger.debug("validity_window_nudge_skipped", exc_info=True)
 
     # Increment ceremony progress state (PRD-CORE-074 FR04)
     try:

@@ -37,6 +37,7 @@ module escapes this, so correctness no longer depends on a grep or a list.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from collections.abc import Callable
@@ -79,7 +80,25 @@ def current_root() -> Path:
 
 
 def resolve_project_root() -> Path:
-    """Isolated stand-in for ``trw_mcp.state._paths.resolve_project_root``."""
+    """Isolated stand-in for ``trw_mcp.state._paths.resolve_project_root``.
+
+    Mirrors the genuine function's ``TRW_PROJECT_ROOT``-env-var-first
+    precedence instead of unconditionally returning the fixture's tmp dir.
+
+    The stand-in used to always return :func:`current_root`, silently
+    ignoring ``TRW_PROJECT_ROOT`` even when a test set it explicitly to
+    verify env-var-based resolution. That leaked the isolation harness's
+    own tmp-path choice into tests whose whole point was to exercise the
+    env-var branch, which then passed or failed for the wrong reason (see
+    ``tests/test_core205_review_producers_enforce.py`` for a test that
+    routed around this by rooting its fixture at ``tmp_path`` itself). A
+    test-set ``TRW_PROJECT_ROOT`` is still confined to whatever directory
+    the test created (almost always under ``tmp_path``), so honoring it
+    does not reopen the real-repo leak this module exists to close.
+    """
+    env_root = os.environ.get("TRW_PROJECT_ROOT")
+    if env_root:
+        return Path(env_root).resolve()
     return current_root()
 
 

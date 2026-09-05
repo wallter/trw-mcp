@@ -50,11 +50,18 @@ DoctorStatus = Literal["PASS", "WARN", "FAIL", "SKIP"]
 
 @dataclass(frozen=True)
 class CheckResult:
-    """One diagnostic check outcome."""
+    """One diagnostic check outcome.
+
+    *data* carries machine-readable detail for checks whose message is a
+    summary of something structured — the ``agent_parity`` per-client installed
+    and expected counts are the first case (PRD-CORE-252-FR05). It is omitted
+    from the json payload when empty, so no existing row grows a key.
+    """
 
     name: str
     status: DoctorStatus
     message: str
+    data: tuple[object, ...] = ()
 
 
 def _overall_status(results: list[CheckResult]) -> Literal["pass", "warn", "fail"]:
@@ -115,6 +122,17 @@ def _parse_version(raw: str) -> tuple[int, ...]:
 
 
 def _check_config(target: Path, _config: TRWConfig) -> CheckResult:
+    """Report whether the TARGET's ``config.yaml`` is present, parseable, and schema-valid.
+
+    CORE262-11: this used to validate a bare ``TRWConfig()`` -- field defaults
+    plus whatever ``TRW_*`` env vars happen to be set in THIS process -- which
+    has no dependency on the target file's content at all. A syntactically
+    valid YAML mapping that Pydantic rejects (e.g. ``target_platforms: 5``)
+    therefore always read PASS: the row validated a config that had nothing to
+    do with the file it claimed to check. This now re-parses the same mapping
+    ``_resolve_target_config`` builds a ``TRWConfig`` from, and validates that
+    mapping directly, so a schema-invalid target genuinely fails this row.
+    """
     config_path = target / ".trw" / "config.yaml"
     if not config_path.exists():
         return CheckResult(
@@ -125,14 +143,19 @@ def _check_config(target: Path, _config: TRWConfig) -> CheckResult:
     try:
         from ruamel.yaml import YAML
 
-        YAML(typ="safe").load(config_path.read_text(encoding="utf-8"))
+        raw = YAML(typ="safe").load(config_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return CheckResult("config", "FAIL", f"config.yaml parse error: {exc}")
 
+    from trw_mcp.models.config._loader import _normalize_meta_tune_overrides
+
+    overrides = raw if isinstance(raw, dict) else {}
+    overrides = {str(k): v for k, v in overrides.items() if v is not None}
+    overrides.pop("platform_api_key", None)
     try:
-        TRWConfig()
+        TRWConfig(**_normalize_meta_tune_overrides(overrides))  # type: ignore[arg-type]
     except Exception as exc:
-        return CheckResult("config", "FAIL", f"config.yaml present but TRWConfig() failed: {exc}")
+        return CheckResult("config", "FAIL", f"config.yaml present but schema-invalid: {exc}")
     return CheckResult("config", "PASS", f"{config_path} found and valid.")
 
 
@@ -165,15 +188,29 @@ def _check_mcp_import(_target: Path, _config: TRWConfig) -> CheckResult:
 
 
 def _check_profile(_target: Path, config: TRWConfig) -> CheckResult:
+    """Report the profile the project resolved, and WARN when it is not the one it asked for.
+
+    PASS is reserved for agreement (PRD-CORE-262-FR05). The old predicate
+    returned PASS whenever the REQUESTED identifier was merely a known profile,
+    never comparing it to the resolved one — so a silent fallback (retired
+    identifier, unknown platform, empty ``target_platforms``) read green while
+    the row printed a client the project never selected.
+    """
     requested = config.target_platforms[0] if config.target_platforms else "claude-code"
     resolved = config.client_profile.client_id
-    if requested in _PROFILES:
-        return CheckResult("profile", "PASS", f"profile: {resolved}")
-    return CheckResult(
-        "profile",
-        "WARN",
-        f"profile: {resolved} (requested '{requested}' is not a supported profile; fell back).",
-    )
+    if requested not in _PROFILES:
+        return CheckResult(
+            "profile",
+            "WARN",
+            f"profile: {resolved} (requested '{requested}' is not a supported profile; fell back).",
+        )
+    if requested != resolved:
+        return CheckResult(
+            "profile",
+            "WARN",
+            f"profile: {resolved} (requested '{requested}' resolved to '{resolved}').",
+        )
+    return CheckResult("profile", "PASS", f"profile: {resolved}")
 
 
 # ── FR-07: instruction-file presence + deliver-gate statement ────────────────
@@ -273,6 +310,58 @@ def _check_memory_backend(target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("memory_backend", "PASS", f"memory store healthy ({count} entries, vectors ok).")
 
 
+# ── PRD-CORE-248-FR06: WAL size, live writers, last-checkpoint age ───────────
+
+
+def _check_memory_wal(target: Path, _config: TRWConfig) -> CheckResult:
+    """Report WAL size, live writer count, and last-checkpoint age.
+
+    Delegates to the ``_doctor_memory_wal`` sibling (kept out of this file for
+    the module-size gate). It opens NO SQLite connection — unlike
+    ``_check_memory_backend`` above — because a diagnostic that adds a writer to
+    a contended store is measuring the thing it just made worse.
+    """
+    from trw_mcp.server._doctor_memory_wal import memory_wal_row
+
+    status, message = memory_wal_row(target)
+    return CheckResult("memory_wal", cast("DoctorStatus", status), message)
+
+
+# ── PRD-CORE-253-FR03: loopback memory-daemon reachability ───────────────────
+
+
+def _check_memory_daemon(_target: Path, _config: TRWConfig) -> CheckResult:
+    """Report the user-space memory daemon's reachability, pid, uptime and store.
+
+    Delegates to the ``_doctor_memory_daemon`` sibling (kept out of this file
+    for the module-size gate). It PROBES and never starts: a diagnostic that
+    spawned a daemon would always report one.
+    """
+    from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
+
+    status, message = memory_daemon_row()
+    return CheckResult("memory_daemon", cast("DoctorStatus", status), message)
+
+
+# ── PRD-SEC-014-FR04: embedding cache state + egress posture ─────────────────
+
+
+def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
+    """Report the configured model's cache state and the effective egress posture.
+
+    Delegates to the ``_doctor_embedding_egress`` sibling (kept out of this file
+    for the eLOC gate). Fail-open: an unanswerable cache probe becomes a WARN row
+    with the conservative posture, never an aborted report.
+    """
+    from trw_mcp.server._doctor_embedding_egress import embedding_egress_report
+
+    status, message = embedding_egress_report(
+        str(getattr(config, "retrieval_embedding_model", "") or ""),
+        embeddings_enabled=bool(getattr(config, "embeddings_enabled", False)),
+    )
+    return CheckResult("embedding_egress", cast("DoctorStatus", status), message)
+
+
 # ── FR-10: optional backend probe + installer-flag advisory ──────────────────
 
 
@@ -366,6 +455,44 @@ def _check_tendencies_xref(_target: Path, _config: TRWConfig) -> CheckResult:
     )
 
 
+# ── FR-12 (PRD-CORE-252-FR05): bundled-agent parity per selected client ──────
+
+
+def _check_agent_parity(target: Path, _config: TRWConfig) -> CheckResult:
+    """Report whether each selected client holds the full bundled agent set."""
+    from trw_mcp.server._doctor_agent_parity import agent_parity_report
+
+    status, message, rows = agent_parity_report(target)
+    return CheckResult("agent_parity", cast("DoctorStatus", status), message, data=tuple(rows))
+
+
+def _check_formation_readiness(_target: Path, config: TRWConfig) -> CheckResult:
+    """Report per-client dispatch readiness: verification, binary, live version."""
+    from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
+
+    status, message, rows = formation_readiness_report(config)
+    return CheckResult("formation_readiness", cast("DoctorStatus", status), message, data=tuple(rows))
+
+
+# ── PRD-FIX-133: Antigravity CLI live MCP registration ───────────────────────
+
+
+def _check_antigravity_mcp(target: Path, _config: TRWConfig) -> CheckResult:
+    """Report whether ``agy`` actually sees the ``trw`` MCP server registered.
+
+    Delegates to the ``_doctor_antigravity_mcp`` sibling (kept out of this file
+    for the eLOC gate). Probes the live client via ``agy mcp list`` rather than
+    re-reading the config file the installer just wrote, so a write that
+    silently fails to reach the running client is caught. SKIPs — never
+    PASSes — when the ``agy`` binary is absent, since an absent binary makes
+    registration unknown, not confirmed.
+    """
+    from trw_mcp.server._doctor_antigravity_mcp import antigravity_mcp_row
+
+    status, message = antigravity_mcp_row(target)
+    return CheckResult("antigravity_mcp", cast("DoctorStatus", status), message)
+
+
 # ── Catalogue + orchestration ────────────────────────────────────────────────
 
 _CheckFn = Callable[[Path, TRWConfig], CheckResult]
@@ -382,11 +509,24 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("instruction_carrier", "_check_instruction_carrier_state"),
     ("trw_dir", "_check_trw_dir"),
     ("framework_integrity", "_check_framework_integrity"),
+    # PRD-CORE-248 FR06: memory_wal runs BEFORE memory_backend. The backend
+    # check opens the store, and opening a SQLite store checkpoints and rewrites
+    # its WAL — so a WAL row placed after it would report the state the
+    # diagnostic itself produced, not the state the operator came to see.
+    ("memory_wal", "_check_memory_wal"),
     ("memory_backend", "_check_memory_backend"),
+    ("memory_daemon", "_check_memory_daemon"),
+    ("embedding_egress", "_check_embedding_egress"),
     ("backend_connectivity", "_check_backend_connectivity"),
     ("installer_flag_advisory", "_check_installer_flag_advisory"),
     ("stubs", "_check_stubs"),
+    ("agent_parity", "_check_agent_parity"),
+    ("antigravity_mcp", "_check_antigravity_mcp"),
     ("tendencies_xref", "_check_tendencies_xref"),
+    # PRD-CORE-266-FR06: appended LAST so every pre-existing row keeps its
+    # position — the doctor's row order is asserted by its own tests and relied
+    # on by operator habit; it is the later of the two subprocess-spawning checks.
+    ("formation_readiness", "_check_formation_readiness"),
 )
 
 
@@ -417,16 +557,67 @@ def _format_human(results: list[CheckResult], overall: str) -> str:
     return "\n".join(lines)
 
 
+def _resolve_target_config(target: Path) -> TRWConfig:
+    """Build the config the TARGET project records, not this process's defaults.
+
+    ``TRWConfig()`` is the bare constructor: field defaults only, never the
+    target's ``.trw/config.yaml``. Every row reading ``target_platforms`` or
+    ``client_profile`` off it therefore printed ``claude-code`` for a codex
+    project — the identical answer it would print for a project that recorded
+    nothing at all, which makes the row unable to be wrong and unable to be
+    right (PRD-CORE-262-FR05).
+
+    Detection never enters this: ``target_platforms`` is the durable record the
+    init path itself wrote, and directory presence cannot distinguish TRW's own
+    scaffold from the user's. ``platform_api_key`` is dropped exactly as the
+    production cascade drops it (PRD-SEC-005-FR03): a tracked ``config.yaml``
+    is never a credential source, not even for a diagnostic read.
+
+    CORE262-10: ``_read_yaml_overrides`` documents "never raises" but does not
+    honor that contract -- ``FileStateReader.read_yaml`` raises ``StateError``
+    on malformed YAML (or a non-mapping top level), and nothing here caught
+    it. ``_run_doctor`` calls this function BEFORE ``_doctor_core``'s per-check
+    exception isolation even starts, so a malformed target ``config.yaml``
+    used to abort the whole ``doctor`` invocation before a single row printed
+    -- not even the ``config: FAIL`` row this exact input is supposed to
+    produce. Falling back to ``TRWConfig()`` here is safe: ``_check_config``
+    re-parses the same file independently and reports the parse failure as
+    its own FAIL row.
+    """
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.models.config._loader import (
+        _normalize_meta_tune_overrides,
+        _read_yaml_overrides,
+    )
+
+    try:
+        overrides = _read_yaml_overrides(target / ".trw" / "config.yaml")
+    except StateError:
+        logger.warning("doctor_target_config_unreadable", path=str(target / ".trw" / "config.yaml"), exc_info=True)
+        return TRWConfig()
+    overrides.pop("platform_api_key", None)
+    if not overrides:
+        return TRWConfig()
+    try:
+        return TRWConfig(**_normalize_meta_tune_overrides(overrides))  # type: ignore[arg-type]
+    except Exception:  # justified: an invalid config.yaml is _check_config's verdict, not this row's
+        logger.warning("doctor_target_config_invalid", path=str(target / ".trw" / "config.yaml"), exc_info=True)
+        return TRWConfig()
+
+
 def _run_doctor(args: argparse.Namespace) -> None:
     """Handle the ``doctor`` subcommand. Exits 1 iff overall verdict is fail."""
     target = Path(getattr(args, "target_dir", ".")).resolve()
-    config = TRWConfig()
+    config = _resolve_target_config(target)
     results = _doctor_core(target, config)
     overall = _overall_status(results)
 
     if getattr(args, "format", "human") == "json":
         payload = {
-            "checks": [{"name": r.name, "status": r.status, "message": r.message} for r in results],
+            "checks": [
+                {"name": r.name, "status": r.status, "message": r.message} | ({"data": list(r.data)} if r.data else {})
+                for r in results
+            ],
             "overall": overall,
         }
         print(json.dumps(payload, indent=2))

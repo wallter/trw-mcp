@@ -29,20 +29,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 
 ### Tool Lifecycle
 
-| Phase | Tool | When to Use | What It Does | Example |
-|-------|------|-------------|--------------|---------|
-| Start | `trw_session_start` | First action — loads prior learnings + recovers active run state | Start from accumulated knowledge instead of zero — prior agents already found gotchas for your area | `trw_session_start(query='task domain')` |
-| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings without a full run | Surface discoveries from past sessions so you don't repeat solved problems | `trw_recall('auth patterns', min_impact=0.7)` |
-| Start | `trw_status` | When resuming — shows current phase, progress, and next steps | Pick up where you left off instead of redoing completed work | `trw_status()` |
-| RESEARCH | `trw_init` | New structured tasks — creates run directory for tracking | Enables checkpoints and progress tracking — without a run, your progress can't be saved | `trw_init(task_name='...')` |
-| Any | `trw_learn` | On errors, discoveries, or gotchas | Saves your finding so no future agent repeats your mistake — this is how institutional knowledge grows | `trw_learn(summary='...', impact=0.8)` |
-| Any | `trw_checkpoint` | After milestones — preserves progress across context compactions | Your resume point if context compacts — uncheckpointed work is permanently lost | `trw_checkpoint(message='...')` |
-| PLAN | `trw_prd_create` | When defining requirements for a new feature or fix | Ambiguous requirements are the cheapest defect to fix in spec and the most expensive in code | `trw_prd_create(input_text='...')` |
-| PLAN | `trw_prd_validate` | Before implementation begins | Catches requirement gaps before they become code bugs — cheaper to fix in spec than in code | `trw_prd_validate(prd_path='...')` |
-| VALIDATE | `trw_build_check` | After implementation and before delivery | Catches failures before delivery — a failure found after delivery cascades into multi-file rework | `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope='<exact command>')` |
-| REVIEW | `review diff` | After VALIDATE — check quality (DRY/KISS/SOLID), fix gaps, record learnings | Independent review catches what self-review misses — implementers optimize for completion, reviewers for correctness | `Read diff, fix gaps, trw_learn(summary='...')` |
-| DELIVER | `trw_instructions_sync` | At delivery | Refreshes the client's instruction file (CLAUDE.md / AGENTS.md / etc.) so every future session starts with your best insights | `trw_instructions_sync()` |
-| DELIVER | `trw_deliver` | Last action — persists everything in one call | Without this, your session's learnings are invisible to future agents — they start from scratch | `trw_deliver()` |
+Call `trw_skill_discovery()` for the live tool and skill surface, and `trw_status()` for the phase you are in and what it expects next. Both read the running server, so neither can drift from what is actually exposed to you.
 
 
 ### Example Flows
@@ -67,9 +54,66 @@ trw_session_start -> trw_init(task_name, prd_scope)
 Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates, exit criteria, quality rubrics, and formation selection. Re-read after context compaction.
 
 
+## TRW Delegation & Orchestration (Auto-Generated)
+
+As orchestrator, your responsibilities are: (1) assess and decompose tasks, (2) use focused helpers only when the active harness supports them, (3) verify integration and quality, (4) maintain strategic oversight, and (5) preserve knowledge via TRW tools. Direct implementation is reserved for small or tightly coupled edits.
+
+### When to Delegate
+
+```
+Task arrives → Assess scope and harness
+├── Trivial or tightly coupled?   → Self-implement with checkpoint
+├── Research/read-only?           → Focused helper if available; otherwise sequential shard
+├── Single-scope? (≤3 files)      → One helper or one local pass
+├── Multi-scope? (4+ files)       → Split by explicit file ownership
+└── Interdependent/high-risk?     → Plan contracts first, then implement/review in stages
+```
+
+Delegation is optional. The invariant is focused context, explicit file ownership, persisted findings, and final integration by the orchestrator. If the client has no safe delegation surface, execute the same shards sequentially in the current session.
+
+
+<!-- trw:lifecycle-sync:sha256-a1208b5b0954 -->
+
+## TRW Governance (non-negotiable)
+
+Call `trw_session_start()` first.
+
+## Deliver Gate (v26.2)
+
+Do NOT call `trw_deliver` unless at least one of:
+- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
+  acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
+  `expiry_iso`, **or**
+- (c) an authorized operator/config override is recorded with technical rationale.
+
+A review-verdict label or free-text reason alone is not an acceptable-failure record.
+Under the default `deliver_gate_mode: block_coding` a missing build check blocks when the task type expects a build artifact (`coding`, `rca`, `eval`) OR when the session recorded modifications to at least `deliver_gate_unclassified_change_threshold` distinct files — so an unclassified or misclassified run that changed code still blocks. A run that modified nothing surfaces the missing-build warning as an advisory without requiring an exception record.
+
 ### Session Boundaries
 
 Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.
+
+### Troubleshooting: the MCP surface is absent
+
+If the `trw_*` tools are missing or fail (`fetch failed`, a connect timeout, an
+empty tool list), every obligation still binds — RIGID names an OBLIGATION, not a
+tool call. Use the offline substitute:
+
+| Obligation | Offline substitute |
+|---|---|
+| `trw_session_start` | `trw-mcp local status`, then `trw-mcp local recall --query "<domain>"` |
+| `trw_init` | `trw-mcp local init --task NAME` |
+| `trw_checkpoint` | `trw-mcp local checkpoint --message MSG` |
+| `trw_learn` | `trw-mcp local learn --summary S --detail D --tag T` |
+| `trw_recall` | `trw-mcp local recall --query Q` |
+| `trw_build_check` | run the project-native check yourself, then write the exact command string and its integer exit code into the active run's `reports/` directory |
+| `trw_deliver` | `trw-mcp local deliver --message MSG` — records `gate_evaluated: false`, which is an UNGATED delivery; the gate above still binds until evidence exists |
+| Feedback | `trw-mcp local feedback --category C --subject S --message M` |
+
+Writes made offline are marked (`source_identity=local_cli` plus a transient
+`trw-reconcile-pending` tag) and the next successful `trw_session_start` reports
+them back, so you do not have to track them by hand.
 
 
 === ceremony_quick_ref ===
@@ -144,8 +188,47 @@ Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates,
 
 
 === closing_reminder ===
+<!-- trw:lifecycle-sync:sha256-a1208b5b0954 -->
+
+## TRW Governance (non-negotiable)
+
+Call `trw_session_start()` first.
+
+## Deliver Gate (v26.2)
+
+Do NOT call `trw_deliver` unless at least one of:
+- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
+  acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
+  `expiry_iso`, **or**
+- (c) an authorized operator/config override is recorded with technical rationale.
+
+A review-verdict label or free-text reason alone is not an acceptable-failure record.
+Under the default `deliver_gate_mode: block_coding` a missing build check blocks when the task type expects a build artifact (`coding`, `rca`, `eval`) OR when the session recorded modifications to at least `deliver_gate_unclassified_change_threshold` distinct files — so an unclassified or misclassified run that changed code still blocks. A run that modified nothing surfaces the missing-build warning as an advisory without requiring an exception record.
+
 ### Session Boundaries
 
 Every session that loads learnings via `trw_session_start()` should persist them at session end — this is how your work compounds across sessions instead of being lost.
+
+### Troubleshooting: the MCP surface is absent
+
+If the `trw_*` tools are missing or fail (`fetch failed`, a connect timeout, an
+empty tool list), every obligation still binds — RIGID names an OBLIGATION, not a
+tool call. Use the offline substitute:
+
+| Obligation | Offline substitute |
+|---|---|
+| `trw_session_start` | `trw-mcp local status`, then `trw-mcp local recall --query "<domain>"` |
+| `trw_init` | `trw-mcp local init --task NAME` |
+| `trw_checkpoint` | `trw-mcp local checkpoint --message MSG` |
+| `trw_learn` | `trw-mcp local learn --summary S --detail D --tag T` |
+| `trw_recall` | `trw-mcp local recall --query Q` |
+| `trw_build_check` | run the project-native check yourself, then write the exact command string and its integer exit code into the active run's `reports/` directory |
+| `trw_deliver` | `trw-mcp local deliver --message MSG` — records `gate_evaluated: false`, which is an UNGATED delivery; the gate above still binds until evidence exists |
+| Feedback | `trw-mcp local feedback --category C --subject S --message M` |
+
+Writes made offline are marked (`source_identity=local_cli` plus a transient
+`trw-reconcile-pending` tag) and the next successful `trw_session_start` reports
+them back, so you do not have to track them by hand.
 
 

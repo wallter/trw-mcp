@@ -147,6 +147,8 @@ def _make_run(
             {
                 "ts": "2026-07-10T01:00:00Z",
                 "event": "build_check_complete",
+                "test_count": 12,
+                "scope": "pytest tests",
                 "tests_passed": True,
                 "static_checks_clean": True,
             }
@@ -482,6 +484,8 @@ def _write_e2e_run(tmp_path: Path) -> Path:
             {
                 "ts": "2026-07-10T00:00:02Z",
                 "event": "build_check_complete",
+                "test_count": 12,
+                "scope": "pytest tests",
                 "tests_passed": True,
                 "static_checks_clean": True,
             }

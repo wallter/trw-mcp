@@ -31,6 +31,7 @@ def _run_maintain_verify(args: argparse.Namespace) -> None:
         get_backend(resolve_trw_dir()),
         assertion_failure_penalty=config.assertion_failure_penalty,
         assertion_stale_threshold_days=config.assertion_stale_threshold_days,
+        anchor_validity_verified_floor=config.anchor_validity_verified_floor,
         batch_limit=config.maintain_verify_batch_limit,
         project_root=project_root,
         namespace=getattr(args, "namespace", None),

@@ -108,10 +108,31 @@ def _codex_skill_names() -> set[str]:
     return {d.name for d in source.iterdir() if d.is_dir()}
 
 
-def _codex_agent_names() -> set[str]:
-    from ._codex import _CODEX_AGENT_TEMPLATES
+def _bundled_agent_filenames(client: str) -> set[str]:
+    """Filenames the bundled agent set produces for *client*.
 
-    return set(_CODEX_AGENT_TEMPLATES)
+    Derived from the bundle plus the client's registry entry, so the stale
+    sweep tracks the bundle automatically. It used to read a per-client
+    template dictionary, which is why retiring a stub name required a second
+    edit — and why a name dropped from one dictionary lingered in installs.
+    """
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.exceptions import AgentFormatError
+
+    from ._utils import _DATA_DIR
+
+    try:
+        fmt = agent_format_for(client)
+    except AgentFormatError:
+        return set()
+    source = _DATA_DIR / "agents"
+    if not fmt.supports_agents or not source.is_dir():
+        return set()
+    return {f"{path.stem}{fmt.filename_suffix}" for path in source.glob("*.md")}
+
+
+def _codex_agent_names() -> set[str]:
+    return _bundled_agent_filenames("codex")
 
 
 def _cursor_skill_names() -> set[str]:
@@ -121,9 +142,7 @@ def _cursor_skill_names() -> set[str]:
 
 
 def _cursor_agent_names() -> set[str]:
-    from ._cursor_ide import _TRW_SUBAGENTS
-
-    return {f"{name}.md" for name, _ in _TRW_SUBAGENTS}
+    return _bundled_agent_filenames("cursor-ide")
 
 
 def _cursor_command_names() -> set[str]:
@@ -146,9 +165,11 @@ def _copilot_skill_names() -> set[str]:
 
 
 def _copilot_agent_names() -> set[str]:
-    from ._copilot import _COPILOT_AGENT_TEMPLATES
+    return _bundled_agent_filenames("copilot")
 
-    return set(_COPILOT_AGENT_TEMPLATES)
+
+def _antigravity_agent_names() -> set[str]:
+    return _bundled_agent_filenames("antigravity-cli")
 
 
 # File-key sources for the in-directory sweep. Each one delegates to the SAME
@@ -176,7 +197,7 @@ def _copilot_skill_file_keys() -> set[str]:
 # surface rather than breaking the whole update.
 _CLIENT_ARTIFACT_SURFACES: tuple[ClientArtifactSurface, ...] = (
     # Codex: skills mirror bundled DIRECTORIES under data/codex/skills; agents
-    # are the 4 in-repo .toml templates.
+    # are the bundled specialists rendered as .toml.
     ClientArtifactSurface(
         ".agents/skills",
         True,
@@ -196,8 +217,8 @@ _CLIENT_ARTIFACT_SURFACES: tuple[ClientArtifactSurface, ...] = (
     ),
     ClientArtifactSurface(".cursor/agents", False, _cursor_agent_names, "stale_cursor_agent_removal_failed"),
     ClientArtifactSurface(".cursor/commands", False, _cursor_command_names, "stale_cursor_command_removal_failed"),
-    # Copilot: skills are DIRECTORIES from data/skills; agents are flattened
-    # trw-*.agent.md files.
+    # Copilot: skills are DIRECTORIES from data/skills; agents are the bundled
+    # specialists rendered as trw-*.agent.md files.
     ClientArtifactSurface(
         ".github/skills",
         True,
@@ -206,6 +227,11 @@ _CLIENT_ARTIFACT_SURFACES: tuple[ClientArtifactSurface, ...] = (
         bundled_files=_copilot_skill_file_keys,
     ),
     ClientArtifactSurface(".github/agents", False, _copilot_agent_names, "stale_copilot_agent_removal_failed"),
+    # Antigravity: `.agents/agents` is the directory its own subagent reference
+    # documents. TRW's pre-PRD-CORE-252 destination, `.antigravitycli/agents`,
+    # is swept by the relocation migration rather than here, because the distill
+    # channel still owns a `trw-`-prefixed file in that directory.
+    ClientArtifactSurface(".agents/agents", False, _antigravity_agent_names, "stale_antigravity_agent_removal_failed"),
 )
 
 
@@ -327,16 +353,18 @@ def _remove_stale_client_surface(
 def codex_artifact_contents() -> dict[str, bytes]:
     """``{repo-relative path: bundled bytes}`` for every codex mirror artifact.
 
-    The SAME sources ``_codex.generate_codex_agents`` / ``install_codex_skills``
-    write from, so the recorder can never key on a path the installer does not
-    produce, and the ownership decision compares against the same bytes the
-    writer would have written. Read once per ``_write_manifest`` call.
-    """
-    from ._codex import _CODEX_AGENT_TEMPLATES, _CODEX_AGENTS_DIR, _CODEX_SKILLS_DIR, _codex_skills_source_dir
+    The SAME source ``_codex.install_codex_skills`` writes from, so the recorder
+    can never key on a path the installer does not produce, and the ownership
+    decision compares against the same bytes the writer would have written. Read
+    once per ``_write_manifest`` call.
 
-    contents: dict[str, bytes] = {
-        f"{_CODEX_AGENTS_DIR}/{filename}": body.encode("utf-8") for filename, body in _CODEX_AGENT_TEMPLATES.items()
-    }
+    ``.codex/agents`` is deliberately absent since PRD-CORE-252: codex agents are
+    materialized from the shared bundle like every other client's, and are
+    recorded by ``_managed_client_artifacts.bundled_agent_contents``.
+    """
+    from ._codex import _CODEX_SKILLS_DIR, _codex_skills_source_dir
+
+    contents: dict[str, bytes] = {}
     source = _codex_skills_source_dir()
     if source.is_dir():
         for skill in sorted(source.iterdir()):
@@ -358,11 +386,14 @@ def _codex_manifest_hashes(target_dir: Path, prev_hashes: dict[str, str] | None 
     Persisted into ``managed-artifacts.yaml`` (``content_hashes``) by
     ``_write_manifest`` so the NEXT update can distinguish a user-edited codex
     artifact from a stale-but-unmodified one, enabling content-aware refresh
-    (FIX B). Keys MUST match the ``rel``/``rel_path`` used by
-    ``_codex.generate_codex_agents`` / ``install_codex_skills`` so the
-    modification guard lines up:
-      - ``.codex/agents/<name>.toml``
+    (FIX B). Keys MUST match the ``rel_path`` used by
+    ``_codex.install_codex_skills`` so the modification guard lines up:
       - ``.agents/skills/<skill>/<file>``
+
+    ``.codex/agents/<name>.toml`` left this recorder with PRD-CORE-252-FR04:
+    codex agents are materializations of the shared bundle now, recorded by
+    ``_managed_client_artifacts.bundled_agent_contents`` against the bytes the
+    shared installer actually writes.
 
     PRD-FIX-121-FR01: *prev_hashes* is the manifest as it stood BEFORE this run.
     An artifact diverging from both the current bundle and its own previous

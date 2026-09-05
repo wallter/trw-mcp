@@ -1,10 +1,17 @@
 """PRD-CORE-149 FR05: hook short-circuit under HOOKS_ENABLED=false.
 
-Runs the shipped ``phase-cycle-stop.sh`` and verifies its stdout is empty
+Runs the shipped ``stop-ceremony.sh`` and verifies its stdout is empty
 when HOOKS_ENABLED=false (light-mode profiles). Runs it with
 HOOKS_ENABLED=true and confirms the hook still short-circuits cleanly
 (exit 0) -- the hook may still emit nothing in a fresh-tmp scenario, so
 we only assert on the HOOKS_ENABLED=false branch being strictly silent.
+
+The subject was ``phase-cycle-stop.sh`` until PRD-CORE-250-FR03 deleted it as
+registered by no shipped template. ``stop-ceremony.sh`` is the correct
+replacement rather than a convenient one: it is the Stop-event hook that DOES
+ship registered in both templates, and it is the only other blocking hook, so
+the FR05 short-circuit matters more there than it ever did on a file that could
+not fire.
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ import pytest
 
 pytestmark = pytest.mark.unit
 
-HOOK = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks" / "phase-cycle-stop.sh"
+HOOK = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks" / "stop-ceremony.sh"
 SESSION_HOOK = HOOK.with_name("session-start.sh")
 POLICY_GATED_HOOKS = (SESSION_HOOK, HOOK.with_name("post-compact.sh"), HOOK.with_name("post-tool-event.sh"))
 

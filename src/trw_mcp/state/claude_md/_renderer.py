@@ -17,6 +17,7 @@ from typing import Literal
 import structlog
 
 from trw_mcp.models.config._client_profile import ClientProfile
+from trw_mcp.state.claude_md._catalogue import CEREMONY_POINTER, catalogue_is_verbatim
 from trw_mcp.state.claude_md._templates import (
     CEREMONY_TOOLS,
     PHASE_DESCRIPTIONS,
@@ -155,6 +156,15 @@ class ProtocolRenderer:
         lines.append("")
         return "\n".join(lines) + "\n"
 
+    def _catalogue_section(self) -> str:
+        """Return the catalogue in the form this profile should receive (FR08).
+
+        The rule — and why a light-ceremony profile always keeps the verbatim
+        table — lives in :mod:`trw_mcp.state.claude_md._catalogue`.
+        """
+        verbatim = catalogue_is_verbatim(self.client_profile.ceremony_mode)
+        return self.render_ceremony_table() if verbatim else CEREMONY_POINTER
+
     # ------------------------------------------------------------------
     # Ceremony flows
     # ------------------------------------------------------------------
@@ -202,13 +212,11 @@ class ProtocolRenderer:
             "\n"
         )
 
-    # ------------------------------------------------------------------
-    # Closing reminder
-    # ------------------------------------------------------------------
+    def render_delegation_section(self) -> str:
+        """Delegation protocol; no-ops per ``include_delegation`` (PRD-CORE-252 OQ-3)."""
+        from trw_mcp.state.claude_md.sections._delegation import render_delegation_protocol
 
-    def render_closing_reminder(self) -> str:
-        """Render closing reminder that bookends the auto-generated section."""
-        return "### Session Boundaries\n\n" + SESSION_BOUNDARY_TEXT + "\n"
+        return render_delegation_protocol(self.client_profile)
 
     # ------------------------------------------------------------------
     # FR04: Behavioral protocol (FULL mode)
@@ -219,14 +227,24 @@ class ProtocolRenderer:
 
         PRD-CORE-131-FR04: FULL ceremony mode output.
         """
+        from trw_mcp.state.claude_md.sections._tool_lifecycle import render_closing_reminder
+
         parts: list[str] = [
             "# TRW Behavioral Protocol\n",
             self.render_ceremony_quick_ref(),
             self.render_phase_descriptions(),
-            self.render_ceremony_table(),
+            self._catalogue_section(),  # PRD-CORE-247-FR08: pointer for full, table for light
             self.render_ceremony_flows(),
             self.render_framework_reference(),
-            self.render_closing_reminder(),
+            self.render_delegation_section(),
+            # PRD-CORE-247: the ONE closing reminder. A same-named method
+            # shadowed it here and returned session boundaries only, so this
+            # block reached bare harnesses carrying neither the deliver gate nor
+            # the offline substitutes (session-start.sh cats it verbatim out of
+            # .trw/context/behavioral_protocol.md). Duplicate deleted, not
+            # reconciled. Function-local import: sections._tool_lifecycle imports
+            # this module at module scope.
+            render_closing_reminder(),
         ]
         return "\n".join(parts)
 
@@ -300,40 +318,12 @@ class ProtocolRenderer:
         """Render instructions for OpenCode .opencode/INSTRUCTIONS.md.
 
         PRD-CORE-131-FR03: v25 accepts legacy ``model_family`` hints while
-        emitting provider-neutral instructions.
+        emitting provider-neutral instructions. Family-specific bodies live in
+        ``renderers/_review_and_opencode.py`` (PRD-CORE-149-FR10); collapsed
+        from four near-identical one-line wrapper methods into one dispatch
+        table (2026-09-04, to make room under the 350-line module ceiling).
         """
-        family = self.model_family
-        if family == "qwen":
-            return self._render_opencode_qwen()
-        if family == "gpt":
-            return self._render_opencode_gpt()
-        if family == "claude":
-            return self._render_opencode_claude()
-        return self._render_opencode_generic()
+        from trw_mcp.state.claude_md.renderers import _review_and_opencode as ro
 
-    def _render_opencode_qwen(self) -> str:
-        """Compatibility wrapper for legacy family-specific rendering."""
-        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_qwen
-
-        return render_opencode_qwen()
-
-    def _render_opencode_gpt(self) -> str:
-        """Compatibility wrapper for legacy family-specific rendering."""
-        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_gpt
-
-        return render_opencode_gpt()
-
-    def _render_opencode_claude(self) -> str:
-        """Compatibility wrapper for legacy family-specific rendering."""
-        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_claude
-
-        return render_opencode_claude()
-
-    def _render_opencode_generic(self) -> str:
-        """Render OpenCode instructions for unknown/generic models.
-
-        PRD-CORE-149-FR10: body extracted to renderers/_review_and_opencode.py.
-        """
-        from trw_mcp.state.claude_md.renderers._review_and_opencode import render_opencode_generic
-
-        return render_opencode_generic()
+        by_family = {"qwen": ro.render_opencode_qwen, "gpt": ro.render_opencode_gpt, "claude": ro.render_opencode_claude}
+        return by_family.get(self.model_family, ro.render_opencode_generic)()

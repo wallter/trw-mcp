@@ -51,6 +51,7 @@ from typing import Any
 
 import structlog
 
+from trw_mcp.models.run import RunStatus, is_terminal_status
 from trw_mcp.state._paths import iter_run_dirs
 from trw_mcp.state._run_gc_io import (
     _append_event_best_effort,
@@ -69,12 +70,6 @@ __all__ = [
     "compute_last_activity",
     "sweep_stale_runs",
 ]
-
-
-# Terminal statuses are skipped outright — their audit trail is sealed.
-_TERMINAL_STATUSES: frozenset[str] = frozenset(
-    {"complete", "failed", "delivered", "abandoned"},
-)
 
 
 @dataclass(frozen=True)
@@ -227,7 +222,10 @@ def sweep_stale_runs(
         # are reserved for actual actions taken (abandon / near-stale), which
         # are rare.
         prefilter_status = _prefilter_status(run_yaml_path)
-        if prefilter_status in _TERMINAL_STATUSES:
+        # Terminal statuses are skipped outright — their audit trail is sealed.
+        # The predicate is RunStatus.is_terminal (PRD-FIX-126-FR02), not a
+        # private literal set that can drift from the enum.
+        if prefilter_status is not None and is_terminal_status(prefilter_status):
             runs_skipped_terminal += 1
             continue
 
@@ -251,7 +249,7 @@ def sweep_stale_runs(
                 continue
             status_raw = data.get("status")
             status = str(status_raw).strip().lower() if status_raw is not None else ""
-            if status in _TERMINAL_STATUSES:
+            if is_terminal_status(status):
                 runs_skipped_terminal += 1
                 continue
             if status != "active":
@@ -350,7 +348,7 @@ def sweep_stale_runs(
                 run_path=str(run_dir),
             )
             continue
-        data["status"] = "abandoned"
+        data["status"] = RunStatus.ABANDONED.value
         try:
             _dump_run_yaml_atomic(run_yaml_path, data)
         except OSError as exc:

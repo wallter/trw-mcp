@@ -219,7 +219,14 @@ async def test_client_catalogue_contains_review_at_connect(project: Path) -> Non
     # The catalogue is genuinely BOUNDED at this point — this is a kernel-only
     # session, not a full-surface fail-open, so the line above means something.
     assert "trw_code_search" not in client.first_catalogue
-    assert len(client.first_catalogue) == 12
+    # 14 since PRD-CORE-246: the ``unknown`` fallback DECLARES verification
+    # (FR05) and ``trw_submit_feedback`` joined the bootstrap never-hide set
+    # (FR06), so a tooling-gap report is reachable from the first catalogue too.
+    # The 2026-09-04 wiring-defect fix added a third bootstrap tool
+    # (``trw_prd_validate``), 13 -> 14, so a coding-task session (and any
+    # sub-agent it dispatches) can reach the requirement-quality validator.
+    assert len(client.first_catalogue) == 14
+    assert "trw_submit_feedback" in client.first_catalogue
 
 
 @pytest.mark.asyncio
@@ -263,8 +270,10 @@ async def test_client_catalogue_does_not_learn_about_a_widened_surface(project: 
     """The control that makes this module non-vacuous.
 
     After ``trw_init(task_type='coding')`` the SERVER would answer *tools/list*
-    with 16 tools including ``trw_code_search``. The CLIENT's catalogue is the
-    12-tool connect-time snapshot, because Slice A ships no propagation. A test
+    with 17 tools including ``trw_code_search``. The CLIENT's catalogue is the
+    13-tool connect-time snapshot, because this helper drives ``trw_init``
+    directly rather than through the middleware, so PRD-CORE-246-FR07's
+    call-path push never fires for it. A test
     that asserted the server's answer under a client-shaped name would find
     ``trw_code_search`` and pass; this one must not.
 

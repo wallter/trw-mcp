@@ -336,8 +336,8 @@ def test_merge_team_learnings_inserts_team_sync_entries(tmp_path) -> None:
             ]
         )
 
-    assert merged == 1
-    stored = backend.get("team-sync-remote-1")
+    assert merged.applied == 1
+    stored = backend.get("team-sync-remote-1", namespace="default")
     assert stored is not None
     assert stored.source == "team_sync"
     assert stored.remote_id == "remote-1"
@@ -369,7 +369,7 @@ def test_merge_team_learnings_resolves_conflicts(tmp_path) -> None:
             metadata={"team_sync_pull_seq": "5"},
         )
     )
-    DeltaTracker.mark_synced(["team-sync-remote-1"], backend)
+    DeltaTracker.mark_synced(["team-sync-remote-1"], backend, namespace="default")
 
     puller = SyncPuller(
         backend_url="http://example.com",
@@ -396,8 +396,8 @@ def test_merge_team_learnings_resolves_conflicts(tmp_path) -> None:
             ]
         )
 
-    assert merged == 1
-    stored = backend.get("team-sync-remote-1")
+    assert merged.applied == 1
+    stored = backend.get("team-sync-remote-1", namespace="default")
     assert stored is not None
     assert stored.source == "team_sync"
     assert "local detail" in stored.detail
@@ -443,9 +443,89 @@ def test_merge_company_sync_learnings_tagged_distinctly(tmp_path) -> None:
             ]
         )
 
-    assert merged == 1
-    stored = backend.get("team-sync-company-1")
+    assert merged.applied == 1
+    stored = backend.get("team-sync-company-1", namespace="default")
     assert stored is not None
     assert stored.source == "company_sync"
     assert stored.metadata["source"] == "company_sync"
     assert stored.remote_id == "company-1"
+
+
+def test_two_peers_sharing_a_source_learning_id_stay_two_rows(tmp_path) -> None:
+    """PRD-CORE-245 FR03: the pull path resolves an existing row WITHIN its namespace.
+
+    ``_local_team_learning_id`` mints the local id from a PEER-SUPPLIED string, so
+    before the namespace predicate two peers emitting the same
+    ``source_learning_id`` into two namespaces matched each other's row and the
+    merge collapsed them into one.
+    """
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    from trw_mcp.sync.pull import SyncPuller
+
+    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
+    puller = SyncPuller(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        trw_dir=tmp_path,
+    )
+    payload = {
+        "source_learning_id": "remote-collide",
+        "summary": "peer content",
+        "impact": 0.5,
+        "type": "pattern",
+        "status": "active",
+    }
+
+    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
+        assert puller.merge_team_learnings([dict(payload)], namespace="project:alpha").applied == 1
+        assert puller.merge_team_learnings([dict(payload)], namespace="project:beta").applied == 1
+
+    rows = backend._conn.execute(
+        "SELECT namespace FROM memories WHERE id = ? ORDER BY namespace",
+        ("team-sync-remote-collide",),
+    ).fetchall()
+    assert [str(row[0]) for row in rows] == ["project:alpha", "project:beta"]
+
+
+def test_pulled_entry_lands_in_the_named_namespace_with_the_peers_clock(tmp_path) -> None:
+    """PRD-CORE-245 FR08: built through the factory, but the PEER's clock survives.
+
+    A deserialiser of remote state must reproduce the causality the payload
+    carries; stamping a local clock over it is the same corruption FR08 exists to
+    prevent, only inverted.
+    """
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    from trw_mcp.sync.pull import SyncPuller
+
+    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
+    puller = SyncPuller(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        trw_dir=tmp_path,
+    )
+
+    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
+        merged = puller.merge_team_learnings(
+            [
+                {
+                    "source_learning_id": "remote-ns",
+                    "summary": "namespaced tip",
+                    "impact": 0.5,
+                    "type": "pattern",
+                    "status": "active",
+                    "vector_clock": {"peer-node": 4},
+                }
+            ],
+            namespace="project:alpha",
+        )
+
+    assert merged.applied == 1
+    stored = backend.get("team-sync-remote-ns", namespace="project:alpha")
+    assert stored is not None, "the pulled entry must land in the namespace the caller named"
+    assert stored.namespace == "project:alpha"
+    assert stored.vector_clock == {"peer-node": 4}
+    assert backend.get("team-sync-remote-ns", namespace="default") is None

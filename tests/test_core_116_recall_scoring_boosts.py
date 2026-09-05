@@ -5,90 +5,6 @@ from __future__ import annotations
 from tests._core_116_recall_scoring_support import _make_entry, _score_of
 
 
-class TestOutcomeBoostFactor:
-    """Tests for _outcome_boost_factor() string and float mapping."""
-
-    def test_outcome_boost_factor_strong_positive(self) -> None:
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor("strong_positive") == 1.5
-
-    def test_outcome_boost_factor_positive(self) -> None:
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor("positive") == 1.2
-
-    def test_outcome_boost_factor_neutral(self) -> None:
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor("neutral") == 1.0
-
-    def test_outcome_boost_factor_negative(self) -> None:
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor("negative") == 0.5
-
-    def test_outcome_boost_factor_float_above_075(self) -> None:
-        """Float >= 0.75 maps to 1.5 (strong_positive tier)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(0.8) == 1.5
-
-    def test_outcome_boost_factor_float_above_05(self) -> None:
-        """Float >= 0.5 but < 0.75 maps to 1.2 (positive tier)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(0.6) == 1.2
-
-    def test_outcome_boost_factor_float_negative(self) -> None:
-        """Float <= -0.5 maps to 0.5 (negative tier)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(-0.7) == 0.5
-
-    def test_outcome_boost_factor_float_neutral_boundary(self) -> None:
-        """Float between -0.5 and 0.5 maps to 1.0 (neutral tier)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(0.3) == 1.0
-
-    def test_outcome_boost_unknown_string(self) -> None:
-        """Unknown string value defaults to 1.0 (neutral)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor("unknown_value") == 1.0
-
-    def test_outcome_boost_factor_float_exact_075(self) -> None:
-        """Float exactly 0.75 maps to 1.5 (boundary inclusive)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(0.75) == 1.5
-
-    def test_outcome_boost_factor_float_exact_05(self) -> None:
-        """Float exactly 0.5 maps to 1.2 (boundary inclusive)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(0.5) == 1.2
-
-    def test_outcome_boost_factor_float_exact_neg_05(self) -> None:
-        """Float exactly -0.5 maps to 0.5 (boundary inclusive)."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(-0.5) == 0.5
-
-    def test_outcome_boost_factor_float_clamped_above(self) -> None:
-        """Float > 1.0 is clamped to 1.0, then mapped to 1.5."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(2.0) == 1.5
-
-    def test_outcome_boost_factor_float_clamped_below(self) -> None:
-        """Float < -1.0 is clamped to -1.0, then mapped to 0.5."""
-        from trw_mcp.scoring._recall import _outcome_boost_factor
-
-        assert _outcome_boost_factor(-2.0) == 0.5
-
-
 class TestDomainBoost:
     """Domain match boost dimension (1.4x)."""
 
@@ -261,7 +177,6 @@ class TestCombinedBoosts:
             domain=["payments"],
             phase_affinity=["VALIDATE"],
             team_origin="checkout",
-            outcome_correlation=0.8,
             anchor_validity=1.0,
         )
         entry_none = _make_entry(
@@ -269,7 +184,6 @@ class TestCombinedBoosts:
             domain=[],
             phase_affinity=[],
             team_origin="",
-            outcome_correlation=0.0,
             anchor_validity=1.0,
         )
 
@@ -295,7 +209,6 @@ class TestCombinedBoosts:
             domain=["payments"],
             phase_affinity=["VALIDATE"],
             team_origin="checkout",
-            outcome_correlation=0.8,
         )
 
         result_none = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=None)

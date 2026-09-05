@@ -252,7 +252,7 @@ class TestEnsureMigratedErrors:
             ):
                 result = ensure_migrated(trw_dir, backend)
                 assert result["migrated"] == 1
-                stored = backend.get("L-ns001")
+                stored = backend.get("L-ns001", namespace="default")
                 assert stored is not None
                 assert stored.namespace == "default"
         finally:

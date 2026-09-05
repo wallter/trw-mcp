@@ -26,11 +26,11 @@ class TestIncrementSessionCounts:
         """A learning surfaced twice in one session should count once from a zero-ish baseline."""
         store_learning(trw_dir, "L-session01", "Summary", "Detail")
         backend = get_backend(trw_dir)
-        backend.update("L-session01", session_count=None)
+        backend.update("L-session01", session_count=None, namespace="default")
 
         increment_session_counts(trw_dir, ["L-session01", "L-session01"])
 
-        entry = backend.get("L-session01")
+        entry = backend.get("L-session01", namespace="default")
         assert entry is not None
         assert entry.session_count == 1
 
@@ -154,7 +154,7 @@ class TestUpdateAccessTrackingMixed:
 
         store_learning(trw_dir, "L-fb1", "Fallback test", "d")
         real_backend = get_backend(trw_dir)
-        real_entry = real_backend.get("L-fb1")
+        real_entry = real_backend.get("L-fb1", namespace="default")
         assert real_entry is not None
 
         mock_backend = MagicMock(spec_set=["get", "update"])

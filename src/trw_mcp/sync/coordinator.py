@@ -3,13 +3,21 @@
 Uses fcntl.flock (via _locking.py shim) for process coordination.
 Tracks last sync time in .trw/sync-state.json.
 Only one MCP server syncs at a time; others skip if recent.
+
+PRD-FIX-125-FR01 — what the counter describes: ``consecutive_failures``,
+``last_push_at`` and ``push_count`` describe the PRIMARY sync target only
+(``resolved_sync_targets[0]``). Non-primary targets are best-effort replicas
+whose health is reported separately under ``secondary_targets`` and can never
+move the counter. Before that change one permanently-401 local dev secondary
+pinned ``consecutive_failures`` for 134 days while the production primary
+succeeded in 161 of 161 measured cycles.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +30,10 @@ logger = structlog.get_logger(__name__)
 
 _STATE_FILE = "sync-state.json"
 _LOCK_FILE = "sync.lock"
+
+#: Upper bound on any persisted remote-error string. ``sync-state.json`` is a
+#: hot-path repo-local artifact; an unbounded remote error would bloat it.
+_MAX_ERROR_CHARS = 500
 
 
 class SyncCoordinator:
@@ -101,9 +113,14 @@ class SyncCoordinator:
         self._write_state(state)
 
     def record_sync_failure(self, error: str) -> None:
-        """Update sync-state.json with failure info."""
+        """Update sync-state.json with failure info.
+
+        PRD-FIX-125-FR01: only a PRIMARY-target failure reaches here. A secondary
+        target's status is recorded by :meth:`record_target_health` and never
+        increments ``consecutive_failures``.
+        """
         state = self._read_state()
-        state["last_error"] = error[:500]
+        state["last_error"] = error[:_MAX_ERROR_CHARS]
         state["last_error_at"] = datetime.now(tz=timezone.utc).isoformat()
         state["consecutive_failures"] = self._int_field(state, "consecutive_failures") + 1
         state["version"] = 1
@@ -128,6 +145,58 @@ class SyncCoordinator:
         state["last_outcome_line"] = max(self._int_field(state, "last_outcome_line"), last_outcome_line)
         state["version"] = 1
         self._write_state(state)
+
+    def record_target_health(
+        self,
+        *,
+        primary_target_label: str | None,
+        secondary_targets: Mapping[str, Mapping[str, object]] | None = None,
+    ) -> None:
+        """Persist which target the counter describes, plus per-secondary health.
+
+        PRD-FIX-125-FR01. Writes exactly two additive keys:
+
+        * ``primary_target_label`` — so a reader of ``sync-state.json`` can tell
+          which target ``consecutive_failures`` / ``last_push_at`` describe.
+        * ``secondary_targets`` — ``{label: {status, failed, last_error,
+          last_error_at}}`` for every non-primary target in the cycle report.
+
+        This method NEVER reads or writes ``consecutive_failures``,
+        ``last_push_at`` or ``push_count``: secondary divergence is reported, not
+        gating. The map is replaced (not merged) each cycle so a target dropped
+        from ``platform_urls`` does not leave a stale entry behind.
+        """
+        state = self._read_state()
+        if primary_target_label is not None:
+            state["primary_target_label"] = primary_target_label
+        state["secondary_targets"] = {
+            label: self._secondary_entry(entry) for label, entry in (secondary_targets or {}).items()
+        }
+        state["version"] = 1
+        self._write_state(state)
+
+    @staticmethod
+    def _secondary_entry(entry: Mapping[str, object]) -> dict[str, object]:
+        """Normalize one secondary-target health record for persistence."""
+        raw_failed = entry.get("failed", 0)
+        raw_error = entry.get("last_error")
+        raw_error_at = entry.get("last_error_at")
+        return {
+            "status": str(entry.get("status", "")),
+            "failed": int(raw_failed) if isinstance(raw_failed, (int, float)) else 0,
+            "last_error": str(raw_error)[:_MAX_ERROR_CHARS] if raw_error else None,
+            "last_error_at": str(raw_error_at) if raw_error_at else None,
+        }
+
+    def get_primary_target_label(self) -> str | None:
+        """Read the label of the target the failure counter describes (FR01)."""
+        raw = self._read_state().get("primary_target_label")
+        return raw if isinstance(raw, str) and raw else None
+
+    def get_last_push_at(self) -> str | None:
+        """Read the ISO timestamp of the last PRIMARY-target push success."""
+        raw = self._read_state().get("last_push_at")
+        return raw if isinstance(raw, str) and raw else None
 
     def get_last_push_seq(self) -> int:
         """Read the last push sequence number from state."""

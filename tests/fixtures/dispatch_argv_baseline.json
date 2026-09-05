@@ -1,0 +1,1114 @@
+{
+  "_comment": "PRD-CORE-266-FR02. Argv recorded from the PRE-REGISTRY builder (trw_mcp.dispatch._commands.build_command) at commit 6773493a83 on 2026-09-04, BEFORE the ClientSpec migration. The migration is behaviour-preserving iff every row below still compares equal token for token. Regenerate ONLY to add a client: a diff on an existing row is a regression, not a fixture update.",
+  "prompt": "audit this",
+  "model": "baseline-model-1",
+  "cwd": "/tmp/dispatch-baseline",
+  "cross_product": [
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--permission-mode",
+        "acceptEdits",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--permission-mode",
+        "acceptEdits",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "acceptEdits",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "acceptEdits",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "claude",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "acceptEdits",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "workspace-write",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "workspace-write",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "workspace-write",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "workspace-write",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "workspace-write",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--sandbox",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--sandbox",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--sandbox",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--sandbox",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--sandbox",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--sandbox",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--sandbox",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--sandbox",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "agy",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--model",
+        "baseline-model-1",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": true,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": true,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": true,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--model",
+        "baseline-model-1",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": false,
+      "model": null,
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": null,
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "isolate": false,
+      "read_only": false,
+      "model": "baseline-model-1",
+      "cwd": "/tmp/dispatch-baseline",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dangerously-skip-permissions",
+        "--model",
+        "baseline-model-1",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "audit this"
+      ]
+    }
+  ],
+  "extra_args_position": [
+    {
+      "client": "claude",
+      "argv": [
+        "claude",
+        "--output-format",
+        "json",
+        "--setting-sources",
+        "user",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{\"mcpServers\":{}}",
+        "--verbose",
+        "--foo=bar",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "codex",
+      "argv": [
+        "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--sandbox",
+        "read-only",
+        "--verbose",
+        "--foo=bar",
+        "audit this"
+      ]
+    },
+    {
+      "client": "agy",
+      "argv": [
+        "agy",
+        "--sandbox",
+        "--verbose",
+        "--foo=bar",
+        "-p",
+        "audit this"
+      ]
+    },
+    {
+      "client": "opencode",
+      "argv": [
+        "opencode",
+        "run",
+        "--format",
+        "json",
+        "--dir",
+        "/tmp/dispatch-baseline",
+        "--verbose",
+        "--foo=bar",
+        "audit this"
+      ]
+    }
+  ]
+}

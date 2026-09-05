@@ -80,11 +80,15 @@ def _structured_reason(expiry: str | None = None) -> str:
 
 
 class TestDeliverBuildGate:
-    """trw_deliver build gate under the v26.1 task-type posture.
+    """trw_deliver build gate under the v26.2 evidence posture.
 
     Build-bearing runs (task_type=coding) HARD-block on missing build evidence;
-    the block is overridable ONLY by a structured PRD-CORE-191 record. Advisory
-    runs (unknown/docs) surface a warning but are never promoted to a block.
+    the block is overridable ONLY by a structured PRD-CORE-191 record. Since
+    PRD-CORE-246-FR03 the advisory branch is scoped to runs that recorded NO
+    file modification, not to a task-type label: an unknown/docs run that
+    changed files blocks like any other. The surviving warning is still never
+    promoted to a ``build_gate_block`` or a ``truthfulness_gate_bypassed``,
+    which is the RC fix this class documents.
     """
 
     def test_deliver_blocks_no_build_check(
@@ -135,12 +139,17 @@ class TestDeliverBuildGate:
         tmp_path: Path,
         writer: FileStateWriter,
     ) -> None:
-        """An unknown/docs run with no build evidence stays ADVISORY (v26.1).
+        """An unknown run that CHANGED NOTHING stays ADVISORY (v26.2).
 
         The build_gate_warning is surfaced but never promoted to a block: no
         build_gate_block, no delivery_blocked, and no truthfulness_gate_bypassed.
-        This documents the new advisory posture that replaced the old universal
-        soft-block + free-text escape.
+
+        PRD-CORE-246-FR03 narrowed the advisory branch: it is the absence of
+        recorded change, not the ``unknown`` label, that keeps this run out of
+        the gate. The ``file_modified`` event this test used to carry now arms
+        the gate for every task type — see
+        ``test_deliver_blocks_unknown_task_type_that_modified_files`` below,
+        which is the same fixture with the event restored.
         """
         project = tmp_path / "project"
         task_root = project / "docs"
@@ -151,10 +160,9 @@ class TestDeliverBuildGate:
             [
                 {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
                 {"event": "checkpoint", "ts": "2026-02-27T11:00:00Z"},
-                {"event": "file_modified", "ts": "2026-02-27T11:30:00Z", "data": {"path": "docs/x.md"}},
             ],
             writer,
-            task_type=None,  # -> task_type=unknown, which stays advisory
+            task_type=None,  # -> task_type=unknown
         )
 
         from fastmcp import FastMCP
@@ -186,6 +194,63 @@ class TestDeliverBuildGate:
         assert "no successful build check" in str(result["build_gate_warning"]).lower()
         assert "build_gate_block" not in result
         assert "delivery_blocked" not in result
+        assert "truthfulness_gate_bypassed" not in result
+
+    def test_deliver_blocks_unknown_task_type_that_modified_files(
+        self,
+        tmp_path: Path,
+        writer: FileStateWriter,
+    ) -> None:
+        """PRD-CORE-246-FR03: the same unknown run BLOCKS once it recorded a change.
+
+        Identical to the advisory case above except for one ``file_modified``
+        event. That single difference is the whole point of FR03: the gate keys
+        on evidence of code change, so a misclassified run can no longer switch
+        verification off. The RC-fix invariants still hold — the block is the
+        structured ``delivery_blocked``, never the retired ``build_gate_block``
+        or a free-text ``truthfulness_gate_bypassed``.
+        """
+        project = tmp_path / "project"
+        task_root = project / "docs"
+        run_dir = _make_run_with_events(
+            task_root,
+            "my-task",
+            "20260227T100000Z-aaaa",
+            [
+                {"event": "run_init", "ts": "2026-02-27T10:00:00Z"},
+                {"event": "checkpoint", "ts": "2026-02-27T11:00:00Z"},
+                {"event": "file_modified", "ts": "2026-02-27T11:30:00Z", "file": "docs/x.md"},
+            ],
+            writer,
+            task_type=None,  # -> task_type=unknown
+        )
+
+        from fastmcp import FastMCP
+
+        from trw_mcp.tools.ceremony import register_ceremony_tools
+
+        server = FastMCP("test")
+        register_ceremony_tools(server)
+        deliver_fn = get_tools_sync(server)["trw_deliver"].fn
+
+        with (
+            patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
+            patch("trw_mcp.state._paths.resolve_project_root", return_value=project),
+            patch(
+                "trw_mcp.tools._delivery_helpers.get_config",
+                return_value=TRWConfig(evidence_receipt_mode="observe"),
+            ),
+        ):
+            (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True)
+            (tmp_path / ".trw" / "reflections").mkdir(parents=True)
+            result = deliver_fn()
+
+        assert result["success"] is False
+        assert result.get("delivery_blocked")
+        assert result.get("blocked_task_type") == "unknown"
+        assert result.get("missing_gate") == "build_check"
+        assert "build_gate_block" not in result
         assert "truthfulness_gate_bypassed" not in result
 
     def test_deliver_structured_override_proceeds_and_ledgers(
@@ -260,7 +325,7 @@ class TestDeliverBuildGate:
                 {
                     "event": "build_check_complete",
                     "ts": "2026-02-27T11:00:00Z",
-                    "data": {"tests_passed": True, "mypy_clean": True},
+                    "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True, "mypy_clean": True},
                 },
             ],
             writer,

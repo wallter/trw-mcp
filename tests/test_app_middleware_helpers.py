@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 
 class TestMiddlewareHelpers:
     """FR03: Verify extracted middleware init helpers exist and are fail-open."""
@@ -70,6 +72,38 @@ class TestMiddlewareHelpers:
         ):
             result = _try_init_response_optimizer()
             assert result is None
+
+    def test_try_init_surface_authority_returns_none_on_error_under_agent(self) -> None:
+        """PRD-SEC-015 round-2 audit (Row 1): the pre-existing fail-open
+        contract is UNCHANGED for an ordinary agent-role process."""
+        import os
+
+        from trw_mcp.server._app import _try_init_surface_authority
+
+        assert os.environ.get("TRW_SURFACE_ROLE") is None
+        with patch(
+            "trw_mcp.middleware.surface_authority.SurfaceAuthorityMiddleware",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = _try_init_surface_authority()
+            assert result is None
+
+    def test_try_init_surface_authority_aborts_startup_under_reviewer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PRD-SEC-015 round-2 audit (Row 1), RED-FIRST: reverting the
+        ``reviewer_role_active()`` guard makes this assert ``is None`` again
+        and fail, since the sole server-side reviewer control must never
+        silently degrade to an unbounded surface."""
+        from trw_mcp.server._app import _try_init_surface_authority
+
+        monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
+        with (
+            patch(
+                "trw_mcp.middleware.surface_authority.SurfaceAuthorityMiddleware",
+                side_effect=RuntimeError("boom"),
+            ),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            _try_init_surface_authority()
 
     def test_build_middleware_still_works(self) -> None:
         """_build_middleware still returns a list after refactor."""

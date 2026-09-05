@@ -210,6 +210,42 @@ def test_reference_hand_edit_fails_parity(tmp_path: Path) -> None:
     assert "--write" in joined
 
 
+def test_max_core_ratio_ignores_stale_on_disk_combined(tmp_path: Path) -> None:
+    """NFR04: the ratio denominator is the fresh compile, never the disk file.
+
+    Reading ``compiled.combined`` from disk made the verdict depend on whether
+    a prior ``--write`` had run for an otherwise unchanged source: a smaller
+    stale file inflates the ratio (false failure), a larger one deflates it
+    (false pass). Both numerator and denominator must come from the same
+    in-memory compile so the verdict is a pure function of the source text.
+    """
+    from trw_mcp.canons.registry import compile_registry_canon
+
+    registry = _registry()
+    compiled = registry.compiled_canon("framework")
+    for rel in (compiled.authoring_source, compiled.combined):
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes((_REPO_ROOT / rel).read_bytes())
+
+    # Unmodified tree: baseline pass (proves the fixture itself is sound).
+    compile_registry_canon(tmp_path, compiled)
+
+    # Stale on-disk combined: shrink it (a completed edit shipped a bigger
+    # source with a new dest=core span but a prior generation was never
+    # regenerated). The source (and thus frozen_baseline_digest and the fresh
+    # compile) is untouched, so the verdict MUST be identical to the pass above.
+    combined_path = tmp_path / compiled.combined
+    stale = combined_path.read_text(encoding="utf-8")[:200]
+    combined_path.write_text(stale, encoding="utf-8")
+    compile_registry_canon(tmp_path, compiled)  # must still pass -- disk state is irrelevant
+
+    # Inflated on-disk combined would falsely deflate the ratio under the old
+    # (disk-reading) implementation; assert it has zero effect on the verdict.
+    combined_path.write_text(stale + ("padding\n" * 5000), encoding="utf-8")
+    compile_registry_canon(tmp_path, compiled)  # still must pass
+
+
 def test_manifest_v2_covers_all_compiled_outputs_and_mirrors() -> None:
     """FR05: schema v2 declares each compiled output once; duplicates/undeclared fail."""
     from trw_mcp.canons.registry import CanonRegistryError, parse_registry
@@ -323,7 +359,9 @@ def test_manifest_names_one_authoring_source_and_all_tracked_mirrors() -> None:
 
     # This registry is shipped in the public wheel. Monorepo-private vendor
     # projections are not usable install/runtime paths and must not leak into it.
-    assert "trw-eval/" not in json.dumps(raw)
+    # fmt: off
+    assert "trw-eval/" not in json.dumps(raw)  # trw-leak-allow: proprietary_path negative assertion: proves the shipped manifest excludes this vendor path
+    # fmt: on
 
     for spec in specs.values():
         source = (_REPO_ROOT / spec["authoring_source"]).read_bytes()

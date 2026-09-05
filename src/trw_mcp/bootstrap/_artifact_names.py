@@ -24,7 +24,6 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
     hooks_source = effective / "hooks"
     opencode_root = effective / "opencode"
     opencode_commands = opencode_root / "commands"
-    opencode_agents = opencode_root / "agents"
     opencode_skills = opencode_root / "skills"
     return {
         "skills": sorted(d.name for d in skills_source.iterdir() if d.is_dir()) if skills_source.is_dir() else [],
@@ -35,8 +34,13 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
         "opencode_commands": sorted(f.name for f in opencode_commands.iterdir() if f.suffix == ".md")
         if opencode_commands.is_dir()
         else [],
-        "opencode_agents": sorted(f.name for f in opencode_agents.iterdir() if f.suffix == ".md")
-        if opencode_agents.is_dir()
+        # PRD-CORE-252: opencode's agents ARE the shared bundle, rendered for
+        # that client. Sourcing them from a retired `data/opencode/agents`
+        # directory would make every installed opencode agent read as stale on
+        # the first update after the change and be deleted moments after the
+        # installer wrote it.
+        "opencode_agents": sorted(f.name for f in agents_source.iterdir() if f.suffix == ".md")
+        if agents_source.is_dir()
         else [],
         "opencode_skills": sorted(d.name for d in opencode_skills.iterdir() if d.is_dir())
         if opencode_skills.is_dir()

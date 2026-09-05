@@ -17,7 +17,7 @@ from trw_mcp.models.config import TRWConfig, _reset_config, get_config
 
 
 class TestPlatformConfigDefaults:
-    """T-CFG-01: Verify default values for new platform/telemetry fields."""
+    """T-CFG-01: Verify default values for new platform-telemetry fields."""
 
     def test_platform_telemetry_enabled_default(self) -> None:
         config = TRWConfig()
@@ -37,7 +37,7 @@ class TestPlatformConfigDefaults:
 
 
 class TestPlatformConfigEnvOverrides:
-    """T-CFG-02: Verify env var overrides for new platform/telemetry fields."""
+    """T-CFG-02: Verify env var overrides for new platform-telemetry fields."""
 
     def test_telemetry_enabled_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_PLATFORM_TELEMETRY_ENABLED", "true")

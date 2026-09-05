@@ -122,21 +122,6 @@ def test_ctx_aware_no_pin_returns_none_not_scan_match(
     assert any(e.get("pin_key") == "fresh-session-no-pin" for e in events)
 
 
-def test_explicit_legacy_mtime_scan_finds_latest_active_run(
-    isolated_project: Path,
-) -> None:
-    """FR15: legacy callers must opt into the mtime scan explicitly."""
-    from trw_mcp.state._paths import find_run_via_mtime_scan
-
-    _seed_active_run(isolated_project, "task-a", "20260101T000000Z-aaaa1111")
-    latest = _seed_active_run(isolated_project, "task-b", "20260102T000000Z-bbbb2222")
-
-    result = find_run_via_mtime_scan()
-    assert result == latest, (
-        f"Explicit legacy scan should return the latest active run (expected {latest}, got {result})"
-    )
-
-
 def test_resolve_run_path_ctx_aware_raises_without_pin(
     isolated_project: Path,
 ) -> None:

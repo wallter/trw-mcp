@@ -279,7 +279,7 @@ class TestFR03BatchSQLiteSync:
     """FR03: _batch_sync_to_sqlite groups updates into a single backend session."""
 
     def test_batch_sync_calls_backend_for_each_entry(self, tmp_path: Path) -> None:
-        """Each entry in the batch gets a backend.update() call."""
+        """Each entry in the batch gets a backend.update(namespace="default") call."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
@@ -297,8 +297,15 @@ class TestFR03BatchSQLiteSync:
             _batch_sync_to_sqlite(updates, trw_dir)
 
         assert mock_backend.update.call_count == 3
-        mock_backend.update.assert_any_call("id-1", q_value=0.6, q_observations=1, outcome_history=["h1"])
-        mock_backend.update.assert_any_call("id-2", q_value=0.7, q_observations=2, outcome_history=["h2"])
+        # PRD-CORE-245 FR03: update() is addressed by (namespace, id), never by
+        # id alone -- the composite key admits the same id in two namespaces, so
+        # a namespace-blind update edits whichever row SQLite returns first.
+        mock_backend.update.assert_any_call(
+            "id-1", namespace="default", q_value=0.6, q_observations=1, outcome_history=["h1"]
+        )
+        mock_backend.update.assert_any_call(
+            "id-2", namespace="default", q_value=0.7, q_observations=2, outcome_history=["h2"]
+        )
 
     def test_batch_sync_single_get_backend_call(self, tmp_path: Path) -> None:
         """get_backend is called only once for the entire batch (not N times)."""

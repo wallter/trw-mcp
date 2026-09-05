@@ -154,6 +154,7 @@ def test_sqlite_sync_and_yaml_write_helpers(monkeypatch: pytest.MonkeyPatch, tmp
             self,
             lid: str,
             *,
+            namespace: str,
             q_value: float,
             q_observations: int,
             outcome_history: list[str],
@@ -364,3 +365,32 @@ def test_read_recall_tracking_read_failure_warns_and_returns_empty(
     assert fail_events[0]["error_class"] == "OSError"
     # The OSError message body must not leak into observability.
     assert "SENSITIVE_ERR_BODY" not in _all_log_values(captured)
+
+
+def test_q_learning_sync_namespace_matches_the_lookup() -> None:
+    """PRD-CORE-245: the Q-sync write and the entry lookup name the SAME namespace.
+
+    ``_io_sqlite_sync`` writes at ``DEFAULT_NAMESPACE``. That is only correct
+    because ``find_entry_by_id`` — the read that decides which ids become
+    pending updates — is pinned to the same namespace on the project backend, so
+    an entry in ``user:<id>`` never reaches the write at all.
+
+    This pins the coupling. If the lookup is ever federated across tiers (as
+    ``update_access_tracking`` already is), this goes red, and the sync must
+    carry the entry's real namespace rather than the constant.
+    """
+    import inspect
+
+    from trw_mcp.scoring import _io_sqlite_sync
+    from trw_mcp.state import _memory_lookups
+
+    lookup_src = inspect.getsource(_memory_lookups.find_entry_by_id)
+    assert "namespace=_NAMESPACE" in lookup_src, (
+        "find_entry_by_id no longer reads a single fixed namespace; the Q-learning "
+        "sync's DEFAULT_NAMESPACE write is no longer guaranteed to match it"
+    )
+    assert "peek_user_backend" not in lookup_src and "get_user_backend" not in lookup_src, (
+        "find_entry_by_id now federates across tiers, so a user-tier id can reach "
+        "_sync_to_sqlite; thread the entry's real namespace instead of the constant"
+    )
+    assert _memory_lookups._NAMESPACE == _io_sqlite_sync.DEFAULT_NAMESPACE

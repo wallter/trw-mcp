@@ -9,16 +9,27 @@ from trw_memory.exceptions import CanaryTamperError
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
+from trw_mcp.tools._ceremony_degradations import SessionStartStepError
 from trw_mcp.tools._ceremony_session_start_steps import step_recall_learnings
 from trw_mcp.tools._recall_impl import execute_recall
 from trw_mcp.tools._session_recall_helpers import perform_session_recalls
 
 
-def test_perform_session_recalls_degrades_on_canary_tamper(
+def test_perform_session_recalls_propagates_canary_tamper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Session-start recall is optional and returns a degraded envelope on tamper."""
+    """PRD-CORE-263-FR01 / DEF-01 attribution.
+
+    ``recall`` is declared ``critical`` in the session-start step table, so a
+    canary-tamper failure here must reach the caller like any other exception
+    instead of being swallowed into a degraded-but-empty envelope (the pre-fix
+    shape this test used to assert, which made the critical branch unreachable
+    for the one recall failure most worth stopping on). Reverting the DEF-01
+    fix (restoring the ``except Exception`` canary-tamper carve-out) turns this
+    red because ``perform_session_recalls`` would return normally instead of
+    raising.
+    """
 
     def _raise_tamper(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
         raise CanaryTamperError("recall halted after canary tamper")
@@ -28,61 +39,68 @@ def test_perform_session_recalls_degrades_on_canary_tamper(
         _raise_tamper,
     )
 
-    learnings, auto_recalled, extra = perform_session_recalls(
-        tmp_path,
-        "*",
-        TRWConfig(),
-        FileStateReader(),
-    )
-
-    assert learnings == []
-    assert auto_recalled == []
-    assert extra["total_available"] == 0
-    assert extra["recall_degraded"]["reason"] == "canary_tamper"
+    with pytest.raises(CanaryTamperError):
+        perform_session_recalls(
+            tmp_path,
+            "*",
+            TRWConfig(),
+            FileStateReader(),
+        )
 
 
-def test_step_recall_learnings_surfaces_degraded_metadata_without_error(
+def test_step_recall_learnings_canary_tamper_raises_typed_step_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """trw_session_start should remain successful when only optional recall degrades."""
-    degraded = {
-        "reason": "canary_tamper",
-        "detail": "Session-start learning recall was skipped.",
-        "exception_type": "CanaryTamperError",
-    }
+    """PRD-CORE-263-FR01 / DEF-01 attribution (end of the chain).
 
+    A canary-tamper failure surfaced from ``perform_session_recalls`` must
+    raise :class:`SessionStartStepError` from ``step_recall_learnings`` — the
+    SAME path a generic ``RuntimeError`` already takes — so the runner's
+    critical branch marks ``success: False`` with a typed reason naming
+    ``CanaryTamperError`` rather than reading a green ``recall_degraded`` block
+    with ``errors == []``.
+    """
     monkeypatch.setattr(
         "trw_mcp.tools.ceremony.resolve_trw_dir",
         lambda: tmp_path,
         raising=False,
     )
+
+    def _raise_tamper(*_args: object, **_kwargs: object) -> tuple[list[object], list[object], dict[str, object]]:
+        raise CanaryTamperError("recall halted after canary tamper")
+
     monkeypatch.setattr(
         "trw_mcp.tools._ceremony_helpers.perform_session_recalls",
-        lambda *_args, **_kwargs: ([], [], {"recall_degraded": degraded, "total_available": 0}),
+        _raise_tamper,
     )
 
     results: dict[str, object] = {}
     errors: list[str] = []
-    step_recall_learnings("*", TRWConfig(), results, errors)
+    with pytest.raises(SessionStartStepError) as exc_info:
+        step_recall_learnings("*", TRWConfig(), results, errors)
 
-    assert errors == []
+    assert exc_info.value.step == "recall"
+    assert isinstance(exc_info.value.cause, CanaryTamperError)
+    # NFR04: the keys an existing consumer reads are still seeded before the raise.
     assert results["learnings"] == []
     assert results["learnings_count"] == 0
-    assert results["total_available"] == 0
-    assert results["recall_degraded"] == degraded
+    assert "recall_degraded" not in results
 
 
-def test_step_recall_learnings_exception_goes_to_warnings_not_errors(
+def test_step_recall_learnings_exception_raises_typed_step_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A recall failure must NOT flip session_start success.
+    """A recall failure raises a typed step error for the runner to classify.
 
-    Recall is fail-open by contract. When ``perform_session_recalls`` raises,
-    the failure is recorded under ``results['warnings']`` (for visibility) and
-    NOT appended to ``errors`` (which would set ``success=False`` and mislead
-    agents into retrying an otherwise-successful session_start).
+    PRD-CORE-263-FR01: ``recall`` is declared ``critical`` in the session-start
+    step table. The step no longer decides whether its own failure is fatal —
+    that decision belongs solely to the runner (``run_steps`` in
+    ``_ceremony_step_table.py``), which holds the ``critical`` flag. So the step
+    body raises ``SessionStartStepError`` instead of swallowing the exception
+    into ``results['warnings']`` with ``errors`` left empty (the pre-fix shape
+    this test used to assert, which made the critical branch unreachable).
     """
     monkeypatch.setattr(
         "trw_mcp.tools.ceremony.resolve_trw_dir",
@@ -100,13 +118,13 @@ def test_step_recall_learnings_exception_goes_to_warnings_not_errors(
 
     results: dict[str, object] = {}
     errors: list[str] = []
-    step_recall_learnings("*", TRWConfig(), results, errors)
+    with pytest.raises(SessionStartStepError) as exc_info:
+        step_recall_learnings("*", TRWConfig(), results, errors)
 
-    # errors stays empty -> finalize_session_start computes success=True.
-    assert errors == [], f"recall failure must not populate errors, got {errors}"
-    warnings = results.get("warnings")
-    assert isinstance(warnings, list) and len(warnings) == 1
-    assert "recall: recall backend unavailable" in warnings[0]
+    assert exc_info.value.step == "recall"
+    assert "recall backend unavailable" in str(exc_info.value.cause)
+    # NFR04: the keys an existing consumer reads are still seeded before the
+    # raise, even though the step no longer decides fatality itself.
     assert results["learnings"] == []
     assert results["learnings_count"] == 0
 

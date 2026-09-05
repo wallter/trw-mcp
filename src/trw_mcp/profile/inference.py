@@ -3,23 +3,25 @@
 Belongs to the ``trw_mcp.profile`` package facade. Re-exported there.
 
 ``infer_domain`` resolves the ``domain`` layer name from (in precedence
-order): an explicit flag, a PRD/file path prefix, else ``unknown``.
+order): an explicit flag, a source-path prefix, else ``unknown``.
 ``infer_task_type`` resolves the ``task-type`` layer name from an explicit
 value, else keyword matching on the task name / PRD category, else
 ``generic``. Both are pure and side-effect free.
+
+The path→domain table is NOT hardcoded here. A source layout belongs to the
+consuming project, so the table is the typed ``profile_domain_path_map``
+config field: generic directory conventions by default
+(``models/config/_defaults.DEFAULT_DOMAIN_PATH_MAP``), overridden wholesale by
+``.trw/config.yaml`` for a project whose tree differs. ``resolve_session_profile``
+passes the live value; ``path_domain_map`` here is the seam that keeps this
+function pure.
 """
 
 from __future__ import annotations
 
-#: PRD/file path-prefix → domain mapping (FR-6 branch b). Checked in order;
-#: the first prefix that matches the normalized path wins.
-_PATH_PREFIX_DOMAINS: tuple[tuple[str, str], ...] = (
-    ("platform/", "frontend"),
-    ("backend/", "backend"),
-    ("trw-eval/", "eval"),
-    ("trw-mcp/", "core"),
-    ("trw-memory/", "memory"),
-)
+from collections.abc import Mapping
+
+from trw_mcp.models.config._defaults import DEFAULT_DOMAIN_PATH_MAP
 
 #: Keyword → task-type mapping (FR-7). Order matters: more-specific tokens
 #: should precede generic ones. Matched as substrings (case-insensitive).
@@ -34,24 +36,46 @@ _TASK_TYPE_KEYWORDS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _normalize_prefix(prefix: str) -> str:
+    """Repo-relative, forward-slashed, trailing-slash-terminated prefix."""
+    cleaned = prefix.strip().replace("\\", "/").lstrip("/")
+    if cleaned and not cleaned.endswith("/"):
+        cleaned += "/"
+    return cleaned
+
+
 def infer_domain(
     *,
     explicit: str | None = None,
     prd_path: str | None = None,
+    path_domain_map: Mapping[str, str] | None = None,
 ) -> str:
     """Infer the ``domain`` layer name (FR-6).
 
-    Precedence: (a) explicit flag wins, (b) PRD/file path prefix, (c) fallback
+    Precedence: (a) explicit flag wins, (b) source-path prefix, (c) fallback
     ``unknown``. ``explicit`` is trusted verbatim (trimmed) when non-empty.
+
+    ``path_domain_map`` is the project's prefix→domain table (normally
+    ``TRWConfig.profile_domain_path_map``); ``None`` falls back to the generic
+    defaults. The LONGEST matching prefix wins, so a config-supplied mapping
+    resolves the same way whatever order its keys were written in.
     """
     if explicit is not None and explicit.strip():
         return explicit.strip()
-    if prd_path:
-        normalized = prd_path.strip().lstrip("./").replace("\\", "/")
-        for prefix, domain in _PATH_PREFIX_DOMAINS:
-            if normalized.startswith(prefix) or f"/{prefix}" in normalized:
-                return domain
-    return "unknown"
+    if not prd_path:
+        return "unknown"
+
+    mapping = DEFAULT_DOMAIN_PATH_MAP if path_domain_map is None else path_domain_map
+    normalized = prd_path.strip().lstrip("./").replace("\\", "/")
+    best_prefix = ""
+    best_domain = ""
+    for raw_prefix, domain in mapping.items():
+        prefix = _normalize_prefix(raw_prefix)
+        if not prefix or not domain or len(prefix) <= len(best_prefix):
+            continue
+        if normalized.startswith(prefix) or f"/{prefix}" in normalized:
+            best_prefix, best_domain = prefix, domain
+    return best_domain or "unknown"
 
 
 def infer_task_type(

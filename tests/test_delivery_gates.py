@@ -8,6 +8,7 @@ complexity_signals.files_affected estimate from run.yaml.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -274,7 +275,14 @@ class TestCheckDeliveryGatesComplexityDrift:
 
 
 def _build_pass(ts: str) -> dict[str, object]:
-    return {"ts": ts, "event": "build_check_complete", "tests_passed": True, "static_checks_clean": True}
+    return {
+        "ts": ts,
+        "event": "build_check_complete",
+        "test_count": 12,
+        "scope": "pytest tests",
+        "tests_passed": True,
+        "static_checks_clean": True,
+    }
 
 
 def _edit(ts: str) -> dict[str, object]:
@@ -496,7 +504,7 @@ def test_qual_119_fr06_real_guard_blocks_planned_prd_with_build_evidence(
         json.dumps(
             {
                 "event": "build_check_complete",
-                "data": {"tests_passed": True, "static_checks_clean": True},
+                "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True, "static_checks_clean": True},
             }
         )
         + "\n",
@@ -535,7 +543,10 @@ def test_qual_120_deliver_writes_acceptance_manifest(tmp_path: Path, monkeypatch
     prd_id = "PRD-CORE-904"
     run_dir, prds_dir = _write_scoped_run(tmp_path, prd_id, "approved")
     (run_dir / "meta" / "events.jsonl").write_text(
-        json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
+        json.dumps(
+            {"event": "build_check_complete", "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True}}
+        )
+        + "\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -575,7 +586,10 @@ def test_qual_120_f7_partial_transition_never_projects_complete(
         encoding="utf-8",
     )
     (run_dir / "meta" / "events.jsonl").write_text(
-        json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
+        json.dumps(
+            {"event": "build_check_complete", "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True}}
+        )
+        + "\n",
         encoding="utf-8",
     )
     prds_dir = tmp_path / "docs" / "requirements-aare-f" / "prds"
@@ -634,7 +648,10 @@ def test_qual_120_happy_path_complete_manifest(tmp_path: Path, monkeypatch: pyte
     (tmp_path / "tests").mkdir(parents=True, exist_ok=True)
     (tmp_path / "tests" / "t.py").touch()
     (run_dir / "meta" / "events.jsonl").write_text(
-        json.dumps({"event": "build_check_complete", "data": {"tests_passed": True}}) + "\n",
+        json.dumps(
+            {"event": "build_check_complete", "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True}}
+        )
+        + "\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
@@ -644,3 +661,140 @@ def test_qual_120_happy_path_complete_manifest(tmp_path: Path, monkeypatch: pyte
     manifest = load_manifest(tmp_path / ".trw", prd_id)
     assert manifest is not None
     assert manifest.completion_outcome == "complete"
+
+
+@pytest.mark.integration
+class TestUnretractedContradictionNudge:
+    """PRD-CORE-244 FR06 — DELIVER names the learning this session disproved.
+
+    ``invalidated_by`` was measured non-null on 0 of 9,366 rows after roughly
+    four months of daily use: the write path exists and nothing ever asks anyone
+    to use it, so invalidation depended entirely on authoring discipline.
+
+    The contradicted set is DERIVED, never stored separately, so these fixtures
+    create it the way production does — by running FR04's real
+    ``apply_contradiction_penalty`` — rather than hand-writing an
+    ``outcome_history`` a real penalty might not produce.
+    """
+
+    @staticmethod
+    def _session(tmp_path: Path, *, entry_ids: list[str], penalise: list[str]) -> Path:
+        """A .trw dir with a recall receipt per entry and a real FR04 penalty applied."""
+        import yaml
+
+        from trw_mcp.models.config import get_config
+        from trw_mcp.scoring import apply_contradiction_penalty
+
+        cfg = get_config()
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "logs").mkdir(parents=True, exist_ok=True)
+        entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        for entry_id in entry_ids:
+            (entries_dir / f"{entry_id}.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "id": entry_id,
+                        "summary": "a claim under test",
+                        "detail": "",
+                        "status": "active",
+                        "impact": 0.6,
+                        "q_value": 0.6,
+                        "q_observations": 4,
+                        "recurrence": 1,
+                        "outcome_history": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        if penalise:
+            assert apply_contradiction_penalty(penalise, trw_dir) == penalise
+
+        now = datetime.now(timezone.utc)
+        (trw_dir / "logs" / "recall_tracking.jsonl").write_text(
+            json.dumps({"ts": now.isoformat(), "matched_ids": entry_ids}) + "\n",
+            encoding="utf-8",
+        )
+        return trw_dir
+
+    @staticmethod
+    def _supersede(trw_dir: Path, entry_id: str, by: str) -> None:
+        """Close the entry's validity window the way trw_learn_update(supersedes=) does."""
+        from datetime import datetime as _dt
+
+        from trw_mcp.state.memory_adapter import get_backend
+
+        get_backend(trw_dir).update(
+            entry_id, invalid_from=_dt.now(timezone.utc), invalidated_by=by, namespace="default"
+        )
+
+    def test_unretracted_contradiction_surfaces_nudge(self, tmp_path: Path) -> None:
+        from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
+
+        trw_dir = self._session(tmp_path, entry_ids=["L-broken"], penalise=["L-broken"])
+
+        nudge = unretracted_contradiction_nudge(trw_dir)
+
+        assert "L-broken" in nudge
+        assert "trw_learn_update(learning_id='L-broken'" in nudge
+
+    def test_superseded_entry_produces_no_nudge(self, tmp_path: Path) -> None:
+        """FR06 AC2: once the window is closed, the obligation is settled."""
+        from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
+
+        trw_dir = self._session(tmp_path, entry_ids=["L-settled"], penalise=["L-settled"])
+        assert "L-settled" in unretracted_contradiction_nudge(trw_dir)
+
+        self._supersede(trw_dir, "L-settled", by="L-replacement")
+
+        assert unretracted_contradiction_nudge(trw_dir) == ""
+
+    def test_session_without_contradictions_produces_no_nudge(self, tmp_path: Path) -> None:
+        from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
+
+        trw_dir = self._session(tmp_path, entry_ids=["L-fine"], penalise=[])
+
+        assert unretracted_contradiction_nudge(trw_dir) == ""
+
+    def test_only_the_contradicted_sibling_is_named(self, tmp_path: Path) -> None:
+        """The nudge names a SPECIFIC entry, not every entry in the recall."""
+        from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
+
+        trw_dir = self._session(tmp_path, entry_ids=["L-bad", "L-ok"], penalise=["L-bad"])
+
+        nudge = unretracted_contradiction_nudge(trw_dir)
+
+        assert "L-bad" in nudge
+        assert "L-ok" not in nudge
+
+    def test_gate_result_is_unchanged_when_nothing_was_contradicted(
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """FR06 AC3: no contradiction -> the gate result is what it is today."""
+        run_dir = tmp_path / "run"
+        _write_run_yaml(run_dir, complexity_class="MINIMAL", files_affected=1)
+        trw_dir = self._session(tmp_path, entry_ids=["L-fine"], penalise=[])
+
+        result = check_delivery_gates(run_dir, reader, trw_dir)
+
+        assert "retraction_nudge" not in result
+
+    def test_nudge_reaches_the_gate_result_and_never_blocks(
+        self,
+        tmp_path: Path,
+        reader: FileStateReader,
+    ) -> None:
+        """Wiring assertion: the nudge is produced BY check_delivery_gates."""
+        run_dir = tmp_path / "run"
+        _write_run_yaml(run_dir, complexity_class="MINIMAL", files_affected=1)
+        trw_dir = self._session(tmp_path, entry_ids=["L-broken"], penalise=["L-broken"])
+
+        result = check_delivery_gates(run_dir, reader, trw_dir)
+
+        assert "L-broken" in str(result["retraction_nudge"])
+        # Advisory: it sets no blocking key.
+        assert not any(key.endswith("_block") for key in result)

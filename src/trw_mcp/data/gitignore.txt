@@ -15,3 +15,7 @@ logs/
 !contracts/weaken-edit-approvals.jsonl
 *.lock
 knowledge.db
+# PRD-FIX-123-FR04: pre-write copies of CLAUDE.md / AGENTS.md taken before
+# every instruction-file write. They mirror files that may hold private
+# project rules, so they are never tracked.
+backups/

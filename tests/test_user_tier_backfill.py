@@ -80,7 +80,7 @@ def test_dry_run_reports_candidates_writes_nothing(tmp_path: Path) -> None:
     # The user store holds nothing.
     assert _user_ids() == []
     # Project entry untouched.
-    assert memory_adapter.get_backend(trw_dir).get("L-portable") is not None
+    assert memory_adapter.get_backend(trw_dir).get("L-portable", namespace="default") is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -115,8 +115,8 @@ def test_real_run_copies_portable_keeps_project(tmp_path: Path) -> None:
     # Copied into the user store...
     assert "L-portable" in _user_ids()
     # ...and NOT deleted from the project store (non-destructive copy).
-    assert memory_adapter.get_backend(trw_dir).get("L-portable") is not None
-    assert memory_adapter.get_backend(trw_dir).get("L-projspecific") is not None
+    assert memory_adapter.get_backend(trw_dir).get("L-portable", namespace="default") is not None
+    assert memory_adapter.get_backend(trw_dir).get("L-projspecific", namespace="default") is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -245,7 +245,7 @@ def test_move_flag_deletes_project_entry(tmp_path: Path) -> None:
     assert "L-portable" in report["promoted"]
     assert "L-portable" in _user_ids()
     # With move=True the project copy is removed (explicit confirmation).
-    assert memory_adapter.get_backend(trw_dir).get("L-portable") is None
+    assert memory_adapter.get_backend(trw_dir).get("L-portable", namespace="default") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -272,13 +272,13 @@ def test_update_learning_updates_user_tier_entry(tmp_path: Path) -> None:
     )
     # Sanity: it landed in the user store, not the project store.
     assert "L-user-upd" in _user_ids()
-    assert memory_adapter.get_backend(trw_dir).get("L-user-upd") is None
+    assert memory_adapter.get_backend(trw_dir).get("L-user-upd", namespace="default") is None
 
     result = memory_adapter.update_learning(trw_dir, "L-user-upd", impact=0.9, status="resolved")
     assert result["status"] == "updated", result
 
     # The user-store row actually changed.
-    updated = get_user_backend().get("L-user-upd")
+    updated = get_user_backend().get("L-user-upd", namespace=USER_NAMESPACE)
     assert updated is not None
     assert updated.importance == 0.9
     assert str(updated.status) in {"resolved", "MemoryStatus.RESOLVED"}
@@ -288,11 +288,11 @@ def test_update_learning_still_updates_project_tier_entry(tmp_path: Path) -> Non
     """Project-tier updates remain byte-identical (project backend wins first)."""
     trw_dir = _trw_dir(tmp_path)
     _seed_project(trw_dir, "L-proj-upd", "project finding in trw_mcp/state/x.py:1", "d", impact=0.4)
-    assert memory_adapter.get_backend(trw_dir).get("L-proj-upd") is not None
+    assert memory_adapter.get_backend(trw_dir).get("L-proj-upd", namespace="default") is not None
 
     result = memory_adapter.update_learning(trw_dir, "L-proj-upd", impact=0.7)
     assert result["status"] == "updated", result
-    assert memory_adapter.get_backend(trw_dir).get("L-proj-upd").importance == 0.7
+    assert memory_adapter.get_backend(trw_dir).get("L-proj-upd", namespace="default").importance == 0.7
 
 
 def test_update_learning_missing_in_both_returns_not_found(tmp_path: Path) -> None:
@@ -314,7 +314,7 @@ def test_update_learning_rejects_invalid_confidence(tmp_path: Path) -> None:
     assert result["status"] == "invalid"
     assert "confidence" in result["error"]
     # Nothing persisted.
-    assert memory_adapter.get_backend(trw_dir).get("L-conf").confidence != "bogus"
+    assert memory_adapter.get_backend(trw_dir).get("L-conf", namespace="default").confidence != "bogus"
 
 
 def test_update_learning_accepts_valid_confidence(tmp_path: Path) -> None:

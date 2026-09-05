@@ -32,6 +32,7 @@ from tests._test_ceremony_middleware_gate_support import (
     _text,
     middleware,  # noqa: F401
 )
+from trw_mcp.middleware import ceremony as ceremony_module
 from trw_mcp.middleware.ceremony import CeremonyMiddleware, is_session_active, reset_state
 
 # Exactly the toolset a TRW sub-agent is allowlisted for — none of these can
@@ -87,7 +88,7 @@ class TestGateGenerationScope:
             blocked = await middleware.on_call_tool(_ctx("session-main", "trw_recall"), call_next)  # type: ignore[arg-type]
 
         assert blocked.structured_content is not None
-        assert blocked.structured_content["error"] == "session_start_required"
+        assert blocked.structured_content["error"] == "post_compaction_recovery_required"
         assert call_next.calls == ["trw_recall"], "the gated call must not reach the tool"
 
     @pytest.mark.asyncio
@@ -107,7 +108,7 @@ class TestGateGenerationScope:
             recovered = await middleware.on_call_tool(_ctx("session-main", "trw_recall"), call_next)  # type: ignore[arg-type]
 
         assert blocked.structured_content is not None
-        assert blocked.structured_content["error"] == "session_start_required"
+        assert blocked.structured_content["error"] == "post_compaction_recovery_required"
         assert recovered.structured_content is None
         assert _text(recovered.content[0]) == "tool ok"
         assert is_session_active("session-main")
@@ -130,7 +131,7 @@ class TestGateGenerationScope:
                 allowed = await middleware.on_call_tool(_ctx("session-sub", "trw_recall"), call_next)  # type: ignore[arg-type]
 
         assert blocked.structured_content is not None
-        assert blocked.structured_content["error"] == "session_start_required"
+        assert blocked.structured_content["error"] == "post_compaction_recovery_required"
         assert allowed.structured_content is None
         assert _text(allowed.content[-1]) == "tool ok"
         assert call_next.calls == ["trw_recall"]
@@ -168,7 +169,7 @@ class TestGateGenerationScope:
         with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
             still_blocked = await middleware.on_call_tool(_ctx("session-main", "trw_recall"), call_next)  # type: ignore[arg-type]
         assert still_blocked.structured_content is not None
-        assert still_blocked.structured_content["error"] == "session_start_required"
+        assert still_blocked.structured_content["error"] == "post_compaction_recovery_required"
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -216,5 +217,57 @@ class TestGateGenerationScope:
 
         assert exempt.structured_content is None
         assert regated.structured_content is not None
-        assert regated.structured_content["error"] == "session_start_required"
+        assert regated.structured_content["error"] == "post_compaction_recovery_required"
         assert call_next.calls == ["trw_recall", "trw_recall"]
+
+
+class TestBehaviourIsUnchangedByTheRename:
+    """PRD-CORE-258-NFR04: only the key changed — not what the gate does.
+
+    Which tools block, how many blocks precede degradation, the generation
+    scoping rule, and when the marker is cleared are all held constant.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _local_clean_state(self) -> None:
+        reset_state()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_gate_scope_and_degradation_unchanged_after_rename(
+        self, middleware: CeremonyMiddleware, tmp_path: Path
+    ) -> None:
+        trw_dir = tmp_path / ".trw"
+        marker = trw_dir / "context" / "pre_compact_state.json"
+        call_next = _Recorder()
+
+        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
+            await middleware.on_call_tool(_ctx("session-main", "trw_recall"), call_next)  # type: ignore[arg-type]
+            _seed_compaction_marker(tmp_path)
+            outs = [
+                await middleware.on_call_tool(_ctx("session-main", "trw_recall"), call_next)  # type: ignore[arg-type]
+                for _ in range(ceremony_module._COMPACTION_GATE_MAX_BLOCKS + 1)
+            ]
+
+        hard_blocked = outs[: ceremony_module._COMPACTION_GATE_MAX_BLOCKS]
+        degraded = outs[-1]
+
+        assert len(hard_blocked) == ceremony_module._COMPACTION_GATE_MAX_BLOCKS
+        for index, out in enumerate(hard_blocked, start=1):
+            assert out.structured_content is not None
+            assert out.structured_content["error"] == "post_compaction_recovery_required"
+            assert out.structured_content["blocked_count"] == index
+            # No alias key rides alongside the new one.
+            assert set(out.structured_content) == {
+                "error",
+                "message",
+                "tool_attempted",
+                "compaction_marker_ts",
+                "marker_state",
+                "blocked_count",
+                "max_blocks",
+                "remedy",
+            }
+        assert degraded.structured_content is None, "the bounded escape still degrades at the same count"
+        assert "trw_session_start" in _text(degraded.content[0]), "the nudge is never removed"
+        assert marker.exists(), "degradation still leaves the obligation on disk"

@@ -1,6 +1,9 @@
-"""Ebbinghaus decay and type-aware utility scoring.
+"""Ebbinghaus impact decay, plus the config adapter for entry utility.
 
 PRD-CORE-034: Impact scoring with exponential decay.
+PRD-CORE-244 FR11: the second entry-utility implementation that used to live
+here is DELETED. ``entry_utility`` below binds ``TRWConfig`` to
+``trw_memory.lifecycle.scoring.entry_utility``, which is now the only one.
 
 Internal module -- all public names are re-exported from ``trw_mcp.scoring``.
 Impact-tier distribution analysis and forced-distribution enforcement live in
@@ -12,16 +15,17 @@ from __future__ import annotations
 import math
 from datetime import date, datetime, timezone
 
+import trw_memory.lifecycle.scoring as _unified_scoring
+from trw_memory.lifecycle._utility_params import UtilityParams
+
 from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.scoring._utils import (
     _IMPACT_DECAY_FLOOR,
     _LN2,
     TRWConfig,
     _ensure_utc,
-    compute_utility_score,
     get_config,
     safe_float,
-    safe_int,
 )
 
 # PRD-CORE-004: Utility-based impact scoring (Q-learning, Ebbinghaus decay)
@@ -59,87 +63,49 @@ def _days_since_access(
     return fallback_days
 
 
-# Type-aware decay half-lives (PRD-CORE-110, PRD-CORE-116)
-_TYPE_HALF_LIFE: dict[str, float] = {
-    "incident": 90.0,  # Slow decay until fix confirmed (unverified = no decay, see _entry_utility)
-    "pattern": 180.0,  # Very slow -- validated patterns are durable
-    "convention": 9999.0,  # No auto-decay -- stable until human override
-    "hypothesis": 7.0,  # Fast -- validate or die
-    "workaround": 14.0,  # Fast -- scheduled expiry, typically paired with expires field
-}
+def utility_params_for(cfg: TRWConfig) -> UtilityParams:
+    """Bind ``TRWConfig`` to the shared entry-utility knob bundle (FR11).
 
-
-def _type_half_life(entry_type: str, cfg: TRWConfig) -> float:
-    """Get decay half-life based on learning type.
-
-    Falls back to config default for unrecognized types.
+    Built ONCE per ranking pass, never per entry: this is a plain model but the
+    caller's alternative — handing ``entry_utility`` a ``MemoryConfig`` — would
+    read ``.trw/config.yaml`` on every row.
     """
-    return _TYPE_HALF_LIFE.get(entry_type, cfg.learning_decay_half_life_days)
+    return UtilityParams(
+        half_life_days=cfg.learning_decay_half_life_days,
+        use_exponent=cfg.learning_decay_use_exponent,
+        cold_start_threshold=cfg.q_cold_start_threshold,
+        access_count_boost_cap=cfg.access_count_utility_boost_cap,
+        source_human_boost=cfg.source_human_utility_boost,
+    )
 
 
-def _entry_utility(
+def entry_utility(
     entry: dict[str, object],
     today: date,
     fallback_days: int | None = None,
+    *,
+    params: UtilityParams | None = None,
 ) -> float:
-    """Compute utility score with type-aware decay curves.
+    """Score one learning entry through the single utility implementation.
 
-    Extracts scoring fields from the entry dict and delegates to
-    compute_utility_score with TRWConfig parameters.
-
-    PRD-CORE-034: Applies time decay to base_impact before computing utility
-    so that older learnings naturally sink in recall ranking results.
-    PRD-CORE-102: Uses type-aware half-life for more accurate decay.
+    PRD-CORE-244 FR11: this module used to carry its own ``_entry_utility``, an
+    independent second implementation that read a DIFFERENT field set from
+    ``trw_memory.lifecycle.scoring.entry_utility`` — notably never
+    ``helpful_count``, ``unhelpful_count`` or ``recall_count``, the counters
+    ``trw_learn``'s docstring credits with feeding decay. That implementation is
+    deleted. What remains here is a config adapter: it binds ``TRWConfig`` knobs
+    and delegates. Nothing in this package computes utility any more.
     """
-    q_value = safe_float(entry, "q_value", safe_float(entry, "impact", 0.5))
-    base_impact = safe_float(entry, "impact", 0.5)
-    q_observations = safe_int(entry, "q_observations", 0)
-    recurrence = safe_int(entry, "recurrence", 1)
-    access_count = safe_int(entry, "access_count", 0)
-    source_type = str(entry.get("source_type", "agent"))
-    days_unused = _days_since_access(entry, today, fallback_days=fallback_days)
-
     cfg: TRWConfig = get_config()
-
-    # Type-aware half-life (PRD-CORE-102)
-    entry_type = str(entry.get("type", ""))
-    half_life = _type_half_life(entry_type, cfg)
-
-    # Unverified incidents don't decay (preserve postmortem knowledge until verified)
-    entry_confidence = str(entry.get("confidence", "unverified"))
-    if entry_type == "incident" and entry_confidence == "unverified":
-        half_life = 9999.0  # Effectively no decay
-
-    # Check expiry (PRD-CORE-110)
-    expires_str = str(entry.get("expires", ""))
-    if expires_str:
-        try:
-            # Handle both date-only ("2026-07-01") and datetime strings
-            # ("2026-07-01T00:00:00+00:00"). date.fromisoformat raises ValueError
-            # on strings containing "T", so try datetime first.
-            parsed_expires = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
-            expires_date = parsed_expires.date()
-        except ValueError:
-            try:
-                expires_date = date.fromisoformat(expires_str)
-            except ValueError:
-                expires_date = None
-        if expires_date is not None and today > expires_date:
-            return 0.01  # Expired -> demote to very low utility
-
-    return compute_utility_score(
-        q_value=q_value,
-        days_since_last_access=days_unused,
-        recurrence_count=recurrence,
-        base_impact=base_impact,
-        q_observations=q_observations,
-        half_life_days=half_life,
-        use_exponent=cfg.learning_decay_use_exponent,
-        cold_start_threshold=cfg.q_cold_start_threshold,
-        access_count=access_count,
-        source_type=source_type,
-        access_count_boost_cap=cfg.access_count_utility_boost_cap,
-        source_human_boost=cfg.source_human_utility_boost,
+    # Module-qualified on purpose: ``from ... import entry_utility`` binds at
+    # import time, so a test patching ``trw_memory.lifecycle.scoring.entry_utility``
+    # would be a no-op here and the FR11 wiring proof would silently pass on a
+    # tree that still had its own copy.
+    return _unified_scoring.entry_utility(
+        entry,
+        fallback_days=fallback_days if fallback_days is not None else cfg.scoring_default_days_unused,
+        params=params if params is not None else utility_params_for(cfg),
+        today=today,
     )
 
 
@@ -205,6 +171,7 @@ def apply_impact_decay(
 
 __all__ = [
     "_days_since_access",
-    "_entry_utility",
     "apply_impact_decay",
+    "entry_utility",
+    "utility_params_for",
 ]

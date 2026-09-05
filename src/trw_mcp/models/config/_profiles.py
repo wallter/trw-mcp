@@ -16,10 +16,7 @@ Migration notes:
 
 from __future__ import annotations
 
-from typing import Literal
-
 import structlog
-from pydantic import BaseModel, ConfigDict
 
 from trw_mcp.models.config._capability import CapabilityTier, ModelTier, normalize_capability_tier
 from trw_mcp.models.config._client_profile import (
@@ -28,13 +25,6 @@ from trw_mcp.models.config._client_profile import (
     NudgePoolWeights,
     ScoringDimensionWeights,
     WriteTargets,
-)
-from trw_mcp.models.config._defaults import (
-    CAPABILITY_PACKS,
-    HIGH_RISK_PACKS,
-    KERNEL_TOOLS,
-    KEYWORD_PACK_HINTS,
-    STANDARD_TASK_PACKS,
 )
 
 logger = structlog.get_logger(__name__)
@@ -76,12 +66,28 @@ def _light_profile(
     nudge_enabled: bool = False,
     on_transition: str = "require_reconnect",
     writes_shared_agents_md: bool = True,
+    include_delegation: bool = False,
 ) -> ClientProfile:
     """Construct a light-mode profile with eval-calibrated defaults.
 
     ``on_transition`` (PRD-INTENT-002 FR04/FR05b): opencode keeps the safe
     ``require_reconnect`` default (its cache is not invalidated automatically);
     codex uses ``silent`` (phase set at session start, no intra-session change).
+
+    ``include_delegation`` (PRD-CORE-252 OQ-3, resolved 2026-09-04): both light
+    profiles default to ``False``; kept as a parameter rather than flipped for
+    both because the two clients' measured budgets diverge. Codex passes
+    ``True`` on a real byte measurement of its own carrier stack: the largest
+    single ``.codex/agents/*.toml`` (``trw-auditor.toml``, 18,170 bytes) +
+    ``AGENTS.md`` (5,597 bytes) + ``.codex/config.toml`` (2,915 bytes) totals
+    26,682 bytes (~6.7K tokens at 4 bytes/token) against this profile's own
+    ``context_window_tokens`` field (32,000) -- ~21% of budget, leaving
+    headroom for the ~1KB delegation block this flag renders into
+    ``.codex/INSTRUCTIONS.md`` (``render_codex_instructions``). Codex loads
+    one agent's ``developer_instructions`` per invocation, not all eleven, so
+    18,170 bytes is the worst case, not a sum. opencode's footprint was not
+    re-measured as part of this change, so it stays at the conservative
+    default.
     """
     return ClientProfile(
         client_id=client_id,
@@ -111,7 +117,7 @@ def _light_profile(
         default_model_tier=default_model_tier,
         hooks_enabled=False,
         include_framework_ref=False,
-        include_delegation=False,
+        include_delegation=include_delegation,
         # Surface control (PRD-CORE-125)
         nudge_enabled=nudge_enabled,
         learning_recall_enabled=True,
@@ -275,6 +281,9 @@ _PROFILES: dict[str, ClientProfile] = {
         default_model_tier="balanced",
         nudge_enabled=True,
         on_transition="silent",
+        # PRD-CORE-252 OQ-3, resolved by measurement 2026-09-04: see
+        # _light_profile's include_delegation docstring for the byte counts.
+        include_delegation=True,
     ),
     "copilot": ClientProfile(
         client_id="copilot",
@@ -420,124 +429,3 @@ def resolve_client_profile(
             )
 
     return profile
-
-
-# ---------------------------------------------------------------------------
-# PRD-CORE-218-FR03: task-selected capability packs.
-#
-# Resolution builds a bounded, explainable tool surface from a stable kernel
-# plus capability packs selected by (1) the standard task->pack fixture,
-# (2) explicit phase rules, and (3) operator grants. Provider identity and
-# vague keywords can NEVER grant a high-risk pack (security monotonicity).
-# Pack membership is the versioned manifest fixture from PRD-CORE-218 §4,
-# owned by ``_defaults`` (single source of truth) and imported here.
-# ---------------------------------------------------------------------------
-
-PackGrantSource = Literal["kernel", "task_type", "phase_rule", "operator_grant", "keyword", "denied"]
-
-
-class PackGrant(BaseModel):
-    """One pack decision with the layer that produced it and a reason.
-
-    ``source == "denied"`` records a refused grant (e.g. a high-risk pack a
-    vague keyword or provider identity failed to grant).
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    pack: str
-    source: PackGrantSource
-    reason: str
-
-
-class CapabilityResolution(BaseModel):
-    """Resolved kernel+pack tool surface with per-capability explanations."""
-
-    model_config = ConfigDict(frozen=True)
-
-    task: str
-    packs: tuple[str, ...]
-    tools: tuple[str, ...]
-    tool_count: int
-    grants: tuple[PackGrant, ...]
-    #: Every resolved tool -> the reason it is present (FR03 "explanation for
-    #: every capability"). Keys are exactly ``tools``.
-    explanations: dict[str, str]
-
-
-def resolve_capability_packs(
-    task: str,
-    *,
-    phase_pack_grants: tuple[str, ...] = (),
-    operator_pack_grants: tuple[str, ...] = (),
-    keyword_hints: tuple[str, ...] = (),
-    provider_identity: str | None = None,
-) -> CapabilityResolution:
-    """Resolve the bounded capability-pack surface for ``task``.
-
-    Layers, highest authority last: standard task fixture, explicit phase rule,
-    operator grant, then vague keyword hints. Provider identity never grants a
-    pack and vague keywords never grant a high-risk pack; both refusals are
-    recorded as ``denied`` grants (FR03 guard).
-    """
-    grants: list[PackGrant] = [PackGrant(pack="kernel", source="kernel", reason="universal minimal kernel")]
-    ordered_packs: list[str] = []
-
-    def _grant(pack: str, source: PackGrantSource, reason: str) -> None:
-        if pack not in CAPABILITY_PACKS:
-            grants.append(PackGrant(pack=pack, source="denied", reason=f"unknown pack '{pack}'"))
-            return
-        if pack not in ordered_packs:
-            ordered_packs.append(pack)
-            grants.append(PackGrant(pack=pack, source=source, reason=reason))
-
-    if task not in STANDARD_TASK_PACKS:
-        grants.append(PackGrant(pack="*", source="denied", reason=f"task '{task}' unmapped; kernel only"))
-    for pack in STANDARD_TASK_PACKS.get(task, ()):
-        _grant(pack, "task_type", f"standard mapping for task '{task}'")
-
-    for pack in phase_pack_grants:
-        _grant(pack, "phase_rule", f"explicit phase rule granted '{pack}'")
-    for pack in operator_pack_grants:
-        _grant(pack, "operator_grant", f"operator granted '{pack}'")
-
-    for keyword in keyword_hints:
-        hinted = KEYWORD_PACK_HINTS.get(keyword.strip().lower())
-        if hinted is None:
-            continue
-        if hinted in HIGH_RISK_PACKS:
-            grants.append(
-                PackGrant(
-                    pack=hinted,
-                    source="denied",
-                    reason=f"vague keyword '{keyword}' cannot grant high-risk pack '{hinted}'",
-                )
-            )
-            continue
-        _grant(hinted, "keyword", f"keyword '{keyword}' hinted low-risk pack '{hinted}'")
-
-    if provider_identity is not None:
-        grants.append(
-            PackGrant(
-                pack="*",
-                source="denied",
-                reason=f"provider identity '{provider_identity}' cannot grant any pack",
-            )
-        )
-
-    tools: list[str] = list(KERNEL_TOOLS)
-    explanations: dict[str, str] = dict.fromkeys(KERNEL_TOOLS, "kernel: always present")
-    for pack in ordered_packs:
-        for tool in CAPABILITY_PACKS[pack]:
-            if tool not in explanations:
-                tools.append(tool)
-                explanations[tool] = f"pack '{pack}': present via task/phase/operator selection"
-
-    return CapabilityResolution(
-        task=task,
-        packs=("kernel", *ordered_packs),
-        tools=tuple(tools),
-        tool_count=len(tools),
-        grants=tuple(grants),
-        explanations=explanations,
-    )

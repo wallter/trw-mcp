@@ -42,11 +42,13 @@ from trw_mcp.state._registry_activation import ActivationDecision, ActivationRef
 from trw_mcp.state._scheduling_ledger import (
     ANCHOR_FILENAME,
     GENESIS_DIGEST,
+    GENESIS_EPOCH_DATE,
     LEDGER_FILENAME,
     SchedulingLedgerError,
     _write_anchor,
     action_digest,
     derive_evaluation_epoch,
+    is_genesis_epoch,
     ledger_head_digest,
     load_ledger,
     verify_ledger_head_anchor,
@@ -57,6 +59,7 @@ from trw_mcp.state.prd_utils import parse_frontmatter
 __all__ = [
     "ANCHOR_FILENAME",
     "GENESIS_DIGEST",
+    "GENESIS_EPOCH_DATE",
     "LEDGER_FILENAME",
     "REGISTRY_FILENAME",
     "REGISTRY_SCHEMA",
@@ -69,6 +72,7 @@ __all__ = [
     "build_registry",
     "derive_evaluation_epoch",
     "evaluate_activation",
+    "is_genesis_epoch",
     "ledger_head_digest",
     "load_ledger",
     "persist_registry",
@@ -207,7 +211,7 @@ class RegistryWriter:
 class RegistryBuildResult:
     """Typed outcome of a registry reconciliation."""
 
-    status: str  # "ok" | "stale_scheduling_head"
+    status: str  # "ok" | "stale_scheduling_head" | "epoch_unset"
     entries: list[RequirementRegistryEntry] = field(default_factory=list)
     epoch: EvaluationEpoch | None = None
     head_digest: str = GENESIS_DIGEST
@@ -215,6 +219,12 @@ class RegistryBuildResult:
     expired: list[str] = field(default_factory=list)
     limits: PrdActiveLimits = field(default_factory=PrdActiveLimits)
     error: str = ""
+    #: PRD-CORE-244-FR07. False when the expiry loop was SKIPPED because no
+    #: authorized ``advance_evaluation_epoch`` action exists. Without it an
+    #: empty ``expired`` list is indistinguishable from "nothing has expired",
+    #: and the registry reported a fully-current hot path (350 of 350, 261 of
+    #: them past-dated) derived from an evaluator that had never run.
+    expiry_evaluated: bool = True
 
     def canonical_document(self) -> dict[str, object]:
         """Byte-stable registry document — no ambient time, no volatile fields."""
@@ -226,6 +236,7 @@ class RegistryBuildResult:
             "scheduling_ledger_head_digest": self.head_digest,
             "hot_path": self.hot_path,
             "expired": self.expired,
+            "expiry_evaluated": self.expiry_evaluated,
             "limits": self.limits.model_dump(mode="json"),
         }
 
@@ -298,6 +309,11 @@ def build_registry(
 
     A stale, forked, or tampered ledger yields ``status="stale_scheduling_head"``
     — an unknown result that cannot activate, renew, expire, or release WIP.
+
+    A ledger carrying no authorized ``advance_evaluation_epoch`` action yields
+    ``status="epoch_unset"`` with ``expiry_evaluated=False`` (PRD-CORE-244-FR07)
+    — the same class of unknown, for the same reason: nothing evaluated expiry,
+    so nothing may act on the result.
     """
     effective_limits = limits or PrdActiveLimits()
     try:
@@ -322,6 +338,22 @@ def build_registry(
                 target.owner = action.payload["owner"]
         elif action.kind == "renew":
             target.renewal_date = action.effective_utc_date
+
+    if is_genesis_epoch(epoch):
+        # PRD-CORE-244-FR07: an unevaluated expiry must be READABLE as such.
+        # Running the loop against 1970-01-01 makes every renewal date hugely
+        # future-dated, so is_expired is never true and the empty list looks
+        # like a clean bill of health. Skip the loop and say so.
+        return RegistryBuildResult(
+            status="epoch_unset",
+            entries=entries,
+            epoch=epoch,
+            head_digest=ledger_head_digest(actions),
+            hot_path=[entry.prd_id for entry in entries],
+            expired=[],
+            limits=effective_limits,
+            expiry_evaluated=False,
+        )
 
     epoch_date = date.fromisoformat(epoch.effective_utc_date)
     expired: list[str] = []

@@ -75,7 +75,13 @@ def compile_registry_canon(repo_root: Path, compiled: CompiledCanon) -> CompileR
             f"{compiled.id}: compiled combined digest {_sha256(result.combined)} != frozen baseline "
             f"{compiled.frozen_baseline_digest}; source drifted from baseline. Regenerate baseline or source.",
         )
-    baseline_bytes = len((repo_root / compiled.combined).read_bytes())
+    # NFR04's denominator MUST come from this same fresh compile, not the
+    # on-disk combined file: reading the disk copy made the verdict depend on
+    # whether a prior ``--write`` had run (stale-pass or stale-fail on an
+    # unchanged source), and left a newly added ``dest=core`` span measured
+    # against a baseline that predates it. ``frozen_baseline_digest`` above
+    # already compares fresh-compile bytes for the same reason.
+    baseline_bytes = len(result.combined.encode("utf-8"))
     ratio = core_byte_ratio(result, baseline_bytes)
     if ratio > compiled.max_core_ratio:
         raise CanonRegistryError(

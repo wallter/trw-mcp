@@ -538,6 +538,22 @@ def test_n11_the_untampered_allow_path_still_exits_zero(tmp_path: Path) -> None:
     assert _run_hook(project, _PRE_HOOK).returncode == 0
 
 
+def test_n12_a_hook_fired_from_a_subdirectory_still_judges_the_enrolled_root(tmp_path: Path) -> None:
+    """The shell recognizer walks UP to the marker, but the Python control point
+    resolved its root from the cwd, so a hook fired from a package subdirectory
+    (a sub-agent that ``cd``-ed into it) read the marker relative to that
+    subdirectory, called it "missing but tracked" and blocked every write as
+    ``stale`` (observed on three agents, 2026-09-04). The recognized root now
+    travels to Python as ``TRW_PROJECT_ROOT``; the allow path must stay allowed."""
+    project = _hook_project(tmp_path, "n12-subdir")
+    assert check_enrollment_status(project, CONTRACT_REL) == "current"
+    subdir = project / "pkg" / "src"
+    subdir.mkdir(parents=True)
+    result = _run_hook(project, _PRE_HOOK, cwd=subdir)
+    assert result.returncode == 0, result.stderr
+    assert "stale" not in result.stderr
+
+
 # --- N4: the ledger must fail closed exactly as the marker does ---------------
 
 

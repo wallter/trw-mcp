@@ -10,6 +10,7 @@ import pytest
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state import memory_adapter
 from trw_mcp.state._memory_lookups import update_access_tracking
+from trw_mcp.state._tier_routing import USER_NAMESPACE
 from trw_mcp.state._user_tier import get_user_backend, reset_user_backend
 
 
@@ -45,11 +46,11 @@ def test_user_tier_assertions_and_feedback_use_owning_backend(tmp_path: Path) ->
     )
 
     assert result["status"] == "updated"
-    entry = get_user_backend().get("L-user-own")
+    entry = get_user_backend().get("L-user-own", namespace=USER_NAMESPACE)
     assert entry is not None
     assert entry.helpful_count == 1
     assert len(entry.assertions) == 1
-    assert memory_adapter.get_backend(trw_dir).get("L-user-own") is None
+    assert memory_adapter.get_backend(trw_dir).get("L-user-own", namespace="default") is None
 
 
 def test_feedback_increment_is_atomic_under_concurrency(tmp_path: Path) -> None:
@@ -65,7 +66,7 @@ def test_feedback_increment_is_atomic_under_concurrency(tmp_path: Path) -> None:
         )
 
     assert all(result["status"] == "updated" for result in results)
-    entry = memory_adapter.get_backend(trw_dir).get("L-votes")
+    entry = memory_adapter.get_backend(trw_dir).get("L-votes", namespace="default")
     assert entry is not None
     assert entry.helpful_count == 32
 
@@ -77,8 +78,8 @@ def test_federated_access_tracking_updates_each_owning_store(tmp_path: Path) -> 
 
     update_access_tracking(trw_dir, ["L-project-hit", "L-user-hit", "L-external"], federated=True)
 
-    project_entry = memory_adapter.get_backend(trw_dir).get("L-project-hit")
-    user_entry = get_user_backend().get("L-user-hit")
+    project_entry = memory_adapter.get_backend(trw_dir).get("L-project-hit", namespace="default")
+    user_entry = get_user_backend().get("L-user-hit", namespace=USER_NAMESPACE)
     assert project_entry is not None and project_entry.recall_count == 1
     assert user_entry is not None and user_entry.recall_count == 1
 
@@ -94,7 +95,7 @@ def test_registered_recall_tracks_user_tier_hit(tmp_path: Path, monkeypatch: pyt
     result = recall(query="portable cadence directive", max_results=10)
 
     assert any(entry["id"] == "L-user-recall" for entry in result["learnings"])
-    entry = get_user_backend().get("L-user-recall")
+    entry = get_user_backend().get("L-user-recall", namespace=USER_NAMESPACE)
     assert entry is not None and entry.recall_count == 1
 
 
@@ -117,5 +118,5 @@ def test_direct_adapter_rejects_invalid_feedback(tmp_path: Path) -> None:
     result = memory_adapter.update_learning(trw_dir, "L-feedback", feedback="maybe")
 
     assert result["status"] == "invalid"
-    entry = memory_adapter.get_backend(trw_dir).get("L-feedback")
+    entry = memory_adapter.get_backend(trw_dir).get("L-feedback", namespace="default")
     assert entry is not None and entry.unhelpful_count == 0

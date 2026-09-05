@@ -8,7 +8,6 @@ import pytest
 
 from trw_mcp.state._paths import (
     find_active_run,
-    find_run_via_mtime_scan,
     get_pinned_run,
     pin_active_run,
     unpin_active_run,
@@ -29,10 +28,10 @@ class TestPinActiveRun:
         """Clean up after each test."""
         unpin_active_run()
 
-    def test_pin_overrides_filesystem_scan(
+    def test_pin_selects_the_older_run_over_the_newer_one_on_disk(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter
     ) -> None:
-        """Pinned run is returned instead of filesystem scan result."""
+        """The pin, not recency, decides. A newer run on disk must not win."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
         old_run = _make_run(runs_root, "task1", "20260219T100000Z-old", writer=writer)
@@ -40,19 +39,17 @@ class TestPinActiveRun:
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
-        assert find_run_via_mtime_scan() != old_run
-
         pin_active_run(old_run)
         assert find_active_run() == old_run.resolve()
 
-    def test_unpin_reverts_to_scan(
+    def test_unpin_returns_none_rather_than_falling_back(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, writer: FileStateWriter
     ) -> None:
-        """After unpin, find_active_run reverts to filesystem scan."""
+        """After unpin there is no answer, and no scan invents one (PRD-FIX-085/132)."""
         project = tmp_path / "project"
         runs_root = project / ".trw" / "runs"
         old_run = _make_run(runs_root, "task1", "20260219T100000Z-old", writer=writer)
-        new_run = _make_run(runs_root, "task1", "20260220T100000Z-new", writer=writer)
+        _make_run(runs_root, "task1", "20260220T100000Z-new", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
@@ -61,7 +58,6 @@ class TestPinActiveRun:
 
         unpin_active_run()
         assert find_active_run() is None
-        assert find_run_via_mtime_scan() == new_run
 
     def test_get_pinned_run_reflects_state(self, tmp_path: Path) -> None:
         """get_pinned_run returns current pin state."""

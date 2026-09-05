@@ -173,8 +173,7 @@ class TestIter22FixEndToEnd:
     """End-to-end regression for the 2026-04-27 iter-22 root-cause fix.
 
     Closes the "not yet validated end-to-end" caveat in the
-    HANDOFF-NEXT-INSTANCE.md commit f2d7f170a. The investigation
-    (docs/research/trw-distill/ITER-22-NAIVE-INJECTION-INVESTIGATION-2026-04-27.md)
+    HANDOFF-NEXT-INSTANCE.md commit f2d7f170a. The iter-22 investigation
     localized the structural defect to ``_PATH_DOMAIN_MAP`` having no
     entries for external eval-corpus repos. Commit 56ca4b9c2 added 20
     repo-root entries to close the gap.

@@ -38,7 +38,7 @@ def test_rank_fn_receives_context_in_execute_recall(tmp_path: Path) -> None:
         patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
         patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=[_make_entry()]),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry()], None)),
     ):
         expected_ctx = RecallContext(current_phase="IMPLEMENT", active_domains=["auth"])
         mock_ctx_builder.return_value = expected_ctx
@@ -85,7 +85,7 @@ def test_execute_recall_threads_live_intel_cache_context(tmp_path: Path) -> None
         patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
         patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=[_make_entry("L-boosted")]),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry("L-boosted")], None)),
     ):
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         execute_recall(
@@ -127,7 +127,7 @@ def test_recall_no_context_regression(tmp_path: Path) -> None:
         patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
         patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=[_make_entry()]),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry()], None)),
     ):
         result = execute_recall(
             query="auth",
@@ -167,7 +167,7 @@ def test_execute_recall_contains_pattern_symlinks_and_context_traversal(tmp_path
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _query, entries: entries),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _query, entries: (entries, None)),
     ):
         result = execute_recall(
             query="external",
@@ -204,7 +204,7 @@ def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
         patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
         patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=ranked_entries),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(ranked_entries, None)),
         patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
     ):
         execute_recall(

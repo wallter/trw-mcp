@@ -63,7 +63,18 @@ _BLOAT_GUIDANCE = (
 
 def _representative_session_start_payload() -> dict[str, object]:
     """A worst-case-ish session_start payload: pressure deferrals + full run."""
-    deferral = {"reason": "writer_pressure", "writer_count": 9, "threshold": 2}
+    # PRD-CORE-257-FR04: measured against the shape the code actually emits.
+    # Leaving the old three-key block here would make the ceiling dishonest.
+    deferral = {
+        "reason": "writer_pressure",
+        "writer_count": 9,
+        "peer_writer_count": 8,
+        "threshold": 8,
+        "deferral_age_hours": 2.25,
+        "deferred_count": 6,
+        "census_state": "measured",
+        "ledger_state": "ok",
+    }
     return {
         "timestamp": "2026-07-12T00:00:00+00:00",
         "learnings": [
@@ -85,7 +96,10 @@ def _representative_session_start_payload() -> dict[str, object]:
         "auto_upgrade_check_deferred": dict(deferral),
         "stale_runs_deferred": dict(deferral),
         "embeddings_backfill_deferred": dict(deferral),
-        "wal_checkpoint_deferred": dict(deferral),
+        # PRD-CORE-248 FR04 deleted wal_checkpoint_deferred (pressure now picks
+        # the mode, not whether the checkpoint runs), so the fixture names a
+        # step that can still defer.
+        "pending_learns_deferred": dict(deferral),
         "auto_recall_deferred": {"reason": "session_start_compacted", "detail": "optional"},
         "ceremony_status_deferred": {"reason": "session_start_compacted", "detail": "optional"},
         "run": {"active_run": None, "status": "no_active_run"},
@@ -217,12 +231,9 @@ def test_recall_projected_entry_stays_under_ceiling() -> None:
         "helpful_count": 3,
         "unhelpful_count": 0,
         "session_count": 4,
-        "sessions_surfaced": ["s1", "s2"],
         "last_accessed_at": "2026-07-11",
         "anchor_validity": 1.0,
-        "avg_rework_delta": 0.1,
         "recurrence": 1,
-        "outcome_correlation": {"positive": 2},
     }
     projected = strip_internal_response_fields([entry], get_config().recall_internal_fields)
     tokens = estimate_payload_tokens(projected[0])

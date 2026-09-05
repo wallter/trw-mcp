@@ -292,3 +292,45 @@ class TestTrwLearnGracefulDegradation:
 
         # With embed returning None, dedup check returns 'store' → trw_learn records
         assert result["status"] == "recorded"
+
+
+# ---------------------------------------------------------------------------
+# PRD-FIX-130-FR03 non-goal: the duplicate probe stays sequential and per-record
+# ---------------------------------------------------------------------------
+
+
+class TestDedupStaysSequentialAcrossASweep:
+    """Batching the duplicate probe would let ONE sweep store N copies of one learning.
+
+    FR03 hoists the soft-cap/distribution active set out of the per-record loop
+    and deliberately does NOT hoist the duplicate check: the probe reads the
+    backend so a record stored earlier in the same sweep is visible to a later
+    identical one. This pins that non-goal.
+    """
+
+    def test_later_record_in_a_sweep_sees_an_earlier_stored_record(self, tmp_path: Path) -> None:
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state import learn_journal
+        from trw_mcp.state.memory_adapter import list_active_learnings
+        from trw_mcp.tools._learn_journal_wiring import make_sweep_replay
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        config = TRWConfig(embeddings_enabled=False, dedup_enabled=True)
+        summary = "identical sweep record summary that must collapse to a single stored row"
+        for index in range(3):
+            learn_journal.journal_pending(
+                trw_dir,
+                f"L-seq{index:03d}",
+                {"summary": summary, "detail": "identical detail body for the sequential dedup probe"},
+            )
+
+        sweep = make_sweep_replay(trw_dir, config)
+        try:
+            result = learn_journal.drain_pending(trw_dir, sweep.replay, limit=50, learnings_dir=config.learnings_dir)
+        finally:
+            sweep.flush()
+
+        assert int(result["replayed"]) == 3, result
+        matching = [e for e in list_active_learnings(trw_dir) if str(e.get("summary", "")) == summary]
+        assert len(matching) == 1, f"the sweep stored {len(matching)} copies of one learning"

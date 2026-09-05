@@ -153,7 +153,7 @@ class TestCeremonyScoreBoolCompat:
         from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
-            {"event": "build_check_complete", "tests_passed": True},
+            {"event": "build_check_complete", "test_count": 12, "scope": "pytest tests", "tests_passed": True},
         ]
         result = compute_ceremony_score(events)
         assert result["build_passed"] is True
@@ -163,7 +163,7 @@ class TestCeremonyScoreBoolCompat:
         from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
-            {"event": "build_check_complete", "tests_passed": "True"},
+            {"event": "build_check_complete", "test_count": 12, "scope": "pytest tests", "tests_passed": "True"},
         ]
         result = compute_ceremony_score(events)
         assert result["build_passed"] is True
@@ -173,7 +173,7 @@ class TestCeremonyScoreBoolCompat:
         from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
-            {"event": "build_check_complete", "tests_passed": False},
+            {"event": "build_check_complete", "test_count": 12, "scope": "pytest tests", "tests_passed": False},
         ]
         result = compute_ceremony_score(events)
         assert result["build_passed"] is False
@@ -183,7 +183,7 @@ class TestCeremonyScoreBoolCompat:
         from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
-            {"event": "build_check_complete", "tests_passed": "False"},
+            {"event": "build_check_complete", "test_count": 12, "scope": "pytest tests", "tests_passed": "False"},
         ]
         result = compute_ceremony_score(events)
         assert result["build_passed"] is False
@@ -205,7 +205,7 @@ class TestCeremonyScoreBoolCompat:
 
         events: list[dict[str, object]] = [
             {"event": "tool_invocation", "tool_name": "trw_build_check"},
-            {"event": "build_check_complete", "tests_passed": True},
+            {"event": "build_check_complete", "test_count": 12, "scope": "pytest tests", "tests_passed": True},
         ]
         result = compute_ceremony_score(events)
         assert result["build_passed"] is True
@@ -224,7 +224,11 @@ class TestCeremonyHelpersBuildGateCompat:
         meta = tmp_path / "meta"
         meta.mkdir(parents=True)
         events_path = meta / "events.jsonl"
-        event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete", "data": {"tests_passed": True}}
+        event = {
+            "ts": "2026-01-01T00:00:00Z",
+            "event": "build_check_complete",
+            "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True},
+        }
         events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
         # Legacy event-coercion contract: opt into observe mode (v26.1
@@ -250,7 +254,11 @@ class TestCeremonyHelpersBuildGateCompat:
         meta = tmp_path / "meta"
         meta.mkdir(parents=True)
         events_path = meta / "events.jsonl"
-        event = {"ts": "2026-01-01T00:00:00Z", "event": "build_check_complete", "data": {"tests_passed": "True"}}
+        event = {
+            "ts": "2026-01-01T00:00:00Z",
+            "event": "build_check_complete",
+            "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": "True"},
+        }
         events_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
 
         # Legacy event-coercion contract: opt into observe mode (v26.1

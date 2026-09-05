@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-if TYPE_CHECKING:
-    from trw_mcp.state.requirements_registry import RegistryBuildResult
+from trw_mcp.state._registry_block import render_registry_block as _render_registry_block
+from trw_mcp.state.requirements_registry import RegistryBuildResult
 
 from trw_mcp.models.typed_dicts import RoadmapSyncResult, SyncIndexMdResult
 from trw_mcp.state._index_sync_catalogue import (
@@ -369,7 +369,10 @@ def _apply_registry_authority(entries: list[PRDEntry], prds_dir: Path) -> Regist
 
     Fail-closed: a stale, forked, or rolled-back scheduling ledger RAISES —
     a projection must never silently fall back to the pre-registry frontmatter
-    authority (adversarial-audit finding 5, 2026-07-11).
+    authority (adversarial-audit finding 5, 2026-07-11). An UNEVALUATED registry
+    (``epoch_unset``, PRD-CORE-244-FR07) is a different case and renders: it
+    reports its own unevaluated expiry in the block rather than withholding the
+    whole catalogue.
 
     Returns the :class:`RegistryBuildResult` so renderers can project the
     registry-distinguishing state (execution state, hot path, expiry, epoch).
@@ -384,7 +387,13 @@ def _apply_registry_authority(entries: list[PRDEntry], prds_dir: Path) -> Regist
     trw_root = _find_trw_root(prds_dir)
     registry_dir = (trw_root / ".trw" / "registry") if trw_root else prds_dir / ".registry-scratch"
     registry = build_registry(prds_dir, registry_dir / LEDGER_FILENAME)
-    if registry.status != "ok":
+    # PRD-CORE-244-NFR02 states the two fail postures separately, and they
+    # differ: "epoch_unset" is fail-closed for ACTIVATION and ADVISORY for
+    # RENDERING. Refusing the projection on it would be strictly worse than the
+    # defect FR07 fixes — the catalogue would stop rendering entirely on every
+    # repo that has never advanced its epoch (which is every repo today),
+    # instead of rendering with "expiry: not evaluated" stated plainly.
+    if registry.status not in ("ok", "epoch_unset"):
         raise SchedulingLedgerError(
             f"projection refused: scheduling ledger is {registry.status} ({registry.error}); "
             "prior projection remains intact"
@@ -401,35 +410,6 @@ def _apply_registry_authority(entries: list[PRDEntry], prds_dir: Path) -> Regist
             entry.status = owner.lifecycle_status
             entry.category = owner.category
     return registry
-
-
-def _render_registry_block(registry: RegistryBuildResult | None) -> list[str]:
-    """Render the executable-registry section (PRD-QUAL-121-FR03).
-
-    This block is derivable ONLY from the registry (scheduling ledger + epoch +
-    receipt digest) — never from frontmatter — so the frontmatter scan alone can
-    no longer reproduce the projection bytes. Bullet lists are used instead of
-    tables so ``check_prd_ids`` catalogue-row parsing never mistakes execution
-    state for a PRD title.
-    """
-    if registry is None or registry.epoch is None:
-        return []
-    lines = [
-        f"### Executable Registry (epoch {registry.epoch.sequence} @ {registry.epoch.effective_utc_date})",
-        "",
-        f"- registry receipt: `{registry.receipt_digest()}`",
-        f"- scheduling ledger head: `{registry.head_digest[:16]}`",
-        f"- hot path: {len(registry.hot_path)} of {len(registry.entries)} executable",
-    ]
-    lines.extend(
-        f"- {str(entry.execution_state).upper()}: {entry.prd_id} ({entry.owner})"
-        for entry in registry.entries
-        if str(entry.execution_state) in ("active", "blocked_external")
-    )
-    if registry.expired:
-        lines.append("- expired (left hot path): " + ", ".join(registry.expired))
-    lines.append("")
-    return lines
 
 
 def render_expected_projection(prds_dir: Path, *, kind: str) -> str:

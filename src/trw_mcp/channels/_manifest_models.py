@@ -288,8 +288,9 @@ DEFAULT_CORRELATION_WINDOW_SECONDS: int = 3600
 # through that path inherits a guess. The `claude-code` factor in particular describes
 # a CC-04 correlation hook that emits nothing today (0 `edit_correlated` events across
 # 4,126 records), so it currently scales an empty set.
-# Replace with measurement before citing any cross-client comparison; see
-# docs/research/providers/CHANNEL-ARCHITECTURE.md §Cross-Client Meta-Tune Correlation.
+# Replace with measurement before citing any cross-client comparison: a per-client
+# capture study (observed events / ground-truth events, with N and a CI) is the only
+# thing that turns these into numbers rather than placeholders.
 CLIENT_CORRECTION_FACTORS: dict[str, float] = {
     "claude-code": 0.85,
     "codex": 0.70,

@@ -25,6 +25,9 @@ from trw_mcp.server._subcommands_commit import (
     _run_commit_candidate as _run_commit_candidate,
 )
 from trw_mcp.server._subcommands_commit import (
+    _run_prd_epoch as _run_prd_epoch,
+)
+from trw_mcp.server._subcommands_commit import (
     _run_prd_state as _run_prd_state,
 )
 from trw_mcp.server._subcommands_commit import (
@@ -387,6 +390,7 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
     "prepare-candidate": _run_prepare_candidate,
     "commit-candidate": _run_commit_candidate,
     "prd-state": _run_prd_state,
+    "prd-epoch": _run_prd_epoch,
     "check-instructions": _run_check_instructions,
     "doctor": _run_doctor,
     "gc": _run_gc,
@@ -413,5 +417,14 @@ def _run_dispatch_lazy(args: argparse.Namespace) -> None:
     run_dispatch(args)
 
 
+def _run_formation_lazy(args: argparse.Namespace) -> None:
+    # PRD-CORE-265: lazy so `trw_mcp.formation` is imported only when a
+    # formation verb actually runs, never on the CLI's common path.
+    from trw_mcp.tools._formation_cli import run_formation
+
+    run_formation(args)
+
+
 SUBCOMMAND_HANDLERS["tier"] = _run_tier_lazy
 SUBCOMMAND_HANDLERS["dispatch"] = _run_dispatch_lazy
+SUBCOMMAND_HANDLERS["formation"] = _run_formation_lazy

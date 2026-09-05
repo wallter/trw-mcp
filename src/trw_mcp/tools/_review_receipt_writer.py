@@ -25,9 +25,12 @@ from trw_mcp.models._evidence_records import ReviewReceipt
 from trw_mcp.models.run import ReviewFinding
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.persistence import FileStateWriter
+from trw_mcp.state.review_signoffs import trw_dir_for_run
 from trw_mcp.tools._evidence_binding import build_content_binding, mint_run_owned_scope
 from trw_mcp.tools._evidence_gates import validate_review_receipt
 from trw_mcp.tools._evidence_persistence import generate_receipt_id, read_receipt_bytes, write_receipt
+from trw_mcp.tools._review_adversarial_source import adversarial_source_is_verified
+from trw_mcp.tools._review_reviewer_family import resolve_reviewer_fields
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +46,12 @@ _AUTO_RUBRICS: tuple[str, ...] = (
     "spec-compliance",
 )
 _CROSS_MODEL_RUBRICS: tuple[str, ...] = ("cross_model_review",)
+#: PRD-CORE-255-FR04. REALIZED (never required) — adding it to any plan's
+#: required set would retroactively invalidate every ordinary review. It is
+#: stamped only on a receipt whose reviewer posture is independently verified
+#: (:func:`adversarial_source_is_verified`), so the rubric marks "an independent
+#: adversarial pass was relayed through this receipt", not "the caller said so".
+ADVERSARIAL_AUDIT_RUBRIC = "adversarial_audit"
 _RUBRIC_POLICY = """TRW review receipt policy v26.1
 manual: validate every finding and derive the verdict from normalized severity
 auto: realize correctness, security, test-quality, performance, style, and spec-compliance roles
@@ -59,6 +68,18 @@ class ReviewReceiptWriteResult:
     plan_id: str = ""
     state: str = "missing"
     reason_code: str = "receipt_not_written"
+    #: PRD-CORE-255-FR02: the family actually stamped, and — when a ``cross_model``
+    #: claim was refused — which verification condition refused it. Carried back so
+    #: the ``trw_review`` RESPONSE says so too; a structlog-only downgrade is
+    #: invisible to the agent that made the claim.
+    reviewer_family: str = ""
+    family_downgraded_reason: str = ""
+    #: True ONLY for a manual-mode family EARNED through a digest-verified external
+    #: artifact. The in-process cross_model dispatch also stamps
+    #: ``reviewer_family="cross_model"``, but its coverage is decided by whether the
+    #: provider actually returned cross-family findings — that handler owns
+    #: ``review_family_coverage`` and this must not overwrite its answer.
+    verified_cross_model: bool = False
 
     @property
     def ok(self) -> bool:
@@ -126,15 +147,6 @@ def _requirements_for_artifact(
     return _MANUAL_RUBRICS, _MANUAL_ROLES, realized, realized_roles
 
 
-def _reviewer_fields(review_data: dict[str, object], mode: str) -> tuple[str, str, str]:
-    reviewer = review_data.get("reviewer")
-    block = reviewer if isinstance(reviewer, dict) else {}
-    origin = str(block.get("source", "unknown") or "unknown")
-    identity = str(block.get("receipt_id") or block.get("session_id") or block.get("run_id") or origin)
-    family = "cross_model" if mode == "cross_model" else ("agent" if mode == "auto" else "human_or_self")
-    return origin, identity, family
-
-
 def _validated_findings(review_data: dict[str, object]) -> tuple[ReviewFinding, ...]:
     raw = review_data.get("findings", review_data.get("cross_model_findings", []))
     if not isinstance(raw, list):
@@ -167,7 +179,33 @@ def record_review_receipt(
             return ReviewReceiptWriteResult(reason_code=binding_outcome.reason_code)
 
         mode = str(review_data.get("mode", "manual") or "manual")
+        reviewer = resolve_reviewer_fields(review_data, mode, project_root)
         required_rubrics, required_roles, realized_rubrics, realized_roles = _requirements_for_artifact(review_data)
+        # PRD-CORE-255-FR04: the adversarial rubric is REALIZED (not required), so
+        # it never changes plan coverage for an ordinary review — it only records
+        # that this receipt relayed an independently-verified adversarial pass.
+        substantive = review_data.get("substantive") is True
+        review_id = str(review_data.get("review_id", ""))
+        # The references an operator sign-off may be bound to. Both are decided
+        # HERE, by the server, from state the caller cannot restate: the review's
+        # own id and the scope digest the run's journal produced.
+        review_refs = tuple(ref for ref in (review_id, scope.scope_digest) if ref)
+        verification = adversarial_source_is_verified(
+            reviewer, review_refs=review_refs, trw_dir=trw_dir_for_run(run_path)
+        )
+        adversarial_verified = substantive and verification.verified
+        if adversarial_verified:
+            realized_rubrics = (*realized_rubrics, ADVERSARIAL_AUDIT_RUBRIC)
+        # A refused adversarial posture must SAY so. The family resolver's own
+        # downgrade reason wins when it has one (it is the more specific fact);
+        # otherwise the refusal reason is surfaced whenever the caller actually
+        # staked something on the posture — an operator source, or an
+        # adversarial_pass claim. Silence here is what let a self-minted operator
+        # receipt look identical to a real one.
+        downgraded_reason = reviewer.family_downgraded_reason
+        staked_on_posture = reviewer.origin == "operator" or bool(review_data.get("adversarial_pass"))
+        if not downgraded_reason and verification.reason and staked_on_posture:
+            downgraded_reason = verification.reason
         plan_seed = {
             "plan_id": "pending",
             "scope_id": scope.scope_id,
@@ -196,8 +234,6 @@ def record_review_receipt(
         FileStateWriter().write_text(plan_path, plan.model_dump_json(exclude_none=True) + "\n")
 
         receipt_id = generate_receipt_id("review")
-        origin, identity, family = _reviewer_fields(review_data, mode)
-        substantive = review_data.get("substantive") is True
         degraded_reason = ""
         if not substantive:
             degraded_reason = str(
@@ -216,13 +252,19 @@ def record_review_receipt(
         verdict = ReviewVerdict(raw_verdict)
         receipt = ReviewReceipt(
             receipt_id=receipt_id,
-            review_id=str(review_data.get("review_id", "")),
+            review_id=review_id,
             run_id=run_path.name,
             completed_at=str(review_data.get("timestamp", "")),
             method=mode,
-            reviewer_origin=origin,
-            reviewer_identity=identity,
-            reviewer_family=family,
+            reviewer_origin=reviewer.origin,
+            reviewer_identity=reviewer.identity,
+            reviewer_family=reviewer.family,
+            external_receipt_digest=reviewer.external_receipt_digest,
+            family_downgraded_reason=downgraded_reason,
+            # A caller passing adversarial_pass=true from an unverified posture has
+            # it recorded False here — silently in the receipt, but the refusal is
+            # visible through family_downgraded_reason and the absent rubric.
+            adversarial_pass=bool(review_data.get("adversarial_pass")) and adversarial_verified,
             reviewer_roles_realized=realized_roles,
             prd_ids=prd_ids,
             content_binding=binding_outcome.binding,
@@ -251,12 +293,22 @@ def record_review_receipt(
         )
         outcome = write_receipt(run_path, "review", receipt_id, receipt)
         if not outcome.ok:
-            return ReviewReceiptWriteResult(plan_id=plan_id, state="invalid", reason_code=outcome.reason_code)
+            return ReviewReceiptWriteResult(
+                plan_id=plan_id,
+                state="invalid",
+                reason_code=outcome.reason_code,
+                reviewer_family=reviewer.family,
+                family_downgraded_reason=downgraded_reason,
+                verified_cross_model=reviewer.verified_cross_model,
+            )
         return ReviewReceiptWriteResult(
             receipt_id=receipt_id,
             plan_id=plan_id,
             state="written",
             reason_code="review_receipt_written",
+            reviewer_family=reviewer.family,
+            family_downgraded_reason=downgraded_reason,
+            verified_cross_model=reviewer.verified_cross_model,
         )
     except Exception as exc:  # justified: review persistence fails toward no evidence, never a false positive
         logger.warning("review_receipt_write_failed", run=str(run_path), error=type(exc).__name__, exc_info=True)
@@ -311,4 +363,9 @@ def load_latest_review_evidence(
         )
 
 
-__all__ = ["ReviewReceiptWriteResult", "load_latest_review_evidence", "record_review_receipt"]
+__all__ = [
+    "ADVERSARIAL_AUDIT_RUBRIC",
+    "ReviewReceiptWriteResult",
+    "load_latest_review_evidence",
+    "record_review_receipt",
+]

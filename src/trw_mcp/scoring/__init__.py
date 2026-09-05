@@ -42,6 +42,9 @@ from trw_mcp.scoring._complexity import (
     get_phase_requirements as get_phase_requirements,
 )
 from trw_mcp.scoring._correlation import (
+    CONTRADICTION_EVENT_LABEL as CONTRADICTION_EVENT_LABEL,
+)
+from trw_mcp.scoring._correlation import (
     EVENT_ALIASES as EVENT_ALIASES,
 )
 from trw_mcp.scoring._correlation import (
@@ -52,6 +55,9 @@ from trw_mcp.scoring._correlation import (
 )
 from trw_mcp.scoring._correlation import (
     _resolve_event_reward as _resolve_event_reward,
+)
+from trw_mcp.scoring._correlation import (
+    apply_contradiction_penalty as apply_contradiction_penalty,
 )
 from trw_mcp.scoring._correlation import (
     apply_proximal_rewards as apply_proximal_rewards,
@@ -78,10 +84,13 @@ from trw_mcp.scoring._decay import (
     _days_since_access as _days_since_access,
 )
 from trw_mcp.scoring._decay import (
-    _entry_utility as _entry_utility,
+    apply_impact_decay as apply_impact_decay,
 )
 from trw_mcp.scoring._decay import (
-    apply_impact_decay as apply_impact_decay,
+    entry_utility as entry_utility,
+)
+from trw_mcp.scoring._decay import (
+    utility_params_for as utility_params_for,
 )
 from trw_mcp.scoring._distribution import (
     compute_impact_distribution as compute_impact_distribution,
@@ -182,12 +191,14 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
+    "CONTRADICTION_EVENT_LABEL",
     "EVENT_ALIASES",
     "REWARD_MAP",
     "CeremonyDepthContract",
     "DuplicateSkillFlag",
     "RecallContext",
     "SkillLifecycleRecord",
+    "apply_contradiction_penalty",
     "apply_impact_decay",
     "apply_proximal_rewards",
     "apply_time_decay",

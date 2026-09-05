@@ -145,6 +145,45 @@ def apply_crash_recovery_locked(
     )
 
 
+def lease_takeover_refusal(
+    operation: OperationRecord,
+    *,
+    now_ms: int,
+    stale_lease_ms: int,
+    owner_alive: bool | None = None,
+    self_owned_pid: int = 0,
+) -> RecoverResult | None:
+    """The staleness + liveness guard every lease-granting action shares (FR04).
+
+    ``None`` means the lease may be taken. One implementation, two callers
+    (:func:`authorize_takeover_locked` and the PRD-FIX-127 ``resume`` action):
+    NFR02 requires resume to reuse takeover's authority, and a verbatim copy would
+    let the two drift apart the first time one is tightened.
+
+    ``self_owned_pid`` names a process that is not a FOREIGN live owner — you
+    cannot steal a lease from yourself. ``resume`` passes its own pid so the
+    ordinary "the gate blocked, fix the evidence, retry under the same delivery
+    id" flow works in one server process; ``takeover_pending`` passes nothing and
+    keeps its behaviour exactly. This never softens the staleness floor, which is
+    checked FIRST: a lease a live batch is heartbeating is still fresh, so a
+    same-pid caller is refused there before liveness is ever consulted.
+    """
+    if operation.lease_expiry_utc_ms and now_ms < operation.lease_expiry_utc_ms:
+        return fail_recovery(RecoverStatus.NOT_STALE, "lease_still_fresh", operation)
+    lease_age = now_ms - operation.lease_expiry_utc_ms if operation.lease_expiry_utc_ms else now_ms
+    if lease_age < stale_lease_ms:
+        return fail_recovery(RecoverStatus.NOT_STALE, "lease_not_stale_enough", operation)
+    if owner_alive is None:
+        alive = (
+            bool(operation.lease_pid) and operation.lease_pid != self_owned_pid and process_alive(operation.lease_pid)
+        )
+    else:
+        alive = owner_alive
+    if alive:
+        return fail_recovery(RecoverStatus.LIVE_OWNER, "owner_process_alive", operation)
+    return None
+
+
 def authorize_takeover_locked(
     store: JournalStore,
     conn: sqlite3.Connection,
@@ -169,19 +208,14 @@ def authorize_takeover_locked(
     these checks, and the writes below.
     """
     if not reason or len(reason) > DeliveryLimits.MAX_REASON_CHARS:
-        return _fail(RecoverStatus.REJECTED, "invalid_reason", operation)
+        return fail_recovery(RecoverStatus.REJECTED, "invalid_reason", operation)
     if not verify_capability(capability_token, operation.capability_salt, operation.capability_hash):
-        return _fail(RecoverStatus.UNAUTHORIZED, "capability_mismatch", operation)
+        return fail_recovery(RecoverStatus.UNAUTHORIZED, "capability_mismatch", operation)
     if expected_revision != operation.revision:
-        return _fail(RecoverStatus.STALE_REVISION, "revision_mismatch", operation)
-    lease_age = now_ms - operation.lease_expiry_utc_ms if operation.lease_expiry_utc_ms else now_ms
-    if operation.lease_expiry_utc_ms and now_ms < operation.lease_expiry_utc_ms:
-        return _fail(RecoverStatus.NOT_STALE, "lease_still_fresh", operation)
-    if lease_age < stale_lease_ms:
-        return _fail(RecoverStatus.NOT_STALE, "lease_not_stale_enough", operation)
-    alive = process_alive(operation.lease_pid) if owner_alive is None else owner_alive
-    if alive:
-        return _fail(RecoverStatus.LIVE_OWNER, "owner_process_alive", operation)
+        return fail_recovery(RecoverStatus.STALE_REVISION, "revision_mismatch", operation)
+    refusal = lease_takeover_refusal(operation, now_ms=now_ms, stale_lease_ms=stale_lease_ms, owner_alive=owner_alive)
+    if refusal is not None:
+        return refusal
 
     updated = operation.model_copy(
         update={
@@ -212,7 +246,8 @@ def authorize_takeover_locked(
     )
 
 
-def _fail(status: RecoverStatus, code: str, operation: OperationRecord) -> RecoverResult:
+def fail_recovery(status: RecoverStatus, code: str, operation: OperationRecord) -> RecoverResult:
+    """Refusal projection that leaves the lease owner and every step unchanged."""
     return RecoverResult(
         status=status,
         reason_code=code,

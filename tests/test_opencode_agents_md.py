@@ -11,6 +11,12 @@ from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 pytestmark = pytest.mark.unit
 
 
+def _closing_reminder() -> str:
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_closing_reminder
+
+    return render_closing_reminder()
+
+
 def _render_opencode_surface() -> str:
     profile = resolve_client_profile("opencode")
     # opencode is a light-mode profile -> MINIMAL is the right ceremony mode.
@@ -21,7 +27,7 @@ def _render_opencode_surface() -> str:
         r.render_ceremony_quick_ref(),
         r.render_ceremony_table(),
         r.render_minimal_protocol(),
-        r.render_closing_reminder(),
+        _closing_reminder(),
     ]
     return "\n\n".join(parts)
 

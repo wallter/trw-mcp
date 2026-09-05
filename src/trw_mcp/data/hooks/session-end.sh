@@ -46,6 +46,16 @@ if [ -z "$_session_id" ] && ! [ -t 0 ]; then
 fi
 _session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""
 
+# PRD-FIX-128-FR08: reclaim THIS session's degraded markers. Deliberately placed
+# BEFORE the run-scoped early exits below -- a session that ended without owning
+# a run still has an epoch marker and possibly a latch, and leaving them to the
+# age-based sweep would keep a dead session's epoch around for a day. The
+# `command -v` guard matches the ones already used for this subsystem: a
+# .claude/hooks copy that predates FR128 has no such function.
+if command -v trw_degraded_release_markers >/dev/null 2>&1; then
+  trw_degraded_release_markers "$_session_id"
+fi
+
 _run_dir=""
 if [ -n "$_session_id" ]; then
   _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""

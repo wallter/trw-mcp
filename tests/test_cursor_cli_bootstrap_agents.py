@@ -1,8 +1,22 @@
-"""Unit tests for cursor-cli AGENTS.md bootstrap generators (PRD-CORE-137)."""
+"""Unit tests for cursor-cli AGENTS.md bootstrap generators (PRD-CORE-137).
+
+PRD-CORE-243-FR06/FR08 (2026-09-03): ``generate_cursor_cli_agents_md`` no
+longer owns a private ``<!-- TRW:BEGIN -->``/``<!-- TRW:END -->`` sentinel
+dialect. It merges into the SAME ``<!-- trw:start -->``/``<!-- trw:end -->``
+block every other AGENTS.md/CLAUDE.md writer uses, through the shared
+``merge_trw_section`` seam. A file that still carries the retired legacy block
+(from before this fix) is migrated in place -- see the
+``TestLegacyDialectMigration`` class below.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
+
+_START = "<!-- trw:start -->"
+_END = "<!-- trw:end -->"
+_LEGACY_START = "<!-- TRW:BEGIN -->"
+_LEGACY_END = "<!-- TRW:END -->"
 
 
 class TestAgentsMdFresh:
@@ -20,16 +34,16 @@ class TestAgentsMdFresh:
 
         generate_cursor_cli_agents_md(tmp_path, "Test ceremony content")
         content = (tmp_path / "AGENTS.md").read_text()
-        assert "<!-- TRW:BEGIN -->" in content
-        assert "<!-- TRW:END -->" in content
+        assert _START in content
+        assert _END in content
 
     def test_trw_section_inside_block(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
         generate_cursor_cli_agents_md(tmp_path, "Ceremony content here")
         content = (tmp_path / "AGENTS.md").read_text()
-        begin_idx = content.index("<!-- TRW:BEGIN -->")
-        end_idx = content.index("<!-- TRW:END -->")
+        begin_idx = content.index(_START)
+        end_idx = content.index(_END)
         block = content[begin_idx:end_idx]
         assert "Ceremony content here" in block
 
@@ -50,7 +64,7 @@ class TestAgentsMdSentinelMerge:
         agents_file = tmp_path / "AGENTS.md"
         pre_content = "# My Project Rules\nBe concise.\n\n"
         post_content = "\n## Custom Stuff\nDon't break things.\n"
-        agents_file.write_text(pre_content + "<!-- TRW:BEGIN -->\nOld TRW content\n<!-- TRW:END -->" + post_content)
+        agents_file.write_text(pre_content + f"{_START}\nOld TRW content\n{_END}" + post_content)
 
         generate_cursor_cli_agents_md(tmp_path, "New TRW content")
         content = agents_file.read_text()
@@ -63,15 +77,24 @@ class TestAgentsMdSentinelMerge:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
         agents_file = tmp_path / "AGENTS.md"
-        agents_file.write_text("<!-- TRW:BEGIN -->\nOld content\n<!-- TRW:END -->\n")
+        agents_file.write_text(f"{_START}\nOld content\n{_END}\n")
         result = generate_cursor_cli_agents_md(tmp_path, "New content")
         assert "AGENTS.md" in result["updated"]
 
 
 class TestAgentsMdNoSentinels:
-    """test_agents_md_no_sentinels_prepends_block."""
+    """test_agents_md_no_sentinels_appends_block.
 
-    def test_no_sentinels_prepends(self, tmp_path: Path) -> None:
+    PRD-CORE-243-FR06/FR08: cursor-cli's writer used to PREPEND its own block
+    above existing content when no sentinels were found -- the one respect in
+    which its private dialect differed from every other AGENTS.md/CLAUDE.md
+    writer, which APPENDS (see ``render_merged_content``'s no-markers-found
+    branch). Routing cursor-cli through the shared ``merge_trw_section`` seam
+    makes this consistent with the rest of the system: existing content is
+    preserved and the TRW block lands after it, not before.
+    """
+
+    def test_no_sentinels_appends(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
         agents_file = tmp_path / "AGENTS.md"
@@ -80,9 +103,9 @@ class TestAgentsMdNoSentinels:
 
         generate_cursor_cli_agents_md(tmp_path, "TRW content")
         content = agents_file.read_text()
-        begin_idx = content.index("<!-- TRW:BEGIN -->")
+        begin_idx = content.index(_START)
         original_idx = content.index("Be careful.")
-        assert begin_idx < original_idx
+        assert original_idx < begin_idx
         assert "Be careful." in content
 
 
@@ -114,52 +137,78 @@ class TestAgentsMdCursorCliContentGating:
         agents_md = (tmp_path / "AGENTS.md").read_text()
         assert "trw_session_start" in agents_md
         assert "trw_deliver" in agents_md
-        assert "<!-- TRW:BEGIN -->" in agents_md
-        assert "<!-- TRW:END -->" in agents_md
+        assert _START in agents_md
+        assert _END in agents_md
+        # The retired dialect must never be emitted by a fresh write.
+        assert _LEGACY_START not in agents_md
+        assert _LEGACY_END not in agents_md
 
 
-class TestMergeAgentsMdPureFunction:
-    """Unit tests for the _merge_agents_md pure helper."""
+class TestLegacyDialectMigration:
+    """PRD-CORE-243-FR06/FR08: a dead legacy block is migrated, not duplicated.
 
-    def test_replaces_content_between_sentinels(self) -> None:
-        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+    Reproduces the live defect: an ``update-project`` run that PREPENDED a
+    second, uppercase-dialect cursor-cli block onto an AGENTS.md that already
+    carried the shared lowercase block (two writers, two dialects, one file --
+    ``make instruction-surface-lint-strict``'s ``duplicate_block`` finding).
+    """
 
-        existing = "Before\n<!-- TRW:BEGIN -->\nOld content\n<!-- TRW:END -->\nAfter\n"
-        trw_block = "<!-- TRW:BEGIN -->\nNew content\n<!-- TRW:END -->"
-        result = _merge_agents_md(existing, trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
-        assert "New content" in result
-        assert "Old content" not in result
-        assert "Before\n" in result
-        assert "After\n" in result
+    def test_legacy_alone_is_migrated_to_the_shared_dialect(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
-    def test_prepends_when_no_sentinels(self) -> None:
-        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(f"{_LEGACY_START}\nOld install body\n{_LEGACY_END}\n", encoding="utf-8")
 
-        existing = "# Existing rules\nDo something.\n"
-        trw_block = "<!-- TRW:BEGIN -->\nTRW stuff\n<!-- TRW:END -->"
-        result = _merge_agents_md(existing, trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
-        begin_idx = result.index("<!-- TRW:BEGIN -->")
-        existing_idx = result.index("# Existing rules")
-        assert begin_idx < existing_idx
-        assert "Do something." in result
+        generate_cursor_cli_agents_md(tmp_path, "New TRW content")
+        content = agents_file.read_text(encoding="utf-8")
 
-    def test_preserves_content_outside_sentinels(self) -> None:
-        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+        assert _LEGACY_START not in content
+        assert _LEGACY_END not in content
+        assert content.count(_START) == 1
+        assert "New TRW content" in content
+        assert "Old install body" not in content
 
-        pre = "# My rules\n"
-        post = "\n## Custom\nDo not break.\n"
-        existing = pre + "<!-- TRW:BEGIN -->\nOld\n<!-- TRW:END -->" + post
-        trw_block = "<!-- TRW:BEGIN -->\nNew\n<!-- TRW:END -->"
-        result = _merge_agents_md(existing, trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
-        assert "# My rules" in result
-        assert "Do not break." in result
-        assert "New" in result
-        assert "Old" not in result
+    def test_legacy_plus_shared_collapse_to_one_block_and_preserve_user_content(self, tmp_path: Path) -> None:
+        """The exact HEAD-of-repo shape: a dead legacy block prepended onto a
 
-    def test_empty_existing_prepends(self) -> None:
-        from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
+        file that already carries the live shared block. After the writer
+        runs, exactly one TRW block of any dialect remains and the pointer
+        prose that sat below both is untouched.
+        """
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
-        trw_block = "<!-- TRW:BEGIN -->\nContent\n<!-- TRW:END -->"
-        result = _merge_agents_md("", trw_block, "<!-- TRW:BEGIN -->", "<!-- TRW:END -->")
-        assert "<!-- TRW:BEGIN -->" in result
-        assert "Content" in result
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(
+            f"{_LEGACY_START}\ndead legacy install body\n{_LEGACY_END}\n\n"
+            "# AGENTS.md\n\nUser pointer prose.\n\n"
+            f"{_START}\nlive shared body\n{_END}\n",
+            encoding="utf-8",
+        )
+
+        generate_cursor_cli_agents_md(tmp_path, "New TRW content")
+        content = agents_file.read_text(encoding="utf-8")
+
+        assert _LEGACY_START not in content
+        assert _LEGACY_END not in content
+        assert content.count(_START) == 1
+        assert "User pointer prose." in content
+        assert "New TRW content" in content
+        assert "dead legacy install body" not in content
+        assert "live shared body" not in content
+
+    def test_migration_is_idempotent_on_a_second_run(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
+
+        agents_file = tmp_path / "AGENTS.md"
+        agents_file.write_text(
+            f"{_LEGACY_START}\ndead\n{_LEGACY_END}\n\n# AGENTS.md\n\nUser prose.\n",
+            encoding="utf-8",
+        )
+
+        generate_cursor_cli_agents_md(tmp_path, "Body")
+        first = agents_file.read_text(encoding="utf-8")
+        generate_cursor_cli_agents_md(tmp_path, "Body")
+        second = agents_file.read_text(encoding="utf-8")
+
+        assert first == second
+        assert second.count(_START) == 1

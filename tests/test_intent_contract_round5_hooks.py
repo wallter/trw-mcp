@@ -34,6 +34,7 @@ import pytest
 
 from tests._intent_contract_hooks import (
     CONTRACT_REL,
+    INTENT_LIB,
     POST_HOOK,
     PRE_HOOK,
     contract_yaml,
@@ -123,28 +124,39 @@ def test_fa_the_same_lib_stays_inert_before_enrollment(tmp_path: Path, hook: str
     assert result.returncode == 0
 
 
-@pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
-def test_fa_the_only_lib_invocation_left_is_detached(hook: str) -> None:
+#: The files that make up the deciding shell. PRD-CORE-250-FR05 moved the shared
+#: routines out of the two hooks and into the library both of them source, so a
+#: structural property of "the deciding shell" now has to be read across all
+#: three — scanning only the hooks would silently stop measuring anything.
+_CONTROL_POINT_FILES = (PRE_HOOK, POST_HOOK, INTENT_LIB)
+
+
+def _control_point_source() -> str:
+    return "\n".join((_HOOK_SRC / name).read_text(encoding="utf-8") for name in _CONTROL_POINT_FILES)
+
+
+def test_fa_the_only_lib_invocation_left_is_detached() -> None:
     """Companion to the paren-depth scan, which passes while this is broken.
 
     ``_subshell_depths`` proves the lib cannot WRITE the deciding shell. It says
     nothing about whether the deciding shell WAITS for it, which is the whole of
     F-A. Two structural facts carry that: the lib appears exactly once outside
-    comments, and the group containing it is backgrounded.
+    comments across the whole control point, and the group containing it is
+    backgrounded.
     """
-    source = (_HOOK_SRC / hook).read_text(encoding="utf-8")
+    source = _control_point_source()
     live = [
         line
         for line in source.splitlines()
         if '. "$_hook_dir/lib-trw.sh"' in line and not line.lstrip().startswith("#")
     ]
-    assert len(live) == 1, f"{hook} invokes the shared lib {len(live)} times outside comments: {live}"
+    assert len(live) == 1, f"the control point invokes the shared lib {len(live)} times outside comments: {live}"
 
     body = source.split("_trw_telemetry() {", 1)[1].split("\n}", 1)[0]
     assert '. "$_hook_dir/lib-trw.sh"' in body, "the one invocation must be the telemetry one"
     closing = [line for line in body.splitlines() if line.strip().startswith(")")]
     assert closing and closing[-1].rstrip().endswith("&"), (
-        f"{hook} runs the shared lib in a FOREGROUND subshell: {closing[-1] if closing else '<no group>'}"
+        f"the control point runs the shared lib in a FOREGROUND subshell: {closing[-1] if closing else '<no group>'}"
     )
     assert "</dev/null" in closing[-1], "a detached job must not inherit the client's stdin"
 
@@ -236,8 +248,7 @@ def test_fc_the_residual_before_any_trap_is_a_kill_not_a_decision(tmp_path: Path
     )
 
 
-@pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
-def test_fc_decide_publishes_the_code_before_the_flag(hook: str) -> None:
+def test_fc_decide_publishes_the_code_before_the_flag() -> None:
     """Latent half of F-C, pinned structurally because it is unreachable by timing.
 
     ``_trw_decide`` set ``_trw_exit_decided=1`` BEFORE ``_trw_decided_code``, so a
@@ -245,12 +256,46 @@ def test_fc_decide_publishes_the_code_before_the_flag(hook: str) -> None:
     exited 0 — a block converted into an allow. The probe measured 0 hits in 150
     timed runs at shipped speed, which is exactly why a behavioural test would be
     vacuous and the source order is the thing worth pinning.
+
+    The function moved into the shared library (PRD-CORE-250-FR05), so the scan
+    covers the whole control point; the split below fails loudly if it moves
+    again rather than passing on an empty body.
     """
-    source = (_HOOK_SRC / hook).read_text(encoding="utf-8")
+    source = _control_point_source()
+    assert source.count("_trw_decide() {") == 1, "the decide routine must exist exactly once in the control point"
     body = source.split("_trw_decide() {", 1)[1].split("}", 1)[0]
     assert body.index("_trw_decided_code=") < body.index("_trw_exit_decided=1"), (
-        f"{hook} publishes the decided flag before the code it carries:{body}"
+        f"the control point publishes the decided flag before the code it carries:{body}"
     )
+
+
+def test_every_inline_decision_assignment_publishes_the_code_first() -> None:
+    """The same ordering rule where it is written OUT rather than called.
+
+    The hooks' pre-library bootstrap cannot call ``_trw_decide`` — the function
+    does not exist yet — so it assigns the pair directly. That is the same latent
+    F-C shape and needs the same guarantee, which a scan for the function body
+    alone would not give.
+
+    Adjacency is the assertion, not order-of-appearance: a scan that only asked
+    "did some `_trw_decided_code=` line come earlier in the file" is satisfied by
+    the initialiser at the top and passes with the two lines swapped (measured).
+    """
+    for name in (PRE_HOOK, POST_HOOK):
+        numbered = [
+            (number, line.strip())
+            for number, line in enumerate((_HOOK_SRC / name).read_text(encoding="utf-8").splitlines(), start=1)
+            if line.strip().startswith(("_trw_decided_code=", "_trw_exit_decided="))
+        ]
+        publishes = [(number, text) for number, text in numbered if text == "_trw_exit_decided=1"]
+        assert publishes, f"{name} has no inline decision assignment — the scan has rotted"
+        by_line = dict(numbered)
+        for number, _text in publishes:
+            previous = by_line.get(number - 1, "")
+            assert previous.startswith("_trw_decided_code="), (
+                f"{name}:{number} publishes _trw_exit_decided=1 without assigning the code on the line before it "
+                f"(found {previous!r})"
+            )
 
 
 # --- F-G: git must not be able to move the root out from under recognition ----
@@ -345,7 +390,9 @@ def test_fg_shell_recognition_reaches_a_marker_in_an_ancestor_directory(
 
     result = _run_from(project, hook, nested, path_without_python3)
     assert result.returncode == 2, f"shell recognition did not reach the marker from a subdirectory\n{result.stderr}"
-    assert "python3 is unavailable" in result.stderr, "the measurement did not go through the shell-only branch"
+    assert "no interpreter with trw_mcp installed" in result.stderr, (
+        "the measurement did not go through the shell-only branch"
+    )
 
 
 @pytest_skip_no_sh

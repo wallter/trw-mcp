@@ -40,30 +40,6 @@ def test_effective_nudge_enabled_opencode_profile() -> None:
 
 
 @pytest.mark.unit
-def test_effective_hooks_enabled_default() -> None:
-    """Default config (None) with claude-code profile -> True."""
-    cfg = TRWConfig()
-    assert cfg.hooks_enabled is None
-    assert cfg.effective_hooks_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_hooks_enabled_explicit_false() -> None:
-    """Explicit hooks_enabled=False overrides profile default."""
-    cfg = TRWConfig(hooks_enabled=False)
-    assert cfg.effective_hooks_enabled is False
-
-
-@pytest.mark.unit
-def test_effective_hooks_enabled_opencode_profile() -> None:
-    """None config + opencode profile -> False (light profile disables hooks)."""
-    cfg = TRWConfig(target_platforms=["opencode"])
-    assert cfg.hooks_enabled is None
-    assert cfg.client_profile.hooks_enabled is False
-    assert cfg.effective_hooks_enabled is False
-
-
-@pytest.mark.unit
 def test_tool_resolution_mode_default_is_standard() -> None:
     """PRD-CORE-218 FR04: tool exposure is a single global authority
     (tool_resolution_mode), NOT a per-profile preset. Default is 'standard'
@@ -106,99 +82,6 @@ def test_effective_skills_enabled_opencode_profile() -> None:
 
 
 @pytest.mark.unit
-def test_effective_learning_recall_enabled_default() -> None:
-    """Default config (None) with claude-code profile -> True."""
-    cfg = TRWConfig()
-    assert cfg.learning_recall_enabled is None
-    assert cfg.effective_learning_recall_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_learning_recall_enabled_explicit_false() -> None:
-    """Explicit learning_recall_enabled=False overrides profile."""
-    cfg = TRWConfig(learning_recall_enabled=False)
-    assert cfg.effective_learning_recall_enabled is False
-
-
-@pytest.mark.unit
-def test_effective_learning_recall_enabled_opencode_profile() -> None:
-    """None config + opencode profile -> True (light profiles still enable recall)."""
-    cfg = TRWConfig(target_platforms=["opencode"])
-    assert cfg.learning_recall_enabled is None
-    assert cfg.client_profile.learning_recall_enabled is True
-    assert cfg.effective_learning_recall_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_mcp_instructions_enabled_default() -> None:
-    """Default config (None) with claude-code profile -> True."""
-    cfg = TRWConfig()
-    assert cfg.mcp_server_instructions_enabled is None
-    assert cfg.effective_mcp_instructions_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_mcp_instructions_enabled_explicit_false() -> None:
-    """Explicit mcp_server_instructions_enabled=False overrides profile."""
-    cfg = TRWConfig(mcp_server_instructions_enabled=False)
-    assert cfg.effective_mcp_instructions_enabled is False
-
-
-@pytest.mark.unit
-def test_effective_mcp_instructions_enabled_opencode_profile() -> None:
-    """None config + opencode profile -> False (light profile disables MCP instructions)."""
-    cfg = TRWConfig(target_platforms=["opencode"])
-    assert cfg.mcp_server_instructions_enabled is None
-    assert cfg.client_profile.mcp_instructions_enabled is False
-    assert cfg.effective_mcp_instructions_enabled is False
-
-
-@pytest.mark.unit
-def test_effective_agents_enabled_default() -> None:
-    """Default config (None) -> True (no profile field yet, default enabled)."""
-    cfg = TRWConfig()
-    assert cfg.agents_enabled is None
-    assert cfg.effective_agents_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_agents_enabled_explicit_false() -> None:
-    """Explicit agents_enabled=False overrides the default."""
-    cfg = TRWConfig(agents_enabled=False)
-    assert cfg.effective_agents_enabled is False
-
-
-@pytest.mark.unit
-def test_effective_agents_enabled_explicit_true() -> None:
-    """Explicit agents_enabled=True with any profile -> True."""
-    cfg = TRWConfig(agents_enabled=True, target_platforms=["opencode"])
-    assert cfg.effective_agents_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_framework_ref_enabled_default() -> None:
-    """Default config (None) with claude-code profile -> True (profile default)."""
-    cfg = TRWConfig()
-    assert cfg.framework_md_enabled is None
-    assert cfg.client_profile.include_framework_ref is True
-    assert cfg.effective_framework_ref_enabled is True
-
-
-@pytest.mark.unit
-def test_effective_framework_ref_enabled_explicit_false() -> None:
-    """Explicit framework_md_enabled=False overrides profile default."""
-    cfg = TRWConfig(framework_md_enabled=False)
-    assert cfg.effective_framework_ref_enabled is False
-
-
-@pytest.mark.unit
-def test_effective_framework_ref_enabled_explicit_true() -> None:
-    """Explicit framework_md_enabled=True overrides any profile."""
-    cfg = TRWConfig(framework_md_enabled=True)
-    assert cfg.effective_framework_ref_enabled is True
-
-
-@pytest.mark.unit
 def test_tools_sub_config_default() -> None:
     """config.tools projects the CORE-218 resolution authority + variant defaults."""
     cfg = TRWConfig()
@@ -226,13 +109,6 @@ def test_nudge_budget_chars_default() -> None:
 
 
 @pytest.mark.unit
-def test_nudge_dedup_enabled_default() -> None:
-    """nudge_dedup_enabled defaults to True."""
-    cfg = TRWConfig()
-    assert cfg.nudge_dedup_enabled is True
-
-
-@pytest.mark.unit
 def test_framework_md_enabled_default_is_none() -> None:
     """framework_md_enabled defaults to None (sentinel)."""
     cfg = TRWConfig()
@@ -253,11 +129,12 @@ def test_session_start_recall_enabled_default_is_none() -> None:
     assert cfg.session_start_recall_enabled is None
 
 
-@pytest.mark.unit
-def test_nudge_urgency_mode_default() -> None:
-    """nudge_urgency_mode defaults to 'adaptive'."""
-    cfg = TRWConfig()
-    assert cfg.nudge_urgency_mode == "adaptive"
+# The default-pinning tests for ``nudge_urgency_mode`` and ``nudge_dedup_enabled``
+# went with the fields in 2.0.0 (WD-02). A default assertion cannot fail on a
+# field that no longer exists, so they had to go either way; what replaces them is
+# test_config_retired_key_warning.py::test_the_two_wd02_nudge_knobs_are_audible_on_removal,
+# which asserts the names are gone from ``TRWConfig`` AND that an operator still
+# holding them in .trw/config.yaml is told so.
 
 
 @pytest.mark.unit

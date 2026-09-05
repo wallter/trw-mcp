@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
+import structlog
 from mcp.types import TextContent
 
 from tests._test_middleware_ceremony_support import (
@@ -339,12 +342,15 @@ class TestCeremonyMiddleware:
         self,
         middleware: CeremonyMiddleware,
         monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         """When recovery is pending, trw_* tools are blocked with a structured error."""
         monkeypatch.setattr(
             "trw_mcp.middleware.ceremony._is_compaction_gate_required",
             lambda: True,
         )
+        # Review P1-1: the blocked payload reads the marker; keep it off the live .trw.
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: tmp_path)
 
         async def call_next(_ctx: Any) -> Any:
             raise AssertionError("blocked tool should not execute")
@@ -357,6 +363,72 @@ class TestCeremonyMiddleware:
         )
         out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
 
-        assert out.structured_content["error"] == "session_start_required"
+        assert out.structured_content["error"] == "post_compaction_recovery_required"
         assert out.structured_content["tool_attempted"] == "trw_status"
         assert "Call trw_session_start()" in out.content[0].text
+
+
+class TestGateLogAndPayloadAgree:
+    """PRD-CORE-258-NFR02: the operator's line and the caller's payload agree."""
+
+    @pytest.fixture
+    def middleware(self) -> CeremonyMiddleware:
+        return CeremonyMiddleware()
+
+    @pytest.mark.asyncio
+    async def test_gate_block_log_and_payload_agree(
+        self, middleware: CeremonyMiddleware, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        marker_dir = tmp_path / ".trw" / "context"
+        marker_dir.mkdir(parents=True)
+        (marker_dir / "pre_compact_state.json").write_text(
+            json.dumps({"timestamp": "2026-09-04T21:49:47+00:00", "trigger": "mcp_tool"}), encoding="utf-8"
+        )
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: tmp_path / ".trw")
+
+        async def call_next(_ctx: Any) -> Any:
+            raise AssertionError("blocked tool should not execute")
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(request_context=FakeRequestContext(session_id="sess-log-parity")),
+        )
+        with structlog.testing.capture_logs() as logs:
+            out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        blocked = [entry for entry in logs if entry.get("event") == "ceremony_gate_blocked"]
+        assert blocked, f"the block must be observable, got {logs}"
+        assert out.structured_content is not None
+        assert blocked[0]["marker_state"] == out.structured_content["marker_state"] == "read"
+        assert (
+            blocked[0]["compaction_marker_ts"]
+            == out.structured_content["compaction_marker_ts"]
+            == "2026-09-04T21:49:47+00:00"
+        )
+        assert blocked[0]["blocked_count"] == out.structured_content["blocked_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_unreadable_reason_is_log_only(
+        self, middleware: CeremonyMiddleware, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The caller learns the timestamp is untrustworthy; WHY is the operator's."""
+        marker_dir = tmp_path / ".trw" / "context"
+        marker_dir.mkdir(parents=True)
+        (marker_dir / "pre_compact_state.json").write_text("{}", encoding="utf-8")
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: tmp_path / ".trw")
+
+        async def call_next(_ctx: Any) -> Any:
+            raise AssertionError("blocked tool should not execute")
+
+        ctx = FakeMiddlewareContext(
+            message=FakeMessage(name="trw_status"),
+            fastmcp_context=FakeContext(request_context=FakeRequestContext(session_id="sess-reason")),
+        )
+        with structlog.testing.capture_logs() as logs:
+            out = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+
+        blocked = [entry for entry in logs if entry.get("event") == "ceremony_gate_blocked"]
+        assert blocked[0]["marker_unreadable_reason"] == "missing_timestamp"
+        assert out.structured_content is not None
+        assert "marker_unreadable_reason" not in out.structured_content
+        assert out.structured_content["marker_state"] == "unreadable"

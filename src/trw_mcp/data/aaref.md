@@ -402,7 +402,7 @@ Keep mutable inventory out of this portable canon; source, Make targets, and the
 | §2.5 verification-method mapping | live 3.2 contract | Typed AC/method/evidence/pass-condition mappings round-trip through template/creator/validator. Missing or malformed mappings block 3.2 Critical/High PRDs; lower-risk and legacy PRDs receive migration warnings. |
 
 - **Remaining gaps:** semantic quality checks for verification mappings, blocking mutation policy, solver-checked conflict satisfiability, stronger wiring/seam enforcement, cross-language AC execution, and reviewed legacy migration.
-- **Calibration decision:** smell/EARS scoring remains weight 0 because the corpus calibration found a document-size/content confound that makes non-zero scoring gameable by omission. See `docs/research/aaref-smell-weight-calibration-2026-05-31.md`.
+- **Calibration decision:** smell/EARS scoring remains weight 0 because a corpus calibration (2026-05-31) found a document-size/content confound that makes non-zero scoring gameable by omission.
 
 ---
 

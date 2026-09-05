@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import cast
 
 import structlog
+from trw_memory.lifecycle.protection import is_removal_exempt
 
 import trw_mcp.state.analytics.core as _ac
 from trw_mcp.exceptions import StateError
@@ -159,9 +161,22 @@ def _compute_removal_scores_from_sqlite(
     return duplicates, utility_candidates
 
 
+def _protected_entry_ids(entries: Iterable[Mapping[str, object]]) -> set[str]:
+    """IDs whose ``protection_tier`` forbids automatic removal (PRD-CORE-244 FR10).
+
+    ``utility_based_prune_candidates`` already refuses to nominate these, but the
+    Jaccard duplicate scan is a SECOND, independent removal source that never
+    reads the entry's tier — an older ``permanent`` entry that happens to look
+    like a newer one was marked obsolete on similarity alone. Computing the set
+    once here lets both sources be filtered at the single apply chokepoint.
+    """
+    return {str(data.get("id", "")) for data in entries if is_removal_exempt(data)} - {""}
+
+
 def _select_removal_candidates(
     duplicates: list[tuple[str, str, float]],
     utility_candidates: list[PruneCandidateDict],
+    protected_ids: set[str] | None = None,
 ) -> list[tuple[str, str]]:
     """Select the full set of entry IDs and their target statuses for removal.
 
@@ -172,16 +187,20 @@ def _select_removal_candidates(
     Args:
         duplicates: List of (older_id, newer_id, similarity) from Jaccard scan.
         utility_candidates: List of candidate dicts from utility_based_prune_candidates.
+        protected_ids: Entry IDs exempt from automatic removal (PRD-CORE-244
+            FR10). Filtered here rather than at each source so a future third
+            removal source inherits the exemption instead of reopening it.
 
     Returns:
         List of (entry_id, target_status) pairs where target_status is one of
         "obsolete" or "resolved".
     """
-    dedup_ids: set[str] = {older_id for older_id, _newer_id, _sim in duplicates}
+    exempt = protected_ids or set()
+    dedup_ids: set[str] = {older_id for older_id, _newer_id, _sim in duplicates} - exempt
     removal: list[tuple[str, str]] = [(rid, "obsolete") for rid in dedup_ids]
     for candidate in utility_candidates:
         cid = str(candidate.get("id", ""))
-        if cid and cid not in dedup_ids:
+        if cid and cid not in dedup_ids and cid not in exempt:
             suggested = str(candidate.get("suggested_status", ""))
             if suggested in ("resolved", "obsolete"):
                 removal.append((cid, suggested))
@@ -277,7 +296,11 @@ def auto_prune_excess_entries(
             entries_dir,
             jaccard_threshold,
         )
-        removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
+        removal_pairs = _select_removal_candidates(
+            duplicates,
+            utility_candidates,
+            _protected_entry_ids(sqlite_entries),
+        )
 
         actions = 0
         stop_reason: str | None = None
@@ -327,7 +350,11 @@ def auto_prune_excess_entries(
         entries_dir,
         jaccard_threshold,
     )
-    removal_pairs = _select_removal_candidates(duplicates, utility_candidates)
+    removal_pairs = _select_removal_candidates(
+        duplicates,
+        utility_candidates,
+        _protected_entry_ids(data for _path, data in all_entries),
+    )
 
     actions = 0
     stop_reason = None

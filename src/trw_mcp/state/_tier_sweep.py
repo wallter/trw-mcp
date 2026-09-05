@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
+from trw_memory.lifecycle.protection import prune_threshold_multiplier
 from trw_memory.lifecycle.tiers import TierSweepResult
 
 from trw_mcp.models.config import TRWConfig, get_config
@@ -27,10 +28,37 @@ from trw_mcp.state._tier_scoring import compute_importance_score
 
 logger = structlog.get_logger(__name__)
 
+# Composite-importance ceilings for the two demotion phases. Pre-existing
+# literals, named here (not retuned) because PRD-CORE-244 FR10 now multiplies
+# them by the entry's protection-tier discount and an unnamed number in an
+# arithmetic expression is unreadable. They mirror
+# MemoryConfig.warm_archive_max_score / cold_purge_max_score, which ARE typed
+# fields on the trw-memory side; the trw-mcp sweep has never read them.
+_WARM_ARCHIVE_MAX_SCORE = 0.22
+_COLD_PURGE_MAX_SCORE = 0.1
+
 # Type alias for TierManager — using Any to avoid circular import with tiers.py.
 # These functions are assigned as methods on TierManager by tiers.py, so runtime
 # type safety is guaranteed by the class definition itself.
 _TierManagerSelf = Any
+
+
+def _protected_ceiling(
+    entry: dict[str, object],
+    cfg: TRWConfig,
+    base_ceiling: float,
+) -> float | None:
+    """Scale a sweep's importance ceiling by ``protection_tier`` (PRD-CORE-244 FR10).
+
+    Returns ``None`` when the entry's tier forbids automatic demotion or purge
+    outright, which the caller must treat as "skip this entry" — not as a
+    threshold of zero, since a zero ceiling would still be satisfied by any
+    negative importance.
+    """
+    multiplier = prune_threshold_multiplier(entry, cfg.protection_tier_prune_discount)
+    if multiplier is None:
+        return None
+    return base_ceiling * multiplier
 
 
 def _sweep_hot_to_warm(
@@ -113,7 +141,10 @@ def _sweep_warm_to_cold(
             try:
                 days = _days_since_access(data, today)
                 importance = compute_importance_score(data, [], config=cfg)
-                if days > cfg.memory_cold_threshold_days and importance < 0.22:
+                archive_ceiling = _protected_ceiling(data, cfg, _WARM_ARCHIVE_MAX_SCORE)
+                if archive_ceiling is None:
+                    continue
+                if days > cfg.memory_cold_threshold_days and importance < archive_ceiling:
                     # Resolve YAML path for cold_archive
                     yaml_file = find_yaml_path_for_entry(self._trw_dir, entry_id)
                     if yaml_file is None:
@@ -158,7 +189,10 @@ def _sweep_warm_to_cold(
                     continue
                 days = _days_since_access(yaml_data, today)
                 importance = compute_importance_score(yaml_data, [], config=cfg)
-                if days > cfg.memory_cold_threshold_days and importance < 0.22:
+                archive_ceiling = _protected_ceiling(yaml_data, cfg, _WARM_ARCHIVE_MAX_SCORE)
+                if archive_ceiling is None:
+                    continue
+                if days > cfg.memory_cold_threshold_days and importance < archive_ceiling:
                     self.cold_archive(entry_id, yaml_file)
                     demoted += 1
                     logger.debug(
@@ -187,8 +221,10 @@ def _sweep_cold_to_purge(
     """Phase 3: purge expired cold-tier entries past retention.
 
     Scans the cold archive for entries idle longer than
-    ``memory_retention_days`` with importance below 0.1. Writes
-    an audit record to ``purge_audit_path`` before deletion.
+    ``memory_retention_days`` with importance below the tier-scaled
+    ``_COLD_PURGE_MAX_SCORE``. Writes an audit record to ``purge_audit_path``
+    before deletion. A ``protected`` or ``permanent`` entry is never purged
+    (PRD-CORE-244 FR10).
 
     Uses ``compute_importance_score`` for purge decisions.
 
@@ -211,7 +247,11 @@ def _sweep_cold_to_purge(
                 entry_id = str(data.get("id", ""))
                 days = _days_since_access(data, today)
                 importance = compute_importance_score(data, [], config=cfg)
-                if days > cfg.memory_retention_days and importance < 0.1:
+                purge_ceiling = _protected_ceiling(data, cfg, _COLD_PURGE_MAX_SCORE)
+                if purge_ceiling is None:
+                    logger.debug("sweep_cold_purge_protected", entry_id=entry_id)
+                    continue
+                if days > cfg.memory_retention_days and importance < purge_ceiling:
                     # Append to purge audit log before deleting
                     audit_record: dict[str, object] = {
                         "entry_id": entry_id,

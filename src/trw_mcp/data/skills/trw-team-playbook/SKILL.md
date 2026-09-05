@@ -23,7 +23,9 @@ description: "Generate portable coordination playbooks with file ownership and i
    - `test_owns`: test files the workstream may edit
    - `does_not_own`: files owned by other workstreams
 4. Stop on overlap. Resolve by splitting files or assigning a single owner.
-5. Write `scratch/sprint-coordination/file_ownership.yaml` when persistence is useful.
+5. Record the result as a formation manifest: `trw_init(advanced={"formation": {...}})`
+   writes `formation.yaml` under the orchestrator run, whose `owned_paths` /
+   `test_owned_paths` are the ownership declaration every enforcement surface reads.
 6. Write interface contracts for shared boundaries.
 7. Write one playbook per workstream with:
    - mission

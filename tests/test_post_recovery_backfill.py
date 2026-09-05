@@ -17,6 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import structlog.testing
 
+from trw_mcp.state.memory_pressure import WriterCensus
+
 # ---------------------------------------------------------------------------
 # FR01: get_backend() schedules backfill on recovery
 # ---------------------------------------------------------------------------
@@ -404,7 +406,17 @@ def test_run_auto_maintenance_passes_coverage_probe(tmp_path: Path) -> None:
     with (
         patch("trw_mcp.state.memory_adapter.check_embeddings_status", side_effect=fake_check_embeddings),
         patch(
-            "trw_mcp.state.memory_pressure.should_defer_session_start_optional_work", return_value=(False, [], "none")
+            "trw_mcp.state.memory_pressure.take_writer_census",
+            return_value=WriterCensus(
+                writer_pids=(),
+                writer_count=0,
+                peer_writer_count=0,
+                threshold=8,
+                under_pressure=False,
+                census_state="measured",
+                identity_state="verified",
+                heartbeat_state="measured",
+            ),
         ),
         patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
         patch("trw_mcp.state.analytics._stale_runs.auto_close_stale_runs", return_value={"count": 0}),

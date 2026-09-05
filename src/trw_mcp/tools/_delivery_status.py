@@ -61,7 +61,7 @@ def build_status_projection(
     have actually run (state != ``not_started``) are enumerated, each without the
     static per-registry ``replay_class`` metadata, plus a
     ``steps_total``/``steps_started``/``steps_succeeded`` summary. ``verbose=True``
-    restores the full 46-entry census with ``replay_class`` for FR05 audits — the
+    restores the full registry census with ``replay_class`` for FR05 audits — the
     underlying journal/DB truth is always complete regardless of this flag; only
     the MCP *response* shape is compacted.
     """
@@ -114,7 +114,7 @@ def build_status_projection(
 def _build_step_view(steps: tuple[StepRecord, ...], *, verbose: bool) -> dict[str, dict[str, str]]:
     """Project step state, compact by default (PRD-CORE-208 census gate).
 
-    Verbose mode reproduces the full 46-entry census with ``replay_class`` for
+    Verbose mode reproduces the full registry census with ``replay_class`` for
     FR05 audits. Compact mode enumerates only steps that have actually run
     (state != ``not_started``) and drops the static per-registry ``replay_class``
     metadata — a caller that needs the replay taxonomy consults the effect

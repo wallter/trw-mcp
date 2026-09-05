@@ -11,28 +11,31 @@ from trw_mcp.wiring.detector import DetectorResult
 from trw_mcp.wiring.model import ContractKind, EdgeClass
 from trw_mcp.wiring.registry import ArtifactContract, build_registry
 
-FIXTURE_KEY = (
-    "INERT_BRANCH::callsite:inert-required-inputs:trw-mcp/src/trw_mcp/tools/code_search.py:rank_semantic_chunks"
-)
+# ``test_semantic_search_branch_flagged_inert`` pinned the live specimen —
+# ``INERT_BRANCH::...code_search.py:rank_semantic_chunks`` — and was DELETED on
+# 2026-09-03 when UF-031 was decided by removal: it asserted that a defect was
+# still present, so it could only stay green while the defect did. What it
+# proved (this check can express the class, on real evidence, with an actionable
+# finding) is now proved by ``test_synthetic_inert_call_is_detected`` below,
+# which builds the call rather than depending on one surviving in the product.
 
 
-def test_semantic_search_branch_flagged_inert(live_result: DetectorResult) -> None:
-    """``rank_semantic_chunks(query=query, chunks=(), embedder=None)``."""
-    finding = next(f for f in live_result.findings if f.key == FIXTURE_KEY)
-    assert finding.edge_class is EdgeClass.INERT_BRANCH
-    assert "chunks=()" in finding.evidence and "embedder=None" in finding.evidence
-    assert "rank_semantic_chunks" in finding.producer_side
+def test_no_inert_branch_remains_in_trw_mcp(live_result: DetectorResult) -> None:
+    """Zero over-fire across the whole package — and now zero true positives too.
 
+    ~1,000 modules. This asserted exactly ONE finding while the code_search
+    specimen lived; the count is 0 now that it is fixed, and the anti-over-fire
+    property is what the assertion was always carrying: the naive version of the
+    adjacent registrar check measured a 47% false-positive rate on this same
+    codebase, so a check that starts inventing inert branches across a package
+    this size is the failure mode worth a test.
 
-def test_exactly_one_inert_finding_across_trw_mcp(live_result: DetectorResult) -> None:
-    """Zero over-fire across the whole package.
-
-    ~1,000 modules and one finding. That number is the check's whole value
-    proposition: the naive version of the adjacent registrar check measured a
-    47% false-positive rate on this same codebase.
+    This is NOT the positive control. ``test_synthetic_inert_call_is_detected``
+    is, and it must stay green alongside this, or "zero findings" would be
+    equally satisfied by a check that has stopped working.
     """
     inert = [f for f in live_result.findings if f.edge_class is EdgeClass.INERT_BRANCH]
-    assert len(inert) == 1, f"expected exactly one inert branch, got: {[f.key for f in inert]}"
+    assert inert == [], f"unexpected inert branch: {[f.key for f in inert]}"
 
 
 def _callsite_contract(repo_root: Path, scan_root: str, package: str) -> ArtifactContract:

@@ -81,7 +81,7 @@ def test_reverify_updates_score(
 
     _update_fn()(learning_id="L-upd", reverify_anchors=True)
 
-    entry = backend.get("L-upd")
+    entry = backend.get("L-upd", namespace="default")
     assert entry is not None
     assert entry.anchor_validity == 0.0
 
@@ -98,7 +98,7 @@ def test_default_leaves_the_write_time_score_alone(
 
     _update_fn()(learning_id="L-noflag", status="resolved")
 
-    entry = backend.get("L-noflag")
+    entry = backend.get("L-noflag", namespace="default")
     assert entry is not None
     assert entry.anchor_validity == 1.0
 
@@ -115,7 +115,7 @@ def test_reverify_runs_before_other_field_updates(
 
     _update_fn()(learning_id="L-both", detail="sharpened detail", reverify_anchors=True)
 
-    entry = backend.get("L-both")
+    entry = backend.get("L-both", namespace="default")
     assert entry is not None
     assert entry.anchor_validity == 0.0
     assert entry.detail == "sharpened detail"
@@ -133,7 +133,7 @@ def test_entry_without_anchors_is_a_no_op(
     result = _update_fn()(learning_id="L-bare", reverify_anchors=True, status="resolved")
 
     assert result["status"] == "updated"
-    entry = backend.get("L-bare")
+    entry = backend.get("L-bare", namespace="default")
     assert entry is not None
     assert entry.anchor_validity == 1.0
 
@@ -149,6 +149,6 @@ def test_intact_anchor_is_not_demoted(
 
     _update_fn()(learning_id="L-ok", reverify_anchors=True)
 
-    entry = backend.get("L-ok")
+    entry = backend.get("L-ok", namespace="default")
     assert entry is not None
     assert entry.anchor_validity == 1.0

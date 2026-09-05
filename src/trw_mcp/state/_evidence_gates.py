@@ -14,6 +14,7 @@ arbitrary passing command never upgrades a non-``VALID`` state (FR03/NFR01).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
@@ -28,6 +29,74 @@ from trw_mcp.models._evidence_records import BuildReceipt, ReviewReceipt, Verifi
 from trw_mcp.state._evidence_binding import content_binding_is_current
 
 logger = structlog.get_logger(__name__)
+
+#: Stable machine reason code for a receipt that aged out of its TTL window.
+#: Deliberately distinct from the content-binding check's ``bound_content_changed``
+#: so logs and tests can tell "the reviewed bytes moved" apart from "the verdict
+#: is simply too old" (PRD-CORE-255-FR01).
+REVIEW_VERDICT_EXPIRED = "review_verdict_expired"
+
+#: Remedy surfaced with every expiry. Names BOTH recovery paths: minting a fresh
+#: receipt, and the stdio version-skew case where the running server predates the
+#: check entirely (PRD-CORE-255-NFR03 S1).
+REVIEW_VERDICT_EXPIRED_REMEDY = (
+    "re-run trw_review to mint a fresh receipt within the TTL window "
+    "(and /mcp reconnect when the server predates the field)"
+)
+
+
+def _resolve_review_ttl_hours() -> int | None:
+    """The configured review-verdict TTL, or ``None`` when it cannot be read.
+
+    ``None`` is the fail-CLOSED signal, not an error: the caller treats an
+    unreadable tunable as "this receipt has expired" rather than as "this receipt
+    never expires" (PRD-CORE-255-NFR01). Returning the field's default instead
+    would silently substitute a policy the project may not have chosen.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+
+        return int(get_config().review_verdict_ttl_hours)
+    except Exception:  # justified: fail-CLOSED, an unreadable TTL must not grant unbounded validity
+        logger.warning("review_verdict_ttl_read_failed", outcome="fail_closed", exc_info=True)
+        return None
+
+
+def review_receipt_age_seconds(completed_at: str, *, now: datetime | None = None) -> float | None:
+    """Elapsed seconds since ``completed_at``, or ``None`` when it cannot be read.
+
+    ONE parser for both consumers of a receipt's age — the FR01 expiry check and
+    the FR05 ``review_evidence.age_seconds`` the deliver payload reports — so the
+    two can never disagree about how old a receipt is.
+    """
+    try:
+        stamped = datetime.fromisoformat(completed_at)
+    except (TypeError, ValueError):
+        return None
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    return (reference - stamped).total_seconds()
+
+
+def review_verdict_is_expired(completed_at: str, *, now: datetime | None = None) -> bool:
+    """True when ``completed_at`` is older than ``review_verdict_ttl_hours``.
+
+    Independent of the content binding: a receipt whose bound bytes never moved
+    still expires. An unreadable TTL or an unparseable/absent ``completed_at``
+    is EXPIRED — the check can only ever fail toward no-evidence, so no input and
+    no failure mode restores the pre-CORE-255 never-expires posture (FR01/NFR01).
+    """
+    ttl_hours = _resolve_review_ttl_hours()
+    if ttl_hours is None:
+        return True
+    age = review_receipt_age_seconds(completed_at, now=now)
+    if age is None:
+        logger.warning("review_verdict_completed_at_unparseable", completed_at=completed_at, outcome="fail_closed")
+        return True
+    return age > ttl_hours * 3600
 
 
 def _result(
@@ -72,6 +141,16 @@ def validate_review_receipt(
     freshness = content_binding_is_current(receipt.content_binding, project_root)
     if freshness.state is not ReceiptState.VALID:
         return _result(freshness.state, freshness.reason_code, receipt_id=rid)
+    # PRD-CORE-255-FR01: the TIME axis, evaluated after (and independently of)
+    # the content binding. Both must pass; neither can substitute for the other.
+    if review_verdict_is_expired(receipt.completed_at):
+        logger.warning(
+            "review_verdict_expired",
+            receipt=rid,
+            completed_at=receipt.completed_at,
+            remedy=REVIEW_VERDICT_EXPIRED_REMEDY,
+        )
+        return _result(ReceiptState.STALE_CONTENT, REVIEW_VERDICT_EXPIRED, receipt_id=rid)
     return _result(ReceiptState.VALID, "review_substantive", receipt_id=rid)
 
 

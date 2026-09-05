@@ -92,48 +92,57 @@ class TestAgentsMdCreation:
 
         assert second_content == third_content
 
-    def test_truncation_preserves_trw_markers(self, tmp_project: Path) -> None:
-        """QUAL-018: Truncation never cuts inside TRW marker boundaries."""
+    def test_overflow_refuses_instead_of_cutting_inside_the_markers(self, tmp_project: Path) -> None:
+        """PRD-FIX-123-FR01, inverting PRD-QUAL-018-FR02.
+
+        This test used to assert that a truncation marker appeared and the file
+        was clipped to the limit. That behaviour destroyed 128 hand-written
+        lines in a reported incident, so the assertion is inverted: nothing is
+        written and the file is byte-identical.
+        """
         target = tmp_project / "CLAUDE.md"
         user_lines = [f"# Line {i}" for i in range(200)]
         target.write_text("\n".join(user_lines) + "\n", encoding="utf-8")
+        before = target.read_bytes()
 
         trw_section = f"\n{TRW_MARKER_START}\n## TRW Section\n- learning 1\n- learning 2\n{TRW_MARKER_END}\n"
-        merge_trw_section(target, trw_section, max_lines=100)
+        verdict = merge_trw_section(target, trw_section, max_lines=100, project_root=tmp_project)
 
-        content = target.read_text(encoding="utf-8")
-        assert TRW_MARKER_START in content
-        assert TRW_MARKER_END in content
-        assert "learning 1" in content
-        assert "truncated" in content.lower()
-        assert len(content.split("\n")) <= 102
+        assert verdict.written is False
+        assert verdict.refusal is not None
+        assert verdict.refusal["reason"] == "oversized"
+        assert target.read_bytes() == before
+        assert "truncated" not in target.read_text(encoding="utf-8").lower()
 
-    def test_truncation_without_markers_falls_back(self, tmp_project: Path) -> None:
-        """QUAL-018: Without TRW markers, truncation falls back to simple slice."""
+    def test_overflow_without_markers_also_refuses(self, tmp_project: Path) -> None:
+        """The marker-less fallback dropped 170 of 200 user lines AND the section."""
         target = tmp_project / "CLAUDE.md"
         target.write_text("\n".join(f"# Line {i}" for i in range(200)) + "\n", encoding="utf-8")
+        before = target.read_bytes()
 
-        merge_trw_section(target, "\n## New Section\n- content\n", max_lines=50)
+        verdict = merge_trw_section(target, "\n## New Section\n- content\n", max_lines=50, project_root=tmp_project)
 
-        result = target.read_text(encoding="utf-8")
-        assert len(result.split("\n")) <= 52
+        assert verdict.written is False
+        assert target.read_bytes() == before
 
-    def test_truncation_user_content_trimmed_not_trw(self, tmp_project: Path) -> None:
-        """QUAL-018: User content is trimmed, TRW section is preserved intact."""
+    def test_user_content_is_never_trimmed_to_make_room_for_trw(self, tmp_project: Path) -> None:
+        """PRD-FIX-123-FR01: TRW no longer chooses its own bytes over the user's."""
         target = tmp_project / "CLAUDE.md"
         user_lines = [f"# User line {i}" for i in range(150)]
         target.write_text("\n".join(user_lines) + "\n", encoding="utf-8")
 
         trw_section = f"\n{TRW_MARKER_START}\n## TRW Generated\n- item a\n- item b\n- item c\n{TRW_MARKER_END}\n"
-        merge_trw_section(target, trw_section, max_lines=50)
+        verdict = merge_trw_section(target, trw_section, max_lines=50, project_root=tmp_project)
 
+        assert verdict.written is False
         content = target.read_text(encoding="utf-8")
-        assert TRW_MARKER_START in content
-        assert TRW_MARKER_END in content
-        assert "item a" in content
-        assert "item b" in content
-        assert "item c" in content
-        assert "User line 149" not in content
+        assert all(f"# User line {i}" in content for i in range(150))
+
+        # Control: with room for both, the merge still lands exactly as before.
+        assert merge_trw_section(target, trw_section, max_lines=500, project_root=tmp_project).written is True
+        merged = target.read_text(encoding="utf-8")
+        assert all(f"# User line {i}" in merged for i in range(150))
+        assert "item a" in merged and "item b" in merged and "item c" in merged
 
     def test_agents_md_root_scope_only(self, tmp_project: Path) -> None:
         """AGENTS.md is only synced for root scope, not sub scope."""

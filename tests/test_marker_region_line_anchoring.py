@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.bootstrap._cursor_cli import _merge_agents_md
 from trw_mcp.bootstrap._file_ops import replace_marker_region
 
 START = "<!-- trw:start -->"
@@ -137,8 +136,19 @@ class TestReplaceMarkerRegion:
         assert out.count(header) == 0, "the stale header must be consumed, not duplicated"
 
 
-class TestCursorCliMergeAgentsMd:
-    """cursor-cli uses its own TRW:BEGIN/TRW:END sentinel vocabulary."""
+class TestReplaceMarkerRegionRetiredDialect:
+    """The shared helper is dialect-agnostic -- proven with the RETIRED
+
+    cursor-cli-only ``TRW:BEGIN``/``TRW:END`` vocabulary. PRD-CORE-243-FR06/
+    FR08 retired ``generate_cursor_cli_agents_md``'s own thin wrapper
+    (``_merge_agents_md``, a ``replace_marker_region`` call plus a prepend
+    fallback) in favour of the shared ``merge_trw_section`` seam every other
+    AGENTS.md/CLAUDE.md writer uses, targeting the SAME shared markers as
+    everyone else. This class keeps the line-anchoring coverage that thin
+    wrapper exercised by calling ``replace_marker_region`` directly with an
+    arbitrary (here: the retired) marker pair, so the underlying guarantee is
+    pinned independently of which writer happens to use it.
+    """
 
     def test_prose_mention_does_not_destroy_user_content(self) -> None:
         existing = (
@@ -148,21 +158,25 @@ class TestCursorCliMergeAgentsMd:
             "Trailing note.\n"
         )
 
-        out = _merge_agents_md(existing, f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n", CURSOR_BEGIN, CURSOR_END)
+        out = replace_marker_region(
+            existing, start=CURSOR_BEGIN, end=CURSOR_END, new_block=f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n"
+        )
 
+        assert out is not None
         assert f"Sentinels are `{CURSOR_BEGIN}` and `{CURSOR_END}`." in out
         assert "Trailing note." in out
         assert "NEW" in out
         assert "OLD" not in out
 
-    def test_mention_without_a_real_block_prepends_and_keeps_everything(self) -> None:
+    def test_mention_without_a_real_block_returns_none(self) -> None:
+        """A mention with no real block is not a region -- caller must append."""
         existing = f"# Agents\n\nWe reference `{CURSOR_BEGIN}` in docs.\n\nUser paragraph.\n"
 
-        out = _merge_agents_md(existing, f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n", CURSOR_BEGIN, CURSOR_END)
+        out = replace_marker_region(
+            existing, start=CURSOR_BEGIN, end=CURSOR_END, new_block=f"{CURSOR_BEGIN}\nNEW\n{CURSOR_END}\n"
+        )
 
-        assert "User paragraph." in out
-        assert f"We reference `{CURSOR_BEGIN}` in docs." in out
-        assert "NEW" in out
+        assert out is None
 
 
 class TestOpencodeAgentsMdWriter:

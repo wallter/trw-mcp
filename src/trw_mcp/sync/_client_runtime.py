@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
+
 logger = structlog.get_logger(__name__)
 
 _MIN_HINT_DELAY_SECONDS = 60
@@ -111,6 +113,6 @@ def mark_synced(*, client_id: str, entries: list[MemoryEntry]) -> None:
         from trw_mcp.state._memory_connection import get_backend as _get_backend
 
         backend = _get_backend()
-        DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend)
+        DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend, namespace=DEFAULT_NAMESPACE)
     except Exception:  # justified: fail-open, sync bookkeeping must not break successful pushes
         logger.debug("sync_mark_synced_failed", client_id=client_id, exc_info=True)

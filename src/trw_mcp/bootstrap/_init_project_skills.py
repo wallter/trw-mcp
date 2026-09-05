@@ -7,13 +7,15 @@ with external callers (`bootstrap/__init__.py` exports + `_copilot.py` and
 Three helpers:
 - ``_validate_skill`` — verify SKILL.md has required frontmatter fields
 - ``_install_skills`` — copy bundled skills to .claude/skills/
-- ``_install_agents`` — copy bundled agent .md files to .claude/agents/,
-  materializing them for the client: tool-placeholder rendering plus
-  capability-tier ``model:`` resolution (PRD-INFRA-104).
+- ``_install_agents`` — materialize every bundled agent for each selected
+  client and write it to that client's own destination: tool-placeholder
+  rendering, capability-tier ``model:`` resolution (PRD-INFRA-104), and
+  per-client frontmatter translation (PRD-CORE-252).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import structlog
@@ -87,12 +89,31 @@ def _install_skills(
     force: bool,
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
+    *,
+    clients: Sequence[str] = ("claude-code",),
+    explicit: bool = False,
 ) -> None:
     """Copy bundled skill directories to ``.claude/skills/``.
 
     Each skill directory is validated via :func:`_validate_skill` before
     installation.  Invalid skills are skipped with a warning.
+
+    *clients* is the resolved install selection (PRD-CORE-262-FR05). A
+    codex-only install used to end up with 29 duplicate skill files under a
+    directory codex never reads -- codex gets its skills from its own
+    installer (``install_codex_skills``). Every other selection (default,
+    claude-code, cursor-ide, a mixed set, ...) still gets ``.claude/skills``
+    exactly as HEAD did; only an EXPLICIT codex-only selection drops it
+    (CORE262-13: *explicit* distinguishes a user ``--ide codex`` from
+    ``detect_ide`` resolving to ``["codex"]`` off a pre-existing ``.codex/``
+    marker on a bare install).
     """
+    from . import _wants_claude_scaffold
+
+    if not _wants_claude_scaffold(clients, explicit=explicit):
+        logger.debug("skills_install_skipped_for_clients", clients=list(clients))
+        return
+
     # PRD-CORE-125-FR07: Skills gating -- skip skill installation when
     # skills are disabled via config/profile.
     try:
@@ -130,28 +151,36 @@ def _install_agents(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
     *,
-    client: str = "claude-code",
+    clients: Sequence[str] = ("claude-code",),
 ) -> None:
-    """Copy bundled agent markdown files to ``.claude/agents/``.
+    """Install every bundled agent into each selected client's own destination.
 
     Bundled agents are client-neutral: they declare a capability tier
-    (``frontier|balanced|local-large|local-small``) in ``model:`` and reference
-    TRW tools through ``{tool:trw_x}`` placeholders. Each file is materialized
-    for *client* via :func:`trw_mcp.agents.tier_resolver.materialize_agent`
-    before it is written — for the default ``claude-code`` client that means
-    ``model: frontier`` → ``model: opus`` and ``{tool:trw_recall}`` →
-    ``mcp__trw__trw_recall``. Unknown tiers are logged and the file is skipped
-    (FR-11).
+    (``frontier|balanced|local-large|local-small``) in ``model:``, reference TRW
+    tools through ``{tool:trw_x}`` placeholders, and are authored in Claude
+    Code's frontmatter dialect. Each file is materialized per client via
+    :func:`trw_mcp.agents.tier_resolver.materialize_agent` — tier resolution,
+    placeholder rendering, and the per-client frontmatter translation — and
+    written to the directory that client's
+    :class:`~trw_mcp.agents.agent_formats.AgentFormat` declares
+    (PRD-CORE-252-FR03).
+
+    Before this, the destination was hardcoded to ``.claude/agents`` whatever
+    the client argument said, and the sole production call site never passed a
+    client at all, so six of the seven supported harnesses received none of the
+    bundled specialists.
+
+    A client with no agent surface produces exactly ONE record in
+    ``result['info']`` naming it and its reason — eleven identical records
+    would be noise — and creates no directory.
 
     Args:
         target_dir: Root of the target git repository.
         force: When ``True`` overwrite existing destination files.
         result: Bootstrap accumulator dict (``created``/``skipped``/``errors``).
         on_progress: Optional progress callback.
-        client: Client-profile identifier passed through to the tier
-            resolver. Defaults to ``"claude-code"``; cursor-ide installs
-            its own agents via :mod:`trw_mcp.bootstrap._cursor_ide` so the
-            default is correct for the only call-site.
+        clients: Selected client-profile identifiers. Duplicates collapse;
+            order is preserved for deterministic reporting.
     """
     # PRD-CORE-125-FR08: Agents gating -- skip agent installation when
     # agents are disabled via config/profile.
@@ -169,14 +198,58 @@ def _install_agents(
     if not agents_source.is_dir():
         return
 
-    dest_root = target_dir / ".claude" / "agents"
+    for client in dict.fromkeys(clients):
+        try:
+            _install_agents_for_client(
+                target_dir,
+                agents_source,
+                client,
+                force=force,
+                result=result,
+                on_progress=on_progress,
+            )
+        except Exception as exc:  # justified: NFR02, one failing client must not stop the rest
+            logger.warning("agent_install_client_failed", client=client, exc_info=True)
+            result["errors"].append(f"Failed to install agents for {client}: {exc}")
+
+
+def _install_agents_for_client(
+    target_dir: Path,
+    agents_source: Path,
+    client: str,
+    *,
+    force: bool,
+    result: dict[str, list[str]],
+    on_progress: ProgressCallback,
+) -> None:
+    """Install the whole bundle for one client, or record why it cannot be."""
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.exceptions import AgentFormatError
+
+    try:
+        fmt = agent_format_for(client)
+    except AgentFormatError as exc:
+        result.setdefault("info", []).append(f"agents: {client} — {exc}")
+        return
+    if not fmt.supports_agents:
+        result.setdefault("info", []).append(f"agents: {client} — {fmt.unsupported_reason}")
+        logger.info("agent_install_client_unsupported", client=client, reason=fmt.unsupported_reason)
+        return
+
     for agent_file in sorted(agents_source.iterdir()):
         if agent_file.suffix != ".md":
             continue
-        dest = dest_root / agent_file.name
+        try:
+            rel = fmt.destination_for(agent_file.stem)
+        except AgentFormatError as exc:
+            # NFR03: a name that would escape the destination never becomes a
+            # path component. Recorded and skipped, never written.
+            logger.warning("agent_install_name_rejected", agent=agent_file.name, client=client, error=str(exc))
+            result["errors"].append(f"Rejected agent name {agent_file.stem!r} for {client}: {exc}")
+            continue
         _install_one_agent(
             agent_file,
-            dest,
+            target_dir / rel,
             force=force,
             result=result,
             on_progress=on_progress,
@@ -207,9 +280,17 @@ def _install_one_agent(
             on_progress("Skipped", str(dest))
         return
 
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.exceptions import AgentFormatError
+
     try:
+        cap = agent_format_for(client).max_agent_bytes
+        if src.stat().st_size > cap:
+            # NFR03: bound the read. A pathological file in a forked bundle
+            # must not be pulled into memory before anything inspects it.
+            raise AgentFormatError(f"agent {src.name} is larger than the {cap}-byte cap")
         bundled = src.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, AgentFormatError) as exc:
         result["errors"].append(f"Failed to read {src}: {exc}")
         if on_progress:
             on_progress("Error", str(dest))
@@ -217,10 +298,11 @@ def _install_one_agent(
 
     try:
         rewritten = materialize_agent(bundled, client=client)
-    except ValueError as exc:
-        # Unknown tier -- surface clearly, skip this agent only.
+    except (ValueError, AgentFormatError) as exc:
+        # Unknown tier, unparseable frontmatter, or an undecided frontmatter
+        # key -- surface clearly, skip this agent only (NFR02).
         logger.warning(
-            "agent_install_tier_unknown",
+            "agent_install_materialize_failed",
             agent=src.name,
             client=client,
             error=str(exc),

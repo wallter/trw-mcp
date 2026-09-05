@@ -1,12 +1,12 @@
 {
   "canon_id": "framework",
   "classes": {
-    "example": 5,
-    "normative": 28,
+    "example": 6,
+    "normative": 29,
     "rationale": 7,
     "reference": 5
   },
-  "core_digest": "20db89fe0283b761cf8e6f5a025b5614b11d626063a11d1971ce8ef5f6d58f92",
+  "core_digest": "57a14a56ce8e8f5d53b4879e001ef62d834bbea21326872d3e9a53055b211514",
   "obligations": [
     {
       "body_lines": 4,
@@ -100,12 +100,21 @@
     },
     {
       "body_lines": 14,
+      "class": "example",
+      "dest": "reference",
+      "digest": "216a2900c0c58e89e13365e895db70a823666df27d2146778b43b8388e6aeff6",
+      "id": "fw-degenerate-result-check",
+      "nonblank_lines": 8,
+      "start_line": 87
+    },
+    {
+      "body_lines": 14,
       "class": "normative",
       "dest": "core",
       "digest": "908a05f862533c9f10d83d072f1dfa9e410fa48fb938623f0a25d0e1fd2edf51",
       "id": "fw-persistence",
       "nonblank_lines": 10,
-      "start_line": 87
+      "start_line": 102
     },
     {
       "body_lines": 35,
@@ -114,7 +123,7 @@
       "digest": "18553eb2f1e92dbadf98f11fe3e005ad4d44a6e4277b57284d918a22e0d499e9",
       "id": "fw-inline-comment-markers",
       "nonblank_lines": 26,
-      "start_line": 102
+      "start_line": 117
     },
     {
       "body_lines": 19,
@@ -123,7 +132,7 @@
       "digest": "576a9f8ccf97d35bd84aa959386e995b1a274f3d4814e7d636fe72030a5b4437",
       "id": "fw-ceremony-tiers",
       "nonblank_lines": 12,
-      "start_line": 138
+      "start_line": 153
     },
     {
       "body_lines": 19,
@@ -132,7 +141,7 @@
       "digest": "591d4c96a621850cb3e0bf0ae422c2e867e3cc00d7027f896cdf00997b5ff568",
       "id": "fw-phases",
       "nonblank_lines": 14,
-      "start_line": 158
+      "start_line": 173
     },
     {
       "body_lines": 6,
@@ -141,7 +150,7 @@
       "digest": "a6891dd1cba42f29e06e1de42750e0bda089c145e5a854d0917f6c573632f684",
       "id": "fw-dynamic-research",
       "nonblank_lines": 3,
-      "start_line": 178
+      "start_line": 193
     },
     {
       "body_lines": 17,
@@ -150,25 +159,34 @@
       "digest": "f26c246d21600d9c8bafbeac4a9824aeb71320347ac9d448ece54dd514c886af",
       "id": "fw-rationalization-watchlist",
       "nonblank_lines": 13,
-      "start_line": 185
+      "start_line": 200
     },
     {
       "body_lines": 24,
       "class": "normative",
       "dest": "core",
-      "digest": "745d6f5939d0bc7f5eec8992c9daf5b6adcb5343b6dc7d54a4028c669b67b4db",
+      "digest": "9bd640d25572bfa59a6ef1159b202eda728c757d5d3312122f1f474bab560f9d",
       "id": "fw-rigid-flexible-tool-classification",
       "nonblank_lines": 18,
-      "start_line": 203
+      "start_line": 218
+    },
+    {
+      "body_lines": 10,
+      "class": "normative",
+      "dest": "core",
+      "digest": "7e5c69ba75c7080fd7284ba6c67a79fb5b4880e660297151d8d25f0cc128391c",
+      "id": "fw-transport-down",
+      "nonblank_lines": 5,
+      "start_line": 243
     },
     {
       "body_lines": 17,
       "class": "normative",
       "dest": "core",
-      "digest": "d36af6a82ab1aeac2c39058583b2019f6ade96eef94ce41d1ed9f94d68bfe6dd",
+      "digest": "a1522a592a0d8e8d727327418a60350cc87b5529adb02ce5a6d47a6fe533ae81",
       "id": "fw-gates",
       "nonblank_lines": 12,
-      "start_line": 228
+      "start_line": 254
     },
     {
       "body_lines": 23,
@@ -177,7 +195,7 @@
       "digest": "f57e362b56153a6eb66bf6f6b653594e4896a203f2071b31b7b42a617501da41",
       "id": "fw-phase-reversion",
       "nonblank_lines": 16,
-      "start_line": 246
+      "start_line": 272
     },
     {
       "body_lines": 9,
@@ -186,7 +204,7 @@
       "digest": "958b028e92d6a7b3be4abbf6f31341d687c719081e585c510f683aa4da29a0fe",
       "id": "fw-adaptive-planning",
       "nonblank_lines": 5,
-      "start_line": 270
+      "start_line": 296
     },
     {
       "body_lines": 41,
@@ -195,7 +213,7 @@
       "digest": "703312211084b53d2ef8a58754942ff8013a042edabbfadae7cff0f428dddb5f",
       "id": "fw-trw-tools-mcp-first-manual-fallback",
       "nonblank_lines": 32,
-      "start_line": 280
+      "start_line": 306
     },
     {
       "body_lines": 14,
@@ -204,7 +222,7 @@
       "digest": "0f6617df478a73f3391bb67a88ab8b74c9fba008eab94f553cc67841eb630e79",
       "id": "fw-skills-commands-hooks-and-client-adapter",
       "nonblank_lines": 10,
-      "start_line": 322
+      "start_line": 348
     },
     {
       "body_lines": 17,
@@ -213,7 +231,7 @@
       "digest": "b5b6fe0519493b424b47007d4d5d8c1330c057266ac08a26b83e49ddc28e3427",
       "id": "fw-bootstrap",
       "nonblank_lines": 13,
-      "start_line": 337
+      "start_line": 363
     },
     {
       "body_lines": 6,
@@ -222,7 +240,7 @@
       "digest": "45621296eafc052d2ee4df3406b04418b109727427cc05f84653b1e899be82c8",
       "id": "fw-formations-stub",
       "nonblank_lines": 3,
-      "start_line": 355
+      "start_line": 381
     },
     {
       "body_lines": 27,
@@ -231,7 +249,7 @@
       "digest": "9ce2279b9f1814b137690aa6a1da40ac12e6b290ef75dc54b3996f9552558fb5",
       "id": "fw-formations",
       "nonblank_lines": 21,
-      "start_line": 362
+      "start_line": 388
     },
     {
       "body_lines": 26,
@@ -240,7 +258,7 @@
       "digest": "9c188f16b84800833299418c9494b06f4369eb6b640413cc274107f059bfe6d7",
       "id": "fw-delegation-and-file-ownership",
       "nonblank_lines": 19,
-      "start_line": 390
+      "start_line": 416
     },
     {
       "body_lines": 34,
@@ -249,7 +267,7 @@
       "digest": "a2fdc254e72f8ea5ddcf5889b21018ca9c444f049b74d0485f3a3bec686a7f63",
       "id": "fw-exploration-planning",
       "nonblank_lines": 26,
-      "start_line": 417
+      "start_line": 443
     },
     {
       "body_lines": 20,
@@ -258,7 +276,7 @@
       "digest": "f45abf443933adeb5829c04e0454c1a16e2d41ea9c3907027d7bb3d94e838e09",
       "id": "fw-context-engineering",
       "nonblank_lines": 15,
-      "start_line": 452
+      "start_line": 478
     },
     {
       "body_lines": 18,
@@ -267,7 +285,7 @@
       "digest": "e38d1d73eb52b3615a666d4a368dbf3c423b26bf65f0a0dfd4b72ec7ebc9f862",
       "id": "fw-requirements",
       "nonblank_lines": 13,
-      "start_line": 473
+      "start_line": 499
     },
     {
       "body_lines": 17,
@@ -276,7 +294,7 @@
       "digest": "b540b4773dca1708ebe69cc211e03bc62c618c3f0a15f89bb2fb2a50501e9f76",
       "id": "fw-language-agnostic-validation-code-qualit",
       "nonblank_lines": 14,
-      "start_line": 492
+      "start_line": 518
     },
     {
       "body_lines": 14,
@@ -285,7 +303,7 @@
       "digest": "1804ca7d284a8887ffd6bb49a31fe30dd07d7a633296b44d429a371c4d83d7f3",
       "id": "fw-tool-retry",
       "nonblank_lines": 10,
-      "start_line": 510
+      "start_line": 536
     },
     {
       "body_lines": 15,
@@ -294,7 +312,7 @@
       "digest": "13d000134ade80449c067ed74a3958a6f5fab4b6d09c3d68906d76c8d5fbebd2",
       "id": "fw-error-handling",
       "nonblank_lines": 11,
-      "start_line": 525
+      "start_line": 551
     },
     {
       "body_lines": 24,
@@ -303,7 +321,7 @@
       "digest": "9f95cca1b5ed9410f0de3cc891ade5c30af904643b5bf5cf59d1ba6484b2861d",
       "id": "fw-version-control-git-adapter",
       "nonblank_lines": 16,
-      "start_line": 541
+      "start_line": 567
     },
     {
       "body_lines": 26,
@@ -312,7 +330,7 @@
       "digest": "f9077522b1064a6da45b2fc5067a8547e96a79849ff0ee839d856ced6bf4ab1f",
       "id": "fw-nudges-and-adaptive-guidance",
       "nonblank_lines": 19,
-      "start_line": 566
+      "start_line": 592
     },
     {
       "body_lines": 19,
@@ -321,7 +339,7 @@
       "digest": "6cbfb52dbe8198f9bc7751251f840078b1716ed0334723d2059479788ef3e946",
       "id": "fw-model-policy",
       "nonblank_lines": 15,
-      "start_line": 593
+      "start_line": 619
     },
     {
       "body_lines": 16,
@@ -330,7 +348,7 @@
       "digest": "abbcd0156634c27421185fcf93b42d832e907a52e9183b48d5729886f9800bbc",
       "id": "fw-eval-and-transfer-discipline",
       "nonblank_lines": 12,
-      "start_line": 613
+      "start_line": 639
     },
     {
       "body_lines": 11,
@@ -339,7 +357,7 @@
       "digest": "288c6b7c704cc0600c47d2828af4efdb5a163e5d557c38df2e171b43d78e3bf9",
       "id": "fw-todo-debt-registry",
       "nonblank_lines": 7,
-      "start_line": 630
+      "start_line": 656
     },
     {
       "body_lines": 12,
@@ -348,7 +366,7 @@
       "digest": "000e581abd1345802e2e69b099ce7880721698839b8c30a9f6180deb57ba7676",
       "id": "fw-autonomous-long-horizon-operation",
       "nonblank_lines": 8,
-      "start_line": 642
+      "start_line": 668
     },
     {
       "body_lines": 21,
@@ -357,7 +375,7 @@
       "digest": "1d236a22184b158c855c3eeb75065e0b2f3f672afe14a1c5d5dcc5aa0c1cebd5",
       "id": "fw-self-improvement-learning",
       "nonblank_lines": 16,
-      "start_line": 655
+      "start_line": 681
     },
     {
       "body_lines": 17,
@@ -366,7 +384,7 @@
       "digest": "b8afa0e0a6719fc65fb90b49ece2d04741e0405110eeab8311ba0d405a1acd97",
       "id": "fw-artifact-prompt-patterns",
       "nonblank_lines": 13,
-      "start_line": 677
+      "start_line": 703
     },
     {
       "body_lines": 14,
@@ -375,7 +393,7 @@
       "digest": "373248383821ec5689d4221481912d7cdbd8a0bda8ef65fa1076ded5a2fa2ea3",
       "id": "fw-framework-adherence",
       "nonblank_lines": 10,
-      "start_line": 695
+      "start_line": 721
     },
     {
       "body_lines": 10,
@@ -384,7 +402,7 @@
       "digest": "f7f56af2af57b8b079d52ec4944628785a7d0a7a39c6fa4c01d280ced3c5faf1",
       "id": "fw-mid-stream-user-input",
       "nonblank_lines": 7,
-      "start_line": 710
+      "start_line": 736
     },
     {
       "body_lines": 6,
@@ -393,7 +411,7 @@
       "digest": "48129b6ebb884de7fa3a012a39ccdf868fa0a59598fd9483c5873925691e5282",
       "id": "fw-qol-changes",
       "nonblank_lines": 3,
-      "start_line": 721
+      "start_line": 747
     },
     {
       "body_lines": 4,
@@ -402,7 +420,7 @@
       "digest": "f5e85492946494c100076c95381dd8819bbee0262b1c6ef5ee8fb5537b9230c8",
       "id": "fw-end-of-session-reminder-terminal-constra",
       "nonblank_lines": 2,
-      "start_line": 728
+      "start_line": 754
     },
     {
       "body_lines": 2,
@@ -411,11 +429,11 @@
       "digest": "685704aed1678b4c73d798c5ce902574243f7ea33ca73ae60e3d258cbcf89581",
       "id": "fw-blk43",
       "nonblank_lines": 1,
-      "start_line": 733
+      "start_line": 759
     }
   ],
-  "reference_digest": "be4ea3ac05dca0803aef99b7c894d61d44411b707f75b07541e7906c8b3fcb92",
+  "reference_digest": "920b4eb60c7778e449853403926e2cb2ef1810c7c50ec7176998697a32dc5428",
   "schema": 1,
-  "source_digest_combined": "2cc2e72ff001c6285651854848d5d5afcb61de885f6e52dd5c015397b84917e2",
-  "span_count": 45
+  "source_digest_combined": "9c7a52193d21f56cdff099869ce26b4e47b2becc4b1d23cb0d14b60e731636fb",
+  "span_count": 47
 }

@@ -160,7 +160,13 @@ def _core_artifact_baselines(
         )
         for name in bundled.get("skills", [])
     ]
-    for kind in ("commands", "agents"):
+    # ``agents`` is deliberately absent from this loop since PRD-CORE-252: every
+    # non-claude-code client's agents are materialized from the shared bundle and
+    # recorded by ``_managed_client_artifacts.bundled_agent_contents``, which
+    # compares against the bytes the installer actually writes. Baselining them
+    # against a retired ``data/opencode/agents`` directory would report every
+    # healthy opencode agent as having no framework baseline.
+    for kind in ("commands",):
         entries += [
             (
                 f".opencode/{kind}/{name}",
@@ -250,17 +256,20 @@ def _render_agent(src: Path, *, client: str) -> str | None:
     Applies the same bundle→installed transform the installer uses
     (:func:`materialize_agent`: tool-placeholder rendering plus capability-tier
     resolution), so an already-current agent never reports as a pending update.
-    Returns ``None`` when the source is unreadable or the tier is unknown for
-    *client* (mirrors the per-agent skip-on-error semantics of
+    Returns ``None`` when the source is unreadable, the tier is unknown for
+    *client*, or the bundled frontmatter cannot be translated into that
+    client's agent format (mirrors the per-agent skip-on-error semantics of
     ``_install_one_agent``).
     """
+    from trw_mcp.exceptions import AgentFormatError
+
     try:
         raw = src.read_text(encoding="utf-8")
     except OSError:
         return None
     try:
         return materialize_agent(raw, client=client)
-    except ValueError:
+    except (ValueError, AgentFormatError):
         return None
 
 
@@ -359,6 +368,7 @@ def _apply_agent_update(
     manifest_hashes: dict[str, str] | None,
     *,
     client: str = "claude-code",
+    manifest_key: str | None = None,
 ) -> None:
     """Materialize one agent on update-project, resolving its ``model:`` tier.
 
@@ -368,13 +378,25 @@ def _apply_agent_update(
     resolve-and-write path as fresh install (:func:`_install_one_agent`) so
     ``frontier`` becomes ``opus`` (etc.), while preserving genuinely user-edited
     agents via :func:`_is_user_modified`.
+
+    *manifest_key* is the ``content_hashes`` key for this destination. It
+    defaults to the bare bundled filename, which is the historical key for
+    ``.claude/agents``; every other client passes its repo-relative destination
+    so two clients' copies of the same agent cannot collide on one key
+    (PRD-CORE-252-FR03).
     """
     from ._init_project_skills import _install_one_agent
 
+    key = manifest_key or agent_file.name
     framework_hashes = _framework_agent_hashes(agent_file, client=client)
-    if _is_user_modified(dest, agent_file.name, manifest_hashes, framework_hashes=framework_hashes):
+    if _is_user_modified(dest, key, manifest_hashes, framework_hashes=framework_hashes):
         logger.info("artifact_user_modified", path=str(dest))
         result.setdefault("modified", []).append(str(dest))
+        # Also recorded under ``preserved``, which is the bucket the CLI summary
+        # counts ("N preserved"). ``modified`` is read by callers that need the
+        # absolute path and is surfaced nowhere, so recording only there made a
+        # preserved user edit invisible to the person whose edit it was.
+        result.setdefault("preserved", []).append(key)
         return
 
     if dry_run:

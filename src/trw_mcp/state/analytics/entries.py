@@ -7,7 +7,7 @@ applying status updates, and extracting learnings (mechanical + LLM).
 
 from __future__ import annotations
 
-import re
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -22,6 +22,7 @@ from trw_mcp.models.learning import (
     LearningStatus,
     LearningType,
 )
+from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.state.analytics.core import is_noise_summary
 from trw_mcp.state.persistence import (
@@ -197,7 +198,12 @@ def has_existing_mechanical_learning(
 # ---------------------------------------------------------------------------
 
 
-def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
+def save_learning_entry(
+    trw_dir: Path,
+    entry: LearningEntry,
+    *,
+    index_sink: list[LearningEntry] | None = None,
+) -> Path:
     """Save a learning entry to .trw/learnings/entries/ as YAML backup.
 
     YAML-only: the caller (trw_learn) handles the primary SQLite write
@@ -209,6 +215,12 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     Args:
         trw_dir: Path to .trw directory.
         entry: Learning entry to save.
+        index_sink: PRD-FIX-130-FR03 batching seam. When supplied, the entry is
+            APPENDED to this list instead of triggering its own read-modify-write
+            of ``learnings/index.yaml``; the caller (the journal drain) flushes
+            the whole sweep through :func:`update_learning_index_batch` once.
+            When ``None`` — every interactive ``trw_learn`` — behaviour is
+            byte-identical to the pre-FR03 path.
 
     Returns:
         Path to the saved YAML entry file.
@@ -218,15 +230,26 @@ def save_learning_entry(trw_dir: Path, entry: LearningEntry) -> Path:
     if inferred:
         entry = entry.model_copy(update={"tags": list(entry.tags) + inferred})
 
-    raw = entry.summary[: _ac._SLUG_MAX_LEN].lower()
-    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
-    filename = f"{entry.created.isoformat()}-{slug}.yaml"
-    entry_path = _ac._entries_path(trw_dir) / filename
+    entry_path = _ac._entries_path(trw_dir) / _ac.entry_filename(entry.summary, entry.created.isoformat())
     FileStateWriter().write_yaml(entry_path, model_to_dict(entry))
     logger.debug("learning_entry_saved", learning_id=entry.id, path=str(entry_path))
 
-    update_learning_index(trw_dir, entry)
+    if index_sink is None:
+        update_learning_index(trw_dir, entry)
+    else:
+        index_sink.append(entry)
     return entry_path
+
+
+def _index_row(entry: LearningEntry) -> dict[str, object]:
+    """The index projection of one entry — the ONLY place its shape is defined."""
+    return {
+        "id": entry.id,
+        "summary": entry.summary,
+        "tags": entry.tags,
+        "impact": entry.impact,
+        "created": entry.created.isoformat(),
+    }
 
 
 def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
@@ -239,6 +262,31 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
         trw_dir: Path to .trw directory.
         entry: New learning entry to add to index.
     """
+    update_learning_index_batch(trw_dir, [entry])
+
+
+def update_learning_index_batch(trw_dir: Path, entries_to_add: Sequence[LearningEntry]) -> None:
+    """Append *entries_to_add* to the learning index in ONE read-modify-write.
+
+    PRD-FIX-130-FR03. The per-record path acquired ``lock_for_rmw`` and rewrote
+    the whole 247 KB index once per stored learning — measured at 623-757 ms
+    idle and 2.27 s under concurrent boot load, the single dominant cost of a
+    journal drain. Draining N records now takes the lock once, reads once,
+    appends all N in order, trims once, and writes once.
+
+    TRIM DIVERGENCE, stated rather than hidden: when the batch crosses
+    ``learning_max_entries`` the retained set is the ``learning_max_entries``
+    highest-impact entries of the COMBINED list. Sequential single-entry updates
+    drop the lowest-impact entry after each append and can therefore retain a
+    different set. That is a deliberate, documented contract (FR03 invariant c),
+    pinned by a test, not an accident. Below the cap the two are identical.
+
+    A failure inside the lock propagates to the caller with the index UNCHANGED
+    (the write is the last statement), so entries already stored in the backend
+    survive an index failure — they are simply not indexed this sweep.
+    """
+    if not entries_to_add:
+        return
     cfg: TRWConfig = get_config()
     reader = FileStateReader()
     writer = FileStateWriter()
@@ -251,16 +299,7 @@ def update_learning_index(trw_dir: Path, entry: LearningEntry) -> None:
 
         raw = index_data.get("entries", [])
         entries: list[dict[str, object]] = [e for e in raw if isinstance(e, dict)] if isinstance(raw, list) else []
-
-        entries.append(
-            {
-                "id": entry.id,
-                "summary": entry.summary,
-                "tags": entry.tags,
-                "impact": entry.impact,
-                "created": entry.created.isoformat(),
-            }
-        )
+        entries.extend(_index_row(entry) for entry in entries_to_add)
 
         if len(entries) > cfg.learning_max_entries:
             entries.sort(key=lambda e: float(str(e.get("impact", 0.0))))
@@ -323,11 +362,11 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
         from trw_mcp.state.memory_adapter import get_backend
 
         backend = get_backend(trw_dir)
-        entry = backend.get(learning_id)
+        entry = resolve_entry_in_backend(backend, learning_id)
         if entry is not None:
             metadata = dict(entry.metadata) if entry.metadata else {}
             metadata["promoted_to_claude_md"] = "true"
-            backend.update(learning_id, metadata=metadata)
+            backend.update(learning_id, namespace=entry.namespace, metadata=metadata)
     except Exception:  # justified: fail-open, promotion metadata update must not block caller
         logger.warning("promotion_metadata_update_failed", learning_id=learning_id, exc_info=True)
 

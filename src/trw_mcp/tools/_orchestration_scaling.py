@@ -48,6 +48,7 @@ def resolve_init_profile(
     config: TRWConfig,
     *,
     task_name: str,
+    objective: str = "",
     run_type: str,
     prd_scope: list[str] | None,
     task_type: str | None,
@@ -58,6 +59,12 @@ def resolve_init_profile(
 
     Extracted from ``orchestration.py`` (PRD-CORE-060/134 + PRD-CORE-184) so
     the facade stays under the 350 eLOC gate after SCALE-001 FR13 wiring.
+
+    ``objective`` is forwarded to the detector (PRD-CORE-246-FR01) so the
+    task-type classifier reads the same free-text description the Scout
+    classifier in :func:`run_scout_for_init` already reads. Before FR01 the
+    value stopped at ``trw_init`` and the Scout, and the detector saw only the
+    regex-constrained ``task_name`` and the identifier-shaped ``prd_scope``.
     """
     from trw_mcp.models.run import ComplexityClass
     from trw_mcp.models.task_profile import resolve_task_profile
@@ -68,6 +75,7 @@ def resolve_init_profile(
     # PRD-CORE-184-FR02: heuristic task-type detection (no LLM call).
     detection = detect_task_type(
         task_name=task_name,
+        objective=objective,
         run_type=run_type,
         prd_scope=prd_scope,
         task_type=task_type,

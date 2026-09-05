@@ -109,7 +109,7 @@ def test_prune_lines_on_cap() -> None:
 
 
 def test_validate_record_id_path_keyed_valid() -> None:
-    assert validate_record_id("hotspot:backend/routers/admin.py@a1b2c3d4") is True
+    assert validate_record_id("hotspot:api/routes/admin.py@a1b2c3d4") is True
 
 
 def test_validate_record_id_path_keyed_longer_sha() -> None:
@@ -124,7 +124,7 @@ def test_validate_record_id_slug_keyed_valid() -> None:
 
 def test_validate_record_id_invalid_risk_score_format() -> None:
     with pytest.raises(ValueError, match="record_id"):
-        validate_record_id("risk-score:backend/routers/admin.py@a1b2")
+        validate_record_id("risk-score:api/routes/admin.py@a1b2")
 
 
 def test_validate_record_id_invalid_hotspot_state_paths() -> None:
@@ -134,7 +134,7 @@ def test_validate_record_id_invalid_hotspot_state_paths() -> None:
 
 def test_validate_record_id_invalid_colon_version() -> None:
     with pytest.raises(ValueError):
-        validate_record_id("hotspot:backend/routers/admin.py:v3")
+        validate_record_id("hotspot:api/routes/admin.py:v3")
 
 
 def test_validate_record_id_invalid_empty() -> None:
@@ -388,10 +388,10 @@ def test_record_id_format_valid_path_keyed(tmp_path: Path) -> None:
         client="claude-code",
         event_type="push_write",
         log_path=log_path,
-        record_ids=["hotspot:backend/routers/admin.py@a1b2c3d4"],
+        record_ids=["hotspot:api/routes/admin.py@a1b2c3d4"],
     )
     event = json.loads(log_path.read_text().strip())
-    assert event["record_ids"] == ["hotspot:backend/routers/admin.py@a1b2c3d4"]
+    assert event["record_ids"] == ["hotspot:api/routes/admin.py@a1b2c3d4"]
 
 
 def test_record_id_format_valid_slug_keyed(tmp_path: Path) -> None:

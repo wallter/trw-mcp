@@ -14,6 +14,7 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.scoring._recall import RecallContext
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 logger = structlog.get_logger(__name__)
 
@@ -45,13 +46,24 @@ def _verify_assertions(
     freshly recomputed ``anchor_validity`` are PERSISTED in the same batched
     ``backend.update()`` that already wrote ``assertions``, instead of living
     only on the response payload.
+
+    PRD-CORE-244 FR04: an entry whose assertion FAILED now also earns a durable
+    negative Q observation. The contradicted ids are accumulated across the whole
+    pass and settled in ONE batched call afterwards, so a 25-result recall costs
+    at most one additional write rather than one per contradicted entry.
     """
+    from trw_mcp.tools._verification_cache import warm_verified_verdict
     from trw_mcp.tools._verification_pass import (
         persist_verification_outcome,
         run_verification_pass,
     )
 
     assertion_penalties: dict[str, float] = {}
+    contradicted_ids: list[str] = []
+    checked = 0
+    verified = 0
+    stale_count = 0
+    cache_hits = 0
     project_root_path: Path | None = None
     try:
         from trw_mcp.state._paths import resolve_project_root
@@ -71,20 +83,41 @@ def _verify_assertions(
             if not raw_assertions and not raw_anchors:
                 continue
             entry_id = str(learning.get("id", ""))
+            namespace = str(learning.get("namespace") or DEFAULT_NAMESPACE)
             try:
+                # FR03: a CLEAN verdict reached inside the TTL is reused and
+                # costs no filesystem verification for this entry. An adverse or
+                # inconclusive verdict is always re-examined so it can clear.
+                if warm_verified_verdict(
+                    backend,
+                    entry_id,
+                    namespace=namespace,
+                    ttl_seconds=config.verification_cache_ttl_seconds,
+                ):
+                    cache_hits += 1
+                    verified += 1
+                    learning["verification_status"] = "verified"
+                    continue
+
                 outcome = run_verification_pass(
                     entry_id,
                     raw_assertions,
                     raw_anchors,
+                    namespace=namespace,
                     assertion_failure_penalty=config.assertion_failure_penalty,
                     assertion_stale_threshold_days=config.assertion_stale_threshold_days,
+                    anchor_validity_verified_floor=config.anchor_validity_verified_floor,
                     project_root=project_root_path,
                 )
 
+                if outcome.verifiable:
+                    checked += 1
                 if outcome.assertion_status:
                     learning["assertion_status"] = outcome.assertion_status
                 if outcome.penalty:
                     assertion_penalties[entry_id] = outcome.penalty
+                if outcome.verifiable and outcome.failing > 0 and entry_id:
+                    contradicted_ids.append(entry_id)
                 if outcome.anchor_validity is not None:
                     learning["anchor_validity"] = outcome.anchor_validity
                 if not outcome.verifiable:
@@ -93,15 +126,24 @@ def _verify_assertions(
                     # erasing one.
                     pass
                 elif outcome.verification_status == "stale":
+                    stale_count += 1
                     logger.info(
                         "learning_auto_stale",
                         entry_id=entry_id,
                         threshold_days=config.assertion_stale_threshold_days,
                     )
                     learning["verification_status"] = "stale"
+                elif outcome.verification_status == "verified":
+                    # FR03: examined AND clean is now a value, not the absence
+                    # of one, so it survives into a later session's payload.
+                    verified += 1
+                    learning["verification_status"] = "verified"
                 else:
-                    # A previously-stale entry that re-passes must not keep
-                    # advertising the old verdict on this response either.
+                    # Examined but neither clean nor persistently failing — a
+                    # failing assertion inside the staleness window, or an
+                    # anchor set that drifted below the verified floor. Neither
+                    # verdict applies, and a previously-stale entry must not
+                    # keep advertising the old one on this response either.
                     learning.pop("verification_status", None)
 
                 if backend is not None:
@@ -113,6 +155,17 @@ def _verify_assertions(
                     entry_id=entry_id,
                     exc_info=True,
                 )
+
+        # NFR05: one structured record per pass carrying the counters.
+        logger.info(
+            "verification_pass_counters",
+            checked=checked,
+            verified=verified,
+            stale=stale_count,
+            contradicted=len(contradicted_ids),
+            cache_hits=cache_hits,
+        )
+        _apply_contradiction_penalties(contradicted_ids)
 
         if assertion_penalties:
             ranked_learnings = rank_fn(
@@ -126,6 +179,23 @@ def _verify_assertions(
         logger.debug("assertion_verification_unavailable", exc_info=True)
 
     return ranked_learnings
+
+
+def _apply_contradiction_penalties(contradicted_ids: list[str]) -> None:
+    """Settle FR04's per-entry negative Q observations in one batched write.
+
+    Fail-open: a scoring write must never fail a recall, matching the
+    best-effort contract the rest of this pass already keeps.
+    """
+    if not contradicted_ids:
+        return
+    try:
+        from trw_mcp.scoring import apply_contradiction_penalty
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        apply_contradiction_penalty(contradicted_ids, resolve_trw_dir())
+    except Exception:  # justified: fail-open, recall must not fail on a reward write
+        logger.debug("contradiction_penalty_skipped", entry_ids=contradicted_ids, exc_info=True)
 
 
 def _resolve_backend() -> Any | None:

@@ -180,17 +180,21 @@ def test_subsequent_checkpoint_event_inherits_surface_snapshot_id_from_run_conte
     assert all(record["surface_snapshot_id"] == result["surface_snapshot_id"] for record in records)
 
 
-def test_session_start_fail_open_returns_empty_string_not_missing(
+def test_session_start_stamp_failure_keeps_the_key_and_fails_the_verdict(
     pinned_run: Callable[..., Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A FORCED stamping failure still yields the key, as an empty string.
+    """A FORCED stamping failure still yields the key, and now fails the verdict.
 
     Previously this called the happy path and asserted only that the key existed
     and was a str — which the successful case already proves, so the error branch
     it names was never executed. Raising inside the registry build makes the
-    fail-open contract the thing under test: parsers may assert presence rather
-    than existence-or-not, and session_start still succeeds.
+    contract the thing under test.
+
+    PRD-CORE-263-FR01 changed the second half. ``surface_stamp`` is declared
+    critical, and the old ``success is True`` assertion is exactly the defect the
+    PRD names: the flag was live and its branch unreachable. NFR04 keeps the key
+    present as an empty string for a parser that asserts presence.
     """
     pinned_run()
 
@@ -204,6 +208,7 @@ def test_session_start_fail_open_returns_empty_string_not_missing(
 
     result = session_start(verbose=True)
 
-    assert "surface_snapshot_id" in result, "fail-open must write the key, not omit it"
+    assert "surface_snapshot_id" in result, "the key is written even when the stamp fails"
     assert result["surface_snapshot_id"] == ""
-    assert result["success"] is True, "a stamping failure is non-critical"
+    assert result["success"] is False, "surface_stamp is declared critical (PRD-CORE-263-FR01)"
+    assert any("surface_stamp" in err for err in result["errors"])

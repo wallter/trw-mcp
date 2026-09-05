@@ -84,8 +84,13 @@ class TestIdempotency:
     """Test that re-running without --force skips existing files."""
 
     def test_second_run_skips_existing(self, fake_git_repo: Path) -> None:
-        init_project(fake_git_repo)
-        result2 = init_project(fake_git_repo)
+        # The client is pinned: since PRD-CORE-252-FR03 each client's agents go
+        # to its own destination, so an unpinned first run (which resolves
+        # through ``detect_ide``, and therefore through the developer's PATH)
+        # can select a different client than the second run does once `.claude/`
+        # exists — and every agent then legitimately reports as created twice.
+        init_project(fake_git_repo, ide="claude-code")
+        result2 = init_project(fake_git_repo, ide="claude-code")
 
         assert not result2["errors"]
         # All files should be skipped, no new creates (dirs already exist too)
@@ -328,13 +333,11 @@ class TestHooks:
     """Test hook script copying."""
 
     EXPECTED_HOOKS = [
-        "completion-gate.sh",
-        "helper-idle.sh",
         "instructions-loaded.sh",
-        "lib-ide-adapter.sh",
+        "lib-intent-guard.sh",  # PRD-CORE-250 FR05
         "lib-trw.sh",
-        "phase-cycle-stop.sh",
         "post-compact.sh",
+        "post-tool-degenerate-result.sh",  # PRD-CORE-250 FR06
         "post-tool-event.sh",
         "post-tool-intent-check.sh",  # PRD-SEC-013 FR07
         "pre-compact.sh",
@@ -452,8 +455,9 @@ class TestSkills:
         """Regression: the `email-template` skill must NOT ship to user projects.
 
         `email-template` is a TRW-platform product feature (it scaffolds
-        branded transactional HTML emails for ``backend/templates/email/``),
-        not a framework engineering-memory capability. It was removed from
+        branded transactional HTML emails for the proprietary platform's
+        server-side email templates), not a framework engineering-memory
+        capability. It was removed from
         the installer's bundled skill set; this test guards against a
         re-introduction.
         """
@@ -559,8 +563,12 @@ class TestAgents:
 
     @_EXACT_SET_MONOREPO_ONLY
     def test_init_deploys_agents(self, fake_git_repo: Path) -> None:
-        """After init_project(), .claude/agents/ has agent .md files."""
-        result = init_project(fake_git_repo)
+        """After a claude-code init_project(), .claude/agents/ has agent .md files.
+
+        PRD-CORE-252-FR03: ``.claude/agents`` is claude-code's destination, not
+        a universal one, so the client is named rather than inferred.
+        """
+        result = init_project(fake_git_repo, ide="claude-code")
         assert not result["errors"]
 
         agents_dir = fake_git_repo / ".claude" / "agents"
@@ -656,8 +664,18 @@ class TestCarrierRespectsClientImportCapability:
         because for four of these five clients CLAUDE.md is not a file they read
         — see :meth:`test_declared_instruction_surface_carries_the_protocol` for
         where the protocol actually has to land.
+
+        A codex-ONLY selection is a narrower case still: PRD-CORE-262-FR05 (the
+        codex-only scaffold-containment fix) means no CLAUDE.md is written at
+        all, not even the import-free shell every other import-incapable
+        client here still receives. No file means no unresolvable import can
+        exist, so the property holds trivially and is asserted directly.
         """
         init_project(fake_git_repo, ide=client)
+
+        if client == "codex":
+            assert not (fake_git_repo / "CLAUDE.md").exists(), "codex-only must get no root CLAUDE.md (FR05)"
+            return
 
         imports, _ = self._shape(fake_git_repo)
         assert imports == [], f"{client} cannot resolve an in-file import, got {imports}"

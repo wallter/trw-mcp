@@ -18,6 +18,12 @@ from trw_mcp.models.requirements import EvaluationEpoch, SchedulingAction
 
 LEDGER_FILENAME = "scheduling-ledger.jsonl"
 GENESIS_DIGEST = "genesis"
+
+#: Effective date of the sentinel epoch returned when the ledger carries no
+#: authorized ``advance_evaluation_epoch`` action. It is deliberately absurd —
+#: any renewal date is "in the future" relative to it — which is exactly why
+#: PRD-CORE-244-FR07 refuses to run the expiry loop against it.
+GENESIS_EPOCH_DATE = "1970-01-01"
 ANCHOR_FILENAME = "ledger-head.json"
 
 
@@ -124,4 +130,14 @@ def derive_evaluation_epoch(actions: list[SchedulingAction]) -> EvaluationEpoch:
                 effective_utc_date=action.effective_utc_date,
                 ledger_head_digest=head,
             )
-    return EvaluationEpoch(sequence=0, effective_utc_date="1970-01-01", ledger_head_digest=head)
+    return EvaluationEpoch(sequence=0, effective_utc_date=GENESIS_EPOCH_DATE, ledger_head_digest=head)
+
+
+def is_genesis_epoch(epoch: EvaluationEpoch) -> bool:
+    """True when *epoch* is the never-advanced sentinel (PRD-CORE-244-FR07).
+
+    Both halves are checked, not just the date: a real authorized action could in
+    principle carry a 1970 effective date, and a sequence of 0 alone would also
+    match a hypothetical zero-indexed real action. The sentinel is the pair.
+    """
+    return epoch.sequence == 0 and epoch.effective_utc_date == GENESIS_EPOCH_DATE

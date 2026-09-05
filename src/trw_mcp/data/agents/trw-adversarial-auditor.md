@@ -81,6 +81,12 @@ Do not duplicate the standard seven-phase workflow or restate its output
 schema. The base protocol remains authoritative; this adapter supplies an
 independent lens only.
 
+When a caller dispatches you as one leg of a multi-agent fan-out and the
+repository ships one, the campaign brief template at
+`docs/documentation/agent-briefs/diagnostic.md` carries the findings format,
+severity ladder, and coverage-map requirement those campaigns expect — read it
+if the caller's prompt does not already restate them.
+
 <!-- trw:mcp-retry-protocol:start -->
 ## MCP Tool Retry Protocol
 

@@ -17,12 +17,12 @@ class TestGetChangedFiles:
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
-                MagicMock(stdout="backend/models/database.py\n"),
+                MagicMock(stdout="api/models/database.py\n"),
                 MagicMock(stdout=""),
                 MagicMock(stdout=""),
             ]
             result = _get_changed_files(tmp_path)
-            assert "backend/models/database.py" in result
+            assert "api/models/database.py" in result
 
     def test_returns_empty_on_git_failure(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
@@ -51,10 +51,10 @@ class TestGetChangedFiles:
             mock_run.side_effect = [
                 MagicMock(stdout=""),
                 MagicMock(stdout=""),
-                MagicMock(stdout="backend/models/database.py\n"),
+                MagicMock(stdout="api/models/database.py\n"),
             ]
             result = _get_changed_files(tmp_path)
-            assert "backend/models/database.py" in result
+            assert "api/models/database.py" in result
 
     def test_returns_empty_on_os_error(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
@@ -94,7 +94,7 @@ class TestCheckNullableDefaults:
         diff_output = "+    status = Column(String(32), nullable=False, default='active')\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 1
             assert "NOT NULL column without server_default" in warnings[0]
 
@@ -104,7 +104,7 @@ class TestCheckNullableDefaults:
         diff_output = "+    status = Column(String(32), nullable=False, server_default='active')\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 0
 
     def test_no_warning_for_nullable_true(self, tmp_path: Path) -> None:
@@ -113,7 +113,7 @@ class TestCheckNullableDefaults:
         diff_output = "+    name = Column(String(100))\n"  # nullable defaults to True
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 0
 
     def test_ignores_removed_lines(self, tmp_path: Path) -> None:
@@ -122,16 +122,16 @@ class TestCheckNullableDefaults:
         diff_output = "-    status = Column(String(32), nullable=False)\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 0
 
     def test_ignores_diff_header_lines(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _check_nullable_defaults
 
-        diff_output = "+++ b/backend/models/database.py\n+    status = Column(String(32), nullable=False)\n"
+        diff_output = "+++ b/api/models/database.py\n+    status = Column(String(32), nullable=False)\n"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(stdout=diff_output)
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 1
             assert "NOT NULL column without server_default" in warnings[0]
 
@@ -140,7 +140,7 @@ class TestCheckNullableDefaults:
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.SubprocessError("git failed")
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 0
 
     def test_handles_multiple_files(self, tmp_path: Path) -> None:
@@ -161,7 +161,7 @@ class TestCheckNullableDefaults:
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("git not found")
-            warnings = _check_nullable_defaults(tmp_path, ["backend/models/database.py"])
+            warnings = _check_nullable_defaults(tmp_path, ["api/models/database.py"])
             assert len(warnings) == 0
 
 
@@ -172,7 +172,7 @@ class TestCheckMigrationGate:
         from trw_mcp.state.validation.phase_gates_build import check_migration_gate
 
         with patch("trw_mcp.state.validation.phase_gates_build._get_changed_files") as mock_files:
-            mock_files.return_value = ["backend/models/database.py"]
+            mock_files.return_value = ["api/models/database.py"]
             with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
                 mock_null.return_value = []
                 warnings = check_migration_gate(tmp_path)
@@ -184,8 +184,8 @@ class TestCheckMigrationGate:
 
         with patch("trw_mcp.state.validation.phase_gates_build._get_changed_files") as mock_files:
             mock_files.return_value = [
-                "backend/models/database.py",
-                "backend/alembic/versions/001_add_status.py",
+                "api/models/database.py",
+                "api/alembic/versions/001_add_status.py",
             ]
             with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
                 mock_null.return_value = []
@@ -196,7 +196,7 @@ class TestCheckMigrationGate:
         from trw_mcp.state.validation.phase_gates_build import check_migration_gate
 
         with patch("trw_mcp.state.validation.phase_gates_build._get_changed_files") as mock_files:
-            mock_files.return_value = ["backend/routers/admin.py"]
+            mock_files.return_value = ["api/routers/admin.py"]
             warnings = check_migration_gate(tmp_path)
             assert len(warnings) == 0
 
@@ -212,7 +212,7 @@ class TestCheckMigrationGate:
         from trw_mcp.state.validation.phase_gates_build import check_migration_gate
 
         with patch("trw_mcp.state.validation.phase_gates_build._get_changed_files") as mock_files:
-            mock_files.return_value = ["backend/models/database.py"]
+            mock_files.return_value = ["api/models/database.py"]
             with patch("trw_mcp.state.validation.phase_gates_build._check_nullable_defaults") as mock_null:
                 mock_null.return_value = ["NOT NULL column without server_default: ..."]
                 warnings = check_migration_gate(tmp_path)

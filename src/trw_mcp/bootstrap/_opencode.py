@@ -52,7 +52,6 @@ _TRW_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
 _OPENCODE_DATA_DIR = _DATA_DIR / "opencode"
 _OPENCODE_COMMANDS_DIR = _OPENCODE_DATA_DIR / "commands"
-_OPENCODE_AGENTS_DIR = _OPENCODE_DATA_DIR / "agents"
 _OPENCODE_SKILLS_DIR = _OPENCODE_DATA_DIR / "skills"
 _OPENCODE_SKILLS_INVENTORY = _OPENCODE_DATA_DIR / "skills_inventory.yaml"
 
@@ -192,22 +191,6 @@ def install_opencode_commands(
     )
 
 
-def install_opencode_agents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> dict[str, list[str]]:
-    """Install bundled OpenCode specialist agents into ``.opencode/agents``."""
-    return _copy_markdown_dir(
-        _OPENCODE_AGENTS_DIR,
-        target_dir / ".opencode" / "agents",
-        ".opencode/agents",
-        force=force,
-        manifest_hashes=manifest_hashes,
-    )
-
-
 def install_opencode_skills(
     target_dir: Path,
     *,
@@ -333,6 +316,28 @@ def _writes_shared_agents_md(client_id: str) -> bool:
         return True
 
 
+def _guarded_agents_write(
+    agents_md_path: Path,
+    candidate: str,
+    target_dir: Path,
+    result: dict[str, list[str]],
+    *,
+    force: bool = False,
+) -> None:
+    """Route an AGENTS.md bootstrap write through the PRD-FIX-123 guard."""
+    from trw_mcp.bootstrap._guarded_write import guarded_bootstrap_write
+
+    guarded_bootstrap_write(
+        agents_md_path,
+        candidate,
+        project_root=target_dir,
+        markers=(_TRW_START_MARKER, _TRW_END_MARKER),
+        result=result,
+        rel_path=str(agents_md_path.name),
+        force=force,
+    )
+
+
 def generate_agents_md(
     target_dir: Path,
     trw_section: str,
@@ -387,30 +392,21 @@ def generate_agents_md(
             )
 
             if updated is not None:
-                try:
-                    agents_md_path.write_text(updated, encoding="utf-8")
-                    result["updated"].append(str(agents_md_path.name))
-                except OSError as exc:
-                    result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+                _guarded_agents_write(agents_md_path, updated, target_dir, result)
             elif not has_marker(content, *markers):  # no section at all -> append
                 # No TRW section yet — append it
                 if not content.endswith("\n"):
                     content += "\n"
                 content += "\n" + new_block
-                try:
-                    agents_md_path.write_text(content, encoding="utf-8")
-                    result["updated"].append(str(agents_md_path.name))
-                except OSError as exc:
-                    result["errors"].append(f"Failed to update {agents_md_path}: {exc}")
+                _guarded_agents_write(agents_md_path, content, target_dir, result)
             else:
                 result["errors"].append("AGENTS.md has malformed TRW markers — found start but not end")
         else:
-            # Create new file
-            try:
-                agents_md_path.write_text(new_block, encoding="utf-8")
-                result["created"].append(str(agents_md_path.name))
-            except OSError as exc:
-                result["errors"].append(f"Failed to write {agents_md_path}: {exc}")
+            # Create-or-replace. Under ``force`` this replaces a hand-written file
+            # wholesale, so it goes through the guard like every other write:
+            # the pre-write bytes are backed up first, and without ``force`` the
+            # shrink floor refuses the replacement outright (PRD-FIX-123-FR06).
+            _guarded_agents_write(agents_md_path, new_block, target_dir, result, force=force)
     finally:
         try:
             lock.__exit__(None, None, None)

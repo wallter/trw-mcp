@@ -18,18 +18,15 @@ from trw_mcp.tools._recall_projection import strip_internal_response_fields
 INTERNAL_FIELDS = {
     "access_count": 64,
     "anchor_validity": 1.0,
-    "avg_rework_delta": 0.1,
     "combined_score": 0.88,
     "helpful_count": 3,
     "last_accessed_at": "2026-07-01",
-    "outcome_correlation": {"positive": 2},
     "outcome_history": [{"outcome": "pass"}] * 8,
     "q_observations": 12,
     "q_value": 0.42,
     "recall_count": 9,
     "recurrence": 1,
     "session_count": 4,
-    "sessions_surfaced": ["s1", "s2"],
     "unhelpful_count": 0,
 }
 
@@ -86,7 +83,7 @@ class TestExecuteRecallProjection:
             patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
             patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _q, m: m),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _q, m: (m, None)),
         ):
             return dict(execute_recall(query="auth", trw_dir=trw_dir, config=get_config(), **kwargs))  # type: ignore[arg-type]
 

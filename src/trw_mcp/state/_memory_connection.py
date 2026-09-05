@@ -557,7 +557,7 @@ def _embed_and_store_returning(backend: SQLiteBackend, entry_id: str, text: str)
     try:
         vector = embedder.embed(text)
         if vector is not None:
-            backend.upsert_vector(entry_id, vector)
+            backend.upsert_vector(entry_id, vector, namespace=_NAMESPACE)
         return vector
     except (OSError, ValueError, RuntimeError):
         # justified: embedding is optional enrichment -- store succeeds without it.

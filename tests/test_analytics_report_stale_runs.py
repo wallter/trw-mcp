@@ -15,6 +15,7 @@ from tests._test_analytics_report_support import (
     _patch_config_and_root,
     _reader,
 )
+from trw_mcp.models.run import RunStatus
 from trw_mcp.state.analytics.report import auto_close_stale_runs
 
 
@@ -186,7 +187,15 @@ class TestStaleRunArchiveSummary:
 class TestStaleRunNonActiveSkipped:
     """Runs that are not in 'active' status should never be closed."""
 
-    @pytest.mark.parametrize("status", ["completed", "abandoned", "failed"])
+    # PRD-FIX-126: the old list was ["completed", "abandoned", "failed"] — one
+    # legacy alias, one member, and one word no writer has ever produced, all
+    # spelled by hand. The member half now comes from RunStatus so it tracks the
+    # enum; the legacy alias and an unnameable value are kept as explicit
+    # non-member cases the closer must still leave alone.
+    @pytest.mark.parametrize(
+        "status",
+        [*sorted(m.value for m in RunStatus if m.is_terminal), "completed", "abandonded"],
+    )
     def test_stale_run_non_active_skipped(self, tmp_path: Path, status: str) -> None:
         """A run with non-active status is never touched, even if very old."""
         runs_root = tmp_path / ".trw" / "runs"

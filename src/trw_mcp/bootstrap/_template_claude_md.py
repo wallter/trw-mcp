@@ -370,6 +370,15 @@ def _apply_claude_md_carrier(
         logger.warning("bootstrap_claude_md_carrier_failed", target=str(claude_md_path), exc_info=True)
         return False
 
+    if outcome.refusal is not None:
+        # PRD-FIX-123-NFR04: never report success for a write the guard refused.
+        # Handled (True) rather than falling through to the inline path, which
+        # would re-attempt the same refused candidate and report it twice.
+        result.setdefault("errors", []).append(
+            f"Refused to write {claude_md_path} ({outcome.refusal['reason']}): {outcome.refusal['detail']}"
+        )
+        return True
+
     if outcome.mode is CarrierMode.POINTER_SKIP:
         result.setdefault("preserved", []).append(str(claude_md_path))
     else:
@@ -429,23 +438,34 @@ def _update_claude_md_trw_section(
         header_span = find_marker_line_span(content[: start_span[0]], _TRW_HEADER_MARKER, anchor="start", last=True)
         replace_start = header_span[0] if header_span is not None else start_span[0]
         updated = content[:replace_start] + new_block + content[end_idx:]
-        try:
-            claude_md_path.write_text(updated, encoding="utf-8")
-            result["updated"].append(str(claude_md_path))
-        except OSError as exc:
-            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
+        _guarded(claude_md_path, updated, project_root, result)
     elif start_span is None:
         # No TRW section -- append it
         if not content.endswith("\n"):
             content += "\n"
         content += "\n" + new_block
-        try:
-            claude_md_path.write_text(content, encoding="utf-8")
-            result["updated"].append(str(claude_md_path))
-        except OSError as exc:
-            result["errors"].append(f"Failed to update {claude_md_path}: {exc}")
+        _guarded(claude_md_path, content, project_root, result)
     else:
         result["errors"].append("CLAUDE.md has malformed TRW markers — found start but not end")
+
+
+def _guarded(claude_md_path: Path, candidate: str, project_root: Path | None, result: dict[str, list[str]]) -> None:
+    """Route a bootstrap CLAUDE.md write through the PRD-FIX-123 guard.
+
+    Replaces two bare, non-atomic ``Path.write_text`` calls. Backup, provenance,
+    and the shrink floors now apply to the bootstrap path exactly as they do to
+    the runtime sync.
+    """
+    from trw_mcp.bootstrap._guarded_write import guarded_bootstrap_write
+
+    guarded_bootstrap_write(
+        claude_md_path,
+        candidate,
+        project_root=project_root or claude_md_path.parent,
+        markers=(_TRW_START_MARKER, _TRW_END_MARKER),
+        result=result,
+        rel_path=str(claude_md_path),
+    )
 
 
 def _minimal_claude_md_trw_block() -> str:

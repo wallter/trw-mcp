@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests._test_sync_client_support import _acquired_lock, _make_config
+from trw_mcp.sync._team_merge_result import TeamMergeResult
 
 
 def _make_entry(entry_id: str, sync_seq: int = 1) -> Any:
@@ -176,7 +177,7 @@ async def test_cycle_does_not_load_dirty_when_sharing_disabled(tmp_path) -> None
     client._puller.pull_intel_state = AsyncMock(
         return_value=PullResult(state={}, etag="e", team_learnings=[], sync_hints={}, status_code=200)
     )
-    client._puller.merge_team_learnings.return_value = 0
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=0, inserted=0)
     client._cache = MagicMock()
     # If the gate failed, this MagicMock would be called and return a MagicMock
     # (truthy) — the assertion below proves it was NOT consulted.
@@ -210,7 +211,7 @@ async def test_cycle_does_not_load_outcomes_when_telemetry_disabled(tmp_path) ->
     client._puller.pull_intel_state = AsyncMock(
         return_value=PullResult(state={}, etag="e", team_learnings=[], sync_hints={}, status_code=200)
     )
-    client._puller.merge_team_learnings.return_value = 0
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=0, inserted=0)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 

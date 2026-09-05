@@ -27,4 +27,13 @@ def test_ordinary_session_start_cannot_launch_embedding_download(
 
     assert os.environ["TRW_OFFLINE"] == "1"
     assert result.get("status") != "error"
-    assert "embedder_warmup_scheduled" not in result
+    # PRD-CORE-263-FR04 now propagates ``embedder_warmup_scheduled`` — it was
+    # computed on every session and silently dropped before this PRD. Its
+    # presence is not itself a download trigger: the isolation guarantee this
+    # test protects is that no download is actually LAUNCHED, which is
+    # ``thread_started``. ``warmup_suppressed_by_offline`` (PRD-QUAL-110-FR04)
+    # short-circuits ``_schedule_embedder_warmup`` before it ever calls the
+    # monkeypatched ``get_embedder``, so the key is now visible but its value
+    # states the guard was suppressed, not fired.
+    warmup = result.get("embedder_warmup_scheduled")
+    assert warmup is None or warmup.get("thread_started") is False

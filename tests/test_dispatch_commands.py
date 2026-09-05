@@ -8,7 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from trw_mcp.dispatch import build_command
-from trw_mcp.dispatch._commands import _CLIENT_SPECS, SUPPORTED_CLIENTS
+from trw_mcp.dispatch._client_specs import CLIENT_SPECS
+from trw_mcp.dispatch._commands import SUPPORTED_CLIENTS
 from trw_mcp.dispatch._types import _FORBIDDEN_EXTRA_ARG_TOKENS, DispatchRequest
 
 
@@ -19,7 +20,11 @@ def _req(client: str, **kw: object) -> DispatchRequest:
 
 
 def test_supported_clients_match_specs() -> None:
-    assert set(SUPPORTED_CLIENTS) == set(_CLIENT_SPECS)
+    # PRD-CORE-266-FR01: the private `_CLIENT_SPECS` dataclass table this used to
+    # read was replaced by the typed `CLIENT_SPECS` registry, which is now the
+    # source `SUPPORTED_CLIENTS` is derived FROM. The assertion is kept because
+    # it still catches a hand-edited Literal drifting from the registry.
+    assert set(SUPPORTED_CLIENTS) == set(CLIENT_SPECS)
 
 
 def test_claude_isolated_readonly_default_argv() -> None:

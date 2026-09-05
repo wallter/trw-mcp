@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests._tools_orchestration_support import set_project_root  # noqa: F401
 from trw_mcp.exceptions import StateError as TRWStateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -174,3 +175,42 @@ class TestCheckFrameworkVersionStaleness:
         with patch.object(FileStateReader, "read_yaml", side_effect=exploding_read):
             result = _check_framework_version_staleness("v18.0_TRW")
         assert result is None
+
+
+# --- PRD-CORE-265-NFR01: owner_of is cheap enough for the commit boundary ----
+
+
+def test_formation_owner_of_latency_budget(formation_env: FormationFixture) -> None:
+    """NFR01. 16 members, 200 resolutions, median at or under 50 ms each.
+
+    The budget exists because FR09 runs this on EVERY scoped commit; a resolution
+    an operator can feel would make the ownership check something people disable.
+    The manifest is loaded inside the timed section (``context=None``), so the
+    number measured is the one the commit boundary actually pays, not a warmed
+    in-memory match.
+    """
+    import statistics
+    import time
+
+    from trw_mcp.formation import create, owner_of
+
+    members = [
+        {
+            "member_id": f"impl-{index:02d}",
+            "client": "claude-code",
+            "owned_paths": [f"src/pkg{index:02d}"],
+            "test_owned_paths": [f"tests/test_pkg{index:02d}.py"],
+        }
+        for index in range(16)
+    ]
+    create(formation_env.orchestrator_run, formation_env.payload(members=members), prds_dir=None)
+
+    samples: list[float] = []
+    for _ in range(200):
+        started = time.perf_counter()
+        ownership = owner_of("src/pkg09/thing.py", run_path=formation_env.orchestrator_run)
+        samples.append((time.perf_counter() - started) * 1000.0)
+    assert ownership is not None and ownership.member_id == "impl-09"
+
+    median_ms = statistics.median(samples)
+    assert median_ms <= 50.0, f"median owner_of resolution {median_ms:.2f} ms exceeds the 50 ms budget"

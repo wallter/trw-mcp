@@ -17,6 +17,7 @@ from tests._delivery_support import (
     strong_capability,
 )
 from tests.conftest import extract_tool_fn
+from trw_mcp.tools._delivery_effect_registry import DELIVERY_EFFECT_REGISTRY
 from trw_mcp.tools._delivery_models import OperationState, StepState
 from trw_mcp.tools._delivery_status import build_status_projection
 
@@ -32,7 +33,7 @@ def test_public_status_is_read_only_and_recovers_after_timeout(tmp_path) -> None
     did = make_uuid7()
     coord.claim(delivery_id=did, capability_token=strong_capability(), run_identity="task/run-1", owner="w", pid=1)
     coord.begin_step(did, "S01", owner="w", pid=1)
-    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED, proof_digest="d1")
+    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED)
 
     trw_dir = tmp_path / ".trw" if (tmp_path / ".trw").exists() else tmp_path
     # Snapshot the whole project tree, run status, and assert nothing changed.
@@ -300,21 +301,21 @@ def test_verbose_status_projects_all_registry_effects_and_replay_classes(tmp_pat
     assert steps["D16"]["state"] == "not_started"
     assert steps["D16"]["replay_class"] == "non_replayable"
     assert steps["S01"]["replay_class"] == "postcondition_provable"
-    assert len(steps) == 46
+    assert len(steps) == len(DELIVERY_EFFECT_REGISTRY)
 
 
 def test_compact_status_omits_not_started_and_replay_class(tmp_path) -> None:
     """Wave 8: the default compact response enumerates only run steps and drops
     the static per-step replay_class, plus a steps_total/started/succeeded summary.
 
-    The full 46-entry census (with replay_class) stays available via verbose=True;
+    The full registry census (with replay_class) stays available via verbose=True;
     only the MCP response shape is compacted — journal/DB truth is unaffected.
     """
     coord = make_coordinator(tmp_path)
     did = make_uuid7()
     coord.claim(delivery_id=did, capability_token=strong_capability(), owner="w", pid=1)
     coord.begin_step(did, "S01", owner="w", pid=1)
-    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED, proof_digest="d1")
+    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED)
 
     status = coord.project_status(did)
     steps = status["steps"]
@@ -325,16 +326,16 @@ def test_compact_status_omits_not_started_and_replay_class(tmp_path) -> None:
     assert steps["S01"]["state"] == "succeeded"
     assert "replay_class" not in steps["S01"]  # static registry metadata dropped
     # Summary counts describe the full census without enumerating it.
-    assert status["steps_total"] == 46
+    assert status["steps_total"] == len(DELIVERY_EFFECT_REGISTRY)
     assert status["steps_started"] == 1
     assert status["steps_succeeded"] == 1
 
     # verbose=True still returns the full census with replay_class.
     verbose = coord.project_status(did, verbose=True)
-    assert len(verbose["steps"]) == 46
+    assert len(verbose["steps"]) == len(DELIVERY_EFFECT_REGISTRY)
     assert verbose["steps"]["S01"]["replay_class"] == "postcondition_provable"
     assert verbose["steps"]["S01"]["state"] == "succeeded"
-    assert verbose["steps_total"] == 46
+    assert verbose["steps_total"] == len(DELIVERY_EFFECT_REGISTRY)
     assert verbose["steps_started"] == 1
 
 
@@ -404,7 +405,7 @@ def test_prd_core_215_fr05(tmp_path, monkeypatch) -> None:
     did = make_uuid7()
     coord.claim(delivery_id=did, capability_token=cap, run_identity="task/run-1", owner="w", pid=1)
     coord.begin_step(did, "S01", owner="w", pid=1)
-    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED, proof_digest="d1")
+    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED)
     replay = coord.claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
     assert replay.effect_calls == 0  # replay attaches, never re-runs the effect
     status = coord.project_status(did)

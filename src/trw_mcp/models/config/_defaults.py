@@ -62,6 +62,24 @@ DEFAULT_PARALLELISM_MAX: int = 10
 # -- Scoring --
 DEFAULT_SCORING_DEFAULT_DAYS_UNUSED: int = 30
 
+# -- Profile domain inference (PRD-HPO-PROF-001 FR-6) --
+#: Generic source-layout prefix -> ``domain`` layer name. These defaults are
+#: deliberately layout-agnostic: they name directory conventions common to most
+#: repositories, NOT any particular project's package tree. A project whose
+#: layout differs states its own mapping in ``.trw/config.yaml`` under
+#: ``profile_domain_path_map``, which REPLACES this table wholesale (it is a
+#: mapping, not a merge). Matching is longest-prefix-wins, so overlapping
+#: prefixes resolve deterministically regardless of declaration order.
+DEFAULT_DOMAIN_PATH_MAP: dict[str, str] = {
+    "frontend/": "frontend",
+    "web/": "frontend",
+    "ui/": "frontend",
+    "api/": "backend",
+    "server/": "backend",
+    "eval/": "eval",
+    "evals/": "eval",
+}
+
 # -- Ceremony adaptation (CORE-084) --
 LIGHT_MODE_RECALL_CAP: int = 10
 
@@ -111,18 +129,15 @@ DEFAULT_RECALL_INTERNAL_FIELDS: frozenset[str] = frozenset(
     {
         "access_count",
         "anchor_validity",
-        "avg_rework_delta",
         "combined_score",
         "helpful_count",
         "last_accessed_at",
-        "outcome_correlation",
         "outcome_history",
         "q_observations",
         "q_value",
         "recall_count",
         "recurrence",
         "session_count",
-        "sessions_surfaced",
         "unhelpful_count",
     }
 )

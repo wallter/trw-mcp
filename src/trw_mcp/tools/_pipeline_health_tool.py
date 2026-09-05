@@ -37,13 +37,22 @@ def register_pipeline_health_tools(server: FastMCP) -> None:
             return step_pipeline_health(trw_dir)
         except Exception as exc:  # justified: fail-open, tool must never crash
             logger.warning("pipeline_health_tool_failed", error=str(exc))
+            # DEF-06: this used to omit ``measured`` entirely — top-level AND
+            # per-signal — so a tool crash rendered identically to a healthy
+            # aggregate to any caller that only reads ``degraded``. Every
+            # entry now carries ``measured: False`` alongside the existing
+            # ``advisory: "probe_error"`` reason, matching the shape
+            # ``step_pipeline_health``'s own probes use for an unmeasured
+            # result (PRD-CORE-263-FR03).
+            unmeasured_signal = {"degraded": False, "measured": False, "advisory": "probe_error"}
             return {
                 "degraded": False,
+                "measured": False,
                 "advisory": "health_probe_failed",
                 "error": str(exc),
-                "sync_push": {"degraded": False, "advisory": "probe_error"},
-                "graph_edges": {"degraded": False, "advisory": "probe_error"},
-                "embedding_coverage": {"degraded": False, "advisory": "probe_error"},
-                "recall_feedback": {"degraded": False, "advisory": "probe_error"},
-                "bandit_state": {"degraded": False, "advisory": "probe_error"},
+                "sync_push": dict(unmeasured_signal),
+                "graph_edges": dict(unmeasured_signal),
+                "embedding_coverage": dict(unmeasured_signal),
+                "recall_feedback": dict(unmeasured_signal),
+                "bandit_state": dict(unmeasured_signal),
             }

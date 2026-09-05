@@ -82,11 +82,27 @@ error-handling, security, privacy, performance, migration, or rollback effects
 of the change. Keep simplification inside the owned behavior boundary; report
 adjacent debt rather than expanding scope silently.
 
+## Converge before you run out of budget
+
+When your turn budget is roughly 80% spent, or 25 or more tool calls have
+passed since your last commit, stop expanding scope: run the full package suite
+(all markers, no `-k`/`-m` narrowing), commit what is green, and report. Never
+leave uncommitted work at session end — an uncommitted change is a change
+nobody else can see, build on, or revert.
+
+Commit each green, coherent unit as you go rather than batching the whole task
+into one final commit you may not reach. When the caller has not assigned you
+commit responsibility, the same rule applies to your handoff: summarize and hand
+back before the budget ends, rather than being cut off mid-edit.
+
 ## Validate and report
 
 1. Run the focused checks that prove each acceptance criterion.
 2. Run the applicable project-native integration/static/full checks after the
-   final edit. Evidence must postdate the code it covers.
+   final edit. Evidence must postdate the code it covers. The final report
+   requires the full package suite (all markers) to have run in this session,
+   not just the tests touched by this change — a marker-filtered tier is a
+   dev-loop signal, not validation.
 3. Report only observed results with
    `{tool:trw_build_check}(tests_passed=<observed>, scope="<exact command>")`.
    That tool records checks; it does not execute them.
@@ -104,6 +120,12 @@ integration: "verified | not applicable | blocked with reason"
 simplification: "removed items or none proven safe"
 remaining_risk: []
 ```
+
+When the caller dispatches you as part of a multi-agent fan-out and the
+repository ships one, the campaign brief template at
+`docs/documentation/agent-briefs/implementer.md` carries the shared-tree commit
+rules, validation ladder, and return contract those campaigns expect — read it
+if the caller's prompt does not already restate them.
 
 Checkpoint durable progress after meaningful milestones with
 `{tool:trw_checkpoint}` — it is what survives a context compaction mid-task.

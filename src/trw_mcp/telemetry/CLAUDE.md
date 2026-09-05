@@ -15,7 +15,6 @@ resolution in `ROADMAP-AUDIT-2026-04-16.md` §D10-P1-11.
 | `sender.py` | Remote telemetry delivery (opt-in) | CORE-031 |
 | `anonymizer.py` | PII scrubbing before publish | CORE-031 |
 | `embeddings.py` | Text embedding for event payloads | CORE-031 |
-| `remote_recall.py` | Ingests remote events for cross-installation recall | CORE-031 |
 | `constants.py` | Inlined constants (was `trw-shared`) | CORE-031 |
 | `client.py` | Thin public client wrapper | CORE-031 |
 

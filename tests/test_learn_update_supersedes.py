@@ -68,13 +68,13 @@ def test_learn_update_supersedes(trw_project: Path) -> None:
 
     assert result["status"] == "updated"
 
-    a = backend.get("L-aaaa")
+    a = backend.get("L-aaaa", namespace="default")
     assert a is not None
     assert a.invalid_from is not None  # window closed
     assert a.invalidated_by == "L-bbbb"  # closer is the updating record
     assert a.validity_state() == "superseded"
     # Retained (not deleted) — still gettable.
-    b = backend.get("L-bbbb")
+    b = backend.get("L-bbbb", namespace="default")
     assert b is not None
     assert b.invalid_from is None  # the superseding record stays open
 
@@ -88,7 +88,7 @@ def test_plain_edit_does_not_supersede(trw_project: Path) -> None:
     result = fn(learning_id="L-cccc", detail="sharper detail")
     assert result["status"] == "updated"
 
-    c = backend.get("L-cccc")
+    c = backend.get("L-cccc", namespace="default")
     assert c is not None
     assert c.invalid_from is None
     assert c.invalidated_by is None
@@ -104,6 +104,6 @@ def test_supersedes_missing_prior_is_reported(trw_project: Path) -> None:
     result = fn(learning_id="L-dddd", supersedes="L-nope", summary="x")
     # The primary update still succeeds; the missing prior is a no-op close.
     assert result["status"] == "updated"
-    d = backend.get("L-dddd")
+    d = backend.get("L-dddd", namespace="default")
     assert d is not None
     assert d.invalid_from is None

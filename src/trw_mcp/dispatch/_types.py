@@ -14,20 +14,18 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-# The set of coding-agent CLIs the dispatch layer can launch. Keep this in
-# lock-step with ``SUPPORTED_CLIENTS`` in ``_commands.py``.
-DispatchClient = Literal["claude", "codex", "agy", "opencode"]
-
-# Single source of truth for the supported client ids — the runtime tuple form of
-# the ``DispatchClient`` Literal. Lives here (next to the Literal) so config-field
-# defaults, the command builder, and the env allowlist all derive their allowed
-# set from ONE place; ``_commands.py`` re-exports it for back-compat. Keep this in
-# lock-step with the ``DispatchClient`` Literal above.
-SUPPORTED_CLIENTS: tuple[DispatchClient, ...] = ("claude", "codex", "agy", "opencode")
+# ``DispatchClient`` and ``SUPPORTED_CLIENTS`` are DEFINED in ``_client_specs``,
+# next to the registry entries they enumerate, and RE-EXPORTED here (``X as X``)
+# so every existing importer — config fields, env allowlist, normalizer, runner —
+# keeps its import site unchanged. Two hand-maintained lists that had to be kept
+# "in lock-step" by comment are now one list plus one derivation, and the registry
+# asserts their equality at import (PRD-CORE-266-FR01).
+from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS as SUPPORTED_CLIENTS
+from trw_mcp.dispatch._client_specs import DispatchClient as DispatchClient
+from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 
 # Upper bound on a forwarded model-override string. A model name is concatenated
 # into argv; even within the benign charset an unbounded value is pointless and a
@@ -39,6 +37,13 @@ _MAX_MODEL_NAME_LEN = 256
 # posture (e.g. re-enable writes, disable MCP isolation, point the child at a
 # different config). ``extra_args`` is an API-only escape hatch for benign extra
 # tokens; the CLI deliberately exposes no ``--extra-args`` surface.
+#
+# Provenance (PRD-LOCAL-074-FR07/FR09). The trailing 10 entries were added on
+# 2026-09-04 (8) and 2026-09-05 (2);
+# each carries the CLI and version whose ``--help`` output was read that day, so a
+# later maintainer can re-verify rather than guess. ``trw_loop._argv_floor`` mirrors
+# this set and the loop runtime's argv-floor parity test asserts the superset
+# relation from source, so the two cannot drift silently.
 _FORBIDDEN_EXTRA_ARG_TOKENS: frozenset[str] = frozenset(
     {
         "--setting-sources",
@@ -53,12 +58,63 @@ _FORBIDDEN_EXTRA_ARG_TOKENS: frozenset[str] = frozenset(
         "--ignore-user-config",
         "--yes",
         "--yes-always",
+        # codex: present in codex-cli 0.153.2 ``codex exec --help``.
+        "--dangerously-bypass-approvals-and-sandbox",
+        # codex: present in codex-cli 0.153.2 ``codex exec --help``.
+        "--dangerously-bypass-hook-trust",
+        # codex: present in codex-cli 0.153.2 ``codex exec --help`` — routes
+        # approvals through automatic review under workspace-write.
+        "--approve-for-me",
+        # codex: present in codex-cli 0.153.2 top-level ``codex --help`` as
+        # ``-a, --ask-for-approval``. Blocked defensively: the builders emit
+        # ``<binary> exec ...``, where the token is not reachable, but a plugin
+        # builder may not use the subcommand.
+        "--ask-for-approval",
+        # codex: LEGACY-UNVERIFIED. ABSENT from both ``codex --help`` and ``codex
+        # exec --help`` in codex-cli 0.153.2; carried as a legacy/forward spelling
+        # for an older or newer binary on PATH. Never assert it is PRESENT in a
+        # CLI's help output.
+        "--full-auto",
+        # opencode: present in opencode 1.18.28 ``opencode run --help``,
+        # documented there as auto-approve and dangerous.
+        "--auto",
+        # claude: present in Claude Code 2.1.261 ``claude --help``.
+        "--allow-dangerously-skip-permissions",
+        # claude: present in Claude Code 2.1.261 ``claude --help`` — selects who
+        # answers permission prompts.
+        "--permission-prompts",
+        # claude: BOTH spellings are live in Claude Code 2.1.261 ``claude --help``,
+        # measured 2026-09-05. Pre-authorises tool use without a human prompt, which
+        # defeats the "a headless child cannot approve" mechanism the read-only
+        # posture rests on -- so it is a permission bypass, not a convenience flag.
+        "--allowed-tools",
+        "--allowedTools",
     }
 )
 
 # A model override is forwarded verbatim into argv; constrain it to a benign
 # charset so it cannot smuggle a second flag or shell metacharacters.
 _MODEL_NAME_RE = re.compile(r"[A-Za-z0-9._:@/-]+")
+
+
+def effective_forbidden_tokens(client: str) -> frozenset[str]:
+    """The forbidden-token set that applies to *client*: the shared floor UNION
+    that client's own tokens (PRD-CORE-266-FR05).
+
+    A union, never a substitution. A per-client set can only ADD restrictions —
+    the floor stays a subset for every client, so no registry entry, present or
+    future, can reopen the read-only posture the floor establishes. Duplicate
+    declarations collapse silently because a set union cannot double-count.
+
+    An unregistered client id yields the floor alone, which is the fail-closed
+    direction: an id TRW does not know is held to the shared minimum rather than
+    escaping validation entirely.
+    """
+    try:
+        own = client_spec_for(client).forbidden_tokens
+    except UnknownClientError:
+        return _FORBIDDEN_EXTRA_ARG_TOKENS
+    return _FORBIDDEN_EXTRA_ARG_TOKENS | own
 
 
 def _is_forbidden_security_token(tok: str) -> bool:
@@ -125,6 +181,26 @@ class DispatchRequest(BaseModel):
                 raise ValueError(f"extra_args may not override security flag: {tok!r}")
         return value
 
+    @model_validator(mode="after")
+    def _reject_client_specific_bypass_tokens(self) -> DispatchRequest:
+        """Reject ``extra_args`` tokens this CLIENT documents as a bypass.
+
+        A model-level validator rather than a field validator because the check
+        needs BOTH values: the field validator above cannot see ``client`` and so
+        can only enforce the shared floor. Without this pass, copilot's
+        ``--yolo`` and cursor-cli's ``--force`` would be legal ``extra_args``
+        tokens — flags whose own vendors document them as enabling every
+        permission — because the floor predates both clients.
+
+        The same ``security flag`` wording and the same ``=`` head split as the
+        floor check, so callers and tests observe one error path.
+        """
+        own = effective_forbidden_tokens(self.client) - _FORBIDDEN_EXTRA_ARG_TOKENS
+        for tok in self.extra_args:
+            if tok.split("=", 1)[0] in own:
+                raise ValueError(f"extra_args may not override security flag: {tok!r} (client {self.client!r})")
+        return self
+
     @field_validator("model")
     @classmethod
     def _validate_model_name(cls, value: str | None) -> str | None:
@@ -168,8 +244,12 @@ class DispatchResult(BaseModel):
     read_only_enforced: bool = Field(
         description=(
             "True iff the child was launched with writes forbidden (mirrors the "
-            "request's ``read_only``). True ⇒ no write/permission-bypass flag was "
-            "passed for any of the four clients, so writes were impossible."
+            "request's ``read_only``). The mechanism is registry-derived and stated "
+            "as a mechanism rather than a client count: True means the builder "
+            "emitted that client's ``read_only_argv`` and OMITTED its "
+            "``allow_writes_argv``, so no write/permission-bypass flag reached the "
+            "child. It holds for every registered client by construction — a count "
+            "here went stale the moment the registry grew past four."
         ),
     )
     exit_code: int | None = Field(description="Child process exit code; None if it timed out before exiting.")

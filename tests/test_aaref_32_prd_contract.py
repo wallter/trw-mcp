@@ -526,12 +526,10 @@ def test_completeness_warning_uses_zero_to_one_completeness_scale(tmp_path: Path
 def test_deployed_prd_templates_are_byte_identical() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     authoring = repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "prd_template.md"
-    # Every live mirror of the authoring template. The vendored
-    # `trw-eval/trw-mcp-local/` mirror was dropped because that whole tree was
-    # deliberately deleted in `a77650f238` ("delete stale vendored
-    # trw-mcp-local (342 files, trw-mcp 0.39.2)") — a stale reference, not a
-    # missing artifact. Deliberately NOT filtered with `.exists()`: a deleted
-    # mirror must fail loudly, not silently pass.
+    # Every live mirror of the authoring template (a formerly-vendored second
+    # mirror was deleted wholesale in `a77650f238`; only this one remains).
+    # Deliberately NOT filtered with `.exists()`: a deleted mirror must fail
+    # loudly, not silently pass.
     mirrors = [
         repo_root / "docs" / "requirements-aare-f" / "prds" / "TEMPLATE.md",
     ]

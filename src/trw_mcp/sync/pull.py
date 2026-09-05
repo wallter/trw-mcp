@@ -10,6 +10,9 @@ from urllib.parse import urlparse
 import structlog
 from pydantic import BaseModel
 
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
+from trw_mcp.sync._team_entry import team_learning_to_entry
+from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.identity import resolve_sync_client_id
 
 logger = structlog.get_logger(__name__)
@@ -230,10 +233,28 @@ class SyncPuller:
             return []
         return result.team_learnings
 
-    def merge_team_learnings(self, team_learnings: list[dict[str, Any]] | None) -> int:
-        """Merge pulled team learnings into local storage."""
-        if not team_learnings or self._trw_dir is None:
-            return 0
+    def merge_team_learnings(
+        self,
+        team_learnings: list[dict[str, Any]] | None,
+        *,
+        namespace: str = DEFAULT_NAMESPACE,
+    ) -> TeamMergeResult:
+        """Merge pulled team learnings into *namespace* in local storage.
+
+        PRD-CORE-245 FR03: the pull target is named explicitly. A peer supplies
+        the ``source_learning_id`` this path mints a local id from, so without a
+        namespace predicate two peers emitting the same id into two namespaces
+        resolve to the same local row and collapse into one.
+
+        Returns a :class:`TeamMergeResult` rather than the applied count: every
+        way an item can fail to land is per-item and was invisible to the caller,
+        which received the same number and the same ``outcome="success"`` log
+        whether one item merged or forty-nine were refused around it.
+        """
+        if self._trw_dir is None:
+            return TeamMergeResult(unavailable=True)
+        if not team_learnings:
+            return TeamMergeResult()
 
         try:
             from trw_memory.models.config import MemoryConfig
@@ -245,20 +266,32 @@ class SyncPuller:
             from trw_mcp.state._memory_connection import get_backend as _get_backend
         except Exception:  # justified: import-guard, optional sync merge dependencies may be unavailable
             logger.warning("sync_team_merge_import_error", event_type="sync_team_merge", outcome="error", exc_info=True)
-            return 0
+            return TeamMergeResult(attempted=len(team_learnings), unavailable=True)
 
         started_at = perf_counter()
         inserted = 0
         merged = 0
+        skipped_no_id = 0
+        invalid = 0
+        quarantined = 0
+        failed = 0
         backend = _get_backend(self._trw_dir)
         sec_cfg = MemoryConfig(storage_path=str(self._trw_dir / "memory"))
 
         def find_existing(source_learning_id: str) -> MemoryEntry | None:
+            """Resolve the local row this remote learning maps to, WITHIN *namespace*.
+
+            Every disjunct is namespace-qualified. Without that predicate a
+            second peer emitting the same ``source_learning_id`` into a second
+            namespace matched the first namespace's row and the merge collapsed
+            the two into one (PRD-CORE-245 P1).
+            """
             conn = getattr(backend, "_conn", None)
             if conn is not None:
                 row = conn.execute(
-                    "SELECT * FROM memories WHERE remote_id = ? OR id = ? OR id = ? LIMIT 1",
+                    "SELECT * FROM memories WHERE namespace = ? AND (remote_id = ? OR id = ? OR id = ?) LIMIT 1",
                     (
+                        namespace,
                         source_learning_id,
                         self._local_team_learning_id(source_learning_id),
                         source_learning_id,
@@ -266,8 +299,8 @@ class SyncPuller:
                 ).fetchone()
                 if row is not None:
                     return row_to_entry(tuple(row))
-            limit = max(backend.count(), 1)
-            for candidate in backend.list_entries(limit=limit):
+            limit = max(backend.count(namespace=namespace), 1)
+            for candidate in backend.list_entries(namespace=namespace, limit=limit):
                 if candidate.remote_id == source_learning_id:
                     return candidate
             return None
@@ -275,12 +308,14 @@ class SyncPuller:
         for raw_learning in team_learnings:
             source_learning_id = str(raw_learning.get("source_learning_id", "")).strip()
             if not source_learning_id:
+                skipped_no_id += 1
                 continue
 
             existing = find_existing(source_learning_id)
             local_id = existing.id if existing is not None else self._local_team_learning_id(source_learning_id)
-            remote_entry = self._team_learning_to_entry(raw_learning, local_id=local_id)
+            remote_entry = team_learning_to_entry(self, raw_learning, local_id=local_id, namespace=namespace)
             if remote_entry is None:
+                invalid += 1
                 continue
 
             resolved = self._normalize_team_sync_entry(
@@ -293,14 +328,16 @@ class SyncPuller:
                 decision = prepare_entry_for_store(resolved, backend=backend, config=sec_cfg, session_id=None)
                 if decision.quarantined:
                     store_quarantined_entry(sec_cfg, decision.entry)
+                    quarantined += 1
                     continue
                 backend.store(decision.entry)
-                DeltaTracker.mark_synced([resolved.id], backend)
+                DeltaTracker.mark_synced([resolved.id], backend, namespace=namespace)
                 if existing is None:
                     inserted += 1
                 else:
                     merged += 1
             except Exception:  # justified: per-item, one invalid team learning must not abort the full merge
+                failed += 1
                 logger.warning(
                     "sync_team_merge_entry_error",
                     event_type="sync_team_merge",
@@ -309,57 +346,24 @@ class SyncPuller:
                     exc_info=True,
                 )
 
-        total = inserted + merged
-        logger.info(
-            "sync_team_merge_complete",
-            event_type="sync_team_merge",
+        result = TeamMergeResult(
+            attempted=len(team_learnings),
             inserted=inserted,
             merged=merged,
-            total=total,
-            duration_ms=int((perf_counter() - started_at) * 1000),
-            outcome="success",
+            skipped_no_id=skipped_no_id,
+            invalid=invalid,
+            quarantined=quarantined,
+            failed=failed,
         )
-        return total
-
-    def _team_learning_to_entry(self, raw_learning: dict[str, Any], *, local_id: str) -> MemoryEntry | None:
-        try:
-            from trw_memory.models.memory import MemoryEntry, MemoryStatus, MemoryType
-
-            metadata = {str(key): str(value) for key, value in dict(raw_learning.get("metadata") or {}).items()}
-            pull_seq = raw_learning.get("sync_seq")
-            if pull_seq is not None:
-                metadata["team_sync_pull_seq"] = str(pull_seq)
-
-            # PRD-INFRA-139 FR06: the server tags company-tier learnings with
-            # source=company_sync in metadata; team learnings carry no source
-            # tag. Preserve the distinction locally while merging via the same
-            # path. Defaults to team_sync, so existing behavior is unchanged.
-            sync_source = _resolve_sync_source(metadata)
-
-            return MemoryEntry(
-                id=local_id,
-                remote_id=str(raw_learning.get("source_learning_id", "")).strip() or None,
-                content=str(raw_learning.get("summary", "")),
-                detail=str(raw_learning.get("detail", "")),
-                tags=[str(tag) for tag in raw_learning.get("tags", []) if isinstance(tag, str)],
-                importance=self._coerce_importance(raw_learning.get("impact")),
-                status=MemoryStatus(str(raw_learning.get("status", "active"))),
-                type=MemoryType(str(raw_learning.get("type", "pattern"))),
-                vector_clock=self._coerce_vector_clock(raw_learning.get("vector_clock")),
-                source=sync_source,
-                source_identity=sync_source,
-                client_profile=sync_source,
-                metadata=metadata,
-            )
-        except Exception:  # justified: boundary, malformed remote payload must fail open for that entry
-            logger.warning(
-                "sync_team_merge_invalid_entry",
-                event_type="sync_team_merge",
-                outcome="error",
-                source_learning_id=str(raw_learning.get("source_learning_id", "")),
-                exc_info=True,
-            )
-            return None
+        emit = logger.warning if result.rejected else logger.info
+        emit(
+            "sync_team_merge_complete",
+            event_type="sync_team_merge",
+            total=result.applied,
+            duration_ms=int((perf_counter() - started_at) * 1000),
+            **result.as_log_fields(),
+        )
+        return result
 
     def _normalize_team_sync_entry(
         self,

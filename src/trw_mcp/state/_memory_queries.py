@@ -19,9 +19,13 @@ from datetime import datetime
 
 import structlog
 from trw_memory.exceptions import MemoryError as TRWMemoryError
+from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from trw_memory.security.namespace_scope import authorize_namespaces
+from trw_memory.security.rbac import Permission
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
+from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 logger = structlog.get_logger(__name__)
@@ -53,15 +57,19 @@ def _lookup_id_tokens(
     tags: list[str] | None,
     mem_status: MemoryStatus | None,
     min_impact: float,
+    namespace: str | None,
 ) -> tuple[list[MemoryEntry], set[str]]:
     """Direct lookup for learning ID tokens (OR semantics).
+
+    ``namespace`` is the scope the search is running in; ``None`` means the
+    federated "any namespace in this store" case (PRD-CORE-185 FR06).
 
     Returns (id_entries, seen_ids).
     """
     seen_ids: set[str] = set()
     id_entries: list[MemoryEntry] = []
     for lid in id_tokens:
-        entry = backend.get(lid)
+        entry = resolve_entry_in_backend(backend, lid, namespace=namespace)
         if entry is not None and entry.id not in seen_ids and _apply_entry_filters(entry, tags, mem_status, min_impact):
             id_entries.append(entry)
             seen_ids.add(entry.id)
@@ -166,7 +174,7 @@ def _keyword_search(
     if len(tokens) <= 1:
         # Single token -- check if it's a learning ID for direct lookup
         if tokens and _LEARNING_ID_RE.match(tokens[0]):
-            entry = backend.get(tokens[0])
+            entry = resolve_entry_in_backend(backend, tokens[0], namespace=namespace)
             if entry is None:
                 return []
             if _apply_entry_filters(entry, tags, mem_status, min_impact):
@@ -190,7 +198,7 @@ def _keyword_search(
         else:
             kw_tokens.append(t)
 
-    id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact)
+    id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact, namespace)
 
     # Keyword search for remaining tokens (AND/intersection semantics)
     kw_entries: list[MemoryEntry] = []
@@ -299,7 +307,7 @@ def _search_entries(
     def _union_id_lookups(ranked: list[MemoryEntry]) -> list[MemoryEntry]:
         if not id_tokens:
             return ranked
-        id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact)
+        id_entries, seen_ids = _lookup_id_tokens(backend, id_tokens, tags, mem_status, min_impact, namespace)
         merged: list[MemoryEntry] = list(id_entries)
         for entry in ranked:
             if entry.id not in seen_ids:
@@ -352,9 +360,21 @@ def _search_entries(
         effective_bm25 = max(cfg.hybrid_bm25_candidates, namespace_size)
         effective_vector = max(cfg.hybrid_vector_candidates, namespace_size)
 
+        # PRD-CORE-245 FR04: the scope is minted from the namespaces the
+        # candidate rows actually carry. ``namespace=None`` is the user-tier
+        # federation case (PRD-CORE-185 FR06), where the caller deliberately
+        # spans stores; going through the authorizer keeps that explicit and
+        # still runs the per-namespace permission check.
+        scope = authorize_namespaces(
+            MemoryConfig(),
+            {namespace} if namespace is not None else {e.namespace for e in all_entries},
+            Permission.READ,
+            "recall",
+        )
         ranked = hybrid_search(
             query=query,
             entries=all_entries,
+            scope=scope,
             embedder=embedder,
             query_embedding=query_vec,
             stored_embeddings=stored_embeddings or None,

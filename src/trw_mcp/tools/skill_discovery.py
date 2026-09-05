@@ -129,8 +129,19 @@ def _maybe_log_surface_events(
     DEFAULT-OFF (NFR01): when ``skill_surface_tracking_enabled`` is false the
     function returns before any write. Fail-open (NFR02): any error during the
     enable-check or write is swallowed so discovery is never blocked.
+
+    PRD-SEC-015 round-2 audit (Row 4): forced off under the reviewer role
+    regardless of this flag. The flag is read from the AUDITED project's own
+    ``.trw/config.yaml`` -- a repository being reviewed must not be able to
+    make its own reviewer write an unacknowledged log, the same rationale
+    FR14 already applies to ``surface_role``/``tool_resolution_mode``.
     """
     try:
+        from trw_mcp.state._surface_role import reviewer_role_active
+
+        if reviewer_role_active():
+            return
+
         from trw_mcp.models.config import get_config
 
         cfg = get_config()

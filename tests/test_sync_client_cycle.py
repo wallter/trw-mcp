@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tests._test_sync_client_support import _acquired_lock, _make_config
+from trw_mcp.sync._team_merge_result import TeamMergeResult
 
 
 @pytest.mark.asyncio
@@ -35,7 +36,7 @@ async def test_run_one_cycle_pulls_even_without_dirty_entries(tmp_path) -> None:
             status_code=200,
         )
     )
-    client._puller.merge_team_learnings.return_value = 1
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=1, inserted=1)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -93,7 +94,7 @@ async def test_company_entries_do_not_advance_org_pull_cursor(tmp_path) -> None:
             next_company_seq=3,
         )
     )
-    client._puller.merge_team_learnings.return_value = 2
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=2, inserted=2)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -119,6 +120,7 @@ async def test_company_entries_do_not_advance_org_pull_cursor(tmp_path) -> None:
 async def test_run_one_cycle_offloads_blocking_local_sync_work(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     """Local scans/bookkeeping must not block foreground MCP requests."""
     from trw_mcp.sync import client as sync_client
+    from trw_mcp.sync._client_push import TargetPushOutcome
     from trw_mcp.sync.client import BackendSyncClient
     from trw_mcp.sync.outcomes import PendingOutcome
     from trw_mcp.sync.pull import PullResult
@@ -159,10 +161,14 @@ async def test_run_one_cycle_offloads_blocking_local_sync_work(monkeypatch: pyte
     dirty_entry = SimpleNamespace(id="L-1", sync_seq=7)
     client._get_dirty_entries = MagicMock(return_value=[dirty_entry])
     client._mark_synced = MagicMock()
+    # PRD-FIX-125-FR01: the cycle verdict is keyed on the PRIMARY target's own
+    # report entry, so the stub report must be keyed by the configured target
+    # label ("example.com" from _make_config). The pre-FR01 rule quantified over
+    # report VALUES and never looked at the key, which let this stub drift.
     client._fanout_push = AsyncMock(
         return_value=(
-            {"localhost": {"error": None}},
-            PushResult(pushed=1, failed=0, skipped=0),
+            {"example.com": {"error": None}},
+            TargetPushOutcome(learnings=PushResult(pushed=1, failed=0, skipped=0)),
         )
     )
 
@@ -203,7 +209,7 @@ async def test_run_one_cycle_applies_server_next_poll_hint(tmp_path) -> None:
             status_code=200,
         )
     )
-    client._puller.merge_team_learnings.return_value = 0
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=0, inserted=0)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -241,7 +247,7 @@ async def test_run_one_cycle_honors_significant_updates_with_immediate_repoll(tm
             status_code=200,
         )
     )
-    client._puller.merge_team_learnings.return_value = 0
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=0, inserted=0)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -254,7 +260,7 @@ async def test_run_one_cycle_honors_significant_updates_with_immediate_repoll(tm
 
 @pytest.mark.asyncio
 async def test_run_one_cycle_accepts_server_intervals_above_one_hour(tmp_path) -> None:
-    """Server-approved schedules honor the backend/PRD 7200-second ceiling."""
+    """Server-approved schedules honor the server-side PRD 7200-second ceiling."""
     from trw_mcp.sync.client import BackendSyncClient
     from trw_mcp.sync.pull import PullResult
 
@@ -275,7 +281,7 @@ async def test_run_one_cycle_accepts_server_intervals_above_one_hour(tmp_path) -
             status_code=200,
         )
     )
-    client._puller.merge_team_learnings.return_value = 0
+    client._puller.merge_team_learnings.return_value = TeamMergeResult(attempted=0, inserted=0)
     client._cache = MagicMock()
     client._get_dirty_entries = MagicMock(return_value=[])
 
@@ -396,6 +402,7 @@ async def test_run_one_cycle_reports_partial_target_failures_truthfully(
 ) -> None:
     """Cycle summary counts payload failures as partial errors, not success."""
     from trw_mcp.sync import client as sync_client
+    from trw_mcp.sync._client_push import TargetPushOutcome
     from trw_mcp.sync.client import BackendSyncClient
     from trw_mcp.sync.pull import PullResult
     from trw_mcp.sync.push import PushResult
@@ -424,7 +431,7 @@ async def test_run_one_cycle_reports_partial_target_failures_truthfully(
                     "status": "partial_error",
                 }
             },
-            PushResult(pushed=0, failed=2, skipped=98),
+            TargetPushOutcome(learnings=PushResult(pushed=0, failed=2, skipped=98)),
         )
     )
     log = MagicMock()

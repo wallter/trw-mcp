@@ -41,6 +41,15 @@ monkeypatch lambdas in unit tests were the only consumers forced to update.
 - `trw-mcp/tests/test_reflection_state.py` — removed with the abandoned full-reflect module; its live FR06
   follow-through coverage moved to `trw-mcp/tests/test_reflection_followthrough.py`.
 
+- `trw-mcp/tests/test_telemetry_remote_recall.py` — removed with `trw_mcp/telemetry/remote_recall.py` by
+  PRD-CORE-245-FR06. That module was a SECOND HTTP client for the same `/v1/learnings/search` endpoint
+  `trw_memory.sync._remote_fetch` already called, with a divergent redaction posture and no admission gate:
+  its results reached agent context without passing `prepare_entry_for_store`. All 15 of its tests patched
+  `trw_mcp.telemetry.remote_recall.*`, so none of them survives the deletion. The surviving path's coverage
+  is `trw-memory/tests/test_remote_admission_single_path.py` plus the three repointed wiring tests in
+  `trw-mcp/tests/test_tools_learning_wiring.py`, which still prove `_augment_with_remote` is reached and
+  still fail open.
+
 These paths are omitted rather than left as missing entries that make the FR15 command fail before collection.
 
 ## FR15 Check Protocol

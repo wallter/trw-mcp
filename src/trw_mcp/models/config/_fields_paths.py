@@ -9,7 +9,10 @@ Covers sections 13, 27, 37, 38 of the original _main_fields.py:
 
 from __future__ import annotations
 
-from pydantic import Field, SecretStr
+import posixpath
+from pathlib import PurePosixPath, PureWindowsPath
+
+from pydantic import Field, SecretStr, field_validator
 
 
 class _PathsFields:
@@ -35,6 +38,30 @@ class _PathsFields:
     templates_dir: str = "templates"
 
     # -- Project source paths --
+
+    #: PRD-CORE-249-FR01. Where the deliver-time handoff write puts the rows a
+    #: run declared blocked, and where session_start reads them back. Interpreted
+    #: relative to ``resolve_project_root()``.
+    #:
+    #: This is a typed override of the write LOCATION and NOT an on/off switch:
+    #: there is no value that disables the write, because an unset-means-off knob
+    #: is a dormant feature flag.
+    #:
+    #: The default is ``.trw/HANDOFF.md`` because ``.trw/`` is created by the
+    #: installer in every TRW project, so the default resolves everywhere;
+    #: ``docs/documentation/`` exists in only some projects and defaulting there
+    #: would have the framework fabricate a docs tree inside arbitrary user
+    #: repositories. A project preferring the docs tree sets this field.
+    project_handoff_path: str = Field(
+        default=".trw/HANDOFF.md",
+        description=(
+            "Project-relative path of the deliver-time handoff file (PRD-CORE-249-FR01). "
+            "Rows a run declares blocked:human-only / blocked:ops-only are merged into a "
+            "marker-bounded managed block there and read back at the next trw_session_start. "
+            "Must stay inside the project root: an absolute value, or one whose normalised "
+            "form escapes via '..', is a validation error."
+        ),
+    )
 
     source_package_path: str = "trw-mcp/src"
     source_package_name: str = "trw_mcp"
@@ -146,3 +173,24 @@ class _PathsFields:
         ge=0,
         description="Maximum number of user-tier hits that may enter a single federated recall result, so a flood of low-value user hits cannot bury a precise project hit (PRD-CORE-185 FR06 / D3 / R4).",
     )
+
+    @field_validator("project_handoff_path", mode="after")
+    @classmethod
+    def _contain_project_handoff_path(cls, value: str) -> str:
+        """Refuse an absolute or root-escaping handoff path (NFR03, lexical half).
+
+        Purely lexical so it holds without a filesystem or a resolved project
+        root, and so it fires at config-load time as FR01's acceptance requires.
+        Symlink traversal is caught by the write-time re-check in
+        ``_project_handoff.resolve_handoff_path``, which is the only place it
+        CAN be caught.
+        """
+        candidate = value.strip()
+        if not candidate:
+            raise ValueError("project_handoff_path must not be empty")
+        if PurePosixPath(candidate).is_absolute() or PureWindowsPath(candidate).is_absolute():
+            raise ValueError(f"project_handoff_path must be project-relative, got absolute {candidate!r}")
+        normalised = posixpath.normpath(candidate.replace("\\", "/"))
+        if normalised == ".." or normalised.startswith("../"):
+            raise ValueError(f"project_handoff_path must not escape the project root, got {candidate!r}")
+        return candidate

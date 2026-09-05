@@ -59,6 +59,7 @@ def run_maintain_verify(
     *,
     assertion_failure_penalty: float,
     assertion_stale_threshold_days: int,
+    anchor_validity_verified_floor: float,
     batch_limit: int,
     project_root: Path | None,
     namespace: str | None = None,
@@ -73,6 +74,8 @@ def run_maintain_verify(
         backend: Memory backend exposing ``entries_with_assertions`` + ``update``.
         assertion_failure_penalty: ``TRWConfig.assertion_failure_penalty``.
         assertion_stale_threshold_days: ``TRWConfig.assertion_stale_threshold_days``.
+        anchor_validity_verified_floor:
+            ``TRWConfig.anchor_validity_verified_floor`` (PRD-CORE-244 FR03).
         batch_limit: ``TRWConfig.maintain_verify_batch_limit``.
         project_root: Repo root for filesystem-scoped verification, or ``None``.
         namespace: Optional namespace scope; ``None`` sweeps every namespace.
@@ -97,8 +100,10 @@ def run_maintain_verify(
                 entry_id,
                 _serialized(list(getattr(entry, "assertions", []) or [])),
                 _serialized(list(getattr(entry, "anchors", []) or [])),
+                namespace=str(getattr(entry, "namespace", namespace)),
                 assertion_failure_penalty=assertion_failure_penalty,
                 assertion_stale_threshold_days=assertion_stale_threshold_days,
+                anchor_validity_verified_floor=anchor_validity_verified_floor,
                 project_root=project_root,
             )
         except Exception:  # justified: sweep-resilience, one bad row must not abort the run
@@ -115,7 +120,10 @@ def run_maintain_verify(
             continue
         if outcome.verification_status == "stale" and prior != "stale":
             summary.stale_transitions += 1
-        elif outcome.verification_status is None and prior == "stale":
+        elif prior == "stale" and outcome.verification_status != "stale":
+            # PRD-CORE-244 FR03: clearing a stale verdict now usually lands on
+            # "verified" rather than None, so keying this on ``is None`` stopped
+            # counting the very transition it exists to report.
             summary.cleared_transitions += 1
 
     summary.duration_ms = int((time.monotonic() - started) * 1000)
@@ -131,7 +139,10 @@ def run_maintain_verify(
 
 
 def run_maintain_verify_for_project() -> MaintainVerifySummary:
-    """Resolve live config/backend/project root, then sweep (CLI entry seam)."""
+    """Resolve the live config, memory backend, and project root, then sweep.
+
+    CLI entry seam.
+    """
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
     from trw_mcp.state.memory_adapter import get_backend
@@ -148,6 +159,7 @@ def run_maintain_verify_for_project() -> MaintainVerifySummary:
         get_backend(resolve_trw_dir()),
         assertion_failure_penalty=config.assertion_failure_penalty,
         assertion_stale_threshold_days=config.assertion_stale_threshold_days,
+        anchor_validity_verified_floor=config.anchor_validity_verified_floor,
         batch_limit=config.maintain_verify_batch_limit,
         project_root=project_root,
     )

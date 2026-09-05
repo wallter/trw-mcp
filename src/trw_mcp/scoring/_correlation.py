@@ -280,15 +280,27 @@ def process_outcome_for_event(
 # Ledger UF-026: nudge->action reward application lives in its own sibling
 # (different correlation source, no recency window) and is re-exported here so
 # ``trw_mcp.scoring`` keeps one import point for outcome correlation.
+# PRD-CORE-244 FR04: the contradiction signal is a different correlation SOURCE
+# (a verification pass, not a recall window and not a nudge), so it lives in its
+# own sibling for the same reason apply_proximal_rewards does. Re-exported here
+# so ``trw_mcp.scoring`` keeps one import point for outcome correlation.
+from trw_mcp.scoring._contradiction_penalty import (  # noqa: E402
+    CONTRADICTION_EVENT_LABEL as CONTRADICTION_EVENT_LABEL,
+)
+from trw_mcp.scoring._contradiction_penalty import (  # noqa: E402
+    apply_contradiction_penalty as apply_contradiction_penalty,
+)
 from trw_mcp.scoring._proximal_correlation import (  # noqa: E402
     apply_proximal_rewards as apply_proximal_rewards,
 )
 
 __all__ = [
+    "CONTRADICTION_EVENT_LABEL",
     "EVENT_ALIASES",
     "REWARD_MAP",
     "_find_session_start_ts",
     "_resolve_event_reward",
+    "apply_contradiction_penalty",
     "apply_proximal_rewards",
     "compute_composite_outcome",
     "compute_initial_q_value",

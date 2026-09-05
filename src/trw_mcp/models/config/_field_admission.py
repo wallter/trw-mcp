@@ -97,7 +97,9 @@ def _legacy_admission(field_name: str) -> ConfigAdmission:
 #: Frozen baseline census of the public ``TRWConfig`` fields admitted at the
 #: PRD-CORE-218 implementation commit, less the two legacy CORE-125 fields
 #: (``tool_exposure_mode`` / ``tool_exposure_list``) removed at FR03/FR04
-#: activation — a net surface REDUCTION, not a new admission. A field NOT in this
+#: activation, and less the two more (``nudge_urgency_mode`` /
+#: ``nudge_dedup_enabled``) removed in 2.0.0 by WD-02 — each a net surface
+#: REDUCTION, not a new admission. A field NOT in this
 #: set and NOT in :data:`FIELD_ADMISSIONS` is a NEW public field that must pay
 #: the full admission budget. This is a committed receipt, NOT derived from the
 #: live model at runtime — deriving it would let any new field auto-admit and
@@ -312,14 +314,12 @@ mutation_threshold_critical
 mutation_threshold_experimental
 mutation_timeout_secs
 nudge_budget_chars
-nudge_dedup_enabled
 nudge_density
 nudge_enabled
 nudge_messenger
 nudge_pool_cooldown_after
 nudge_pool_cooldown_calls
 nudge_pool_cooldown_wall_clock_max_hours
-nudge_urgency_mode
 nudge_variant
 observation_masking
 otel_capture_messages
@@ -388,7 +388,6 @@ review_gate_mode
 review_mandate_advisory_enabled
 risk_scaling_enabled
 run_archive_hours
-run_auto_close_age_days
 run_auto_close_enabled
 run_stale_ttl_hours
 run_staleness_grace_hours

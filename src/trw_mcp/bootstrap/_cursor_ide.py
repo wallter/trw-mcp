@@ -1,7 +1,6 @@
 """Cursor IDE-specific bootstrap configuration (PRD-CORE-136 FR03-FR06, FR08).
 
 Manages:
-  .cursor/agents/   — subagent definitions (FR03)
   .cursor/skills/   — Agent Skills mirror (FR04)
   .cursor/commands/ — slash command wrappers (FR05)
   .cursor/hooks/    — full 8-event TRW hook set + hooks.json (FR08)
@@ -17,7 +16,6 @@ JSON-merge logic, file-copy logic, or template-rendering logic.
 
 from __future__ import annotations
 
-import json
 from importlib.resources import files as _pkg_files
 from pathlib import Path
 
@@ -27,52 +25,6 @@ from trw_mcp.bootstrap._cursor import HookHandlerEntry
 from trw_mcp.models.typed_dicts._bootstrap import BootstrapFileResult
 
 logger = structlog.get_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# Subagent definitions
-# ---------------------------------------------------------------------------
-
-# (name, description) — description goes into YAML frontmatter.
-#
-# Descriptions are phrased as routing rules per Cursor's delegation heuristic
-# (cursor.com/docs/subagents): the main agent reads the description to decide
-# delegation, so specificity about *when to invoke* matters more than a label.
-# "Use proactively" framing signals Cursor to reach for the subagent without
-# being asked. See docs/research/providers/cursor/cursor-ide/
-# eval-and-customizations-2026-04-13.md §C1-C2.
-_TRW_SUBAGENTS: list[tuple[str, str]] = [
-    (
-        "trw-explorer",
-        "Use when the user asks to 'find', 'locate', 'search for', 'where is', "
-        "'look up', or wants to map architecture, dependencies, or module "
-        "boundaries. Use proactively before making changes to unfamiliar code. "
-        "Read-only; does not modify files.",
-    ),
-    (
-        "trw-implementer",
-        "Use when the user asks to 'implement', 'build', 'add', 'fix', or "
-        "'write tests for' any feature, bug, or component. Follows TDD: writes "
-        "a failing test first, then production code that passes it. "
-        "Write-enabled; respects TRW ceremony gates (build_check before "
-        "declaring complete).",
-    ),
-    (
-        "trw-reviewer",
-        "Use proactively after any non-trivial code edit to check for quality "
-        "gaps, security issues, missing tests, or spec drift before the user "
-        "reviews. Also invoked when the user asks to 'review', 'audit', "
-        "'check the diff', or 'look over changes'. Read-only; scores code "
-        "against TRW's 7 review dimensions.",
-    ),
-    (
-        "trw-researcher",
-        "Use when the user asks to 'research', 'investigate', 'compare', "
-        "'survey', or 'evaluate' external libraries, APIs, papers, or tools. "
-        "Also use proactively when the main agent needs up-to-date docs that "
-        "may have changed since the model's training cutoff. Read-only, "
-        "background-capable (runs async via is_background: true).",
-    ),
-]
 
 # ---------------------------------------------------------------------------
 # Curated skill list (IDE surface)
@@ -228,102 +180,16 @@ _IDE_HOOK_SCRIPTS: list[str] = [
     "trw-pre-compact.sh",
     "trw-stop.sh",
     "trw-before-submit-prompt.sh",
+    # Python helper invoked by trw-session-start.sh, trw-pre-compact.sh and
+    # trw-stop.sh; omitting it made every one of those hooks exit 2 with
+    # FileNotFoundError under `set -euo pipefail` (adapter diagnostic F1, 2026-09-03).
+    "_nudge_gate.py",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Public generators
 # ---------------------------------------------------------------------------
-
-
-def cursor_ide_agent_contents() -> dict[str, bytes]:
-    """Bundled ``.cursor/agents/trw-*.md`` content, keyed by repo-relative path.
-
-    Single source of truth shared by :func:`generate_cursor_ide_subagents` and
-    the managed-artifact manifest sweep.
-    """
-    template_pkg = _pkg_files("trw_mcp").joinpath("data/cursor_ide/agents")
-    contents: dict[str, bytes] = {}
-
-    for name, description in _TRW_SUBAGENTS:
-        template_path = template_pkg.joinpath(f"{name}.md")
-        try:
-            body = template_path.read_text(encoding="utf-8")
-        except (FileNotFoundError, TypeError, OSError):
-            body = f"# {name}\n\nSpecialist agent for TRW framework tasks.\n"
-            logger.warning("cursor_ide_agent_template_missing", name=name)
-
-        readonly = name != "trw-implementer"
-        is_background = name == "trw-researcher"
-
-        frontmatter = (
-            "---\n"
-            f"name: {name}\n"
-            # JSON-encode description so embedded colons / apostrophes don't
-            # break the YAML scanner. JSON string literals are valid YAML
-            # flow scalars.
-            f"description: {json.dumps(description)}\n"
-            "model: inherit\n"
-            f"readonly: {str(readonly).lower()}\n"
-            f"is_background: {str(is_background).lower()}\n"
-            "---\n\n"
-        )
-        contents[f".cursor/agents/{name}.md"] = (frontmatter + body).encode("utf-8")
-
-    return contents
-
-
-def generate_cursor_ide_subagents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> BootstrapFileResult:
-    """Generate .cursor/agents/trw-*.md subagent definitions (FR03).
-
-    Each file has YAML frontmatter (name, description, model, readonly,
-    is_background) followed by the body content from bundled templates in
-    data/cursor_ide/agents/<name>.md.
-
-    Content-aware (CONSTITUTION HB-2): a TRW agent matching the bundled content
-    or TRW's recorded last write is refreshed; a user-edited one is preserved.
-    These files used to be written unconditionally, so a hand edit was destroyed
-    on every update. User-authored agents in .cursor/agents/ outside the
-    ``trw-`` prefix were and remain untouched.
-
-    Args:
-        target_dir: Root of the target git repository.
-        force: When True, rewrite TRW agents even if user-edited — the
-            documented escape hatch for discarding local edits.
-        manifest_hashes: ``content_hashes`` from the manifest as it stood BEFORE
-            this run, used to recognise TRW's own previous write.
-
-    Returns:
-        Dict with 'created'/'updated'/'preserved' lists.
-    """
-    from ._managed_client_artifacts import artifact_user_edited
-
-    result: BootstrapFileResult = {"created": [], "updated": [], "preserved": []}
-    agents_dir = target_dir / ".cursor" / "agents"
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    for rel, incoming in cursor_ide_agent_contents().items():
-        target = target_dir / rel
-        existed = target.exists()
-        if existed and not force and artifact_user_edited(target, rel, incoming, manifest_hashes):
-            logger.info("cursor_ide_agent_user_modified", path=rel)
-            result["preserved"].append(rel)
-            continue
-        target.write_bytes(incoming)
-        (result["updated"] if existed else result["created"]).append(rel)
-
-    logger.info(
-        "generate_cursor_ide_subagents",
-        created=len(result["created"]),
-        updated=len(result["updated"]),
-        preserved=len(result["preserved"]),
-    )
-    return result
 
 
 def cursor_ide_command_contents() -> dict[str, bytes]:

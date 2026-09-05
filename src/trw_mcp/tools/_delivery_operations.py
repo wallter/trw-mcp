@@ -22,6 +22,7 @@ registry and proven by its own wrapper.
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from pathlib import Path
 
@@ -65,6 +66,7 @@ from trw_mcp.tools._delivery_request import (
     validate_capability_strength,
     validate_delivery_id,
 )
+from trw_mcp.tools._delivery_resume_action import DeliveryResumeMixin
 from trw_mcp.tools._delivery_status import build_status_projection
 
 __all__ = [
@@ -81,7 +83,7 @@ __all__ = [
 logger = structlog.get_logger(__name__)
 
 
-class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
+class DeliveryCoordinator(DeliveryRecoveryActionsMixin, DeliveryResumeMixin):
     """High-level API over one project's delivery operation store."""
 
     def __init__(
@@ -220,12 +222,23 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
         effect_id: str,
         *,
         state: StepState,
-        proof_digest: str = "",
-        proof_ref: str = "",
         disposition: StepDisposition = StepDisposition.NONE,
         finding_code: str = "",
     ) -> StepRecord:
-        """Capture proof and commit the terminal step transition AFTER the effect."""
+        """Commit the terminal step transition AFTER the effect (PRD-FIX-127 OQ-005).
+
+        No parameter accepts ``proof_ref``/``proof_digest`` directly: on the real
+        critical path no caller ever computed one (the per-effect ``proof_contract``
+        in the registry names evidence no generic wrapper can produce without
+        per-effect knowledge), so ``proof_digest``/``proof_ref`` params here were
+        always empty strings except when a caller happened to forward a PRIOR
+        record's values by hand -- decorative plumbing that silently wiped real
+        evidence on any call site that forgot to forward it. Instead, any proof
+        already durably recorded for this step (written by ``reconcile_effect``,
+        the one path with genuine operator-supplied evidence) is carried forward
+        automatically, so a normal completion or a resume re-affirmation can never
+        erase previously reconciled proof.
+        """
         if state is StepState.STARTED or state is StepState.NOT_STARTED:
             raise DeliveryRequestError("illegal_transition", "finalize requires a terminal step state")
         conn = self.store.connect()
@@ -242,8 +255,8 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
                     disposition=disposition,
                     replay_class=get_descriptor(effect_id).replay_class,
                     attempt=prior.attempt if prior else 1,
-                    proof_ref=proof_ref,
-                    proof_digest=proof_digest,
+                    proof_ref=prior.proof_ref if prior else "",
+                    proof_digest=prior.proof_digest if prior else "",
                     finding_code=finding_code,
                     updated_utc_ms=now,
                 )
@@ -345,26 +358,39 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
 
     # --- FR04: crash recovery / takeover ---
 
-    def recover_after_crash(self, operation_id: str) -> RecoverResult:
-        """Reconcile a restarted operation whose lease is stale/absent (FR04)."""
-        conn = self.store.connect()
+    def recover_after_crash(self, operation_id: str, conn: sqlite3.Connection | None = None) -> RecoverResult:
+        """Reconcile a restarted operation whose lease is stale/absent (FR04).
+
+        PRD-FIX-127 FR01: passing an ``conn`` on which the caller already holds
+        ``store.immediate`` runs the classifier inside THAT transaction. The
+        ``resume`` action does exactly that, which is what gives this method (and
+        the replay classifier under it) a production caller for the first time —
+        before FR01 it was reachable only from test modules.
+        """
+        if conn is not None:
+            return self._recover_locked(conn, operation_id)
+        own_conn = self.store.connect()
         try:
-            with self.store.immediate(conn):
-                now = self._now_ms()
-                op = self.store.get_operation(conn, operation_id)
-                if op is None:
-                    return RecoverResult(status=RecoverStatus.NOT_FOUND, reason_code="unknown_operation")
-                if self._lease_valid(op, now):
-                    return RecoverResult(
-                        status=RecoverStatus.LIVE_OWNER,
-                        reason_code="lease_still_live",
-                        operation_id=operation_id,
-                        revision=op.revision,
-                        state=op.state,
-                    )
-                return apply_crash_recovery_locked(self.store, conn, op, now)
+            with self.store.immediate(own_conn):
+                return self._recover_locked(own_conn, operation_id)
         finally:
-            conn.close()
+            own_conn.close()
+
+    def _recover_locked(self, conn: sqlite3.Connection, operation_id: str) -> RecoverResult:
+        """Classify one operation's crashed steps under the caller's lock (FR04)."""
+        now = self._now_ms()
+        op = self.store.get_operation(conn, operation_id)
+        if op is None:
+            return RecoverResult(status=RecoverStatus.NOT_FOUND, reason_code="unknown_operation")
+        if self._lease_valid(op, now):
+            return RecoverResult(
+                status=RecoverStatus.LIVE_OWNER,
+                reason_code="lease_still_live",
+                operation_id=operation_id,
+                revision=op.revision,
+                state=op.state,
+            )
+        return apply_crash_recovery_locked(self.store, conn, op, now)
 
     def takeover(
         self,
@@ -425,7 +451,7 @@ class DeliveryCoordinator(DeliveryRecoveryActionsMixin):
 
         ``verbose=False`` compacts the ``ok`` response step census (see
         :func:`build_status_projection`); ``verbose=True`` returns the full
-        46-entry projection for audits.
+        full registry projection for audits.
         """
         return build_status_projection(self.store, delivery_id, now_ms=self._now_ms(), verbose=verbose)
 

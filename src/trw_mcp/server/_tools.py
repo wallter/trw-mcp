@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, TypeVar
 import structlog
 
 from trw_mcp.server._app import mcp
+from trw_mcp.server._boot_timeline import emit_boot_phase
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -155,8 +156,40 @@ def raw_registered_tool_names() -> frozenset[str]:
     return frozenset(t.name for t in _run_async(probe.list_tools()))
 
 
-def _assert_manifest_parity() -> None:
+def live_registered_tool_names(app: FastMCP) -> frozenset[str] | None:
+    """Return the RAW registered tool names on *app*, or None when unobtainable.
+
+    Uses ``FastMCP._list_tools`` rather than the public ``list_tools``: the
+    public method runs the middleware chain, and ``SurfaceAuthorityMiddleware``
+    is a per-session exposure MASK (13 of 48 tools on the default resolution
+    mode). Parity is a statement about the *registered* surface, so masking the
+    answer would report drift for every tool the current session cannot see.
+
+    Returns ``None`` — never a silently empty set — when the private accessor is
+    absent, so the caller can say the check did not run instead of reporting a
+    clean comparison it never made.
+    """
+    lister = getattr(app, "_list_tools", None)
+    if not callable(lister):
+        return None
+    return frozenset(t.name for t in _run_async(lister()))
+
+
+def _assert_manifest_parity(app: FastMCP) -> None:
     """PRD-CORE-218 FR01: log any drift between the manifest and registration.
+
+    Reads the registered names off the LIVE *app* (PRD-CORE-248 FR03). It used
+    to call ``raw_registered_tool_names()``, which builds a second, throwaway
+    ``FastMCP`` and re-runs every registrar against it — a full duplicate pass
+    of Pydantic schema generation for the whole tool surface, on every process
+    start of every client, purely to emit an advisory warning. By the time this
+    runs the live app is already fully registered, so the names are right there.
+    Measured saving: 0.066 s of a 1.106 s cold import (about 6 %) — worth
+    removing because it is pure waste, not because it closes a latency gap.
+
+    ``raw_registered_tool_names()`` is retained: it is the throwaway-probe
+    surface the acceptance tests use, and its own docstring names that test as
+    the authority. Only the boot-time call changes.
 
     The authoritative bidirectional parity assertion lives in the FR01
     acceptance test. At boot we only emit a visible WARNING on drift and never
@@ -165,7 +198,13 @@ def _assert_manifest_parity() -> None:
     try:
         from trw_mcp.server._surface_manifest_registry import MANIFEST_BY_NAME
 
-        registered = raw_registered_tool_names()
+        registered = live_registered_tool_names(app)
+        if registered is None:
+            logger.warning(
+                "surface_manifest_parity_unavailable",
+                reason="the FastMCP raw tool accessor is absent; parity was NOT checked",
+            )
+            return
         manifest = set(MANIFEST_BY_NAME)
         missing = registered - manifest
         orphan = manifest - registered
@@ -197,7 +236,9 @@ def _register_tools() -> None:
 
     # PRD-CORE-218 FR01: verify the registered surface matches the authoritative
     # manifest (advisory at boot; hard assertion in the acceptance test).
-    _assert_manifest_parity()
+    # PRD-CORE-248 FR03: read off the live app — boot builds ONE FastMCP and
+    # runs each registrar exactly once.
+    _assert_manifest_parity(mcp)
 
     # Mark the ceremony floor always-loaded so a deferring client (Claude Code
     # defers every MCP schema by default) does not make the agent pay a
@@ -344,3 +385,8 @@ SURFACE_MANIFEST: tuple[dict[str, str], ...] = _build_surface_manifest_export()
 
 # Eager registration so tools are available via `fastmcp run` and test imports.
 _register_tools()
+
+# PRD-CORE-248 FR02: the app exists and its full tool surface is registered.
+# Emitted after registration because registration IS app construction here —
+# _register_tools() is the single largest self-time module in the import graph.
+emit_boot_phase("app_constructed")

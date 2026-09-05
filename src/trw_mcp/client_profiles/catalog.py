@@ -175,12 +175,17 @@ class UninstallSurface:
             of event -> groups, TRW groups tagged by ``"TRW managed:"``
             description). Empty for non-merged surfaces; the stripper falls back
             to a suffix heuristic when unset.
+        home_scoped: When True, ``relpath`` is relative to ``Path.home()``
+            instead of the project root. Used for the few client configs TRW
+            writes GLOBALLY (antigravity-cli's ``~/.gemini/config/mcp_config.json``,
+            PRD-FIX-133); uninstall resolves them the same way install did.
     """
 
     relpath: str
     managed_block: bool = False
     merged_config: bool = False
     config_shape: str = ""
+    home_scoped: bool = False
 
 
 # Instruction-file uninstall surfaces for retired clients (2026-07-11). Resolved
@@ -353,6 +358,15 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # settings.json is a smart-merged MCP-server map (preserves user
         # servers) -- strip only the ``trw`` entry, never rmtree the dir.
         UninstallSurface(".antigravitycli/settings.json", merged_config=True, config_shape="mcp-server-map"),
+        # Where the bundled specialists land since PRD-CORE-252. Antigravity's
+        # own subagent reference documents ``.agents/agents``; TRW used to write
+        # ``.antigravitycli/agents``, which that reference never names. The old
+        # directory stays registered so an existing install is still cleaned —
+        # uninstall has to know every path TRW ever wrote, not just the current
+        # one. It is a whole-directory surface only because the relocation
+        # migration removes TRW's four stubs from it first; the distill channel's
+        # own file there is removed by the distill surfaces.
+        UninstallSurface(".agents/agents"),
         UninstallSurface(".antigravitycli/agents"),
         # The workspace rule `_antigravity_cli.py` writes (_ANTIGRAVITY_RULES_DIR
         # + _ANTIGRAVITY_RULE_FILENAME). Registered as the FILE, never the
@@ -377,6 +391,10 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # so the hook is removed without discarding user entries.
         UninstallSurface(".antigravitycli/hooks.json", merged_config=True, config_shape="antigravity-hook-map"),
         UninstallSurface(".antigravitycli/hooks"),
+        # ``bootstrap/_antigravity_cli.py::generate_antigravity_mcp_config`` writes the
+        # ``mcpServers.trw`` entry into the GLOBAL agy config (PRD-FIX-133); without a
+        # home-scoped surface uninstall left it behind (install/uninstall parity gate).
+        UninstallSurface(".gemini/config/mcp_config.json", merged_config=True, config_shape="mcp-server-map", home_scoped=True),
     ),
 }
 

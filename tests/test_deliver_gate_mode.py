@@ -1,11 +1,14 @@
-"""Tests for PRD-CORE-184-FR03 — task-type-aware deliver gate mode.
+"""Tests for PRD-CORE-184-FR03 + PRD-CORE-246-FR03 — the deliver gate mode.
 
 The ``deliver_gate_mode`` config flag (advisory | block_coding | block_all)
-governs whether a missing passing build check blocks delivery, conditioned on
-the run's ``task_type``. Default is ``block_coding`` (flipped from
-``advisory`` 2026-06-10): coding/rca/eval runs without build evidence block;
-docs/research/planning/unknown stay advisory; explicit ``advisory`` config
-restores the warn-only posture.
+governs whether a missing passing build check blocks delivery. Default is
+``block_coding`` (flipped from ``advisory`` 2026-06-10). Since PRD-CORE-246-FR03
+the block predicate is a DISJUNCTION: the run's ``task_type`` expects a build
+artifact (coding/rca/eval) OR the session recorded at least
+``deliver_gate_unclassified_change_threshold`` distinct modified files. The
+task-type-only expectations that used to live here encoded the superseded
+never-block-on-unknown rule and are updated in place, with the zero-change case
+retained as the proof that a ceremony-only run still stays advisory.
 """
 
 from __future__ import annotations
@@ -26,8 +29,19 @@ from trw_mcp.tools._delivery_helpers import (
 )
 
 
-def _make_run(tmp_path: Path, task_type: str, *, build_passed: bool) -> Path:
-    """Create a run dir with a work event and optional passing build check."""
+def _make_run(
+    tmp_path: Path,
+    task_type: str,
+    *,
+    build_passed: bool,
+    file_modified_count: int = 1,
+) -> Path:
+    """Create a run dir with ``file_modified_count`` distinct modified files.
+
+    ``file_modified_count=0`` is the ceremony-only shape: the build gate still
+    warns (it is independent of work events), but PRD-CORE-246's change-evidence
+    clause is unarmed, so an advisory task type stays advisory.
+    """
     writer = FileStateWriter()
     run_dir = tmp_path / ".trw" / "runs" / "t" / "20260602T000000Z-aaaa1111"
     meta = run_dir / "meta"
@@ -43,11 +57,18 @@ def _make_run(tmp_path: Path, task_type: str, *, build_passed: bool) -> Path:
         },
     )
     writer.append_jsonl(meta / "events.jsonl", {"event": "run_init", "task": "t"})
-    writer.append_jsonl(meta / "events.jsonl", {"event": "file_modified", "path": "x.py"})
+    for i in range(file_modified_count):
+        writer.append_jsonl(meta / "events.jsonl", {"event": "file_modified", "file": f"x{i}.py"})
     if build_passed:
         writer.append_jsonl(
             meta / "events.jsonl",
-            {"event": "build_check_complete", "tests_passed": True, "static_checks_clean": True},
+            {
+                "event": "build_check_complete",
+                "test_count": 12,
+                "scope": "pytest tests",
+                "tests_passed": True,
+                "static_checks_clean": True,
+            },
         )
     return run_dir
 
@@ -58,6 +79,7 @@ def _call_deliver(
     *,
     task_type: str,
     mode: str,
+    file_modified_count: int = 1,
     **deliver_kwargs: object,
 ) -> dict[str, Any]:
     """Exercise the public trw_deliver tool with heavyweight steps stubbed."""
@@ -65,7 +87,7 @@ def _call_deliver(
     (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
     (trw_dir / "reflections").mkdir(parents=True, exist_ok=True)
     (trw_dir / "context").mkdir(parents=True, exist_ok=True)
-    run_dir = _make_run(tmp_project, task_type, build_passed=False)
+    run_dir = _make_run(tmp_project, task_type, build_passed=False, file_modified_count=file_modified_count)
     cfg = get_config()
     object.__setattr__(cfg, "deliver_gate_mode", mode)
 
@@ -93,45 +115,64 @@ def _call_deliver(
 
 
 @pytest.mark.parametrize(
-    ("mode", "task_type", "build_missing", "expect_block"),
+    ("mode", "task_type", "build_missing", "files_changed", "expect_block"),
     [
-        # advisory never blocks, regardless of task type / build state
-        ("advisory", "coding", True, False),
-        ("advisory", "rca", True, False),
-        ("advisory", "docs", True, False),
-        # block_coding blocks coding/rca/eval, advisory for docs/research/planning/unknown
-        ("block_coding", "coding", True, True),
-        ("block_coding", "rca", True, True),
-        ("block_coding", "eval", True, True),
-        ("block_coding", "docs", True, False),
-        ("block_coding", "research", True, False),
-        ("block_coding", "planning", True, False),
-        ("block_coding", "unknown", True, False),
-        # block_all blocks every build-artifact type but NOT docs/research/planning
-        ("block_all", "coding", True, True),
-        ("block_all", "rca", True, True),
-        ("block_all", "eval", True, True),
-        ("block_all", "docs", True, False),
-        ("block_all", "research", True, False),
-        ("block_all", "planning", True, False),
-        ("block_all", "unknown", True, False),
-        # a passing build check is never blocked
-        ("block_coding", "coding", False, False),
-        ("block_all", "coding", False, False),
+        # advisory never blocks, regardless of task type / build state / changes
+        ("advisory", "coding", True, 3, False),
+        ("advisory", "rca", True, 3, False),
+        ("advisory", "docs", True, 3, False),
+        # block_coding blocks the build-artifact types on the task-type clause
+        # alone, even with zero recorded changes.
+        ("block_coding", "coding", True, 0, True),
+        ("block_coding", "rca", True, 0, True),
+        ("block_coding", "eval", True, 0, True),
+        # ...and the remaining types stay advisory ONLY while nothing changed.
+        ("block_coding", "docs", True, 0, False),
+        ("block_coding", "research", True, 0, False),
+        ("block_coding", "planning", True, 0, False),
+        ("block_coding", "unknown", True, 0, False),
+        # PRD-CORE-246-FR03: recorded file modifications arm the gate for every
+        # task type. This supersedes the task-type-only expectations above.
+        ("block_coding", "docs", True, 1, True),
+        ("block_coding", "research", True, 3, True),
+        ("block_coding", "planning", True, 3, True),
+        ("block_coding", "unknown", True, 3, True),
+        # block_all uses the same disjunction.
+        ("block_all", "coding", True, 0, True),
+        ("block_all", "rca", True, 0, True),
+        ("block_all", "eval", True, 0, True),
+        ("block_all", "docs", True, 0, False),
+        ("block_all", "research", True, 0, False),
+        ("block_all", "planning", True, 0, False),
+        ("block_all", "unknown", True, 0, False),
+        ("block_all", "unknown", True, 3, True),
+        # a passing build check is never blocked, however much changed
+        ("block_coding", "coding", False, 9, False),
+        ("block_all", "coding", False, 9, False),
+        # NFR02: an uncomputable count is treated as meeting the threshold.
+        ("block_coding", "unknown", True, None, True),
+        ("block_all", "docs", True, None, True),
+        ("advisory", "unknown", True, None, False),
     ],
 )
-def test_resolve_deliver_gate_decision(mode: str, task_type: str, build_missing: bool, expect_block: bool) -> None:
+def test_resolve_deliver_gate_decision(
+    mode: str, task_type: str, build_missing: bool, files_changed: int | None, expect_block: bool
+) -> None:
     blocked = resolve_deliver_gate_decision(
         mode=mode,
         task_type=task_type,
         build_check_missing=build_missing,
+        files_changed=files_changed,
     )
     assert blocked is expect_block
 
 
 def test_resolve_deliver_gate_decision_unknown_mode_fails_open() -> None:
     """An unrecognised mode must not block (fail-open / no regression)."""
-    assert resolve_deliver_gate_decision(mode="bogus", task_type="coding", build_check_missing=True) is False
+    assert (
+        resolve_deliver_gate_decision(mode="bogus", task_type="coding", build_check_missing=True, files_changed=9)
+        is False
+    )
 
 
 # ── check_delivery_gates integration (reads run.yaml + config) ──────────────
@@ -149,17 +190,34 @@ def test_block_coding_blocks_coding_task(tmp_project: Path, monkeypatch: pytest.
     assert result.get("missing_gate") == "build_check"
 
 
-def test_block_coding_advisory_for_docs_task(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR03 AC: docs + no build check + block_coding -> advisory only (no block)."""
+def test_block_coding_advisory_for_unchanged_docs_task(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """docs + no build check + NO recorded change -> advisory only (no block).
+
+    PRD-CORE-246-FR03 narrowed this case: it is the ZERO-CHANGE run that stays
+    advisory, not the docs label. The changed-file companion below proves the
+    same task type blocks once the session recorded modifications.
+    """
     cfg = get_config()
     object.__setattr__(cfg, "deliver_gate_mode", "block_coding")
     monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)
 
-    run_dir = _make_run(tmp_project, "docs", build_passed=False)
+    run_dir = _make_run(tmp_project, "docs", build_passed=False, file_modified_count=0)
     result = check_delivery_gates(run_dir, FileStateReader(), tmp_project / ".trw")
     assert not result.get("delivery_blocked")
     # build_gate_warning (advisory) may still be present — that's the current behavior
     assert "build_gate_warning" in result
+
+
+def test_block_coding_blocks_docs_task_that_modified_files(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD-CORE-246-FR03: change evidence blocks a non-build-artifact task type."""
+    cfg = get_config()
+    object.__setattr__(cfg, "deliver_gate_mode", "block_coding")
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)
+
+    run_dir = _make_run(tmp_project, "docs", build_passed=False, file_modified_count=3)
+    result = check_delivery_gates(run_dir, FileStateReader(), tmp_project / ".trw")
+    assert result.get("delivery_blocked")
+    assert result.get("blocked_task_type") == "docs"
 
 
 def test_block_coding_default_blocks_coding_missing_build(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -220,8 +278,12 @@ def test_trw_deliver_preserves_default_task_type_policy(
     task_type: str,
     expect_block: bool,
 ) -> None:
-    """The wrapper must not promote an intentionally advisory warning to a block."""
-    result = _call_deliver(tmp_project, monkeypatch, task_type=task_type, mode="block_coding")
+    """The wrapper must not promote an intentionally advisory warning to a block.
+
+    Run with ZERO recorded file modifications so the PRD-CORE-246 change clause
+    is unarmed and the task-type clause is the only thing under test.
+    """
+    result = _call_deliver(tmp_project, monkeypatch, task_type=task_type, mode="block_coding", file_modified_count=0)
 
     assert bool(result.get("delivery_blocked")) is expect_block
     assert result["success"] is (not expect_block)
@@ -232,6 +294,20 @@ def test_trw_deliver_preserves_default_task_type_policy(
         assert "build_gate_warning" in result
         assert "build_gate_block" not in result
         assert "acceptable_failure_record" not in result
+
+
+@pytest.mark.parametrize("task_type", ["coding", "rca", "eval", "docs", "research", "planning", "unknown"])
+def test_trw_deliver_blocks_every_task_type_that_changed_files(
+    tmp_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_type: str,
+) -> None:
+    """PRD-CORE-246-FR03 end-to-end: change evidence blocks regardless of label."""
+    result = _call_deliver(tmp_project, monkeypatch, task_type=task_type, mode="block_coding", file_modified_count=3)
+
+    assert result.get("delivery_blocked")
+    assert result.get("blocked_task_type") == task_type
+    assert result["success"] is False
 
 
 @pytest.mark.parametrize(

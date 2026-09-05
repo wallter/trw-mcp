@@ -45,6 +45,9 @@ from trw_mcp.tools.build._build_check_helpers import (
     derive_duration_secs as derive_duration_secs,
 )
 from trw_mcp.tools.build._build_check_helpers import (
+    derive_test_count as derive_test_count,
+)
+from trw_mcp.tools.build._build_check_helpers import (
     reconcile_typed_results as reconcile_typed_results,
 )
 from trw_mcp.tools.build._core import (
@@ -175,6 +178,11 @@ def register_build_tools(server: FastMCP) -> None:
         # omitted from the response and the event rather than reported as 0.0.
         observed_duration_secs = derive_duration_secs(typed_command_results)
 
+        # WD-01: the deliver gate refuses a "pass" that recorded zero tests, so
+        # the count a typed command result already carries must reach the record
+        # rather than being lost to the flat argument's default of 0.
+        effective_test_count = derive_test_count(typed_command_results, reported=test_count)
+
         # Step: persist (cache + progress state)
         _persist_started = monotonic()
         status = BuildStatus(
@@ -183,7 +191,7 @@ def register_build_tools(server: FastMCP) -> None:
             mypy_clean=mypy_clean,
             timed_out=False,
             coverage_pct=coverage_pct,
-            test_count=test_count,
+            test_count=effective_test_count,
             failure_count=failure_count,
             failures=effective_failures,
             timestamp=datetime.now(timezone.utc).isoformat(),
@@ -386,6 +394,10 @@ def _log_build_event(resolved_run: Path | None, scope: str, status: object) -> N
         "build_check_complete",
         {
             "scope": scope,
+            # WD-01: the deliver-time build gate needs the test count to reject a
+            # "pass" that ran zero tests. It was absent from this payload, so the
+            # gate had no way to tell a real run from a self-reported one.
+            "test_count": int(getattr(status, "test_count", 0) or 0),
             "tests_passed": getattr(status, "tests_passed", False),
             "static_checks_clean": getattr(
                 status,

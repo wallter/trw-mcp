@@ -56,12 +56,12 @@ def test_agent_files_carry_rule(agent_file: str) -> None:
 
 def _write_scope(tmp_path: Path) -> Path:
     scope = tmp_path / "scope.yaml"
-    scope.write_text("globs:\n  - docs/research/**/audit*.md\n", encoding="utf-8")
+    scope.write_text("globs:\n  - internal-docs/**/audit*.md\n", encoding="utf-8")
     return scope
 
 
 def _write_audit(tmp_path: Path, name: str, body: str) -> None:
-    audit = tmp_path / "docs" / "research" / "x"
+    audit = tmp_path / "internal-docs" / "x"
     audit.mkdir(parents=True, exist_ok=True)
     (audit / name).write_text(body, encoding="utf-8")
 

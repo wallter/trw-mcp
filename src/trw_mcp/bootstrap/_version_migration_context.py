@@ -18,6 +18,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.state.pre_compact_marker import PRE_COMPACT_MARKER_FILENAME
+
 logger = structlog.get_logger(__name__)
 
 __all__ = [
@@ -54,7 +56,7 @@ _CONTEXT_ALLOWLIST: frozenset[str] = frozenset(
         "injected_learning_ids.txt",
         "last_ups_phase",
         "messages.yaml",
-        "pre_compact_state.json",
+        PRE_COMPACT_MARKER_FILENAME,
         "hooks-reference.yaml",
     }
 )

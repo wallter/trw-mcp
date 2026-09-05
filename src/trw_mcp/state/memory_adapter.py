@@ -153,7 +153,7 @@ def store_learning(
     protection_tier: str = "normal",
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
-    anchor_validity: float = 1.0,
+    anchor_validity: float | None = None,
     session_id: str | None = None,
     # PRD-DIST-254 §FR02 (cycle 112): policy-relevant metadata.
     metadata: dict[str, str] | None = None,
@@ -335,6 +335,12 @@ def store_learning(
         impact=impact,
         tier="user" if is_user_write else "project",  # PRD-CORE-185 FR05 NFR06
     )
+    # PRD-CORE-248 FR04 clause 2: the write-commit evaluation point. Costs one
+    # stat when nothing is due; the store path had no checkpoint trigger at all
+    # before this, so a server that never ran session-start never checkpointed.
+    from trw_mcp.state._wal_idle_sweep import checkpoint_after_commit
+
+    checkpoint_after_commit(trw_dir)
     return {
         "learning_id": learning_id,
         "path": f"sqlite://{learning_id}",

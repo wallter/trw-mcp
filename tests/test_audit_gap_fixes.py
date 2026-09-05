@@ -59,9 +59,16 @@ class TestLearningEntryAnchors:
         entry = LearningEntry(id="L-1", summary="s", detail="d")
         assert entry.anchors == []
 
-    def test_default_anchor_validity_is_1(self) -> None:
+    def test_default_anchor_validity_is_none(self) -> None:
+        """PRD-CORE-244 FR01: an unexamined entry has NO validity, not a perfect one.
+
+        The old ``1.0`` default scored every entry nobody had ever anchored as
+        though its anchors had just been checked and all resolved -- 83.3% of the
+        reference store's ``anchor_validity=1.0`` rows carried no anchors at all.
+        ``None`` is the only honest reading of "never computed".
+        """
         entry = LearningEntry(id="L-1", summary="s", detail="d")
-        assert entry.anchor_validity == 1.0
+        assert entry.anchor_validity is None
 
     def test_custom_anchors_accepted(self) -> None:
         anchors = [{"file": "src/foo.py", "symbol_name": "bar", "symbol_type": "function"}]
@@ -113,7 +120,10 @@ class TestLearningParamsAnchors:
             source_type="agent",
             source_identity="",
         )
-        assert params.anchor_validity == 1.0
+        # PRD-CORE-244 FR01: an unassessed anchor score is None. This assertion
+        # previously pinned 1.0 — the default that reported a perfect anchor
+        # score for learnings that were never anchored at all.
+        assert params.anchor_validity is None
 
     def test_custom_anchors(self) -> None:
         anchors = [{"file": "src/foo.py", "symbol_name": "bar"}]
@@ -197,11 +207,11 @@ class TestSanitizePathTraversal:
 
     def test_traversal_mid_path_rejected(self) -> None:
         """Traversal in the middle of a path is also rejected."""
-        assert _sanitize_path("backend/../etc/passwd") == ""
+        assert _sanitize_path("web/../etc/passwd") == ""
 
     def test_normal_path_preserved(self) -> None:
         """Normal paths are preserved without modification."""
-        assert _sanitize_path("backend/payments/handler.py") == "backend/payments/handler.py"
+        assert _sanitize_path("web/payments/handler.py") == "web/payments/handler.py"
 
     def test_absolute_path_stripped(self) -> None:
         """Leading '/' is stripped from normal absolute paths."""
@@ -233,10 +243,10 @@ class TestInferDomainsTraversalRejection:
         """Safe paths produce domains; traversal paths are silently dropped."""
         result = infer_domains(
             file_paths=[
-                "backend/payments/handler.py",
+                "web/payments/handler.py",
                 "../../etc/passwd",
             ]
         )
         assert "etc" not in result
         assert "passwd" not in result
-        assert "backend" in result or "payments" in result
+        assert "web" in result or "payments" in result

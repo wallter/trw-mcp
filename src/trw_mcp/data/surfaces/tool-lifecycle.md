@@ -42,4 +42,4 @@ Do NOT call `trw_deliver` unless at least one of:
 - (c) an authorized operator/config override is recorded with technical rationale.
 
 A review-verdict label or free-text reason alone is not an acceptable-failure record.
-For task types `coding`, `rca`, `eval` the gate blocks by default (`deliver_gate_mode: block_coding`). Docs, research, planning, and unknown types remain advisory and surface the missing-build warning without requiring an exception record.
+Under the default `deliver_gate_mode: block_coding` a missing build check blocks when the task type expects a build artifact (`coding`, `rca`, `eval`) OR when the session recorded modifications to at least `deliver_gate_unclassified_change_threshold` distinct files — so an unclassified or misclassified run that changed code still blocks. A run that modified nothing surfaces the missing-build warning as an advisory without requiring an exception record.

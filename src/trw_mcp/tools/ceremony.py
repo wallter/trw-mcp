@@ -223,7 +223,13 @@ from trw_mcp.tools._ceremony_step_table import (
     _ss_graph_health as _ss_graph_health,
 )
 from trw_mcp.tools._ceremony_step_table import (
+    _ss_handoff_readback as _ss_handoff_readback,
+)
+from trw_mcp.tools._ceremony_step_table import (
     _ss_log_event as _ss_log_event,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_moved_checkout as _ss_moved_checkout,
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_phase_recall as _ss_phase_recall,
@@ -236,6 +242,9 @@ from trw_mcp.tools._ceremony_step_table import (
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_recall as _ss_recall,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_reconcile_local_writes as _ss_reconcile_local_writes,
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_run_resolve as _ss_run_resolve,
@@ -331,8 +340,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
             # log-event, telemetry, first-session-marker, counter, maintenance,
             # phase-recall, embed/sync/assertion/graph/pipeline health. Each is a
             # ``_ss_*`` adapter resolved through this facade at call time (so all
-            # ``ceremony.<name>`` monkeypatches propagate); critical steps
-            # re-raise, the rest are fail-open. See _ceremony_step_table.
+            # ``ceremony.<name>`` monkeypatches propagate); critical steps NEVER
+            # re-raise (DR-001) — the runner's critical branch degrades the
+            # payload instead (``success: false`` + a typed reason naming the
+            # step), the rest are fail-open. See _ceremony_step_table.
             from trw_mcp.tools import ceremony as _ceremony
 
             sctx = SessionStartContext(

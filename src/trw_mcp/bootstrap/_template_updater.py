@@ -317,16 +317,50 @@ def _update_agents(
     PRD-FIX-068-FR05: genuinely user-edited agents are still preserved + reported
     (``result['modified']``); an agent matching either framework rendering (raw
     tier OR resolved) is treated as unmodified so a mis-materialized agent heals.
+
+    PRD-CORE-252-FR03: the update runs once per selected client, into that
+    client's own destination from the FR01 registry, with that client's own
+    materialization. Install and update therefore produce identical bytes for
+    the same client and bundle — the property whose absence made the earlier
+    install-versus-update asymmetry regress on every upgrade. A client with no
+    agent surface is recorded once and creates no directory.
     """
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.exceptions import AgentFormatError
+
+    from ._utils import resolve_client_write_targets
     from ._version_manifest import _apply_agent_update
 
     agents_source = effective_data / "agents"
     if not agents_source.is_dir():
         return
-    dest_root = target_dir / ".claude" / "agents"
-    for agent_file in sorted(agents_source.iterdir()):
-        if agent_file.suffix == ".md":
-            _apply_agent_update(agent_file, dest_root / agent_file.name, result, dry_run, on_progress, manifest_hashes)
+    for client in dict.fromkeys(resolve_client_write_targets(target_dir)):
+        try:
+            fmt = agent_format_for(client)
+        except AgentFormatError as exc:
+            result.setdefault("info", []).append(f"agents: {client} — {exc}")
+            continue
+        if not fmt.supports_agents:
+            result.setdefault("info", []).append(f"agents: {client} — {fmt.unsupported_reason}")
+            continue
+        for agent_file in sorted(agents_source.iterdir()):
+            if agent_file.suffix != ".md":
+                continue
+            try:
+                rel = fmt.destination_for(agent_file.stem)
+            except AgentFormatError as exc:
+                result["errors"].append(f"Rejected agent name {agent_file.stem!r} for {client}: {exc}")
+                continue
+            _apply_agent_update(
+                agent_file,
+                target_dir / rel,
+                result,
+                dry_run,
+                on_progress,
+                manifest_hashes,
+                client=client,
+                manifest_key=rel,
+            )
 
 
 def _update_framework_files(
@@ -380,6 +414,31 @@ def _update_framework_files(
 # ---------------------------------------------------------------------------
 
 
+def _write_claude_md_scaffold(claude_md_path: Path, target_dir: Path, result: dict[str, list[str]]) -> bool:
+    """Create the CLAUDE.md scaffold through the PRD-FIX-123 guard.
+
+    Both call sites only fire when the file does NOT exist, so no user content is
+    at stake — but they are still writers of a repo-root CLAUDE.md, so they route
+    through the same seam as the rest (FR06) and pick up its atomic write and
+    provenance record. Bookkeeping goes to a scratch dict because the callers
+    already report ``created`` themselves; only ERRORS are merged back, since
+    discarding a refusal while reporting a clean create misrepresents the result.
+    """
+    from trw_mcp.bootstrap._guarded_write import guarded_bootstrap_write
+
+    scratch: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
+    wrote = guarded_bootstrap_write(
+        claude_md_path,
+        _minimal_claude_md(),
+        project_root=target_dir,
+        markers=(_TRW_START_MARKER, _TRW_END_MARKER),
+        result=scratch,
+        rel_path=str(claude_md_path),
+    )
+    result.setdefault("errors", []).extend(scratch["errors"])
+    return wrote
+
+
 def _update_mcp_config(
     target_dir: Path,
     result: dict[str, list[str]],
@@ -426,6 +485,7 @@ def _update_mcp_config(
         else:
             result["created"].append(f"would create: {claude_md_path}")
     else:
+        from trw_mcp.exceptions import StateError
         from trw_mcp.state.claude_md._orphan_strip import (
             strip_orphaned_agents_md_block,
             strip_orphaned_claude_md_block,
@@ -442,8 +502,18 @@ def _update_mcp_config(
         # Same rule for the OTHER shared surface: a project installed before
         # opencode's AGENTS.md was withdrawn still carries that block, and
         # nothing refreshes it any more.
-        if strip_orphaned_agents_md_block(target_dir, ide_targets):
-            result.setdefault("updated", []).append(str(target_dir / "AGENTS.md"))
+        #
+        # CORE262-14: the strip's write now raises StateError on a genuine
+        # failure instead of silently returning False, so it must be caught
+        # here rather than left to escape uncaught -- a failed cleanup must be
+        # a recorded error, not either a swallowed no-op or an unhandled raise.
+        try:
+            agents_removed = strip_orphaned_agents_md_block(target_dir, ide_targets)
+        except StateError as exc:
+            result["errors"].append(f"Failed to remove orphaned TRW block from {target_dir / 'AGENTS.md'}: {exc}")
+        else:
+            if agents_removed:
+                result.setdefault("updated", []).append(str(target_dir / "AGENTS.md"))
         if not claude_md_is_claimed(target_dir):
             # Only clients that declare CLAUDE.md get the block. Without this
             # the update path re-injected it on every run into projects whose
@@ -453,10 +523,10 @@ def _update_mcp_config(
             # (it is a project doc); only TRW's block is withheld.
             existed = claude_md_path.exists()
             try:
-                if not existed:
-                    claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                if not existed and not _write_claude_md_scaffold(claude_md_path, target_dir, result):
+                    return
                 removed = strip_orphaned_claude_md_block(target_dir, ide_targets)
-            except OSError as exc:
+            except (OSError, StateError) as exc:
                 result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
             else:
                 if not existed:
@@ -471,7 +541,8 @@ def _update_mcp_config(
                 on_progress("Updated", str(claude_md_path))
         else:
             try:
-                claude_md_path.write_text(_minimal_claude_md(), encoding="utf-8")
+                if not _write_claude_md_scaffold(claude_md_path, target_dir, result):
+                    return
                 # Scaffold first, then resolve the carrier, so a newly-created
                 # file lands in the same shape an existing project converges to.
                 # A create path that skipped the carrier is how the two entry

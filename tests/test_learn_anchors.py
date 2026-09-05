@@ -465,7 +465,7 @@ class TestAnchorStoredInSqliteAndYaml:
 
         # --- SQLite side ---
         backend = get_backend(trw_dir)
-        entry = backend.get(learning_id)
+        entry = backend.get(learning_id, namespace="default")
         assert entry is not None, "learning must be stored in SQLite"
         assert len(entry.anchors) >= 1, "anchors must be persisted to SQLite"
         assert entry.anchors[0].symbol_name == "handle"
@@ -479,3 +479,58 @@ class TestAnchorStoredInSqliteAndYaml:
         loaded = YAML(typ="safe").load(yaml_path.read_text())
         assert loaded.get("anchors"), "anchors must be present in YAML backup"
         assert loaded["anchors"][0]["symbol_name"] == "handle"
+
+
+class TestUnanchoredLearningHasNoValidity:
+    """PRD-CORE-244 FR01: an unassessed anchor score is None, never a perfect 1.0.
+
+    ``anchor_validity`` fed the recall ranking boost, so defaulting it to 1.0
+    handed every unanchored learning — 7,541 rows in the live store — the top
+    anchor score without a single anchor ever being checked.
+    """
+
+    def test_no_anchors_resolves_to_none_validity(self, tmp_path: Path) -> None:
+        """The resolver reports "not assessed", not "perfect"."""
+        from trw_mcp.tools import _learn_anchors
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+
+        def fake_run(_cmd: list[str], **_kw: Any) -> MagicMock:
+            result = MagicMock()
+            result.returncode = 1  # not a git repo: no modified files at all
+            result.stdout = ""
+            return result
+
+        with patch.object(_learn_anchors.subprocess, "run", side_effect=fake_run):
+            anchors, validity = _learn_anchors.resolve_learn_anchors(tmp_path, trw_dir, "L-none")
+
+        assert anchors == []
+        assert validity is None
+
+    def test_learn_without_anchors_persists_null_validity(self, tmp_project: Path) -> None:
+        """End of the real learn path: the stored entry claims no anchor score.
+
+        No git repo and no run events, so nothing can be anchored — exactly the
+        shape of the majority of stored learnings.
+        """
+        from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state._memory_connection import get_backend
+        from trw_mcp.tools._learn_impl import execute_learn
+
+        trw_dir = tmp_project / ".trw"
+        config = TRWConfig(trw_dir=str(trw_dir))
+
+        result = execute_learn(
+            summary="Unanchored learning carries no anchor score",
+            detail="PRD-CORE-244 FR01 — a default must not assert a positive result",
+            trw_dir=trw_dir,
+            config=config,
+        )
+        learning_id = str(result["learning_id"])
+
+        backend = get_backend(trw_dir)
+        entry = backend.get(learning_id, namespace="default")
+        assert entry is not None
+        assert entry.anchors == []
+        assert entry.anchor_validity is None

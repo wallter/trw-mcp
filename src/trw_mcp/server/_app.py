@@ -19,6 +19,7 @@ from fastmcp import FastMCP
 from trw_mcp.meta_tune.boot_checks import validate_defaults as validate_meta_tune_defaults
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.server._boot_timeline import emit_boot_phase
 
 logger = structlog.get_logger(__name__)
 
@@ -135,13 +136,27 @@ def _try_init_surface_authority() -> object | None:
     CORE-218 surface. The middleware self-resolves ``tool_resolution_mode`` from
     config at request time (default ``standard``; ``all`` is a strict no-op
     operator escape), so it is always appended — a broken init is fail-open.
+
+    PRD-SEC-015 round-2 audit (Row 1): this fail-open contract is INVERTED under
+    the reviewer role. SurfaceAuthorityMiddleware is the sole server-side control
+    that bounds a reviewer to ``REVIEWER_TOOLS`` — a reviewer session that lost
+    it would serve its full, unmasked surface to a stateless, unattributed lane.
+    Ceremony still exempts a reviewer from the compaction gate regardless, so
+    "degrade and keep serving" is worse here than refusing to boot: an operator
+    who sees the server fail to start investigates; one who gets an unbounded
+    reviewer with no error at all does not.
     """
     try:
         from trw_mcp.middleware.surface_authority import SurfaceAuthorityMiddleware
 
         return SurfaceAuthorityMiddleware()
-    except Exception:  # justified: fail-open, middleware init failure must not crash startup
-        logger.warning("middleware_init_failed", component="SurfaceAuthorityMiddleware")
+    except Exception:
+        from trw_mcp.state._surface_role import reviewer_role_active
+
+        if reviewer_role_active():
+            logger.exception("middleware_init_failed_reviewer_abort", component="SurfaceAuthorityMiddleware")
+            raise
+        logger.warning("middleware_init_failed", component="SurfaceAuthorityMiddleware")  # justified: fail-open
         return None
 
 
@@ -181,6 +196,22 @@ def _try_init_version_drift() -> object | None:
         return None
 
 
+def _try_init_boot_deferral() -> object | None:
+    """Initialize BootDeferralMiddleware (PRD-CORE-248 FR01). None on failure.
+
+    Registered FIRST in the chain so its ``on_initialize`` hook wraps the whole
+    handshake and its ``on_call_tool`` fallback runs before any other middleware
+    can act on a session whose sync configuration is still unresolved.
+    """
+    try:
+        from trw_mcp.middleware.boot_deferral import BootDeferralMiddleware
+
+        return BootDeferralMiddleware(_resolve_deferred_budget_ms())
+    except Exception:  # justified: fail-open, middleware init failure must not crash startup
+        logger.warning("middleware_init_failed", component="BootDeferralMiddleware")
+        return None
+
+
 def _try_init_response_optimizer() -> object | None:
     """Try to initialize ResponseOptimizerMiddleware. Returns None on failure."""
     try:
@@ -212,6 +243,13 @@ def _build_middleware() -> list[object]:
     _run_meta_tune_boot_validation(config)
 
     middleware: list[object] = []
+
+    # PRD-CORE-248 FR01: first in the chain — its on_initialize hook must wrap
+    # the whole handshake, and its first-tool-call fallback must resolve backend
+    # sync before any other middleware inspects session state.
+    boot_deferral = _try_init_boot_deferral()
+    if boot_deferral is not None:
+        middleware.append(boot_deferral)
 
     global _mcp_security
     _mcp_security = _try_init_mcp_security(config)
@@ -256,46 +294,40 @@ def _build_middleware() -> list[object]:
 
 @asynccontextmanager
 async def _build_sync_lifespan(_: FastMCP) -> AsyncIterator[None]:
-    """Start the background sync client when backend sync is configured."""
-    sync_task: asyncio.Task[None] | None = None
-    config = _try_load_config()
+    """Own the background sync task's lifecycle. Resolves NOTHING before yield.
+
+    PRD-CORE-248 FR01: this lifespan used to resolve backend-sync config, sync
+    targets and — through ``BackendSyncClient.__init__`` ->
+    ``resolve_sync_client_id()`` -> ``cfg.client_profile`` — the client profile,
+    all of it before the lowlevel server began processing messages, so all of it
+    preceded the ``initialize`` reply (measured 1111.0-1114.9 ms against a reply
+    at 1116.3 ms). That work now lives in
+    :mod:`trw_mcp.server._boot_deferred`, scheduled after the client's
+    ``initialized`` notification, with a first-tool-call inline fallback.
+
+    What remains here is exactly task lifecycle: record the serving loop so the
+    deferred step can create its task on it, and cancel that task at shutdown.
+    Anything added before ``yield`` goes back on the handshake critical path,
+    which is what ``tests/test_boot_initialize_ordering.py`` exists to catch.
+    """
+    from trw_mcp.server._boot_deferred import cancel_sync_task, remember_serving_loop
+
+    remember_serving_loop(asyncio.get_running_loop())
     try:
-        if config is not None:
-            backend_url = config.resolved_backend_url
-            backend_api_key = config.resolved_backend_api_key
-            if backend_url and backend_api_key:
-                if config.backend_url and config.backend_api_key:
-                    source = "explicit"
-                elif config.backend_url or config.backend_api_key:
-                    source = "mixed"
-                else:
-                    source = "platform_fallback"
-                # PRD-SEC-004-FR05/FR01: the sync client still starts (pull/intel
-                # is unaffected and credential resolution must keep working), but
-                # CONTENT egress is consent-gated downstream in
-                # BackendSyncClient._run_one_cycle. Surface the resolved consent
-                # state here so an operator can verify opt-out is honored.
-                logger.info(
-                    "sync_config_resolved",
-                    source=source,
-                    url=backend_url,
-                    learning_sharing_enabled=bool(getattr(config, "learning_sharing_enabled", False)),
-                    platform_telemetry_enabled=bool(getattr(config, "platform_telemetry_enabled", False)),
-                )
-
-                from trw_mcp.state._paths import resolve_trw_dir
-                from trw_mcp.sync.client import BackendSyncClient
-
-                sync_client = BackendSyncClient(config=config, trw_dir=resolve_trw_dir())
-                sync_task = asyncio.create_task(sync_client.run_sync_loop())
-            else:
-                logger.info("sync_config_resolved", source="none")
         yield
     finally:
+        sync_task = cancel_sync_task()
         if sync_task is not None:
-            sync_task.cancel()
             with suppress(asyncio.CancelledError):
                 await sync_task
+
+
+def _resolve_deferred_budget_ms() -> int:
+    """Read ``boot_deferred_work_budget_ms``, falling back to its field default."""
+    config = _try_load_config()
+    if config is not None:
+        return int(config.boot_deferred_work_budget_ms)
+    return int(TRWConfig.model_fields["boot_deferred_work_budget_ms"].default)
 
 
 def create_app(
@@ -310,7 +342,9 @@ def create_app(
         middleware: Override middleware list. Uses default chain by default.
 
     Returns:
-        Configured FastMCP instance.
+        Configured FastMCP instance. The default middleware chain carries
+        ``BootDeferralMiddleware``, so the object this returns is the one the
+        FR01/FR02 contract tests drive the ordering invariant through.
     """
     return FastMCP(
         "trw",
@@ -325,4 +359,8 @@ def create_app(
 # FR-6/FR-9) when startup succeeds; it is None otherwise (observe-mode
 # fail-open). Transports consult this for per-dispatch security events.
 _mcp_security: object | None = None
+# PRD-CORE-248 FR02: everything above this line is dependency import — fastmcp,
+# trw_memory, config, middleware. 99% of the pre-`initialize` window is spent
+# here, and until now nothing said so.
+emit_boot_phase("import_complete")
 mcp = create_app()

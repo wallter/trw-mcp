@@ -9,7 +9,6 @@ from trw_mcp.bootstrap._opencode import (
     _parse_jsonc,
     generate_agents_md,
     generate_opencode_config,
-    install_opencode_agents,
     install_opencode_commands,
     install_opencode_skills,
     load_opencode_skill_inventory,
@@ -86,11 +85,29 @@ class TestOpenCodeBootstrap:
         assert (tmp_path / ".opencode" / "commands" / "trw-sprint-team.md").exists()
 
     def test_opencode_agents_installed(self, tmp_path: Path) -> None:
-        result = install_opencode_agents(tmp_path)
-        assert ".opencode/agents/trw-researcher.md" in result["created"]
+        """PRD-CORE-252-FR04: the source is the shared bundle, not a stub directory.
+
+        ``install_opencode_agents`` and ``data/opencode/agents`` are retired;
+        the same two properties this always asserted — subagent mode and a
+        deny-write permission map for a read-only specialist — now hold for
+        every bundled agent rather than for three hand-written ones.
+        """
+        from trw_mcp.bootstrap._init_project_skills import _install_agents
+
+        result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
+        _install_agents(tmp_path, force=False, result=result, clients=["opencode"])
+
+        assert str(tmp_path / ".opencode" / "agents" / "trw-researcher.md") in result["created"]
         content = (tmp_path / ".opencode" / "agents" / "trw-reviewer.md").read_text(encoding="utf-8")
         assert "mode: subagent" in content
-        assert "write: deny" in content
+        # The deny is now expressed in opencode v2's documented ORDERED ARRAY of
+        # {action, resource, effect} rules. The old `write: deny` assertion
+        # matched TRW's retired keyed-map form, whose action vocabulary
+        # (`bash`/`write`) that harness does not define -- see
+        # tests/test_agent_materialization_per_client.py::
+        # test_opencode_permissions_are_an_ordered_array_of_rules.
+        assert "- action: edit" in content
+        assert "effect: deny" in content
 
     def test_opencode_skills_inventory_curated(self) -> None:
         inventory = load_opencode_skill_inventory()

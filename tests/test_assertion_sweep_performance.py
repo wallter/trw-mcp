@@ -59,6 +59,10 @@ def _sweep(backend: Any, project_root: Path | None, config: TRWConfig | None = N
         backend,
         assertion_failure_penalty=cfg.assertion_failure_penalty,
         assertion_stale_threshold_days=cfg.assertion_stale_threshold_days,
+        # PRD-CORE-244 FR03: a 'verified' verdict now has to clear a recomputed
+        # anchor-validity floor, so the sweep takes the floor as a required,
+        # config-derived argument rather than assuming one.
+        anchor_validity_verified_floor=cfg.anchor_validity_verified_floor,
         batch_limit=cfg.maintain_verify_batch_limit,
         project_root=project_root,
     )
@@ -74,24 +78,32 @@ def test_sweep_persists_stale_for_never_recalled_entry(backend: SQLiteBackend, p
 
     assert summary.entries_processed == 1
     assert summary.stale_transitions == 1
-    entry = backend.get("L-never-recalled")
+    entry = backend.get("L-never-recalled", namespace="default")
     assert entry is not None
     assert entry.verification_status == "stale"
 
 
 def test_sweep_clears_a_recovered_entry(backend: SQLiteBackend, project: Path) -> None:
-    """A previously-stale entry whose assertion re-passes is cleared and counted."""
+    """A previously-stale entry whose assertion re-passes is cleared and counted.
+
+    PRD-CORE-244 FR03: clearing no longer means writing ``None`` back. ``None``
+    is what an entry nobody ever examined reads, so reusing it for "examined and
+    found clean" made the two indistinguishable. A cleared entry now carries the
+    positive ``"verified"`` verdict and the ``verification_checked_at`` stamp
+    that says when the exam happened.
+    """
     config = TRWConfig()
     old = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 10)
     _store(backend, "L-recovered", [_assertion("live_symbol", old)])
-    backend.update("L-recovered", verification_status="stale")
+    backend.update("L-recovered", verification_status="stale", namespace="default")
 
     summary = _sweep(backend, project, config)
 
     assert summary.cleared_transitions == 1
-    entry = backend.get("L-recovered")
+    entry = backend.get("L-recovered", namespace="default")
     assert entry is not None
-    assert entry.verification_status is None
+    assert entry.verification_status == "verified"
+    assert entry.verification_checked_at != ""
 
 
 def test_sweep_logs_summary_event(backend: SQLiteBackend, project: Path) -> None:
@@ -126,7 +138,7 @@ def test_sweep_uses_one_bulk_fetch_not_n_plus_one(backend: SQLiteBackend, projec
             return real_fetch(**kwargs)  # type: ignore[arg-type]
 
         def update(self, entry_id: str, **fields: object) -> MemoryEntry | None:
-            return backend.update(entry_id, **fields)
+            return backend.update(entry_id, **fields, namespace="default")
 
     summary = _sweep(_CountingBackend(), project, config)
 
@@ -156,12 +168,12 @@ def test_sweep_survives_a_broken_entry(backend: SQLiteBackend, project: Path) ->
             return [_ExplodingEntry(), *good_entries]
 
         def update(self, entry_id: str, **fields: object) -> MemoryEntry | None:
-            return backend.update(entry_id, **fields)
+            return backend.update(entry_id, **fields, namespace="default")
 
     summary = _sweep(_MixedBackend(), project, config)
 
     assert summary.entries_processed == 1
-    assert backend.get("L-good") is not None
+    assert backend.get("L-good", namespace="default") is not None
 
 
 def test_sweep_degrades_without_a_project_root(backend: SQLiteBackend) -> None:
@@ -174,7 +186,7 @@ def test_sweep_degrades_without_a_project_root(backend: SQLiteBackend) -> None:
 
     assert summary.entries_processed == 1
     # passed is None (unverifiable), so no first_failed_at => no stale verdict.
-    entry = backend.get("L-norr")
+    entry = backend.get("L-norr", namespace="default")
     assert entry is not None
     assert entry.verification_status is None
 
@@ -218,7 +230,7 @@ def test_maintain_verify_cli_is_registered_and_dispatches(
     payload = _json.loads(capsys.readouterr().out)
     assert payload["entries_processed"] == 1
     assert payload["stale_transitions"] == 1
-    entry = backend.get("L-cli")
+    entry = backend.get("L-cli", namespace="default")
     assert entry is not None
     assert entry.verification_status == "stale"
 

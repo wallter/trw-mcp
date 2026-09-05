@@ -37,7 +37,14 @@ class ActivationDecision:
 
 
 def evaluate_activation(registry: RegistryBuildResult, prd_id: str) -> ActivationDecision:
-    """Check nested WIP limits for activating ``prd_id`` (PRD-QUAL-121-FR04)."""
+    """Check nested WIP limits for activating ``prd_id`` (PRD-QUAL-121-FR04).
+
+    Any status other than ``"ok"`` is an UNKNOWN result and refuses activation.
+    That set now includes PRD-CORE-244-FR07's ``"epoch_unset"``: a registry whose
+    expiry was never evaluated cannot say whether the WIP slots it is counting
+    are still current, so it is fail-closed for activation exactly as
+    ``"stale_scheduling_head"`` is — not optimistically permissive.
+    """
     if registry.status != "ok":
         return ActivationDecision(False, f"registry unknown: {registry.status}")
     candidate = next((entry for entry in registry.entries if entry.prd_id == prd_id), None)

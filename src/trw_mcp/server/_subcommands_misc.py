@@ -5,7 +5,8 @@ with test imports (``test_config_reference.py``).
 
 Two handlers:
 - ``_run_config_reference`` — print config env vars (markdown table)
-- ``_run_local`` — offline ceremony fallback (PRD-FIX-073) — init/checkpoint
+- ``_run_local`` — offline ceremony fallback (PRD-FIX-073, extended by
+  PRD-CORE-247-FR03 with ``recall`` and ``feedback``)
 """
 
 from __future__ import annotations
@@ -94,6 +95,36 @@ def _run_local(args: argparse.Namespace) -> None:
         except (OSError, ValueError) as exc:
             print(f"Error: {exc}")
             sys.exit(1)
+    elif local_cmd == "recall":
+        # PRD-CORE-247-FR03: marshalling only. Ranking happened in execute_recall.
+        from trw_mcp.services.local_surface_service import format_local_recall, run_local_recall
+
+        try:
+            recall_result = run_local_recall(
+                str(getattr(args, "query", "")),
+                tags=list(getattr(args, "tag", []) or []) or None,
+                max_results=getattr(args, "max_results", None),
+            )
+        except Exception as exc:
+            print(f"Error: cannot read the memory store ({type(exc).__name__}: {exc})")
+            sys.exit(1)
+        for line in format_local_recall(recall_result):
+            print(line)
+    elif local_cmd == "feedback":
+        from trw_mcp.services.local_surface_service import submit_local_feedback
+
+        feedback_result = submit_local_feedback(
+            category=str(getattr(args, "category", "")),
+            subject=str(getattr(args, "subject", "")),
+            message=str(getattr(args, "message", "")),
+            contact_email=getattr(args, "contact_email", None),
+        )
+        if feedback_result.get("success"):
+            print(f"Feedback submitted: {feedback_result.get('submission_id') or 'accepted'}")
+        else:
+            # Same result shape the MCP tool returns; an unconfigured backend is
+            # reported, not raised, so the operator sees what to set.
+            print(f"Feedback not submitted: {feedback_result.get('error', 'unknown error')}")
     elif local_cmd == "deliver":
         run_path_str = getattr(args, "run_path", None)
         run_path = Path(run_path_str) if run_path_str else None
@@ -111,13 +142,18 @@ def _run_local(args: argparse.Namespace) -> None:
             print(f"Error: {exc}")
             sys.exit(1)
     else:
-        print("Usage: trw-mcp local {init|checkpoint|status|learn|deliver}")
+        # PRD-CORE-247-FR03: this listing IS the discoverability fix. The
+        # capability must be reachable without reading argparse source, so every
+        # subcommand appears here with the flags it needs.
+        print("Usage: trw-mcp local {init|checkpoint|status|learn|recall|feedback|deliver}")
         print()
         print("Commands:")
         print("  init        Create a run directory (--task NAME required)")
         print("  checkpoint  Save progress (--message MSG)")
         print("  status      Show active local run status")
-        print("  learn       Persist a learning (--summary, --detail)")
+        print("  learn       Persist a learning (--summary, --detail, --tag)")
+        print("  recall      Recall learnings (--query Q, --tag T, --max-results N)")
+        print("  feedback    Submit feedback (--category C, --subject S, --message M)")
         print("  deliver     Mark active run delivered (--message MSG)")
         sys.exit(0)
 

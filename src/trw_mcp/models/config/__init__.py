@@ -45,11 +45,6 @@ from trw_mcp.models.config._sub_models import (
     ToolsConfig,
     TrustConfig,
 )
-from trw_mcp.models.config._surface_config import (
-    NudgeConfig,
-    RecallConfig,
-    SurfaceConfig,
-)
 from trw_mcp.models.config._unread_fields import unread_config_fields
 
 __all__ = [
@@ -65,16 +60,13 @@ __all__ = [
     "LegacyModelTier",
     "MemoryConfig",
     "ModelTier",
-    "NudgeConfig",
     "NudgePoolWeights",
     "OrchestrationConfig",
     "PathsConfig",
     "PhaseTimeCaps",
-    "RecallConfig",
     "ScoringConfig",
     "ScoringDimensionWeights",
     "SecurityConfig",
-    "SurfaceConfig",
     "TRWConfig",
     "TelemetryConfig",
     "ToolsConfig",

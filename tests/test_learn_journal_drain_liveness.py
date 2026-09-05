@@ -6,9 +6,11 @@ INFO success event — fired **ZERO** times, ever. 42 accepted learnings went on
 disk and not one logged sweep took any off.
 
 The cause is arithmetic, not a bug in the drain. ``session_start_writer_pressure_threshold``
-defaults to 2 and ``should_defer_session_start_optional_work`` defers as soon as a
-single PEER writer exists, so in this repo's 5-to-10-instance fleet the gate never
-disengages and ``_run_learn_journal_drain`` took its early return on every sweep.
+defaulted to 2 and the optional-work predicate deferred as soon as a single PEER
+writer existed, so in this repo's 5-to-10-instance fleet the gate never
+disengaged and ``_run_learn_journal_drain`` took its early return on every sweep.
+PRD-CORE-257-FR01 later made the threshold decide (``peer_writer_count >=
+threshold``); the escape hatches asserted here are unchanged by that.
 "Durable" degraded into "indefinitely queued": a record in ``.trw/learnings/pending``
 is safe but not recallable, so no future session inherits it.
 
@@ -46,6 +48,7 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state import learn_journal
+from trw_mcp.state.memory_pressure import WriterCensus
 from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
 _PEER_PIDS = [4242, 4243, 4244]
@@ -64,13 +67,20 @@ def _pin_writer_pressure(monkeypatch: pytest.MonkeyPatch) -> None:
     predicate inside the function body.
     """
 
-    def _always_pressured(_trw_dir: Path, **_kw: object) -> tuple[bool, list[int], str]:
-        return True, list(_PEER_PIDS), "writer_pressure"
+    def _always_pressured(_trw_dir: Path, **kwargs: object) -> WriterCensus:
+        threshold = int(str(kwargs.get("threshold", len(_PEER_PIDS))))
+        return WriterCensus(
+            writer_pids=tuple(_PEER_PIDS),
+            writer_count=len(_PEER_PIDS),
+            peer_writer_count=len(_PEER_PIDS),
+            threshold=threshold,
+            under_pressure=True,
+            census_state="measured",
+            identity_state="verified",
+            heartbeat_state="measured",
+        )
 
-    monkeypatch.setattr(
-        "trw_mcp.state.memory_pressure.should_defer_session_start_optional_work",
-        _always_pressured,
-    )
+    monkeypatch.setattr("trw_mcp.state.memory_pressure.take_writer_census", _always_pressured)
 
 
 def _journal(trw_dir: Path, index: int) -> str:
@@ -421,3 +431,213 @@ class TestFailOpenAndUnpressuredParity:
 
         assert seen == [config.learn_journal_drain_limit]
         assert learn_journal.pending_count(trw_dir) == 0
+
+
+class _FakeClock:
+    """A monotonic clock the test drives, so no assertion depends on real time."""
+
+    def __init__(self, step: float) -> None:
+        self.now = 0.0
+        self.step = step
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance_on_replay(self, learning_id: str, payload: dict[str, object]) -> str:
+        """A replay that consumes nothing and burns *step* seconds of fake time."""
+        self.now += self.step
+        return "error"
+
+
+class TestWallClockBudget:
+    """PRD-FIX-130-FR01: the sweep is bounded by a clock, not only by a count.
+
+    NON-VACUITY: every test here drives ``drain_pending`` with a fake monotonic
+    clock and asserts on the ATTEMPTED count. Delete the budget break condition
+    in ``state/learn_journal.drain_pending`` and all four fail on behaviour —
+    a count-only sweep attempts every record regardless of the clock.
+    """
+
+    def test_wall_clock_budget_stops_the_sweep_before_the_next_replay(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Record 1 burns the whole budget, so record 2 is never started."""
+        trw_dir = _trw_dir(tmp_path)
+        for i in range(5):
+            _journal(trw_dir, i)
+        clock = _FakeClock(step=10.0)
+        monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+
+        result = learn_journal.drain_pending(
+            trw_dir,
+            clock.advance_on_replay,
+            limit=50,
+            budget_seconds=3.0,
+        )
+
+        assert result["replayed"] == 1, result
+        assert result["deferred"] == 4, result
+        assert result.get("budget_exhausted") is True, result
+        # The bound is the property, not the number: attempted is a function of
+        # the clock and the budget, never of the backlog size.
+        assert learn_journal.pending_count(trw_dir) == 5
+
+    def test_attempted_count_does_not_grow_with_the_backlog(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The property a count limit cannot deliver: K-independence."""
+        attempted: list[int] = []
+        for k in (5, 20, 50):
+            trw_dir = _trw_dir(tmp_path / f"k{k}")
+            for i in range(k):
+                _journal(trw_dir, i)
+            clock = _FakeClock(step=2.0)
+            monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+            result = learn_journal.drain_pending(
+                trw_dir,
+                clock.advance_on_replay,
+                limit=50,
+                budget_seconds=3.0,
+            )
+            attempted.append(int(result["replayed"]))
+        assert attempted == [2, 2, 2], attempted
+
+    def test_zero_budget_defers_every_record(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``learn_journal_drain_budget_ms: 0`` is the config-only background-only mode."""
+        trw_dir = _trw_dir(tmp_path)
+        for i in range(4):
+            _journal(trw_dir, i)
+        clock = _FakeClock(step=1.0)
+        monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+
+        result = learn_journal.drain_pending(
+            trw_dir,
+            clock.advance_on_replay,
+            limit=50,
+            budget_seconds=0.0,
+        )
+
+        assert result["replayed"] == 0, result
+        assert result["deferred"] == 4, result
+        assert result.get("budget_exhausted") is True, result
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0, float("-inf")])
+    def test_invalid_budget_refuses_instead_of_running_unbounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad: float
+    ) -> None:
+        """An unusable budget is 0, never 'unbounded' — silently restoring the defect is the failure."""
+        trw_dir = _trw_dir(tmp_path)
+        for i in range(3):
+            _journal(trw_dir, i)
+        clock = _FakeClock(step=1.0)
+        monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+
+        with structlog.testing.capture_logs() as logs:
+            result = learn_journal.drain_pending(
+                trw_dir,
+                clock.advance_on_replay,
+                limit=50,
+                budget_seconds=bad,
+            )
+
+        assert result["replayed"] == 0, result
+        assert any(e.get("event") == "learn_journal_drain_budget_invalid" for e in logs), logs
+
+    def test_none_budget_stays_unbounded_for_the_operator_cli(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An operator-invoked drain is not a hot path and keeps its old semantics."""
+        trw_dir = _trw_dir(tmp_path)
+        for i in range(6):
+            _journal(trw_dir, i)
+        clock = _FakeClock(step=1000.0)
+        monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+
+        result = learn_journal.drain_pending(trw_dir, clock.advance_on_replay, limit=50)
+
+        assert result["replayed"] == 6, result
+        assert "budget_exhausted" not in result, result
+
+    def test_zero_pending_reads_no_clock_and_returns_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NFR01: the budget is resolved only AFTER the empty-pending early return."""
+        trw_dir = _trw_dir(tmp_path)
+        reads: list[int] = []
+
+        def _counting_monotonic() -> float:
+            reads.append(1)
+            return 0.0
+
+        monkeypatch.setattr(learn_journal.time, "monotonic", _counting_monotonic)
+
+        result = learn_journal.drain_pending(
+            trw_dir,
+            lambda _lid, _p: "recorded",
+            limit=50,
+            budget_seconds=3.0,
+        )
+
+        assert result == {}
+        assert reads == [], "the zero-pending path must not even read the clock"
+
+
+class TestAgeHatchIsSubordinateToTheClock:
+    """PRD-FIX-130-FR06: age raises the COUNT budget, never the TIME budget.
+
+    NON-VACUITY: the aged-count assertion pins the PRE-EXISTING PRD-INFRA-171
+    behaviour (it must not change); the attempted-count assertion fails without
+    the FR01 break condition, because an unbounded sweep replays all 27.
+    """
+
+    def test_age_hatch_raises_count_budget_but_never_the_time_budget(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """27 records past 6h under 2 live writers: the clock, not the age, sets attempted."""
+        trw_dir = _trw_dir(tmp_path)
+        config = TRWConfig(embeddings_enabled=False)
+        for i in range(27):
+            _age(trw_dir, _journal(trw_dir, i), seconds=7 * 3600)
+
+        # The count budget still admits all 27 — the liveness rule is untouched.
+        count_budget = learn_journal.pressure_drain_budget(
+            trw_dir,
+            drain_limit=config.learn_journal_drain_limit,
+            min_batch=config.learn_journal_drain_min_batch,
+            max_age_seconds=config.learn_journal_pending_max_age_hours * 3600.0,
+        )
+        assert count_budget == 27
+
+        # The clock still stops the sweep. Age buys admission, not elapsed time.
+        clock = _FakeClock(step=1.0)
+        monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+        result = learn_journal.drain_pending(
+            trw_dir,
+            clock.advance_on_replay,
+            limit=count_budget,
+            budget_seconds=3.0,
+        )
+
+        assert result["replayed"] == 3, result
+        assert result["deferred"] == 24, result
+        assert result.get("budget_exhausted") is True
+
+    def test_aged_backlog_with_a_zero_budget_replays_nothing_inline(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No aged record is replayed 'because of its age' when the time budget is 0."""
+        trw_dir = _trw_dir(tmp_path)
+        for i in range(9):
+            _age(trw_dir, _journal(trw_dir, i), seconds=48 * 3600)
+        clock = _FakeClock(step=1.0)
+        monkeypatch.setattr(learn_journal.time, "monotonic", clock)
+
+        result = learn_journal.drain_pending(
+            trw_dir,
+            clock.advance_on_replay,
+            limit=50,
+            budget_seconds=0.0,
+        )
+
+        assert result["replayed"] == 0, result
+        assert result["deferred"] == 9, result

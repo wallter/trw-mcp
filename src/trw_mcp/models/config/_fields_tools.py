@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 if TYPE_CHECKING:
     from trw_mcp.server._surface_manifest_registry import ToolResolution
@@ -37,6 +37,35 @@ class _ToolsFields:
     # is recorded in the resolution decision. A missing config field therefore
     # resolves to 'standard' — full exposure is never silently the default.
     tool_resolution_mode: Literal["standard", "all"] = "standard"
+
+    # -- Session identity: WHO this process is (PRD-SEC-015 FR02) --
+    # 'agent' is the default, so every existing session is unchanged. 'reviewer'
+    # is set per PROCESS by the dispatch layer (TRW_SURFACE_ROLE=reviewer) and
+    # bounds the server to the read-only REVIEWER_TOOLS surface, DOMINATING
+    # tool_resolution_mode (including 'all') and task-pack resolution.
+    # Deliberately TOP-LEVEL rather than nested: the env selection this field
+    # exists for is the flat `TRW_<KEY_UPPER>` form the loader filters on, which
+    # a nested field could not use.
+    surface_role: Literal["agent", "reviewer"] = "agent"
+
+    @field_validator("surface_role", mode="before")
+    @classmethod
+    def _normalize_surface_role(cls, value: object) -> object:
+        """Case/whitespace-normalize BEFORE the Literal check.
+
+        Mirrors ``surface_authority._env_marks_reviewer``'s tolerance (``.strip()
+        .lower()``): ``" Reviewer "`` must resolve the same way through the typed
+        field as it already does through the raw environment read, or the two
+        mechanisms silently disagree on the same input. A value that still is
+        not ``agent``/``reviewer`` after normalization is a genuine typo and is
+        passed through UNCHANGED so the Literal validator's error message names
+        the value the operator actually set, not a lowercased guess.
+        """
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in ("agent", "reviewer"):
+                return normalized
+        return value
 
     code_index_enabled: bool = False
     code_index_max_file_bytes: int = Field(default=1_000_000, ge=1)

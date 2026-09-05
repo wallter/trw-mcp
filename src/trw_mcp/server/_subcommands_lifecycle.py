@@ -123,7 +123,8 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     managed_paths: list[Path] = []
     merged_config_paths: list[tuple[Path, str]] = []
     for surface in uninstall_surfaces():
-        path = (target / surface.relpath).resolve()
+        base = Path.home() if surface.home_scoped else target
+        path = (base / surface.relpath).resolve()
         if not path.exists():
             continue
         if surface.merged_config:

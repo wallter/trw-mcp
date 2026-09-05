@@ -94,7 +94,11 @@ def test_codex_profile_contract_is_explicit() -> None:
     assert profile.hooks_enabled is False
     assert profile.include_framework_ref is False
     assert not hasattr(profile, "include_agent" + "_teams")
-    assert profile.include_delegation is False
+    # PRD-CORE-252 OQ-3, resolved by measurement 2026-09-04: codex's own
+    # carrier stack (largest agent + AGENTS.md + config.toml) measures ~21%
+    # of its 32K budget, so delegation content is enabled here (opencode
+    # stays disabled -- see _light_profile's include_delegation docstring).
+    assert profile.include_delegation is True
     assert profile.skills_enabled is False
     assert profile.mcp_instructions_enabled is False
     assert profile.learning_recall_enabled is True
@@ -267,11 +271,14 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "Nudges": "Enabled; standard messenger, default density, `60/30/0/10` pool weights",
         "Hooks": "Disabled",
         "Framework ref": "Disabled",
-        "Delegation": "Disabled",
+        "Delegation": "Enabled — see below",
         "Skills": "Disabled",
         "Learning recall": "Enabled",
         "MCP instructions": "Disabled",
     }
+    # PRD-CORE-252 OQ-3: the flag is truthfully True on the resolved profile,
+    # matching the doc's "Enabled" row and the measurement prose below it.
+    assert profile.include_delegation is True
     assert "Agent teams" not in config_rows
     assert "current Codex runtime surfaces" in codex_section
     assert "shared `_light_profile(...)` contract" in codex_section
@@ -280,9 +287,10 @@ def test_codex_docs_profile_configuration_matches_profile_contract() -> None:
         "while keeping `AGENTS.md` as the profile's top-level write target."
     ) in codex_section
     assert (
-        "Hooks, framework reference content, delegation content, and skills are "
-        "intentionally disabled in the profile contract."
+        "Hooks, framework reference content, and skills are "
+        "intentionally disabled in the profile contract; delegation content is enabled"
     ) in codex_section
+    assert "26,682 bytes" in codex_section
     assert (
         "`skills_enabled = false` is a profile-layer prompt/exposure setting; it does not suppress "
         "the installer-managed `.agents/skills/` helper directories that Codex may reference from "
@@ -324,3 +332,96 @@ def test_codex_profile_capability_change_alters_write_target_behavior(
     assert write_claude is False
     assert write_agents is False
     assert instruction_path == ".codex/ALT-INSTRUCTIONS.md"
+
+
+# ── PRD-CORE-252 OQ-3 wiring-defect fix (2026-09-04) ───────────────────────
+#
+# ``include_delegation`` was declared on every profile but
+# ``render_delegation_protocol()`` had exactly one call site (codex's
+# dedicated renderer), so claude-code, cursor-ide, copilot, and
+# antigravity-cli — all True — never rendered the block despite
+# ``trw_profile_explain`` (``client_profiles/catalog.py::delegation_enabled``)
+# reporting it enabled. This section pins each client's REAL instruction
+# surface against its own profile flag.
+
+_DELEGATION_HEADING = "## TRW Delegation & Orchestration (Auto-Generated)"
+
+
+def _rendered_surface_for(client_id: str) -> str:
+    """Render the actual instruction-file body TRW writes for ``client_id``."""
+    profile = resolve_client_profile(client_id)
+
+    if client_id == "codex":
+        from trw_mcp.state.claude_md._static_sections import render_codex_instructions
+
+        return render_codex_instructions()
+    if client_id == "opencode":
+        from trw_mcp.state.claude_md._static_sections import render_opencode_instructions
+
+        return render_opencode_instructions("generic")
+    if client_id == "cursor-cli":
+        from trw_mcp.state.claude_md._static_sections import render_minimal_protocol
+
+        return render_minimal_protocol()
+    if client_id == "antigravity-cli":
+        from trw_mcp.state.claude_md.renderers._review_and_opencode import (
+            render_antigravity_instructions,
+        )
+
+        return render_antigravity_instructions()
+    if client_id == "claude-code":
+        from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+
+        return ProtocolRenderer(client_profile=profile, ceremony_mode="FULL").render_behavioral_protocol()
+    if client_id in ("cursor-ide", "copilot"):
+        from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
+
+        return render_agents_trw_section(client_profile=profile)
+    raise AssertionError(f"no known instruction-surface renderer for {client_id!r}")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "client_id",
+    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
+)
+def test_delegation_block_present_iff_profile_flag_true(client_id: str) -> None:
+    """Every client's rendered instruction surface carries the delegation
+    block if and only if its own profile's ``include_delegation`` is True.
+
+    Red before the fix for claude-code, cursor-ide, copilot, and
+    antigravity-cli: all had the flag True but the block was never rendered.
+    """
+    profile = resolve_client_profile(client_id)
+    rendered = _rendered_surface_for(client_id)
+
+    if profile.include_delegation:
+        assert _DELEGATION_HEADING in rendered, (
+            f"{client_id}: include_delegation=True but the rendered surface has no delegation block"
+        )
+    else:
+        assert _DELEGATION_HEADING not in rendered, (
+            f"{client_id}: include_delegation=False but the rendered surface carries a delegation block"
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "client_id",
+    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
+)
+def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: str) -> None:
+    """``trw_profile_explain``'s ``delegation_enabled`` must agree with what
+    is actually rendered (the P8 attribution check) — a label with no
+    matching content is exactly the wiring defect this fix closes.
+    """
+    from trw_mcp.client_profiles.catalog import build_client_profile_rows
+
+    rows = {row.client_id: row for row in build_client_profile_rows()}
+    row = rows[client_id]
+    rendered = _rendered_surface_for(client_id)
+
+    assert row.delegation_enabled == (_DELEGATION_HEADING in rendered), (
+        f"{client_id}: delegation_enabled={row.delegation_enabled} but rendered "
+        f"presence={_DELEGATION_HEADING in rendered}"
+    )

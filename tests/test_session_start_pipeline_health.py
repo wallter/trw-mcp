@@ -161,3 +161,158 @@ def test_session_start_pipeline_health_wired_into_ceremony(tmp_path: Path) -> No
         "ceremony.py must reference pipeline_health (step_pipeline_health_advisory "
         "or step_pipeline_health) — wiring not found"
     )
+
+
+def _tripped_gate_trw_dir(tmp_path: Path) -> Path:
+    """A .trw dir whose sync state trips the fail-closed gate on push staleness."""
+    import json
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    (trw_dir / "sync-state.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "consecutive_failures": 10653,
+                "last_push_at": "2026-04-21T18:08:05.640262+00:00",
+                "primary_target_label": "api.trwframework.com",
+                "secondary_targets": {"localhost": {"status": "partial_error", "failed": 8}},
+            }
+        )
+    )
+    return trw_dir
+
+
+def _config_with_secret(secret: str):
+    from pydantic import SecretStr
+
+    from trw_mcp.models.config import TRWConfig
+
+    return TRWConfig(
+        platform_urls=["https://api.trwframework.com", "http://localhost:5002"],
+        platform_api_key=SecretStr(secret),
+    )
+
+
+def test_warning_names_primary_target_last_success(tmp_path: Path) -> None:
+    """PRD-FIX-125-FR02: the warning says WHICH target failed and when it last worked.
+
+    A bare "push staleness: N consecutive failures" cannot distinguish "never
+    worked" from "worked until <date>", and before FR01 the counter it reported
+    was the worst of every configured target rather than the primary's.
+    """
+    from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
+
+    trw_dir = _tripped_gate_trw_dir(tmp_path)
+    results: dict[str, object] = {}
+
+    with patch(
+        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_healthy_health_result()
+    ):
+        step_pipeline_health_advisory(trw_dir, results, _config_with_secret("pk-secret"))
+
+    warning = results["pipeline_health_warning"]
+    assert isinstance(warning, dict)
+    assert warning["primary_target_label"] == "api.trwframework.com"
+    assert warning["primary_last_success_at"] == "2026-04-21T18:08:05.640262+00:00"
+    assert warning["enforced_by"] == "make check (pipeline-health)"
+    assert warning["reasons"]
+
+
+def test_warning_never_leaks_credentials(tmp_path: Path) -> None:
+    """PRD-FIX-125-NFR03: the warning carries a hostname label, never the api key."""
+    from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
+
+    secret = "pk-super-secret-value"
+    trw_dir = _tripped_gate_trw_dir(tmp_path)
+    results: dict[str, object] = {}
+
+    with patch(
+        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_healthy_health_result()
+    ):
+        step_pipeline_health_advisory(trw_dir, results, _config_with_secret(secret))
+
+    warning = results["pipeline_health_warning"]
+    assert isinstance(warning, dict)
+    assert secret not in repr(warning)
+    assert "Authorization" not in repr(warning)
+
+
+def test_healthy_pipeline_injects_no_warning(tmp_path: Path) -> None:
+    """PRD-FIX-125-FR02: no distraction on a healthy session (unchanged behavior)."""
+    import json
+    from datetime import datetime, timezone
+
+    from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    (trw_dir / "sync-state.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "consecutive_failures": 0,
+                "last_push_at": datetime.now(tz=timezone.utc).isoformat(),
+            }
+        )
+    )
+    results: dict[str, object] = {}
+
+    with patch(
+        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_healthy_health_result()
+    ):
+        step_pipeline_health_advisory(trw_dir, results, _config_with_secret("pk"))
+
+    assert "pipeline_health_warning" not in results
+
+
+def test_unmeasured_pipeline_injects_a_distinct_advisory(tmp_path: Path) -> None:
+    """PRD-CORE-263 DEF-05 attribution.
+
+    ``degraded`` is False for BOTH a confirmed-healthy pipeline AND one where
+    every probe crashed unmeasured (FR03 deliberately excludes an unmeasured
+    probe from the degraded verdict). Before this fix, both cases produced NO
+    ``pipeline_health_advisory`` — an operator reading a clean session_start
+    could not tell "we checked, it's fine" from "we never checked". Reverting
+    the fix (restoring the ``if bool(health.get("degraded")):``-only branch)
+    turns this red.
+    """
+    from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    unmeasured_health: dict[str, object] = {
+        "degraded": False,
+        "advisory": "",
+        "unmeasured": ["sync_push", "bandit_state"],
+        "sync_push": {"measured": False, "degraded": False, "advisory": "sync_push not measured: OSError"},
+        "graph_edges": {"degraded": False, "advisory": ""},
+        "embedding_coverage": {"degraded": False, "advisory": ""},
+        "recall_feedback": {"degraded": False, "advisory": ""},
+        "bandit_state": {"measured": False, "degraded": False, "advisory": "bandit_state not measured: OSError"},
+    }
+    results: dict[str, object] = {}
+
+    with patch("trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=unmeasured_health):
+        step_pipeline_health_advisory(trw_dir, results)
+
+    assert "pipeline_health_advisory" in results
+    advisory = str(results["pipeline_health_advisory"])
+    assert "sync_push" in advisory
+    assert "bandit_state" in advisory
+
+
+def test_fully_healthy_pipeline_still_injects_no_advisory(tmp_path: Path) -> None:
+    """DEF-05's fix must not distract a genuinely healthy session (PRD-INFRA-068)."""
+    from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    results: dict[str, object] = {}
+
+    with patch(
+        "trw_mcp.tools._ceremony_session_start_steps.step_pipeline_health", return_value=_healthy_health_result()
+    ):
+        step_pipeline_health_advisory(trw_dir, results)
+
+    assert "pipeline_health_advisory" not in results

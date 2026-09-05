@@ -22,6 +22,7 @@ import pytest
 
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+from trw_mcp.state.claude_md.sections._tool_lifecycle import render_closing_reminder
 
 pytestmark = pytest.mark.unit
 
@@ -40,7 +41,7 @@ def _render_baseline() -> str:
         ("ceremony_table", r.render_ceremony_table()),
         ("ceremony_flows", r.render_ceremony_flows()),
         ("framework_reference", r.render_framework_reference()),
-        ("closing_reminder", r.render_closing_reminder()),
+        ("closing_reminder", render_closing_reminder()),
     ]
     return "".join(f"=== {name} ===\n{body}\n" for name, body in parts)
 

@@ -114,7 +114,7 @@ def test_serialize_entry_format() -> None:
     assert serialized["metadata"]["installation_id"] != "install-123"
 
 
-# Backend `LearningSync.sync_hash` (backend/routers/sync.py:28) is validated
+# The server-side `LearningSync.sync_hash` (sync router, line 28) is validated
 # against this pattern under extra="forbid"; an entry that fails it 422-rejects
 # the whole batch. These tests guard the 2026-05-20 MCP-server snare fix.
 _BACKEND_SYNC_HASH_PATTERN = re.compile(r"[0-9a-f]{64}")

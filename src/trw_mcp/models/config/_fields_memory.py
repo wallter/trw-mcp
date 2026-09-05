@@ -83,8 +83,6 @@ class _MemoryFields:
     # importances passed), 0.0 = pure importance. Default 0.7 mirrors the
     # MemoryClient default (`MemoryConfig.rrf_importance_alpha`).
     hybrid_rrf_importance_alpha: float = Field(default=0.7, ge=0.0, le=1.0)
-    wal_checkpoint_threshold_mb: int = 10
-
     # -- LLM utility filter (QUAL-062) --
     # When enabled, trw_learn routes each candidate learning through a live
     # Claude Haiku call (is_high_utility) that can reject low-utility entries.
@@ -97,32 +95,6 @@ class _MemoryFields:
     dedup_enabled: bool = True
     dedup_skip_threshold: float = 0.95
     dedup_merge_threshold: float = 0.85
-
-    # -- Learn write-ahead journal (durability) --
-    # An ACCEPTED trw_learn is fsync'd to `.trw/learnings/pending/<id>.json`
-    # BEFORE the slow pre-store pipeline that a 120s client tool timeout can cut
-    # short, then replayed on the next session_start sweep if the store was never
-    # reached. Rationale + interactions: see `_field_admission.py`. Kill switch
-    # for operators who want the legacy (loss-prone) path:
-    learn_journal_enabled: bool = True
-    # Max pending records replayed per session_start sweep. Bounds the recovery
-    # cost so a large backlog cannot stall boot; the remainder drains next sweep.
-    learn_journal_drain_limit: int = Field(default=50, ge=1)
-    # Drain liveness (PRD-INFRA-171 FR06): that sweep is the journal's ONLY
-    # consumer and used to be skipped whenever ONE peer MCP writer existed, so
-    # 42 records were journaled and ZERO ever drained across 122 log files.
-    # Records replayed per sweep EVEN under pressure, clamped to drain_limit - 1
-    # so a pressured sweep stays strictly smaller (0 = pre-FR06 defer-always):
-    learn_journal_drain_min_batch: int = Field(default=2, ge=0)
-    # A pending record at or past this age (file mtime, INCLUSIVE) drains
-    # regardless of pressure, making eventual drain a guarantee (0 disables):
-    learn_journal_pending_max_age_hours: float = Field(default=6.0, ge=0.0)
-    # Retry budget for a TRANSIENTLY failing replay (backend down, DB lock);
-    # past it the record moves to `.trw/learnings/dead_letter/` instead of being
-    # re-attempted forever. A DETERMINISTIC refusal (accept-gate rejection,
-    # invalid enum) bypasses the budget and moves aside immediately; 0 disables
-    # the budget for transient failures only:
-    learn_journal_max_replay_attempts: int = Field(default=5, ge=0)
 
     # -- Memory consolidation (CORE-044, FIX-071) --
 
@@ -188,11 +160,37 @@ class _MemoryFields:
     session_start_recent_bypass_days: int = Field(default=7, ge=0, le=365)
     session_start_recent_bypass_min_impact: float = Field(default=0.3, ge=0.0, le=1.0)
 
-    # -- Session-start runtime pressure controls (PRD-FIX-080) --
-    # SQLite uses a 30s busy timeout. In shared MCP workspaces, best-effort
-    # session-start writes must not stack several lock waits before returning
-    # learnings to the caller. These defaults preserve normal single-writer
-    # behavior while deferring non-critical side effects when another live MCP
-    # process is already registered against the same memory DB.
+    # -- Session-start runtime pressure controls (PRD-FIX-080, PRD-CORE-257) --
+    # SQLite uses a 30s busy timeout, so best-effort session-start writes must not
+    # stack several lock waits before returning learnings to the caller.
     session_start_defer_under_writer_pressure: bool = True
-    session_start_writer_pressure_threshold: int = Field(default=2, ge=2, le=64)
+    session_start_writer_pressure_threshold: int = Field(
+        default=8,
+        ge=2,
+        le=64,
+        description=(
+            "PEER writers (registered pids that are not this process) at or above which best-effort session-start"
+            " work is deferred. The default of 8 is a DOCUMENTED STARTING POINT, not a fitted or validated"
+            " steady-state figure: the highest peer-writer count observed across the three 2026-09-04 censuses is 7,"
+            " and 8 is the smallest value strictly greater than every count yet observed. Those censuses are not"
+            " three independent samples — two are the same box and session lineage, one is an independent machine —"
+            " so this makes no claim about the population of TRW installs, and is expected to be retuned from the"
+            " one-per-session INFO writer_census log once that log exists on more than two machines. The floor stays"
+            " at 2: a threshold of 1 peer restores exactly the defer-on-any-writer behaviour PRD-CORE-257-FR01"
+            " deletes, and 0 would defer unconditionally."
+        ),
+    )
+    session_start_max_deferral_hours: int = Field(  # PRD-CORE-257-FR02: deferral is bounded
+        default=6,
+        ge=1,
+        le=168,
+        description=(
+            "Hours a session-start step may be continuously deferred by writer pressure before it runs anyway. The"
+            " pressure condition was observed persisting for a full working day, so an unbounded deferral is silent"
+            " cancellation. Six hours targets four executions of each covered step per 24 hours under permanent"
+            " pressure while capping the cost at one forced pass per step per six hours, whose worst case is a single"
+            " 30 s SQLite busy-timeout wait. Distinct from pin_ttl_hours, which evicts dead pins rather than bounding"
+            " live work, so its 24-hour value is deliberately not reused. Zero is not permitted: 'never defer' is"
+            " already session_start_defer_under_writer_pressure, and a second switch for it would be dormant."
+        ),
+    )

@@ -27,12 +27,16 @@ through ``state/claude_md/__init__.py``.
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 import structlog
+
+from trw_mcp.models.typed_dicts._ceremony import (
+    InstructionDiffDict,
+    InstructionWriteRefusalDict,
+)
 
 # Classification helpers live in the ``_carrier_classify`` sibling (350-line
 # gate); re-exported here so the facade import path is stable and so the callers
@@ -47,16 +51,30 @@ from trw_mcp.state.claude_md._carrier_classify import (
 from trw_mcp.state.claude_md._carrier_classify import (
     classify_instruction_file as classify_instruction_file,
 )
+
+# Externalization lives in the ``_carrier_externalize`` sibling (350-line gate).
+# Re-exported here so import paths are unchanged AND so ``apply_carrier``
+# resolves ``externalize_block`` as a module global — the seam existing tests
+# monkeypatch.
+from trw_mcp.state.claude_md._carrier_externalize import (
+    AT_IMPORT_PREFIX as AT_IMPORT_PREFIX,
+)
+from trw_mcp.state.claude_md._carrier_externalize import (
+    externalize_block as externalize_block,
+)
+from trw_mcp.state.claude_md._carrier_externalize import (
+    is_path_within as is_path_within,
+)
+from trw_mcp.state.claude_md._carrier_externalize import (
+    render_import_region as render_import_region,
+)
 from trw_mcp.state.claude_md._parser import (
-    TRW_AUTO_COMMENT,
     TRW_MARKER_END,
     TRW_MARKER_START,
 )
 from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger(__name__)
-
-AT_IMPORT_PREFIX = "@"
 
 # The include-incapable registry lives in ``_instruction_clients`` with the
 # other client-tier data; re-exported here so existing importers are unchanged.
@@ -87,13 +105,20 @@ class CarrierMode(str, Enum):
 
 @dataclass(frozen=True)
 class CarrierOutcome:
-    """Result of :func:`apply_carrier` — what was written and how."""
+    """Result of :func:`apply_carrier` — what was written and how.
+
+    ``refusal`` and ``diff`` carry the PRD-FIX-123 guard verdict outward: a
+    refused write is a policy outcome the caller must report, not an exception
+    and not a silent success.
+    """
 
     mode: CarrierMode
     total_lines: int = 0
     external_path: str | None = None
     pointer_targets: tuple[str, ...] = ()
     healed: bool = False
+    refusal: InstructionWriteRefusalDict | None = None
+    diff: InstructionDiffDict | None = None
 
 
 def resolve_carrier_mode(
@@ -109,112 +134,6 @@ def resolve_carrier_mode(
     if externalize != EXTERNALIZE_OFF and import_syntax in IMPORT_CAPABLE_SYNTAXES and scope == "root":
         return CarrierMode.IMPORT
     return CarrierMode.INLINE
-
-
-def _extract_marker_inner(
-    block: str,
-    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
-) -> str:
-    """Return the content BETWEEN the TRW markers (for the sidecar body).
-
-    Takes the marker pair so a client with its own sentinel vocabulary does not
-    fall through to "return the whole block", which would copy that client's
-    markers into the sidecar and leave them duplicated on both surfaces.
-    """
-    marker_start, marker_end = markers
-    lines = block.splitlines()
-    start: int | None = None
-    end: int | None = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == marker_start and start is None:
-            start = i
-        elif stripped == marker_end:
-            end = i
-            break
-    if start is not None and end is not None and end > start:
-        return "\n".join(lines[start + 1 : end]).strip()
-    return block.strip()
-
-
-def _sidecar_document(
-    rendered_block: str,
-    sidecar_relpath: str,
-    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
-) -> str:
-    """Build the externalized sidecar document from the rendered TRW block."""
-    inner = _extract_marker_inner(rendered_block, markers)
-    header = (
-        f"<!-- TRW AUTO-GENERATED — do not edit. "
-        f"Imported into your instruction file via {AT_IMPORT_PREFIX}{sidecar_relpath} (PRD-CORE-203). -->"
-    )
-    return f"{header}\n\n{inner}\n"
-
-
-def render_import_region(
-    sidecar_relpath: str,
-    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
-) -> str:
-    """Render the marker-wrapped one-line import region placed into the file.
-
-    *markers* lets a client keep its OWN sentinel vocabulary. Copilot's surface
-    is delimited by ``trw:copilot:start/end``, and the uninstall registry plus
-    doctor key on those — emitting the generic pair there would orphan the block
-    from both (PRD-CORE-240-FR03).
-    """
-    marker_start, marker_end = markers
-    return f"{TRW_AUTO_COMMENT}\n{marker_start}\n{AT_IMPORT_PREFIX}{sidecar_relpath}\n{marker_end}\n"
-
-
-def is_path_within(root: Path, candidate: Path) -> bool:
-    """Return whether *candidate* resolves to a path inside *root* (no traversal).
-
-    PRD-CORE-203 P0-1: ``instruction_external_filename`` is operator-overridable
-    (env / config.yaml); a value like ``../../etc/x`` would otherwise let the
-    sidecar write escape the project root. ``resolve()`` normalizes ``..`` so the
-    containment check is robust even for not-yet-existing paths.
-    """
-    try:
-        candidate.resolve().relative_to(root.resolve())
-    except ValueError:
-        return False
-    return True
-
-
-def externalize_block(
-    target: Path,
-    *,
-    rendered_block: str,
-    sidecar_path: Path,
-    sidecar_relpath: str,
-    max_lines: int,
-    markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
-) -> int:
-    """Externalize the TRW block: sidecar FIRST, then the import region (FR05).
-
-    Writes *rendered_block* to *sidecar_path* before placing the
-    ``@<sidecar_relpath>`` import region into *target*'s marker region — so a
-    written import line always has a resolvable target (NFR02: no dangling
-    import). The import region is merged via ``merge_trw_section`` so any prior
-    inline block is cleanly replaced (migration) and user content outside the
-    markers is preserved. Raises on any failure so the caller falls back to
-    inline; a half-written sidecar is removed before re-raising (P2-1).
-    """
-    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = FileStateWriter()
-    writer.write_text(sidecar_path, _sidecar_document(rendered_block, sidecar_relpath, markers))
-
-    # Lazy import breaks the _parser <-> _instruction_carrier cycle.
-    from trw_mcp.state.claude_md._parser import merge_trw_section
-
-    try:
-        return merge_trw_section(target, render_import_region(sidecar_relpath, markers), max_lines, markers)
-    except Exception:
-        # The import line never landed — drop the now-orphaned sidecar so it does
-        # not linger unreferenced, then re-raise for the inline fallback.
-        with contextlib.suppress(OSError):
-            sidecar_path.unlink()
-        raise
 
 
 def heal_pointer(target: Path) -> bool:
@@ -271,6 +190,8 @@ def apply_carrier(
     external_filename: str,
     project_root: Path,
     markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
+    force: bool = False,
+    dry_run: bool = False,
 ) -> CarrierOutcome:
     """Resolve and apply the carrier mode for *target* (FR04/FR05/FR06).
 
@@ -292,7 +213,8 @@ def apply_carrier(
     )
 
     if mode is CarrierMode.POINTER_SKIP:
-        healed = heal_pointer(target)
+        # A dry run writes nothing at all, healing included.
+        healed = False if dry_run else heal_pointer(target)
         lines = len(target.read_text(encoding="utf-8").splitlines()) if target.exists() else 0
         logger.info(
             "instruction_pointer_skipped",
@@ -319,16 +241,25 @@ def apply_carrier(
             )
         else:
             try:
-                lines = externalize_block(
+                verdict = externalize_block(
                     target,
                     rendered_block=rendered_block,
                     sidecar_path=sidecar_path,
                     sidecar_relpath=external_filename,
                     max_lines=max_lines,
                     markers=markers,
+                    force=force,
+                    dry_run=dry_run,
                 )
-                logger.info("instruction_externalized", target=str(target), sidecar=external_filename)
-                return CarrierOutcome(mode=mode, total_lines=lines, external_path=external_filename)
+                if verdict.written or verdict.diff is not None:
+                    logger.info("instruction_externalized", target=str(target), sidecar=external_filename)
+                return CarrierOutcome(
+                    mode=mode,
+                    total_lines=verdict.total_lines,
+                    external_path=external_filename,
+                    refusal=verdict.refusal,
+                    diff=verdict.diff,
+                )
             except Exception:  # justified: fail-open — externalization must degrade to inline, never dangle
                 logger.warning(
                     "instruction_externalize_failed_fallback_inline",
@@ -339,5 +270,10 @@ def apply_carrier(
     # INLINE — also the IMPORT fallback path.
     from trw_mcp.state.claude_md._parser import merge_trw_section
 
-    lines = merge_trw_section(target, rendered_block, max_lines, markers)
-    return CarrierOutcome(mode=CarrierMode.INLINE, total_lines=lines)
+    verdict = merge_trw_section(target, rendered_block, max_lines, markers, force=force, dry_run=dry_run)
+    return CarrierOutcome(
+        mode=CarrierMode.INLINE,
+        total_lines=verdict.total_lines,
+        refusal=verdict.refusal,
+        diff=verdict.diff,
+    )

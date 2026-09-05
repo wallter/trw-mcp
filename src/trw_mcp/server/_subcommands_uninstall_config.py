@@ -15,6 +15,7 @@ from trw_mcp.bootstrap._opencode_instructions import (
     OPENCODE_INSTRUCTIONS_REL as _OPENCODE_INSTRUCTIONS_REL,
 )
 from trw_mcp.channels._manifest_models import MARKER_REGISTRY
+from trw_mcp.state.claude_md._parser import LEGACY_TRW_MARKER_END, LEGACY_TRW_MARKER_START
 
 # Marker pairs TRW writes that the channel MARKER_REGISTRY does not carry. Each
 # is imported from (or names) its producer so the literals cannot drift.
@@ -33,11 +34,13 @@ _EXTRA_BLOCK_MARKERS: tuple[tuple[str, str], ...] = (
     (_GIT_HOOK_MARKER_START, _GIT_HOOK_MARKER_END),
     # channels/claude_code/_cc02_segment.py
     ("<!-- trw-distill:start -->", "<!-- trw-distill:end -->"),
-    # bootstrap/_cursor_cli.py::generate_agents_md — an UPPERCASE sentinel pair
-    # (a third spelling) wrapping the cursor-cli ceremony block in AGENTS.md.
-    # Drift is caught end-to-end by TestInstallUninstallParity, which runs the
-    # real writer rather than re-stating this literal.
-    ("<!-- TRW:BEGIN -->", "<!-- TRW:END -->"),
+    # PRD-CORE-243-FR06/FR08: the retired cursor-cli install-time dialect (an
+    # UPPERCASE sentinel pair — a third spelling). No writer emits it anymore
+    # -- generate_cursor_cli_agents_md merges into the shared trw:start block
+    # and migrates any dead legacy block it finds in place — but a project
+    # installed before that fix can still have one on disk, so uninstall must
+    # still be able to find and remove it.
+    (LEGACY_TRW_MARKER_START, LEGACY_TRW_MARKER_END),
 )
 
 # Marker values whose partner is formed by these open -> close substitutions.

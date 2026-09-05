@@ -31,6 +31,47 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# --- Shared bundled-agent helpers (PRD-CORE-252) ----------------------------
+#
+# Agents on every client now come from one bundle through one materialization,
+# so these tests drive the installer and the update path instead of five
+# retired per-client generators. The expected bytes are computed with the SAME
+# transform the writer uses — a golden file here would only prove the test and
+# the writer agree about a snapshot, not about the contract.
+
+
+def _install_agents_for(target: Path, client: str) -> dict[str, list[str]]:
+    from trw_mcp.bootstrap._init_project_skills import _install_agents
+
+    result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
+    _install_agents(target, force=False, result=result, clients=[client])
+    assert not result["errors"], result["errors"]
+    return result
+
+
+def _update_agents_for(target: Path, client: str, manifest: dict[str, str]) -> dict[str, list[str]]:
+    from trw_mcp.bootstrap._template_updater import _update_agents
+    from trw_mcp.bootstrap._utils import _DATA_DIR
+
+    trw_dir = target / ".trw"
+    trw_dir.mkdir(parents=True, exist_ok=True)
+    (trw_dir / "config.yaml").write_text(f"target_platforms:\n  - {client}\n", encoding="utf-8")
+
+    result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
+    _update_agents(target, _DATA_DIR, result, dry_run=False, manifest_hashes=manifest)
+    assert not result["errors"], result["errors"]
+    return result
+
+
+def _materialized(rel: str, client: str) -> bytes:
+    """The bytes the installer writes for *rel* on *client*."""
+    from trw_mcp.agents.tier_resolver import materialize_agent
+    from trw_mcp.bootstrap._utils import _DATA_DIR
+
+    source = _DATA_DIR / "agents" / f"{Path(rel).name.split('.')[0]}.md"
+    return materialize_agent(source.read_text(encoding="utf-8"), client=client).encode("utf-8")
+
+
 # ---------------------------------------------------------------------------
 # The shared predicate
 # ---------------------------------------------------------------------------
@@ -90,31 +131,34 @@ class TestArtifactUserEdited:
 class TestCursorIdeAgentsAndCommands:
     """``.cursor/agents`` and ``.cursor/commands`` were unconditional writes."""
 
-    def test_agents_preserve_user_edit(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
+    # PRD-CORE-252-FR04 retired ``generate_cursor_ide_subagents``; cursor agents
+    # come from the shared bundle through ``_update_agents``. Both directions
+    # still hold, and are still asserted here — only the writer changed.
 
-        generate_cursor_ide_subagents(tmp_path)
-        edited = tmp_path / ".cursor" / "agents" / "trw-implementer.md"
+    def test_agents_preserve_user_edit(self, tmp_path: Path) -> None:
+        rel = ".cursor/agents/trw-implementer.md"
+        _install_agents_for(tmp_path, "cursor-ide")
+        edited = tmp_path / rel
         assert edited.is_file()
+        # Baseline recorded BEFORE the edit, as a real manifest holds it.
+        manifest = {rel: hashlib.sha256(edited.read_bytes()).hexdigest()}
         edited.write_text("# my agent\n", encoding="utf-8")
 
-        result = generate_cursor_ide_subagents(tmp_path)
+        result = _update_agents_for(tmp_path, "cursor-ide", manifest)
 
         assert edited.read_text(encoding="utf-8") == "# my agent\n"
-        assert ".cursor/agents/trw-implementer.md" in result["preserved"]
+        assert rel in result["preserved"]
 
     def test_agents_refresh_untouched_file(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._cursor_ide import cursor_ide_agent_contents, generate_cursor_ide_subagents
-
         rel = ".cursor/agents/trw-implementer.md"
         dest = tmp_path / rel
         dest.parent.mkdir(parents=True)
         dest.write_text("# older bundled agent\n", encoding="utf-8")
 
-        result = generate_cursor_ide_subagents(tmp_path, manifest_hashes={rel: _sha("# older bundled agent\n")})
+        result = _update_agents_for(tmp_path, "cursor-ide", {rel: _sha("# older bundled agent\n")})
 
-        assert dest.read_bytes() == cursor_ide_agent_contents()[rel]
-        assert rel in result["updated"]
+        assert dest.read_bytes() == _materialized(rel, "cursor-ide")
+        assert any(rel in entry for entry in result["updated"])
 
     def test_commands_preserve_user_edit(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_ide import _TRW_COMMANDS, generate_cursor_ide_commands
@@ -149,35 +193,36 @@ class TestCursorIdeAgentsAndCommands:
 
 
 class TestAntigravityAgents:
-    """``.antigravitycli/agents`` was frozen, not destructive — the other direction."""
+    """Antigravity's agents were frozen, not destructive — the other direction.
+
+    The directory moved to ``.agents/agents`` with PRD-CORE-252-FR03 (the one
+    Antigravity's own subagent reference documents) and the writer is now the
+    shared bundle installer. Both freeze directions are still asserted.
+    """
 
     def test_preserve_user_edit(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._antigravity_cli import generate_antigravity_agents
-
-        generate_antigravity_agents(tmp_path)
-        edited = tmp_path / ".antigravitycli" / "agents" / "trw-explorer.md"
+        rel = ".agents/agents/trw-implementer.md"
+        _install_agents_for(tmp_path, "antigravity-cli")
+        edited = tmp_path / rel
+        assert edited.is_file()
+        manifest = {rel: hashlib.sha256(edited.read_bytes()).hexdigest()}
         edited.write_text("# my agent\n", encoding="utf-8")
 
-        result = generate_antigravity_agents(tmp_path)
+        result = _update_agents_for(tmp_path, "antigravity-cli", manifest)
 
         assert edited.read_text(encoding="utf-8") == "# my agent\n"
-        assert ".antigravitycli/agents/trw-explorer.md" in result["preserved"]
+        assert rel in result["preserved"]
 
     def test_refresh_untouched_file(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._antigravity_cli import (
-            antigravity_agent_contents,
-            generate_antigravity_agents,
-        )
-
-        rel = ".antigravitycli/agents/trw-explorer.md"
+        rel = ".agents/agents/trw-implementer.md"
         dest = tmp_path / rel
         dest.parent.mkdir(parents=True)
         dest.write_text("# older bundled agent\n", encoding="utf-8")
 
-        result = generate_antigravity_agents(tmp_path, manifest_hashes={rel: _sha("# older bundled agent\n")})
+        result = _update_agents_for(tmp_path, "antigravity-cli", {rel: _sha("# older bundled agent\n")})
 
-        assert dest.read_bytes() == antigravity_agent_contents()[rel]
-        assert rel in result["updated"]
+        assert dest.read_bytes() == _materialized(rel, "antigravity-cli")
+        assert any(rel in entry for entry in result["updated"])
 
 
 class TestCopilotPathInstructions:
@@ -209,18 +254,14 @@ class TestCopilotPathInstructions:
 
 class TestManagedClientManifestHashes:
     def test_records_hash_for_a_trw_owned_artifact(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._antigravity_cli import (
-            antigravity_agent_contents,
-            generate_antigravity_agents,
-        )
         from trw_mcp.bootstrap._managed_client_artifacts import managed_client_manifest_hashes
 
-        generate_antigravity_agents(tmp_path)
-        rel = ".antigravitycli/agents/trw-explorer.md"
+        rel = ".agents/agents/trw-implementer.md"
+        _install_agents_for(tmp_path, "antigravity-cli")
 
         hashes = managed_client_manifest_hashes(tmp_path, None)
 
-        assert hashes[rel] == hashlib.sha256(antigravity_agent_contents()[rel]).hexdigest()
+        assert hashes[rel] == hashlib.sha256(_materialized(rel, "antigravity-cli")).hexdigest()
 
     def test_declines_to_record_a_user_edited_artifact(self, tmp_path: Path) -> None:
         """Non-laundering: recording the user's hash would make TRW claim it.
@@ -229,11 +270,10 @@ class TestManagedClientManifestHashes:
         makes the guard answer "not modified" on the NEXT update and overwrite —
         i.e. preservation that only survives one run.
         """
-        from trw_mcp.bootstrap._antigravity_cli import generate_antigravity_agents
         from trw_mcp.bootstrap._managed_client_artifacts import managed_client_manifest_hashes
 
-        generate_antigravity_agents(tmp_path)
-        rel = ".antigravitycli/agents/trw-explorer.md"
+        rel = ".agents/agents/trw-implementer.md"
+        _install_agents_for(tmp_path, "antigravity-cli")
         (tmp_path / rel).write_text("# my agent\n", encoding="utf-8")
 
         hashes = managed_client_manifest_hashes(tmp_path, None)
@@ -274,7 +314,7 @@ _E2E_EDITS: tuple[tuple[str, str], ...] = (
     ("copilot", ".github/agents/trw-implementer.agent.md"),
     ("cursor-ide", ".cursor/agents/trw-implementer.md"),
     ("cursor-ide", ".cursor/skills/trw-deliver/SKILL.md"),
-    ("antigravity-cli", ".antigravitycli/agents/trw-explorer.md"),
+    ("antigravity-cli", ".agents/agents/trw-implementer.md"),
 )
 
 
@@ -331,9 +371,16 @@ def test_update_project_still_refreshes_untouched_artifacts(
     template changes between updates and the untouched on-disk artifact must
     pick the new content up.
     """
-    from trw_mcp.bootstrap import _antigravity_cli, update_project
+    from trw_mcp.bootstrap import _copilot_artifacts, update_project
 
-    rel = ".antigravitycli/agents/trw-explorer.md"
+    # Retargeted from the retired `_ANTIGRAVITY_AGENT_TEMPLATES` (PRD-CORE-252-FR04)
+    # onto a surface `_managed_client_artifacts` still owns from a template
+    # dictionary. The bundled-agent surfaces get the same property from
+    # `tests/test_install_agents_destinations.py::test_update_bytes_equal_a_fresh_materialization`,
+    # which is stronger: it asserts the update bytes equal a fresh render for
+    # every agent on every client, rather than for one patched template.
+    name = next(iter(_copilot_artifacts._PATH_SCOPED_TEMPLATES))
+    rel = f".github/instructions/{name}"
     dest = multi_client_project / rel
     assert dest.is_file()
     installed = dest.read_text(encoding="utf-8")
@@ -343,13 +390,13 @@ def test_update_project_still_refreshes_untouched_artifacts(
         update_project(multi_client_project, ide="all")
     assert dest.read_text(encoding="utf-8") == installed
 
-    new_template = "---\nname: trw-explorer\n---\n\n# upstream fix\n"
-    patched = dict(_antigravity_cli._ANTIGRAVITY_AGENT_TEMPLATES)
-    patched["trw-explorer.md"] = new_template
-    monkeypatch.setattr(_antigravity_cli, "_ANTIGRAVITY_AGENT_TEMPLATES", patched)
+    patched = dict(_copilot_artifacts._PATH_SCOPED_TEMPLATES)
+    patched[name] = {"applyTo": "**", "content": "# upstream fix\n"}
+    monkeypatch.setattr(_copilot_artifacts, "_PATH_SCOPED_TEMPLATES", patched)
+    expected = _copilot_artifacts.copilot_path_instruction_contents()[rel]
 
     with patch_update_project_internals():
         result = update_project(multi_client_project, ide="all")
 
     assert not result["errors"], result["errors"]
-    assert dest.read_text(encoding="utf-8") == new_template
+    assert dest.read_bytes() == expected

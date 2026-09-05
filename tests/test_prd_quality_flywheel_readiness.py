@@ -42,7 +42,7 @@ The system shall update the toggle state and persist the new value.
 - `test_api.py::test_toggle_endpoint`
 
 ### Acceptance Tests
-- `platform/src/toggle.test.tsx`
+- `web/src/toggle.test.tsx`
 
 ### Regression Tests
 - `test_toggle.py::test_toggle_regression`

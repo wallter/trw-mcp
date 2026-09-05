@@ -29,8 +29,8 @@ access (``org.plan`` + a ``proprietary:install`` license) but that state
 had NO representation here, so testers resolved ``tier="free"`` and were
 shown a paid-tier remediation. ``beta`` unlocks the same distill-sidecar
 feature as the paid tiers and is provisioned locally via
-``trw-mcp tier issue --tier beta``. The backend's tester program plan name
-is ``"alpha"`` (``backend/services/tester_program.py`` ``TESTER_PLAN``), so
+``trw-mcp tier issue --tier beta``. The platform tester-program service names
+that plan ``"alpha"`` in the entitlements it issues, so
 ``"alpha"`` is accepted as an ALIAS for ``beta`` at load/validation time —
 one concept, one feature row (no separate ``alpha`` feature set).
 
@@ -61,8 +61,8 @@ _DEV_HMAC_KEY = b"trw-v0-dev-key-2026-05-17-replace-in-prod"
 Tier = Literal["free", "team", "pro", "enterprise", "beta"]
 _VALID_TIERS: tuple[Tier, ...] = ("free", "team", "pro", "enterprise", "beta")
 
-# Backend tester-program plan name → canonical TRW tier. The tester program
-# (backend/services/tester_program.py TESTER_PLAN="alpha") provisions "alpha";
+# Platform tester-program plan name → canonical TRW tier. The tester program
+# issues entitlements whose plan is "alpha";
 # we alias it to "beta" so a backend-issued entitlement unlocks the same
 # feature set without a duplicate feature row (one concept, one source of
 # truth). Aliases are resolved AFTER signature verification (the signed

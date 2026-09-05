@@ -11,13 +11,24 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
 # ---------------------------------------------------------------------------
 # FR02 — Shared service layer
 # ---------------------------------------------------------------------------
+
+
+def _run_path_from_init(stdout: str) -> str:
+    """Pull the run directory out of ``trw-mcp local init`` output.
+
+    The printed path IS the handoff (PRD-FIX-132): init is the only offline
+    command that can establish a run identity for a caller that has none.
+    """
+    for line in stdout.splitlines():
+        if line.strip().startswith("Path:"):
+            return line.split("Path:", 1)[1].strip()
+    raise AssertionError(f"local init printed no run path:\n{stdout}")
 
 
 class TestOrchestrationServiceScaffold:
@@ -185,23 +196,38 @@ class TestOrchestrationServiceCheckpoint:
         with pytest.raises(FileNotFoundError):
             write_checkpoint("msg", run_path=tmp_path / "nonexistent")
 
-    def test_checkpoint_auto_detect(self, tmp_path: Path) -> None:
-        """Auto-detection finds the most recent run."""
+    def test_checkpoint_without_identity_refuses(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """PRD-FIX-132: no --run-path and no pin is a refusal, not a guess.
+
+        This test previously asserted the opposite -- that the newest run on
+        disk was auto-detected -- which is why nothing caught a pinless agent
+        checkpointing into another session's run. The run scaffolded below is
+        the only one present, and it is still not selected: being the only
+        candidate is not evidence of ownership either.
+        """
+        from trw_mcp.services._local_run_identity import LocalRunIdentityError
         from trw_mcp.services.orchestration_service import (
             scaffold_run_directory,
             write_checkpoint,
         )
 
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.delenv("TRW_SESSION_ID", raising=False)
         scaffold = scaffold_run_directory(
             "auto-task",
             runs_root=tmp_path / ".trw" / "runs",
             trw_dir=tmp_path / ".trw",
         )
 
-        with patch("trw_mcp.services.orchestration_service.Path.cwd", return_value=tmp_path):
-            result = write_checkpoint("auto-detected")
+        with pytest.raises(LocalRunIdentityError) as exc_info:
+            write_checkpoint("auto-detected")
 
-        assert result["status"] == "checkpoint_created"
+        assert "--run-path" in str(exc_info.value)
+        assert not (Path(scaffold["run_path"]) / "meta" / "checkpoints.jsonl").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -229,56 +255,81 @@ class TestLocalCLISubcommand:
         assert runs_dir.exists()
 
     def test_local_checkpoint_after_init(self, tmp_path: Path) -> None:
-        """trw-mcp local checkpoint works after init."""
-        # First init
-        subprocess.run(
+        """trw-mcp local checkpoint works after init, threading the printed run path.
+
+        PRD-FIX-132: ``init`` prints the run it created and the caller passes it
+        back. That is the flow the degraded-mode protocol block now instructs,
+        replacing the auto-detect this test used to rely on.
+        """
+        init = subprocess.run(
             [sys.executable, "-m", "trw_mcp.server", "local", "init", "--task", "cp-cli"],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
         )
+        run_path = _run_path_from_init(init.stdout)
 
-        # Then checkpoint
         result = subprocess.run(
-            [sys.executable, "-m", "trw_mcp.server", "local", "checkpoint", "--message", "step done"],
+            [
+                sys.executable,
+                "-m",
+                "trw_mcp.server",
+                "local",
+                "checkpoint",
+                "--message",
+                "step done",
+                "--run-path",
+                run_path,
+            ],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
         )
 
-        assert result.returncode == 0
+        assert result.returncode == 0, result.stdout + result.stderr
         assert "Checkpoint created" in result.stdout
 
     def test_local_status_and_deliver_after_init(self, tmp_path: Path) -> None:
         """trw-mcp local status/deliver work without MCP transport."""
-        subprocess.run(
+        init = subprocess.run(
             [sys.executable, "-m", "trw_mcp.server", "local", "init", "--task", "deliver-cli"],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
             check=True,
         )
+        run_path = _run_path_from_init(init.stdout)
 
         status = subprocess.run(
-            [sys.executable, "-m", "trw_mcp.server", "local", "status"],
+            [sys.executable, "-m", "trw_mcp.server", "local", "status", "--run-path", run_path],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
         )
-        assert status.returncode == 0
+        assert status.returncode == 0, status.stdout + status.stderr
         assert "Status: active" in status.stdout
 
         delivered = subprocess.run(
-            [sys.executable, "-m", "trw_mcp.server", "local", "deliver", "--message", "done"],
+            [
+                sys.executable,
+                "-m",
+                "trw_mcp.server",
+                "local",
+                "deliver",
+                "--message",
+                "done",
+                "--run-path",
+                run_path,
+            ],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
         )
-        assert delivered.returncode == 0
+        assert delivered.returncode == 0, delivered.stdout + delivered.stderr
         assert "Run delivered" in delivered.stdout
 
         after = subprocess.run(
-            [sys.executable, "-m", "trw_mcp.server", "local", "status"],
+            [sys.executable, "-m", "trw_mcp.server", "local", "status", "--run-path", run_path],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),

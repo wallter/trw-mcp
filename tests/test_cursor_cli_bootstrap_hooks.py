@@ -221,3 +221,20 @@ class TestHookScriptFunctional:
         assert result.returncode == 0, f"Script exited non-zero:\n{result.stderr}"
         output = json.loads(result.stdout.strip())
         assert output.get("permission") == "allow"
+
+
+def test_every_helper_a_cli_hook_invokes_is_deployed(tmp_path: Path) -> None:
+    """Deployment closure for the CLI profile (adapter diagnostic F1, 2026-09-03):
+    trw-stop.sh runs ``python3 "${_SCRIPT_DIR}/_nudge_gate.py"``; the helper must ship."""
+    import re
+
+    from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_hooks
+
+    generate_cursor_cli_hooks(tmp_path)
+    hooks_dir = tmp_path / ".cursor" / "hooks"
+    invoked = re.compile(r'"\$\{_SCRIPT_DIR\}/([A-Za-z0-9_.-]+)"')
+    for script_path in hooks_dir.glob("*.sh"):
+        for helper in invoked.findall(script_path.read_text(encoding="utf-8")):
+            assert (hooks_dir / helper).is_file(), (
+                f"{script_path.name} invokes {helper}, which the installer did not deploy"
+            )

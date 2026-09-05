@@ -64,10 +64,6 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     # Code-grounded anchors (PRD-CORE-111).
     anchors: list[dict[str, object]]
     anchor_validity: float
-    # Outcome attribution (PRD-CORE-108).
-    sessions_surfaced: int
-    avg_rework_delta: float | None
-    outcome_correlation: str
     session_count: int
     # Bi-temporal validity (PRD-CORE-194 FR03). ``superseded`` surfaces WHY a
     # record is down-ranked/excluded; ``invalidated_by`` names the superseding

@@ -11,9 +11,11 @@ inline ``_record_step`` timing blocks and 9 ad-hoc ``except Exception`` fail-ope
 swallows. Those are folded here into ONE uniform driver (:func:`run_steps`) plus
 a small adapter per step. Behaviour is preserved exactly:
 
-- ``critical=True`` steps re-raise on failure (the pre-refactor code left them
-  un-``try``-wrapped, so a raise propagated); the rest are fail-open (logged at
-  debug, then skipped) exactly like the old inline ``except`` blocks.
+- ``critical=True`` steps fail the payload verdict (PRD-CORE-263-FR01: the
+  runner records the typed reason and appends to ``errors``, and never lets the
+  exception escape the mandated first tool call); the rest are fail-open
+  (recorded as a degradation, then skipped) exactly like the old inline
+  ``except`` blocks.
 - ``timed=False`` reproduces the two steps the old code never recorded a
   duration for (``first_session_marker`` and ``graph_health``) — so
   ``step_durations_ms`` keeps the same key set.
@@ -31,7 +33,13 @@ import structlog
 
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.state._paths import TRWCallContext
-from trw_mcp.tools._ceremony_degradations import DegradationCollector
+from trw_mcp.tools._ceremony_degradations import (
+    DegradationCollector,
+)
+from trw_mcp.tools._ceremony_degradations import (
+    SessionStartStepError as SessionStartStepError,
+)
+from trw_mcp.tools._ceremony_reconcile_step import step_reconcile_local_writes
 from trw_mcp.tools._ceremony_session_start_steps import (
     step_assertion_health,
     step_auto_recall_orchestrated,
@@ -55,9 +63,9 @@ class Step:
     """One entry in the session-start step table.
 
     ``attr`` is the name of the ``_ss_*`` adapter re-exported on the ceremony
-    facade; the driver resolves it by name at call time. ``critical`` steps
-    re-raise on failure (matching the pre-refactor un-``try``-wrapped steps);
-    the rest are fail-open. ``timed`` steps record an entry in
+    facade; the driver resolves it by name at call time. A ``critical`` step's
+    failure makes the payload verdict false and carries a typed reason naming
+    the step; the rest are fail-open. ``timed`` steps record an entry in
     ``step_durations_ms``.
     """
 
@@ -93,13 +101,41 @@ class SessionStartContext:
     degradations: DegradationCollector = field(default_factory=DegradationCollector)
 
 
+#: The one wording for a critical-step failure, so the payload reason, the log
+#: line and the test that asserts it cannot drift apart (PRD-CORE-263-NFR03).
+CRITICAL_STEP_REASON_PREFIX = "critical step"
+
+
+def critical_step_reason(step_key: str, cause: BaseException) -> str:
+    """The typed reason a critical step failure contributes to ``errors``.
+
+    Names the step (so an agent reading ``success: false`` knows WHICH step
+    failed) and the error class (so it knows what kind of failure it was).
+    """
+    return f"{CRITICAL_STEP_REASON_PREFIX} {step_key} failed: {type(cause).__name__}: {cause}"
+
+
 def run_steps(steps: Sequence[Step], sctx: SessionStartContext, facade: ModuleType) -> None:
     """Run each step in order, resolving its adapter via ``getattr(facade, attr)``.
 
     The call-time ``getattr`` (never a captured import-time reference) is the
     invariant that keeps every ``ceremony.<name>`` monkeypatch propagating.
-    Fail-open for non-critical steps; critical steps re-raise. Per-step wall
-    time is recorded into ``sctx.step_durations_ms`` for ``timed`` steps.
+    Per-step wall time is recorded into ``sctx.step_durations_ms`` for ``timed``
+    steps.
+
+    **This is the only place that decides what a step failure means**
+    (PRD-CORE-263-FR01):
+
+    - ``critical`` — the failure is recorded as a degradation AND appended to
+      ``sctx.errors``, which is what makes the payload verdict false. It is
+      NEVER re-raised. DR-001: ``trw_session_start`` is the mandated first
+      action of every session, and an exception escaping it removes the agent's
+      only path to run state, recall and the framework reminder — trading a
+      truthfulness defect for an availability one is not an improvement, so the
+      runner degrades the payload instead. (Before PRD-CORE-263 this branch
+      re-raised, which is what its docstring said; it was also unreachable,
+      because all five critical step bodies swallowed first.)
+    - non-critical — a degradation entry, verdict untouched.
     """
     for step in steps:
         started_at = time.monotonic()
@@ -107,13 +143,25 @@ def run_steps(steps: Sequence[Step], sctx: SessionStartContext, facade: ModuleTy
             fn = getattr(facade, step.attr)
             fn(sctx)
         except Exception as exc:  # justified: fail-open, one step must not block session start
-            if step.critical:
-                raise
+            # Report the ORIGINAL error class: a step that refused to classify
+            # its own failure hands it over wrapped, and an ``error_class`` of
+            # ``SessionStartStepError`` on every critical entry would erase the
+            # field an operator triages by. DEF-03: unwrap in a LOOP, not just
+            # once — a step that calls another already-wrapping step function
+            # (e.g. ``phase_recall`` calling ``step_phase_auto_recall``) could
+            # otherwise nest two layers deep and leave ``cause`` as the INNER
+            # ``SessionStartStepError`` instead of the real failure. The call
+            # sites are also fixed to never double-wrap; this loop is the
+            # runner's own belt to that brace.
+            cause: BaseException = exc
+            while isinstance(cause, SessionStartStepError):
+                cause = cause.cause
             # Was a silent ``logger.debug`` — now recorded as a typed, counted
-            # degradation so the swallow is observable in the payload. Behaviour
-            # is unchanged: a non-critical step failure still does NOT flip
-            # ``success`` (only ``errors`` does).
-            sctx.degradations.record(step.key, exc)
+            # degradation so the swallow is observable in the payload. For a
+            # non-critical step this still does NOT flip ``success``.
+            sctx.degradations.record(step.key, cause)
+            if step.critical:
+                sctx.errors.append(critical_step_reason(step.key, cause))
         finally:
             if step.timed:
                 sctx.step_durations_ms[step.key] = round((time.monotonic() - started_at) * 1000.0, 2)
@@ -139,6 +187,12 @@ def _ss_run_resolve(sctx: SessionStartContext) -> None:
 
 def _ss_surface_stamp(sctx: SessionStartContext) -> None:
     session_id = str(sctx.call_ctx.session_id) if sctx.call_ctx is not None else ""
+    # PRD-CORE-263-NFR04: the key is seeded BEFORE the call so a consumer that
+    # read ``surface_snapshot_id`` on the pre-263 fail-open path still finds a
+    # string. What changed is the verdict, not the key set: the step now raises
+    # (FR01) and the runner records the failure, so an empty id no longer passes
+    # for a stamp that happened.
+    sctx.results["surface_snapshot_id"] = ""
     sctx.results["surface_snapshot_id"] = step_surface_stamp(sctx.run_dir, session_id, sctx.degradations)
 
 
@@ -179,27 +233,64 @@ def _ss_counter(sctx: SessionStartContext) -> None:
     step_increment_session_counter()
 
 
+#: Every key ``run_auto_maintenance()`` can produce that reaches the payload.
+#:
+#: PRD-CORE-263-FR04. This list used to name 11 of the 14 keys
+#: ``AutoMaintenanceDict`` declared, and the three it omitted —
+#: ``wal_checkpoint``, ``embeddings_coverage_ratio`` and
+#: ``embedder_warmup_scheduled`` — were computed on the hot path of every
+#: session and then dropped here. The WAL checkpoint in particular is called
+#: unconditionally, so the work was paid for on every session start and its
+#: outcome was unobservable.
+MAINTENANCE_PROPAGATED_KEYS: tuple[str, ...] = (
+    "update_advisory",
+    "auto_upgrade",
+    "auto_upgrade_check_deferred",
+    "stale_runs_closed",
+    "stale_runs_deferred",
+    "embeddings_advisory",
+    "embeddings_backfill",
+    "embeddings_backfill_scheduled",
+    "embeddings_backfill_deferred",
+    "embeddings_backfill_not_performed",  # PRD-CORE-263 DEF-11
+    # PRD-CORE-263-FR04: the three that were computed and dropped.
+    "embedder_warmup_scheduled",
+    "embeddings_coverage_ratio",
+    "wal_checkpoint",
+    "pending_learns_replayed",
+    "pending_learns_deferred",
+    # PRD-CORE-257: the expired-bound list and the per-step outcome map are
+    # top-level response keys, not log-only diagnostics — FR03 requires the
+    # response to name the step whose bound fired.
+    "deferral_expired_ran",
+    "step_outcomes",
+)
+
+#: Keys the maintenance sweep produces that are DELIBERATELY not propagated.
+#:
+#: Empty today, and that is the honest answer rather than an oversight: nothing
+#: the sweep computes is currently internal-only. It exists as the other half of
+#: the totality assertion in ``tests/test_ceremony_helpers_auto_maintenance.py``
+#: (``test_every_maintenance_key_is_propagated_or_declared_internal``):
+#: propagated ∪ internal must equal the declared ``AutoMaintenanceDict`` keys,
+#: so a NEW key classified in neither fails that test BY NAME instead of being
+#: silently dropped the way the three above were.
+MAINTENANCE_INTERNAL_KEYS: frozenset[str] = frozenset()
+
+
 def _ss_sanitize_maintain(sctx: SessionStartContext) -> None:
     from trw_mcp.tools._ceremony_helpers import step_sanitize_and_maintain
 
     maintenance = step_sanitize_and_maintain()
     results = cast("dict[str, object]", sctx.results)
-    for key in (
-        "update_advisory",
-        "auto_upgrade",
-        "auto_upgrade_check_deferred",
-        "stale_runs_closed",
-        "stale_runs_deferred",
-        "embeddings_advisory",
-        "embeddings_backfill",
-        "embeddings_backfill_scheduled",
-        "embeddings_backfill_deferred",
-        "wal_checkpoint_deferred",
-        "pending_learns_replayed",
-        "pending_learns_deferred",
-    ):
-        if key in maintenance:
-            results[key] = maintenance[key]
+    # AutoMaintenanceDict is total=False and every key is optional, so the read
+    # must be a ``.get`` rather than a subscript: a maintenance step that
+    # produced no result leaves its key absent, and indexing it would be a
+    # KeyError on the mandated first action.
+    for key in MAINTENANCE_PROPAGATED_KEYS:
+        value = maintenance.get(key)
+        if value is not None:
+            results[key] = value
 
 
 def _ss_phase_recall(sctx: SessionStartContext) -> None:
@@ -216,13 +307,13 @@ def _ss_sync_health(sctx: SessionStartContext) -> None:
     from trw_mcp.tools import ceremony as _ceremony
     from trw_mcp.tools._ceremony_helpers import step_sync_health
 
-    sctx.results["sync_health"] = step_sync_health(_ceremony.resolve_trw_dir(), sctx.config)
+    sctx.results["sync_health"] = step_sync_health(_ceremony.resolve_trw_dir(), sctx.config, sctx.degradations)
 
 
 def _ss_assertion_health(sctx: SessionStartContext) -> None:
     from trw_mcp.tools import ceremony as _ceremony
 
-    ah = step_assertion_health(_ceremony.resolve_trw_dir(), sctx.degradations)
+    ah = step_assertion_health(_ceremony.resolve_trw_dir(), sctx.degradations, sctx.config)
     if ah is not None:
         sctx.results["assertion_health"] = ah
 
@@ -233,6 +324,41 @@ def _ss_graph_health(sctx: SessionStartContext) -> None:
     gh = step_graph_health(_ceremony.resolve_trw_dir(), sctx.degradations)
     if gh is not None:
         sctx.results["graph_health"] = gh
+
+
+def _ss_reconcile_local_writes(sctx: SessionStartContext) -> None:
+    from trw_mcp.tools import ceremony as _ceremony
+
+    sctx.results["reconciled_local_writes"] = step_reconcile_local_writes(
+        _ceremony.resolve_trw_dir(),
+        sctx.degradations,
+    )
+
+
+def _ss_handoff_readback(sctx: SessionStartContext) -> None:
+    """PRD-CORE-249-FR03 — project-scoped open handoff rows.
+
+    Placed after ``run_resolve`` so the project root is settled. Non-critical:
+    an unfinished-work advisory must never take down the mandated first action.
+    """
+    from trw_mcp.tools._project_handoff_readback import step_handoff_readback
+
+    sctx.results["open_handoff"] = step_handoff_readback()
+
+
+def _ss_moved_checkout(sctx: SessionStartContext) -> None:
+    """PRD-CORE-253-FR01 — a checkout whose rows are one rename away.
+
+    The key is omitted only for ``status="absent"``, so a normal session carries
+    no extra payload and the observation is salient when it does appear. A
+    ``not_measured`` readback DOES set the key: an omitted key used to mean both
+    "no move" and "the probe failed", which is the ambiguity the step removes.
+    """
+    from trw_mcp.tools._moved_checkout_readback import step_moved_checkout
+
+    observed = step_moved_checkout()
+    if observed.get("status") != "absent":
+        sctx.results["moved_checkout"] = observed
 
 
 def _ss_pipeline_health(sctx: SessionStartContext) -> None:
@@ -258,4 +384,14 @@ SESSION_START_STEPS: tuple[Step, ...] = (
     Step("assertion_health", "_ss_assertion_health"),
     Step("graph_health", "_ss_graph_health", timed=False),
     Step("pipeline_health", "_ss_pipeline_health"),
+    # PRD-CORE-247-FR05. Non-critical: a reconciliation report is diagnostic, so
+    # its failure records a degradation and leaves success: true.
+    Step("reconcile_local_writes", "_ss_reconcile_local_writes"),
+    # PRD-CORE-249-FR03. Non-critical + timed: the readback is an advisory about
+    # work earlier runs deferred, and its failure must never block session start.
+    Step("handoff_readback", "_ss_handoff_readback"),
+    # PRD-CORE-253-FR01. Non-critical: a possible-rename advisory is diagnostic
+    # and must never take down the mandated first action. Last, so it cannot
+    # delay anything an agent needs to start work.
+    Step("moved_checkout", "_ss_moved_checkout"),
 )

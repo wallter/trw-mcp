@@ -64,6 +64,8 @@ def handle_manual_mode(
     reviewer_receipt_id: str | None = None,
     review_completed: bool = False,
     verified_reviewer_identity: RunIdentity | None = None,
+    external_receipt_path: str | None = None,
+    adversarial_pass: bool = False,
 ) -> ManualReviewResult:
     """Handle the manual review mode -- validate findings, compute verdict, persist.
 
@@ -73,6 +75,12 @@ def handle_manual_mode(
     ``verified_reviewer_identity`` (OQ-001) must come from
     ``resolve_verified_reviewer_identity`` — it stamps the framework-verified
     reviewer identity instead of the delivering run's.
+
+    PRD-CORE-255-FR02/FR04: ``external_receipt_path`` and ``adversarial_pass`` are
+    passed through UNINTERPRETED to the receipt writer, which is the only place
+    that decides what they earn. This handler never upgrades a family or honors
+    an adversarial claim itself — a second interpretation site is how the two
+    would drift apart.
     """
     from trw_mcp.state.persistence import FileStateReader
     from trw_mcp.tools._review_provenance import build_reviewer_block, derive_reviewer_source
@@ -135,6 +143,8 @@ def handle_manual_mode(
             "non_substantive_reason": "" if substantive else MANUAL_EMPTY_REVIEW_REASON,
             "reviewer": reviewer_block,
             "review_completed": review_completed,
+            "external_receipt_path": external_receipt_path or "",
+            "adversarial_pass": adversarial_pass,
         },
         {
             "review_id": review_id,

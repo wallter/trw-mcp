@@ -39,7 +39,6 @@ _DURABLE: dict[str, str] = {
     "tool_call_events.jsonl": "legacy projection, still read by mcp_security_status",
     "session-events.jsonl": "state/_session_events.py",
     "ceremony-overrides.yaml": "state/_ceremony_escalation.py — operator escalation overrides",
-    "file_ownership.yaml": "tools/checkpoint.py — multi-agent coordination state",
     "nudge-analysis.json": "state/nudge_analysis.py",
     "claude_md_hash.txt": "state/claude_md/_sync_hash.py — render cache",
     "architecture.yaml": "context pack",
@@ -192,9 +191,9 @@ class TestNoDriftBetweenWritersAndCleanup:
         # would sweep them while a stricter regex kept this guard green.
         writer = re.compile(r'(?:"context"|context_dir)\s*/\s*"([A-Za-z0-9_.\-]+)"')
         # Two shell forms, both in use: the literal `.../.trw/context/<name>`
-        # and the `$_context_dir/<name>` idiom (pre-compact.sh, helper-idle.sh,
-        # completion-gate.sh, stop-ceremony.sh). Matching only the first left
-        # four hooks invisible to this guard.
+        # and the `$_context_dir/<name>` idiom (pre-compact.sh,
+        # stop-ceremony.sh). Matching only the first left several hooks
+        # invisible to this guard.
         shell_writer = re.compile(r"(?:/\.trw/context/|\$\{?_context_dir\}?/)([A-Za-z0-9_.\-]+)")
         found: set[str] = set()
         for path in root.rglob("*.py"):
@@ -223,11 +222,14 @@ class TestNoDriftBetweenWritersAndCleanup:
         # - hook-executions.log: PRD-FIX-031 Non-Goals states the purge is
         #   deliberate ("rotation already exists in lib-trw.sh:85; cleanup here
         #   is a one-time purge on update only").
-        # - tc_block_ / idle_block_: the ceremony block files themselves
-        #   (completion-gate.sh:117, helper-idle.sh:118), which ARE the
-        #   transients this cleanup exists to reap — lib-trw.sh:561 also rm's
-        #   them directly. A writer of a transient is expected to collide with
-        #   the pattern that deletes it.
+        # - tc_block_ / idle_block_: the ceremony block files, which ARE the
+        #   transients this cleanup exists to reap — lib-trw.sh rm's them
+        #   directly. A writer of a transient is expected to collide with the
+        #   pattern that deletes it. Their two writers (completion-gate.sh,
+        #   helper-idle.sh) were deleted by PRD-CORE-250 FR01/FR02; the names
+        #   stay listed because lib-trw.sh still reaps them and the purge
+        #   pattern still matches, so removing the exemption would only make
+        #   this guard fail on a file nothing writes.
         _INTENTIONAL_PURGE = {"hook-executions.log", "tc_block_", "idle_block_"}
 
         swept = sorted(
@@ -237,3 +239,58 @@ class TestNoDriftBetweenWritersAndCleanup:
             "these filenames are written by production code AND match a "
             f"transient-deletion pattern, so an update-project destroys them: {swept}"
         )
+
+
+# --- PRD-CORE-265-FR02: exactly one ownership path ---------------------------
+
+#: The two paths PRD-CORE-265 retired. Neither may appear in trw-mcp source or
+#: any bundled skill: the first was probed by ``checkpoint.py`` and had never
+#: existed in any project, the second was documented by two bundled skills and
+#: read by nothing.
+_RETIRED_OWNERSHIP_PATHS = (
+    ".trw/context/file_ownership.yaml",
+    "scratch/sprint-coordination/file_ownership.yaml",
+)
+
+
+def test_one_canonical_file_ownership_path() -> None:
+    """FR02. One ownership artifact, and the recovery line stops lying.
+
+    ATTRIBUTION. The grep half guards the edits to
+    ``tools/checkpoint.py::_read_pre_compact_state``, the two bundled SKILL.md
+    bodies, and ``data/playbook-template.yaml``; restoring any of the retired
+    strings turns it red. The recovery half guards
+    ``tools/checkpoint.py::_resolve_formation_line`` — the line that used to
+    render ``not set`` on every compaction because it probed a path that has
+    never existed, conflating "checked and found nothing" with "never checked".
+    """
+    import trw_mcp
+    from trw_mcp.formation import MANIFEST_FILENAME
+
+    root = Path(trw_mcp.__file__).parent
+    offenders: dict[str, list[str]] = {}
+    for path in list(root.rglob("*.py")) + list(root.rglob("*.md")) + list(root.rglob("*.yaml")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        hits = [retired for retired in _RETIRED_OWNERSHIP_PATHS if retired in text]
+        # ``file_ownership`` in ANY spelling is retired: the split this FR closes
+        # was three-way, so a fourth spelling is the same defect re-committed.
+        if "file_ownership" in text:
+            hits.append("file_ownership")
+        if hits:
+            offenders[str(path.relative_to(root))] = hits
+    assert not offenders, f"retired ownership paths still named in the shipped package: {offenders}"
+    assert MANIFEST_FILENAME == "formation.yaml"
+
+
+def test_pre_compact_recovery_distinguishes_no_formation_from_unreadable(tmp_path: Path) -> None:
+    """FR02 / NFR02. Three answers, none of them silence."""
+    from trw_mcp.tools.checkpoint import _resolve_formation_line
+
+    run_dir = tmp_path / "run"
+    (run_dir / "meta").mkdir(parents=True)
+    assert _resolve_formation_line(run_dir) == "none active"
+
+    (run_dir / "formation.yaml").write_text("formation_id: [unclosed\n", encoding="utf-8")
+    broken = _resolve_formation_line(run_dir)
+    assert broken.startswith("unresolved"), broken
+    assert "formation.yaml" in broken, "an unreadable manifest must name the file, never read as absence"

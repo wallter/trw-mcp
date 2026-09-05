@@ -17,16 +17,26 @@ Precedence (highest wins):
   the ``dispatch_default_read_only`` config baseline. (The caller is responsible
   for turning an ``--allow-writes`` request into ``read_only=False``.)
 
-A resolved client absent from ``dispatch_enabled_clients`` is rejected. All
-rejection paths raise :class:`DispatchResolutionError` carrying an ``exit_code``
-so the CLI can translate it to ``sys.exit`` and the MCP tool can surface it as a
-structured ``{"error", "exit_code"}`` payload.
+A resolved client absent from ``dispatch_enabled_clients`` is rejected, as is a
+client whose registry entry records its capabilities as UNVERIFIED
+(PRD-CORE-266-FR04). All rejection paths raise :class:`DispatchResolutionError`
+carrying an ``exit_code`` so the CLI can translate it to ``sys.exit`` and the MCP
+tool can surface it as a structured ``{"error", "exit_code"}`` payload.
+
+Refusal happens HERE, before :func:`resolve_dispatch_request` returns a request
+and therefore before any argv is built or any subprocess is launched. That
+ordering is the point: an unverified entry carries provisional flag data recorded
+for documentation, and it must never be possible for that data to reach a command
+line. No fallback and no substitution is ever applied — silently answering with a
+different client would answer the operator's question with a different agent's
+output, which is a worse failure than refusing.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 from trw_mcp.dispatch._roles import apply_role
 from trw_mcp.dispatch._types import DispatchRequest
 
@@ -78,7 +88,36 @@ def _resolve_client(
             f"client {resolved!r} is disabled (set dispatch.enabled_clients in .trw/config.yaml)",
             exit_code=2,
         )
+    _refuse_unverified(resolved)
     return resolved
+
+
+def _refuse_unverified(client: str) -> None:
+    """Refuse a client TRW has not verified, naming what verification is missing.
+
+    Runs AFTER the enabled check so an operator who never enabled the client
+    still hears the accurate "disabled" answer, and BEFORE any request object
+    exists so no argv can be built from provisional data.
+
+    The message quotes the entry's own ``outstanding`` text rather than a generic
+    line: telling a caller that a client is unverified without telling them what
+    would settle it leaves them with no next step, and a caller with no next step
+    reaches for a bypass.
+    """
+    try:
+        spec = client_spec_for(client)
+    except UnknownClientError:
+        raise DispatchResolutionError(
+            f"client {client!r} has no dispatch client spec registered; no substitute was applied.",
+            exit_code=2,
+        ) from None
+    if spec.verification.method == "unverified":
+        raise DispatchResolutionError(
+            f"client {client!r} is UNVERIFIED: TRW has not established its capabilities, so it "
+            f"will not be launched. Outstanding verification: {spec.verification.outstanding}. "
+            "No default or fallback client was substituted.",
+            exit_code=2,
+        )
 
 
 def resolve_dispatch_request(

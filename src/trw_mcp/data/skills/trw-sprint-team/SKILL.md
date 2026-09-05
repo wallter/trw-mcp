@@ -27,10 +27,11 @@ description: "Plan sprint-scale coordination from a sprint document. Produces a 
    - validation command
 4. Validate zero overlap across source and test file ownership.
 5. Ask for user approval before launching helpers or making broad edits.
-6. Generate/update coordination artifacts under `scratch/sprint-coordination/` when persistence is useful:
-   - `file_ownership.yaml`
-   - `workstreams.yaml`
-   - optional `playbooks/{workstream}.md`
+6. Record ownership in the formation manifest — `trw_init(advanced={"formation": {...}})`
+   writes `formation.yaml` under the orchestrator run and each peer joins with
+   `trw_init(advanced={"join_formation": {...}})`. Its `owned_paths` /
+   `test_owned_paths` are what the commit boundary enforces; brief each member with
+   `trw-mcp formation brief <member_id>` rather than writing prose per peer.
 7. Execute or delegate in the smallest safe batches.
 8. Integrate results, run validation, record `trw_build_check`, and deliver.
 

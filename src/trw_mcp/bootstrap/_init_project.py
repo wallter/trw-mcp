@@ -7,19 +7,19 @@ required framework files into a target git repository.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.bootstrap._client_integrations import run_install_integrations
-from trw_mcp.canons.registry import install_view, load_registry
+from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
 
 from ._utils import (
     _DATA_DIR,
     ProgressCallback,
     _copy_file,
     _default_config,
-    _ensure_dir,
     _merge_mcp_json,
     _minimal_claude_md,
     _minimal_review_md,
@@ -66,17 +66,14 @@ from trw_mcp.bootstrap._init_project_ide import (
     _run_copilot_installer as _run_copilot_installer,
 )
 
-
-def _create_directory_structure(
-    target_dir: Path,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Create the TRW directory scaffold inside *target_dir*."""
-    from . import _TRW_DIRS
-
-    for rel_dir in _TRW_DIRS:
-        _ensure_dir(target_dir / rel_dir, result, on_progress)
+# Client-aware scaffold sinks extracted to _init_project_scaffold (PRD-CORE-262
+# FR05, 350-eLOC gate). Re-exported so existing importers keep resolving.
+from trw_mcp.bootstrap._init_project_scaffold import (
+    _copy_bundled_data_files as _copy_bundled_data_files,
+)
+from trw_mcp.bootstrap._init_project_scaffold import (
+    _create_directory_structure as _create_directory_structure,
+)
 
 
 def _harden_trw_permissions(target_dir: Path) -> None:
@@ -166,27 +163,6 @@ def _write_ceremony_state_skeleton(
         on_progress("created", str(state_path))
 
 
-def _copy_bundled_data_files(
-    target_dir: Path,
-    force: bool,
-    result: dict[str, list[str]],
-    on_progress: ProgressCallback = None,
-) -> None:
-    """Copy all bundled data files from ``_DATA_FILE_MAP`` to *target_dir*."""
-    from . import _DATA_FILE_MAP
-
-    # Canon bodies are promoted together with VERSION.yaml and DEPLOYMENT.json
-    # by _write_version_yaml after config creation. Writing them here would
-    # expose a mixed generation if init were interrupted.
-    canon_destinations = {
-        destination for _, destination in install_view(load_registry()) if destination.startswith(".trw/frameworks/")
-    }
-    for data_name, dest_rel in _DATA_FILE_MAP:
-        if dest_rel in canon_destinations:
-            continue
-        _copy_file(_DATA_DIR / data_name, target_dir / dest_rel, force, result, on_progress)
-
-
 def _write_initial_config(
     target_dir: Path,
     force: bool,
@@ -225,15 +201,30 @@ def _install_hooks(
     force: bool,
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
+    *,
+    clients: Sequence[str] = ("claude-code",),
+    explicit: bool = False,
 ) -> None:
     """Copy bundled hook scripts to ``.claude/hooks/`` and install git hooks.
 
     ``.claude/hooks/`` is the Claude Code TOOL-LIFECYCLE surface — it has no
     ``post-commit`` event — so the git-hook family is installed separately into
     ``.git/hooks/`` (PRD-CORE-231 FR01/FR02).
+
+    The ``.claude/hooks`` copy is gated on *clients* (PRD-CORE-262-FR05): those
+    scripts are Claude Code's, and a codex-only project received 17 of them
+    under a directory none of its clients read. Only an EXPLICIT codex-only
+    selection drops the copy (CORE262-13: *explicit* distinguishes a user
+    ``--ide codex`` from ``detect_ide`` resolving to ``["codex"]`` off a
+    pre-existing ``.codex/`` marker on a bare install, which must NOT drop
+    it) — every other case (default, claude-code, cursor-ide, a mixed set,
+    ...) keeps it exactly as HEAD did. The git-hook family and the
+    intent-hook re-blessing stay unconditional — both are client-neutral.
     """
+    from . import _wants_claude_scaffold
+
     hooks_source = _DATA_DIR / "hooks"
-    if hooks_source.is_dir():
+    if _wants_claude_scaffold(clients, explicit=explicit) and hooks_source.is_dir():
         for hook_file in sorted(hooks_source.iterdir()):
             if hook_file.suffix == ".sh":
                 _copy_file(
@@ -347,7 +338,37 @@ def _generate_root_files(
     """
     _merge_mcp_json(target_dir, result, on_progress)
     claude_md_path = target_dir / "CLAUDE.md"
-    _write_if_missing(claude_md_path, _minimal_claude_md(), force, result, on_progress)
+    # Record which clients the user actually chose BEFORE anything reads it
+    # back. Installing writes `.claude/` and `.cursor/` into every project
+    # whatever the client, so from here on detection cannot tell a codex-only
+    # project from a Claude Code one; without the record, every later run
+    # re-derives the wrong answer from artifacts we created ourselves.
+    from ._template_claude_md import claude_md_is_claimed
+
+    claimed = claude_md_is_claimed(target_dir, ide_targets if ide_explicit else None)
+    # PRD-CORE-262-FR05: an EXPLICIT, codex-only selection never gets a root
+    # CLAUDE.md at all -- not even the write-then-strip shell every other
+    # unclaimed client (e.g. an explicit cursor-ide) still receives. Before
+    # this, the scaffold write ran unconditionally and the orphan-strip below
+    # only hollowed the file out, so a codex-only project still ended up with
+    # a 17-line root CLAUDE.md none of its clients load. Every other
+    # selection -- default, claude-code, cursor-ide, or codex alongside
+    # another client -- keeps HEAD's write-then-strip behavior unchanged, and
+    # the write itself stays on the guarded seam below (no new write path).
+    codex_only = ide_explicit and set(ide_targets or []) == {"codex"}
+    if not claude_md_path.exists() and codex_only:
+        logger.debug("claude_md_scaffold_skipped_codex_only", ide_targets=list(ide_targets or []))
+    elif claude_md_path.exists() and force:
+        # `_write_if_missing`'s force branch is a raw write_text: fine for the
+        # non-user config/REVIEW.md callers below, but a raw clobber of a
+        # hand-edited CLAUDE.md -- the class of loss FR06 exists to prevent.
+        from trw_mcp.bootstrap._guarded_write import guarded_claude_md_scaffold_write
+
+        guarded_claude_md_scaffold_write(
+            claude_md_path, _minimal_claude_md(), project_root=target_dir, result=result, force=force
+        )
+    else:
+        _write_if_missing(claude_md_path, _minimal_claude_md(), force, result, on_progress)
     # Resolve the PRD-CORE-203 carrier on the file we just scaffolded, so a fresh
     # install produces the same shape an existing project converges to. Without
     # this, `init-project` always wrote a fully inline TRW block while
@@ -358,14 +379,6 @@ def _generate_root_files(
     # carrier failure here (EROFS/ENOSPC, malformed markers) would otherwise be
     # discarded while the installer still reported a clean create, which is a
     # truthfulness defect, not just a cosmetic one.
-    # Record which clients the user actually chose BEFORE anything reads it
-    # back. Installing writes `.claude/` and `.cursor/` into every project
-    # whatever the client, so from here on detection cannot tell a codex-only
-    # project from a Claude Code one; without the record, every later run
-    # re-derives the wrong answer from artifacts we created ourselves.
-    from ._template_claude_md import claude_md_is_claimed
-
-    claimed = claude_md_is_claimed(target_dir, ide_targets if ide_explicit else None)
     if claude_md_path.exists() and not claimed:
         # PRD-CORE-240-FR04, same rule as the shared AGENTS.md: only claude-code
         # declares CLAUDE.md, so for a codex/opencode/copilot project this file
@@ -375,9 +388,17 @@ def _generate_root_files(
         # moved on. The MCP sync path already declined this write
         # (`_determine_write_target_decision`); bootstrap did it anyway, so the
         # two entry points disagreed about the same file.
+        from trw_mcp.exceptions import StateError
         from trw_mcp.state.claude_md._agents_md import strip_orphaned_claude_md_block
 
-        strip_orphaned_claude_md_block(target_dir, ide_targets)
+        # CORE262-14: the strip's write can now fail loudly (StateError) instead
+        # of silently returning False, so a genuine failure here must be
+        # surfaced, not swallowed -- an install that leaves the foreign TRW
+        # block behind must not report a clean result.
+        try:
+            strip_orphaned_claude_md_block(target_dir, ide_targets)
+        except StateError as exc:
+            result["errors"].append(f"Failed to remove orphaned TRW block from {claude_md_path}: {exc}")
     elif claude_md_path.exists():
         from ._template_claude_md import _update_claude_md_trw_section
 
@@ -413,6 +434,7 @@ def _write_hook_env_for_primary_profile(target_dir: Path, ide_targets: list[str]
         logger.warning("hook_env_write_failed", error=str(exc), primary=primary)
 
 
+@with_instruction_write_trigger("bootstrap_init", "init-project")
 def init_project(
     target_dir: Path,
     *,
@@ -516,16 +538,22 @@ def _run_init_phases(
     # Resolve IDE targets before creating any provider-specific directories.
     # Otherwise new scaffold directories can pollute auto-detection.
     ide_targets = resolve_ide_targets(target_dir, ide_override=ide)
+    # CORE262-13: whether the caller EXPLICITLY chose these targets (a user
+    # ``--ide``) versus ``detect_ide`` resolving them off on-disk markers. A
+    # pre-existing ``.codex/`` makes a bare init resolve to ``["codex"]`` too,
+    # and that auto-detected case must not take the codex-only suppression
+    # path the FR05 scaffold gates apply to an EXPLICIT codex-only request.
+    ide_explicit = ide is not None
 
-    # 1. Create directory structure
-    _create_directory_structure(target_dir, result, on_progress)
+    # 1. Create directory structure (client-owned dirs gated on ide_targets)
+    _create_directory_structure(target_dir, result, on_progress, clients=ide_targets, explicit=ide_explicit)
 
     # 1b. PRD-FIX-076: Write ceremony-state.json skeleton with mcp_never_connected
     # sentinel so trw-eval can detect runs where MCP never connected.
     _write_ceremony_state_skeleton(target_dir, result, on_progress)
 
     # 2. Copy bundled data files
-    _copy_bundled_data_files(target_dir, force, result, on_progress)
+    _copy_bundled_data_files(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
 
     # 3. Write generated config and seed files (includes target_platforms)
     _write_initial_config(
@@ -535,21 +563,24 @@ def _run_init_phases(
         source_package=source_package,
         test_path=test_path,
         runs_root=runs_root,
-        target_platforms=_recordable_targets(target_dir, ide_targets, explicit=ide is not None),
+        target_platforms=_recordable_targets(target_dir, ide_targets, explicit=ide_explicit),
         on_progress=on_progress,
     )
 
     # 4. Copy hook scripts
-    _install_hooks(target_dir, force, result, on_progress)
+    _install_hooks(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
 
     # 5. Copy skills
-    _install_skills(target_dir, force, result, on_progress)
+    _install_skills(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
 
-    # 6. Copy agents
-    _install_agents(target_dir, force, result, on_progress)
+    # 6. Materialize agents for every selected client (PRD-CORE-252-FR03).
+    # ``ide_targets`` is the resolved selection and is never empty
+    # (``resolve_ide_targets`` defaults to claude-code), so passing it is what
+    # makes the client-parameterised installer reachable in production at all.
+    _install_agents(target_dir, force, result, on_progress, clients=ide_targets)
 
     # 7. Generate root-level files (Claude Code: .mcp.json, CLAUDE.md)
-    _generate_root_files(target_dir, force, result, ide_targets, on_progress, ide_explicit=ide is not None)
+    _generate_root_files(target_dir, force, result, ide_targets, on_progress, ide_explicit=ide_explicit)
 
     # 7a. Claude Code distill channels (always installed — claude-code is the default)
     if "claude-code" in ide_targets or not ide_targets:

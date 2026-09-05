@@ -253,7 +253,7 @@ def _mk_tree(root: Path, files: list[str]) -> None:
 
 def test_resolve_bare_filename_one_match_returns_true(tmp_path: Path) -> None:
     """FR-01 happy path: exactly one match → resolved=True, count=1."""
-    _mk_tree(tmp_path, ["docs/eval/TRACE-SCHEMA.md"])
+    _mk_tree(tmp_path, ["internal-docs/TRACE-SCHEMA.md"])
     resolved, count = _resolve_bare_filename(tmp_path, "TRACE-SCHEMA.md")
     assert resolved is True
     assert count == 1
@@ -264,9 +264,9 @@ def test_resolve_bare_filename_multi_match_returns_ambiguous(tmp_path: Path) -> 
     _mk_tree(
         tmp_path,
         [
-            "trw-eval/src/trw_eval/scoring/analysis/a/prompts.py",
-            "trw-eval/src/trw_eval/scoring/analysis/b/prompts.py",
-            "trw-eval/src/trw_eval/scoring/analysis/c/prompts.py",
+            "eval-pkg/src/eval_pkg/scoring/analysis/a/prompts.py",
+            "eval-pkg/src/eval_pkg/scoring/analysis/b/prompts.py",
+            "eval-pkg/src/eval_pkg/scoring/analysis/c/prompts.py",
         ],
     )
     resolved, count = _resolve_bare_filename(tmp_path, "prompts.py")
@@ -276,7 +276,7 @@ def test_resolve_bare_filename_multi_match_returns_ambiguous(tmp_path: Path) -> 
 
 def test_resolve_bare_filename_zero_match_returns_unresolved(tmp_path: Path) -> None:
     """FR-01 + NFR-03: zero matches → resolved=False, count=0 (surfaces as warning)."""
-    _mk_tree(tmp_path, ["docs/eval/something_else.md"])
+    _mk_tree(tmp_path, ["internal-docs/something_else.md"])
     resolved, count = _resolve_bare_filename(tmp_path, "aggregate.json")
     assert resolved is False
     assert count == 0
@@ -301,12 +301,12 @@ def test_resolve_bare_filename_respects_exclude_dirs(tmp_path: Path) -> None:
 
 def test_resolve_bare_filename_memoizes(tmp_path: Path) -> None:
     """FR-01 perf: cache dict short-circuits repeat lookups for the same token."""
-    _mk_tree(tmp_path, ["docs/eval/TRACE-SCHEMA.md"])
+    _mk_tree(tmp_path, ["internal-docs/TRACE-SCHEMA.md"])
     cache: dict[str, tuple[bool, int]] = {}
     r1 = _resolve_bare_filename(tmp_path, "TRACE-SCHEMA.md", cache=cache)
     assert "TRACE-SCHEMA.md" in cache
     # Delete the file: if memoization works, the cached result survives.
-    (tmp_path / "docs/eval/TRACE-SCHEMA.md").unlink()
+    (tmp_path / "internal-docs/TRACE-SCHEMA.md").unlink()
     r2 = _resolve_bare_filename(tmp_path, "TRACE-SCHEMA.md", cache=cache)
     assert r1 == r2 == (True, 1)
 
@@ -331,7 +331,7 @@ def test_bare_filename_unknown_extension_falls_through(tmp_path: Path) -> None:
 
 def test_bare_filename_single_match_emits_no_failure(tmp_path: Path) -> None:
     """FR-01 happy path end-to-end: single-match bare filename produces zero failures."""
-    _mk_tree(tmp_path, ["docs/eval/TRACE-SCHEMA.md"])
+    _mk_tree(tmp_path, ["internal-docs/TRACE-SCHEMA.md"])
     content = "Per `TRACE-SCHEMA.md`, the trace has fields X and Y."
     failures = _check_repo_path_references(content, tmp_path)
     assert failures == []
@@ -342,8 +342,8 @@ def test_bare_filename_emits_warning_not_error_on_ambiguous(tmp_path: Path) -> N
     _mk_tree(
         tmp_path,
         [
-            "trw-eval/a/prompts.py",
-            "trw-eval/b/prompts.py",
+            "eval-pkg/a/prompts.py",
+            "eval-pkg/b/prompts.py",
         ],
     )
     content = "The helper `prompts.py` is shared."
@@ -427,7 +427,7 @@ def _enable_debug_logs() -> None:
 def test_bare_filename_resolved_emits_debug_event(tmp_path: Path) -> None:
     """FR-06: single-match → `prd_integrity_bare_filename_resolved` at debug."""
     _enable_debug_logs()
-    _mk_tree(tmp_path, ["docs/eval/TRACE-SCHEMA.md"])
+    _mk_tree(tmp_path, ["internal-docs/TRACE-SCHEMA.md"])
     with capture_logs() as logs:
         _check_repo_path_references("See `TRACE-SCHEMA.md`.", tmp_path)
     events = [e for e in logs if e.get("event") == "prd_integrity_bare_filename_resolved"]
@@ -477,7 +477,7 @@ def test_batch_revalidation_zero_flips(tmp_path: Path) -> None:
     _mk_tree(
         tmp_path,
         [
-            "docs/eval/TRACE-SCHEMA.md",  # unambiguous
+            "internal-docs/TRACE-SCHEMA.md",  # unambiguous
             "a/prompts.py",  # ambiguous
             "b/prompts.py",  # ambiguous
         ],

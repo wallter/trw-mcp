@@ -4,8 +4,7 @@ Tests invoke trw-before-edit-hint.sh via subprocess with controlled Cursor
 preToolUse stdin JSON fixtures and a tmp project directory. All assertions are on
 REAL shell execution outputs and exit codes.
 
-Contract (Cursor preToolUse — see docs/research/providers/cursor/cursor-cli/
-integration-research.md §4):
+Contract (PRD-DIST-2459 §4, Cursor preToolUse integration):
 - The hook emits a permission decision JSON on stdout.
 - NEVER denies / NEVER exits 2 / NEVER emits "permission":"deny" — advisory only.
 - Gate OFF (cc03_hook_enabled false / absent) => plain {"permission":"allow"} no-op.

@@ -1,5 +1,11 @@
 """Ledger UF-047 — six hooks stop resolving "the active run" by recency.
 
+Three of those six (``completion-gate.sh``, ``helper-idle.sh``,
+``phase-cycle-stop.sh``) were deleted by PRD-CORE-250 FR01-FR03: no shipped
+template registered any of them, so none could ever fire and the ownership
+decision they carried was unreachable. Their cases went with them; the three
+that ship keep both directions asserted below.
+
 The dangerous half of this migration is not the positive case. Several of these
 hooks already ``exit 0`` when no run resolves, so swapping in ``resolve_owned_run``
 naively converts a false POSITIVE (nagging about a foreign run) into a false
@@ -12,11 +18,6 @@ behaviour is its OWN decision, spelled out in the test that pins it:
 ===================== ============================================================
 hook                  what unowned means, and why
 ===================== ============================================================
-completion-gate.sh    "no run-scoped evidence" -> the checkpoint gate STILL blocks.
-                      It must not clear itself with a stranger's checkpoint.
-helper-idle.sh        same: the idle nudge STILL fires, capped as before.
-phase-cycle-stop.sh   exit 0 without enforcing. The phase cycle IS the run; a
-                      session that never ran trw_init has no criteria to fail.
 pre-compact.sh        STILL writes the snapshot, with run fields empty. Recovery
                       after compaction must be armed, just not with foreign state.
 session-end.sh        STILL does housekeeping; skips only the run-scoped warning,
@@ -33,19 +34,17 @@ present and always different.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 from _ownership_harness import (
-    BUILD_CHECK,
     BUNDLED_HOOKS,
-    CHECKPOINT,
     DELIVER_COMPLETE,
     FILE_MODIFIED,
     FOREIGN_RUN_ID,
     MIRROR_HOOKS,
     OWN_RUN_ID,
-    SESSION_ID,
     build_project,
     run_hook,
     write_hook_env,
@@ -55,289 +54,6 @@ _HOOK_COPIES = pytest.mark.parametrize(
     "hook_dir",
     [pytest.param(BUNDLED_HOOKS, id="bundled"), pytest.param(MIRROR_HOOKS, id="mirror")],
 )
-
-
-def _build_status(root: Path, *, tests_passed: bool) -> None:
-    (root / ".trw" / "context").mkdir(parents=True, exist_ok=True)
-    (root / ".trw" / "context" / "build-status.yaml").write_text(
-        f"tests_passed: {'true' if tests_passed else 'false'}\nfailures:\n  - test_thing\n",
-        encoding="utf-8",
-    )
-
-
-# =========================================================================== #
-# completion-gate.sh
-#   unowned == "no run-scoped evidence", NOT "skip the gate".
-# =========================================================================== #
-_HELPER_PAYLOAD = {"helper_name": "impl-1", "task_subject": "T1", "session_id": "unused"}
-
-
-@_HOOK_COPIES
-def test_completion_gate_blocks_when_only_a_FOREIGN_run_checkpointed(hook_dir: Path, tmp_path: Path) -> None:
-    """The owned run has no checkpoint; the newest run does. The gate must block.
-
-    Under recency this is the silent failure: the helper's checkpoint requirement
-    is satisfied by a checkpoint another instance wrote.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED,),
-        foreign_event_lines=(FILE_MODIFIED, CHECKPOINT),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=True)
-
-    res = run_hook(hook_dir / "completion-gate.sh", root, payload=_HELPER_PAYLOAD)
-
-    assert res.returncode == 2, f"gate cleared itself with a foreign checkpoint: {res.stdout}{res.stderr}"
-    # Specifically the checkpoint-first message. Asserting only exit 2 would pass
-    # on the pre-migration hook, which also exits 2 -- but from the NEXT gate,
-    # having already accepted the foreign checkpoint.
-    assert "Running trw_checkpoint preserves" in res.stderr, res.stderr
-    assert "completion artifact" not in res.stderr
-
-
-@_HOOK_COPIES
-def test_completion_gate_accepts_the_OWNED_runs_checkpoint(hook_dir: Path, tmp_path: Path) -> None:
-    """The other direction: the owned run's own checkpoint does clear the check.
-
-    It then asks for the completion artifact -- i.e. the gate advanced a step,
-    proving the checkpoint branch was actually taken and not skipped.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED, CHECKPOINT),
-        foreign_event_lines=(FILE_MODIFIED,),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=True)
-
-    res = run_hook(hook_dir / "completion-gate.sh", root, payload=_HELPER_PAYLOAD)
-
-    assert res.returncode == 2
-    assert "completion artifact" in res.stderr, res.stderr
-
-
-@_HOOK_COPIES
-def test_completion_gate_still_blocks_an_unowned_session(hook_dir: Path, tmp_path: Path) -> None:
-    """UNOWNED direction: no run means no evidence, so the gate keeps enforcing.
-
-    This is the false-negative guard. The foreign run holds a checkpoint that a
-    recency resolver would have accepted.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_pin=False,
-        own_event_lines=(FILE_MODIFIED,),
-        foreign_event_lines=(FILE_MODIFIED, CHECKPOINT),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=True)
-
-    res = run_hook(hook_dir / "completion-gate.sh", root, payload=_HELPER_PAYLOAD)
-
-    assert res.returncode == 2, "an unowned session silently escaped the checkpoint gate"
-    assert "Running trw_checkpoint preserves" in res.stderr, res.stderr
-    assert "completion artifact" not in res.stderr
-
-
-@_HOOK_COPIES
-def test_completion_gate_resolves_ownership_from_the_stdin_session_id(hook_dir: Path, tmp_path: Path) -> None:
-    """Identity may arrive on stdin when the client exports no session variable.
-
-    Guards the fallback path: a stale or profile-less hook-env.sh must not silently
-    demote an identified session to the legacy newest-wins branch.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED, CHECKPOINT),
-        foreign_event_lines=(FILE_MODIFIED,),
-    )
-    write_hook_env(root, client_id="copilot")
-    _build_status(root, tests_passed=True)
-
-    res = run_hook(
-        hook_dir / "completion-gate.sh",
-        root,
-        payload={"helper_name": "impl-1", "task_subject": "T1", "session_id": SESSION_ID},
-        identified=False,
-    )
-
-    assert res.returncode == 2
-    assert "completion artifact" in res.stderr, res.stderr
-
-
-@_HOOK_COPIES
-def test_completion_gate_advisory_is_silent_for_an_unowned_session(hook_dir: Path, tmp_path: Path) -> None:
-    """The non-helper advisory must not report a foreign run's ceremony state."""
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_pin=False,
-        foreign_event_lines=(FILE_MODIFIED, FILE_MODIFIED, FILE_MODIFIED),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=True)
-
-    res = run_hook(hook_dir / "completion-gate.sh", root, payload={"task_subject": "T1"})
-
-    assert res.returncode == 0
-    assert "Ceremony pending" not in res.stderr, "advised on a foreign run's ceremony state"
-
-
-@_HOOK_COPIES
-def test_completion_gate_advisory_fires_for_the_owned_run(hook_dir: Path, tmp_path: Path) -> None:
-    """...and still fires when THIS session's own run has pending ceremony."""
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED, FILE_MODIFIED, FILE_MODIFIED),
-        foreign_event_lines=(DELIVER_COMPLETE,),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=True)
-
-    res = run_hook(hook_dir / "completion-gate.sh", root, payload={"task_subject": "T1"})
-
-    assert res.returncode == 0
-    assert "Ceremony pending" in res.stderr, res.stderr
-
-
-# =========================================================================== #
-# helper-idle.sh
-#   unowned == "no run-scoped ceremony evidence", nudge still fires.
-# =========================================================================== #
-_IDLE_PAYLOAD = {"helper_name": "impl-1", "workstream_name": "ws-1", "session_id": "unused"}
-
-
-@_HOOK_COPIES
-def test_helper_idle_nudges_when_only_a_FOREIGN_run_checkpointed(hook_dir: Path, tmp_path: Path) -> None:
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED,),
-        foreign_event_lines=(CHECKPOINT,),
-    )
-    write_hook_env(root)
-
-    res = run_hook(hook_dir / "helper-idle.sh", root, payload=_IDLE_PAYLOAD)
-
-    assert res.returncode == 2, "a foreign checkpoint silenced this helper's idle nudge"
-    assert "trw_checkpoint" in res.stderr
-
-
-@_HOOK_COPIES
-def test_helper_idle_is_silenced_by_the_OWNED_runs_checkpoint(hook_dir: Path, tmp_path: Path) -> None:
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(CHECKPOINT,),
-        foreign_event_lines=(FILE_MODIFIED,),
-    )
-    write_hook_env(root)
-
-    res = run_hook(hook_dir / "helper-idle.sh", root, payload=_IDLE_PAYLOAD)
-
-    assert res.returncode == 0, res.stderr
-
-
-@_HOOK_COPIES
-def test_helper_idle_still_nudges_an_unowned_session(hook_dir: Path, tmp_path: Path) -> None:
-    """UNOWNED direction: the nudge keeps firing rather than silently vanishing."""
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_pin=False,
-        foreign_event_lines=(CHECKPOINT,),
-    )
-    write_hook_env(root)
-
-    res = run_hook(hook_dir / "helper-idle.sh", root, payload=_IDLE_PAYLOAD)
-
-    assert res.returncode == 2, "an unowned session silently escaped the idle nudge"
-
-
-# =========================================================================== #
-# phase-cycle-stop.sh
-#   unowned == exit 0 WITHOUT enforcing: the phase cycle is the run.
-# =========================================================================== #
-@_HOOK_COPIES
-def test_phase_cycle_blocks_on_the_OWNED_runs_unmet_phase(hook_dir: Path, tmp_path: Path) -> None:
-    """Owned run is stuck in VALIDATE; the newest run has already delivered.
-
-    Recency would read the foreign run's trw_deliver_complete and short-circuit to
-    exit 0, so this test fails loudly if the hook ever regresses.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED, BUILD_CHECK),
-        foreign_event_lines=(FILE_MODIFIED, DELIVER_COMPLETE),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=False)
-
-    res = run_hook(hook_dir / "phase-cycle-stop.sh", root, payload={"session_id": "unused"})
-
-    assert res.returncode == 2, f"foreign delivery cleared our phase gate: {res.stderr}"
-    assert "TRW BLOCK [validate" in res.stderr, res.stderr
-
-
-@_HOOK_COPIES
-def test_phase_cycle_allows_when_the_OWNED_runs_criteria_are_met(hook_dir: Path, tmp_path: Path) -> None:
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_event_lines=(FILE_MODIFIED,),
-        foreign_event_lines=(FILE_MODIFIED, BUILD_CHECK),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=False)
-
-    res = run_hook(hook_dir / "phase-cycle-stop.sh", root, payload={"session_id": "unused"})
-
-    assert res.returncode == 0, res.stderr
-
-
-@_HOOK_COPIES
-def test_phase_cycle_does_not_enforce_for_an_unowned_session(hook_dir: Path, tmp_path: Path) -> None:
-    """UNOWNED direction: no owned run, no phase cycle, no block -- and no state.
-
-    Justified because every criterion this hook evaluates is read out of a run's
-    own events.jsonl, and its reversion path WRITES back into that run. A session
-    with no run of its own has nothing to evaluate and must not touch another's.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_pin=False,
-        own_event_lines=(FILE_MODIFIED, BUILD_CHECK),
-        foreign_event_lines=(FILE_MODIFIED, BUILD_CHECK),
-    )
-    write_hook_env(root)
-    _build_status(root, tests_passed=False)
-
-    res = run_hook(hook_dir / "phase-cycle-stop.sh", root, payload={"session_id": "unused"})
-
-    assert res.returncode == 0, res.stderr
-    assert not (root / ".claude" / "trw-phase-cycle.local.md").exists(), "wrote phase state from a foreign run"
-
-
-@_HOOK_COPIES
-def test_phase_cycle_still_enforces_for_a_client_with_no_identity(hook_dir: Path, tmp_path: Path) -> None:
-    """The anti-false-negative guard: legacy newest-wins survives for such clients.
-
-    A client that publishes no session id cannot own a run by definition. Treating
-    that as "unowned" would disable this gate outright for every one of them, so
-    the identity-unknown branch keeps today's single-instance behaviour.
-
-    "No identity" has to mean BOTH channels: no session variable AND no session_id
-    in the Stop payload. A payload-only id is still an identity, and a session that
-    has one but no pin is positively unowned, not unknown.
-    """
-    root, _own, _foreign = build_project(
-        tmp_path,
-        own_pin=False,
-        foreign_event_lines=(FILE_MODIFIED, BUILD_CHECK),
-    )
-    write_hook_env(root, client_id="copilot")
-    _build_status(root, tests_passed=False)
-
-    res = run_hook(hook_dir / "phase-cycle-stop.sh", root, payload={"transcript_path": ""}, identified=False)
-
-    assert res.returncode == 2, "identity-unknown clients lost the phase gate entirely"
 
 
 # =========================================================================== #
@@ -567,3 +283,120 @@ def test_subagent_start_keeps_legacy_context_with_no_identity(hook_dir: Path, tm
 
     assert FOREIGN_RUN_ID in res.stdout, "single-instance subagents lost their run context"
     assert "VALIDATE PHASE:" in res.stdout
+
+
+# --- PRD-CORE-265-FR10: the editor hook warns, and can never block -----------
+
+
+def _formation_project(tmp_path: Path) -> Path:
+    """A project with a live formation whose ``impl-2`` owns ``src/beta``.
+
+    The calling session is pinned to ``impl-1``'s run, and a foreign, newer run
+    is present as always, so an advisory that resolved identity by recency would
+    attribute the write to the wrong member and this fixture would catch it.
+    """
+    import yaml
+
+    root, own, _foreign = build_project(tmp_path, own_pin=True, own_events=3, foreign_events=18)
+    orchestrator = root / ".trw" / "runs" / "orchestrator-task" / "20260101T000000Z-orch"
+    (orchestrator / "meta").mkdir(parents=True)
+    (orchestrator / "meta" / "run.yaml").write_text("task: orchestrator\n", encoding="utf-8")
+    manifest = {
+        "formation_id": "fr10",
+        "revision": 3,
+        "created_utc": "2026-09-04T00:00:00+00:00",
+        "updated_utc": "2026-09-04T00:00:00+00:00",
+        "orchestrator_run_path": str(orchestrator),
+        "members": [
+            {"member_id": "impl-1", "client": "claude-code", "owned_paths": ["src/alpha"], "run_path": str(own)},
+            {
+                "member_id": "impl-2",
+                "client": "claude-code",
+                "owned_paths": ["src/beta"],
+                "run_path": str(root / ".trw" / "runs" / "other"),
+            },
+        ],
+    }
+    (orchestrator / "formation.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    (root / ".trw" / "runtime" / "formations.json").write_text(
+        json.dumps({"fr10": str(orchestrator)}), encoding="utf-8"
+    )
+    own_yaml = own / "meta" / "run.yaml"
+    own_yaml.write_text(own_yaml.read_text(encoding="utf-8") + "formation_id: fr10\nmember_id: impl-1\n", "utf-8")
+
+    # An exec WRAPPER, never a symlink: CPython derives sys.prefix from the
+    # interpreter's own path, so a symlinked python looks like an empty venv at
+    # the fixture root, cannot import trw_mcp, and the advisory would silently
+    # do nothing while the test still passed.
+    venv_python = root / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True)
+    venv_python.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    venv_python.chmod(0o755)
+    return root
+
+
+_WRITE_PAYLOAD = {"tool_name": "Edit", "tool_input": {"file_path": "src/beta"}}
+
+
+def test_intent_guard_warns_but_never_blocks_on_foreign_owned_path(tmp_path: Path) -> None:
+    """FR10. Warn mode advises and exits 0; off mode is silent and exits 0.
+
+    ATTRIBUTION. Guards ``_trw_formation_advisory`` in
+    ``data/hooks/lib-intent-guard.sh`` and its call site ahead of the unenrolled
+    fail-open exit. Delete the call and the warn case loses its message; move it
+    below that exit and it becomes dead in every project that never enrolled in
+    the intent contract, which is most of them. The exit-status assertions are
+    the load-bearing half: this advisory must never be able to turn an allow
+    into a block on any client.
+    """
+    root = _formation_project(tmp_path)
+    hook = BUNDLED_HOOKS / "pre-tool-intent-guard.sh"
+
+    warned = run_hook(hook, root, payload=_WRITE_PAYLOAD)
+    assert warned.returncode == 0, warned.stdout + warned.stderr
+    assert "TRW formation advisory" in warned.stderr, warned.stderr
+    assert "impl-2" in warned.stderr and "src/beta" in warned.stderr
+    assert "warning only" in warned.stderr, "the advisory must say the commit boundary is what refuses"
+
+    silent = run_hook(
+        hook, root, payload=_WRITE_PAYLOAD, TRW_FORMATION_MEMBER="", TRW_FORMATION_HOOK_OWNERSHIP_MODE="off"
+    )
+    assert silent.returncode == 0, silent.stdout + silent.stderr
+    assert "TRW formation advisory" not in silent.stderr, silent.stderr
+
+    own_path = run_hook(hook, root, payload={"tool_name": "Edit", "tool_input": {"file_path": "src/alpha"}})
+    assert own_path.returncode == 0
+    assert "TRW formation advisory" not in own_path.stderr
+
+
+def test_intent_guard_advisory_is_inert_without_a_formation(tmp_path: Path) -> None:
+    """FR10 / NFR02. No formation index means no spawn and no output at all."""
+    root = _formation_project(tmp_path)
+    (root / ".trw" / "runtime" / "formations.json").unlink()
+
+    result = run_hook(BUNDLED_HOOKS / "pre-tool-intent-guard.sh", root, payload=_WRITE_PAYLOAD)
+    assert result.returncode == 0
+    assert "TRW formation advisory" not in result.stderr
+
+
+def test_formation_hook_mode_vocabulary_excludes_block() -> None:
+    """FR10. ``block`` is not spellable, in the knob or in the shell.
+
+    A configuration that could turn this hook into a gate is the failure mode
+    the PRD names: the guard's own decision path must stay the intent contract's.
+    """
+    import typing
+
+    from trw_mcp.models.config._fields_formation import _FormationFields
+
+    # ``get_type_hints`` because the module uses ``from __future__ import
+    # annotations``: reading ``__annotations__`` directly yields the SOURCE
+    # STRING, and ``set(getattr(str, "__args__", ()))`` is the empty set, which
+    # would make this assertion pass against any vocabulary at all.
+    annotation = typing.get_type_hints(_FormationFields)["formation_hook_ownership_mode"]
+    assert set(typing.get_args(annotation)) == {"warn", "off"}
+    for path in (BUNDLED_HOOKS / "lib-intent-guard.sh", MIRROR_HOOKS / "lib-intent-guard.sh"):
+        body = path.read_text(encoding="utf-8")
+        assert "formation_hook_ownership_mode: block" not in body
+        advisory = body[body.index("_trw_formation_advisory() {") : body.index("# _trw_guard_main")]
+        assert "exit 2" not in advisory, "the advisory body must contain no blocking exit"

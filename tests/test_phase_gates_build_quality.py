@@ -33,7 +33,7 @@ class TestCheckNullableDefaults:
             return r
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        result = pgb._check_nullable_defaults(tmp_path, ["backend/models/database/user.py"])
+        result = pgb._check_nullable_defaults(tmp_path, ["api/models/database/user.py"])
         assert len(result) == 1
         assert "NOT NULL column" in result[0]
         assert "email" in result[0]
@@ -51,7 +51,7 @@ class TestCheckNullableDefaults:
             return r
 
         monkeypatch.setattr(subprocess, "run", fake_run)
-        result = pgb._check_nullable_defaults(tmp_path, ["backend/models/database/user.py"])
+        result = pgb._check_nullable_defaults(tmp_path, ["api/models/database/user.py"])
         assert result == []
 
     def test_subprocess_error_continues_gracefully(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,7 +64,7 @@ class TestCheckNullableDefaults:
             "run",
             lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.SubprocessError("fail")),
         )
-        result = pgb._check_nullable_defaults(tmp_path, ["backend/models/database/user.py"])
+        result = pgb._check_nullable_defaults(tmp_path, ["api/models/database/user.py"])
         assert result == []
 
     def test_empty_file_list_returns_empty(self, tmp_path: Path) -> None:

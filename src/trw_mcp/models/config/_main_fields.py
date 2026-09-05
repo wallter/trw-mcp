@@ -17,13 +17,20 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from trw_mcp.models.config._fields_bandit import _BanditFields
+from trw_mcp.models.config._fields_boot_maintenance import _BootMaintenanceFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
+from trw_mcp.models.config._fields_degenerate_result import _DegenerateResultFields
+from trw_mcp.models.config._fields_degraded_mode import _DegradedModeFields
 from trw_mcp.models.config._fields_delivery import _DeliveryFields
 from trw_mcp.models.config._fields_dispatch import _DispatchFields
 from trw_mcp.models.config._fields_feedback import _FeedbackFields
+from trw_mcp.models.config._fields_formation import _FormationFields
 from trw_mcp.models.config._fields_instruction_surfaces import _InstructionSurfaceFields
+from trw_mcp.models.config._fields_learn_journal import _LearnJournalFields
 from trw_mcp.models.config._fields_memory import _MemoryFields
+from trw_mcp.models.config._fields_memory_truth import _MemoryTruthFields
+from trw_mcp.models.config._fields_nudge import _NudgeFields
 from trw_mcp.models.config._fields_orchestration import _OrchestrationFields
 from trw_mcp.models.config._fields_paths import _PathsFields
 from trw_mcp.models.config._fields_phase_exposure import _PhaseExposureFields
@@ -41,12 +48,18 @@ from trw_mcp.models.config._fields_verification import _VerificationFields
 class _TRWConfigFields(
     _ScoringFields,
     _MemoryFields,
+    _MemoryTruthFields,
+    _LearnJournalFields,
     _OrchestrationFields,
     _TelemetryFields,
     _CeremonyFields,
+    _DegenerateResultFields,
+    _DegradedModeFields,
     _DeliveryFields,
+    _FormationFields,
     _InstructionSurfaceFields,
     _FeedbackFields,
+    _NudgeFields,
     _BanditFields,
     _BuildFields,
     _DispatchFields,
@@ -59,6 +72,7 @@ class _TRWConfigFields(
     _ProfileFields,
     _ScoutFields,
     _VerificationFields,
+    _BootMaintenanceFields,
     BaseSettings,
 ):
     """All TRW configuration fields.

@@ -11,7 +11,7 @@ from typing import cast
 
 import structlog
 
-from trw_mcp.models.typed_dicts import TrwStatusDict
+from trw_mcp.models.typed_dicts import TrwStatusDict, WriterPressureDict
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._orchestration_gate_scan import (
     apply_deliver_gate_status as _apply_deliver_gate_status,
@@ -58,6 +58,110 @@ def _stale_close_remedy() -> str:
     return ""
 
 
+def _apply_formation_block(result: TrwStatusDict, resolved_path: Path) -> None:
+    """Attach the read-only formation board when one is active (FR07).
+
+    STRICTLY READ-ONLY, AND DELIBERATELY MEMORY-BLIND. The rows are derived from
+    each member's OWN run directory; nothing here opens a memory store, and it
+    MUST NOT read, import, or ingest any member's learnings or handoff text. A
+    delegated agent's memory is untrusted data under ``docs/CONSTITUTION.md``,
+    so promoting it into the orchestrator's knowledge base because two runs
+    share a manifest would launder unverified content into the project.
+
+    Absence and breakage are different outcomes: no formation omits the block
+    entirely, while an unreadable or invalid manifest sets ``formation_error``
+    naming the file and the parse error (NFR02). Neither ever fails the status
+    call — a status check that crashed on a coordination artifact would be a
+    worse outage than the missing board.
+    """
+    try:
+        from trw_mcp.formation import FormationError
+        from trw_mcp.formation import status as formation_status
+
+        board = formation_status(run_path=resolved_path)
+    except FormationError as exc:
+        result["formation_error"] = str(exc)
+        return
+    except Exception:  # justified: fail-open, the board is observability
+        logger.warning("formation_status_degraded", run=str(resolved_path), exc_info=True)
+        return
+    if board is None:
+        return
+    result["formation"] = {
+        "formation_id": board.formation_id,
+        "revision": board.revision,
+        "manifest_path": board.manifest_path,
+        "members": [row.as_dict() for row in board.rows],
+        "non_terminal": [
+            {"member_id": member, "status": member_status} for member, member_status in board.non_terminal
+        ],
+    }
+
+
+def _degraded_writer_pressure_block() -> WriterPressureDict:
+    """The block ``trw_status`` must ALWAYS carry, typed as degraded.
+
+    PRD-CORE-257 audit row 5: the field is ``Required`` on ``TrwStatusDict``,
+    so any exception building the real block — config/path resolution,
+    census, ledger projection, or conversion — must still leave the key
+    present rather than silently omitted. A caller reading ``under_pressure``
+    without reading ``census_state``/``ledger_state`` is reading an unsafe
+    default either way, so this block reports the least-trusting values.
+    """
+    return WriterPressureDict(
+        writer_count=0,
+        peer_writer_count=0,
+        threshold=0,
+        under_pressure=False,
+        census_state="unreadable",
+        ledger_state="degraded",
+        heartbeat_state="unavailable",
+        identity_state="unverified",
+        deferred_steps={},
+    )
+
+
+def _writer_pressure_block() -> WriterPressureDict:
+    """Measure writer pressure and project the deferral ledger (PRD-CORE-257-FR05).
+
+    Resolved inside the function rather than added to the signature so every
+    existing caller and monkeypatch keeps working. Fail-open, but never
+    fail-quiet: a registry that cannot be scanned reports
+    ``census_state="unreadable"`` with counts held at 0 for shape stability and
+    logs at WARNING, so a consumer can tell "nothing measured" from "measured
+    nothing". The counts are shape padding, not evidence.
+    """
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._paths import resolve_trw_dir
+    from trw_mcp.state.deferral_ledger import deferred_steps_summary
+    from trw_mcp.state.memory_pressure import take_writer_census
+
+    config = get_config()
+    trw_dir = resolve_trw_dir()
+    census = take_writer_census(
+        trw_dir,
+        threshold=config.session_start_writer_pressure_threshold,
+        pin_ttl_hours=config.pin_ttl_hours,
+    )
+    if census.census_state == "unreadable":
+        logger.warning("writer_census_unreadable", surface="trw_status", threshold=census.threshold)
+    summary, ledger_state = deferred_steps_summary(trw_dir)
+    return WriterPressureDict(
+        writer_count=census.writer_count,
+        peer_writer_count=census.peer_writer_count,
+        threshold=census.threshold,
+        under_pressure=census.under_pressure,
+        census_state=census.census_state,
+        ledger_state=ledger_state,
+        heartbeat_state=census.heartbeat_state,
+        identity_state=census.identity_state,
+        deferred_steps={
+            step: {"age_hours": float(values["age_hours"]), "deferred_count": int(values["deferred_count"])}
+            for step, values in summary.items()
+        },
+    )
+
+
 def assemble_status_result(
     state_data: dict[str, object],
     events: list[dict[str, object]],
@@ -68,6 +172,9 @@ def assemble_status_result(
 ) -> TrwStatusDict:
     """Build the trw_status response payload from already-read run state."""
     result: TrwStatusDict = {
+        # Placeholder for the ``Required`` key below; overwritten unconditionally
+        # (with a real or degraded value) before this function returns.
+        "writer_pressure": _degraded_writer_pressure_block(),
         "run_id": str(state_data.get("run_id", "unknown")),
         "task": str(state_data.get("task", "unknown")),
         "phase": str(state_data.get("phase", "unknown")),
@@ -131,6 +238,8 @@ def assemble_status_result(
     # the helper — the three fields are simply omitted on any scan error.
     _apply_deliver_gate_status(cast("dict[str, object]", result), events, resolved_path)
 
+    _apply_formation_block(result, resolved_path)
+
     last_ts, hours_since = _compute_last_activity_ts(reader, meta_path, events)
     if last_ts:
         result["last_activity_ts"] = last_ts
@@ -157,5 +266,15 @@ def assemble_status_result(
     except Exception:  # justified: fail-open, stale run count is advisory only
         result["stale_count_error"] = True
         logger.warning("stale_count_scan_failed", exc_info=True)
+
+    try:
+        result["writer_pressure"] = _writer_pressure_block()
+    except Exception:  # justified: fail-open, the pressure block must not break status
+        logger.warning("writer_pressure_block_failed", exc_info=True)
+        # Audit row 5: omitting the key entirely (the old behavior) violates
+        # the ``Required`` status contract — a caller cannot distinguish
+        # "healthy, no pressure" from "the whole block crashed" if both look
+        # like an absent key. Degraded-but-present beats silently missing.
+        result["writer_pressure"] = _degraded_writer_pressure_block()
 
     return result

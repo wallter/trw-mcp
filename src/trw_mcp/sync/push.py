@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# Backend `LearningSync.sync_hash` (backend/routers/sync.py) is validated against
-# this exact pattern under `extra="forbid"`. An empty/invalid hash fails the
+# The platform sync API validates `LearningSync.sync_hash` against this exact
+# pattern under `extra="forbid"`. An empty/invalid hash fails the
 # pattern and FastAPI 422-rejects the ENTIRE batch (up to 500 entries) — the
 # primary driver of the 2026-05-20 MCP-server team-sync snare. Keep a valid
 # stored hash; otherwise synthesize a stable content hash so a single unhashed

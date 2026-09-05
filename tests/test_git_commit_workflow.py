@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 import structlog
 
+from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests._git_commit_workflow_support import create_verified_run, journal_edits_and_build
 
 
@@ -241,3 +243,151 @@ def test_run_candidate_commit_rejects_empty_message(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     with pytest.raises(GitTransactionError, match="message must not be empty"):
         run_candidate_commit(repo, "   ", transaction_id="missing", run_dir=repo)
+
+
+# --- PRD-CORE-265-FR09: the commit boundary enforces ownership ---------------
+
+
+def _formation_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A real git repo holding a formation whose impl-2 owns ``src/beta``."""
+    import yaml
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=repo, check=True)
+    (repo / "src" / "beta").write_text("original\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+
+    runs = repo / ".trw" / "runs"
+    orchestrator = runs / "orchestrator"
+    member = runs / "impl-1"
+    for run in (orchestrator, member):
+        (run / "meta").mkdir(parents=True)
+        (run / "meta" / "run.yaml").write_text(f"run_id: {run.name}\ntask: t\nstatus: active\n", encoding="utf-8")
+    manifest = {
+        "formation_id": "fr09",
+        "revision": 2,
+        "created_utc": "2026-09-04T00:00:00+00:00",
+        "updated_utc": "2026-09-04T00:00:00+00:00",
+        "orchestrator_run_path": str(orchestrator),
+        "members": [
+            {"member_id": "impl-1", "client": "codex", "owned_paths": ["src/alpha"], "run_path": str(member)},
+            {"member_id": "impl-2", "client": "codex", "owned_paths": ["src/beta"], "run_path": str(runs / "impl-2")},
+        ],
+    }
+    (orchestrator / "formation.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    (member / "meta" / "run.yaml").write_text(
+        "run_id: impl-1\ntask: t\nstatus: active\nformation_id: fr09\nmember_id: impl-1\n", encoding="utf-8"
+    )
+    runtime = repo / ".trw" / "runtime"
+    runtime.mkdir(parents=True)
+    (runtime / "formations.json").write_text(json.dumps({"fr09": str(orchestrator)}), encoding="utf-8")
+    (runtime / "pins.json").write_text(
+        json.dumps(
+            {"fr09-session": {"run_path": str(member), "pid": 1, "last_heartbeat_ts": "2099-01-01T00:00:00.0Z"}}
+        ),
+        encoding="utf-8",
+    )
+    return repo, orchestrator, member
+
+
+def test_scoped_commit_refuses_foreign_owned_path(tmp_path: Path) -> None:
+    """FR09. A path another member owns is refused, and HEAD does not move.
+
+    ATTRIBUTION. Guards the ``check_formation_ownership.py`` invocation added to
+    ``scripts/git-commit-scoped.sh`` between the import check and the stage.
+    Delete that block and the refuse case commits. The HEAD assertion is the one
+    that matters: a check that ran AFTER ``git add``/``git commit`` would print
+    the same message while the commit had already landed.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "git-commit-scoped.sh"
+    repo, _orchestrator, member = _formation_repo(tmp_path)
+
+    env = {
+        **os.environ,
+        "TRW_PROJECT_ROOT": str(repo),
+        "TRW_SESSION_ID": "fr09-session",
+        "SKIP_COMMIT_IMPORT_CHECK": "1",
+    }
+    # The helper resolves its own repo root from git, and runs the checks with
+    # THIS repo's .venv interpreter; point both at the fixture.
+    env["PATH"] = os.environ.get("PATH", "")
+    # An exec WRAPPER, never a symlink: CPython derives sys.prefix from the
+    # interpreter's own path, so a symlinked python looks like an empty venv at
+    # the fixture root and cannot import trw_mcp — which would make the gate's
+    # "package not installed" branch pass and the test vacuous.
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    wrapper = repo / ".venv" / "bin" / "python"
+    wrapper.write_text(f'#!/bin/sh\nexec "{repo_root / ".venv" / "bin" / "python"}" "$@"\n', encoding="utf-8")
+    wrapper.chmod(0o755)
+    (repo / "scripts").mkdir()
+    for name in ("git-commit-scoped.sh", "check_formation_ownership.py", "check_commit_imports.py"):
+        (repo / "scripts" / name).symlink_to(repo_root / "scripts" / name)
+
+    head_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    (repo / "src" / "beta").write_text("edited by the wrong member\n", encoding="utf-8")
+
+    refused = subprocess.run(
+        ["bash", str(script), "fix(x): y", "WHY: z", "--", "src/beta"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert refused.returncode != 0, refused.stdout + refused.stderr
+    assert "src/beta" in refused.stderr, refused.stderr
+    assert "impl-2" in refused.stderr, "the refusal must name the OWNING member"
+    assert "glob 'src/beta'" in refused.stderr, "the refusal must name the matching glob"
+    head_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert head_after == head_before, "a refused scoped commit must leave HEAD untouched"
+
+    warned = subprocess.run(
+        ["bash", str(script), "fix(x): y", "WHY: z", "--", "src/beta"],
+        cwd=repo,
+        env={**env, "TRW_FORMATION_OWNERSHIP_ENFORCEMENT": "warn"},
+        capture_output=True,
+        text=True,
+    )
+    assert warned.returncode == 0, warned.stdout + warned.stderr
+    assert "impl-2" in warned.stderr, "warn mode prints the identical message"
+    head_warned = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert head_warned != head_before, "warn mode commits"
+
+
+def test_formation_ownership_precondition_distinguishes_absent_from_unreadable(
+    formation_env: FormationFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """FR09 / NFR02. No formation passes silently; a broken one refuses."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import check_formation_ownership as gate
+
+    from trw_mcp.formation import create, join
+
+    assert gate.main(["src/beta"]) == 0, "no formation active must be a silent no-op"
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+    monkey_run = formation_env.member_runs["impl-1"]
+    gate._resolve_caller_run = lambda: monkey_run  # type: ignore[assignment]
+
+    assert gate.main(["src/alpha/thing.py"]) == 0, "a member may commit its own owned path"
+    assert gate.main(["docs/unclaimed.md"]) == 0, "an unowned path is not a refusal"
+    assert gate.main(["src/beta/thing.py"]) == 1
+    assert "impl-2" in capsys.readouterr().err
+
+    formation_env.manifest_path().write_text("members: [", encoding="utf-8")
+    assert gate.main(["docs/unclaimed.md"]) == 1, "an unreadable manifest must refuse, never pass"
+    assert "formation.yaml" in capsys.readouterr().err

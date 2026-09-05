@@ -5,36 +5,6 @@ from __future__ import annotations
 from tests._core_116_recall_scoring_support import _make_entry, _score_of
 
 
-class TestOutcomeBoostInRanking:
-    """Tests for string-typed outcome_correlation in rank_by_utility."""
-
-    def test_string_strong_positive_boosts(self) -> None:
-        """Entry with outcome_correlation='strong_positive' scores higher."""
-        from trw_mcp.scoring._recall import RecallContext, rank_by_utility
-
-        entry_pos = _make_entry(id="L-pos", outcome_correlation="strong_positive")
-        entry_neu = _make_entry(id="L-neu", outcome_correlation="neutral")
-        ctx = RecallContext(current_phase="IMPLEMENT")
-
-        result_pos = rank_by_utility([entry_pos], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
-        result_neu = rank_by_utility([entry_neu], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
-
-        assert _score_of(result_pos) > _score_of(result_neu)
-
-    def test_string_negative_penalizes(self) -> None:
-        """Entry with outcome_correlation='negative' scores lower."""
-        from trw_mcp.scoring._recall import RecallContext, rank_by_utility
-
-        entry_neg = _make_entry(id="L-neg", outcome_correlation="negative")
-        entry_neu = _make_entry(id="L-neu", outcome_correlation="neutral")
-        ctx = RecallContext(current_phase="IMPLEMENT")
-
-        result_neg = rank_by_utility([entry_neg], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
-        result_neu = rank_by_utility([entry_neu], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
-
-        assert _score_of(result_neg) < _score_of(result_neu)
-
-
 class TestRankByUtilityEdgeCases:
     """Edge cases for the ranking function."""
 
@@ -56,7 +26,6 @@ class TestRankByUtilityEdgeCases:
             domain=["payments"],
             phase_affinity=["VALIDATE"],
             team_origin="checkout",
-            outcome_correlation="strong_positive",
             anchor_validity=1.0,
         )
         ctx = RecallContext(

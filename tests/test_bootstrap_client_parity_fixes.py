@@ -19,9 +19,7 @@ from trw_mcp.bootstrap._client_integrations import (
     CLIENT_INTEGRATIONS,
 )
 from trw_mcp.bootstrap._codex import (
-    _CODEX_AGENT_TEMPLATES,
     _codex_skills_source_dir,
-    generate_codex_agents,
     install_codex_skills,
 )
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES
@@ -46,18 +44,31 @@ def _new_result() -> dict[str, list[str]]:
 # ---------------------------------------------------------------------------
 
 
+def _a_bundled_agent_stem() -> str:
+    """One stem from the shipped bundle, so keep-set assertions track the bundle."""
+    from trw_mcp.bootstrap._utils import _DATA_DIR
+
+    stems = sorted(path.stem for path in (_DATA_DIR / "agents").glob("*.md"))
+    assert stems, "no bundled agents found; these sweeps have stopped testing anything"
+    return stems[0]
+
+
 def test_stale_codex_agent_removed_bundled_and_user_kept(tmp_path: Path) -> None:
     agents = tmp_path / ".codex" / "agents"
     agents.mkdir(parents=True)
+    # The "still bundled" name is READ from the bundle, not written here: since
+    # PRD-CORE-252 the sweep derives its keep-set from the bundled agent
+    # directory, so a literal would go stale the day that directory moves.
+    kept = f"{_a_bundled_agent_stem()}.toml"
     (agents / "trw-gone.toml").write_text("stale", encoding="utf-8")  # dropped TRW agent
-    (agents / "trw-explorer.toml").write_text("bundled", encoding="utf-8")  # still bundled
+    (agents / kept).write_text("bundled", encoding="utf-8")  # still bundled
     (agents / "my-agent.toml").write_text("user", encoding="utf-8")  # user file (no trw- prefix)
 
     result = _new_result()
     _remove_stale_client_artifacts(tmp_path, result)
 
     assert not (agents / "trw-gone.toml").exists()
-    assert (agents / "trw-explorer.toml").exists()  # current bundle survives
+    assert (agents / kept).exists()  # current bundle survives
     assert (agents / "my-agent.toml").exists()  # non-trw user file survives
     assert any("removed:" in line and "trw-gone.toml" in line for line in result["updated"])
 
@@ -83,14 +94,15 @@ def test_stale_cursor_skill_dir_removed(tmp_path: Path) -> None:
 def test_stale_copilot_agents_removed(tmp_path: Path) -> None:
     copilot = tmp_path / ".github" / "agents"
     copilot.mkdir(parents=True)
+    kept = f"{_a_bundled_agent_stem()}.agent.md"
     (copilot / "trw-gone.agent.md").write_text("stale", encoding="utf-8")
-    (copilot / "trw-explorer.agent.md").write_text("bundled", encoding="utf-8")  # in templates
+    (copilot / kept).write_text("bundled", encoding="utf-8")  # in the bundle
 
     result = _new_result()
     _remove_stale_client_artifacts(tmp_path, result)
 
     assert not (copilot / "trw-gone.agent.md").exists()
-    assert (copilot / "trw-explorer.agent.md").exists()
+    assert (copilot / kept).exists()
 
 
 def test_stale_cleanup_leaves_unmanaged_client_dirs_untouched(tmp_path: Path) -> None:
@@ -142,38 +154,6 @@ def test_stale_cleanup_never_removes_dir_as_file_or_vice_versa(tmp_path: Path) -
 # ---------------------------------------------------------------------------
 
 
-def test_codex_agent_unmodified_is_refreshed_when_bundle_changes(tmp_path: Path) -> None:
-    filename = "trw-explorer.toml"
-    rel = f".codex/agents/{filename}"
-    template = _CODEX_AGENT_TEMPLATES[filename]
-    old = b"# previously bundled content (now stale)\n"
-    dest = tmp_path / ".codex" / "agents" / filename
-    dest.parent.mkdir(parents=True)
-    dest.write_bytes(old)
-
-    # Manifest records the previously-installed (old) hash -> unmodified.
-    manifest_hashes = {rel: _sha(old)}
-    result = generate_codex_agents(tmp_path, manifest_hashes=manifest_hashes)
-
-    assert dest.read_text(encoding="utf-8") == template  # refreshed to current bundle
-    assert rel in result["updated"]
-
-
-def test_codex_agent_user_edited_is_preserved(tmp_path: Path) -> None:
-    filename = "trw-explorer.toml"
-    rel = f".codex/agents/{filename}"
-    user_content = b"# my hand-tuned agent config\n"
-    dest = tmp_path / ".codex" / "agents" / filename
-    dest.parent.mkdir(parents=True)
-    dest.write_bytes(user_content)
-
-    manifest_hashes = {rel: _sha(b"different-previous-install")}
-    result = generate_codex_agents(tmp_path, manifest_hashes=manifest_hashes)
-
-    assert dest.read_bytes() == user_content  # untouched
-    assert rel in result["preserved"]
-
-
 def test_codex_skill_unmodified_refreshed_and_edited_preserved(tmp_path: Path) -> None:
     source = _codex_skills_source_dir()
     skill_dirs = [d for d in sorted(source.iterdir()) if d.is_dir()]
@@ -205,12 +185,16 @@ def test_codex_skill_unmodified_refreshed_and_edited_preserved(tmp_path: Path) -
 def test_codex_manifest_hashes_keys_match_install_paths(tmp_path: Path) -> None:
     # The persisted manifest keys must line up with the rel paths the codex
     # installers use, otherwise the refresh guard silently never matches.
-    generate_codex_agents(tmp_path)
+    #
+    # PRD-CORE-252-FR04: `.codex/agents` left this recorder when codex agents
+    # became materializations of the shared bundle. Their keys are now asserted
+    # against the same installer in
+    # `tests/test_install_agents_destinations.py::test_update_bytes_equal_a_fresh_materialization`,
+    # and the ownership record is `_managed_client_artifacts.bundled_agent_contents`.
     install_codex_skills(tmp_path)
     hashes = _codex_manifest_hashes(tmp_path)
 
-    for filename in _CODEX_AGENT_TEMPLATES:
-        assert f".codex/agents/{filename}" in hashes
+    assert not [key for key in hashes if key.startswith(".codex/agents/")]
     assert any(k.startswith(".agents/skills/") and k.endswith(".md") for k in hashes)
 
 

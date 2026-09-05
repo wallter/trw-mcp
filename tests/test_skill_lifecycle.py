@@ -60,6 +60,33 @@ def _event(skill: str, *, days_ago: float, invoked: bool) -> SkillSurfaceEvent:
 # ---------------------------------------------------------------------------
 
 
+def test_reviewer_role_forces_tracking_off_even_when_project_config_enables_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-SEC-015 round-2 audit (Row 4), RED-FIRST: reverting the
+    ``reviewer_role_active()`` check in ``skill_discovery._maybe_log_surface_events``
+    makes this assert an empty log, but the AUDITED PROJECT's own config (which
+    a reviewer must never trust) still says tracking is on, so events would
+    reappear -- exactly the "unacknowledged residual writer" the audit found.
+    """
+    src = tmp_path / "skills"
+    src.mkdir()
+    a = _write_skill(src, "alpha", "review changed python code")
+    trw_dir = tmp_path / ".trw"
+    _enable_tracking(monkeypatch, trw_dir)
+    monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
+
+    discover_meta_skills([a], query="review python")
+
+    assert read_skill_surface_events(trw_dir) == []
+    assert not (trw_dir / "logs" / "skill_surface_tracking.jsonl").exists()
+
+    monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
+    from trw_mcp.state import _surface_role
+
+    _surface_role.reset_surface_role_state()
+
+
 def test_discovery_emits_one_skill_surface_event_per_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "skills"
     src.mkdir()

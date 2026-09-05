@@ -5,7 +5,7 @@ and ``update-project`` time. Called from ``bootstrap/_init_project_ide.py``
 and ``bootstrap/_ide_targets.py``.
 
 Artifacts written:
-  - .antigravitycli/agents/trw-distill-explorer.md              (AG-02 T1 stub)
+  - .agents/agents/trw-distill-explorer.md                       (AG-02 T1 stub; PRD-CORE-252 destination)
   - .antigravitycli/hooks.json                                   (AG-03 PreToolUse hook entry)
   - .antigravitycli/hooks/trw_before_edit_telemetry.py           (AG-03 hook script)
   - .trw/channels/manifest.yaml                                  (three AG channel entries merged)
@@ -29,6 +29,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import structlog
+from typing_extensions import assert_never
 
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result
@@ -89,12 +90,14 @@ def install_antigravity_distill_channels(
     """
     result = _new_result()
 
-    # 1. Install AG-02 explorer subagent (.antigravitycli/agents/trw-distill-explorer.md).
+    # 1. Install AG-02 explorer subagent (.agents/agents/trw-distill-explorer.md,
+    #    the FR01 format registry's antigravity-cli destination).
     #    PRD-CORE-239: licence-gated — sibling of cc-05 and the opencode
     #    explorer. All three install an agent that cannot work without the
     #    proprietary package; gating one and not the others would have been a
     #    subset defect inside the fix.
     try:
+        from trw_mcp.agents.agent_formats import agent_format_for
         from trw_mcp.bootstrap._distill_entitlement import distill_artifacts_entitled
         from trw_mcp.channels.antigravity import generate_distill_explorer_agent
 
@@ -107,12 +110,24 @@ def install_antigravity_distill_channels(
                 sidecar_data=None,
                 sidecar_sha=None,
             )
-            rel = ".antigravitycli/agents/trw-distill-explorer.md"
-            status = getattr(agent_result, "status", None)
-            if status == "skipped":
-                result["preserved"].append(rel)
-            else:
+            # Read from the same registry the writer itself uses (never
+            # restated) so this report can't drift from where the file
+            # actually landed the way the hardcoded literal it replaced did.
+            rel = agent_result.path or agent_format_for("antigravity-cli").destination_for("trw-distill-explorer")
+            # Exhaustive over AgentWriteResult.status's real Literal set
+            # (P4/P10 fix): the prior `status == "skipped"` comparison could
+            # never match `"skipped_same_sha"`, so every outcome -- including
+            # `"error"` -- fell into the `else` branch and was reported as a
+            # successful create, silently swallowing write failures.
+            status = agent_result.status
+            if status == "written":
                 result["created"].append(rel)
+            elif status == "skipped_same_sha":
+                result["preserved"].append(rel)
+            elif status == "error":
+                result["errors"].append(f"AG-02 subagent install failed: {agent_result.error}")
+            else:
+                assert_never(status)
     except Exception as exc:  # justified: fail-open, subagent is best-effort
         log.warning("ag02_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"AG-02 subagent install failed: {exc}")

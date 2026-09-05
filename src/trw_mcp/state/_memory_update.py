@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from trw_mcp.exceptions import NamespaceEnumerationError
+from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.state._memory_lookups import get_backend
 
 if TYPE_CHECKING:
@@ -37,7 +39,7 @@ def _resolve_owning_backend(trw_dir: Path, learning_id: str) -> tuple[SQLiteBack
     or ``(project_backend, None)`` when neither has it.
     """
     project_backend = get_backend(trw_dir)
-    existing = project_backend.get(learning_id)
+    existing = resolve_entry_in_backend(project_backend, learning_id)
     if existing is not None:
         return project_backend, existing
 
@@ -52,7 +54,7 @@ def _resolve_owning_backend(trw_dir: Path, learning_id: str) -> tuple[SQLiteBack
     from trw_mcp.state._user_tier import get_user_backend
 
     user_backend = get_user_backend()
-    user_entry = user_backend.get(learning_id)
+    user_entry = resolve_entry_in_backend(user_backend, learning_id)
     if user_entry is not None:
         return user_backend, user_entry
     return project_backend, None
@@ -66,6 +68,66 @@ _VALID_TYPES = {"incident", "pattern", "convention", "hypothesis", "workaround"}
 _VALID_CONFIDENCES = {"unverified", "low", "medium", "high", "verified"}
 _VALID_PROTECTION_TIERS = {"critical", "high", "normal", "low", "protected", "permanent"}
 _VALID_FEEDBACK = {"helpful", "unhelpful"}
+
+
+def _reject_unverifiable_promotion(
+    existing: MemoryEntry,
+    pending_fields: dict[str, object],
+) -> dict[str, str] | None:
+    """Refuse an unsubstantiated promotion to ``verified`` (PRD-CORE-244-FR02).
+
+    Returns an error dict, or ``None`` when the write may proceed.
+
+    The rule itself is NOT reimplemented here: this projects the post-update
+    entry and hands it to ``trw_memory.security.poisoning.reject_unsubstantiated_verified``,
+    the same function ``validate_entry_payload`` calls on the store path. A copy
+    would be free to drift, and a substantiation rule that means two different
+    things on two surfaces is worse than one that is merely strict.
+
+    ``SchemaValidationError`` is converted to the error dict this module returns
+    everywhere else — ``update_learning`` is a JSON-RPC boundary that reports
+    failures as values, and raising here would change its contract for every
+    caller.
+    """
+    from trw_memory.exceptions import SchemaValidationError
+    from trw_memory.models.config import MemoryConfig
+    from trw_memory.models.memory import Confidence
+    from trw_memory.security.poisoning import reject_unsubstantiated_verified
+
+    # Only a promotion needs a basis. Demoting, or leaving confidence alone, is
+    # not a new claim and never requires substantiation.
+    if str(pending_fields.get("confidence", "")) != Confidence.VERIFIED.value:
+        return None
+
+    # Project the entry as it will exist AFTER this update. Both keys matter:
+    # ``confidence`` because the gate short-circuits on anything that is not
+    # verified (projecting only the assertions would make it a silent no-op),
+    # and ``assertions`` so a basis supplied by the same call counts.
+    projected = existing.model_copy(
+        update={
+            "confidence": Confidence.VERIFIED,
+            "assertions": pending_fields.get("assertions", existing.assertions),
+        }
+    )
+    # The threshold lives on MemoryConfig (the store pipeline reads it from
+    # ctx.config), not on TRWConfig, so it is resolved from the same settings
+    # source the store gate uses rather than duplicated on the trw-mcp side.
+    min_items = int(MemoryConfig().min_evidence_items_for_verified)
+    try:
+        reject_unsubstantiated_verified(projected, min_items=min_items)
+    except SchemaValidationError as exc:
+        logger.warning(
+            "unsubstantiated_verified_update_rejected",
+            learning_id=existing.id,
+            reason=exc.reason,
+            required_items=min_items,
+        )
+        return {
+            "error": str(exc),
+            "status": "invalid",
+            "reason": exc.reason,
+        }
+    return None
 
 
 def update_learning(
@@ -108,7 +170,17 @@ def update_learning(
             "error": f"Invalid feedback '{feedback}'. Must be one of: {_VALID_FEEDBACK}",
             "status": "invalid",
         }
-    backend, existing = _resolve_owning_backend(trw_dir, learning_id)
+    try:
+        backend, existing = _resolve_owning_backend(trw_dir, learning_id)
+    except NamespaceEnumerationError as exc:
+        # "we could not look everywhere" is not "it is not there". Reporting it
+        # as not_found would tell the agent its learning is gone and invite a
+        # duplicate write into a store that already holds the row.
+        logger.warning("update_learning_lookup_unavailable", learning_id=learning_id, exc_info=True)
+        return {
+            "error": f"Could not determine whether {learning_id} exists: {exc}",
+            "status": "lookup_unavailable",
+        }
     if existing is None:
         return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
@@ -208,24 +280,40 @@ def update_learning(
             logger.info("supersession_prior_already_closed", supersedes=supersedes)
         else:
             now = datetime.now(timezone.utc)
-            prior_backend.update(supersedes, invalid_from=now, invalidated_by=learning_id)
+            prior_backend.update(supersedes, namespace=prior.namespace, invalid_from=now, invalidated_by=learning_id)
             changes.append(f"supersedes→{supersedes}")
             logger.info("supersession_window_closed", prior=supersedes, by=learning_id)
+
+    # PRD-CORE-244-FR02 on the UPDATE surface. ``update_learning`` edits an
+    # existing row through ``backend.update()`` and therefore never re-enters the
+    # store pipeline where ``_stage_validate_payload`` lives — so before this
+    # check, ``trw_learn_update(fields={"confidence": "verified"})`` promoted an
+    # evidence-less entry to verified, reopening on the update path exactly the
+    # hole the store gate closes.
+    #
+    # Placed here, AFTER every field is collected, for two reasons: the entry it
+    # must judge is the POST-update one (a call may be supplying the assertions
+    # that substantiate the claim in the same breath as the promotion), and a
+    # refusal must abort the WHOLE update rather than let the other fields land
+    # from a call that was rejected.
+    refusal = _reject_unverifiable_promotion(existing, fields)
+    if refusal is not None:
+        return refusal
 
     if feedback is not None:
         # Keep the read and increment inside the backend's serialized write
         # transaction. A bare get()+update() pair loses votes when concurrent
         # callers read the same old counter.
         with backend.transaction():
-            current = backend.get(learning_id)
+            current = resolve_entry_in_backend(backend, learning_id)
             if current is None:
                 return {"error": f"Learning {learning_id} not found", "status": "not_found"}
             counter = "helpful_count" if feedback == "helpful" else "unhelpful_count"
             fields[counter] = getattr(current, counter) + 1
-            backend.update(learning_id, **fields)
+            backend.update(learning_id, namespace=current.namespace, **fields)
         changes.append(f"feedback→{feedback}")
     elif fields:
-        backend.update(learning_id, **fields)
+        backend.update(learning_id, namespace=existing.namespace, **fields)
 
     if not changes:
         return {"learning_id": learning_id, "status": "no_changes"}

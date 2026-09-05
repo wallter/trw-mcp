@@ -27,6 +27,12 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.tools._delivery_effect_boundaries import (
+    EFFECT_BOUNDARIES,
+    BoundaryKind,
+    EffectBoundary,
+)
+
 
 class ReplayClass(str, Enum):
     """Automatic-restart safety class for one delivery effect (§6.4).
@@ -71,6 +77,7 @@ class EffectDescriptor(BaseModel):
     impact: OperationStateImpact
     replay_class: ReplayClass
     proof_contract: str = Field(description="Evidence a wrapper must capture to finalize.")
+    boundary: EffectBoundary = Field(description="Declared crash boundary (PRD-FIX-127 FR03).")
     redaction_policy: str = Field(default="digest_only", description="What may persist to the journal.")
 
 
@@ -120,13 +127,44 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
     ("S18", "ceremony deliver-called flag", "mark_deliver", _R, _PP, "deliver_called=true + revision"),
     ("S19", "nudge-analysis JSON write", "_write_nudge_analysis_artifact", _O, _PP, "content digest"),
     ("S20", "delivery-complete event append", "_log_deliver_event", _R, _KI, "operation terminal event id"),
+    # PRD-CORE-249-FR02/FR05: the deliver-time project-handoff write. Keyed on
+    # (run_id, gate_id) and marker-bounded, so a replay converges rather than
+    # appending — POSTCONDITION_PROVABLE on the merged block's content digest.
+    (
+        "S22",
+        "project handoff rows + remaining-work section",
+        "step_project_handoff",
+        _O,
+        _PP,
+        "managed block content digest",
+    ),
     (
         "S21",
         "structured application log emissions",
-        "delivery_logger",
+        "log_deliver_complete",
         _O,
         _DG,
         "diagnostic only; excluded from success proof",
+    ),
+    # PRD-FIX-127 FR05: both of the following were durable delivery mutations with
+    # NO descriptor at all until the input/output tracer observed them on a live
+    # deliver — exactly the "unclassified mutation" class the FR03 census forbids
+    # and the old journal-reading gate was structurally unable to detect.
+    (
+        "S23",
+        "gate decision-set receipt writes",
+        "_persist_decision_set",
+        _O,
+        _PP,
+        "per-decision content digest",
+    ),
+    (
+        "D26",
+        "meta-tune rollout linkage event append",
+        "_step_delivery_metrics",
+        _O,
+        _KI,
+        "stable session/effect event id",
     ),
     ("D00", "deferred lock-holder record", "_try_acquire_deferred_lock", _O, _CO, "lock/lease owner + liveness"),
     ("D01", "learning auto-prune mutations/audit", "_step_auto_prune", _O, _NR, "per-action proof"),
@@ -195,7 +233,52 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
         _KI,
         "batch change/effect id; diagnostic fallback",
     ),
+    (
+        "D25",
+        "importance decay for unused entries",
+        "_step_memory_decay",
+        _O,
+        _NR,
+        "per-row importance delta + outcome_history append",
+    ),
 )
+
+
+#: Replay classes for which ``unjournaled`` is an honest declaration (FR03/NFR04):
+#: the write is not evidence of anything, so losing it after a crash proves nothing.
+UNJOURNALABLE_CLASSES: frozenset[ReplayClass] = frozenset({ReplayClass.DIAGNOSTIC, ReplayClass.COORDINATION})
+
+
+def _validate_boundaries(registry: dict[str, EffectDescriptor]) -> None:
+    """Reject an overclaiming, dangling, or cyclic boundary at import (NFR04).
+
+    Enforced here rather than by review: an ``unjournaled`` declaration on a
+    non-diagnostic effect, or a ``shared_with`` host that is missing or is itself
+    ``shared_with``, would re-create the FR03 gap under a legal-looking label.
+    """
+    for effect_id, descriptor in registry.items():
+        boundary = descriptor.boundary
+        if boundary.kind is BoundaryKind.UNJOURNALED:
+            if descriptor.replay_class not in UNJOURNALABLE_CLASSES:
+                raise ValueError(
+                    f"{effect_id}: boundary 'unjournaled' requires a diagnostic/coordination "
+                    f"replay class, got {descriptor.replay_class.value}"
+                )
+            if boundary.host_effect_id:
+                raise ValueError(f"{effect_id}: 'unjournaled' must not name a host")
+        elif boundary.kind is BoundaryKind.SHARED_WITH:
+            host = registry.get(boundary.host_effect_id)
+            if host is None:
+                raise ValueError(f"{effect_id}: shared_with names unknown effect {boundary.host_effect_id!r}")
+            if host.effect_id == effect_id:
+                raise ValueError(f"{effect_id}: shared_with may not name itself")
+            if host.boundary.kind is not BoundaryKind.OWN:
+                raise ValueError(
+                    f"{effect_id}: shared_with host {host.effect_id} declares "
+                    f"{host.boundary.kind.value}, but a host must declare 'own'"
+                )
+        elif boundary.host_effect_id:
+            raise ValueError(f"{effect_id}: 'own' must not name a host")
 
 
 def _build_registry() -> dict[str, EffectDescriptor]:
@@ -203,6 +286,9 @@ def _build_registry() -> dict[str, EffectDescriptor]:
     for effect_id, mutation, owner, impact, replay_class, proof in _CENSUS:
         if effect_id in registry:  # pragma: no cover - guarded by frozen data + test
             raise ValueError(f"duplicate effect descriptor id: {effect_id}")
+        boundary = EFFECT_BOUNDARIES.get(effect_id)
+        if boundary is None:
+            raise ValueError(f"{effect_id}: no crash boundary declared (PRD-FIX-127 FR03)")
         registry[effect_id] = EffectDescriptor(
             effect_id=effect_id,
             mutation=mutation,
@@ -210,7 +296,12 @@ def _build_registry() -> dict[str, EffectDescriptor]:
             impact=impact,
             replay_class=replay_class,
             proof_contract=proof,
+            boundary=boundary,
         )
+    orphan_boundaries = sorted(set(EFFECT_BOUNDARIES) - set(registry))
+    if orphan_boundaries:
+        raise ValueError(f"boundary declared for unregistered effect(s): {orphan_boundaries}")
+    _validate_boundaries(registry)
     return registry
 
 
@@ -221,6 +312,31 @@ DELIVERY_EFFECT_REGISTRY: dict[str, EffectDescriptor] = _build_registry()
 #: D01-D13 plus post-batch D14-D24 and the D00 coordination lock).
 DEFERRED_ROSTER_IDS: frozenset[str] = frozenset(
     d.effect_id for d in DELIVERY_EFFECT_REGISTRY.values() if d.effect_id.startswith("D")
+)
+
+
+#: DECISION-shaped effects: their wrapped call reports failure by RETURN VALUE,
+#: and the value is a governance verdict the delivery acts on. Two consequences,
+#: both load-bearing (PRD-FIX-127 FR03, review finding 1):
+#:
+#: 1. The wrapper MUST call :func:`trw_mcp._delivery_boundary.refuse_boundary` when
+#:    the verdict is negative, or the step finalizes ``succeeded`` and claims a
+#:    write that never happened.
+#: 2. A resumed delivery MUST re-evaluate them, never skip them on a prior
+#:    ``succeeded`` row. A gate verdict is not a durable artifact whose existence
+#:    can be inherited: the acceptable-failure record may have expired, its
+#:    evidence may have changed, and PRD-CORE-191 requires the record to be
+#:    re-validated and PRD-SEC-013 requires the accepted override to be ledgered
+#:    on the attempt that relies on it.
+#:
+#: Enumerated, not inferred: adding a decision-shaped effect without listing it
+#: here reintroduces the bypass.
+ALWAYS_REEVALUATE_EFFECTS: frozenset[str] = frozenset(
+    {
+        "S06",  # acceptable-failure override ledger — the PRD-CORE-191 verdict
+        "S07",  # override event append — the audit of that verdict
+        "S23",  # gate decision-set receipts — evidence for THIS attempt's gates
+    }
 )
 
 
@@ -258,6 +374,27 @@ def is_auto_replayable_after_started(effect_id: str) -> bool:
     registry — not a code comment — is the authority for that decision.
     """
     return DELIVERY_EFFECT_REGISTRY[effect_id].replay_class not in NON_AUTO_REPLAY_CLASSES
+
+
+def unjournaled_effect_ids() -> frozenset[str]:
+    """Effects that legitimately produce no journal step (FR03 ``unjournaled``)."""
+    return frozenset(
+        d.effect_id for d in DELIVERY_EFFECT_REGISTRY.values() if d.boundary.kind is BoundaryKind.UNJOURNALED
+    )
+
+
+def boundary_host(effect_id: str) -> str:
+    """The effect id whose step row is ``effect_id``'s crash evidence, or ``""``.
+
+    ``own`` resolves to itself; ``shared_with`` resolves to its host; an
+    ``unjournaled`` effect has no crash evidence at all and resolves to ``""``.
+    """
+    boundary = DELIVERY_EFFECT_REGISTRY[effect_id].boundary
+    if boundary.kind is BoundaryKind.OWN:
+        return effect_id
+    if boundary.kind is BoundaryKind.SHARED_WITH:
+        return boundary.host_effect_id
+    return ""
 
 
 def reconcile_static_roster(observed_effect_ids: frozenset[str]) -> dict[str, tuple[str, ...]]:

@@ -389,6 +389,59 @@ def test_adopt_refuses_terminal_status_without_force(
     assert "terminal" in str(exc.value).lower()
 
 
+def test_adopt_refuses_abandoned_run_without_force(
+    isolated_project: Path,
+) -> None:
+    """PRD-FIX-126-FR02: a swept run is terminal, so adoption needs ``force``.
+
+    Before the shared predicate landed, ``_ceremony_adopt_run`` refused only
+    ``("delivered", "complete", "failed")``. ``abandoned`` — the status the
+    stale-run sweep writes, and the status 185 of the 191 live runs carried —
+    was absent, so every swept run was adoptable silently, as if it were live
+    work. This test fails against that tuple and passes against
+    ``RunStatus.is_terminal``.
+    """
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.models.run import RunStatus
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111", status=RunStatus.ABANDONED.value)
+    server = _make_server()
+    adopt = _adopt(server)
+    with pytest.raises(StateError) as exc:
+        adopt(ctx=SimpleNamespace(session_id="sess-A"), run_path=str(run))
+    assert "status=abandoned" in str(exc.value)
+    assert "terminal" in str(exc.value).lower()
+
+
+def test_adopt_succeeds_on_abandoned_run_with_force(
+    isolated_project: Path,
+) -> None:
+    """PRD-FIX-126-FR02: ``force=True`` still adopts, exactly as for ``delivered``."""
+    from trw_mcp.models.run import RunStatus
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111", status=RunStatus.ABANDONED.value)
+    server = _make_server()
+    adopt = _adopt(server)
+    result = adopt(ctx=SimpleNamespace(session_id="sess-AF"), run_path=str(run), force=True)
+    assert result["force_used"] is True
+    assert result["to_pin_key"] == "sess-AF"
+
+
+def test_adopt_allows_a_run_whose_status_cannot_be_named(
+    isolated_project: Path,
+) -> None:
+    """PRD-FIX-126-FR02: an unnameable status is NOT terminal.
+
+    The predicate must not seal a record on the strength of a typo — a run
+    whose status we cannot resolve is treated as live and stays adoptable.
+    """
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111", status="abandonded")
+    server = _make_server()
+    adopt = _adopt(server)
+    result = adopt(ctx=SimpleNamespace(session_id="sess-AT"), run_path=str(run))
+    assert result["to_pin_key"] == "sess-AT"
+
+
 def test_adopt_refuses_unreadable_metadata_before_pin_write(isolated_project: Path) -> None:
     from trw_mcp.exceptions import StateError
     from trw_mcp.state._pin_store import load_pin_store

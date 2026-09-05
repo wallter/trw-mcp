@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 import pytest
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.scoring import _days_since_access, _entry_utility
+from trw_mcp.scoring import _days_since_access, entry_utility
 
 
 class TestDaysSinceAccessEdgeCases:
@@ -80,14 +80,14 @@ class TestDaysSinceAccessEdgeCases:
 
 
 class TestEntryUtilityEdgeCases:
-    """Edge cases for _entry_utility composite scoring."""
+    """Edge cases for entry_utility composite scoring."""
 
     def test_minimal_entry_no_fields(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Entry with no scoring fields uses defaults."""
         cfg = TRWConfig()
         monkeypatch.setattr("trw_mcp.scoring._decay.get_config", lambda: cfg)
         entry: dict[str, object] = {}
-        result = _entry_utility(entry, datetime.now(tz=timezone.utc).date())
+        result = entry_utility(entry, datetime.now(tz=timezone.utc).date())
         assert 0.0 <= result <= 1.0
 
     def test_high_access_count_boosts_utility(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,8 +113,8 @@ class TestEntryUtilityEdgeCases:
             "source_type": "agent",
             "created": today.isoformat(),
         }
-        score_low = _entry_utility(entry_low, today)
-        score_high = _entry_utility(entry_high, today)
+        score_low = entry_utility(entry_low, today)
+        score_high = entry_utility(entry_high, today)
         assert score_high >= score_low
 
     def test_human_source_boosts_utility(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,8 +132,8 @@ class TestEntryUtilityEdgeCases:
         }
         entry_agent = {**base, "source_type": "agent"}
         entry_human = {**base, "source_type": "human"}
-        score_agent = _entry_utility(entry_agent, today)
-        score_human = _entry_utility(entry_human, today)
+        score_agent = entry_utility(entry_agent, today)
+        score_human = entry_utility(entry_human, today)
         assert score_human >= score_agent
 
     def test_fallback_days_passed_through(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,6 +148,6 @@ class TestEntryUtilityEdgeCases:
             "access_count": 0,
             "source_type": "agent",
         }
-        score_fresh = _entry_utility(entry, datetime.now(tz=timezone.utc).date(), fallback_days=0)
-        score_stale = _entry_utility(entry, datetime.now(tz=timezone.utc).date(), fallback_days=365)
+        score_fresh = entry_utility(entry, datetime.now(tz=timezone.utc).date(), fallback_days=0)
+        score_stale = entry_utility(entry, datetime.now(tz=timezone.utc).date(), fallback_days=365)
         assert score_fresh > score_stale

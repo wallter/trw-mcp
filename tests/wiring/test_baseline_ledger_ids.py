@@ -2,8 +2,8 @@
 
 ``BaselineEntry.__post_init__`` (``trw_mcp/wiring/baseline.py``) validates
 ``ledger_id`` for **regex shape only** — ``UF-\\d+`` / ``OQ-\\d+`` / ``DEAD-\\d+`` /
-``PRD-[A-Z]+-\\d+`` — and is never cross-checked against
-``docs/research/framework-simplification/DEFECT-LEDGER.md``. So
+``PRD-[A-Z]+-\\d+`` — and is never cross-checked against the monorepo-internal
+defect ledger. So
 ``BaselineEntry(key=<any finding's key>, ledger_id="UF-999999", rationale="...")``
 constructs fine and permanently silences that finding, even though ``UF-999999``
 exists nowhere. This module is the cross-check.
@@ -45,7 +45,7 @@ import pytest
 
 from trw_mcp.wiring.baseline import BASELINE, BaselineEntry
 
-LEDGER_RELATIVE_PATH = "docs/research/framework-simplification/DEFECT-LEDGER.md"
+LEDGER_RELATIVE_PATH = "docs/research/framework-simplification/DEFECT-LEDGER.md"  # trw-leak-allow: internal_docs dev-repo-only wiring test; the ledger is the fixture
 
 # Baseline ledger ids with a KNOWN, currently-unresolved gap against
 # DEFECT-LEDGER.md. Exact-match discipline mirrors BASELINE's own design (the

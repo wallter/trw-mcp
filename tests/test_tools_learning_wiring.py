@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+from trw_memory.sync import SharedFetchResult
+
 from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from tests.conftest import get_tools_sync, make_test_server
 
@@ -29,7 +31,13 @@ class TestToolDelegationIntact:
 
 
 class TestRemoteRecallWiring:
-    """Verify fetch_shared_learnings() wiring in trw_recall."""
+    """Verify the shared-learning fetch wiring in trw_recall.
+
+    PRD-CORE-245 FR06 repointed these at ``trw_memory.sync.fetch_shared_memories``,
+    the ONE remaining path to the platform search endpoint. The fail-open
+    assertions are the wiring proof: they only hold if ``_augment_with_remote``
+    actually reaches that function.
+    """
 
     def test_remote_learnings_augment_local_results(self, tmp_path: Path) -> None:
         """When platform returns remote learnings, they are added to results."""
@@ -48,8 +56,8 @@ class TestRemoteRecallWiring:
         }
 
         with patch(
-            "trw_mcp.telemetry.remote_recall.fetch_shared_learnings",
-            return_value=[remote_learning],
+            "trw_memory.sync.fetch_shared_memories",
+            return_value=SharedFetchResult([remote_learning], "ok", 1, 0),
         ):
             result = tools["trw_recall"].fn(query="testing")
 
@@ -57,14 +65,40 @@ class TestRemoteRecallWiring:
         all_summaries = [str(e.get("summary", "")) for e in result.get("learnings", [])]
         assert any("[shared]" in s for s in all_summaries)
 
+    def test_remote_refusal_is_reported_not_merged_silently(self, tmp_path: Path) -> None:
+        """W13: an empty remote result whose cause was refusal is logged as such.
+
+        ``fetch_shared_memories`` returns a status now, and this is the assertion
+        that the trw-mcp caller reads it -- a status nobody consumes would be a
+        new wiring defect rather than a fix for one.
+        """
+        tools = _get_tools()
+        entries_dir = _entries_dir(tmp_path)
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        with (
+            patch(
+                "trw_memory.sync.fetch_shared_memories",
+                return_value=SharedFetchResult([], "refused", 3, 3),
+            ),
+            patch("trw_mcp.tools._recall_impl.logger.warning") as mock_warning,
+        ):
+            result = tools["trw_recall"].fn(query="testing")
+
+        assert "learnings" in result
+        incomplete = [call for call in mock_warning.call_args_list if call.args[:1] == ("remote_recall_incomplete",)]
+        assert len(incomplete) == 1
+        assert incomplete[0].kwargs["outcome"] == "refused"
+        assert incomplete[0].kwargs["refused"] == 3
+
     def test_remote_recall_failure_is_fail_open(self, tmp_path: Path) -> None:
-        """If fetch_shared_learnings raises, local results still returned."""
+        """If the shared fetch raises, local results are still returned."""
         tools = _get_tools()
         entries_dir = _entries_dir(tmp_path)
         entries_dir.mkdir(parents=True, exist_ok=True)
 
         with patch(
-            "trw_mcp.telemetry.remote_recall.fetch_shared_learnings",
+            "trw_memory.sync.fetch_shared_memories",
             side_effect=Exception("network boom"),
         ):
             result = tools["trw_recall"].fn(query="testing")
@@ -81,7 +115,7 @@ class TestRemoteRecallWiring:
 
         with (
             patch(
-                "trw_mcp.telemetry.remote_recall.fetch_shared_learnings",
+                "trw_memory.sync.fetch_shared_memories",
                 side_effect=Exception("network boom"),
             ),
             patch("trw_mcp.tools._recall_impl.logger.warning") as mock_warning,
@@ -97,6 +131,35 @@ class TestRemoteRecallWiring:
         assert kwargs["outcome"] == "fail_open"
         assert kwargs["query_excerpt"] == "testing observability query"
         assert kwargs["exc_info"] is True
+        # P5: the failure is on the PAYLOAD, not only in the log.
+        assert result["remote_recall"] == {"status": "failed", "reason": "Exception"}
+
+    def test_remote_fetch_status_is_on_the_payload_when_incomplete(self, tmp_path: Path) -> None:
+        """A remote leg that answered but was not 'ok' names its status to the agent."""
+        tools = _get_tools()
+        entries_dir = _entries_dir(tmp_path)
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch(
+            "trw_memory.sync.fetch_shared_memories",
+            return_value=SharedFetchResult([], "fetch_failed", 0, 0),
+        ):
+            result = tools["trw_recall"].fn(query="testing")
+
+        assert result["remote_recall"] == {"status": "fetch_failed", "fetched": 0, "refused": 0}
+
+    def test_remote_fetch_ok_leaves_no_status_key(self, tmp_path: Path) -> None:
+        tools = _get_tools()
+        entries_dir = _entries_dir(tmp_path)
+        entries_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch(
+            "trw_memory.sync.fetch_shared_memories",
+            return_value=SharedFetchResult([], "ok", 0, 0),
+        ):
+            result = tools["trw_recall"].fn(query="testing")
+
+        assert "remote_recall" not in result
 
 
 class TestRecallTrackingWiring:

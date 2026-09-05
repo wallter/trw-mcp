@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from trw_memory.sync import SharedFetchResult
+
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
@@ -190,7 +192,7 @@ class TestRecallTopicFilter:
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
-            patch("trw_mcp.telemetry.remote_recall.fetch_shared_learnings", return_value=[]),
+            patch("trw_memory.sync.fetch_shared_memories", return_value=SharedFetchResult([], "ok", 0, 0)),
         ):
             result = tool.fn(query="*", topic="nonexistent_topic")
 

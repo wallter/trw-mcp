@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import structlog
 
-from trw_mcp.scoring._decay import _entry_utility
+from trw_mcp.scoring._decay import entry_utility, utility_params_for
 from trw_mcp.scoring._recall_context import (
     RecallContext as RecallContext,
 )
@@ -42,7 +42,7 @@ from trw_mcp.scoring._recall_domains import (
 from trw_mcp.scoring._recall_prune import (
     utility_based_prune_candidates as utility_based_prune_candidates,
 )
-from trw_mcp.scoring._utils import safe_float
+from trw_mcp.scoring._utils import get_config, safe_float
 
 _logger = structlog.get_logger(__name__)
 _level_logger = logging.getLogger(__name__)
@@ -55,37 +55,6 @@ __all__ = [
 ]
 
 
-def _outcome_boost_factor(outcome_corr: float | str) -> float:
-    """Map outcome_correlation to a multiplicative boost factor.
-
-    PRD-CORE-116-FR01: Handles both string categories and float values.
-
-    String values: "strong_positive"=1.5, "positive"=1.2,
-        "neutral"=1.0, "negative"=0.5.
-    Float values mapped via thresholds: >=0.75 → 1.5, >=0.5 → 1.2,
-        <=-0.5 → 0.5, else → 1.0.
-    """
-    if isinstance(outcome_corr, str):
-        return {
-            "strong_positive": 1.5,
-            "positive": 1.2,
-            "neutral": 1.0,
-            "negative": 0.5,
-        }.get(outcome_corr, 1.0)
-
-    # Float path — clamp to [-1.0, 1.0]
-    val = max(-1.0, min(1.0, float(outcome_corr)))
-    if val != outcome_corr:
-        _logger.debug("outcome_correlation_clamped", original=outcome_corr, clamped=val)
-    if val >= 0.75:
-        return 1.5
-    if val >= 0.5:
-        return 1.2
-    if val <= -0.5:
-        return 0.5
-    return 1.0
-
-
 def rank_by_utility(
     matches: list[dict[str, object]],
     query_tokens: list[str],
@@ -96,8 +65,13 @@ def rank_by_utility(
 ) -> list[dict[str, object]]:
     """Re-rank matched learnings by combined relevance + utility score.
 
-    PRD-CORE-116 + PRD-INFRA-053: 7-factor multiplicative boost formula:
-    ``combined = base * domain * phase * team * outcome * anchor * prd * intel``
+    PRD-CORE-116 + PRD-INFRA-053: 6-factor multiplicative boost formula:
+    ``combined = base * domain * phase * team * anchor * prd * intel``
+
+    The PRD-CORE-116-FR01 outcome-correlation factor is gone: trw-memory
+    0.16.0 dropped ``outcome_correlation`` (PRD-CORE-244 FR08 — no producer
+    ever wrote it), so the recall dicts reaching this function never carried
+    the key and the factor was the multiplicative identity on every entry.
 
     Args:
         matches: List of matched learning entry dicts.
@@ -115,6 +89,8 @@ def rank_by_utility(
         return matches
 
     today = datetime.now(tz=timezone.utc).date()
+    # PRD-CORE-244 FR11: bound ONCE per pass, not per entry.
+    utility_params = utility_params_for(get_config())
     scored: list[tuple[float, dict[str, object]]] = []
     bandit_params: dict[str, float] | None = None
     boosted_entries = 0
@@ -141,7 +117,7 @@ def rank_by_utility(
         else:
             relevance = 1.0  # wildcard query
 
-        utility = _entry_utility(entry, today)
+        utility = entry_utility(entry, today, params=utility_params)
 
         combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
 
@@ -151,11 +127,10 @@ def rank_by_utility(
             if entry_id in assertion_penalties:
                 combined = max(0.0, combined - assertion_penalties[entry_id])
 
-        # --- 7-factor multiplicative boosts (PRD-CORE-116-FR01, PRD-INFRA-053) ---
+        # --- 6-factor multiplicative boosts (PRD-CORE-116-FR01, PRD-INFRA-053) ---
         domain_boost = 1.0
         phase_boost = 1.0
         team_boost = 1.0
-        outcome_boost = 1.0
         anchor_val = 1.0
         prd_boost = 1.0
         intel_boost = 1.0
@@ -182,32 +157,22 @@ def rank_by_utility(
             if entry_team and context.team and entry_team == context.team:
                 team_boost = 1.2
 
-            # 4. Outcome boost (1.5/1.2/1.0/0.5)
-            raw_outcome = entry.get("outcome_correlation", 0.0)
-            if isinstance(raw_outcome, str):
-                outcome_boost = _outcome_boost_factor(raw_outcome)
-            else:
-                outcome_boost = _outcome_boost_factor(safe_float(entry, "outcome_correlation", 0.0))
-
-            # 5. Anchor validity — multiplicative (not binary exclusion)
+            # 4. Anchor validity — multiplicative (not binary exclusion)
             anchor_val = safe_float(entry, "anchor_validity", 1.0)
 
-            # 6. PRD boost (1.5x)
+            # 5. PRD boost (1.5x)
             if context.prd_knowledge_ids:
                 eid = str(entry.get("id", ""))
                 if eid in context.prd_knowledge_ids:
                     prd_boost = 1.5
 
-            # 7. Intel boost from backend bandit params (PRD-INFRA-053)
+            # 6. Intel boost from backend bandit params (PRD-INFRA-053)
             if bandit_params:
                 entry_id = str(entry.get("id", ""))
                 if entry_id in bandit_params:
                     intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
 
-            if any(
-                f != 1.0
-                for f in (domain_boost, phase_boost, team_boost, outcome_boost, anchor_val, prd_boost, intel_boost)
-            ):
+            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, anchor_val, prd_boost, intel_boost)):
                 boosted_entries += 1
                 if intel_boost != 1.0:
                     intel_boosted_entries += 1
@@ -217,23 +182,16 @@ def rank_by_utility(
                         "domain_boost": domain_boost,
                         "phase_boost": phase_boost,
                         "team_boost": team_boost,
-                        "outcome_boost": outcome_boost,
                         "anchor_validity": anchor_val,
                         "prd_boost": prd_boost,
                         "intel_boost": intel_boost,
                         "final_boost": round(
-                            domain_boost
-                            * phase_boost
-                            * team_boost
-                            * outcome_boost
-                            * anchor_val
-                            * prd_boost
-                            * intel_boost,
+                            domain_boost * phase_boost * team_boost * anchor_val * prd_boost * intel_boost,
                             4,
                         ),
                     }
 
-        combined *= domain_boost * phase_boost * team_boost * outcome_boost * anchor_val * prd_boost * intel_boost
+        combined *= domain_boost * phase_boost * team_boost * anchor_val * prd_boost * intel_boost
         # Clamp final score
         combined = max(0.0, min(2.0, combined))
 

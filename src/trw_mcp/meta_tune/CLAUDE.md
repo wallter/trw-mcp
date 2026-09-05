@@ -68,5 +68,6 @@ mypy --strict src/trw_mcp/meta_tune/
 ## References
 
 - PRD: `docs/requirements-aare-f/prds/agentic-hpo/PRD-HPO-SAFE-001-meta-tune-safety-gates.md`
-- Design: `docs/research/agentic-hpo/sandbox-isolation-design-2026-04-17.md`
+- Design: the sandbox layering is documented in `sandbox.py`'s module docstring
+  (subprocess -> seccomp-bpf -> network unshare -> resource limits).
 - Sprint: `docs/requirements-aare-f/sprints/active/sprint-96-agentic-hpo-foundation.md`

@@ -137,9 +137,17 @@ def test_render_framework_reference_gated() -> None:
 
 
 def test_render_closing_reminder() -> None:
-    """Verify closing reminder includes session boundary text."""
-    renderer = ProtocolRenderer(client_profile=ClientProfile(client_id="test", display_name="test"))
-    output = renderer.render_closing_reminder()
+    """Verify closing reminder includes session boundary text.
+
+    PRD-CORE-247 deleted ``ProtocolRenderer.render_closing_reminder``: it
+    shadowed the module function of the same name and returned session
+    boundaries ONLY, so the generated protocol block reached agents carrying
+    neither the deliver gate nor the offline substitutes. There is now one
+    implementation, and this asserts on it.
+    """
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_closing_reminder
+
+    output = render_closing_reminder()
     assert "Session Boundaries" in output
     assert "trw_session_start()" in output
 

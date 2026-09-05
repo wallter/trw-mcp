@@ -61,7 +61,7 @@ class TestBatchAccessTracking:
 
         backend = get_backend(trw_dir)
         for lid in ["L-b1", "L-b2", "L-b3"]:
-            entry = backend.get(lid)
+            entry = backend.get(lid, namespace="default")
             assert entry is not None
             assert entry.access_count == 1, f"{lid} access_count should be 1"
             assert entry.last_accessed_at is not None
@@ -72,13 +72,13 @@ class TestBatchAccessTracking:
 
         # First tracking call
         update_access_tracking(trw_dir, ["L-inc1"])
-        entry = get_backend(trw_dir).get("L-inc1")
+        entry = get_backend(trw_dir).get("L-inc1", namespace="default")
         assert entry is not None
         assert entry.access_count == 1
 
         # Second tracking call
         update_access_tracking(trw_dir, ["L-inc1"])
-        entry = get_backend(trw_dir).get("L-inc1")
+        entry = get_backend(trw_dir).get("L-inc1", namespace="default")
         assert entry is not None
         assert entry.access_count == 2
 
@@ -93,7 +93,7 @@ class TestBatchAccessTracking:
         # Mix real and fake IDs
         update_access_tracking(trw_dir, ["L-real1", "L-fake1", "L-fake2"])
 
-        entry = get_backend(trw_dir).get("L-real1")
+        entry = get_backend(trw_dir).get("L-real1", namespace="default")
         assert entry is not None
         assert entry.access_count == 1
 
@@ -123,13 +123,13 @@ class TestBatchAccessTracking:
         """Batch update sets last_accessed_at timestamp."""
         store_learning(trw_dir, "L-ts1", "Timestamp test", "detail")
 
-        entry_before = get_backend(trw_dir).get("L-ts1")
+        entry_before = get_backend(trw_dir).get("L-ts1", namespace="default")
         assert entry_before is not None
         ts_before = entry_before.last_accessed_at
 
         update_access_tracking(trw_dir, ["L-ts1"])
 
-        entry_after = get_backend(trw_dir).get("L-ts1")
+        entry_after = get_backend(trw_dir).get("L-ts1", namespace="default")
         assert entry_after is not None
         assert entry_after.last_accessed_at is not None
         if ts_before is not None:

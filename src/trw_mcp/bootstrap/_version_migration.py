@@ -82,7 +82,36 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "reviewer-spec-compliance.md": None,
         "reviewer-style.md": None,
         "reviewer-test-quality.md": None,
+        # PRD-CORE-252: retired outright. Both names existed ONLY as per-client
+        # stubs (a short original body sharing a filename with nothing in the
+        # bundle) and neither was ever a bundled specialist. The stub sets are
+        # gone, so the names go with them rather than being promoted into the
+        # bundle — bundled-or-discard.
+        "trw-explorer.md": None,
+        "trw-docs-researcher.md": None,
     },
+}
+
+#: Per-client agent directories TRW no longer writes to, mapped to the exact
+#: filenames it used to write there (PRD-CORE-252-FR04).
+#:
+#: Enumerated rather than swept, because these directories are not exclusively
+#: TRW's — a blanket "remove every trw-* file here" could delete a live
+#: artifact of another subsystem. ``trw-distill-explorer.md`` (the AG-02
+#: dynamically-rendered explorer subagent) joined this list once its own
+#: writer moved to the same ``.agents/agents`` destination the bundled
+#: specialists use (PRD-CORE-252 follow-up); before that it was excluded here
+#: for the reason this comment used to state. Antigravity's own subagent
+#: reference documents ``.agents/agents``, which is where every antigravity
+#: agent — bundled or dynamically rendered — now lands.
+RELOCATED_CLIENT_AGENTS: dict[str, tuple[str, ...]] = {
+    ".antigravitycli/agents": (
+        "trw-explorer.md",
+        "trw-implementer.md",
+        "trw-lead.md",
+        "trw-reviewer.md",
+        "trw-distill-explorer.md",
+    ),
 }
 
 

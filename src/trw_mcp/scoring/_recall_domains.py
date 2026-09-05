@@ -94,7 +94,7 @@ def infer_domains(
         file_paths: File paths to extract domains from.
         query: Search query text for keyword extraction.
         path_domain_map: Explicit prefix-to-domain mapping
-            (e.g. ``{"backend/payments": "payments"}``).
+            (e.g. ``{"api/payments": "payments"}``).
         modified_files: Deprecated alias for ``file_paths``.
 
     Returns:

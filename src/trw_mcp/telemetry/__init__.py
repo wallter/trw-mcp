@@ -56,7 +56,6 @@ from trw_mcp.telemetry.models import (
 )
 from trw_mcp.telemetry.pipeline import TelemetryPipeline
 from trw_mcp.telemetry.publisher import publish_learnings
-from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
 from trw_mcp.telemetry.sender import BatchSender
 from trw_mcp.telemetry.surface_manifest import (
     MANIFEST_FILENAME,
@@ -123,7 +122,6 @@ __all__ = [
     "clear_snapshot_cache",
     "emit_h1_observe_mode_warning",
     "emit_unified",
-    "fetch_shared_learnings",
     "get_default_writer",
     "load_manifest",
     "publish_learnings",

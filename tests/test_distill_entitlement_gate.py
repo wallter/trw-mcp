@@ -12,7 +12,7 @@ distill-dependent artifacts into every project, licensed or not:
 - `.cursor/rules/distill-*.mdc` whose description read *"TRW distill data
   available — quota exceeded"*, which is false twice over for a stub: no data
   exists and no quota was hit.
-- `.claude/agents/trw-distill-explorer.md`, `.antigravitycli/agents/…`, and
+- `.claude/agents/trw-distill-explorer.md`, `.agents/agents/…`, and
   `.opencode/agents/…` — three copies of an agent that cannot function without
   the package.
 

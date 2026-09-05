@@ -1,15 +1,17 @@
 """PRD-FIX-COMPOUNDING-2 FR05 — wiring tests for knowledge-graph edge creation.
 
 These tests are the regression anchor for RC-1/RC-4 from the 2026-06-02
-postmortem (``docs/research/postmortems/2026-06-02-knowledge-graph-empty.md``):
-``store_learning`` never enriched the knowledge graph, so
+knowledge-graph-empty postmortem: ``store_learning`` never enriched the
+knowledge graph, so
 ``memory_graph_edges`` was 0 rows for the entire project lifespan and no test
 asserted edge count after a store.
 
 What each test proves:
-- ``test_store_learning_creates_tag_cooccurrence_edges``: two stores sharing
-  2+ tags create at least one ``tag_cooccurrence`` edge (the exact failure
-  mode — FAILS before the FR01 fix).
+- ``test_store_learning_indexes_tags_for_derivation``: two stores sharing 2+
+  tags become derivable neighbours of each other. PRD-CORE-245 FR07 deleted the
+  materialised ``tag_cooccurrence`` edge — the store path now maintains the
+  ``memory_tags`` inverted index and the relation is computed at query time, so
+  the wiring this test guards is the index, not an edge row.
 - ``test_store_learning_calls_graph_enrichment``: enrichment is wired with the
   entry + the reused embedding vector (via synchronous ``update_entry_graph``
   on the singleton connection — see the test for the path-divergence rationale).
@@ -29,6 +31,8 @@ from unittest.mock import MagicMock
 
 import pytest
 from trw_memory.graph import wait_for_graph_updates
+from trw_memory.models.config import MemoryConfig
+from trw_memory.retrieval.tag_derivation import derive_tag_neighbours
 
 from trw_mcp.state.memory_adapter import get_backend, store_learning
 
@@ -63,11 +67,17 @@ def _count_edges_by_type(trw_dir: Path, edge_type: str) -> int:
 
 
 class TestStoreLearningGraphWiring:
-    def test_store_learning_creates_tag_cooccurrence_edges(self, trw_dir: Path) -> None:
-        """Two entries sharing 2+ tags → tag_cooccurrence edge exists (FR01).
+    def test_store_learning_indexes_tags_for_derivation(self, trw_dir: Path) -> None:
+        """Two entries sharing 2+ tags become derivable neighbours (CORE-245 FR07).
 
-        This is the exact failure the postmortem found: 0 edges after stores.
-        Before the FR01 fix (no schedule_graph_update call) this assertion fails.
+        The postmortem's failure mode was 0 relations after a store. The relation
+        it asked for is still the contract; what changed is where it lives. FR07
+        deleted the materialised ``tag_cooccurrence`` edges — they had captured
+        3.3% of the predicate they claimed to store, biased toward whichever
+        entries were recent at write time — and replaced them with the
+        ``memory_tags`` index plus ``derive_tag_neighbours``. So this asserts
+        the store path maintains the index, that NO tag edge is written, and
+        that the two entries derive each other.
         """
         store_learning(
             trw_dir,
@@ -87,10 +97,36 @@ class TestStoreLearningGraphWiring:
         # Graph dispatch is a background thread — wait for it to land.
         wait_for_graph_updates(timeout=30.0)
 
-        assert _count_edges(trw_dir) > 0, "store_learning must create graph edges"
-        assert _count_edges_by_type(trw_dir, "tag_cooccurrence") > 0, (
-            "two entries sharing >=2 tags must produce a tag_cooccurrence edge"
+        backend = get_backend(trw_dir)
+        conn = backend._conn
+        assert isinstance(conn, sqlite3.Connection)
+        postings = {
+            (str(row[0]), str(row[1]))
+            for row in conn.execute(
+                "SELECT entry_id, tag FROM memory_tags WHERE namespace = 'default' AND tag IN "
+                "('postgres', 'performance', 'database', 'indexing')"
+            ).fetchall()
+        }
+        assert postings == {
+            ("L-graph-1", "postgres"),
+            ("L-graph-1", "performance"),
+            ("L-graph-1", "database"),
+            ("L-graph-2", "postgres"),
+            ("L-graph-2", "performance"),
+            ("L-graph-2", "indexing"),
+        }
+        assert _count_edges_by_type(trw_dir, "tag_cooccurrence") == 0, (
+            "FR07: tag co-occurrence is derived, never materialised"
         )
+
+        neighbours = derive_tag_neighbours(
+            conn,
+            "L-graph-1",
+            namespace="default",
+            config=MemoryConfig(storage_path=str(trw_dir / "memory")),
+        )
+        assert [n.entry_id for n in neighbours] == ["L-graph-2"]
+        assert neighbours[0].shared_tags == 2
 
     def test_store_learning_calls_graph_enrichment(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Graph enrichment is invoked with the stored entry (FR01 wiring).

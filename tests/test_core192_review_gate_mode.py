@@ -225,11 +225,23 @@ def _deliver(tmp_path: Path, run_dir: Path, *, mode: str, **kwargs: Any) -> dict
 
 
 def _write_deliver_run(tmp_path: Path, complexity_class: str) -> Path:
-    """STANDARD run with a passing build event + no review.yaml.
+    """STANDARD run with FULL build evidence and no review.yaml.
 
     The run lives under the configured ``runs_root`` (``.trw/runs``) with a
     ``run_id`` equal to the directory name so it satisfies the deliver-path
     run-identity gate (a spoofed/relocated run_path is rejected before gating).
+
+    Build evidence is a real content-bound ``BuildReceipt`` written by
+    ``record_build_receipt`` -- the writer ``trw_build_check`` itself calls --
+    over a file that really exists under the project root, alongside the legacy
+    ``build_check_complete`` event. Both are needed: under the default
+    ``evidence_receipt_mode=enforce`` (PRD-CORE-205-FR04/FR08) a legacy event
+    alone is ``typed_absent``, i.e. MISSING build evidence, and since
+    PRD-CORE-246-FR03 a missing build check blocks delivery whenever the session
+    recorded at least ``deliver_gate_unclassified_change_threshold`` changed
+    files -- an ``unknown`` task type no longer exempts a run. Without the
+    receipt these fixtures would exercise the BUILD gate, not the review gate
+    they are named for.
     """
     run_id = "20260611T000000Z-deliver"
     run_dir = tmp_path / ".trw" / "runs" / "task" / run_id
@@ -239,15 +251,23 @@ def _write_deliver_run(tmp_path: Path, complexity_class: str) -> Path:
         f"run_id: {run_id}\nstatus: active\nphase: deliver\nprd_scope: []\ncomplexity_class: {complexity_class}\n",
         encoding="utf-8",
     )
+    changed = tmp_path / "src" / "x.py"
+    changed.parent.mkdir(parents=True, exist_ok=True)
+    changed.write_text("x = 1\n", encoding="utf-8")
+    # ``file`` is top level: the shape the post-tool hook and FileEventLogger
+    # emit, and the shape BOTH the review-scope counter and the receipt scope
+    # minter read. A ``data.path`` spelling is invisible to both.
     (meta / "events.jsonl").write_text(
         json.dumps({"ts": "2026-06-11T00:00:00Z", "event": "session_start"})
         + "\n"
-        + json.dumps({"ts": "2026-06-11T00:00:01Z", "event": "file_modified", "data": {"path": "src/x.py"}})
+        + json.dumps({"ts": "2026-06-11T00:00:01Z", "event": "file_modified", "file": "src/x.py"})
         + "\n"
         + json.dumps(
             {
                 "ts": "2026-06-11T00:00:02Z",
                 "event": "build_check_complete",
+                "test_count": 12,
+                "scope": "pytest tests",
                 "tests_passed": True,
                 "static_checks_clean": True,
             }
@@ -255,7 +275,31 @@ def _write_deliver_run(tmp_path: Path, complexity_class: str) -> Path:
         + "\n",
         encoding="utf-8",
     )
+    _record_passing_build_receipt(run_dir, tmp_path)
     return run_dir
+
+
+def _record_passing_build_receipt(run_dir: Path, project_root: Path) -> None:
+    """Write a valid typed BuildReceipt through the production writer."""
+    from trw_mcp.models._evidence_plans import BuildCommandResult, CommandClass
+    from trw_mcp.tools._evidence_writers import record_build_receipt
+
+    outcome = record_build_receipt(
+        run_dir,
+        project_root,
+        tests_passed=True,
+        static_checks_clean=True,
+        scope_label="full",
+        coverage_pct=None,
+        policy_mode="enforce",
+        command_results=(
+            BuildCommandResult(command_id="tests", label="pytest", command_class=CommandClass.TEST, exit_code=0),
+            BuildCommandResult(
+                command_id="static_checks", label="mypy", command_class=CommandClass.STATIC, exit_code=0
+            ),
+        ),
+    )
+    assert outcome is not None and outcome.ok, f"build receipt fixture failed: {outcome}"
 
 
 @pytest.mark.integration

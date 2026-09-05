@@ -3,23 +3,24 @@
 PRD-HPO-SAFE-001 FR-7: ``meta_tune.enabled`` defaults to False; when False
 the proposer short-circuits and emits a single INFO-level structlog event.
 
-PRD-HPO-SAFE-001 NFR-7: every bundled profile MUST ship with
-``meta_tune.enabled: false``.
+PRD-HPO-SAFE-001 NFR-7: ``meta_tune.enabled`` MUST default to False. The
+real-path proof that the switch disables meta-tune lives in
+``tests/unit/meta_tune/test_promotion_gate.py::test_gate_noop_when_disabled``
+(``PromotionGate().evaluate(...)`` with default config returns a rejected
+no-op decision). The per-client bundled overlay YAMLs formerly asserted here
+(``trw-mcp/data/profiles/*.yaml``) were never loaded by any production code
+and were removed in trw-mcp 2.0.0 (2026-09-03).
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pytest
 import structlog
-import yaml
 
 from trw_mcp.models.config._main import TRWConfig
 from trw_mcp.models.config._sub_models import MetaTuneConfig
-
-PROFILES_DIR = Path(__file__).resolve().parents[3] / "data" / "profiles"
 
 
 def test_meta_tune_config_default_disabled() -> None:
@@ -33,25 +34,6 @@ def test_trw_config_exposes_meta_tune_sub_config_defaulting_false() -> None:
     cfg = TRWConfig()
     assert isinstance(cfg.meta_tune, MetaTuneConfig)
     assert cfg.meta_tune.enabled is False
-
-
-def test_profiles_directory_contains_at_least_one_bundled_profile() -> None:
-    """Guard: the bundled-profile corpus must be non-empty, or the
-    NFR-7 glob test below would pass vacuously."""
-    profiles = sorted(PROFILES_DIR.glob("*.yaml"))
-    assert profiles, f"No bundled profile YAMLs under {PROFILES_DIR}; NFR-7 check would pass vacuously."
-
-
-def test_all_bundled_profiles_ship_with_enabled_false() -> None:
-    """NFR-7: every bundled profile sets ``meta_tune.enabled: false``."""
-    profiles = sorted(PROFILES_DIR.glob("*.yaml"))
-    offenders: list[str] = []
-    for path in profiles:
-        data = yaml.safe_load(path.read_text()) or {}
-        meta_tune = data.get("meta_tune")
-        if not isinstance(meta_tune, dict) or meta_tune.get("enabled") is not False:
-            offenders.append(f"{path.name}: meta_tune={meta_tune!r}")
-    assert not offenders, f"Bundled profiles must ship with meta_tune.enabled=false (NFR-7); offenders: {offenders}"
 
 
 def test_log_message_meta_tune_disabled_at_info(

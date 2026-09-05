@@ -220,7 +220,13 @@ class TestBootstrapDryRunBranches:
         assert any("would create" in s for s in would_create)
 
     def test_update_project_claude_md_write_failure(self, tmp_path: Path) -> None:
-        """Lines 378-379: CLAUDE.md write fails → error appended."""
+        """An unwritable CLAUDE.md is reported, never silently swallowed.
+
+        PRD-FIX-123-FR06 moved this write onto the atomic
+        ``FileStateWriter.write_text`` path (temp file + rename), which never
+        calls ``Path.write_text`` on a file named ``CLAUDE.md`` — patching only
+        the latter would leave the write succeeding and assert nothing.
+        """
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
@@ -234,7 +240,17 @@ class TestBootstrapDryRunBranches:
                 raise OSError("permission denied")
             return original_write_text(self, content, encoding=encoding, **kw)
 
-        with patch.object(Path, "write_text", patched_write_text):
+        def patched_atomic_write(self: object, path: Path, content: str) -> None:
+            nonlocal call_count
+            if path.name == "CLAUDE.md":
+                call_count += 1
+                raise OSError("permission denied")
+            original_write_text(path, content, encoding="utf-8")
+
+        with (
+            patch.object(Path, "write_text", patched_write_text),
+            patch("trw_mcp.state.persistence.FileStateWriter.write_text", patched_atomic_write),
+        ):
             result = bs.update_project(target, dry_run=False)
 
         assert any("CLAUDE.md" in e for e in result["errors"])

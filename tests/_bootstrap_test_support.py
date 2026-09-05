@@ -21,8 +21,18 @@ def fake_git_repo(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def initialized_repo(fake_git_repo: Path) -> Path:
-    """Create a repo with TRW already initialized."""
-    result = init_project(fake_git_repo)
+    """Create a repo with TRW already initialized for Claude Code.
+
+    The client is named EXPLICITLY. A bare ``init_project`` resolves its
+    targets through ``detect_ide``, which reports cursor-ide whenever a
+    ``cursor`` binary is on the developer's PATH — so on some machines this
+    fixture produced a cursor project and on others a Claude Code one. That was
+    invisible while agents were written to ``.claude/agents`` regardless of the
+    selected client; since PRD-CORE-252-FR03 routes each client's agents to its
+    own destination, an unpinned client makes every ``.claude/agents``
+    assertion depend on the host's PATH.
+    """
+    result = init_project(fake_git_repo, ide="claude-code")
     assert not result["errors"]
     return fake_git_repo
 

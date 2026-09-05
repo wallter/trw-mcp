@@ -9,7 +9,7 @@ Production feedback ``sub_CgkvsxHaWprG3ZXq`` reported two installer defects:
    fix widens the class to ``[a-zA-Z0-9_-]``. These tests drive the pure
    ``validate_api_key`` surface loaded from the template by file path.
 
-2. The curl|bash bootstraps (``platform/public/install.sh`` and
+2. The curl|bash bootstraps (the public-facing web install script and
    ``scripts/install.sh``) tried three ``pip`` forms and, on an
    externally-managed Python (PEP 668, the Homebrew/modern-distro default),
    never fell back to ``pipx`` — then printed the exact ``pip`` command that

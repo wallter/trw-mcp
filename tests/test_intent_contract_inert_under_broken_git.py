@@ -172,7 +172,14 @@ def test_f2_the_shell_preamble_alone_must_also_read_a_bystander_as_unenrolled(tm
     """
     project = _committed_repo(tmp_path, f"f2-shell-{hook}", enroll=False)
     _partial_clone(project)
-    result = run_hook(project, hook, extra_env={"PATH": _path_without_python3(tmp_path, f"nopy-{hook}")})
+    result = run_hook(
+        project,
+        hook,
+        # The isolator is a PATH with no python3 — so the TRW_PYTHON override
+        # `run_hook` sets by default has to go too, or resolution succeeds and
+        # this stops measuring the shell-only branch it is named for.
+        extra_env={"PATH": _path_without_python3(tmp_path, f"nopy-{hook}"), "TRW_PYTHON": ""},
+    )
     assert result.returncode == 0, f"the shell preamble blocked a bystander on its own\n{result.stderr}"
 
 
@@ -184,9 +191,13 @@ def test_f2_the_shell_preamble_still_blocks_an_enrolled_project_it_cannot_check(
     project = _committed_repo(tmp_path, f"f2-shell-armed-{hook}", enroll=True)
     (project / MARKER_REL).unlink()  # only the evidence file is left
     _partial_clone(project)
-    result = run_hook(project, hook, extra_env={"PATH": _path_without_python3(tmp_path, f"nopy-armed-{hook}")})
+    result = run_hook(
+        project,
+        hook,
+        extra_env={"PATH": _path_without_python3(tmp_path, f"nopy-armed-{hook}"), "TRW_PYTHON": ""},
+    )
     assert result.returncode == 2, f"an enrolled project stopped failing closed in shell\n{result.stderr}"
-    assert "python3 is unavailable" in result.stderr, "the block did not come from the shell-only branch"
+    assert "no interpreter with trw_mcp installed" in result.stderr, "the block did not come from the shell-only branch"
 
 
 @pytest_skip_no_git

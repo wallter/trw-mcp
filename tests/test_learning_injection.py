@@ -107,9 +107,9 @@ class TestInferDomainTags:
 
     def test_swebench_repo_paths_get_tags(self) -> None:
         """SWE-bench repo roots produce non-empty tag sets after the
-        2026-04-27 iter-22 root-cause fix. Closes the relevance-ranker
-        collapse documented in
-        docs/research/trw-distill/ITER-22-NAIVE-INJECTION-INVESTIGATION-2026-04-27.md.
+        2026-04-27 iter-22 root-cause fix, which closed the relevance-ranker
+        collapse: empty tag sets on external eval-corpus repos surfaced
+        off-domain TRW-framework learnings against SWE-bench tasks.
         """
         from trw_mcp.state.learning_injection import infer_domain_tags
 

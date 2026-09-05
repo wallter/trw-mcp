@@ -141,7 +141,7 @@ def test_finalize_step_completing_cancellation_retires_queue_link(tmp_path) -> N
 
     from trw_mcp.tools._delivery_models import StepState
 
-    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED, proof_digest="d1")
+    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED)
 
     assert _link_state(coord, did) is QueueState.CANCELLED
     assert _queued_count(coord) == 0

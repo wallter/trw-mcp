@@ -7,7 +7,7 @@
     "rationale": 1,
     "reference": 22
   },
-  "core_digest": "0446cf2ef01eb338028be1b7dec1ce72b42643beaad743d295c334f045e67b75",
+  "core_digest": "4a64720dd24073052fc3efb4d515539b424d84daf08e1615b23cc19b4118b07a",
   "obligations": [
     {
       "body_lines": 13,
@@ -373,7 +373,7 @@
       "body_lines": 20,
       "class": "normative",
       "dest": "core",
-      "digest": "219441e222fe335309927e5fca5625a7f5270ee77df10a766fb462b773c76158",
+      "digest": "f0e498e9460b368298b1ceb19bc884e97bbe5a1a73c591aaaaebd114749de3b3",
       "id": "af-reference-implementation-status-not-norm",
       "nonblank_lines": 15,
       "start_line": 429
@@ -453,6 +453,6 @@
   ],
   "reference_digest": "384eee5eb1234bba1a5d754aebbf96865d4c73eb26e3958fea8f0eecf336b09a",
   "schema": 1,
-  "source_digest_combined": "09b46d42145d539214adf9671e6628ee9eb829c5dccefd8eb9b3ab917e546120",
+  "source_digest_combined": "b81ce4cc86cc604008eaf845a9dccc6e84862a5d21f1a77709e3338f827c8cf7",
   "span_count": 49
 }

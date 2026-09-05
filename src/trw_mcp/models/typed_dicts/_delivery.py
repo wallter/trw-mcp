@@ -70,6 +70,21 @@ class TierSweepStepResult(TypedDict):
     impact_tier_distribution: NotRequired[TierDistribution]
 
 
+class MemoryDecayStepResult(TypedDict):
+    """Return shape of ``_step_memory_decay()`` (PRD-CORE-244 FR09).
+
+    ``processed`` is the number of rows whose importance was actually lowered and
+    ``remaining`` the qualifying rows the batch size deferred to the next
+    delivery — reported separately so a bounded pass is never mistaken for a
+    completed one.
+    """
+
+    status: str
+    reason: str
+    processed: int
+    remaining: int
+
+
 class ProgressionItem(TypedDict):
     """Single PRD progression result from ``auto_progress_prds()``."""
 

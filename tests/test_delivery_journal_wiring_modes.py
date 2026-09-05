@@ -54,7 +54,33 @@ def test_step_failure_is_finalized_failed() -> None:
     with pytest.raises(ValueError, match="effect"):
         with journal.step("S01"):
             raise ValueError("effect")
-    coordinator.finalize_step.assert_called_once_with("op", "S01", state=StepState.FAILED)
+    # Assert the OUTCOME, not the call shape: PRD-FIX-127 added `finding_code` so a
+    # decision-shaped effect can finalize `failed` without raising, and pinning the
+    # exact kwargs made this test fail on a purely additive signature change.
+    coordinator.finalize_step.assert_called_once()
+    call = coordinator.finalize_step.call_args
+    assert call.args == ("op", "S01")
+    assert call.kwargs["state"] is StepState.FAILED
+    assert call.kwargs.get("finding_code", "") == ""  # a raise carries no verdict
+
+
+def test_a_refused_decision_step_is_finalized_failed_without_raising() -> None:
+    """PRD-FIX-127: `did the call raise` is not the business outcome.
+
+    ``apply_structured_override`` reports a rejected acceptable-failure record by
+    RETURN VALUE. Without this channel the step finalized ``succeeded`` and claimed
+    a ledger write that never happened.
+    """
+    from trw_mcp._delivery_boundary import refuse_boundary
+
+    coordinator = MagicMock()
+    journal = DeliverJournal(coordinator=coordinator, operation_id="op", mode="enforce")
+    with journal.step("S06"):
+        refuse_boundary("override_refused")
+
+    call = coordinator.finalize_step.call_args
+    assert call.kwargs["state"] is StepState.FAILED
+    assert call.kwargs["finding_code"] == "override_refused"
 
 
 @pytest.mark.parametrize(

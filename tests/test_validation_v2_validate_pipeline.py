@@ -175,7 +175,10 @@ class TestValidatePrdQualityV2:
         refreshed = refresh_dynamic_prd_validation(pure, content, project_root=str(tmp_path))
 
         assert refreshed.valid is False
-        assert refreshed.failures == []
+        # PRD-INFRA-179: this test used to assert `failures == []`, i.e. that a
+        # valid=False verdict could travel with nothing explaining it. The static
+        # invalid bit is still authoritative; it now names itself instead.
+        assert [failure.rule for failure in refreshed.failures] == ["valid_without_error_finding"]
 
     def test_dynamic_refresh_does_not_duplicate_integrity_failures(self, tmp_path: Path) -> None:
         content = _build_integrity_prd(
@@ -248,10 +251,10 @@ class TestValidatePrdQualityV2:
 
     def test_content_docs_profile_scores_static_content_without_runtime_switches(self, tmp_path: Path) -> None:
         for path in (
-            tmp_path / "platform/public/llms.txt",
-            tmp_path / "platform/src/app/(marketing)/page.tsx",
-            tmp_path / "platform/src/app/(marketing)/homepage/data.ts",
-            tmp_path / "platform/public/llms.test.ts",
+            tmp_path / "web/public/llms.txt",
+            tmp_path / "web/src/app/(marketing)/page.tsx",
+            tmp_path / "web/src/app/(marketing)/homepage/data.ts",
+            tmp_path / "web/public/llms.test.ts",
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("fixture\n", encoding="utf-8")
@@ -302,19 +305,19 @@ Goal: verify source parity. Non-goal: runtime behavior.
 As a maintainer I want static content checks.
 ## 4. Functional Requirements
 ### FR01: llms copy
-When platform/public/llms.txt changes, then platform/src/app/(marketing)/page.tsx mirrors the install phrase.
+When web/public/llms.txt changes, then web/src/app/(marketing)/page.tsx mirrors the install phrase.
 **Assertions**:
-- `grep_present: "Install TRW Framework" in "platform/public/llms.txt"`
+- `grep_present: "Install TRW Framework" in "web/public/llms.txt"`
 ### FR02: homepage data
-When platform/src/app/(marketing)/homepage/data.ts changes, then platform/public/llms.txt stays in parity.
+When web/src/app/(marketing)/homepage/data.ts changes, then web/public/llms.txt stays in parity.
 **Assertions**:
-- `grep_present: "trw_session_start" in "platform/src/app/(marketing)/homepage/data.ts"`
+- `grep_present: "trw_session_start" in "web/src/app/(marketing)/homepage/data.ts"`
 ## 5. Non-Functional Requirements
 NFR01: No visible layout shift.
 ## 6. Technical Approach
-Update platform/public/llms.txt and platform/src/app/(marketing)/page.tsx from platform/src/app/(marketing)/homepage/data.ts.
+Update web/public/llms.txt and web/src/app/(marketing)/page.tsx from web/src/app/(marketing)/homepage/data.ts.
 ## 7. Test Strategy
-Unit Tests: platform/public/llms.test.ts checks parity.
+Unit Tests: web/public/llms.test.ts checks parity.
 Verification: npm run test and pytest tests/test_validation_v2_validate_pipeline.py -q.
 ## 8. Rollout Plan
 Deploy static content. Rollback by reverting the content commit.
@@ -327,8 +330,8 @@ None.
 ## 12. Traceability Matrix
 | Requirement | Implementation | Tests |
 |-------------|----------------|-------|
-| FR01 | `platform/public/llms.txt`, `platform/src/app/(marketing)/page.tsx` | `platform/public/llms.test.ts` |
-| FR02 | `platform/src/app/(marketing)/homepage/data.ts` | `platform/public/llms.test.ts` |
+| FR01 | `web/public/llms.txt`, `web/src/app/(marketing)/page.tsx` | `web/public/llms.test.ts` |
+| FR02 | `web/src/app/(marketing)/homepage/data.ts` | `web/public/llms.test.ts` |
 """
 
         result = validate_prd_quality_v2(prd, project_root=str(tmp_path))

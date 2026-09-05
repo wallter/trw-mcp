@@ -79,38 +79,6 @@ def test_team_match_1_2() -> None:
     assert score_ctx > score_no
 
 
-def test_outcome_strong_positive_1_5() -> None:
-    """Entry with outcome_correlation=0.8 gets ~1.5x boost."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
-
-    entry_pos = _base_entry("L-pos", outcome_correlation=0.8)
-    entry_neu = _base_entry("L-neu", outcome_correlation=0.0)
-    ctx = RecallContext(current_phase="IMPLEMENT")  # any non-None context
-
-    result_pos = rank_by_utility([entry_pos], [], 0.3, context=ctx)
-    result_neu = rank_by_utility([entry_neu], [], 0.3, context=ctx)
-
-    score_pos = float(str(result_pos[0]["combined_score"]))
-    score_neu = float(str(result_neu[0]["combined_score"]))
-    assert score_pos > score_neu
-
-
-def test_outcome_negative_0_5() -> None:
-    """Entry with outcome_correlation=-0.8 gets 0.5x (penalized)."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
-
-    entry_neg = _base_entry("L-neg", outcome_correlation=-0.8)
-    entry_neu = _base_entry("L-neu", outcome_correlation=0.0)
-    ctx = RecallContext(current_phase="IMPLEMENT")
-
-    result_neg = rank_by_utility([entry_neg], [], 0.3, context=ctx)
-    result_neu = rank_by_utility([entry_neu], [], 0.3, context=ctx)
-
-    score_neg = float(str(result_neg[0]["combined_score"]))
-    score_neu = float(str(result_neu[0]["combined_score"]))
-    assert score_neg < score_neu
-
-
 def test_anchor_validity_zero_excludes() -> None:
     """anchor_validity=0.0 → combined_score=0.0 (excluded)."""
     from trw_mcp.scoring._recall import RecallContext, rank_by_utility
@@ -131,7 +99,6 @@ def test_all_combined() -> None:
         domain=["auth"],
         phase_affinity=["IMPLEMENT"],
         team_origin="team-a",
-        outcome_correlation=0.8,
     )
     ctx = RecallContext(
         current_phase="IMPLEMENT",

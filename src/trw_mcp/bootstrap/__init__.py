@@ -13,12 +13,10 @@ from __future__ import annotations
 # Re-export ``shutil`` so that existing test patches targeting
 # ``trw_mcp.bootstrap.shutil.rmtree`` continue to resolve correctly.
 import shutil as shutil  # explicit re-export for test compat
+from collections.abc import Sequence
 
 from trw_mcp.canons.registry import install_view, load_registry
 
-from ._codex import (
-    generate_codex_agents as generate_codex_agents,
-)
 from ._codex import (
     generate_codex_config as generate_codex_config,
 )
@@ -27,9 +25,6 @@ from ._codex import (
 )
 from ._codex import (
     install_codex_skills as install_codex_skills,
-)
-from ._copilot import (
-    generate_copilot_agents as generate_copilot_agents,
 )
 from ._copilot import (
     generate_copilot_hooks as generate_copilot_hooks,
@@ -266,7 +261,8 @@ from ._utils import (
     resolve_ide_targets as resolve_ide_targets,
 )
 
-# Directories to scaffold inside the target repo.
+# Client-neutral directories to scaffold inside the target repo. Every install
+# gets these regardless of which client was selected (PRD-CORE-262-FR05).
 _TRW_DIRS = [
     ".trw/frameworks",
     ".trw/context",
@@ -274,11 +270,51 @@ _TRW_DIRS = [
     ".trw/learnings/entries",
     ".trw/scripts",
     ".trw/runs",
-    ".claude/hooks",
-    ".claude/skills",
-    ".claude/agents",
     "docs",
 ]
+
+# Claude Code's own scaffold directories (PRD-CORE-262-FR05). These used to
+# sit unconditionally in ``_TRW_DIRS``, so a codex-only ``init-project``
+# created a ``.claude`` tree and then filled it with 47 files no selected
+# client loads.
+#
+# The exclusion is narrow and specific to ONE selection, not to "any client
+# that isn't claude-code": measured evidence (release rehearsal, 2026-09-04)
+# is a codex-ONLY install; RISK-008's own mitigation is "a project selecting
+# several clients keeps every one". A bare ``init-project`` and every other
+# single-client selection (cursor-ide, opencode, copilot, cursor-cli,
+# antigravity-cli) keep scaffolding ``.claude/**`` exactly as HEAD did before
+# this PRD -- only ``codex`` used alone drops it.
+_CLAUDE_SCAFFOLD_DIRS: tuple[str, ...] = (".claude/hooks", ".claude/skills", ".claude/agents")
+
+# The one resolved target set that excludes the Claude Code scaffold.
+_CODEX_ONLY = frozenset({"codex"})
+
+
+def _wants_claude_scaffold(clients: Sequence[str], *, explicit: bool = False) -> bool:
+    """False only when *clients* is codex-only AND the user asked for it explicitly.
+
+    CORE262-13: a bare/default ``init-project`` (``ide=None``) that resolves
+    through ``detect_ide`` to ``["codex"]`` -- because the target directory
+    already has a ``.codex/`` marker on disk -- is NOT a user request for
+    codex-only. Before *explicit* existed here, that auto-detected case took
+    the same suppression path as ``ide="codex"`` and silently lost HEAD's
+    default scaffold. Only an EXPLICIT ``--ide codex`` (or ``ide="codex"``)
+    selection may drop the Claude Code surfaces; every other path -- bare,
+    detected, or any set containing another client -- keeps them.
+    """
+    return not (explicit and set(clients) == _CODEX_ONLY)
+
+
+def _client_scaffold_dirs(clients: Sequence[str], *, explicit: bool = False) -> list[str]:
+    """Return Claude Code's scaffold directories, unless *clients* is EXPLICITLY codex-only."""
+    return list(_CLAUDE_SCAFFOLD_DIRS) if _wants_claude_scaffold(clients, explicit=explicit) else []
+
+
+def _client_data_files(clients: Sequence[str], *, explicit: bool = False) -> list[tuple[str, str]]:
+    """Return Claude Code's bundled data files, unless *clients* is EXPLICITLY codex-only."""
+    return [("settings.json", ".claude/settings.json")] if _wants_claude_scaffold(clients, explicit=explicit) else []
+
 
 # Mapping of bundled data files to their destination paths (relative to target).
 _DATA_FILE_MAP: list[tuple[str, str]] = [
@@ -287,5 +323,4 @@ _DATA_FILE_MAP: list[tuple[str, str]] = [
     ("messages/messages.yaml", ".trw/context/messages.yaml"),
     ("templates/claude_md.md", ".trw/templates/claude_md.md"),
     ("gitignore.txt", ".trw/.gitignore"),
-    ("settings.json", ".claude/settings.json"),
 ]

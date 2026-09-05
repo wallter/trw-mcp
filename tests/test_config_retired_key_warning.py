@@ -109,6 +109,35 @@ def test_the_shipped_retired_map_parses_and_names_only_removed_keys() -> None:
     assert still_live == [], f"retired map names fields TRWConfig still defines: {still_live}"
 
 
+def test_the_two_wd02_nudge_knobs_are_audible_on_removal(capsys: pytest.CaptureFixture[str]) -> None:
+    """WD-02. ``nudge_urgency_mode``/``nudge_dedup_enabled`` are gone in 2.0.0.
+
+    Both were live public knobs an operator could set, and both were no-ops:
+    their only path out of ``TRWConfig`` was the ``surfaces`` projection, whose
+    only reader had no production call site. Deleting a field an operator holds
+    in ``.trw/config.yaml`` is silent by default (``extra="ignore"``), so the
+    removal is only honest if the retired map carries them — otherwise the knob
+    goes from doing nothing quietly to not existing quietly.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    retired = retired_config_keys()
+    for key in ("nudge_urgency_mode", "nudge_dedup_enabled"):
+        assert key not in TRWConfig.model_fields, f"{key} is still a live field"
+        assert key in retired, f"{key} was removed without a retired-map entry"
+
+    warned = warn_unrecognised_config_keys(
+        {"nudge_urgency_mode": "always_high", "nudge_dedup_enabled": False},
+        set(TRWConfig.model_fields),
+    )
+    err = capsys.readouterr().err
+    assert warned == ["nudge_dedup_enabled", "nudge_urgency_mode"]
+    # The key is named; the value the operator set is never echoed.
+    assert "nudge_urgency_mode" in err
+    assert "always_high" not in err
+
+
 def test_the_shipped_retired_map_is_valid_json() -> None:
     """Non-vacuity for the test above: a corrupt map would read as empty."""
     resource = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "config-retired-keys.json"

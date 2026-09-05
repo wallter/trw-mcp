@@ -23,7 +23,7 @@ connections remain isolated from one another.
 
 from __future__ import annotations
 
-__all__ = ["CeremonyMiddleware"]
+__all__ = ["COMPACTION_GATE_EXEMPT_TOOLS", "TERMINAL_TOOLS", "CeremonyMiddleware"]
 
 import json
 import os
@@ -37,6 +37,12 @@ from fastmcp.server.middleware.middleware import (
 )
 from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
+
+from trw_mcp.middleware._compaction_gate_owner import (
+    MarkerOwnership as MarkerOwnership,
+)
+from trw_mcp.middleware._compaction_gate_owner import marker_owner_exempts, marker_ownership
+from trw_mcp.middleware._compaction_gate_payload import build_compaction_block
 
 # Bound on per-session tracking maps. In stdio mode connections are short-lived
 # (1 per client session) so these stay tiny — but in a long-lived shared-HTTP
@@ -96,25 +102,52 @@ def _register_session(session_id: str) -> None:
 # Tools that clear the ceremony gate.
 CEREMONY_TOOLS: frozenset[str] = frozenset({"trw_session_start"})
 
-#: Tools the post-compaction gate MUST NOT block (operator-approved 2026-07-26;
-#: the decision audit C-5 deferred).
+#: Tools the post-compaction gate MUST NOT block. Named for the question the
+#: gate is asking — "may this call proceed on stale post-compaction context?" —
+#: rather than for whichever members happen to answer it today. Each member
+#: carries its own reason, because they are exempt for two different ones.
 #:
-#: The gate exists to stop an agent ACTING on stale post-compaction context.
-#: These three do not act — they record what already happened. Their content is
-#: supplied by the caller and cannot be corrupted by a stale framework, so
-#: blocking them buys no context integrity; it only destroys evidence, and that
-#: loss is unrecoverable. Measured consequence of gating them: a delegated
-#: VALIDATE completed with NO recorded ``trw_build_check`` and a checkpoint that
-#: reported ``recorded: false`` (three delegates, one session, 2026-07-26) —
-#: the precise failure the framework exists to prevent. A gate that defends
-#: context integrity by destroying evidence integrity has its priorities
-#: inverted.
+#: ``trw_checkpoint`` / ``trw_learn`` / ``trw_build_check`` (operator-approved
+#: 2026-07-26, closing the decision audit C-5 deferred): the gate exists to stop
+#: an agent ACTING on stale context, and these do not act — they record what
+#: already happened, from content the caller supplies, which a stale framework
+#: cannot corrupt. Blocking them buys no context integrity; it destroys evidence,
+#: unrecoverably. Measured: a delegated VALIDATE completed with NO recorded
+#: ``trw_build_check`` and a checkpoint reporting ``recorded: false`` (three
+#: delegates, one session, 2026-07-26). A gate that defends context integrity by
+#: destroying evidence integrity has its priorities inverted.
 #:
-#: Everything else stays gated, including ``trw_recall`` (it SHAPES subsequent
-#: decisions, which is exactly what a stale-context agent must not do) and
-#: ``trw_deliver`` (a terminal act). The bounded escape below is unchanged and
-#: still backstops those.
-EVIDENCE_RECORDING_TOOLS: frozenset[str] = frozenset({"trw_checkpoint", "trw_learn", "trw_build_check"})
+#: ``trw_request_tool_access`` (PRD-CORE-258-FR03): it is the documented escape
+#: from a restricted surface — ``middleware/surface_authority.py`` and
+#: ``middleware/phase_exposure.py`` both instruct callers to reach for it BY
+#: NAME — and a remedy for restriction A must not be withheld by restriction B.
+#: An agent told to call the escape hatch and then refused the escape hatch has
+#: been handed a loop with no documented exit. Exempting it does not widen this
+#: gate: it grants one masked call, and that granted call is itself evaluated by
+#: this same ``on_call_tool`` and still blocked.
+#:
+#: Everything else stays gated, including ``trw_recall`` and ``trw_status`` (they
+#: SHAPE subsequent decisions, which is exactly what a stale-context agent must
+#: not do) and ``trw_deliver`` (a terminal act — see ``TERMINAL_TOOLS``).
+COMPACTION_GATE_EXEMPT_TOOLS: frozenset[str] = frozenset(
+    {"trw_checkpoint", "trw_learn", "trw_build_check", "trw_request_tool_access"}
+)
+
+#: Acts that must never ride the bounded escape below (PRD-CORE-258-FR09).
+#:
+#: The escape exists for a caller that CANNOT clear the gate, and that is
+#: measurably not the caller who delivers: of the eleven bundled agents exactly
+#: one names ``trw_session_start`` in its toolset, and it is the same one — and
+#: the only one — that names ``trw_deliver``. Excluding delivery therefore
+#: strands nobody, and it restores an invariant two other places in this tree
+#: already document (``tools/_delivery_build_gates.py`` names this middleware as
+#: layer 1 of the deliver-gate defence in depth).
+#:
+#: ``trw_init`` is deliberately NOT a member: it is not a terminal act, it
+#: creates the run container the exempt evidence tools write into, and blocking
+#: it past the bound would strand a delegate trying to record work — the failure
+#: the bounded escape exists to prevent.
+TERMINAL_TOOLS: frozenset[str] = frozenset({"trw_deliver"})
 
 # How many times a session may be hard-blocked by the post-compaction gate
 # before the gate degrades to advisory for that session (audit C-5).
@@ -231,9 +264,9 @@ def _is_compaction_gate_required() -> bool:
     """Return True when a pre-compaction marker indicates recovery is pending."""
 
     try:
-        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.pre_compact_marker import pre_compact_marker_path
 
-        return (resolve_trw_dir() / "context" / "pre_compact_state.json").exists()
+        return pre_compact_marker_path().exists()
     except Exception:  # justified: fail-open, compaction detection must never block tool execution
         logger.debug(
             "compaction_gate_detection_failed",
@@ -245,20 +278,62 @@ def _is_compaction_gate_required() -> bool:
         return False
 
 
-def _clear_compaction_gate_safe() -> None:
-    """Clear the pre-compaction marker once session_start succeeds."""
+# PRD-CORE-258-FR10 ownership lives in its own module (LOC ratchet); the
+# underscore names are kept here so existing tests and call sites keep working.
+_marker_ownership = marker_ownership
+_marker_owner_exempts = marker_owner_exempts
 
+
+def _clear_compaction_gate_safe(ctx: object | None = None) -> None:
+    """Clear the pre-compaction marker once session_start succeeds.
+
+    PRD-CORE-258-FR10: an owned marker is cleared only by its owner — a session
+    that never compacted owes nothing and must not destroy somebody else's
+    recovery obligation. An ownerless marker keeps today's behaviour.
+
+    PRD-CORE-258-FR08: a failure to unlink is an OPERATOR condition, not a
+    routine one — a read-only filesystem or a directory occupying the name means
+    ``Path.exists`` keeps returning True and every new process re-arms the gate.
+    It is therefore reported at WARNING with the resolved path and the exception
+    type, where DEBUG is below the level an operator reads. The caller is not
+    deadlocked by it: the bounded escape still degrades the gate to advisory, so
+    an undeletable marker costs a bounded number of blocks per session. No
+    in-memory disarm override is introduced — that would silently discharge an
+    obligation the disk still asserts.
+    """
+
+    marker_path = "<unresolved>"
     try:
-        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.pre_compact_marker import pre_compact_marker_path
 
-        marker_path = resolve_trw_dir() / "context" / "pre_compact_state.json"
-        if marker_path.exists():
-            marker_path.unlink()
-    except Exception:  # justified: fail-open, marker cleanup must not break session start
-        logger.debug(
+        resolved = pre_compact_marker_path()
+        marker_path = str(resolved)
+        if not resolved.exists():
+            return
+        # Ownership is read ONCE, immediately before the unlink, to keep the
+        # check-then-delete window as small as a single-file design allows
+        # (codex audit 2026-09-05 row 2; owner-keyed markers are the full fix).
+        # Deleting is the irreversible act, so the fail direction here is the
+        # opposite of the arm site: an owner we could not resolve is treated
+        # as somebody else's obligation and left on disk.
+        ownership = _marker_ownership(ctx)
+        if ownership in ("foreign", "unknown"):
+            logger.info(
+                "compaction_gate_clear_skipped_foreign_owner",
+                component="ceremony",
+                op="clear_compaction_gate",
+                marker_path=marker_path,
+                outcome="not_the_owner" if ownership == "foreign" else "owner_unknown",
+            )
+            return
+        resolved.unlink()
+    except Exception as exc:  # justified: fail-open, marker cleanup must not break session start
+        logger.warning(
             "compaction_gate_clear_failed",
             component="ceremony",
             op="clear_compaction_gate",
+            marker_path=marker_path,
+            error_type=type(exc).__name__,
             outcome="fail_open",
             exc_info=True,
         )
@@ -336,7 +411,33 @@ def _raise_compaction_gate(session_id: str) -> None:
     )
 
 
-def _is_compaction_gate_required_for_session(session_id: str) -> bool:
+def _is_reviewer_role() -> bool:
+    """True when this PROCESS runs the PRD-SEC-015 reviewer role (FR05).
+
+    The reviewer surface deliberately denies ``trw_session_start``, which is the
+    post-compaction gate's ONLY remedy, and a stateless reviewer never had
+    context to recover in the first place — so gating it can only deadlock it or
+    degrade it through the block bound while producing zero context integrity.
+
+    The raw environment marker is consulted first (the role is declared by the
+    process that spawned this one, and the reviewed repository's own config must
+    not be able to revoke it), the typed config field second.
+
+    Fail-CLOSED on any error: this predicate GRANTS an exemption, so an
+    unreadable config must leave the gate armed rather than exempt every session.
+    """
+    if os.environ.get("TRW_SURFACE_ROLE", "").strip().lower() == "reviewer":
+        return True
+    try:
+        from trw_mcp.models.config import get_config
+
+        return str(getattr(get_config(), "surface_role", "agent")) == "reviewer"
+    except Exception:  # justified: an exemption must never be granted by a fault
+        logger.warning("ceremony_reviewer_role_lookup_failed", op="ceremony", outcome="not_exempt", exc_info=True)
+        return False
+
+
+def _is_compaction_gate_required_for_session(session_id: str, ctx: object | None = None) -> bool:
     """Return True when this session still owes post-compaction recovery.
 
     The blanket gate is scoped to the gate generation: only sessions that
@@ -344,6 +445,11 @@ def _is_compaction_gate_required_for_session(session_id: str) -> bool:
     seen afterwards is recorded as exempt (and the decision logged) so its
     trw_* calls pass through — otherwise a sub-agent whose toolset omits
     ``trw_session_start`` would be permanently unable to clear its own gate.
+
+    PRD-CORE-258-FR10 adds a second scope on top of the generation: a marker that
+    NAMES an owner arms only the session whose resolved pin key matches it. The
+    read happens only for a session the generation already gated, so the
+    pass-through hot path still costs one ``Path.exists``.
 
     Fail-open: any bookkeeping failure returns False rather than hard-blocking
     a tool call.
@@ -382,7 +488,18 @@ def _is_compaction_gate_required_for_session(session_id: str) -> bool:
         )
         return False
 
-    return _compaction_gate_sessions.get(session_id, False)
+    gated = _compaction_gate_sessions.get(session_id, False)
+    if gated and _marker_owner_exempts(ctx):
+        logger.info(
+            "compaction_gate_owner_scoped",
+            op="ceremony",
+            component="ceremony",
+            session_id=session_id,
+            generation=_compaction_gate_generation,
+            outcome="marker_owned_by_another_session",
+        )
+        return False
+    return gated
 
 
 class CeremonyMiddleware(Middleware):
@@ -413,7 +530,7 @@ class CeremonyMiddleware(Middleware):
         session_id = ctx.session_id
         _register_session(session_id)
 
-        compaction_gate_required = _is_compaction_gate_required_for_session(session_id)
+        compaction_gate_required = _is_compaction_gate_required_for_session(session_id, ctx)
 
         # Ceremony tool called — mark session as active after a successful session_start
         if tool_name in CEREMONY_TOOLS:
@@ -422,7 +539,10 @@ class CeremonyMiddleware(Middleware):
                 mark_session_active(session_id)
                 _compaction_gate_sessions.pop(session_id, None)
                 _compaction_gate_attempts.pop(session_id, None)
-                _clear_compaction_gate_safe()
+                # The in-memory pop above precedes the unlink DELIBERATELY: an
+                # unlink that can never succeed must not re-arm the session that
+                # just recovered (PRD-CORE-258-FR08 pins this ordering).
+                _clear_compaction_gate_safe(ctx)
                 logger.debug(
                     "ceremony_activated",
                     op="ceremony",
@@ -442,33 +562,27 @@ class CeremonyMiddleware(Middleware):
 
         # Post-compaction gate (PRD-CORE-098-FR06): only block trw_* tools
         # when recovery is actually pending after context compaction, and never
-        # the evidence-recording tools (see EVIDENCE_RECORDING_TOOLS).
-        if compaction_gate_required and tool_name.startswith("trw_") and tool_name not in EVIDENCE_RECORDING_TOOLS:
-            # Two remedies, because the caller may be able to perform only one.
-            # Naming just the first stranded every delegated sub-agent: ten of
-            # eleven bundled agents hold no trw_session_start, so a compliant
-            # delegate read an impossible instruction, retried once, and stopped
-            # one call short of the escape below — observed 2026-07-26, blocks
-            # arriving in exact pairs against a MAX_BLOCKS of 2.
-            recovery_message = (
-                "Call trw_session_start() to load your prior learnings"
-                " before using other tools. This ensures you don't repeat"
-                " solved problems or miss known gotchas."
-                " If you do NOT hold trw_session_start (you are a delegated"
-                " sub-agent sharing your dispatcher's session), retry this call"
-                f" — after {_COMPACTION_GATE_MAX_BLOCKS} blocks the gate passes"
-                " you through, and post-compaction recovery is your"
-                " dispatcher's obligation, not yours."
-            )
+        # the exempt tools (see COMPACTION_GATE_EXEMPT_TOOLS).
+        if (
+            compaction_gate_required
+            and tool_name.startswith("trw_")
+            and tool_name not in COMPACTION_GATE_EXEMPT_TOOLS
+            # PRD-SEC-015-FR05: a reviewer lane is exempt — see _is_reviewer_role.
+            and not _is_reviewer_role()
+        ):
             blocked_count = _compaction_gate_attempts.get(session_id, 0) + 1
             _compaction_gate_attempts[session_id] = blocked_count
+            # One payload builder for both branches below, so the re-block past
+            # the bound cannot drift from the block before it.
+            block = build_compaction_block(
+                tool_name=tool_name,
+                blocked_count=blocked_count,
+                max_blocks=_COMPACTION_GATE_MAX_BLOCKS,
+            )
+            recovery_message = block.message
+            past_bound = blocked_count > _COMPACTION_GATE_MAX_BLOCKS
 
-            if blocked_count <= _COMPACTION_GATE_MAX_BLOCKS:
-                error_payload = {
-                    "error": "session_start_required",
-                    "message": recovery_message,
-                    "tool_attempted": tool_name,
-                }
+            if not past_bound or tool_name in TERMINAL_TOOLS:
                 logger.info(
                     "ceremony_gate_blocked",
                     op="ceremony",
@@ -476,10 +590,14 @@ class CeremonyMiddleware(Middleware):
                     tool=tool_name,
                     compaction_gate_required=compaction_gate_required,
                     blocked_count=blocked_count,
+                    marker_state=block.marker_state,
+                    compaction_marker_ts=block.marker_ts,
+                    marker_unreadable_reason=block.unreadable_reason,
+                    terminal_tool_past_bound=past_bound,
                 )
                 return ToolResult(
-                    content=[TextContent(type="text", text=error_payload["message"])],
-                    structured_content=error_payload,
+                    content=[TextContent(type="text", text=recovery_message)],
+                    structured_content=block.payload,
                 )
 
             # Audit C-5: repeated blocks with no intervening session_start are
@@ -489,6 +607,9 @@ class CeremonyMiddleware(Middleware):
             # prepended (the nudge is never removed) and the disk marker is
             # deliberately NOT cleared, so the real post-compaction obligation
             # survives for a caller able to discharge it.
+            #
+            # TERMINAL_TOOLS never reach here: a terminal act rides no escape
+            # (PRD-CORE-258-FR09), so it was re-blocked above.
             logger.warning(
                 "compaction_gate_degraded",
                 op="ceremony",
@@ -513,8 +634,10 @@ class CeremonyMiddleware(Middleware):
         # FR03: validate any operation-backed claim against the owner registry.
         _annotate_operation_backed_claim(tool_name, result)
 
-        # If session is NOT active (non-trw tool), prepend warning
-        if not is_session_active(session_id):
+        # If session is NOT active (non-trw tool), prepend warning. A reviewer is
+        # exempt for the same reason as the gate above (PRD-SEC-015-FR05): the
+        # warning asks for a ceremony whose entry point it is denied.
+        if not is_session_active(session_id) and not _is_reviewer_role():
             warning_block = TextContent(type="text", text=CEREMONY_WARNING)
             result.content.insert(0, warning_block)
             logger.debug("ceremony_warning_injected", op="ceremony", session_id=session_id, tool=tool_name)

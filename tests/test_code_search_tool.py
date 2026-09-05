@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
+import pytest
+from fastmcp import Client, FastMCP
+
 from trw_mcp.code_index.update import update_code_index
-from trw_mcp.tools.code_search import trw_code_search, trw_code_symbol
+from trw_mcp.tools.code_search import register_code_search_tools, trw_code_search, trw_code_symbol
 
 
 def test_trw_code_search_returns_structured_failure_for_missing_index(tmp_path: Path) -> None:
     (tmp_path / "app.py").write_text("def hidden() -> str:\n    return 'secret'\n", encoding="utf-8")
 
-    result = trw_code_search(repo_root=str(tmp_path), query="hidden", mode="lexical", top_k=10)
+    result = trw_code_search(repo_root=str(tmp_path), query="hidden", top_k=10)
 
     assert result["status"] == "failed"
     assert result["error_code"] == "missing_index"
@@ -23,7 +27,7 @@ def test_trw_code_search_returns_ranked_capped_snippets_after_index(tmp_path: Pa
     (tmp_path / "app.py").write_text(body, encoding="utf-8")
     update_code_index(tmp_path)
 
-    result = trw_code_search(repo_root=str(tmp_path), query="bounded snippet", mode="lexical", top_k=3)
+    result = trw_code_search(repo_root=str(tmp_path), query="bounded snippet", top_k=3)
 
     assert result["status"] == "ok"
     assert result["results"][0]["path"] == "app.py"
@@ -36,7 +40,7 @@ def test_trw_code_search_returns_ranked_capped_snippets_after_index(tmp_path: Pa
 def test_trw_code_search_rejects_unsafe_path_filters(tmp_path: Path) -> None:
     update_code_index(tmp_path)
 
-    result = trw_code_search(repo_root=str(tmp_path), query="anything", mode="lexical", path="../outside.py")
+    result = trw_code_search(repo_root=str(tmp_path), query="anything", path="../outside.py")
 
     assert result["status"] == "failed"
     assert result["error_code"] == "invalid_path"
@@ -54,6 +58,56 @@ def test_trw_code_symbol_returns_exact_match_with_disambiguating_location(tmp_pa
     assert result["results"][0]["symbol"] == {"name": "duplicate", "kind": "function"}
     assert result["results"][0]["path"] == "pkg/one.py"
     assert result["results"][0]["line_range"] == {"start": 1, "end": 2}
+
+
+def _call_registered_search(**arguments: object) -> object:
+    """Drive the REGISTERED MCP tool, so the assertion is about the wire schema.
+
+    Calling ``trw_code_search`` directly would only prove Python's own signature
+    binding. The thing UF-031 was about is what an MCP client may send.
+    """
+    server = FastMCP("code-search-test")
+    register_code_search_tools(server)
+
+    async def _run() -> object:
+        async with Client(server) as client:
+            return await client.call_tool("trw_code_search", arguments)
+
+    return asyncio.run(_run())
+
+
+def test_semantic_mode_is_rejected_by_the_tools_input_schema(tmp_path: Path) -> None:
+    """UF-031: ``mode="semantic"`` used to be accepted and return an empty result.
+
+    It was a member of a public ``Literal``, so it validated, dispatched, and
+    answered ``dependency_missing`` forever -- registered, reachable, and
+    structurally incapable of ranking anything. 2.0.0 removes the parameter
+    outright, and the tool's schema (``additionalProperties: false``) now REFUSES
+    the argument instead of honouring a mode that cannot work.
+    """
+    update_code_index(tmp_path)
+
+    with pytest.raises(Exception, match="mode"):
+        _call_registered_search(repo_root=str(tmp_path), query="anything", mode="semantic")
+
+    # Non-vacuity: the same call without ``mode`` is accepted, so the failure
+    # above is about the retired argument and not about the harness.
+    assert _call_registered_search(repo_root=str(tmp_path), query="anything") is not None
+
+
+def test_search_mode_vocabulary_no_longer_admits_semantic() -> None:
+    """The response model's mode vocabulary tracks the removal.
+
+    A response could not be built with ``mode="semantic"`` any more; leaving the
+    member in ``SearchMode`` would keep an unconstructible value in the public
+    type, which is how a removed mode gets quietly re-offered.
+    """
+    from typing import get_args
+
+    from trw_mcp.code_index.search import ErrorCode, SearchMode
+
+    assert get_args(SearchMode) == ("lexical",)
+    assert "dependency_missing" not in get_args(ErrorCode)
 
 
 def test_trw_code_search_skill_has_valid_frontmatter_and_usage_text() -> None:

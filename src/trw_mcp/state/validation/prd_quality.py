@@ -15,6 +15,7 @@ work without modification.
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 import structlog
 
@@ -27,6 +28,11 @@ from trw_mcp.models.requirements import (
     ValidationResultV2,
 )
 from trw_mcp.state.validation import _prd_scoring_smells as _smells
+from trw_mcp.state.validation._prd_validation_findings import (
+    enforce_valid_invariant,
+    has_blocking_failure,
+    verification_command_failures,
+)
 
 # ---------------------------------------------------------------------------
 # Re-exports from _prd_scoring (metric computation)
@@ -307,7 +313,13 @@ def validate_prd_quality_v2(
         content,
         effective_risk_level=effective_risk,
     )
-    is_valid = is_valid and not any(failure.severity == "error" for failure in verification_failures)
+    # PRD-INFRA-179-FR02: a `verification_commands` entry that is not a runnable
+    # invocation is an error here, not an exit-127 surprise inside prd_verify_check.
+    verification_failures = [
+        *verification_failures,
+        *verification_command_failures(frontmatter, repo_root=Path(project_root) if project_root else None),
+    ]
+    is_valid = is_valid and not has_blocking_failure(verification_failures)
 
     # PRD-FIX-056: Status integrity checks (informational -- never block scoring)
     status_drift_warnings: list[str] = []
@@ -376,6 +388,7 @@ def validate_prd_quality_v2(
             config=config,
             project_root=project_root,
         )
+    enforce_valid_invariant(result)
     return result
 
 

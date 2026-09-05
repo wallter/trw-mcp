@@ -20,7 +20,10 @@ from trw_mcp.models.config._defaults import (
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
 )
-from trw_mcp.models.config._fields_dispatch import DEFAULT_DISPATCH_TIMEOUT_SECS
+from trw_mcp.models.config._fields_dispatch import (
+    DEFAULT_DISPATCH_TIMEOUT_SECS,
+    DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS,
+)
 
 
 class BuildConfig(BaseModel):
@@ -36,7 +39,6 @@ class BuildConfig(BaseModel):
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None
     run_auto_close_enabled: bool = True
-    run_auto_close_age_days: int = 7
     auto_checkpoint_enabled: bool = True
     auto_checkpoint_tool_interval: int = 25
     auto_checkpoint_pre_compact: bool = True
@@ -63,6 +65,7 @@ class DispatchConfig(BaseModel):
     dispatch_default_client: str | None = "codex"
     dispatch_default_models: dict[str, str] = Field(default_factory=dict)
     dispatch_default_timeout_s: int = DEFAULT_DISPATCH_TIMEOUT_SECS
+    dispatch_version_probe_timeout_s: int = DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS
     dispatch_default_read_only: bool = True
     dispatch_role_client: dict[str, str] = Field(default_factory=dict)
 
@@ -120,7 +123,12 @@ class OrchestrationConfig(BaseModel):
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 3
     auto_recall_max_tokens: int = 100
-    auto_recall_min_score: float = 0.7
+    # PRD-FIX-124-FR06/FR07: keep these two in lockstep with the identically
+    # named fields on _BuildFields (models/config/_fields_build.py) and with the
+    # UserPromptSubmit hook's inline fallbacks. min_score is an IDF-weighted
+    # prompt-coverage fraction, not a probability.
+    auto_recall_min_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    auto_recall_scan_cap: int = Field(default=10000, ge=1)
 
 
 class ScoringConfig(BaseModel):
@@ -344,6 +352,20 @@ class IntentContractConfig(BaseModel):
     telemetry_path: str = Field(
         default=".trw/context/intent-hook-telemetry.json",
         description="Repo-relative path of the FR06 hook-firing telemetry file (operational data).",
+    )
+    glob_sidecar_path: str = Field(
+        default=".trw/contracts/enrollment.globs",
+        description=(
+            "PRD-CORE-254-FR01: repo-relative path of the generated, digest-bound glob "
+            "sidecar the edit-time hooks read before deciding whether to spawn Python. "
+            "Derived cache, never authority: the shell trusts it only while its trailing "
+            "digest matches the marker AND it is newer than every artifact the marker's "
+            "digests cover. Pointing this somewhere else without re-running "
+            "`make refresh-enrollment` leaves the hooks reading no sidecar, which is the "
+            "same fall-through-to-Python state as a stale one — slower, never less safe. "
+            "The hooks resolve the DEFAULT spelling only (no shell YAML parse), so an "
+            "override disables the fast path rather than relocating it."
+        ),
     )
     falsifier_timeout_seconds: float = Field(
         default=3.0,

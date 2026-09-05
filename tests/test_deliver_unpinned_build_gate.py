@@ -240,11 +240,16 @@ def test_interleaved_sessions_cannot_share_build_pass(tmp_path: Path) -> None:
     assert _check_no_active_run_build_gate(trw_dir, FileStateReader(), session_id="session-b") is not None
 
 
-def test_compaction_gate_blocks_trw_deliver_before_session_start() -> None:
+def test_compaction_gate_blocks_trw_deliver_before_session_start(tmp_path: Path) -> None:
     """Upstream layer: CeremonyMiddleware blocks trw_deliver with
 
-    ``session_start_required`` when a post-compaction recovery marker is pending,
+    ``post_compaction_recovery_required`` when a post-compaction recovery marker is pending,
     so a deliver after a dropped session cannot reach the no-run path at all.
+
+    This case forces the gate on a session with a ZERO block count, so it pins
+    only the pre-bound half. The post-bound half — where the bounded escape used
+    to execute ``trw_deliver`` outright — is pinned by
+    ``test_trw_deliver_is_still_blocked_after_the_bound_is_exhausted`` below.
     """
     import asyncio
 
@@ -273,11 +278,15 @@ def test_compaction_gate_blocks_trw_deliver_before_session_start() -> None:
 
     mw = cm.CeremonyMiddleware()
     # Force the compaction gate pending for this session.
-    with patch.object(cm, "_is_compaction_gate_required_for_session", return_value=True):
+    with (
+        patch.object(cm, "_is_compaction_gate_required_for_session", return_value=True),
+        # Review P1-1: the blocked payload reads the marker; keep it off the live .trw.
+        patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path),
+    ):
         result = asyncio.run(mw.on_call_tool(_MwCtx(), _call_next))  # type: ignore[arg-type]
 
     structured = getattr(result, "structured_content", {})
-    assert structured.get("error") == "session_start_required"
+    assert structured.get("error") == "post_compaction_recovery_required"
     assert structured.get("tool_attempted") == "trw_deliver"
     content = getattr(result, "content", [])
     assert content and isinstance(content[0], TextContent)
@@ -344,3 +353,69 @@ def test_deliver_rejects_inside_project_non_run_without_writing_checkpoint(tmp_p
     assert result["success"] is False
     assert "not a valid TRW run directory" in str(result["delivery_blocked"])
     assert not (non_run / "meta").exists()
+
+
+def test_trw_deliver_is_still_blocked_after_the_bound_is_exhausted(tmp_path: Path) -> None:
+    """PRD-CORE-258-FR09: a terminal act never rides the bounded escape.
+
+    The escape exists for a caller that CANNOT clear the gate. That is
+    measurably not the caller who delivers: of eleven bundled agents exactly one
+    names ``trw_session_start``, and it is the same and only one that names
+    ``trw_deliver``. Before this, ``_delivery_build_gates.py``'s
+    defence-in-depth comment — "so a deliver after a compacted session cannot
+    reach here" — was false for every session past the bound.
+    """
+    import asyncio
+
+    from mcp.types import TextContent
+
+    from trw_mcp.middleware import ceremony as cm
+
+    cm.reset_state()
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    (trw_dir / "context" / "pre_compact_state.json").write_text(
+        json.dumps({"timestamp": "2026-09-04T21:49:47+00:00", "trigger": "mcp_tool"}), encoding="utf-8"
+    )
+
+    class _Ctx:
+        session_id = "sess-exhausted"
+        request_context = object()
+
+    def _mw_ctx(tool_name: str) -> Any:
+        message = type("_Msg", (), {"name": tool_name})()
+        return type("_MwCtx", (), {"message": message, "fastmcp_context": _Ctx()})()
+
+    executed: list[str] = []
+
+    async def _call_next(ctx: Any) -> Any:
+        executed.append(ctx.message.name)
+        return type("_Result", (), {"content": [TextContent(type="text", text="ok")], "structured_content": None})()
+
+    mw = cm.CeremonyMiddleware()
+    with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
+        # Spend the budget, then prove the two tools diverge in the SAME session.
+        for _ in range(cm._COMPACTION_GATE_MAX_BLOCKS):
+            asyncio.run(mw.on_call_tool(_mw_ctx("trw_recall"), _call_next))  # type: ignore[arg-type]
+        degraded = asyncio.run(mw.on_call_tool(_mw_ctx("trw_recall"), _call_next))  # type: ignore[arg-type]
+        blocked = asyncio.run(mw.on_call_tool(_mw_ctx("trw_deliver"), _call_next))  # type: ignore[arg-type]
+
+    assert executed == ["trw_recall"], "trw_deliver must never reach call_next past the bound"
+    assert degraded.structured_content is None, "a non-terminal tool still degrades to advisory"
+    assert "trw_session_start" in degraded.content[0].text, "the nudge is never removed"
+
+    assert blocked.structured_content is not None
+    assert blocked.structured_content["error"] == "post_compaction_recovery_required"
+    assert blocked.structured_content["tool_attempted"] == "trw_deliver"
+    assert blocked.structured_content["blocked_count"] > cm._COMPACTION_GATE_MAX_BLOCKS
+    # The obligation survives: the marker is still on disk for a caller that can
+    # discharge it.
+    assert (trw_dir / "context" / "pre_compact_state.json").exists()
+
+
+def test_terminal_tools_holds_only_the_terminal_act() -> None:
+    """OQ-04: ``trw_init`` is NOT terminal — it creates the run evidence lands in."""
+    from trw_mcp.middleware import ceremony as cm
+
+    assert cm.TERMINAL_TOOLS == frozenset({"trw_deliver"})
+    assert "trw_init" not in cm.TERMINAL_TOOLS

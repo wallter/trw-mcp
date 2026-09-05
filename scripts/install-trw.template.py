@@ -3574,7 +3574,7 @@ def phase_install_proprietary(
             "(public install unaffected; logs in .trw/logs/)"
         )
     # Re-write target-dir console scripts as PYTHONPATH wrappers so the bare
-    # trw-distill/trw-loop/trw-swarm commands resolve their module under
+    # license-gated proprietary package commands resolve their module under
     # --target (mirrors the bin/trw-mcp wrapper). No-op for non-target installs.
     _write_proprietary_console_wrappers(python, target_dir, installed, ui)
     _print_distill_repo_intel_hint(ui, installed)

@@ -69,7 +69,7 @@ class TestStoreLearning:
         )
 
         backend = get_backend(trw_dir)
-        entry = backend.get("L-prov01")
+        entry = backend.get("L-prov01", namespace="default")
         assert entry is not None
         assert entry.metadata["provenance_session_id"] == "env-session-123"
         assert entry.metadata["provenance_signature"]
@@ -167,7 +167,7 @@ class TestRecallLearnings:
 
         store_learning(trw_dir, "L-safe01", "Safe summary", "Safe detail")
         backend = get_backend(trw_dir)
-        canary = backend.get("canary-001")
+        canary = backend.get("canary-001", namespace="default")
         assert canary is not None
         backend.store(canary.model_copy(update={"content": "tampered canary"}))
 

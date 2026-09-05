@@ -25,8 +25,10 @@ unenrolled project is not a fix, it is a different bug.
 from __future__ import annotations
 
 import os
+import shutil
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -34,6 +36,7 @@ import pytest
 
 from tests._intent_contract_hooks import (
     CONTRACT_REL,
+    INTENT_LIB,
     POST_HOOK,
     PRE_HOOK,
     contract_yaml,
@@ -142,8 +145,17 @@ def _subshell_depths(source: str, needle: str) -> list[int]:
     return depths
 
 
-@pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
-def test_f1_the_hook_never_sources_the_shared_lib_into_its_own_shell(hook: str) -> None:
+_CONTROL_POINT_FILES = [PRE_HOOK, POST_HOOK, INTENT_LIB]
+
+
+def _hook_source(name: str) -> str:
+    return (Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks" / name).read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.mark.parametrize("name", _CONTROL_POINT_FILES)
+def test_f1_no_control_point_file_sources_lib_trw_into_its_own_shell(name: str) -> None:
     """The structural property behind every case above, asserted directly.
 
     A lib that runs only in subshells cannot write a variable, define a function,
@@ -151,13 +163,28 @@ def test_f1_the_hook_never_sources_the_shared_lib_into_its_own_shell(hook: str) 
     is what stops a FIFTH symptom shipping: this fails the moment any
     `. lib-trw.sh` reappears at depth 0, which is exactly where the pre-fix
     `case ok:*)` branch put it.
+
+    PRD-CORE-250-FR05 moved ``_trw_telemetry`` — the one legitimate lib-trw.sh
+    call site — into ``lib-intent-guard.sh``. The scan follows it: the property
+    is about the shell that decides, and that shell now sources two files, so
+    checking only the hooks would have made the assertion vacuously true in the
+    one file where the call actually lives.
     """
-    source = (Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks" / hook).read_text(
-        encoding="utf-8"
-    )
-    depths = _subshell_depths(source, _SOURCE_LIB)
-    assert depths, f"{hook} must still USE the lib — an empty result would make this vacuous"
-    assert all(depth > 0 for depth in depths), f"{hook} sources lib-trw.sh at shell depth {depths}"
+    depths = _subshell_depths(_hook_source(name), _SOURCE_LIB)
+    assert all(depth > 0 for depth in depths), f"{name} sources lib-trw.sh at shell depth {depths}"
+
+
+def test_f1_the_lib_trw_call_site_still_exists_somewhere() -> None:
+    """Non-vacuity for the parametrized scan above.
+
+    ``all(...)`` over an empty list is True, so a change that simply deleted the
+    telemetry call would turn every case above green while proving nothing. The
+    call has to exist in exactly one of the three files, and it must be nested.
+    """
+    found = {name: _subshell_depths(_hook_source(name), _SOURCE_LIB) for name in _CONTROL_POINT_FILES}
+    carriers = {name: depths for name, depths in found.items() if depths}
+    assert carriers, "no control-point file sources lib-trw.sh at all — the F1 scan is now vacuous"
+    assert list(carriers) == [INTENT_LIB], f"the telemetry call site moved unexpectedly: {carriers}"
 
 
 def test_the_subshell_depth_scanner_actually_distinguishes_the_two_shapes() -> None:
@@ -233,3 +260,119 @@ def test_f4_the_header_does_not_claim_a_protection_that_cannot_exist(hook: str) 
     header = source.split("set -e", 1)[0]
     assert "CATCHABLE termination signal" in header
     assert "SIGKILL cannot" in header, "the header must name what it does NOT cover"
+
+
+# --- P1 2026-09-03: `python3` resolution must not depend on PATH order -------
+#
+# Hit live by a sub-agent: a shell whose PATH carried a foreign, unrelated
+# project's venv first (its python3 had no trw_mcp installed) made every
+# enrolled Edit/Write block, because the hook resolved the checker interpreter
+# as bare `python3` from PATH. Reproduced here with a fake foreign python3
+# that always exits 1 (the observed ModuleNotFoundError shape -- verified: a
+# missing/partial module under `-m` always exits 1, before the checker's own
+# except-Exception boundary, which can only answer 0 or 2).
+
+_BASE_HOOK_TOOLS = ("sh", "cat", "date", "git")
+
+
+def _foreign_broken_python3(tmp_path: Path, name: str) -> Path:
+    """A directory whose ``python3`` exists but cannot run the checker module."""
+    stub_dir = tmp_path / name
+    stub_dir.mkdir()
+    stub = stub_dir / "python3"
+    stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    stub.chmod(0o755)
+    return stub_dir
+
+
+def _fixture_project_venv(project: Path) -> None:
+    """``$project/.venv/bin/python`` -- a REAL interpreter, standing in for an
+    installed project venv. It resolves trw_mcp the same way every other test
+    in this suite does (``run_hook`` sets ``PYTHONPATH``), so it proves
+    SELECTION, not a fabricated import.
+
+    A wrapper script that ``exec``s the real interpreter BY ITS OWN PATH, not a
+    symlink: CPython's venv detection walks up from argv[0] looking for a
+    sibling ``pyvenv.cfg``, so a symlink placed elsewhere makes it search the
+    WRONG directory and silently fall back to the base install (which lacks
+    the workspace's editable-installed packages) -- verified live while
+    writing this fixture.
+    """
+    venv_bin = project / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    launcher = venv_bin / "python"
+    launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    launcher.chmod(0o755)
+
+
+def _path_with_foreign_python_first(tmp_path: Path, stub_dir: Path, name: str) -> str:
+    """PATH holding the broken foreign ``python3`` first, plus what a hook needs."""
+    bin_dir = tmp_path / name
+    bin_dir.mkdir()
+    for tool in _BASE_HOOK_TOOLS:
+        located = shutil.which(tool)
+        if located:
+            (bin_dir / tool).symlink_to(located)
+    return f"{stub_dir}{os.pathsep}{bin_dir}"
+
+
+_NO_INTERPRETER_MARKER = "no interpreter with trw_mcp installed"
+
+
+@pytest_skip_no_sh
+@pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
+def test_the_project_venv_wins_over_a_foreign_trw_less_python3_first_on_path(tmp_path: Path, hook: str) -> None:
+    """The fixture venv must be selected and the guard must actually run.
+
+    A python-less-for-us-purposes foreign interpreter sits first on PATH; the
+    project's own venv -- reached via CLAUDE_PROJECT_DIR -- must win anyway,
+    and the resulting decision must be the REAL one (the baseline block this
+    project is built to produce), not the resolver's own fallback message.
+    """
+    project = _blocking_post_project(tmp_path, f"venv-wins-{hook}") if hook == POST_HOOK else None
+    if project is None:
+        project = _blocking_pre_project(tmp_path, f"venv-wins-{hook}")
+    _fixture_project_venv(project)
+    stub_dir = _foreign_broken_python3(tmp_path, f"foreign-{hook}")
+    path = _path_with_foreign_python_first(tmp_path, stub_dir, f"pathdir-{hook}")
+
+    result = run_hook(project, hook, extra_env={"PATH": path, "CLAUDE_PROJECT_DIR": str(project)})
+
+    assert result.returncode == 2, f"the fixture venv did not run the guard: {result.stderr}"
+    assert _NO_INTERPRETER_MARKER not in result.stderr, (
+        f"fell through to the no-interpreter branch instead of using the project venv\n{result.stderr}"
+    )
+    # A vacuous-negative would also pass if the OLD "any nonzero rc is a silent
+    # block" code path fired (empty stderr, no marker either way). Pin the
+    # POSITIVE side too: the real Python decision text this specific baseline
+    # produces, which only prints when the module actually ran to completion.
+    real_decision_marker = (
+        "BLOCKED (intent-contract post-edit):" if hook == POST_HOOK else ("BLOCKED (intent-contract pre-write):")
+    )
+    assert real_decision_marker in result.stderr, (
+        f"the real python decision text is missing -- did the guard actually run?\n{result.stderr}"
+    )
+
+
+@pytest_skip_no_sh
+@pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
+def test_when_only_a_foreign_python3_is_reachable_the_message_names_it(tmp_path: Path, hook: str) -> None:
+    """No project venv anywhere -> exhausted resolution must be ACTIONABLE.
+
+    Not "python3 is unavailable" (names no cause, no fix): the message must
+    name the interpreter it tried and how to point TRW_PYTHON at the right one.
+    """
+    project = hook_project(tmp_path, f"foreign-only-{hook}")
+    stub_dir = _foreign_broken_python3(tmp_path, f"foreign-only-bin-{hook}")
+    path = _path_with_foreign_python_first(tmp_path, stub_dir, f"foreign-only-path-{hook}")
+
+    # `run_hook` sets TRW_PYTHON to the suite's own interpreter so the OTHER
+    # tests measure the guard rather than the resolver; this test measures the
+    # resolver, so it clears the override and leaves PATH as the only tier. An
+    # empty value is skipped by the resolver's `-n` test, as an unset one is.
+    result = run_hook(project, hook, extra_env={"PATH": path, "TRW_PYTHON": ""})
+
+    assert result.returncode == 2, f"an enrolled project must still fail closed: {result.stderr}"
+    assert _NO_INTERPRETER_MARKER in result.stderr, result.stderr
+    assert str(stub_dir / "python3") in result.stderr, f"the tried interpreter path is not named: {result.stderr}"
+    assert "TRW_PYTHON" in result.stderr, f"the fix is not actionable: {result.stderr}"

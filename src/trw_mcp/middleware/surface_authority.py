@@ -30,9 +30,16 @@ Always additionally exposed so a bounded surface can never brick a session:
     — the SAME in-memory store PhaseExposureMiddleware consults; reused, not forked).
 
 When a session's resolved surface CHANGES (e.g. its run's ``task_type`` shifts,
-remapping the packs) the LIST path emits ``notifications/tools/list_changed`` via
-the shared ``_phase_transitions.emit_list_changed`` helper so a capable client
-re-fetches (P2a). Every denial is logged as a structured warning (P2d).
+remapping the packs) BOTH the list path and the CALL path emit
+``notifications/tools/list_changed`` via the shared
+``_phase_transitions.emit_list_changed`` helper so a capable client re-fetches
+(P2a + PRD-CORE-246-FR07). The call-path emission is what a real client needs:
+it lists ONCE at connect and never re-asks on its own, so a widening caused BY a
+tool call (``trw_init``, ``trw_adopt_run``) was previously invisible to it
+forever. The re-resolution happens AFTER ``call_next`` returns — before it the
+run is not yet pinned and the surface has not yet widened, so resolving first
+would compare the old surface with itself and never notify. Every denial is
+logged as a structured warning (P2d).
 
 Denial (``on_call_tool``) returns a structured error naming
 ``trw_request_tool_access`` and the pack(s) that contain the tool (from
@@ -69,16 +76,47 @@ from trw_mcp.middleware._phase_session import (
 )
 from trw_mcp.middleware._phase_transitions import emit_list_changed
 from trw_mcp.models.phase_policy import RIGID_TOOLS
+from trw_mcp.models.surface_packs import REVIEWER_TOOLS
+from trw_mcp.state._surface_role import _env_marks_reviewer as _surface_role_env_marks_reviewer
+from trw_mcp.state._surface_role import reset_surface_role_state, reviewer_role_active
 
 logger = structlog.get_logger(__name__)
 
+#: The resolution mode reported for a reviewer-role session (PRD-SEC-015-FR03).
+#: Not a ``tool_resolution_mode`` value — the role is a session-IDENTITY axis
+#: that is resolved BEFORE the mode and replaces it.
+_REVIEWER_MODE = "reviewer"
+
 #: Bootstrap-critical tools that must reach EVERY session regardless of the
-#: resolved surface — same never-hide rationale as ``RIGID_TOOLS``. A fresh
-#: session with no run must be able to call ``trw_init`` to CREATE its first run;
-#: ``trw_init`` lives in the ``run_maintenance`` pack, so a kernel-only surface
-#: would otherwise strand a brand-new session (round-1 audit finding P2b). NOT
-#: added to ``KERNEL_TOOLS`` — the kernel digest is version-pinned.
-_BOOTSTRAP_TOOLS: frozenset[str] = frozenset({"trw_init"})
+#: resolved surface — same never-hide rationale as ``RIGID_TOOLS``. NOT added to
+#: ``KERNEL_TOOLS`` (the kernel digest is version-pinned) and NOT to
+#: ``RIGID_TOOLS`` (that is the phase-gate never-hide set, and joining it would
+#: also change ``PhaseToolPolicy``). Pack membership is unchanged, so the FR01
+#: manifest bijection still holds and no new tool is registered.
+#:   * ``trw_init`` — a fresh session with no run must be able to CREATE its
+#:     first run; ``trw_init`` lives in the ``run_maintenance`` pack, so a
+#:     kernel-only surface would otherwise strand a brand-new session (round-1
+#:     audit finding P2b).
+#:   * ``trw_submit_feedback`` — the tooling-gap report channel. It is the sole
+#:     member of the ``feedback`` pack, which NO entry of ``STANDARD_TASK_PACKS``
+#:     names, so before PRD-CORE-246-FR06 it was masked on every resolved
+#:     surface: an agent that hit a tooling gap could not report the gap it had
+#:     hit. It IS in the phase-exposure Safe Set, but this middleware runs first
+#:     in the chain and masked it before phase exposure was ever consulted.
+#:   * ``trw_prd_validate`` — the read-only, no-side-effect requirement-quality
+#:     check. It is a member of the ``requirements`` pack, which only the
+#:     ``docs``/``planning`` entries of ``STANDARD_TASK_PACKS`` name, so a
+#:     session pinned ``task_type=coding`` (or any other unnamed type) masked
+#:     it on every resolved surface — and a ``trw-prd-groomer`` /
+#:     ``trw-requirement-reviewer`` sub-agent dispatched from that session
+#:     shares the SAME stdio connection and therefore the SAME masked surface
+#:     (session id comes from ``fastmcp_context.session_id`` — there is no
+#:     separate connection per dispatched agent), so it inherited the mask too
+#:     and could not call the validator it is grafted to (2026-09-04
+#:     wiring-defect report, ``docs/documentation/wiring-defect-patterns.md``
+#:     P12). Read-only and side-effect-free, so never-hiding it carries none of
+#:     the risk a write tool would.
+_BOOTSTRAP_TOOLS: frozenset[str] = frozenset({"trw_init", "trw_submit_feedback", "trw_prd_validate"})
 
 #: The never-hide set unioned into every bounded surface.
 _ALWAYS_EXPOSED: frozenset[str] = RIGID_TOOLS | _BOOTSTRAP_TOOLS
@@ -90,6 +128,7 @@ _last_surface: dict[str, frozenset[str]] = {}
 def reset_surface_authority_state() -> None:
     """Clear the per-session surface-change ledger — for testing only."""
     _last_surface.clear()
+    reset_surface_role_state()
 
 
 class _Resolved(NamedTuple):
@@ -141,6 +180,14 @@ def _resolve_mode() -> str:
     from trw_mcp.models.config import get_config
 
     return str(getattr(get_config(), "tool_resolution_mode", "standard"))
+
+
+# PRD-SEC-015: the reviewer-role identity lives in ONE place —
+# ``state/_surface_role.py`` — and is consulted by every side-effecting layer
+# (telemetry, recall, code index, skill tracking, boot). The names below are kept
+# for the call sites and tests that import them from this module.
+_is_reviewer_role = reviewer_role_active
+_env_marks_reviewer = _surface_role_env_marks_reviewer
 
 
 def _active_override_tools(session_id: str) -> frozenset[str]:
@@ -199,6 +246,18 @@ class SurfaceAuthorityMiddleware(Middleware):
         path consumes them explicitly so the single-use invariant holds. ``mode``
         and ``task_type`` ride along so a denial can be logged observably (P2d).
         """
+        # PRD-SEC-015-FR03: the session-IDENTITY axis is answered first. The
+        # reviewer branch REPLACES the resolved surface — it does not subtract
+        # from `_ALWAYS_EXPOSED`, because that set grows by ordinary maintenance
+        # (`trw_prd_validate` joined it on 2026-09-04) and a subtractive design
+        # would silently re-widen every reviewer surface on the next addition.
+        # It also precedes the `mode == "all"` escape: "all" widens an OPERATOR'S
+        # OWN session, while the role CONTAINS a subordinate process, so honouring
+        # it would let an audited project's config un-bound the lane auditing it.
+        # Returning here is also the NFR01 property: no `resolve_task_type` call,
+        # so a reviewer call reads strictly less from disk than an agent call.
+        if _is_reviewer_role():
+            return _Resolved(mode=_REVIEWER_MODE, task_type=None, tools=REVIEWER_TOOLS)
         mode = _resolve_mode()
         if mode == "all":
             return None
@@ -223,7 +282,13 @@ class SurfaceAuthorityMiddleware(Middleware):
             if resolved is None:  # mode="all" → strict no-op (operator escape)
                 return tools
             await self._maybe_notify_surface_change(session_id, resolved.tools, ctx)
-            visible = resolved.tools | _active_override_tools(session_id)
+            # FR04: a reviewer surface is never widened by a grant — the bound
+            # must be unreachable from inside the bounded lane (US-002).
+            visible = (
+                resolved.tools
+                if resolved.mode == _REVIEWER_MODE
+                else resolved.tools | _active_override_tools(session_id)
+            )
             filtered = [t for t in tools if t.name in visible]
             logger.debug(
                 "surface_authority_filtered",
@@ -234,7 +299,15 @@ class SurfaceAuthorityMiddleware(Middleware):
                 visible=len(filtered),
             )
             return filtered
-        except Exception:  # justified: fail-open — expose the full catalogue
+        except Exception:
+            # NFR02: a REVIEWER-marked process fails CLOSED — a deliberate,
+            # reviewer-scoped inversion of the PRD-CORE-218 fail-open contract.
+            # A bricked reviewer is a lost second opinion; an un-bounded reviewer
+            # is an authorization bypass, so availability loses to containment
+            # for a subordinate process. Every other session keeps fail-open.
+            if _env_marks_reviewer():
+                logger.warning("surface_authority_list_failed", outcome="fail_closed_reviewer", exc_info=True)
+                return [t for t in tools if t.name in REVIEWER_TOOLS]
             logger.warning("surface_authority_list_failed", outcome="fail_open", exc_info=True)
             return tools
 
@@ -270,39 +343,123 @@ class SurfaceAuthorityMiddleware(Middleware):
         context: MiddlewareContext[CallToolRequestParams],
         call_next: CallNext[CallToolRequestParams, ToolResult],
     ) -> ToolResult:
-        """Deny a call to a tool outside the resolved surface (FR03/FR04)."""
+        """Deny a call to a tool outside the resolved surface (FR03/FR04).
+
+        An executed call is followed by a surface re-resolution and, when the
+        surface moved, a ``list_changed`` push (PRD-CORE-246-FR07).
+
+        The fail-open ``call_next`` fallback below covers ONLY the gating
+        resolution (session/mode/task-type lookup) — it must never wrap a
+        branch that has already invoked ``call_next``. A tool raising is not
+        a resolution failure; letting it propagate here (rather than being
+        caught and retried) is what keeps a raising tool executing exactly
+        once (audit finding: a raising tool previously ran twice — once
+        inside ``call_next`` and once more from this handler's own fail-open
+        retry).
+        """
         tool_name = context.message.name
+        ctx = context.fastmcp_context
         try:
-            ctx = context.fastmcp_context
             session_id = safe_session_id_from_context(ctx)
             resolved = self._resolve(session_id=session_id, fastmcp_context=ctx)
-            if resolved is None:  # mode="all" → strict no-op (operator escape)
-                return await call_next(context)
-            if tool_name in resolved.tools:
-                return await call_next(context)
-            # Outside the surface: an active single-use grant permits exactly one call.
-            if _consume_override(session_id, tool_name):
-                logger.info(
-                    "surface_authority_override_call_allowed",
-                    component="surface_authority",
-                    op="call_tool",
-                    session_id=session_id,
-                    tool=tool_name,
+        except Exception:
+            # NFR02 (see on_list_tools): reviewer-marked processes DENY on a
+            # resolution fault. The PRD accepts "the reviewer returns only
+            # denials" as the safe degradation for a subordinate lane.
+            if _env_marks_reviewer():
+                logger.warning(
+                    "surface_authority_call_failed", outcome="fail_closed_reviewer", tool=tool_name, exc_info=True
                 )
-                return await call_next(context)
-            return self._deny(tool_name=tool_name, mode=resolved.mode, task_type=resolved.task_type)
-        except Exception:  # justified: fail-open — execute rather than wrongly block
+                return self._deny(tool_name=tool_name, mode=_REVIEWER_MODE, task_type=None, reviewer=True)
             logger.warning("surface_authority_call_failed", outcome="fail_open", tool=tool_name, exc_info=True)
             return await call_next(context)
+        if resolved is None:  # mode="all" → strict no-op (operator escape)
+            return await call_next(context)
+        if tool_name in resolved.tools:
+            return await self._call_then_push(context, call_next, session_id=session_id, fastmcp_context=ctx)
+        if resolved.mode == _REVIEWER_MODE:
+            # FR04: the grant store is not consulted AT ALL under the reviewer
+            # role, so a grant planted by any path cannot unmask a write tool —
+            # and a reviewer denial never burns the parent session's single-use
+            # grant either.
+            return self._deny(tool_name=tool_name, mode=resolved.mode, task_type=None, reviewer=True)
+        # Outside the surface: an active single-use grant permits exactly one call.
+        if _consume_override(session_id, tool_name):
+            logger.info(
+                "surface_authority_override_call_allowed",
+                component="surface_authority",
+                op="call_tool",
+                session_id=session_id,
+                tool=tool_name,
+            )
+            return await self._call_then_push(context, call_next, session_id=session_id, fastmcp_context=ctx)
+        return self._deny(tool_name=tool_name, mode=resolved.mode, task_type=resolved.task_type)
+
+    async def _call_then_push(
+        self,
+        context: MiddlewareContext[CallToolRequestParams],
+        call_next: CallNext[CallToolRequestParams, ToolResult],
+        *,
+        session_id: str,
+        fastmcp_context: object | None,
+    ) -> ToolResult:
+        """Execute the call, then push the surface if the call changed it (FR07).
+
+        The re-resolution is deliberately AFTER ``call_next``: a call like
+        ``trw_init`` creates and pins the run whose ``task_type`` selects the
+        packs, so resolving beforehand would compare the pre-call surface with
+        itself. The push is wrapped in its own handler — never the caller's —
+        because the caller's fail-open branch re-invokes ``call_next``, so a
+        notification fault leaking upward would execute the tool a second time.
+        """
+        result = await call_next(context)
+        try:
+            resolved = self._resolve(session_id=session_id, fastmcp_context=fastmcp_context)
+            if resolved is not None:
+                await self._maybe_notify_surface_change(session_id, resolved.tools, fastmcp_context)
+        except Exception:  # justified: fail-open — a push fault must never fail the tool call
+            logger.warning("surface_authority_call_push_failed", outcome="fail_open", exc_info=True)
+        return result
 
     @staticmethod
-    def _deny(*, tool_name: str, mode: str, task_type: str | None) -> ToolResult:
-        """Return a structured ``tool_not_in_surface`` denial (discoverability contract).
+    def _deny(*, tool_name: str, mode: str, task_type: str | None, reviewer: bool = False) -> ToolResult:
+        """Return a structured denial (discoverability contract).
 
-        Names ``trw_request_tool_access`` (the remediation) and the pack(s) that
-        contain the tool so the caller knows exactly how to reach it. Every denial
-        is also logged as a structured WARNING (P2d) so masking is observable.
+        The agent payload names ``trw_request_tool_access`` (the remediation) and
+        the pack(s) that contain the tool so the caller knows how to reach it.
+        The REVIEWER payload (PRD-SEC-015-FR04) deliberately names NEITHER: a
+        denial that tells the bounded lane how to widen itself is not a control
+        (US-002). Every denial is logged as a structured WARNING (P2d) so
+        containment is observable rather than inferred.
         """
+        if reviewer:
+            logger.warning(
+                "surface_authority_call_denied",
+                component="surface_authority",
+                op="call_tool",
+                tool=tool_name,
+                surface_role=_REVIEWER_MODE,
+                mode=mode,
+            )
+            return ToolResult(
+                content=[
+                    TextContent(
+                        type="text",
+                        text=(
+                            f"{tool_name} is outside the read-only reviewer tool surface. "
+                            f"This lane may call only: {', '.join(sorted(REVIEWER_TOOLS))}. "
+                            "Report the finding in your answer instead; the dispatching "
+                            "orchestrator records anything durable."
+                        ),
+                    )
+                ],
+                structured_content={
+                    "error_type": "tool_not_in_reviewer_surface",
+                    "tool_name": tool_name,
+                    "surface_role": _REVIEWER_MODE,
+                    "allowed_tools": sorted(REVIEWER_TOOLS),
+                },
+            )
         packs = _packs_for_tool(tool_name)
         pack_txt = ", ".join(packs) if packs else "operator-only / unmapped"
         payload: dict[str, Any] = {

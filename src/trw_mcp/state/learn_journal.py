@@ -35,6 +35,7 @@ rather than occupying active journal capacity. That policy lives in
 
 from __future__ import annotations
 
+import math
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -42,6 +43,7 @@ from pathlib import Path
 import structlog
 from typing_extensions import TypedDict
 
+from trw_mcp.state._learn_journal_claims import acquire_claim, release_claim
 from trw_mcp.state._learn_journal_disposition import (
     DEAD_LETTER_DIRNAME as DEAD_LETTER_DIRNAME,
 )
@@ -76,6 +78,19 @@ class LearnJournalDrainResult(TypedDict, total=False):
     aside as unreplayable; ``retained`` counts records still queued for a later
     sweep. The three are disjoint and, with ``deferred``, account for every
     pending record.
+
+    ``budget_exhausted`` (PRD-FIX-130-FR01) is True when the sweep stopped on the
+    WALL-CLOCK budget rather than on the count limit, which is what tells the
+    caller the remainder is worth continuing in the background NOW rather than
+    leaving for the next sweep.
+
+    ``contended`` counts records another drain (a peer stdio process, or this
+    process's own background continuation) owns or has already finished: either
+    it holds the claim right now, or it consumed the record between this sweep's
+    snapshot and its claim. They are not attempted, not deferred to a
+    continuation this sweep would schedule, and not lost. Keeping them out of
+    ``deferred`` is what stops the caller scheduling a second worker over work
+    that is already in flight or already done.
     """
 
     pending: int
@@ -84,6 +99,8 @@ class LearnJournalDrainResult(TypedDict, total=False):
     dead_lettered: int
     retained: int
     deferred: int
+    contended: int
+    budget_exhausted: bool
 
 
 def pending_dir(trw_dir: Path, learnings_dir: str = "learnings") -> Path:
@@ -272,6 +289,31 @@ def pending_count(trw_dir: Path, *, learnings_dir: str = "learnings") -> int:
     return sum(1 for p in directory.glob("*.json") if p.is_file())
 
 
+def _resolve_budget_seconds(budget_seconds: float | None) -> float | None:
+    """Normalize the FR01 wall-clock budget, REFUSING an unusable value.
+
+    ``None`` means unbounded and is the operator-CLI contract (a drain an
+    operator invoked is not a hot path). Any other value must be a finite,
+    non-negative number of seconds.
+
+    A negative, NaN, or infinite budget is treated as ``0.0`` — drain nothing
+    inline — and NEVER as "unbounded". Falling back to unbounded here would
+    silently restore the defect this budget exists to remove: a 353,590 ms
+    ``trw_session_start`` on a 77-record backlog. Reporting the refusal and
+    handing everything to the background continuation is the honest failure.
+    """
+    if budget_seconds is None:
+        return None
+    try:
+        value = float(budget_seconds)
+    except (TypeError, ValueError):  # justified: refuse-on-exception, never "unbounded"
+        value = float("nan")
+    if not math.isfinite(value) or value < 0.0:
+        logger.warning("learn_journal_drain_budget_invalid", budget_seconds=repr(budget_seconds))
+        return 0.0
+    return value
+
+
 def drain_pending(
     trw_dir: Path,
     replay_fn: Callable[[str, dict[str, object]], str],
@@ -279,6 +321,7 @@ def drain_pending(
     limit: int,
     learnings_dir: str = "learnings",
     max_attempts: int = 0,
+    budget_seconds: float | None = None,
 ) -> LearnJournalDrainResult:
     """Replay un-consumed pending records through ``replay_fn``.
 
@@ -295,11 +338,33 @@ def drain_pending(
     ``recovered`` — see :mod:`trw_mcp.state._learn_journal_disposition` for why
     the string alone once produced false recoveries that never drained.
 
+    Each record is CLAIMED before its replay (see
+    :mod:`trw_mcp.state._learn_journal_claims`), so two drains over the same
+    directory — two stdio processes, or one process whose inline sweep overlaps
+    its own background continuation — cannot both enter ``replay_fn`` for the
+    same id. A record another live drain holds — or one it consumed between this
+    sweep's snapshot and its claim — is counted as ``contended`` and left alone;
+    a claim whose owner is provably gone is reclaimed. The claim is a SIDECAR
+    file (``<id>.json.claim``), so the pending record itself, and therefore the
+    classification above, is untouched.
+
     An un-consumed record is then either DEAD-LETTERED (a deterministic refusal
     that would fail identically forever, or a transient failure that exhausted
     ``max_attempts``) or RETAINED for the next sweep with its attempt count
     persisted. ``max_attempts=0`` disables the budget, so only deterministic
     refusals move aside. At most ``limit`` records are attempted per sweep.
+
+    ``budget_seconds`` (PRD-FIX-130-FR01) additionally bounds the sweep by WALL
+    CLOCK, checked in the same guard clause as the count break. It is a SOFT
+    budget by construction: the check sits BETWEEN records, so one replay can
+    exceed the whole deadline on its own and the sweep overruns by at most one
+    record's replay. The hard guarantee that the backlog still lands is the
+    caller's background continuation (FR02), not this check. ``None`` (the
+    default, and the operator CLI's contract) is unbounded; ``0`` replays
+    nothing inline. See :func:`_resolve_budget_seconds` for the refusal rule.
+
+    The budget is read only AFTER the empty-pending early return, so the
+    zero-pending hot path adds no work at all (NFR01).
 
     Returns per-outcome counts (see :class:`LearnJournalDrainResult`), or an
     empty dict when nothing was pending.
@@ -309,48 +374,75 @@ def drain_pending(
     if not pending:
         return result
 
+    budget = _resolve_budget_seconds(budget_seconds)
+    deadline = None if budget is None else time.monotonic() + budget
+    budget_exhausted = False
     recovered = 0
     dead_lettered = 0
     retained = 0
     attempted = 0
+    contended = 0
     dead_dir = dead_letter_dir(trw_dir, learnings_dir)
     for path, learning_id, record in pending:
         if attempted >= limit:
             break
-        attempted += 1
-        attempt = _record_attempts(record) + 1
-        status = ""
-        error: BaseException | None = None
+        # FR01: the second break condition. Checked BEFORE the replay so the
+        # sweep stops before starting the work that would cross the deadline.
+        if deadline is not None and time.monotonic() >= deadline:
+            budget_exhausted = True
+            break
+        # FIX130-01: claim BEFORE the replay. Two stdio processes, or one
+        # process whose next inline sweep overlaps its own background
+        # continuation, otherwise both enter execute_learn for this id.
+        claim = acquire_claim(path)
+        if claim is None:
+            contended += 1
+            continue
         try:
-            status = replay_fn(learning_id, _record_payload(record))
-        except Exception as exc:  # justified: fail-open, one bad replay must not abort the sweep or the session
-            logger.warning("learn_journal_replay_failed", learning_id=learning_id, exc_info=True)
-            error = exc
-        disposition = classify_replay(
-            consumed=not path.exists(),
-            status=status,
-            error=error,
-            attempt=attempt,
-            max_attempts=max_attempts,
-        )
-        if disposition.outcome == "recovered":
-            recovered += 1
-            continue
-        moved = disposition.outcome == "dead_lettered" and dead_letter(
-            path,
-            target_dir=dead_dir,
-            reason=disposition.reason,
-            status=status,
-            error="" if error is None else f"{type(error).__name__}: {error}",
-            attempt=attempt,
-        )
-        if moved:
-            dead_lettered += 1
-            continue
-        # Still pending — either a deliberate retry or a dead-letter move that
-        # failed. Persist the attempt so the budget survives a restart.
-        record_attempt(path, record, attempt)
-        retained += 1
+            if not path.exists():
+                # Consumed by another drain between OUR snapshot and OUR claim.
+                # The claim alone cannot see this: the holder finished, released,
+                # and left; only re-reading the file closes the stale-snapshot
+                # window. Replaying here would re-enter execute_learn for a
+                # record that already reached a terminal outcome.
+                contended += 1
+                continue
+            attempted += 1
+            attempt = _record_attempts(record) + 1
+            status = ""
+            error: BaseException | None = None
+            try:
+                status = replay_fn(learning_id, _record_payload(record))
+            except Exception as exc:  # justified: fail-open, one bad replay must not abort the sweep or the session
+                logger.warning("learn_journal_replay_failed", learning_id=learning_id, exc_info=True)
+                error = exc
+            disposition = classify_replay(
+                consumed=not path.exists(),
+                status=status,
+                error=error,
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+            if disposition.outcome == "recovered":
+                recovered += 1
+                continue
+            moved = disposition.outcome == "dead_lettered" and dead_letter(
+                path,
+                target_dir=dead_dir,
+                reason=disposition.reason,
+                status=status,
+                error="" if error is None else f"{type(error).__name__}: {error}",
+                attempt=attempt,
+            )
+            if moved:
+                dead_lettered += 1
+                continue
+            # Still pending — either a deliberate retry or a dead-letter move that
+            # failed. Persist the attempt so the budget survives a restart.
+            record_attempt(path, record, attempt)
+            retained += 1
+        finally:
+            release_claim(claim)
 
     result["pending"] = len(pending)
     result["replayed"] = attempted
@@ -360,9 +452,16 @@ def drain_pending(
         result["dead_lettered"] = dead_lettered
     if retained:
         result["retained"] = retained
-    deferred = len(pending) - attempted
+    # Disjoint by construction: a contended record is owned by a live peer, so
+    # reporting it as deferred would let the caller schedule a second worker
+    # over work already in flight.
+    deferred = len(pending) - attempted - contended
     if deferred > 0:
         result["deferred"] = deferred
+    if contended:
+        result["contended"] = contended
+    if budget_exhausted:
+        result["budget_exhausted"] = True
     logger.info(
         "learn_journal_drain",
         pending=len(pending),
@@ -371,5 +470,7 @@ def drain_pending(
         dead_lettered=dead_lettered,
         retained=retained,
         deferred=deferred,
+        contended=contended,
+        budget_exhausted=budget_exhausted,
     )
     return result

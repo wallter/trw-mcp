@@ -199,3 +199,93 @@ def test_get_last_company_pull_seq_default(trw_dir: Path) -> None:
 
     coord = SyncCoordinator(trw_dir=trw_dir)
     assert coord.get_last_company_pull_seq() == 0
+
+
+def test_secondary_status_never_touches_failure_counter(trw_dir: Path) -> None:
+    """PRD-FIX-125-FR01: a secondary's health is reported, never counted.
+
+    ``consecutive_failures`` / ``last_push_at`` / ``push_count`` describe the
+    PRIMARY target only. A permanently-401 local dev secondary pinned all three
+    for 134 days before this split.
+    """
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    coord.record_sync_success(pushed=8, pulled=0, push_seq=4)
+    before = json.loads((trw_dir / "sync-state.json").read_text())
+
+    coord.record_target_health(
+        primary_target_label="api.trwframework.com",
+        secondary_targets={
+            "localhost": {
+                "status": "partial_error",
+                "failed": 8,
+                "last_error": "HTTPStatusError: 401 Unauthorized",
+                "last_error_at": "2026-09-03T19:16:47+00:00",
+            }
+        },
+    )
+    after = json.loads((trw_dir / "sync-state.json").read_text())
+
+    assert after["consecutive_failures"] == before["consecutive_failures"] == 0
+    assert after["last_push_at"] == before["last_push_at"]
+    assert after["push_count"] == before["push_count"] == 1
+    assert after["primary_target_label"] == "api.trwframework.com"
+    assert after["secondary_targets"]["localhost"]["status"] == "partial_error"
+    assert after["secondary_targets"]["localhost"]["failed"] == 8
+
+
+def test_secondary_error_text_is_truncated(trw_dir: Path) -> None:
+    """PRD-FIX-125-NFR03: a verbose remote error cannot bloat the hot-path file."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    coord.record_target_health(
+        primary_target_label="api.trwframework.com",
+        secondary_targets={"localhost": {"status": "error", "failed": 1, "last_error": "x" * 900}},
+    )
+
+    state = json.loads((trw_dir / "sync-state.json").read_text())
+    assert len(state["secondary_targets"]["localhost"]["last_error"]) == 500
+    assert state["secondary_targets"]["localhost"]["last_error_at"] is None
+
+
+def test_reads_pre_fix_state_file_additively(trw_dir: Path) -> None:
+    """PRD-FIX-125-NFR04: a v1 state file written before the fix loads unchanged."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    pre_fix = {
+        "last_error": "1 of 2 targets failed",
+        "consecutive_failures": 10653,
+        "version": 1,
+        "push_count": 12,
+        "last_push_at": "2026-04-21T18:08:05.640262+00:00",
+        "last_outcome_line": 36,
+    }
+    (trw_dir / "sync-state.json").write_text(json.dumps(pre_fix))
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    assert coord.get_primary_target_label() is None
+    assert coord.get_last_push_at() == "2026-04-21T18:08:05.640262+00:00"
+    assert coord.get_consecutive_failures() == 10653
+
+    # Writing the new keys preserves every pre-existing key and bumps nothing.
+    coord.record_target_health(primary_target_label="api.trwframework.com", secondary_targets=None)
+    state = json.loads((trw_dir / "sync-state.json").read_text())
+    assert state["secondary_targets"] == {}
+    assert state["version"] == 1
+    for key, value in pre_fix.items():
+        assert state[key] == value
+
+
+def test_state_write_is_idempotent(trw_dir: Path) -> None:
+    """PRD-FIX-125-NFR04: rewriting the same cycle result produces the same file."""
+    from trw_mcp.sync.coordinator import SyncCoordinator
+
+    coord = SyncCoordinator(trw_dir=trw_dir)
+    secondaries = {"localhost": {"status": "partial_error", "failed": 8, "last_error": None}}
+    coord.record_target_health(primary_target_label="api.trwframework.com", secondary_targets=secondaries)
+    first = (trw_dir / "sync-state.json").read_text()
+    coord.record_target_health(primary_target_label="api.trwframework.com", secondary_targets=secondaries)
+
+    assert (trw_dir / "sync-state.json").read_text() == first

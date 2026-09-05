@@ -12,6 +12,8 @@ between tests so no state leaks.
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 import threading
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -20,6 +22,7 @@ import pytest
 from trw_memory.exceptions import StorageError
 from trw_memory.models.memory import MemoryEntry
 
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
 from trw_mcp.state.memory_adapter import (
     backfill_embeddings,
     get_backend,
@@ -237,7 +240,7 @@ class TestFieldRenameRoundTrip:
         store_learning(trw_dir, "L-rt004", "summary for sqlite test", "detail", impact=0.75)
 
         backend = get_backend(trw_dir)
-        raw_entry: MemoryEntry | None = backend.get("L-rt004")
+        raw_entry: MemoryEntry | None = backend.get("L-rt004", namespace=DEFAULT_NAMESPACE)
         assert raw_entry is not None, "Entry not found in SQLite after store_learning()"
 
         # MemoryEntry must have content and importance (storage field names)
@@ -627,3 +630,214 @@ class TestMemoryStatusRoundTrip:
         ids = [str(r["id"]) for r in results]
         assert "L-st008" in ids
         assert "L-st009" not in ids, "Resolved entry appeared in active-filtered keyword search"
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-251 FR09: the memory-concern boundary ratchet
+# ---------------------------------------------------------------------------
+#
+# ``scripts/check_memory_boundary.py`` is the gate. Phase 1 lands it ARMED WITH
+# NOTHING on purpose: no concern has been delegated yet, so the
+# re-implementation scan has an empty registry and would pass a tree full of
+# duplication. A gate in that state is the kind that rots — green through five
+# phases while never once biting. So these tests do two different jobs:
+#
+# * the checks that bite TODAY (import direction stays guarded, the trw-mcp-only
+#   allowlist is present and rationalised, the delegation floor rises with the
+#   first ``trw_memory.tools`` import) are asserted against the REAL tree;
+# * the check that is armed with nothing is asserted against a PLANTED tree with
+#   an injected concern registry, so the mechanism is proven before Phase 2
+#   depends on it.
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+_BOUNDARY_SCRIPT = REPO_ROOT / "scripts" / "check_memory_boundary.py"
+
+# Monorepo-only invariant: the repo-root scripts/ layout is absent from the
+# standalone trw-mcp mirror, where these gate tests do not apply. The adapter
+# tests above are NOT monorepo-only, so the skip is per-test, not module-level.
+monorepo_only = pytest.mark.skipif(
+    not _BOUNDARY_SCRIPT.is_file(),
+    reason="monorepo-only invariant (repo-root scripts/ absent in mirror)",
+)
+
+
+def _load_gate() -> object:
+    """Load the gate script as a module (it is a script, not an installed package)."""
+    spec = importlib.util.spec_from_file_location("check_memory_boundary", _BOUNDARY_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # Register before exec so the module's @dataclass declarations can resolve
+    # annotations — dataclasses looks the defining module up in sys.modules.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@monorepo_only
+def test_the_gate_passes_on_the_current_tree() -> None:
+    """The ratchet must be green at the Phase 1 boundary (PRD-CORE-251 NFR02)."""
+    assert _load_gate().main() == 0
+
+
+@monorepo_only
+def test_import_direction_is_guarded_by_the_real_scanner() -> None:
+    """trw-memory importing trw_mcp must remain a build failure.
+
+    The scan lives in ``scripts/check_import_boundaries.py`` and runs in
+    ``make check`` through ``seam-check``; re-implementing it here would be the
+    same duplication PRD-CORE-251 exists to delete. What was unguarded is the
+    registry entry that makes it apply to trw-memory — this asserts it.
+    """
+    gate = _load_gate()
+    assert gate.check_import_direction_is_guarded() == []
+    assert "trw_mcp" in gate._load_import_boundaries().BOUNDARIES["trw-memory"][1]
+
+
+@monorepo_only
+def test_import_direction_check_fails_when_the_boundary_is_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Planted violation: drop trw_mcp from trw-memory's forbidden tuple."""
+    gate = _load_gate()
+    boundaries_module = gate._load_import_boundaries()
+    source_dir, forbidden = boundaries_module.BOUNDARIES["trw-memory"]
+    weakened = dict(boundaries_module.BOUNDARIES)
+    weakened["trw-memory"] = (source_dir, tuple(root for root in forbidden if root != "trw_mcp"))
+    monkeypatch.setattr(boundaries_module, "BOUNDARIES", weakened)
+    monkeypatch.setattr(gate, "_load_import_boundaries", lambda: boundaries_module)
+
+    violations = gate.check_import_direction_is_guarded()
+    assert len(violations) == 1
+    assert "no longer forbids 'trw_mcp'" in violations[0].message
+
+
+@monorepo_only
+def test_every_allowlist_entry_carries_a_rationale() -> None:
+    """FR09 AC4 — an unexplained allowlist entry is an exemption nobody can review."""
+    gate = _load_gate()
+    assert gate.TRW_MCP_ONLY_CONCERNS, "the trw-mcp-only allowlist is empty — it would exempt nothing"
+    for concern in gate.TRW_MCP_ONLY_CONCERNS:
+        assert concern.rationale.strip(), f"{concern.module} has no rationale"
+        assert len(concern.rationale.split()) >= 5, f"{concern.module}'s rationale is not a reason: {concern.rationale}"
+
+
+@monorepo_only
+def test_kept_concerns_still_live_in_trw_mcp() -> None:
+    """Section 6's keep list is asserted, not described — a swept module fails here."""
+    assert _load_gate().check_kept_concerns_present() == []
+
+
+@monorepo_only
+def test_kept_concern_check_fails_when_a_module_is_swept_away(tmp_path: Path) -> None:
+    """Planted violation: the audit-recurrence detector has left trw-mcp."""
+    gate = _load_gate()
+    kept = gate.KeptConcern("state/consolidation/_audit_patterns.py", "TRW audit vocabulary, not a memory concern")
+    violations = gate.check_kept_concerns_present(tree=tmp_path, kept=(kept,))
+    assert len(violations) == 1
+    assert "absent from trw-mcp" in violations[0].message
+
+
+@monorepo_only
+def test_no_memory_concern_is_reimplemented() -> None:
+    """FR09 — the headline gate over the real tree.
+
+    Vacuous today by design: ``DELEGATED_CONCERNS`` is empty in Phase 1. The
+    companion tests below prove the mechanism on a planted tree so that
+    emptiness cannot be mistaken for a clean tree.
+    """
+    assert _load_gate().scan_reimplementations() == []
+
+
+@monorepo_only
+def test_the_ratchet_is_honest_about_being_unarmed() -> None:
+    """Phase 1 arms nothing; a later phase that forgets to register its concern is visible here."""
+    assert _load_gate().DELEGATED_CONCERNS == (), (
+        "DELEGATED_CONCERNS is no longer empty — update this test with the phase that armed it, "
+        "and confirm the concern's trw-mcp implementation was actually deleted."
+    )
+
+
+@monorepo_only
+def test_a_planted_reimplementation_fails_the_gate(tmp_path: Path) -> None:
+    """The mechanism Phases 2-5 depend on, proven before they depend on it."""
+    gate = _load_gate()
+    concern = gate.Concern(
+        name="dedup",
+        owner="trw_memory.lifecycle.dedup",
+        symbols=frozenset({"check_duplicate"}),
+        phase=3,
+    )
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "dedup.py").write_text(
+        "def check_duplicate(entry: dict[str, object]) -> None:\n    return None\n",
+        encoding="utf-8",
+    )
+
+    violations = gate.scan_reimplementations(tree=tmp_path, concerns=(concern,), kept=())
+    assert len(violations) == 1
+    assert violations[0].where == "trw-mcp/src/trw_mcp/state/dedup.py"
+    assert "dedup" in violations[0].message
+    assert "trw_memory.lifecycle.dedup" in violations[0].message, "the message must name the trw-memory owner"
+
+
+@monorepo_only
+def test_an_allowlisted_module_may_define_a_delegated_symbol(tmp_path: Path) -> None:
+    """FR09/US-005 AC2 — the allowlist is what keeps the gate from blocking kept concerns."""
+    gate = _load_gate()
+    concern = gate.Concern(
+        name="consolidation cycle",
+        owner="trw_memory.lifecycle.consolidation",
+        symbols=frozenset({"consolidate_cycle"}),
+        phase=3,
+    )
+    (tmp_path / "state" / "consolidation").mkdir(parents=True)
+    (tmp_path / "state" / "consolidation" / "_audit_patterns.py").write_text(
+        "def consolidate_cycle() -> None:\n    return None\n", encoding="utf-8"
+    )
+    kept = (gate.KeptConcern("state/consolidation/_audit_patterns.py", "TRW audit vocabulary, not a memory concern"),)
+
+    assert gate.scan_reimplementations(tree=tmp_path, concerns=(concern,), kept=kept) == []
+
+
+@monorepo_only
+def test_trw_mcp_imports_no_tool_surface_module_yet() -> None:
+    """Measured 2026-09-03 and re-measured here: Phase 1 wires no delegation.
+
+    This is the counter FR09 hands to the floor check. When Phase 2 lands the
+    first import, this test is the one that must be updated — deliberately, in
+    the change that raises the floor.
+    """
+    assert _load_gate().count_tool_surface_imports() == []
+
+
+@monorepo_only
+def test_the_floor_check_is_inert_until_the_first_delegation() -> None:
+    """No import, no floor requirement — a premature raise makes trw-mcp unresolvable."""
+    assert _load_gate().check_delegation_floor() == []
+
+
+@monorepo_only
+def test_the_first_tool_surface_import_forces_the_floor_up(tmp_path: Path) -> None:
+    """FR01 — a delegating trw-mcp with a stale floor fails the build.
+
+    This is what makes a version skew fail at INSTALL time rather than at the
+    first tool call, once there is a call to fail. Planted rather than live,
+    because trw-mcp does not import the surface yet.
+    """
+    gate = _load_gate()
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "memory_adapter.py").write_text(
+        "from trw_memory.tools import memory_store_impl\n", encoding="utf-8"
+    )
+    stale = tmp_path / "pyproject.toml"
+    stale.write_text('[project]\nname = "trw-mcp"\ndependencies = ["trw-memory>=0.12.0,<1.0.0"]\n', encoding="utf-8")
+
+    assert gate.count_tool_surface_imports(tmp_path) == ["state/memory_adapter.py"]
+    violations = gate.check_delegation_floor(tree=tmp_path, pyproject=stale)
+    assert len(violations) == 1
+    assert gate.PROTOCOL_MIN_VERSION in violations[0].message
+
+    current = tmp_path / "current.toml"
+    current.write_text(
+        f'[project]\nname = "trw-mcp"\ndependencies = ["trw-memory>={gate.PROTOCOL_MIN_VERSION},<1.0.0"]\n',
+        encoding="utf-8",
+    )
+    assert gate.check_delegation_floor(tree=tmp_path, pyproject=current) == []

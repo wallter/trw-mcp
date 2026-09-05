@@ -106,7 +106,7 @@ class TestAutoRecallEnabled:
         for _ in range(3):
             tools["trw_recall"].fn(query="Session count learning")
 
-        entry = get_backend(trw_dir).get(learning_id)
+        entry = get_backend(trw_dir).get(learning_id, namespace="default")
         assert entry is not None
         assert entry.session_count == 1
         assert entry.access_count >= 3
@@ -132,7 +132,7 @@ class TestAutoRecallEnabled:
             for _ in range(3):
                 tools["trw_session_start"].fn()
 
-        entry = get_backend(trw_dir).get(learning_id)
+        entry = get_backend(trw_dir).get(learning_id, namespace="default")
         assert entry is not None
         assert entry.session_count == 3
 

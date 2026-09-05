@@ -13,15 +13,16 @@ Extracted from phase_gates.py for module focus.
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
-from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.requirements import ValidationFailure
+from trw_mcp.state.validation._phase_gates_build_staleness import (
+    evaluate_build_staleness as evaluate_build_staleness,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -102,36 +103,9 @@ def _check_build_status(
             )
         ]
 
-    failures: list[ValidationFailure] = []
-
-    # FR10: Staleness detection
-    is_stale = False
-    ts_str = data.get("timestamp", "")
-    if ts_str:
-        try:
-            cached_dt = datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
-            age_secs = (
-                time.time()
-                - cached_dt.replace(
-                    tzinfo=timezone.utc,
-                ).timestamp()
-            )
-            if age_secs > _BUILD_STALENESS_SECS:
-                is_stale = True
-                failures.append(
-                    ValidationFailure(
-                        field="build_status",
-                        rule="build_staleness",
-                        message=(
-                            f"Build status is {int(age_secs / 60)}m old "
-                            f"(threshold: {_BUILD_STALENESS_SECS // 60}m) — "
-                            "re-run trw_build_check()"
-                        ),
-                        severity="warning",
-                    )
-                )
-        except (ValueError, TypeError, OSError):
-            logger.debug("build_timestamp_parse_skipped", exc_info=True)  # justified: fail-open, treat as fresh
+    # FR10 + WD-02: staleness detection, including the unparseable-timestamp
+    # branch that used to fall through as FRESH.
+    is_stale, failures = evaluate_build_staleness(data.get("timestamp", ""), _BUILD_STALENESS_SECS)
 
     # Determine severity: IMPLEMENT always warning; VALIDATE/DELIVER per config
     is_strict_gate = phase_name != "implement" and not is_stale and config.build_gate_enforcement == "strict"

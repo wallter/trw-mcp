@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Protocol
 
 import structlog
+from pydantic import BaseModel, Field
 
 from trw_mcp.sync.push import PushResult, SyncPusher
 
@@ -18,6 +19,47 @@ if TYPE_CHECKING:
 _TARGET_STATUS_SUCCESS = "success"
 _TARGET_STATUS_PARTIAL_ERROR = "partial_error"
 _TARGET_STATUS_ERROR = "error"
+
+
+class TargetPushOutcome(BaseModel):
+    """One target's push result, kept SPLIT BY KIND.
+
+    PRD-FIX-125-FR01: each acknowledgement path slices its OWN list by its OWN
+    count, so a single summed :class:`PushResult` is not enough — it cannot say
+    how many LEARNINGS versus how many OUTCOMES a target accepted. Summing them
+    made ``dirty[: pushed + skipped]`` count outcome inserts toward the learning
+    slice, acknowledging learnings the primary never took whenever both kinds
+    were pushed in the same cycle.
+
+    The two endpoints also report differently, which is why they cannot share a
+    count: ``push_learnings`` reads ``skipped`` back from the response, so
+    ``pushed + skipped`` is a real accepted-count. ``push_outcomes`` has no
+    ``skipped`` concept and counts only ``inserted``, so a de-duplicated outcome
+    the backend already holds reports as neither pushed, skipped, nor failed.
+    See :func:`trw_mcp.sync._client_cycle.run_one_cycle` for how each path
+    consumes its own half.
+
+    The summed ``pushed`` / ``failed`` / ``skipped`` accessors are retained so a
+    caller that only wants the target's overall verdict reads it directly.
+    """
+
+    learnings: PushResult = Field(default_factory=PushResult)
+    outcomes: PushResult = Field(default_factory=PushResult)
+
+    @property
+    def pushed(self) -> int:
+        """Total accepted-and-inserted across both kinds."""
+        return self.learnings.pushed + self.outcomes.pushed
+
+    @property
+    def failed(self) -> int:
+        """Total failures across both kinds — any non-zero makes the target unhealthy."""
+        return self.learnings.failed + self.outcomes.failed
+
+    @property
+    def skipped(self) -> int:
+        """Total de-duplicated learnings (the outcomes endpoint reports no skips)."""
+        return self.learnings.skipped + self.outcomes.skipped
 
 
 class _TargetLike(Protocol):
@@ -44,8 +86,13 @@ async def _push_to_target(
     outcomes: list[dict[str, object]],
     learning_sharing_enabled: bool = False,
     platform_telemetry_enabled: bool = False,
-) -> PushResult:
-    """PRD-FIX-087 FR03: async — awaits pusher.push_learnings / push_outcomes."""
+) -> TargetPushOutcome:
+    """PRD-FIX-087 FR03: async — awaits pusher.push_learnings / push_outcomes.
+
+    Returns the two kinds SEPARATELY (PRD-FIX-125-FR01); see
+    :class:`TargetPushOutcome` for why they must not be summed before the
+    acknowledgement paths have taken their slices.
+    """
     started = perf_counter()
     pusher: SyncPusher | None
     if primary_target_label is not None and target.label == primary_target_label:
@@ -68,7 +115,8 @@ async def _push_to_target(
         )
         pusher_map[target.label] = pusher
 
-    total = PushResult()
+    learning_result = PushResult()
+    outcome_result = PushResult()
     if dirty:
         logger.info(
             "sync_target_push_start",
@@ -77,11 +125,6 @@ async def _push_to_target(
             client_id=client_id,
         )
         learning_result = await pusher.push_learnings(dirty)
-        total = PushResult(
-            pushed=total.pushed + learning_result.pushed,
-            failed=total.failed + learning_result.failed,
-            skipped=total.skipped + learning_result.skipped,
-        )
         logger.info(
             "sync_target_push_complete",
             label=target.label,
@@ -100,11 +143,6 @@ async def _push_to_target(
             client_id=client_id,
         )
         outcome_result = await pusher.push_outcomes(outcomes)
-        total = PushResult(
-            pushed=total.pushed + outcome_result.pushed,
-            failed=total.failed + outcome_result.failed,
-            skipped=total.skipped + outcome_result.skipped,
-        )
         logger.info(
             "sync_target_push_complete",
             label=target.label,
@@ -115,7 +153,7 @@ async def _push_to_target(
             duration_ms=int((perf_counter() - started) * 1000),
             client_id=client_id,
         )
-    return total
+    return TargetPushOutcome(learnings=learning_result, outcomes=outcome_result)
 
 
 async def fanout_push(
@@ -130,10 +168,20 @@ async def fanout_push(
     outcomes: list[dict[str, object]],
     learning_sharing_enabled: bool = False,
     platform_telemetry_enabled: bool = False,
-) -> tuple[dict[str, dict[str, object]], PushResult]:
-    """PRD-FIX-087 FR03: async — awaits _push_to_target per target."""
+) -> tuple[dict[str, dict[str, object]], TargetPushOutcome]:
+    """PRD-FIX-087 FR03: async — awaits _push_to_target per target.
+
+    Returns ``(per-target report, the PRIMARY target's split push result)``.
+
+    PRD-FIX-125-FR01: the returned aggregate is the primary's own result — a
+    zero-valued :class:`TargetPushOutcome` when the primary raised or is absent. It was
+    previously the *first successful* target's result, so a failing primary with
+    a succeeding secondary handed the caller the secondary's counts, which is the
+    wrong basis for slicing ``dirty`` in the acknowledgement path: the caller
+    would have marked entries synced that the primary never accepted.
+    """
     report: dict[str, dict[str, object]] = {}
-    aggregate: PushResult = PushResult()
+    primary_result = TargetPushOutcome()
     primary_target_label = targets[0].label if targets else None
     for target in targets:
         try:
@@ -176,6 +224,6 @@ async def fanout_push(
             "error": None,
             "status": status,
         }
-        if status == _TARGET_STATUS_SUCCESS and aggregate.pushed == 0 and aggregate.skipped == 0:
-            aggregate = result
-    return report, aggregate
+        if target.label == primary_target_label and status == _TARGET_STATUS_SUCCESS:
+            primary_result = result
+    return report, primary_result

@@ -37,6 +37,7 @@ __all__ = [
     "_iter_entry_files",
     "_safe_float",
     "_safe_int",
+    "entry_filename",
     "find_entry_by_id",
     "generate_learning_id",
     "infer_topic_tags",
@@ -407,20 +408,39 @@ def is_success_event(event: dict[str, object]) -> bool:
     return any(kw in event_type for kw in _SUCCESS_KEYWORDS)
 
 
+def entry_filename(summary: str, created_iso: str) -> str:
+    """Build the sidecar filename a learning entry is written under.
+
+    THE single source of truth for the ``{created}-{slug}.yaml`` convention.
+    ``save_learning_entry`` writes through it and the FR07 bounded id-to-path
+    resolver (``state/_entry_paths.py``) reads through it, so the two can never
+    disagree about where an entry lives — which is the whole reason the lookup
+    can be O(1) instead of a linear scan of the corpus.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", summary[:_SLUG_MAX_LEN].lower()).strip("-")
+    return f"{created_iso}-{slug}.yaml"
+
+
 def find_entry_by_id(
     entries_dir: Path,
     learning_id: str,
+    *,
+    reader: FileStateReader | None = None,
 ) -> tuple[Path, dict[str, object]] | None:
     """Find a learning entry file by scanning for a matching ID.
 
     Args:
         entries_dir: Path to the entries directory.
         learning_id: ID to search for.
+        reader: Optional reader to scan through. Supplying the CALLER'S reader
+            keeps every entry-file read on one instrumentable seam, which is how
+            the PRD-FIX-130-FR07 bound ("at most one YAML read on a resolvable
+            merge") is measured rather than asserted.
 
     Returns:
         Tuple of (file_path, entry_data) if found, None otherwise.
     """
-    reader = FileStateReader()
+    reader = reader if reader is not None else FileStateReader()
     for entry_file in iter_yaml_entry_files(entries_dir):
         try:
             data = reader.read_yaml(entry_file)

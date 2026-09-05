@@ -71,17 +71,20 @@ class BaselinePartition:
 
 
 # ---------------------------------------------------------------------------
-# The acknowledged set. Every entry is a specimen named in
-# docs/research/framework-simplification/DEFECT-LEDGER.md with an open
-# disposition. Removing one is the goal; adding one requires a ledger entry.
+# The acknowledged set. Every entry is a specimen carried in the project's
+# defect ledger with an open disposition. Removing one is the goal; adding one
+# requires a ledger entry, which is what keeps this table from becoming a
+# permanent amnesty list.
 # ---------------------------------------------------------------------------
 
+# UF-031 was retired here on 2026-09-03, decided by REMOVAL. Its key was
+# ``INERT_BRANCH::...code_search.py:rank_semantic_chunks``; the public
+# ``mode="semantic"`` parameter is gone, the optional-embedder hook is deleted,
+# and the finding no longer fires — which, by rule 1 above, would have failed
+# this run as a stale entry had the entry stayed. Recorded rather than silently
+# dropped: an acknowledged list that shrinks without a reason is indistinguishable
+# from one that shrank because the detector went blind.
 BASELINE: tuple[BaselineEntry, ...] = (
-    BaselineEntry(
-        key="INERT_BRANCH::callsite:inert-required-inputs:trw-mcp/src/trw_mcp/tools/code_search.py:rank_semantic_chunks",
-        ledger_id="UF-031",
-        rationale="trw_code_search(mode='semantic') cannot return a result; implement-or-remove-the-mode is a public tool-surface decision",
-    ),
     BaselineEntry(
         key="PREDICATE_COVERAGE::gate:prd-core-190-wiring",
         ledger_id="UF-074",

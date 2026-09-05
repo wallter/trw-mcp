@@ -169,46 +169,6 @@ class DeliveryRecoveryActionsMixin:
         finally:
             conn.close()
 
-    def run_compensation(
-        self,
-        *,
-        operation_id: str,
-        effect_id: str,
-        capability_token: str,
-        expected_revision: int,
-        reason: str,
-        evidence_ref: str,
-    ) -> RecoverResult:
-        """Reject rollback unless a reviewed compensating effect is registered.
-
-        The current census has no safely reversible effect with a captured
-        before-image.  This implemented action therefore fails closed rather
-        than fabricating rollback or deleting history.
-        """
-        conn = self.store.connect()
-        try:
-            op = self.store.get_operation(conn, operation_id)
-            if op is None:
-                return RecoverResult(status=RecoverStatus.NOT_FOUND, reason_code="unknown_operation")
-            rejected = self._authorize_recovery(op, capability_token, expected_revision, reason, evidence_ref)
-            if rejected is not None:
-                return rejected
-            try:
-                get_descriptor(effect_id)
-            except KeyError:
-                reason_code = "unregistered_effect"
-            else:
-                reason_code = "no_registered_compensation"
-            return RecoverResult(
-                status=RecoverStatus.REJECTED,
-                reason_code=reason_code,
-                operation_id=operation_id,
-                revision=op.revision,
-                state=op.state,
-            )
-        finally:
-            conn.close()
-
     @staticmethod
     def _authorize_recovery(
         operation: OperationRecord,

@@ -164,7 +164,7 @@ class TestWriteSideAndStoreSideAgree:
 
         assert _content_policy_reject(summary, detail) is None, "write-side gate rejected it"
         entry = MemoryEntry(id="M-crosslayer", content=summary, detail=detail, tags=[])
-        validate_entry_payload(entry, max_chars=10_240)
+        validate_entry_payload(entry, max_chars=10_240, min_evidence_items_for_verified=1)
 
     @pytest.mark.parametrize(
         "summary",
@@ -181,7 +181,7 @@ class TestWriteSideAndStoreSideAgree:
 
         entry = MemoryEntry(id="M-crosslayer-block", content=summary, detail="", tags=[])
         with pytest.raises(PoisoningError):
-            validate_entry_payload(entry, max_chars=10_240)
+            validate_entry_payload(entry, max_chars=10_240, min_evidence_items_for_verified=1)
 
 
 class TestAuxiliaryFieldGate:

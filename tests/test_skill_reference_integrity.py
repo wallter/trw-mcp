@@ -29,9 +29,6 @@ PACKAGED_SKILL_ROOTS = (
     ROOT / "trw-mcp/src/trw_mcp/data/copilot/skills",
     ROOT / "trw-mcp/src/trw_mcp/data/copilot/plugin/skills",
     ROOT / "trw-mcp/src/trw_mcp/data/opencode/skills",
-    ROOT / "trw-eval/trw-mcp-local/src/trw_mcp/data/skills",
-    ROOT / "trw-eval/trw-mcp-local/src/trw_mcp/data/codex/skills",
-    ROOT / "trw-eval/trw-mcp-local/src/trw_mcp/data/opencode/skills",
 )
 
 #: This monorepo's OWN client configuration. Bootstrap installs *into* these
@@ -96,10 +93,7 @@ def test_no_shipped_surface_references_a_retired_skill() -> None:
             unresolvable = {name for name in retired & referenced if not (root / name).is_dir()}
             assert not unresolvable, f"{skill_path}: references skills that exist nowhere: {unresolvable}"
 
-    source_roots = (
-        ROOT / "trw-mcp/src/trw_mcp",
-        ROOT / "trw-eval/trw-mcp-local/src/trw_mcp",
-    )
+    source_roots = (ROOT / "trw-mcp/src/trw_mcp",)
     for source_root in source_roots:
         if not source_root.is_dir():
             continue

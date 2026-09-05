@@ -134,6 +134,23 @@ def _enforce_exit_gate(run_path: Path, current_phase: str, run_data: dict[str, o
     )
 
 
+def _mirror_ceremony_phase(new_phase: Phase) -> None:
+    """Sync the ceremony phase mirror inside its own crash boundary (S02).
+
+    PRD-FIX-127 FR03: S02 is a `required` census effect, so an operation cannot be
+    declared successful while its outcome after a crash is unreadable. Outside a
+    delivery there is no ambient journal, so ``journal_step`` yields True and
+    records nothing. The binding lives at the package root rather than in
+    ``tools/`` because ``state/`` may never import from ``tools/``
+    (``tests/test_layer_boundaries.py::test_state_does_not_import_tools``).
+    """
+    from trw_mcp._delivery_boundary import journal_step
+
+    with journal_step("S02") as run_phase_mirror:
+        if run_phase_mirror:
+            _sync_ceremony_phase(new_phase)
+
+
 def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     """Update phase in run.yaml with forward-only guard.
 
@@ -161,6 +178,14 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
             to_phase=new_phase.value,
             reason="not_forward",
         )
+        if new_order == current_order:
+            # Already AT the target: the run.yaml write is correctly skipped, but the
+            # ceremony mirror still has to converge. A delivery killed between the
+            # run.yaml write and the mirror leaves them disagreeing, and before
+            # PRD-FIX-127 this early return meant no retry could ever repair it —
+            # the mirror's whole job is to track the run's phase, and re-writing the
+            # same value is idempotent.
+            _mirror_ceremony_phase(new_phase)
         return False  # Forward-only: don't revert
 
     # Enforce exit criteria for the phase being LEFT before committing the
@@ -176,7 +201,14 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     # F13: Mirror the committed phase into CeremonyState.phase so the status
     # line and phase-aware nudge dedup track the real phase (instead of the
     # permanent 'early' default). Done AFTER the run.yaml write succeeds.
-    _sync_ceremony_phase(new_phase)
+    #
+    # PRD-FIX-127 FR03: this is census effect S02, and S02 is `required` — an
+    # operation cannot be declared successful while its outcome after a crash is
+    # unreadable. Outside a delivery there is no ambient journal, so journal_step
+    # yields True and records nothing. The binding lives at the package root, not
+    # in tools/, because state/ may never import from tools/
+    # (tests/test_layer_boundaries.py::test_state_does_not_import_tools).
+    _mirror_ceremony_phase(new_phase)
 
     # Log phase_enter event (best-effort)
     phase_event: dict[str, object] = {

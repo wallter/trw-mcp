@@ -36,6 +36,23 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.ceremony import register_ceremony_tools
 
 
+def _write_scoped_prd(project_root: Path, prd_id: str = "PRD-CORE-901") -> str:
+    """Write a resolvable, non-safety-critical PRD under the test's project root.
+
+    PRD-CORE-255-FR03 (2026-09-04 amendment): declaring NO scope is inert, but a
+    run that NAMES a PRD whose file cannot be read resolves ``unknown`` and fails
+    closed into the FR04 gate. The FR05 fixture below is genuinely scoped -- its
+    receipt records ``prd_ids`` -- so it must be able to show the PRD it claims.
+    """
+    prds = project_root / "docs" / "requirements-aare-f" / "prds"
+    prds.mkdir(parents=True, exist_ok=True)
+    (prds / f"{prd_id}.md").write_text(
+        f'---\nprd:\n  id: {prd_id}\n  title: "review-gate fixture"\n  safety_critical: false\n---\n\n# {prd_id}\n',
+        encoding="utf-8",
+    )
+    return prd_id
+
+
 def _make_deliver_fn() -> Callable[..., dict[str, Any]]:
     server = FastMCP("test")
     register_ceremony_tools(server)
@@ -100,6 +117,8 @@ def _write_run(
                 {
                     "ts": "2026-06-04T00:00:02Z",
                     "event": "build_check_complete",
+                    "test_count": 12,
+                    "scope": "pytest tests",
                     "tests_passed": True,
                     "static_checks_clean": True,
                 }
@@ -357,6 +376,8 @@ class TestReviewBlockGate:
                 {
                     "ts": "2026-06-04T00:00:09Z",
                     "event": "build_check_complete",
+                    "test_count": 12,
+                    "scope": "pytest tests",
                     "tests_passed": True,
                     "static_checks_clean": True,
                 }
@@ -369,3 +390,65 @@ class TestReviewBlockGate:
         assert result["success"] is False
         assert "review_scope_block" in result
         assert "review_block" not in result
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-255-FR05 — the payload NAMES the receipt that satisfied the gate
+# ---------------------------------------------------------------------------
+
+
+def test_deliver_payload_names_satisfying_review_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR05. Fails before: ``DeliveryGatesDict`` carried only free-text
+    review_block/warning/advisory strings and nothing at all when the gate
+    PASSED, so an operator auditing a delivery could not tell which receipt (if
+    any) trw_deliver actually trusted.
+    """
+    from datetime import datetime, timezone
+
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._delivery_helpers import check_delivery_gates
+    from trw_mcp.tools._review_manual import handle_manual_mode
+    from trw_mcp.tools._review_receipt_writer import load_latest_review_evidence
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    source = tmp_path / "src" / "feature.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    prd_id = _write_scoped_prd(tmp_path)
+    # ``_review_receipt_writer`` is first imported inside another test's
+    # ``patch("trw_mcp.state._paths.resolve_project_root")`` block, so its
+    # module-level alias is that (stale) mock for the rest of the session and
+    # tests/_path_isolation's sweep cannot re-bind it (it only replaces aliases
+    # still identical to the GENUINE resolver). Pin it explicitly rather than
+    # depend on which test ran first.
+    monkeypatch.setattr("trw_mcp.tools._review_receipt_writer.resolve_project_root", lambda: tmp_path)
+    run = tmp_path / ".trw" / "runs" / "task" / "20260903T000000Z-fr05"
+    (run / "meta").mkdir(parents=True)
+    (run / "meta" / "run.yaml").write_text(
+        f"run_id: 20260903T000000Z-fr05\nstatus: active\nphase: deliver\nprd_scope: [{prd_id}]\n",
+        encoding="utf-8",
+    )
+    (run / "meta" / "events.jsonl").write_text(
+        json.dumps({"event": "file_modified", "file": str(source)}) + "\n", encoding="utf-8"
+    )
+    written = handle_manual_mode(
+        [], run, "rv-fr05", datetime.now(timezone.utc).isoformat(), [prd_id], review_completed=True
+    )
+    validation, receipt = load_latest_review_evidence(run, tmp_path)
+    assert validation.is_positive and receipt is not None, "precondition: a POSITIVE typed receipt must exist"
+
+    gates = check_delivery_gates(run, FileStateReader(), tmp_path / ".trw")
+
+    evidence = gates["review_evidence"]
+    assert evidence["receipt_id"] == written["review_receipt_id"] == receipt.receipt_id
+    assert evidence["scope_digest"] == receipt.content_binding.scope_digest
+    assert isinstance(evidence["age_seconds"], float) and evidence["age_seconds"] >= 0.0
+    # Absent, not empty, when no typed receipt satisfied the gate.
+    bare = tmp_path / ".trw" / "runs" / "task" / "20260903T000000Z-bare"
+    (bare / "meta").mkdir(parents=True)
+    (bare / "meta" / "run.yaml").write_text(
+        f"run_id: 20260903T000000Z-bare\nstatus: active\nphase: deliver\nprd_scope: [{prd_id}]\n",
+        encoding="utf-8",
+    )
+    (bare / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+    assert "review_evidence" not in check_delivery_gates(bare, FileStateReader(), tmp_path / ".trw")

@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 import structlog
+from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import (
     Anchor,
     Assertion,
@@ -119,10 +120,12 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
     if verification_status is not None:
         base["verification_status"] = verification_status
 
-    # Outcome attribution fields (PRD-CORE-108)
-    base["sessions_surfaced"] = entry.sessions_surfaced
-    base["avg_rework_delta"] = entry.avg_rework_delta
-    base["outcome_correlation"] = entry.outcome_correlation
+    # PRD-CORE-244-FR08: the three PRD-CORE-108 outcome-attribution fields
+    # (sessions_surfaced, avg_rework_delta, outcome_correlation) were removed
+    # from MemoryEntry and the schema-5 table — no producer had ever written
+    # them (0 of 9,366 rows), so the projection advertised a rework-attribution
+    # subsystem that did not exist. Reading them here after the model drop
+    # raised AttributeError on EVERY recall.
 
     base["session_count"] = entry.session_count or 0
 
@@ -163,7 +166,7 @@ def _learning_to_memory_entry(
     protection_tier: str = "normal",
     # PRD-CORE-111: Code-grounded anchors
     anchors: list[dict[str, object]] | None = None,
-    anchor_validity: float = 1.0,
+    anchor_validity: float | None = None,
     # PRD-DIST-254 §FR02 (cycle 112): caller-supplied metadata for
     # promotion-policy keys (utility_grade, current_status, etc.).
     metadata: dict[str, str] | None = None,
@@ -245,33 +248,44 @@ def _learning_to_memory_entry(
             except Exception:  # justified: fail-open, skip invalid anchors
                 logger.debug("invalid_anchor_skipped", anchor=a, exc_info=True)
 
-    return MemoryEntry(
-        id=learning_id,
+    # PRD-CORE-245 FR08: the flagship consumer's real write path goes through the
+    # shared construction helper, not a bare constructor. It used to leave
+    # ``vector_clock`` at its ``{}`` default, which is what makes an org-shared
+    # pull return the REMOTE entry outright even when the local row is newer.
+    from trw_memory.models.entry_factory import local_node_id_for, new_entry
+
+    return new_entry(
+        entry_id=learning_id,
         content=summary,
-        detail=detail,
-        tags=tags or [],
-        evidence=evidence or [],
-        importance=impact,
-        source=cast("_SourceType", source_type if source_type in _VALID_SOURCES else "agent"),
-        source_identity=source_identity,
-        client_profile=client_profile,
-        model_id=model_id,
         namespace=target_namespace,
-        metadata=merged_metadata,
-        q_value=compute_initial_q_value(impact),
-        assertions=assertion_objects,
-        # PRD-CORE-110: Typed learning fields - convert strings to enums
-        type=MemoryType(type) if isinstance(type, str) else type,
-        nudge_line=nudge_line,
-        expires=expires,
-        confidence=Confidence(confidence) if isinstance(confidence, str) else confidence,
-        task_type=task_type,
-        domain=domain or [],
-        phase_origin=phase_origin,
-        phase_affinity=phase_affinity or [],
-        team_origin=team_origin,
-        protection_tier=ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier,
-        # PRD-CORE-111: Code-grounded anchors
-        anchors=anchor_objects,
-        anchor_validity=anchor_validity,
+        local_node_id=local_node_id_for(MemoryConfig().storage_path),
+        fields={
+            "detail": detail,
+            "tags": tags or [],
+            "evidence": evidence or [],
+            "importance": impact,
+            "source": cast("_SourceType", source_type if source_type in _VALID_SOURCES else "agent"),
+            "source_identity": source_identity,
+            "client_profile": client_profile,
+            "model_id": model_id,
+            "metadata": merged_metadata,
+            "q_value": compute_initial_q_value(impact),
+            "assertions": assertion_objects,
+            # PRD-CORE-110: Typed learning fields - convert strings to enums
+            "type": MemoryType(type) if isinstance(type, str) else type,
+            "nudge_line": nudge_line,
+            "expires": expires,
+            "confidence": Confidence(confidence) if isinstance(confidence, str) else confidence,
+            "task_type": task_type,
+            "domain": domain or [],
+            "phase_origin": phase_origin,
+            "phase_affinity": phase_affinity or [],
+            "team_origin": team_origin,
+            "protection_tier": (
+                ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier
+            ),
+            # PRD-CORE-111: Code-grounded anchors
+            "anchors": anchor_objects,
+            "anchor_validity": anchor_validity,
+        },
     )

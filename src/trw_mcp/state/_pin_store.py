@@ -56,6 +56,7 @@ import structlog
 
 from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.exceptions import StateError
+from trw_mcp.state._pin_ttl import pin_entry_is_expired, resolve_pin_ttl_hours
 
 logger = structlog.get_logger(__name__)
 
@@ -165,12 +166,24 @@ def _safe_mtime_ns(path: Path) -> int | None:
 # --- Load path ---------------------------------------------------------------
 
 
-def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Drop malformed entries and pins whose ``run_path`` disappeared.
+def _apply_eviction_passes(
+    raw: dict[str, dict[str, Any]],
+    *,
+    pin_ttl_hours: int | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Drop malformed entries, pins whose ``run_path`` disappeared, and expired pins.
 
-    Creator PIDs are diagnostic only: pins intentionally survive MCP process
-    restarts. Heartbeat expiry and explicit adoption govern live ownership.
+    A creator PID alone is still diagnostic: pins intentionally survive MCP
+    process restarts, so a dead PID with a fresh heartbeat is retained. PRD-
+    CORE-248 FR05 adds the conjunction — dead creator PID **and** a parseable
+    heartbeat older than ``pin_ttl_hours`` — which is the only combination that
+    means "this pin outlived the session that made it". See
+    :mod:`trw_mcp.state._pin_ttl` for why either half alone is wrong.
+
+    *pin_ttl_hours* is resolved from config when not supplied, so both call
+    sites (the cached load and the persisted prune) use one cutoff.
     """
+    ttl_hours = resolve_pin_ttl_hours() if pin_ttl_hours is None else pin_ttl_hours
     survivors: dict[str, dict[str, Any]] = {}
     for pin_key, entry in raw.items():
         if not isinstance(entry, dict):
@@ -195,6 +208,18 @@ def _apply_eviction_passes(raw: dict[str, dict[str, Any]]) -> dict[str, dict[str
             )
             continue
 
+        # PRD-CORE-248 FR05: dead creator PID AND a heartbeat past the TTL.
+        expired, age_hours = pin_entry_is_expired(entry, pin_ttl_hours=ttl_hours)
+        if expired:
+            _runtime_logger().info(
+                "pin_ttl_expired_evicted",
+                pin_key=pin_key,
+                pid=entry.get("pid"),
+                heartbeat_age_hours=round(age_hours, 2) if age_hours is not None else None,
+                pin_ttl_hours=ttl_hours,
+            )
+            continue
+
         survivors[pin_key] = entry
     return survivors
 
@@ -203,8 +228,8 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     """Return the current pin store, honoring the 1-second read cache.
 
     Fail-open on malformed JSON: logs ``pin_store_malformed_fallback``
-    at WARN level and returns ``{}``.  Each load applies the stale-path
-    and stale-path eviction before caching.
+    at WARN level and returns ``{}``.  Each load applies the malformed,
+    stale-path and TTL-expiry evictions before caching.
     """
     global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_ts
 
@@ -266,7 +291,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
 
 
 def prune_pin_store_orphans() -> int:
-    """Persist eviction of malformed or stale-path entries to disk.
+    """Persist eviction of malformed, stale-path, or TTL-expired entries to disk.
 
     ``load_pin_store`` evicts stale entries in-memory only, so one keeps
     showing up in every load (with a fresh warning)
@@ -279,6 +304,10 @@ def prune_pin_store_orphans() -> int:
     Fail-open: filesystem errors are logged at WARNING and the function
     returns ``0`` instead of raising. Callers (boot sweep, periodic
     maintenance) must never crash because pin pruning failed.
+
+    NFR03: this removes the pins.json ENTRY only. The referenced run directory
+    is never deleted, moved, or written to — run-directory lifecycle stays
+    owned by ``_run_gc.sweep_stale_runs``.
     """
     pins_path = pin_store_path()
     if not pins_path.exists():

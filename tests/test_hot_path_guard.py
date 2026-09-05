@@ -1,9 +1,14 @@
 """PRD-FIX-085 FR02: HOT_PATH ContextVar guards the legacy mtime scan.
 
 The contextvar is set on entry to trw_session_start and middleware. Any
-caller that triggers find_run_via_mtime_scan() while it is True emits
-``hot_path_legacy_scan_attempted`` WARN with the offending stack. With
+caller that reaches ``resolve_run_path``'s mtime fallback while it is True
+emits ``hot_path_legacy_scan_attempted`` WARN with the offending stack. With
 ``TRW_HOT_PATH_STRICT=1``, the same call raises HotPathLegacyScanError.
+
+PRD-FIX-132 deleted the sibling explicit opt-in scan helper these tests used
+to drive -- it had no production caller. The guard itself is unchanged and
+still live, so the tests now drive it through the fallback that remains: a
+``resolve_run_path()`` call with neither ``run_path`` nor ``context``.
 
 This is the durable mechanical defense against the regression class
 "hot-path caller forgot context= and silently routed to the slow scan."
@@ -20,7 +25,8 @@ from tests._structlog_capture import captured_structlog  # noqa: F401
 from trw_mcp.state._paths import (
     HOT_PATH,
     HotPathLegacyScanError,
-    find_run_via_mtime_scan,
+    resolve_run_path,
+    unpin_active_run,
 )
 from trw_mcp.state.persistence import FileStateWriter
 
@@ -40,12 +46,17 @@ def _make_run_dir(tmp_path: Path, task: str = "t", run_id: str = "r-001") -> Pat
 
 @pytest.fixture
 def patched_runs_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Build a tmp project + point find_run_via_mtime_scan at it."""
+    """Build a tmp project + point run resolution at it, with no pin set.
+
+    The pin must be cleared: with one, ``resolve_run_path`` short-circuits
+    before the guarded fallback and the guard would never be exercised.
+    """
     _make_run_dir(tmp_path)
     monkeypatch.setattr(
         "trw_mcp.state._paths.resolve_project_root",
         lambda: tmp_path,
     )
+    unpin_active_run()
     return tmp_path
 
 
@@ -53,7 +64,7 @@ def test_warn_fires_when_scan_called_in_hot_path(
     patched_runs_root: Path,
     captured_structlog: list[dict],
 ) -> None:
-    """find_run_via_mtime_scan() while HOT_PATH=True logs hot_path_legacy_scan_attempted.
+    """The mtime fallback while HOT_PATH=True logs hot_path_legacy_scan_attempted.
 
     Uses the shared ``captured_structlog`` fixture (not raw capture_logs):
     sibling startup-path tests leak a CRITICAL filtering wrapper via the
@@ -63,7 +74,7 @@ def test_warn_fires_when_scan_called_in_hot_path(
     """
     token = HOT_PATH.set(True)
     try:
-        find_run_via_mtime_scan()
+        resolve_run_path()
     finally:
         HOT_PATH.reset(token)
 
@@ -80,9 +91,9 @@ def test_no_warn_when_scan_called_outside_hot_path(
     patched_runs_root: Path,
     captured_structlog: list[dict],
 ) -> None:
-    """find_run_via_mtime_scan() outside the hot path is silent (legitimate use)."""
+    """The mtime fallback outside the hot path is silent (legitimate use)."""
     # HOT_PATH defaults to False; we don't set it.
-    find_run_via_mtime_scan()
+    resolve_run_path()
 
     warn_events = [e for e in captured_structlog if e.get("event") == "hot_path_legacy_scan_attempted"]
     assert warn_events == [], f"Legitimate scan use should not warn; got {warn_events}"
@@ -97,7 +108,7 @@ def test_strict_mode_raises_on_hot_path_scan(
     token = HOT_PATH.set(True)
     try:
         with pytest.raises(HotPathLegacyScanError) as exc_info:
-            find_run_via_mtime_scan()
+            resolve_run_path()
     finally:
         HOT_PATH.reset(token)
 
@@ -113,9 +124,9 @@ def test_strict_mode_does_not_raise_outside_hot_path(
     """Strict mode only raises when both env var AND HOT_PATH are True."""
     monkeypatch.setenv("TRW_HOT_PATH_STRICT", "1")
     # Don't set HOT_PATH — it defaults to False.
-    result = find_run_via_mtime_scan()
-    # Should run normally and return whatever the scan finds (or None).
-    assert result is None or isinstance(result, Path)
+    result = resolve_run_path()
+    # Should run normally and return whatever the fallback finds.
+    assert isinstance(result, Path)
 
 
 def test_hot_path_set_during_session_start() -> None:
@@ -128,20 +139,20 @@ def test_hot_path_set_during_session_start() -> None:
 
     fn = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")
 
-    # Capture HOT_PATH during a call by mocking find_run_via_mtime_scan
+    # Capture HOT_PATH during a call by mocking the mtime scan helper
     # to read the contextvar (simulating a hypothetical leak).
     captured: list[bool] = []
 
-    def fake_scan() -> None:
+    def fake_scan(_base: Path) -> None:
         captured.append(HOT_PATH.get())
         return None
 
-    # Patch find_run_via_mtime_scan to record the contextvar state if invoked.
+    # Patch _find_latest_run_dir to record the contextvar state if invoked.
     # If session_start triggers it (which would be a regression), captured
     # will be non-empty and the value tells us if HOT_PATH was set.
     from unittest.mock import patch
 
-    with patch("trw_mcp.state._paths.find_run_via_mtime_scan", side_effect=fake_scan):
+    with patch("trw_mcp.state._paths._find_latest_run_dir", side_effect=fake_scan):
         result: dict[str, Any] = fn(ctx=None, query="hot-path-probe")
 
     # Whether or not the scan was triggered, after the call HOT_PATH must
@@ -154,7 +165,7 @@ def test_hot_path_set_during_session_start() -> None:
     # if no scan was triggered at all, captured is empty.
     if captured:
         assert all(captured), (
-            f"If find_run_via_mtime_scan is called during session_start, HOT_PATH must be True. Got: {captured}"
+            f"If the mtime scan is reached during session_start, HOT_PATH must be True. Got: {captured}"
         )
 
     # Sanity: the call returned a result dict.

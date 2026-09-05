@@ -27,7 +27,7 @@ class TestCheckMigrationGate:
     def test_model_change_without_migration_adds_warning(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.validation import phase_gates_build as pgb
 
-        changed = ["backend/models/database/user.py"]
+        changed = ["api/models/database/user.py"]
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: changed)
         monkeypatch.setattr(pgb, "_check_nullable_defaults", lambda _root, _files: [])
 
@@ -39,8 +39,8 @@ class TestCheckMigrationGate:
         from trw_mcp.state.validation import phase_gates_build as pgb
 
         changed = [
-            "backend/models/database/user.py",
-            "backend/alembic/versions/0001_add_user.py",
+            "api/models/database/user.py",
+            "api/alembic/versions/0001_add_user.py",
         ]
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: changed)
         monkeypatch.setattr(pgb, "_check_nullable_defaults", lambda _root, _files: [])
@@ -51,7 +51,7 @@ class TestCheckMigrationGate:
     def test_nullable_default_warnings_appended(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.state.validation import phase_gates_build as pgb
 
-        changed = ["backend/models/database/user.py"]
+        changed = ["api/models/database/user.py"]
         monkeypatch.setattr(pgb, "_get_changed_files", lambda _: changed)
         monkeypatch.setattr(
             pgb,

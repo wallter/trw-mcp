@@ -7,10 +7,12 @@ harmless query gain recovery authority (§6.5):
   ``readOnlyHint``/``idempotentHint``/``openWorldHint=false``, opens the store
   via SQLite ``mode=ro``, and never claims/refreshes a lease, sweeps retention,
   invokes delivery, or creates the database.
-- ``trw_delivery_recover`` — capability-guarded mutation (FR04). Splits stale
-  takeover and crash reconciliation from status so recovery authority is
-  explicit. Every action requires the caller-held recovery capability + expected
-  revision + reason before ownership changes.
+- ``trw_delivery_recover`` — capability-guarded mutation (FR04 / PRD-FIX-127
+  FR01+FR06). Splits stale takeover, ``resume``, and crash reconciliation from
+  status so recovery authority is explicit. Every action requires the caller-held
+  recovery capability + expected revision + reason before ownership changes. The
+  always-refusing rollback action was deleted by PRD-FIX-127 FR06 (no descriptor
+  registers a compensator, so its entire behaviour was to refuse).
 
 Belongs to the ``server/_tools.py`` registration site. The coordinator resolves
 its project scope from the same default installation identity ``run_trw_deliver``
@@ -37,13 +39,15 @@ _TAKEOVER = "takeover_pending"
 _RECONCILE_APPLIED = "reconcile_applied"
 _RECONCILE_NOT_APPLIED = "reconcile_not_applied"
 _REQUEST_CANCEL = "request_cancel"
-_RUN_COMPENSATION = "run_compensation"
+_RESUME = "resume"
+#: PRD-FIX-127 FR06 deleted the rollback action from this tuple; requesting it
+#: now returns ``unsupported_action``, which is the truthful answer.
 _SUPPORTED_ACTIONS = (
     _TAKEOVER,
+    _RESUME,
     _RECONCILE_APPLIED,
     _RECONCILE_NOT_APPLIED,
     _REQUEST_CANCEL,
-    _RUN_COMPENSATION,
 )
 
 
@@ -110,8 +114,12 @@ def register_delivery_tools(server: FastMCP) -> None:
         Requires the delivery_id AND capability_token trw_deliver returned
         (the recovery secret) plus exact expected_revision.
 
-        Args: action in {takeover_pending, reconcile_applied,
-        reconcile_not_applied, request_cancel, run_compensation}.
+        Args: action in {takeover_pending, resume, reconcile_applied,
+        reconcile_not_applied, request_cancel}. Use resume to finish a
+        crashed delivery under the SAME delivery_id: it classifies the
+        crashed steps, refuses with reconciliation_required while any is
+        indeterminate, and otherwise grants this process a fresh lease so
+        a re-invoked trw_deliver runs only the steps that never started.
         """
         if action not in _SUPPORTED_ACTIONS:
             return {"result": "unsupported_action", "action": action, "supported": list(_SUPPORTED_ACTIONS)}
@@ -121,6 +129,7 @@ def register_delivery_tools(server: FastMCP) -> None:
         # all: an oversize evidence_ref fell through to the journal, raised, and
         # came back as the generic "recover_unavailable" — an input error
         # reported as an infrastructure failure.
+        from trw_mcp.tools._delivery_models import DELIVERY_JOURNAL_OWNER
         from trw_mcp.tools._delivery_recovery import enforce_reason_bounds
         from trw_mcp.tools._delivery_request import DeliveryRequestError
 
@@ -149,21 +158,24 @@ def register_delivery_tools(server: FastMCP) -> None:
                     reason=reason,
                     evidence_ref=evidence_ref,
                 )
-            elif action == _REQUEST_CANCEL:
+            elif action == _RESUME:
+                # PRD-FIX-127 FR01/FR02: the grant is bound to the delivery
+                # journal owner and to THIS server process, so it cannot be
+                # consumed by an unrelated caller or banked across a restart.
+                result = coord.resume(
+                    operation_id=delivery_id,
+                    capability_token=capability_token,
+                    expected_revision=expected_revision,
+                    reason=reason,
+                    new_owner=new_owner or DELIVERY_JOURNAL_OWNER,
+                    new_pid=new_pid,
+                )
+            else:
                 result = coord.request_cancel(
                     operation_id=delivery_id,
                     capability_token=capability_token,
                     expected_revision=expected_revision,
                     reason=reason,
-                )
-            else:
-                result = coord.run_compensation(
-                    operation_id=delivery_id,
-                    effect_id=effect_id,
-                    capability_token=capability_token,
-                    expected_revision=expected_revision,
-                    reason=reason,
-                    evidence_ref=evidence_ref,
                 )
         except Exception:  # justified: fail-closed — a recover failure changes nothing
             logger.debug("delivery_recover_failed", action=action, exc_info=True)

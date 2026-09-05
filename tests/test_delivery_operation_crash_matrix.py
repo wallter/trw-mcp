@@ -68,7 +68,7 @@ def test_finalized_step_records_proof_and_bumps_revision(tmp_path) -> None:
     did = make_uuid7()
     coord.claim(delivery_id=did, capability_token=strong_capability(), owner="w1", pid=1)
     coord.begin_step(did, "S01", owner="w1", pid=1)
-    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED, proof_digest="abc123")
+    coord.finalize_step(did, "S01", state=StepState.SUCCEEDED)
     status = coord.project_status(did)
     assert status["steps"]["S01"]["state"] == "succeeded"
 

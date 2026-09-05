@@ -50,7 +50,11 @@ IMMUNE_CONTROL_SURFACES: dict[str, str] = {
     "cursor_skills": ".cursor/skills/trw-audit/SKILL.md",
     # OQ-4: immune by construction (hardened recorder) but never independently
     # measured before this suite. Parameterized so the claim is checked, not asserted.
-    "antigravity_agents": ".antigravitycli/agents/trw-implementer.md",
+    # The path moved with PRD-CORE-252-FR03: Antigravity's own subagent reference
+    # documents `.agents/agents`, and TRW's `.antigravitycli/agents` appears in it
+    # nowhere. The surface — a whole-file client agent recorded by
+    # `_managed_client_artifacts` — is unchanged, which is what this control tests.
+    "antigravity_agents": ".agents/agents/trw-implementer.md",
 }
 
 ALL_SURFACES: dict[str, str] = {**DESTROYED_SURFACES, **IMMUNE_CONTROL_SURFACES}
@@ -305,7 +309,10 @@ def _content_hash_producers(source: str, func_name: str) -> set[str]:
 #: instead of silently reintroducing the gap (RISK-002).
 RECORDER_CASES: dict[str, tuple[str, str]] = {
     "core_artifacts": (".claude/hooks/session-start.sh", "lib-trw.sh"),
-    "codex_artifacts": (".codex/agents/trw-implementer.toml", ".codex/agents/trw-reviewer.toml"),
+    # PRD-CORE-252-FR04: `.codex/agents` left this recorder when codex agents
+    # became materializations of the shared bundle; the codex skills mirror is
+    # what it still owns, and is what its ownership behaviour must be proven on.
+    "codex_artifacts": (".agents/skills/trw-audit/SKILL.md", ".agents/skills/trw-deliver/SKILL.md"),
     "managed_client_artifacts": (".github/skills/trw-audit/SKILL.md", ".github/skills/trw-deliver/SKILL.md"),
 }
 
@@ -580,15 +587,23 @@ class TestForceStillOverwrites:
         assert hook.read_bytes() == bundled
 
     def test_generator_force_overwrites_user_edit(self, tmp_path: Path) -> None:
-        from trw_mcp.bootstrap._codex import generate_codex_agents
+        """``force`` still discards a hand edit — now through the shared installer.
+
+        PRD-CORE-252-FR04 retired ``generate_codex_agents`` with the codex stub
+        template dictionary; codex agents come from the shared bundle, so the
+        escape hatch this asserts is ``_install_agents(force=True)``.
+        """
+        from trw_mcp.bootstrap._init_project_skills import _install_agents
 
         repo = _init_all_clients(tmp_path)
         agent = repo / ".codex" / "agents" / "trw-implementer.toml"
         bundled = agent.read_bytes()
         agent.write_bytes(_user_edit(bundled, ".toml"))
 
-        generate_codex_agents(repo, force=True)
+        result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
+        _install_agents(repo, force=True, result=result, clients=["codex"])
 
+        assert not result["errors"], result["errors"]
         assert agent.read_bytes() == bundled
 
 

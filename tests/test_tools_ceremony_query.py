@@ -221,12 +221,18 @@ class TestSessionStartWithQuery:
         ):
             result = tools["trw_session_start"].fn(query="auth")
 
-        # Recall is fail-open by contract: a recall-only failure (here injected
-        # via resolve_trw_dir, which the recall step calls) is surfaced as a
-        # non-fatal warning and must NOT flip success into a misleading retry.
-        assert result["success"] is True
-        assert any("recall" in w for w in result.get("warnings", []))
-        assert "recall" not in " ".join(result.get("errors", []))
+        # PRD-CORE-263-FR01: ``recall`` is declared ``critical`` in the
+        # session-start step table. Its step body no longer swallows the
+        # exception into a fail-open warning with a green payload — it raises a
+        # typed ``SessionStartStepError`` and the runner's critical branch
+        # degrades the payload: ``success`` is false and ``errors`` names the
+        # step, while the failure is still recorded as an observable
+        # degradation.
+        assert result["success"] is False
+        assert any("recall" in e for e in result["errors"])
+        recall_degradations = [d for d in result.get("degradations", []) if d["step"] == "recall"]
+        assert len(recall_degradations) == 1
+        assert "recall boom" in recall_degradations[0]["message"]
         assert result["learnings"] == []
         assert "run" in result
 

@@ -44,7 +44,7 @@ HOT_PATH: ContextVar[bool] = ContextVar("trw_hot_path", default=False)
 
 
 class HotPathLegacyScanError(RuntimeError):
-    """Raised when find_run_via_mtime_scan() is called from the hot path.
+    """Raised when :func:`resolve_run_path` reaches its mtime fallback on the hot path.
 
     Only raised when ``TRW_HOT_PATH_STRICT=1`` is set in the environment;
     in default (non-strict) mode, the violation is logged at WARN.
@@ -430,9 +430,10 @@ def find_active_run(
 ) -> Path | None:
     """Find the active run directory for a session — pin-only.
 
-    PRD-FIX-085 FR01: This function is now PIN-ONLY by default. The
-    legacy mtime-scan fallback that previously kicked in when
-    ``context is None`` has been moved to :func:`find_run_via_mtime_scan`.
+    PRD-FIX-085 FR01: This function is PIN-ONLY. The legacy mtime-scan
+    fallback that previously kicked in when ``context is None`` was split
+    out behind an explicit opt-in and then deleted outright by PRD-FIX-132,
+    which found it had never acquired a single production caller.
     Five regressions in one week shared the same root cause -- a hot-path
     caller forgot ``context=`` and silently routed to the slow scan path.
     Removing the implicit fallback eliminates the regression class.
@@ -451,10 +452,6 @@ def find_active_run(
     See Also:
         :func:`get_pinned_run` -- equivalent for callers that don't need
         the legacy session_id kwarg.
-        :func:`find_run_via_mtime_scan` -- explicit legacy mtime-scan,
-        for one-shot CLI tools with no session context. Emits a WARN
-        (or raises in TRW_HOT_PATH_STRICT=1 mode) when called from the
-        hot path.
     """
     pinned = get_pinned_run(context=context, session_id=session_id)
     if pinned is not None:
@@ -467,83 +464,6 @@ def find_active_run(
             reason="ctx_aware_no_pin",
         )
     return None
-
-
-def find_run_via_mtime_scan() -> Path | None:
-    """Scan the filesystem for the most recent active run via mtime.
-
-    PRD-FIX-085 FR01: explicit legacy entry point for one-shot CLI tools
-    that have no session context (and therefore no pin). Hot-path
-    callers MUST NOT use this -- it PyYAML-parses every ``run.yaml``
-    under ``.trw/runs/`` (~25 s on ~200 runs).
-
-    PRD-FIX-085 FR02: when called while the :data:`HOT_PATH` ContextVar
-    is True (set by ``trw_session_start`` and middleware), this function
-    emits a ``hot_path_legacy_scan_attempted`` WARN with the calling
-    stack. When ``TRW_HOT_PATH_STRICT=1`` is set, it raises
-    ``HotPathLegacyScanError`` instead -- catches the regression class
-    AT THE API BOUNDARY in dev/test.
-
-    Returns:
-        Path to the latest active run directory by lexicographic name,
-        or ``None`` if no active run exists.
-    """
-    if HOT_PATH.get():
-        # PRD-FIX-085 FR02: caller is on the session_start / middleware
-        # hot path. The legacy scan is forbidden here; surface the offender.
-        try:
-            import inspect
-
-            frame = inspect.stack()[1]
-            caller_module = frame.frame.f_globals.get("__name__", "<unknown>")
-            caller_function = frame.function
-            caller_lineno = frame.lineno
-        except Exception:  # justified: fail-open, diagnostic only
-            caller_module = "<unknown>"
-            caller_function = "<unknown>"
-            caller_lineno = 0
-
-        logger.warning(
-            "hot_path_legacy_scan_attempted",
-            caller_module=caller_module,
-            caller_function=caller_function,
-            caller_lineno=caller_lineno,
-        )
-
-        if os.environ.get("TRW_HOT_PATH_STRICT") == "1":
-            raise HotPathLegacyScanError(
-                f"find_run_via_mtime_scan() called from hot path "
-                f"({caller_module}:{caller_function}:{caller_lineno}); "
-                f"use get_pinned_run() instead. "
-                f"Set TRW_HOT_PATH_STRICT=0 to demote to a WARN."
-            )
-
-    try:
-        config = get_config()
-        reader = FileStateReader()
-        project_root = resolve_project_root()
-        runs_root = project_root / config.runs_root
-        if not runs_root.exists():
-            return None
-
-        latest_name = ""
-        latest_dir: Path | None = None
-        for run_dir, run_yaml in iter_run_dirs(runs_root):
-            # Status-aware: skip non-active runs (PRD-FIX-042 FR02)
-            try:
-                data = reader.read_yaml(run_yaml)
-                status = str(data.get("status", "active"))
-                if status in ("complete", "failed", "abandoned", "delivered"):
-                    continue
-            except Exception:  # justified: fail-open, unreadable run.yaml treated as active for backward compat
-                logger.debug("run_yaml_read_failed", path=str(run_yaml), exc_info=True)
-            if run_dir.name > latest_name:
-                latest_name = run_dir.name
-                latest_dir = run_dir
-
-        return latest_dir
-    except (StateError, OSError):
-        return None
 
 
 def resolve_run_path(
@@ -654,9 +574,9 @@ def resolve_run_path(
 
     # PRD-FIX-085 FR02: HOT_PATH guard. If we reach this fallback during
     # the session_start / middleware hot-path, that's a regression --
-    # callers in that scope must pass context=. The find_run_via_mtime_scan
-    # helper is the explicit-opt-in legacy path; mark this mtime fallback
-    # the same way for consistency.
+    # callers in that scope must pass context=. PRD-FIX-132 deleted the
+    # sibling explicit-opt-in scan helper; this fallback is the last
+    # mtime-selected path in the package and stays marked accordingly.
     if HOT_PATH.get():
         try:
             import inspect

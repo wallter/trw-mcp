@@ -24,17 +24,14 @@ import structlog
 # keeps working for _init_project_ide.py, _ide_targets.py,
 # _version_migration_clients.py, bootstrap/__init__.py, and the test modules that
 # import through this facade.
-from ._copilot_artifacts import _COPILOT_AGENT_TEMPLATES as _COPILOT_AGENT_TEMPLATES
 from ._copilot_artifacts import _COPILOT_AGENTS_DIR as _COPILOT_AGENTS_DIR
 from ._copilot_artifacts import _COPILOT_INSTRUCTIONS_DIR as _COPILOT_INSTRUCTIONS_DIR
 from ._copilot_artifacts import _COPILOT_SKILLS_DIR as _COPILOT_SKILLS_DIR
 from ._copilot_artifacts import _PATH_SCOPED_TEMPLATES as _PATH_SCOPED_TEMPLATES
 from ._copilot_artifacts import _copilot_data_dir as _copilot_data_dir
 from ._copilot_artifacts import _copilot_skills_source_dir as _copilot_skills_source_dir
-from ._copilot_artifacts import copilot_agent_contents as copilot_agent_contents
 from ._copilot_artifacts import copilot_path_instruction_contents as copilot_path_instruction_contents
 from ._copilot_artifacts import copilot_skill_contents as copilot_skill_contents
-from ._copilot_artifacts import generate_copilot_agents as generate_copilot_agents
 from ._copilot_artifacts import generate_copilot_path_instructions as generate_copilot_path_instructions
 from ._copilot_artifacts import install_copilot_skills as install_copilot_skills
 from ._copilot_models import (
@@ -223,13 +220,35 @@ def _externalize_copilot_block(
         return False
 
     before = target_path.read_text(encoding="utf-8") if target_path.is_file() else None
+
+    # `force` must discard existing content (a pointer file included) rather
+    # than merge into it. The prior implementation got that by truncating
+    # `target_path` in place before calling `apply_carrier` (so its
+    # classification saw an EMPTY file) and restoring `before` on any failure
+    # -- but a crash between the truncate and the restore left the user's
+    # instruction file empty on disk with nothing left to recover from. A
+    # nonexistent path classifies identically to an empty one
+    # (`classify_instruction_file`/`render_merged_content` both special-case a
+    # missing target), so routing the carrier at a not-yet-existing staging
+    # path gets the same "discard existing content" behaviour without ever
+    # writing to `target_path` until the single atomic `Path.replace()` below.
+    # `target_path` therefore holds either the original bytes or the fully
+    # written new bytes at every instant -- never an intermediate empty one.
+    staging_path: Path | None = None
+    carrier_target = target_path
     if force and target_path.is_file():
-        target_path.write_text("", encoding="utf-8")
+        staging_path = target_path.with_name(f".{target_path.name}.trw-force-staging")
+        staging_path.unlink(missing_ok=True)  # drop any leftover from a prior interrupted run
+        carrier_target = staging_path
+
+    def _discard_staging() -> None:
+        if staging_path is not None:
+            staging_path.unlink(missing_ok=True)
 
     profile = resolve_client_profile("copilot")
     try:
         outcome = apply_carrier(
-            target_path,
+            carrier_target,
             rendered,
             profile.instruction_max_lines,
             import_syntax=profile.instruction_import_syntax,
@@ -241,14 +260,31 @@ def _externalize_copilot_block(
         )
     except Exception:  # justified: fail-open — bootstrap must never break on carrier failure
         logger.warning("copilot_externalize_failed", target=str(target_path), exc_info=True)
-        if before is not None:
-            target_path.write_text(before, encoding="utf-8")
+        _discard_staging()
+        return False
+
+    if outcome.refusal is not None:
+        # PRD-FIX-123-NFR04: a guard refusal is not a success. Nothing was
+        # ever written to `target_path` (a staged write lands only at
+        # `carrier_target`), so there is nothing to restore; reporting the
+        # reason is what must not be skipped.
+        _discard_staging()
+        result.setdefault("errors", []).append(
+            f"Refused to write {target_path} ({outcome.refusal['reason']}): {outcome.refusal['detail']}"
+        )
         return False
 
     if outcome.mode is not CarrierMode.IMPORT:
-        if before is not None:
-            target_path.write_text(before, encoding="utf-8")
+        _discard_staging()
         return False
+
+    if staging_path is not None:
+        try:
+            staging_path.replace(target_path)  # single atomic swap onto the real file
+        except OSError:
+            logger.warning("copilot_externalize_staging_swap_failed", target=str(target_path), exc_info=True)
+            _discard_staging()
+            return False
 
     after = target_path.read_text(encoding="utf-8") if target_path.is_file() else None
     if before is None:

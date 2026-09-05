@@ -33,13 +33,22 @@ from trw_mcp.state.persistence import (
     FileStateWriter,
 )
 from trw_mcp.tools._ceremony_maintenance_steps import (
+    _census_log_fields as _census_log_fields,
+)
+from trw_mcp.tools._ceremony_maintenance_steps import (
     _check_version_sentinel as _check_version_sentinel,
+)
+from trw_mcp.tools._ceremony_maintenance_steps import (
+    _record_step_outcome as _record_step_outcome,
 )
 from trw_mcp.tools._ceremony_maintenance_steps import (
     _run_learn_journal_drain as _run_learn_journal_drain,
 )
 from trw_mcp.tools._ceremony_maintenance_steps import (
     _run_wal_maintenance as _run_wal_maintenance,
+)
+from trw_mcp.tools._ceremony_maintenance_steps import (
+    _step_pressure_decision as _step_pressure_decision,
 )
 from trw_mcp.tools._ceremony_maintenance_steps import (
     _writer_pressure_details as _writer_pressure_details,
@@ -266,21 +275,46 @@ def run_auto_maintenance(
     Returns a dict with keys for each maintenance operation that produced results.
     All operations are fail-open — individual failures do not affect others.
     """
-    maintenance: AutoMaintenanceDict = {}
-    defer_memory_heavy = False
-    writer_pids: list[int] = []
-    defer_reason = "writer_pressure"
-    if config.session_start_defer_under_writer_pressure:
-        try:
-            from trw_mcp.state.memory_pressure import should_defer_session_start_optional_work
+    from trw_mcp.state.memory_pressure import WriterCensus, take_writer_census
 
-            defer_memory_heavy, writer_pids, defer_reason = should_defer_session_start_optional_work(
-                trw_dir,
-                threshold=config.session_start_writer_pressure_threshold,
-                pin_ttl_hours=config.pin_ttl_hours,
-            )
-        except Exception:  # justified: pressure detection must never block maintenance
-            logger.warning("maintenance_writer_pressure_check_failed", exc_info=True)
+    maintenance: AutoMaintenanceDict = {}
+    census = WriterCensus(
+        writer_pids=(),
+        writer_count=0,
+        peer_writer_count=0,
+        threshold=config.session_start_writer_pressure_threshold,
+        under_pressure=False,
+        census_state="unreadable",
+        identity_state="unverified",
+        heartbeat_state="unavailable",
+    )
+    try:
+        census = take_writer_census(
+            trw_dir,
+            threshold=config.session_start_writer_pressure_threshold,
+            pin_ttl_hours=config.pin_ttl_hours,
+        )
+    except Exception:  # justified: pressure detection must never block maintenance
+        logger.warning("maintenance_writer_pressure_check_failed", exc_info=True)
+    defer_memory_heavy = config.session_start_defer_under_writer_pressure and census.under_pressure
+    # PRD-CORE-257-FR07: exactly ONE census line per trw_session_start, before
+    # any step decision, whether or not pressure was detected. The per-site
+    # warnings kept their step-specific fields but no longer restate the census,
+    # so a healthy-but-loaded machine is now measurable instead of silent and a
+    # pressured one logs these numbers once rather than up to six times.
+    logger.info(
+        "writer_census",
+        writer_count=census.writer_count,
+        peer_writer_count=census.peer_writer_count,
+        threshold=census.threshold,
+        under_pressure=census.under_pressure,
+        census_state=census.census_state,
+        identity_state=census.identity_state,
+        heartbeat_state=census.heartbeat_state,
+    )
+    if census.census_state == "unreadable":
+        # "Nothing measured" must be distinguishable from "measured nothing".
+        logger.warning("writer_census_unreadable", threshold=census.threshold)
 
     # Version sentinel check — detect if installer ran since this process started
     try:
@@ -289,16 +323,13 @@ def run_auto_maintenance(
         logger.warning("maintenance_version_sentinel_failed", exc_info=True)
 
     # Auto-upgrade check (PRD-INFRA-014)
+    upgrade_decision = _step_pressure_decision(
+        trw_dir, config, maintenance, "auto_upgrade_check", defer_memory_heavy=defer_memory_heavy
+    )
     try:
-        if defer_memory_heavy:
-            maintenance["auto_upgrade_check_deferred"] = _writer_pressure_details(config, defer_reason, writer_pids)
-            logger.warning(
-                "auto_upgrade_check_deferred",
-                reason=defer_reason,
-                writer_pids=writer_pids,
-                writer_count=len(writer_pids),
-                threshold=config.session_start_writer_pressure_threshold,
-            )
+        if upgrade_decision.defer:
+            maintenance["auto_upgrade_check_deferred"] = _writer_pressure_details(census, upgrade_decision)
+            logger.warning("auto_upgrade_check_deferred", **_census_log_fields(census))
         else:
             from trw_mcp.state.auto_upgrade import check_for_update
 
@@ -311,26 +342,26 @@ def run_auto_maintenance(
                     upgrade_result = perform_upgrade(update_info)
                     if upgrade_result.get("applied"):
                         maintenance["auto_upgrade"] = upgrade_result
+        _record_step_outcome(trw_dir, maintenance, "auto_upgrade_check", upgrade_decision)
     except Exception:  # justified: fail-open, auto-upgrade must not block session start
         logger.warning("maintenance_auto_upgrade_failed", exc_info=True)
+        _record_step_outcome(trw_dir, maintenance, "auto_upgrade_check", upgrade_decision, failed=True)
 
-    # Auto-close stale runs
-    try:
-        if config.run_auto_close_enabled:
-            if defer_memory_heavy:
-                maintenance["stale_runs_deferred"] = _writer_pressure_details(
-                    config,
-                    defer_reason,
-                    writer_pids,
-                    retain_legacy_reason=True,
-                )
-                logger.warning(
-                    "stale_runs_close_deferred",
-                    reason=defer_reason,
-                    writer_pids=writer_pids,
-                    writer_count=len(writer_pids),
-                    threshold=config.session_start_writer_pressure_threshold,
-                )
+    # Auto-close stale runs. PRD-CORE-257 audit row 9: the ledger decision
+    # used to be consulted UNCONDITIONALLY, before checking whether the
+    # feature is even enabled — so a disabled auto-close could still open and
+    # age a deferral streak under pressure, and enabling the feature later
+    # could immediately force a phantom "expired" run. Gate the ledger read
+    # itself on ``run_auto_close_enabled``: disabled is a THIRD state, not a
+    # deferral, so nothing is consulted and no outcome is recorded.
+    if config.run_auto_close_enabled:
+        stale_decision = _step_pressure_decision(
+            trw_dir, config, maintenance, "stale_runs", defer_memory_heavy=defer_memory_heavy
+        )
+        try:
+            if stale_decision.defer:
+                maintenance["stale_runs_deferred"] = _writer_pressure_details(census, stale_decision)
+                logger.warning("stale_runs_close_deferred", **_census_log_fields(census))
             else:
                 from trw_mcp.state.analytics._stale_runs import auto_close_stale_runs
 
@@ -338,8 +369,10 @@ def run_auto_maintenance(
                 closed_count = int(str(close_result.get("count", 0)))
                 if closed_count > 0:
                     maintenance["stale_runs_closed"] = close_result
-    except Exception:  # justified: fail-open, stale run cleanup must not block session start
-        logger.warning("maintenance_stale_runs_close_failed", exc_info=True)
+            _record_step_outcome(trw_dir, maintenance, "stale_runs", stale_decision)
+        except Exception:  # justified: fail-open, stale run cleanup must not block session start
+            logger.warning("maintenance_stale_runs_close_failed", exc_info=True)
+            _record_step_outcome(trw_dir, maintenance, "stale_runs", stale_decision, failed=True)
 
     # Embeddings status check + warm-up + backfill (extracted to sibling to keep
     # this facade under the 350 effective-LOC module gate).
@@ -349,31 +382,33 @@ def run_auto_maintenance(
         trw_dir,
         config,
         maintenance,
+        census=census,
         defer_memory_heavy=defer_memory_heavy,
-        defer_reason=defer_reason,
-        writer_pids=writer_pids,
     )
 
-    _run_wal_maintenance(
-        trw_dir,
-        config,
-        maintenance,
-        defer_memory_heavy=defer_memory_heavy,
-        defer_reason=defer_reason,
-        writer_pids=writer_pids,
-    )
+    # PRD-CORE-248 FR04: the checkpoint is called unconditionally. Writer
+    # pressure selects its MODE, never whether it runs, so no deferral state is
+    # passed here any more.
+    _run_wal_maintenance(trw_dir, maintenance)
 
     _run_learn_journal_drain(
         trw_dir,
         config,
         maintenance,
+        census=census,
         defer_memory_heavy=defer_memory_heavy,
-        defer_reason=defer_reason,
-        writer_pids=writer_pids,
     )
 
-    logger.debug(
-        "auto_maintenance_complete",
+    # PRD-CORE-257-FR12: ``auto_maintenance_complete`` fired identically when
+    # every one of those keys was a DEFERRAL — completion asserted for a pass in
+    # which nothing ran. The aggregate now says only that the pass was
+    # evaluated, and carries the per-step outcome map that makes the difference
+    # readable. "complete" is reserved for a pass in which every covered step
+    # reports ``executed`` or ``expired_ran``.
+    logger.info(
+        "auto_maintenance_evaluated",
         keys=list(maintenance.keys()),
+        step_outcomes=dict(maintenance.get("step_outcomes", {})),
+        under_pressure=defer_memory_heavy,
     )
     return maintenance

@@ -61,10 +61,24 @@ def _is_localhost(url: str) -> bool:
 
 
 def _check_localhost_only(config: TRWConfig | None) -> str | None:
-    """Return a reason string when sync is configured but ALL targets are localhost.
+    """Return a reason string when the configured sync targets are misaddressed.
 
-    Empty ``platform_urls`` means sync is simply OFF (not a degradation), so the
-    rule only fires when one-or-more targets exist and EVERY one is localhost.
+    Empty ``platform_urls`` means sync is simply OFF (not a degradation), so
+    neither arm fires without at least one configured target.
+
+    Two signatures, both about WHERE the pipeline's durable copy goes:
+
+    (a) **localhost-only** — every target is loopback. The restored-URL
+        regression this gate was built for: nothing leaves the machine.
+    (b) **localhost PRIMARY with a remote secondary** — ``platform_urls`` is
+        ordered, and slot 0 is the primary (``resolved_sync_targets[0]``).
+        Since PRD-FIX-125-FR01 the cycle verdict, both acknowledgement paths and
+        ``consecutive_failures`` all follow the PRIMARY, so this ordering points
+        every one of them at a dev box and demotes the real backend to a
+        best-effort replica that can diverge silently. Before FR01 the ordering
+        was nearly harmless because every target had to succeed; afterwards it
+        inverts the whole health signal, which is why the arm is added in the
+        same change that made the order load-bearing.
     """
     if config is None:
         return None
@@ -75,6 +89,14 @@ def _check_localhost_only(config: TRWConfig | None) -> str | None:
         return (
             f"misconfigured target: platform_urls is localhost-only ({', '.join(urls)}) "
             "— restore the remote sync URL in .trw/config.yaml"
+        )
+    if _is_localhost(urls[0]):
+        remote = next(u for u in urls[1:] if not _is_localhost(u))
+        return (
+            f"misconfigured target order: the PRIMARY sync target is local ({urls[0]}) "
+            f"while a remote target ({remote}) is configured behind it — the failure counter "
+            "and both acknowledgement paths follow platform_urls[0]; put the remote URL first "
+            "in .trw/config.yaml"
         )
     return None
 
@@ -108,6 +130,17 @@ def _check_push_staleness(health: GateResult, config: TRWConfig | None) -> str |
     """
     sync = health.get("sync_push")
     if not isinstance(sync, dict):
+        return None
+
+    # An unmeasured probe is not evidence of stale sync (mirrors the identical
+    # guard in _check_empty_graph). Without this, a probe that crashed reading
+    # an unreadable/corrupt sync-state.json happens to coerce to "no staleness"
+    # only because _unmeasured() also zeroes consecutive_failures/last_push_at
+    # — an accidental safety, not a declared one. The gate's ``reasons`` list
+    # only carries confirmed degradations (no "not measured" slot exists for
+    # a single signature), so this stays a silent skip like its sibling rather
+    # than inventing a new reason shape here.
+    if sync.get("measured") is False:
         return None
 
     # Sync OFF (no remote configured) is not a degradation — same guard the
@@ -156,6 +189,10 @@ def _check_empty_graph(health: GateResult, config: TRWConfig | None) -> str | No
     graph = health.get("graph_edges")
     if not isinstance(graph, dict):
         return None
+    # An unmeasured probe is not evidence of a dead graph. Without this the
+    # fail-closed gate could escalate a store it never managed to read.
+    if graph.get("measured") is False:
+        return None
 
     min_corpus = 10
     if config is not None:
@@ -178,14 +215,25 @@ def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> Gat
         ``{"healthy": bool, "status": str, "reasons": list[str]}``
 
     ``status`` is one of:
-        - ``"healthy"``  — no breakage detected.
+        - ``"healthy"``  — no breakage detected, and everything the gate
+          checks was actually measured.
         - ``"degraded"`` — one or more of the three signatures tripped
           (``healthy`` is False; callers fail closed).
+        - ``"not_measured"`` — DEF-04: the ``sync_push`` and/or
+          ``graph_edges`` probes this gate reuses could not be read (e.g. a
+          locked or unreadable database), so neither confirmed signature
+          could be evaluated. ``healthy`` stays ``True`` — an unread probe is
+          not a CONFIRMED breakage, and this gate's whole design is to never
+          wedge ``make check`` on an ambiguous negative (see the module
+          docstring) — but the distinct status makes the ambiguity visible in
+          ``reasons`` instead of silently reporting the same ``"healthy"``
+          verdict a fully-measured, actually-clean run would report.
         - ``"disabled"`` — the kill switch is off (always healthy).
         - ``"probe_error"`` — the gate's own machinery failed; reports healthy
           (fail-open) so a crash cannot wedge CI on a false negative.
 
-    FAILS CLOSED on detected breakage; FAILS OPEN on internal error.
+    FAILS CLOSED on detected breakage; FAILS OPEN on internal error OR an
+    unmeasured probe.
     """
     if config is not None and not bool(getattr(config, "pipeline_health_gate_enabled", True)):
         return {"healthy": True, "status": "disabled", "reasons": []}
@@ -213,6 +261,27 @@ def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> Gat
             count=len(reasons),
         )
         return {"healthy": False, "status": "degraded", "reasons": reasons}
+
+    # DEF-04: the two probe-backed checks above silently skip an unmeasured
+    # probe (a probe crash is not evidence of the breakage each one detects),
+    # which is correct for whether the gate FAILS but wrong for what it
+    # REPORTS — a probe nobody could read and a probe that measured clean
+    # both landed on the exact same ``{"status": "healthy"}``. Name the gap
+    # without blocking on it.
+    unmeasured_gate_probes = [
+        probe_key
+        for probe_key in ("sync_push", "graph_edges")
+        if isinstance(health.get(probe_key), dict)
+        and health[probe_key].get("measured") is False
+        # Mirrors _check_push_staleness's own guard: an unmeasured sync_push
+        # probe is only worth reporting when sync is actually configured — a
+        # deliberately-off install has nothing to measure in the first place.
+        and (probe_key != "sync_push" or _sync_configured(config))
+    ]
+    if unmeasured_gate_probes:
+        reason = f"gate probes not measured: {', '.join(unmeasured_gate_probes)} — could not confirm or clear"
+        logger.warning("pipeline_health_gate_not_measured", probes=unmeasured_gate_probes)
+        return {"healthy": True, "status": "not_measured", "reasons": [reason]}
 
     return {"healthy": True, "status": "healthy", "reasons": []}
 
@@ -251,11 +320,20 @@ def run_gate_cli() -> int:
         for reason in reasons:
             print(f"  - {reason}", file=sys.stderr)
         print(
-            "Fix the sync/graph/target breakage, or set pipeline_health_gate_enabled=false "
-            "(TRW_PIPELINE_HEALTH_GATE_ENABLED=0) once activation is complete.",
+            "Fix the sync/graph/target breakage. (`pipeline_health_gate_enabled=false` exists "
+            "for installs that run TRW with no backend at all — it is not a way to clear a "
+            "real breakage, and silencing this gate is how the last one went unseen for 134 days.)",
             file=sys.stderr,
         )
         return 1
+
+    if status == "not_measured":
+        # DEF-04: non-blocking by design (see check_pipeline_health's
+        # docstring) but printed so an operator sees the ambiguity in a bare
+        # ``make check`` log instead of an indistinguishable "OK".
+        reasons = [str(r) for r in verdict.get("reasons", [])]
+        for reason in reasons:
+            print(f"pipeline-health gate: NOT MEASURED (not blocking) — {reason}", file=sys.stderr)
 
     logger.info("pipeline_health_gate_cli_ok", status=status)
     print(f"pipeline-health gate: OK (status={status})", file=sys.stderr)

@@ -29,6 +29,12 @@ def _make_config(target: Path, *, client_id: str = "claude-code", backend_url: s
 
 
 def _status_of(results: list[CheckResult], name_fragment: str) -> CheckResult:
+    # Exact name wins over a substring hit: since PRD-CORE-248 added the
+    # ``memory_wal`` row, a bare "memory" fragment matches two rows and the
+    # first-wins fallback would silently return the wrong one.
+    for r in results:
+        if name_fragment == r.name:
+            return r
     for r in results:
         if name_fragment in r.name:
             return r
@@ -92,6 +98,68 @@ def test_config_valid_pass(tmp_path: Path) -> None:
     assert cfg.status == "PASS"
 
 
+def test_config_schema_invalid_fail(tmp_path: Path) -> None:
+    """CORE262-11: syntactically valid YAML that Pydantic rejects must FAIL.
+
+    ``target_platforms`` must be a list; a bare int parses fine as YAML but
+    fails ``TRWConfig`` schema validation. The old ``_check_config`` validated
+    an unrelated bare ``TRWConfig()`` instead of this file's own content, so
+    this exact input read PASS. Reverting to the bare-constructor check turns
+    this red.
+    """
+    trw = tmp_path / ".trw"
+    trw.mkdir()
+    (trw / "config.yaml").write_text("target_platforms: 5\n", encoding="utf-8")
+    results = _doctor_core(tmp_path, _make_config(tmp_path))
+    cfg = _status_of(results, "config")
+    assert cfg.status == "FAIL", cfg.message
+    assert "schema-invalid" in cfg.message.lower()
+    assert _overall_status(results) == "fail"
+
+
+def test_resolve_target_config_survives_malformed_yaml(tmp_path: Path) -> None:
+    """CORE262-10: malformed target YAML must not abort doctor before any row prints.
+
+    ``_read_yaml_overrides`` documents "never raises" but ``FileStateReader.
+    read_yaml`` raises ``StateError`` on a parse failure, and nothing caught
+    it in ``_resolve_target_config`` -- called in ``_run_doctor`` BEFORE
+    ``_doctor_core``'s per-check exception isolation even starts. Reverting
+    the ``except StateError`` here makes this raise instead of falling back,
+    which is exactly the abort-before-any-row failure mode.
+    """
+    from trw_mcp.server._subcommands_doctor import _resolve_target_config
+
+    trw = tmp_path / ".trw"
+    trw.mkdir()
+    (trw / "config.yaml").write_text("key: [unterminated\n  : : bad", encoding="utf-8")
+
+    config = _resolve_target_config(tmp_path)  # must not raise
+    assert isinstance(config, TRWConfig)
+
+    # And the doctor run this precondition exists for still gets to print the
+    # config: FAIL row -- _check_config re-parses the same file independently.
+    results = _doctor_core(tmp_path, config)
+    cfg = _status_of(results, "config")
+    assert cfg.status == "FAIL"
+    assert "parse error" in cfg.message.lower()
+
+
+def test_run_doctor_does_not_crash_on_malformed_target_config(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """CORE262-10, end to end: the CLI entry point must still print a report."""
+    trw = tmp_path / ".trw"
+    trw.mkdir()
+    (trw / "config.yaml").write_text("key: [unterminated\n  : : bad", encoding="utf-8")
+
+    args = argparse.Namespace(target_dir=str(tmp_path), format="human", fix=False)
+    with pytest.raises(SystemExit):
+        _run_doctor(args)
+    stdout = capsys.readouterr().out
+    assert "] config:" in stdout
+    assert "parse error" in stdout.lower()
+
+
 # ── FR-03: MCP server smoke (import only) ────────────────────────────────────
 
 
@@ -133,6 +201,40 @@ def test_profile_unknown_warn(tmp_path: Path) -> None:
     assert prof.status == "WARN"
 
 
+def test_profile_known_requested_resolving_elsewhere_warns_naming_both(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CORE262-12: a KNOWN requested profile that resolves to a DIFFERENT one must WARN, not PASS.
+
+    ``test_profile_unknown_warn`` only covers an unrecognised identifier, and
+    the pre-CORE-262-FR05 ``_check_profile`` already returned PASS for
+    agreement and WARN for an unknown one -- so neither existing test binds
+    the specific defect FR05 fixed: PASS whenever the requested id was merely
+    A known profile, without ever comparing it to the resolved one. This
+    injects a real disagreement -- "cursor-ide" requested, "codex" resolved --
+    by patching ``resolve_client_profile`` at its consumer site in
+    ``TRWConfig.client_profile`` (``trw_mcp.models.config._main``), the same
+    site PRD-CORE-185's routing tests patch. Reverting ``_check_profile`` to
+    "PASS whenever requested is a known profile" turns this red.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+
+    codex_profile = resolve_client_profile("codex")
+    monkeypatch.setattr(
+        "trw_mcp.models.config._main.resolve_client_profile",
+        lambda primary, model_tier=None: codex_profile,
+    )
+
+    config = _make_config(tmp_path, client_id="cursor-ide")
+    assert config.client_profile.client_id == "codex", "precondition: patch must produce a real disagreement"
+
+    results = _doctor_core(tmp_path, config)
+    prof = _status_of(results, "profile")
+    assert prof.status == "WARN", prof.message
+    assert "cursor-ide" in prof.message
+    assert "codex" in prof.message
+
+
 # ── FR-05: JSON output + overall/exit logic ──────────────────────────────────
 
 
@@ -162,7 +264,11 @@ def test_json_output_format(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert isinstance(payload["checks"], list)
     assert len(payload["checks"]) >= 8
     for entry in payload["checks"]:
-        assert set(entry) == {"name", "status", "message"}
+        # ``data`` is optional and present only on rows whose message summarizes
+        # something structured — ``agent_parity`` carries the per-client
+        # installed/expected counts (PRD-CORE-252-FR05). No existing row gained
+        # a key: the field is omitted when empty.
+        assert {"name", "status", "message"} <= set(entry) <= {"name", "status", "message", "data"}
         assert entry["status"] in {"PASS", "WARN", "FAIL", "SKIP"}
 
 
@@ -268,7 +374,7 @@ def test_trw_dir_not_a_directory_fail(tmp_path: Path) -> None:
 def test_memory_backend_no_store_warn(tmp_path: Path) -> None:
     """No memory store yet -> WARN, and the run creates no .trw/memory files."""
     results = _doctor_core(tmp_path, _make_config(tmp_path))
-    mem = _status_of(results, "memory")
+    mem = _status_of(results, "memory_backend")
     assert mem.status == "WARN"
     assert "no memory store" in mem.message.lower()
     # Read-only guarantee: no memory store materialised.
@@ -283,7 +389,7 @@ def test_memory_backend_present_pass(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(doctor, "_probe_memory_backend", lambda p: (12, True))
     results = _doctor_core(tmp_path, _make_config(tmp_path))
-    mem = _status_of(results, "memory")
+    mem = _status_of(results, "memory_backend")
     assert mem.status == "PASS"
     assert "12" in mem.message
 
@@ -295,7 +401,7 @@ def test_memory_backend_degraded_vectors_warn(tmp_path: Path, monkeypatch: pytes
 
     monkeypatch.setattr(doctor, "_probe_memory_backend", lambda p: (3, False))
     results = _doctor_core(tmp_path, _make_config(tmp_path))
-    mem = _status_of(results, "memory")
+    mem = _status_of(results, "memory_backend")
     assert mem.status == "WARN"
     assert "sqlite-vec" in mem.message
 
@@ -351,6 +457,10 @@ def test_installer_advisory_skips_and_overall_pass_on_clean_tree(
         "_check_trw_dir",
         "_check_memory_backend",
         "_check_backend_connectivity",
+        # PRD-CORE-252-FR05: an empty tmp_path has no installed agents, so the
+        # parity check legitimately WARNs there. It is forced like the rest so
+        # the advisory row stays the only thing that could move the verdict.
+        "_check_agent_parity",
     ):
         name = fn_name.removeprefix("_check_")
         monkeypatch.setattr(doctor, fn_name, lambda _t, _c, _n=name: CheckResult(_n, "PASS", "forced pass"))

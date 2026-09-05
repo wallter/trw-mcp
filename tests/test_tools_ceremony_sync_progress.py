@@ -139,6 +139,8 @@ class TestDoAutoProgress:
                 {
                     "ts": "2026-02-14T00:00:01Z",
                     "event": "build_check_complete",
+                    "test_count": 12,
+                    "scope": "pytest tests",
                     "tests_passed": True,
                     "static_checks_clean": True,
                 }

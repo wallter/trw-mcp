@@ -12,7 +12,6 @@ from ruamel.yaml import YAML
 from trw_mcp.bootstrap._codex import (
     codex_hooks_review_warning,
     codex_trw_hook_count,
-    generate_codex_agents,
     generate_codex_config,
     generate_codex_hooks,
     install_codex_skills,
@@ -171,31 +170,13 @@ class TestCodexBootstrap:
         hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
         assert "Stop" in hooks["hooks"]
 
-    def test_codex_agents_created(self, tmp_path: Path) -> None:
-        result = generate_codex_agents(tmp_path)
-        assert ".codex/agents/trw-explorer.toml" in result["created"]
-        assert ".codex/agents/trw-implementer.toml" in result["created"]
-        agents_dir = tmp_path / ".codex" / "agents"
-        expected_effort = {
-            "trw-explorer.toml": "medium",
-            "trw-implementer.toml": "medium",
-            "trw-reviewer.toml": "high",
-            "trw-docs-researcher.toml": "medium",
-        }
-        for name, effort in expected_effort.items():
-            agent = tomllib.loads((agents_dir / name).read_text(encoding="utf-8"))
-            assert "model" not in agent, f"{name} must inherit the active Codex model"
-            assert agent["model_reasoning_effort"] == effort
-
-    def test_codex_agents_preserve_existing_edits_without_force(self, tmp_path: Path) -> None:
-        generate_codex_agents(tmp_path)
-        explorer_path = tmp_path / ".codex" / "agents" / "trw-explorer.toml"
-        explorer_path.write_text("customized explorer", encoding="utf-8")
-
-        result = generate_codex_agents(tmp_path)
-
-        assert ".codex/agents/trw-explorer.toml" in result["preserved"]
-        assert explorer_path.read_text(encoding="utf-8") == "customized explorer"
+    # ``test_codex_agents_created`` / ``test_codex_agents_preserve_existing_edits_
+    # without_force`` were deleted by PRD-CORE-252-FR04 with the
+    # ``_CODEX_AGENT_TEMPLATES`` dictionary they exercised. Codex now receives
+    # the bundled specialists as ``.codex/agents/*.toml``; destination,
+    # preservation and TOML parseability are asserted in
+    # ``tests/test_install_agents_destinations.py`` and
+    # ``tests/test_agent_materialization_per_client.py``.
 
     def test_codex_skills_installed(self, tmp_path: Path) -> None:
         result = install_codex_skills(tmp_path)
@@ -443,3 +424,77 @@ class TestCodexEnabledToolsCompleteness:
         assert not missing, f"Codex enabled_tools dropped tools under a masked server: {missing}"
         # Sanity: privileged admin tools (e.g. trw_meta_tune_rollback) are included.
         assert "trw_meta_tune_rollback" in names
+
+
+class TestCodexNoReviewerProfile:
+    """PRD-SEC-015-FR10: the reviewer bound is applied at the CALL SITES, never
+    as a repo-shipped Codex profile."""
+
+    def test_no_reviewer_profile_table_is_emitted(self, tmp_path: Path) -> None:
+        """Codex 0.134.0 REMOVED `[profiles.<name>]` tables — profiles are now
+        user-scoped standalone $CODEX_HOME/<name>.config.toml files selected by
+        `--profile`, so a repository cannot ship one at all. A generated config
+        carrying a profiles table would be rejected by the client it targets."""
+        generate_codex_config(tmp_path)
+        raw = (tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8")
+        config = tomllib.loads(raw)
+
+        assert [key for key in config if key.startswith("profiles")] == []
+        assert "[profiles." not in raw
+        # The interactive allowlist is deliberately UNCHANGED (FR10 non-goal):
+        # SurfaceAuthorityMiddleware narrows per session, so Codex mirrors Claude
+        # Code's full-but-server-masked surface.
+        assert "trw_deliver" in config["mcp_servers"]["trw"]["enabled_tools"]
+
+    def test_the_docstring_records_why_no_reviewer_variant_is_generated(self) -> None:
+        """The three reasons must travel with the code, not only with the PRD:
+        a TOML comment would be dropped by the bootstrap's merge-and-rewrite, so
+        the module docstring is the only durable place for them."""
+        import trw_mcp.bootstrap._codex as codex
+
+        doc = codex._registered_trw_tool_names.__doc__ or ""
+
+        assert "0.134" in doc, "the profile-syntax removal must be named"
+        assert "reviewer" in doc.lower()
+        assert "TOML comments" in doc or "toml comments" in doc.lower()
+
+
+class TestCodexInitScaffoldContainment:
+    """PRD-CORE-262-FR05: a codex-only install scaffolds codex, and only codex.
+
+    This class is an INSERT into a module that pre-existed PRD-CORE-262 (its 21
+    other tests are untouched). Helpers live in the
+    ``test_init_scaffold_containment`` sibling, which also carries the
+    claude-code regression test proving containment removed only foreign
+    surfaces.
+    """
+
+    def test_codex_init_creates_no_claude_scaffold(self, tmp_path: Path) -> None:
+        """FR05 attribution test: three properties, one run.
+
+        Measured before the fix on 2026-09-04: 47 files under ``.claude``, a
+        17-line root ``CLAUDE.md``, and a doctor profile row reading
+        ``claude-code`` for a project whose ``target_platforms`` said ``codex``.
+        Reverting either half of the fix turns this red.
+        """
+        from tests.test_init_scaffold_containment import (
+            claude_scaffold_paths,
+            doctor_rows,
+            init_single_client_project,
+            recorded_target_platforms,
+        )
+
+        init_single_client_project(tmp_path, "codex")
+
+        assert claude_scaffold_paths(tmp_path) == [], "a codex-only install scaffolded a .claude tree"
+        assert not (tmp_path / "CLAUDE.md").exists(), "a codex-only install scaffolded a root CLAUDE.md"
+
+        platforms = recorded_target_platforms(tmp_path)
+        assert platforms == ["codex"]
+
+        rows = doctor_rows(tmp_path)
+        profile_status, profile_message = rows["profile"]
+        assert profile_message == f"profile: {platforms[0]}", profile_message
+        assert profile_status == "PASS", profile_message
+        # The two rows that name a client must agree with each other.
+        assert platforms[0] in rows["agent_parity"][1], rows["agent_parity"][1]

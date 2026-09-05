@@ -109,7 +109,6 @@ def _update_opencode_artifacts(
         generate_agents_md,
         generate_opencode_config,
         generate_opencode_instructions,
-        install_opencode_agents,
         install_opencode_commands,
         install_opencode_skills,
     )
@@ -183,15 +182,6 @@ def _update_opencode_artifacts(
         result.setdefault("warnings", []).append(f".opencode/commands update skipped: {exc}")
 
     try:
-        agents_result = install_opencode_agents(target_dir, manifest_hashes=manifest_hashes)
-        result["created"].extend(agents_result.get("created", []))
-        result["updated"].extend(agents_result.get("updated", []))
-        result["preserved"].extend(agents_result.get("preserved", []))
-        result["errors"].extend(agents_result.get("errors", []))
-    except Exception as exc:  # justified: fail-open, agent update is best-effort
-        result.setdefault("warnings", []).append(f".opencode/agents update skipped: {exc}")
-
-    try:
         skills_result = install_opencode_skills(target_dir, manifest_hashes=manifest_hashes)
         result["created"].extend(skills_result.get("created", []))
         result["updated"].extend(skills_result.get("updated", []))
@@ -216,7 +206,6 @@ def _update_codex_artifacts(
     from ._codex import (
         codex_hooks_enabled,
         codex_hooks_review_warning,
-        generate_codex_agents,
         generate_codex_config,
         generate_codex_hooks,
         install_codex_skills,
@@ -248,15 +237,6 @@ def _update_codex_artifacts(
                 result.setdefault("warnings", []).append(codex_hooks_review_warning())
         except Exception as exc:  # justified: fail-open, codex update is best-effort
             result.setdefault("warnings", []).append(f".codex/hooks.json update skipped: {exc}")
-
-    try:
-        agents_result = generate_codex_agents(target_dir, manifest_hashes=manifest_hashes)
-        result["created"].extend(agents_result.get("created", []))
-        result["updated"].extend(agents_result.get("updated", []))
-        result["preserved"].extend(agents_result.get("preserved", []))
-        result["errors"].extend(agents_result.get("errors", []))
-    except Exception as exc:  # justified: fail-open, codex update is best-effort
-        result.setdefault("warnings", []).append(f".codex/agents update skipped: {exc}")
 
     try:
         skills_result = install_codex_skills(target_dir, manifest_hashes=manifest_hashes)
@@ -317,7 +297,6 @@ def _update_copilot_artifacts(
     break the overall update flow.
     """
     from ._copilot import (
-        generate_copilot_agents,
         generate_copilot_hooks,
         generate_copilot_instructions,
         generate_copilot_path_instructions,
@@ -347,12 +326,6 @@ def _update_copilot_artifacts(
         result.setdefault("warnings", []).append(f"copilot hooks.json update skipped: {exc}")
 
     try:
-        agents_result = generate_copilot_agents(target_dir, manifest_hashes=manifest_hashes)
-        _absorb_sub_result(result, agents_result)
-    except Exception as exc:  # justified: fail-open
-        result.setdefault("warnings", []).append(f"copilot agents update skipped: {exc}")
-
-    try:
         skills_result = install_copilot_skills(target_dir, manifest_hashes=manifest_hashes)
         _absorb_sub_result(result, skills_result)
     except Exception as exc:  # justified: fail-open
@@ -377,14 +350,15 @@ def _update_antigravity_artifacts(
 ) -> None:
     """Update Antigravity CLI artifacts when Antigravity is detected.
 
-    Generates ``ANTIGRAVITY.md``, ``.antigravitycli/settings.json`` MCP config,
-    and ``.antigravitycli/agents/trw-*.md`` subagent definitions.
+    Generates ``ANTIGRAVITY.md`` plus the GLOBAL ``~/.gemini/config/
+    mcp_config.json`` MCP entry (PRD-FIX-133 — that file, not any project-scoped
+    one, is what ``agy`` actually reads). Bundled subagents land in
+    ``.agents/agents/`` via the shared agent installer (PRD-CORE-252), not here.
 
     Fail-open: errors are captured in ``result["warnings"]`` so they never
     break the overall update flow.
     """
     from ._antigravity_cli import (
-        generate_antigravity_agents,
         generate_antigravity_instructions,
         generate_antigravity_mcp_config,
     )
@@ -404,12 +378,6 @@ def _update_antigravity_artifacts(
         _absorb_sub_result(result, mcp_result)
     except Exception as exc:  # justified: fail-open
         result.setdefault("warnings", []).append(f"antigravity MCP config update skipped: {exc}")
-
-    try:
-        agents_result = generate_antigravity_agents(target_dir, manifest_hashes=manifest_hashes)
-        _absorb_sub_result(result, agents_result)
-    except Exception as exc:  # justified: fail-open
-        result.setdefault("warnings", []).append(f"antigravity agents update skipped: {exc}")
 
     # Distill channel bootstrap (FR41-FR43) — extracted to _ide_targets_distill
     from ._ide_targets_distill import _update_antigravity_distill_channels
@@ -431,9 +399,13 @@ def _extract_trw_section_content() -> str:
     weaker rule file still beats an empty one.
     """
     try:
+        from trw_mcp.models.config._profiles import resolve_client_profile
         from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
-        rendered = render_agents_trw_section().strip()
+        # PRD-CORE-252 OQ-3 wiring-defect fix (2026-09-04): gate the
+        # delegation block on cursor-ide's OWN profile, not whichever client
+        # is ambiently active — this rule file is always cursor-ide's.
+        rendered = render_agents_trw_section(client_profile=resolve_client_profile("cursor-ide")).strip()
         if rendered:
             return rendered
     except Exception:  # justified: fail-open — a rule file with the old body beats none
@@ -464,7 +436,6 @@ def _update_cursor_artifacts(
 
     cursor-ide specific steps (PRD-CORE-136 FR03-FR06, FR08):
       - generate_cursor_rules_mdc        (FR06): .cursor/rules/trw-ceremony.mdc
-      - generate_cursor_ide_subagents    (FR03): .cursor/agents/trw-*.md
       - generate_cursor_ide_commands     (FR05): .cursor/commands/trw-*.md
       - generate_cursor_ide_skills       (FR04): .cursor/skills/<name>/
       - generate_cursor_ide_hooks        (FR08): .cursor/hooks/trw-*.sh + hooks.json
@@ -504,7 +475,6 @@ def _update_cursor_artifacts(
             generate_cursor_ide_commands,
             generate_cursor_ide_hooks,
             generate_cursor_ide_skills,
-            generate_cursor_ide_subagents,
         )
 
         # FR06: .cursor/rules/trw-ceremony.mdc (IDE primary write target)
@@ -516,13 +486,6 @@ def _update_cursor_artifacts(
             result.setdefault("warnings", []).append(
                 f".cursor/rules/trw-ceremony.mdc update skipped: {type(exc).__name__}: {exc}"
             )
-
-        # FR03: .cursor/agents/trw-*.md
-        try:
-            sub_result = generate_cursor_ide_subagents(target_dir, manifest_hashes=manifest_hashes)
-            _absorb_sub_result(result, sub_result)
-        except Exception as exc:  # justified: fail-open
-            result.setdefault("warnings", []).append(f".cursor/agents/ update skipped: {type(exc).__name__}: {exc}")
 
         # FR05: .cursor/commands/trw-*.md
         try:

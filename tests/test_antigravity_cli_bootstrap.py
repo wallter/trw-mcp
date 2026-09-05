@@ -1,4 +1,13 @@
-"""Tests for Antigravity CLI bootstrap configuration and installers."""
+"""Tests for Antigravity CLI bootstrap configuration and installers.
+
+``TestAntigravityCliAgents`` was deleted by PRD-CORE-252-FR04. It exercised the
+retired ``generate_antigravity_agents`` stub generator and asserted two things
+that were drift, not contract: that every agent file contained ``mcp_trw_``
+(a namespace this client's own profile does not declare) and that the explorer
+stub named ``grep_search``. Antigravity now receives the bundled specialists in
+``.agents/agents`` — see ``tests/test_install_agents_destinations.py`` and
+``tests/test_agent_materialization_per_client.py``.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +17,8 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.bootstrap._antigravity_cli import (
-    _ANTIGRAVITY_AGENTS_DIR,
     _ANTIGRAVITY_MD_PATH,
-    _ANTIGRAVITY_SETTINGS_PATH,
-    generate_antigravity_agents,
+    _antigravity_global_mcp_config_path,
     generate_antigravity_instructions,
     generate_antigravity_mcp_config,
 )
@@ -19,102 +26,36 @@ from trw_mcp.bootstrap._utils import detect_ide
 
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 
-
-@pytest.mark.unit
-class TestAntigravityCliAgents:
-    """Test generate_antigravity_agents."""
-
-    def test_agents_dir_created(self, fake_git_repo: Path) -> None:
-        result = generate_antigravity_agents(fake_git_repo)
-        assert not result["errors"]
-        assert (fake_git_repo / _ANTIGRAVITY_AGENTS_DIR).is_dir()
-
-    def test_agents_files_created(self, fake_git_repo: Path) -> None:
-        result = generate_antigravity_agents(fake_git_repo)
-        assert not result["errors"]
-        agents_dir = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR
-        agent_files = list(agents_dir.glob("trw-*.md"))
-        # Derived from the template registry the generator writes from.
-        from trw_mcp.bootstrap._antigravity_cli import _ANTIGRAVITY_AGENT_TEMPLATES
-
-        assert len(agent_files) == len(_ANTIGRAVITY_AGENT_TEMPLATES)
-
-    def test_expected_agents_exist(self, fake_git_repo: Path) -> None:
-        """All four TRW agents must be generated."""
-        generate_antigravity_agents(fake_git_repo)
-        agents_dir = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR
-        assert (agents_dir / "trw-explorer.md").exists()
-        assert (agents_dir / "trw-implementer.md").exists()
-        assert (agents_dir / "trw-reviewer.md").exists()
-        assert (agents_dir / "trw-lead.md").exists()
-
-    def test_agent_yaml_frontmatter(self, fake_git_repo: Path) -> None:
-        """Verify YAML frontmatter with name, description, tools."""
-        generate_antigravity_agents(fake_git_repo)
-        agents_dir = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR
-        for agent_file in agents_dir.glob("trw-*.md"):
-            content = agent_file.read_text(encoding="utf-8")
-            assert content.startswith("---"), f"{agent_file.name} missing YAML frontmatter"
-            assert "name:" in content, f"{agent_file.name} missing name field"
-            assert "description:" in content, f"{agent_file.name} missing description field"
-            assert "tools:" in content, f"{agent_file.name} missing tools field"
-
-    def test_agent_tools_reference_mcp_trw(self, fake_git_repo: Path) -> None:
-        """Agents should reference mcp_trw_ tools for TRW integration."""
-        generate_antigravity_agents(fake_git_repo)
-        agents_dir = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR
-        for agent_file in agents_dir.glob("trw-*.md"):
-            content = agent_file.read_text(encoding="utf-8")
-            assert "mcp_trw_" in content, f"{agent_file.name} missing mcp_trw_ reference"
-
-    def test_explorer_uses_grep_search(self, fake_git_repo: Path) -> None:
-        """Explorer agent must use official 'grep_search' tool name."""
-        generate_antigravity_agents(fake_git_repo)
-        explorer = (fake_git_repo / _ANTIGRAVITY_AGENTS_DIR / "trw-explorer.md").read_text(encoding="utf-8")
-        assert "grep_search" in explorer
-
-    def test_agents_no_overwrite_existing(self, fake_git_repo: Path) -> None:
-        """Existing agent files preserved without force."""
-        generate_antigravity_agents(fake_git_repo)
-
-        custom_path = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR / "trw-explorer.md"
-        custom_path.write_text("# My custom agent\n", encoding="utf-8")
-
-        result = generate_antigravity_agents(fake_git_repo)
-        assert not result["errors"]
-
-        rel_path = f"{_ANTIGRAVITY_AGENTS_DIR}/trw-explorer.md"
-        assert rel_path in result["preserved"]
-        assert custom_path.read_text(encoding="utf-8") == "# My custom agent\n"
-
-    def test_agents_force_overwrites_existing(self, fake_git_repo: Path) -> None:
-        """force=True regenerates all agents."""
-        generate_antigravity_agents(fake_git_repo)
-
-        custom_path = fake_git_repo / _ANTIGRAVITY_AGENTS_DIR / "trw-explorer.md"
-        custom_path.write_text("# My custom agent\n", encoding="utf-8")
-
-        result = generate_antigravity_agents(fake_git_repo, force=True)
-        assert not result["errors"]
-        assert custom_path.read_text(encoding="utf-8") != "# My custom agent\n"
+# The suite-wide ``_isolate_home_dir`` autouse fixture (conftest.py) points
+# ``$HOME`` at a per-test tmp dir, so this resolves under that tmp dir — never
+# the operator's real ``~/.gemini/config/mcp_config.json`` (PRD-FIX-133).
+_GLOBAL_MCP_REL = ".gemini/config/mcp_config.json"
 
 
 @pytest.mark.unit
 class TestAntigravityCliMcpConfigHardening:
-    """Hardened settings.json deep-merge and recovery."""
+    """Hardened GLOBAL mcp_config.json deep-merge and recovery (PRD-FIX-133)."""
 
     def test_writes_fresh_when_settings_missing(self, tmp_path: Path) -> None:
         result = generate_antigravity_mcp_config(tmp_path)
-        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings = _antigravity_global_mcp_config_path()
         assert settings.is_file()
         data = json.loads(settings.read_text(encoding="utf-8"))
         assert "mcpServers" in data
         assert "trw" in data["mcpServers"]
-        assert data["mcpServers"]["trw"]["trust"] is True
+        assert "trust" not in data["mcpServers"]["trw"]  # not part of agy's schema
         assert result["errors"] == []
+        # The project directory itself receives no antigravity MCP write.
+        assert not (tmp_path / ".antigravitycli" / "settings.json").exists()
+
+    def test_write_notes_global_scope(self, tmp_path: Path) -> None:
+        """FR03: every write names the file as global/cross-project."""
+        result = generate_antigravity_mcp_config(tmp_path)
+        warnings = result.get("warnings", [])
+        assert any("global" in w.lower() and "mcp_config.json" in w for w in warnings)
 
     def test_preserves_unrelated_user_keys(self, tmp_path: Path) -> None:
-        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings = _antigravity_global_mcp_config_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(
             json.dumps(
@@ -140,11 +81,11 @@ class TestAntigravityCliMcpConfigHardening:
         first = generate_antigravity_mcp_config(tmp_path)
         second = generate_antigravity_mcp_config(tmp_path)
 
-        assert any(_ANTIGRAVITY_SETTINGS_PATH in p for p in first["created"])
-        assert any(_ANTIGRAVITY_SETTINGS_PATH in p for p in second.get("preserved", []))
+        assert any(_GLOBAL_MCP_REL in p for p in first["created"])
+        assert any(_GLOBAL_MCP_REL in p for p in second.get("preserved", []))
 
     def test_recovers_from_invalid_json_with_backup(self, tmp_path: Path) -> None:
-        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings = _antigravity_global_mcp_config_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text("this is not { valid json", encoding="utf-8")
 
@@ -161,7 +102,7 @@ class TestAntigravityCliMcpConfigHardening:
 
     def test_recovers_from_non_utf8_with_backup(self, tmp_path: Path) -> None:
         """Non-UTF-8 settings must not crash (regression: UnicodeDecodeError)."""
-        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings = _antigravity_global_mcp_config_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_bytes(b"\xff\xfe{\x00garbage")
 
@@ -178,7 +119,7 @@ class TestAntigravityCliMcpConfigHardening:
 
     def test_recovers_from_non_object_top_level(self, tmp_path: Path) -> None:
         """A top-level JSON array is recovered + backed up, not propagated."""
-        settings = tmp_path / _ANTIGRAVITY_SETTINGS_PATH
+        settings = _antigravity_global_mcp_config_path()
         settings.parent.mkdir(parents=True, exist_ok=True)
         settings.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
 

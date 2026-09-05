@@ -21,8 +21,13 @@ MAX_SNIPPET_CHARS: int = 800
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
-ErrorCode = Literal["", "missing_index", "invalid_repo", "invalid_path", "query_empty", "dependency_missing"]
-SearchMode = Literal["lexical", "semantic"]
+ErrorCode = Literal["", "missing_index", "invalid_repo", "invalid_path", "query_empty"]
+#: One member, and deliberately still a Literal: it is the response's record of
+#: WHICH search ran, so a future second mode extends it rather than replaces it.
+#: ``"semantic"`` was a member until 2.0.0 and named a branch that could not
+#: return a result (UF-031); ``dependency_missing`` left ``ErrorCode`` with it,
+#: because the only producer of either was the deleted optional-embedder hook.
+SearchMode = Literal["lexical"]
 
 
 class ChunkIndexStats(BaseModel):
@@ -105,6 +110,10 @@ class CodeSearchResponse(BaseModel):
     error_code: ErrorCode = ""
     error: str = ""
     remediation: str = ""
+    #: PRD-SEC-015 round-2 audit (Row 2): set to ``"read_only_stale"`` when the
+    #: reviewer role skipped reconciling the index against the manifest and
+    #: served whatever was already on disk. Empty string outside that path.
+    index_state: Literal["", "read_only_stale"] = ""
 
 
 def default_chunk_index_path(repo_root: Path | str) -> Path:
@@ -171,6 +180,26 @@ def update_chunk_index(repo_root: Path | str) -> ChunkIndexUpdateResult:
     return ChunkIndexUpdateResult(index=index, index_path=str(index_path), stats=stats)
 
 
+def _resolve_index_for_read(root: Path) -> tuple[CodeChunkIndex | None, Literal["", "read_only_stale"]]:
+    """Return ``(index, index_state)`` honoring the reviewer role's write bar.
+
+    PRD-SEC-015 round-2 audit (Row 2): ``trw_code_search``/``trw_code_symbol``
+    are allowlisted read tools, but their sole index accessor,
+    ``update_chunk_index``, always reconciles against the manifest and calls
+    ``save_chunk_index`` — creating ``.trw/code-index/`` and writing
+    ``chunks.json`` even when nothing changed. Under the reviewer role this
+    reads whatever already exists on disk (``load_chunk_index`` never creates
+    a directory or writes) and reports ``"read_only_stale"`` so a caller can
+    see no refresh happened, instead of silently mutating repository state
+    the review is supposed to be read-only against.
+    """
+    from trw_mcp.state._surface_role import reviewer_role_active
+
+    if reviewer_role_active():
+        return load_chunk_index(default_chunk_index_path(root)), "read_only_stale"
+    return update_chunk_index(root).index, ""
+
+
 def lexical_search(
     repo_root: Path | str,
     *,
@@ -185,11 +214,19 @@ def lexical_search(
         return validation
     root, safe_path = validation
     try:
-        index = update_chunk_index(root).index
+        index, index_state = _resolve_index_for_read(root)
     except FileNotFoundError as exc:
         return _failure("lexical", query, "missing_index", str(exc), "Run trw_code_index_update for this repo first.")
     except NotADirectoryError as exc:
         return _failure("lexical", query, "invalid_repo", str(exc), "Pass an existing repository directory.")
+    if index is None:
+        return _failure(
+            "lexical",
+            query,
+            "missing_index",
+            "code-index has no existing chunks.json and the reviewer role never reconciles one",
+            "Ask the orchestrator to run trw_code_index_update as an agent-role session first.",
+        )
 
     query_terms = _terms(query)
     hits: list[CodeSearchHit] = []
@@ -200,7 +237,7 @@ def lexical_search(
         hits.append(_hit(chunk, score=score, reason=f"lexical token match: {_matched_terms(query_terms, chunk)}"))
 
     ranked = tuple(sorted(hits, key=lambda hit: (-hit.score, hit.path, hit.line_range.start))[: _bounded_top_k(top_k)])
-    return CodeSearchResponse(status="ok", mode="lexical", query=query, results=ranked)
+    return CodeSearchResponse(status="ok", mode="lexical", query=query, results=ranked, index_state=index_state)
 
 
 def symbol_search(
@@ -217,11 +254,19 @@ def symbol_search(
         return validation
     root, safe_path = validation
     try:
-        index = update_chunk_index(root).index
+        index, index_state = _resolve_index_for_read(root)
     except FileNotFoundError as exc:
         return _failure("lexical", symbol, "missing_index", str(exc), "Run trw_code_index_update for this repo first.")
     except NotADirectoryError as exc:
         return _failure("lexical", symbol, "invalid_repo", str(exc), "Pass an existing repository directory.")
+    if index is None:
+        return _failure(
+            "lexical",
+            symbol,
+            "missing_index",
+            "code-index has no existing chunks.json and the reviewer role never reconciles one",
+            "Ask the orchestrator to run trw_code_index_update as an agent-role session first.",
+        )
 
     needle = symbol.lower()
     hits: list[CodeSearchHit] = []
@@ -235,7 +280,7 @@ def symbol_search(
             hits.append(_hit(chunk, score=50.0 + (len(needle) / len(candidate)), reason="fuzzy symbol match"))
 
     ranked = tuple(sorted(hits, key=lambda hit: (-hit.score, hit.path, hit.line_range.start))[: _bounded_top_k(top_k)])
-    return CodeSearchResponse(status="ok", mode="lexical", query=symbol, results=ranked)
+    return CodeSearchResponse(status="ok", mode="lexical", query=symbol, results=ranked, index_state=index_state)
 
 
 def load_chunk_index(path: Path) -> CodeChunkIndex | None:

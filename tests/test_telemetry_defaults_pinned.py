@@ -1,8 +1,8 @@
 """Pin the enterprise 'telemetry / network egress OFF by default' invariant.
 
 A fresh ``TRWConfig()`` (no ``.trw/config.yaml`` and no ``TRW_*`` env overrides)
-must not enable any outbound data path: no platform telemetry, no backend/platform
-sync URLs, no auto-upgrade, no remote sync feature gates, and no OTEL export.
+must not enable any outbound data path: no platform telemetry, no server sync
+URLs, no auto-upgrade, no remote sync feature gates, and no OTEL export.
 
 This is a *library-level* guarantee — installing the package and importing the
 config model must never opt a user into sending data off-box. These tests fail

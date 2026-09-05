@@ -1,7 +1,7 @@
 """Memory-related deferred delivery steps.
 
 Sub-module of ``_deferred_delivery`` — contains steps for auto-pruning,
-consolidation, and tier lifecycle sweeps.
+consolidation, tier lifecycle sweeps, and importance decay.
 
 Test patches should still target the parent facade:
 ``patch("trw_mcp.tools._deferred_delivery._step_auto_prune")``.
@@ -17,6 +17,7 @@ import structlog
 
 from trw_mcp.models.typed_dicts import (
     ConsolidationStepResult,
+    MemoryDecayStepResult,
     TierSweepStepResult,
 )
 from trw_mcp.state.persistence import FileStateReader
@@ -94,6 +95,58 @@ def _step_consolidation(trw_dir: Path) -> ConsolidationStepResult:
             )
         ),
     )
+
+
+def _step_memory_decay(trw_dir: Path) -> MemoryDecayStepResult:
+    """Step 2.75: importance decay for entries nobody has used (PRD-CORE-244 FR09).
+
+    ``memory_decay_pass`` has existed, hardened and tested, with ZERO production
+    callers, while its sibling ``apply_importance_boost`` was wired — so
+    importance could only ever rise. That made the field both
+    ``compute_utility_score`` and prune-candidate selection key on a
+    one-directional ratchet, and an entry's importance asserted a currency it had
+    not earned.
+
+    Runs AFTER the tier sweep so a record demoted this delivery is not also
+    decayed in the same pass, and takes the backend's own writer lock so it
+    serialises against concurrent stores on the shared connection.
+    """
+    from trw_memory.graph import memory_decay_pass
+
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import get_backend
+
+    config = get_config()
+    backend = get_backend(trw_dir)
+    # ``_conn`` is the established accessor for the owning connection — the same
+    # one tools/knowledge.py:71 and state/_graph_backfill.py use. It is
+    # deliberately the SINGLETON's connection, not a fresh one: the decay pass
+    # takes the backend's own RLock, and a second connection would serialise
+    # against nothing.
+    conn = getattr(backend, "_conn", None)
+    if conn is None:
+        # A YAML backend has no SQL connection; the sweep is SQL-only by design
+        # (it is a batched UPDATE). Say so rather than reporting a zero-row pass.
+        return {"status": "skipped", "reason": "backend_not_sqlite", "processed": 0, "remaining": 0}
+
+    result = memory_decay_pass(
+        conn,
+        cutoff_days=config.memory_decay_cutoff_days,
+        batch_size=config.memory_decay_batch_size,
+        lock=getattr(backend, "_lock", None),
+    )
+    logger.info(
+        "memory_decay_pass_complete",
+        processed=result["processed"],
+        remaining=result["remaining"],
+        cutoff_days=config.memory_decay_cutoff_days,
+    )
+    return {
+        "status": "success",
+        "reason": "",
+        "processed": result["processed"],
+        "remaining": result["remaining"],
+    }
 
 
 def _step_tier_sweep(trw_dir: Path) -> TierSweepStepResult:

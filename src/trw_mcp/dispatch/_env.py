@@ -9,7 +9,8 @@ arbitrary LLM that can read its own environment and emit it in stdout. Inheritin
 the full host environment would let a prompt-injected child exfiltrate every host
 secret (AWS keys, DB URLs, unrelated provider tokens) through its answer. We pass
 only the variables the child legitimately needs: a base set required to run any
-CLI, plus the per-client provider API keys for the model it will call.
+CLI, plus the per-client provider API keys for the model it will call — read from
+that client's registry entry rather than from a second table keyed on client id.
 
 This mirrors the trw-loop ``worker_subprocess_env`` allowlist discipline and the
 ``.claude/rules/trw-mcp-python.md`` Subprocess Env Hygiene rule (full-env
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import os
 
+from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 from trw_mcp.dispatch._types import DispatchClient
 
 # Always-safe base variables every CLI needs to locate binaries, resolve $HOME,
@@ -35,37 +37,27 @@ _LOCALE_PREFIX = "LC_"
 # are forwarded ON TOP of the per-client allowlist by ``build_runner_env`` only.
 _RUNNER_PASSTHROUGH: tuple[str, ...] = ("PYTHONPATH", "VIRTUAL_ENV")
 
-# Per-client provider API-key passthrough. Only the keys a given client could
-# legitimately use for the model it drives are forwarded.
-_CLIENT_KEY_ALLOWLIST: dict[DispatchClient, tuple[str, ...]] = {
-    # Anthropic / Bedrock / Vertex auth surfaces for Claude Code.
-    "claude": (
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_MODEL",
-        "CLAUDE_CODE_USE_BEDROCK",
-        "CLAUDE_CODE_USE_VERTEX",
-        "AWS_REGION",
-        "AWS_PROFILE",
-    ),
-    "codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL"),
-    # agy = Antigravity CLI (Gemini-family models). ``GEMINI_API_KEY`` is
-    # Antigravity's OWN documented credential env var — it is NOT a remnant of
-    # the removed ``gemini`` client profile. Do not delete it in a gemini sweep.
-    "agy": ("GEMINI_API_KEY", "ANTIGRAVITY_API_KEY"),
-    # opencode is multi-provider — forward all three provider keys.
-    "opencode": (
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
-    ),
-}
+# Per-client provider credentials are NOT listed here. They live on the client's
+# registry entry (``ClientSpec.credential_env``) alongside the flags and the
+# verification record, so one entry states everything TRW believes about a client
+# and this module carries no client-id literal (PRD-CORE-266-NFR03/NFR04). A
+# client with no recorded credential variable — because none appears in its cited
+# source — therefore receives the base allowlist ALONE by construction, rather
+# than by someone remembering to omit it from a second table.
 
 
 def _allowed_names(client: DispatchClient) -> set[str]:
-    """Return the full set of env-var names allowed for *client*."""
-    return {*_BASE_ALLOWLIST, *_CLIENT_KEY_ALLOWLIST.get(client, ())}
+    """Return the full set of env-var names allowed for *client*.
+
+    An unregistered client id yields the base allowlist alone. That is the
+    fail-closed direction: an id TRW does not know gets FEWER variables, never a
+    wider set and never the host environment.
+    """
+    try:
+        credentials = client_spec_for(client).credential_env
+    except UnknownClientError:  # pragma: no cover - guarded by the Literal upstream
+        credentials = ()
+    return {*_BASE_ALLOWLIST, *credentials}
 
 
 def build_subprocess_env(
@@ -85,6 +77,23 @@ def build_subprocess_env(
     """
     src = dict(os.environ) if source_env is None else source_env
     allowed = _allowed_names(client)
+    return {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
+
+
+def build_probe_env(source_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Build the env for a read-only CAPABILITY PROBE (e.g. ``<binary> --version``).
+
+    The base allowlist and locale variables only — deliberately NOT the client's
+    credential set. A probe exists to make the binary print a banner; forwarding
+    an API key to it would widen the blast radius of a diagnostic for no benefit,
+    and the doctor payload that quotes the probe's output must be safe to read.
+
+    Uses the empty-credential path of :func:`_allowed_names` by construction
+    rather than by re-listing the base set, so a variable added to the base
+    allowlist reaches probes too.
+    """
+    src = dict(os.environ) if source_env is None else source_env
+    allowed = set(_BASE_ALLOWLIST)
     return {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
 
 

@@ -7,6 +7,7 @@ Extracted from ceremony.py for single-responsibility.
 from __future__ import annotations
 
 import dataclasses
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -21,9 +22,11 @@ from trw_mcp.state._call_context import build_call_context as _build_call_contex
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._paths import (
     find_active_run,
+    resolve_pin_key,
     resolve_project_root,
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
+from trw_mcp.state.pre_compact_marker import write_pre_compact_marker
 from trw_mcp.tools._checkpoint_obligations import (
     compute_pending_ceremony as _compute_pending_ceremony,
 )
@@ -141,14 +144,42 @@ def _read_pre_compact_state(run_dir: Path, project_root: Path) -> dict[str, obje
                 prd_scope = [str(s) for s in raw_scope]
             phase = str(run_data.get("phase", ""))
 
-    ownership_path = project_root / ".trw" / "context" / "file_ownership.yaml"
-    file_ownership_path = str(ownership_path) if ownership_path.exists() else ""
-
     return {
         "prd_scope": prd_scope,
         "phase": phase,
-        "file_ownership_path": file_ownership_path,
+        "formation": _resolve_formation_line(run_dir),
     }
+
+
+def _resolve_formation_line(run_dir: Path) -> str:
+    """Name the formation this run belongs to, or state that there is none.
+
+    PRD-CORE-265-FR02. What this replaces probed a retired ownership artifact
+    under ``.trw/context/`` — a path that has never existed in this repository —
+    and threaded the resulting empty string into a recovery line that therefore
+    rendered ``not set`` on every compaction. "We checked and
+    found nothing" and "we never checked" were the same sentence, and the
+    reassuring one is the one that shipped: exactly the fallback defect in
+    ``docs/documentation/wiring-defect-patterns.md``.
+
+    Now there are three distinguishable answers and no silence: the formation
+    and this run's member id, an explicit statement that no formation is active,
+    or the parse error from a manifest that could not be read (NFR02 — an
+    unreadable manifest is never reported as absence).
+    """
+    from trw_mcp import formation as _formation
+
+    try:
+        context = _formation.load(run_dir)
+    except _formation.FormationError as exc:
+        return f"unresolved — {exc}"
+    except Exception as exc:  # justified: recovery capture must never fail on this line
+        logger.debug("formation_resolution_degraded", run=str(run_dir), exc_info=True)
+        return f"unresolved — {exc}"
+    if context is None:
+        return "none active"
+    who = context.member_id or "orchestrator"
+    return f"{context.manifest.formation_id} (this run: {who}); manifest {context.manifest_path}"
 
 
 def _read_last_events(events_path: Path) -> list[str]:
@@ -231,11 +262,12 @@ def _write_compact_state(
     events_path: Path,
     prd_scope: list[str],
     phase: str,
-    file_ownership_path: str,
+    formation: str,
     failing_tests: list[str],
     ceremony_state: dict[str, object],
     directive: str = "",
     context_anchor: str = "",
+    owner_pin_key: str = "",
 ) -> None:
     """Write pre_compact_state.json with enhanced checkpoint metadata.
 
@@ -244,12 +276,14 @@ def _write_compact_state(
     auto-derived). They are persisted only when non-empty so the next session's
     recovery readback can surface them; the run-derived in-flight position
     (``last_checkpoint`` + ``last_5_events``) is already persisted unconditionally.
+
+    PRD-CORE-258-FR10: ``owner_pin_key`` names the session that compacted, so
+    only that session is armed by this marker and only it may clear it. It is a
+    PIN KEY, not a FastMCP ``session_id`` — the pin key is the one identifier the
+    MCP server and a shell hook can both observe. An empty value writes no owner
+    field at all, which keeps the fail-safe blanket behaviour an ownerless
+    marker has always had.
     """
-    import json
-
-    state_file = project_root / ".trw" / "context" / "pre_compact_state.json"
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-
     _evt_text = events_path.read_text().strip() if events_path.exists() else ""
     # run_dir + events let the obligation consequences be resolved against the
     # real deliver gate rather than asserted; both are already in hand here.
@@ -267,7 +301,7 @@ def _write_compact_state(
         "events_logged": len(_evt_text.split("\n")) if _evt_text else 0,
         "last_checkpoint": _read_last_checkpoint_message(run_dir),
         "prd_scope": prd_scope,
-        "file_ownership_path": file_ownership_path,
+        "formation": formation,
         "last_5_events": _read_last_events(events_path),
         "failing_tests": failing_tests,
         "ceremony_state": ceremony_state,
@@ -277,7 +311,14 @@ def _write_compact_state(
         state_data["directive"] = directive
     if context_anchor:
         state_data["context_anchor"] = context_anchor
-    state_file.write_text(json.dumps(state_data, indent=2))
+    if owner_pin_key:
+        state_data["owner_pin_key"] = owner_pin_key
+        # Diagnostic ONLY, and deliberately never consulted by the arming
+        # decision: the PreCompact hook runs in a process unrelated to the
+        # server, so a pid comparison could never match on that path.
+        state_data["owner_pid"] = os.getpid()
+    # PRD-CORE-258-FR04: the marker's path and shape have exactly one owner.
+    write_pre_compact_marker(state_data, trw_dir=project_root / ".trw")
 
 
 def _write_compact_instructions(
@@ -286,7 +327,7 @@ def _write_compact_instructions(
     run_dir: Path,
     phase: str,
     prd_scope: list[str],
-    file_ownership_path: str,
+    formation: str,
     failing_tests: list[str],
     ceremony_state: dict[str, object],
 ) -> Path:
@@ -299,7 +340,7 @@ def _write_compact_instructions(
             "- TRW run_id: {run_id}\n"
             "- TRW PRD scope: {prd_scope}\n"
             "- Last checkpoint: {last_checkpoint}\n"
-            "- File ownership: {file_ownership_path}\n"
+            "- TRW formation: {formation}\n"
             "- Failing tests: {failing_tests}\n"
             "DO NOT summarize run artifacts — reference their file paths only.\n"
             "Reference .trw/context/pre_compact_state.json for full state.\n"
@@ -317,7 +358,7 @@ def _write_compact_instructions(
         run_id=str(run_dir.name),
         prd_scope=", ".join(prd_scope) if prd_scope else "none",
         last_checkpoint=_read_last_checkpoint_message(run_dir),
-        file_ownership_path=file_ownership_path or "not set",
+        formation=formation or "unresolved — the formation facade returned no answer",
         failing_tests=", ".join(failing_tests) if failing_tests else "none",
         ceremony_pending="\n".join(f"- {s}" for s in pending_ceremony) if pending_ceremony else "- all complete",
     )
@@ -369,7 +410,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
             state_dict = _read_pre_compact_state(run_dir, project_root)
             prd_scope: list[str] = cast("list[str]", state_dict["prd_scope"])
             phase: str = cast("str", state_dict["phase"])
-            file_ownership_path: str = cast("str", state_dict["file_ownership_path"])
+            formation: str = cast("str", state_dict["formation"])
 
             failing_tests = _read_failing_tests(project_root)
             ceremony_state = _read_ceremony_state(project_root)
@@ -381,11 +422,12 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 events_path,
                 prd_scope,
                 phase,
-                file_ownership_path,
+                formation,
                 failing_tests,
                 ceremony_state,
                 directive=directive,
                 context_anchor=context_anchor,
+                owner_pin_key=resolve_pin_key(ctx),
             )
             instructions_path = _write_compact_instructions(
                 cfg,
@@ -393,7 +435,7 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 run_dir,
                 phase,
                 prd_scope,
-                file_ownership_path,
+                formation,
                 failing_tests,
                 ceremony_state,
             )

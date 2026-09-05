@@ -1,4 +1,4 @@
-"""Shared helpers for PRD-CORE-208 delivery-operation tests.
+"""Shared helpers for the PRD-CORE-208 / PRD-FIX-127 delivery-operation tests.
 
 Provides a UUIDv7 factory (the stdlib ``uuid`` module has no ``uuid7`` on 3.12)
 and a coordinator/config factory over a real ``.trw`` directory so every test
@@ -64,3 +64,79 @@ def env_pid_dead() -> int:
     except OSError:
         return pid
     return 424_242
+
+
+# --- PRD-FIX-127 resume-test fixtures (shared by test_delivery_resume*.py) ---
+
+_TWO_HOURS_MS = 2 * 60 * 60 * 1000
+
+
+def age_lease(coord, did: str) -> int:  # type: ignore[no-untyped-def]
+    """Push the lease expiry two hours into the past; return the current revision."""
+    conn = coord.store.connect()
+    with coord.store.immediate(conn):
+        op = coord.store.get_operation(conn, did)
+        assert op is not None
+        coord.store.replace_operation(
+            conn, op.model_copy(update={"lease_expiry_utc_ms": coord._now_ms() - _TWO_HOURS_MS})
+        )
+    conn.close()
+    return op.revision
+
+
+def recovery_events(coord, did: str):  # type: ignore[no-untyped-def]
+    conn = coord.store.connect()
+    try:
+        return coord.store.get_recovery_events(conn, did)
+    finally:
+        conn.close()
+
+
+def steps_by_id(coord, did: str):  # type: ignore[no-untyped-def]
+    conn = coord.store.connect()
+    try:
+        return {s.effect_id: s for s in coord.store.get_steps(conn, did)}
+    finally:
+        conn.close()
+
+
+def operation_row(coord, did: str):  # type: ignore[no-untyped-def]
+    conn = coord.store.connect()
+    try:
+        return coord.store.get_operation(conn, did)
+    finally:
+        conn.close()
+
+
+def seed_deliver_run(tmp_path: Path) -> Path:
+    trw_dir = tmp_path / ".trw"
+    for sub in ("learnings/entries", "reflections", "context"):
+        (trw_dir / sub).mkdir(parents=True, exist_ok=True)
+    run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+    (run_dir / "meta").mkdir(parents=True, exist_ok=True)
+    (run_dir / "meta" / "run.yaml").write_text(
+        "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n", encoding="utf-8"
+    )
+    (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
+    return run_dir
+
+
+def deliver_patches(tmp_path: Path):  # type: ignore[no-untyped-def]
+    """The standard patch set that drives a real trw_deliver on a synthetic run."""
+    from unittest.mock import patch
+
+    trw_dir = tmp_path / ".trw"
+    run_dir = tmp_path / "docs" / "task" / "runs" / "20260214T000000Z-test"
+    return (
+        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
+        patch("trw_mcp.tools.ceremony.find_active_run", return_value=run_dir),
+        patch(
+            "trw_mcp.tools.ceremony._do_instruction_sync",
+            return_value={"status": "success", "learnings_promoted": 0, "path": "", "total_lines": 0},
+        ),
+        patch(
+            "trw_mcp.tools._deferred_delivery._do_index_sync",
+            return_value={"status": "success", "index": {}, "roadmap": {}},
+        ),
+        patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
+    )

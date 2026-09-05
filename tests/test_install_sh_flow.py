@@ -4,7 +4,7 @@ The grep-level wiring guards in ``test_installer_api_key_validation.py`` prove t
 pipx rung *exists* in the ladder, but they cannot prove it *runs*: a flipped
 ``||``/``&&``, a deleted PATH helper, or a broken ``pipx ensurepath`` would ship
 undetected. This harness actually EXECUTES both bootstraps
-(``platform/public/install.sh`` and ``scripts/install.sh``) with stubbed
+(the public-facing web install script and ``scripts/install.sh``) with stubbed
 ``python3`` / ``pipx`` / ``trw-mcp`` / ``curl`` on PATH, simulates a PEP 668
 externally-managed Python (the ``python3`` stub's ``-m pip install`` exits
 non-zero), and asserts the bootstrap:

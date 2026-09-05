@@ -18,6 +18,7 @@ from trw_memory.storage.sqlite_backend import SQLiteBackend
 from trw_memory.sync.delta import DeltaTracker
 
 from tests._test_sync_client_support import _acquired_lock, _make_config
+from trw_mcp.sync.push import PushResult
 
 
 def test_get_dirty_entries_does_not_skip_low_seq_unsynced_updates(tmp_path) -> None:
@@ -26,8 +27,8 @@ def test_get_dirty_entries_does_not_skip_low_seq_unsynced_updates(tmp_path) -> N
 
     backend = SQLiteBackend(tmp_path / "memory.db")
     backend.store(MemoryEntry(id="L-low", content="initial"))
-    DeltaTracker.mark_synced(["L-low"], backend)
-    backend.update("L-low", content="updated")
+    DeltaTracker.mark_synced(["L-low"], backend, namespace="default")
+    backend.update("L-low", content="updated", namespace="default")
 
     with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
         client = BackendSyncClient(_make_config(), tmp_path)
@@ -55,7 +56,7 @@ async def test_run_one_cycle_records_highest_pushed_sync_seq(tmp_path) -> None:
     client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
     client._coordinator.get_last_pull_seq.return_value = 3
     client._pusher = MagicMock()
-    client._pusher.push_learnings = AsyncMock(return_value=SimpleNamespace(pushed=2, failed=0, skipped=0))
+    client._pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=2, failed=0, skipped=0))
     client._puller = MagicMock()
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
@@ -108,8 +109,8 @@ async def test_run_one_cycle_pushes_pending_outcomes_after_learning_sync(tmp_pat
     client._coordinator.get_last_pull_seq.return_value = 3
     client._coordinator.get_last_outcome_line.return_value = 0
     client._pusher = MagicMock()
-    client._pusher.push_learnings = AsyncMock(return_value=SimpleNamespace(pushed=1, failed=0, skipped=0))
-    client._pusher.push_outcomes = AsyncMock(return_value=SimpleNamespace(pushed=1, failed=0, skipped=0))
+    client._pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=1, failed=0, skipped=0))
+    client._pusher.push_outcomes = AsyncMock(return_value=PushResult(pushed=1, failed=0, skipped=0))
     client._puller = MagicMock()
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
@@ -138,7 +139,7 @@ async def test_run_one_cycle_keeps_entries_dirty_when_push_reports_failures(tmp_
     client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
     client._coordinator.get_last_pull_seq.return_value = 3
     client._pusher = MagicMock()
-    client._pusher.push_learnings = AsyncMock(return_value=SimpleNamespace(pushed=1, failed=1, skipped=0))
+    client._pusher.push_learnings = AsyncMock(return_value=PushResult(pushed=1, failed=1, skipped=0))
     client._puller = MagicMock()
     client._puller.pull_intel_state = AsyncMock(return_value=PullResult(status_code=304, not_modified=True))
     client._cache = MagicMock()
@@ -194,8 +195,18 @@ async def test_create_app_registers_sync_lifespan() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_lifespan_starts_and_cancels_backend_sync_client(tmp_path, monkeypatch) -> None:
-    """Configured sync lifecycles start and stop the background sync task."""
+async def test_sync_lifespan_defers_the_start_and_still_cancels(tmp_path, monkeypatch) -> None:
+    """The lifespan starts NOTHING; the deferred step starts it; shutdown cancels it.
+
+    PRD-CORE-248-FR01 moved backend-sync resolution out of the lifespan, which
+    the FastMCP runtime enters BEFORE the lowlevel server answers ``initialize``.
+    This test previously asserted the opposite — that entering the lifespan
+    started the sync loop — i.e. exactly the handshake-blocking behaviour the FR
+    removed. All three halves of the new contract are asserted here, because
+    asserting only the last one would pass against a lifespan that had quietly
+    gone back to resolving eagerly.
+    """
+    from trw_mcp.server import _boot_deferred
     from trw_mcp.server._app import _build_sync_lifespan
 
     started = asyncio.Event()
@@ -214,8 +225,22 @@ async def test_sync_lifespan_starts_and_cancels_backend_sync_client(tmp_path, mo
 
     monkeypatch.setattr("trw_mcp.server._app._try_load_config", lambda: _make_config())
     monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: tmp_path)
-    with patch("trw_mcp.sync.client.BackendSyncClient", return_value=fake_client):
-        async with _build_sync_lifespan(FastMCP("test")):
-            await asyncio.wait_for(started.wait(), timeout=1)
+    _boot_deferred.reset_deferred_boot_state()
+    try:
+        with patch("trw_mcp.sync.client.BackendSyncClient", return_value=fake_client):
+            async with _build_sync_lifespan(FastMCP("test")):
+                # 1. Entering the lifespan resolves nothing and starts nothing:
+                #    everything it does precedes the `initialize` reply.
+                await asyncio.sleep(0)
+                assert not started.is_set()
 
-    await asyncio.wait_for(cancelled.wait(), timeout=1)
+                # 2. The deferred step — what the `initialized` notification
+                #    schedules, and what the first tool call runs inline — starts
+                #    the loop on the serving loop the lifespan recorded.
+                assert _boot_deferred.ensure_deferred_boot_work() is True
+                await asyncio.wait_for(started.wait(), timeout=1)
+
+            # 3. Shutdown still owns cancellation of the task it did not create.
+            await asyncio.wait_for(cancelled.wait(), timeout=1)
+    finally:
+        _boot_deferred.reset_deferred_boot_state()

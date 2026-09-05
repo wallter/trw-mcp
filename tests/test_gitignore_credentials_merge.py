@@ -59,12 +59,18 @@ def test_appends_credentials_rule_to_old_custom_gitignore(tmp_path: Path) -> Non
     assert str(gi) in result["updated"]
 
 
-def test_idempotent_when_rule_already_present(tmp_path: Path) -> None:
-    """If credentials.yaml is already ignored, the file is left untouched."""
+def test_idempotent_when_every_rule_already_present(tmp_path: Path) -> None:
+    """If every required rule is already ignored, the file is left untouched.
+
+    PRD-FIX-123-FR04 added a second required rule (``backups/``), so the fixture
+    now has to carry both for the no-op branch to be the one under test. The
+    single-rule variant is covered by
+    ``test_missing_rule_is_appended_without_disturbing_the_others``.
+    """
     trw = tmp_path / ".trw"
     trw.mkdir()
     gi = trw / ".gitignore"
-    gi.write_text("credentials.yaml\nreflections/\n", encoding="utf-8")
+    gi.write_text("credentials.yaml\nbackups/\nreflections/\n", encoding="utf-8")
     before = _read(gi)
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
@@ -72,6 +78,25 @@ def test_idempotent_when_rule_already_present(tmp_path: Path) -> None:
 
     assert _read(gi) == before  # no duplicate append, no mutation
     assert str(gi) not in result["updated"]
+
+
+def test_missing_rule_is_appended_without_disturbing_the_others(tmp_path: Path) -> None:
+    """PRD-FIX-123-FR04: only the ABSENT rule is appended; present ones are not duplicated."""
+    trw = tmp_path / ".trw"
+    trw.mkdir()
+    gi = trw / ".gitignore"
+    existing = "credentials.yaml\nreflections/\n"
+    gi.write_text(existing, encoding="utf-8")
+
+    result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+
+    merged = _read(gi)
+    assert merged.startswith(existing)
+    rules = [ln.strip() for ln in merged.splitlines()]
+    assert rules.count("credentials.yaml") == 1
+    assert "backups/" in rules
+    assert str(gi) in result["updated"]
 
 
 def test_creates_gitignore_when_absent(tmp_path: Path) -> None:

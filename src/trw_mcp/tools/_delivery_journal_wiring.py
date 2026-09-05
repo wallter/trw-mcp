@@ -10,13 +10,20 @@ shadow:
   whose bound request differs from a prior claim returns
   ``delivery_request_conflict`` with zero delivery effects.
 - **FR02** — commits a ``started`` transition before each synchronous effect and
-  a terminal transition after it (crash-safe: a killed deliver leaves a
-  ``started`` step for FR04 recovery, never ``not_started``).
+  a terminal transition after it, so a killed deliver leaves a ``started`` step
+  rather than ``not_started``. PRD-FIX-127 FR01/FR02 gave that row a consumer:
+  the ``resume`` recovery action classifies it, and a granted resume reopens this
+  journal in RESUME MODE, where :meth:`DeliverJournal.step` yields ``False`` for
+  every step already durably ``succeeded`` so only the never-started ones run.
 - **FR06** — records the deferred batch digest so a later different-ID delivery
   attaches or durably FIFO-queues.
 - **NFR01** — a legacy no-``delivery_id`` call generates a fresh server-side
   UUIDv7 each time, so it is journaled but reports ``caller_recoverable=false``
   (a lost response can never be recovered by caller identity).
+
+A repeat claim under a non-terminal operation is still a zero-effect refusal
+UNLESS this process holds a valid resume grant for it; the refusal now names
+``resume`` as the action that changes that.
 
 Gated by ``delivery_operations_mode``: ``off`` is an explicit rollback switch;
 ``observe`` journals diagnostics fail-open; the default ``enforce`` mode blocks
@@ -37,15 +44,27 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp._delivery_boundary import open_boundary, take_refusal
 from trw_mcp.models._evidence_core import domain_digest
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import DeliverResultDict
-from trw_mcp.tools._delivery_models import ClaimResult, ClaimStatus, OperationState, StepState
+from trw_mcp.tools._delivery_effect_registry import ALWAYS_REEVALUATE_EFFECTS
+from trw_mcp.tools._delivery_models import (
+    DELIVERY_JOURNAL_OWNER,
+    TERMINAL_OPERATION_STATES,
+    ClaimResult,
+    ClaimStatus,
+    OperationState,
+    StepDisposition,
+    StepRecord,
+    StepState,
+)
 from trw_mcp.tools._delivery_operations import DeliveryCoordinator
+from trw_mcp.tools._delivery_resume_action import latest_resume_grant
 
 logger = structlog.get_logger(__name__)
 
-_JOURNAL_OWNER = "trw_deliver"
+_JOURNAL_OWNER = DELIVERY_JOURNAL_OWNER
 #: Server-generated recovery capability entropy for legacy no-ID claims (NFR01).
 #: 32 bytes = 256 bits, well over the 128-bit floor enforced at claim time.
 _SERVER_CAPABILITY_BYTES = 32
@@ -95,30 +114,102 @@ class DeliverJournal:
         operation_id: str = "",
         caller_recoverable: bool = True,
         mode: str = "off",
+        resume_steps: dict[str, StepRecord] | None = None,
     ) -> None:
         self._coordinator = coordinator
         self.operation_id = operation_id
         self.caller_recoverable = caller_recoverable
         self.mode = mode
         self.journaled_effects: set[str] = set()
+        self.skipped_effects: set[str] = set()
+        #: Pre-resume durable step rows, captured once under the grant lock. Empty
+        #: (and ``resume_mode`` False) on a normal first delivery.
+        self._resume_steps: dict[str, StepRecord] = resume_steps or {}
+        self.resume_mode = resume_steps is not None
 
     @property
     def enabled(self) -> bool:
         return self._coordinator is not None and bool(self.operation_id)
 
     @contextmanager
-    def step(self, effect_id: str) -> Iterator[None]:
-        """Commit ``started`` before the wrapped effect, terminal after (FR02)."""
+    def step(self, effect_id: str) -> Iterator[bool]:
+        """Open a crash boundary; yield whether the wrapped effect must RUN (FR02).
+
+        ``False`` means resume mode found the step already durably ``succeeded``:
+        it is recorded with disposition ``skipped_no_work``, no ``begin_step`` runs
+        and the attempt counter is untouched, so a resumed delivery duplicates no
+        effect. ``True`` (always, outside resume mode) means run it.
+        An empty ``effect_id`` is an unjournaled call site and always runs.
+        """
+        if not effect_id:
+            yield True
+            return
+        if self._skip_completed(effect_id):
+            yield False
+            return
         started = self._begin(effect_id)
         failed = False
         try:
-            yield
+            with open_boundary(effect_id):
+                yield True
         except BaseException:
             failed = True
             raise
         finally:
+            # A decision-shaped effect reports refusal by RETURN VALUE, so
+            # "the call did not raise" is not evidence that it succeeded.
+            refusal = take_refusal(effect_id)
             if started:
-                self._finalize(effect_id, StepState.FAILED if failed else StepState.SUCCEEDED)
+                self._finalize(
+                    effect_id,
+                    StepState.FAILED if (failed or refusal) else StepState.SUCCEEDED,
+                    finding_code=refusal,
+                )
+
+    def _skip_completed(self, effect_id: str) -> bool:
+        """True iff resume mode proves this step already succeeded (FR02).
+
+        A ``failed`` step is NOT re-run either — it keeps the operation on a failed
+        terminal path and is settled by explicit reconciliation (OQ-002) — but it
+        is also not recorded as skipped work, so it stays visible as a failure.
+        """
+        if effect_id in ALWAYS_REEVALUATE_EFFECTS:
+            # A governance verdict is re-decided on every attempt. Inheriting a
+            # prior `succeeded` row here would let a resumed delivery act on an
+            # override that was never re-validated and never re-ledgered.
+            return False
+        prior = self._resume_steps.get(effect_id)
+        if prior is None or self._coordinator is None:
+            return False
+        if prior.state is StepState.FAILED:
+            # `reconcile_not_applied` is the operator's PROOF that the effect did
+            # not land (PRD-CORE-208 FR04); re-running it is the whole point of
+            # that action, and `begin_step` already records it as attempt 2. Any
+            # other failure means the wrapped statement raised, so the effect may
+            # have partially applied and is not re-run (OQ-002).
+            return prior.finding_code != "confirmed_not_applied"
+        if prior.state is not StepState.SUCCEEDED:
+            return False
+        self.skipped_effects.add(effect_id)
+        try:
+            # proof_ref/proof_digest are no longer explicit args here: finalize_step
+            # (PRD-FIX-127 OQ-005) now carries forward whatever is already durably
+            # recorded for this step -- exactly `prior`'s values, since `prior` IS
+            # the record finalize_step re-reads -- so forwarding them by hand here
+            # was redundant plumbing that only worked as long as every call site
+            # remembered to do it.
+            self._coordinator.finalize_step(
+                self.operation_id,
+                effect_id,
+                state=StepState.SUCCEEDED,
+                disposition=StepDisposition.SKIPPED_NO_WORK,
+                finding_code=prior.finding_code,
+            )
+        except Exception:
+            logger.debug("delivery_journal_skip_record_failed", effect_id=effect_id, exc_info=True)
+            if self.mode == "enforce":
+                raise
+        return True
 
     def _begin(self, effect_id: str) -> bool:
         if not self.enabled or self._coordinator is None:
@@ -133,11 +224,11 @@ class DeliverJournal:
                 raise
             return False
 
-    def _finalize(self, effect_id: str, state: StepState) -> None:
+    def _finalize(self, effect_id: str, state: StepState, finding_code: str = "") -> None:
         if self._coordinator is None:
             return
         try:
-            self._coordinator.finalize_step(self.operation_id, effect_id, state=state)
+            self._coordinator.finalize_step(self.operation_id, effect_id, state=state, finding_code=finding_code)
         except Exception:
             logger.debug("delivery_journal_finalize_failed", effect_id=effect_id, exc_info=True)
             if self.mode == "enforce":
@@ -194,6 +285,8 @@ class DeliverJournal:
             "mode": self.mode,
             "enabled": self.enabled,
             "journaled_effect_count": len(self.journaled_effects),
+            "resume_mode": self.resume_mode,
+            "skipped_effect_count": len(self.skipped_effects),
         }
 
 
@@ -259,8 +352,16 @@ def open_delivery_journal(
             )
         return DeliverJournal(mode=mode), None
 
+    resume_steps: dict[str, StepRecord] | None = None
     if result.status is ClaimStatus.EXISTING and mode == "enforce":
-        return DeliverJournal(mode=mode), _existing_operation_result(result, delivery_id)
+        resume_steps = read_resume_grant(coordinator, result.operation_id)
+        if resume_steps is None:
+            return DeliverJournal(mode=mode), _existing_operation_refusal(result, delivery_id)
+        logger.info(
+            "delivery_resume_mode_entered",
+            operation_id=result.operation_id,
+            already_succeeded=sorted(eid for eid, row in resume_steps.items() if row.state is StepState.SUCCEEDED),
+        )
     if result.status in (ClaimStatus.CLAIMED, ClaimStatus.EXISTING):
         return (
             DeliverJournal(
@@ -268,6 +369,7 @@ def open_delivery_journal(
                 operation_id=result.operation_id,
                 caller_recoverable=caller_recoverable,
                 mode=mode,
+                resume_steps=resume_steps,
             ),
             None,
         )
@@ -286,7 +388,10 @@ def open_deferred_journal(trw_dir: Path, operation_id: str) -> DeliverJournal:
     Runs in the deferred daemon thread over the SAME already-claimed operation, so
     each roster step commits a ``started`` transition before it runs and a
     terminal transition after — a process death mid-batch leaves e.g. the
-    NON_REPLAYABLE trust step ``started`` for FR04 recovery, never lost. Fully
+    NON_REPLAYABLE trust step ``started``, which the ``resume`` action classifies
+    as ``indeterminate`` and refuses to replay until an operator reconciles it.
+    When this process already holds a resume grant the handle opens in resume mode,
+    so the roster skips the steps a prior attempt already completed. Fully
     fail-open: any failure returns a disabled (no-op) handle.
     """
     try:
@@ -305,7 +410,48 @@ def open_deferred_journal(trw_dir: Path, operation_id: str) -> DeliverJournal:
         if mode == "enforce":
             raise
         return DeliverJournal(mode=mode)
-    return DeliverJournal(coordinator=coordinator, operation_id=operation_id, caller_recoverable=False, mode=mode)
+    return DeliverJournal(
+        coordinator=coordinator,
+        operation_id=operation_id,
+        caller_recoverable=False,
+        mode=mode,
+        resume_steps=read_resume_grant(coordinator, operation_id),
+    )
+
+
+def read_resume_grant(coordinator: DeliveryCoordinator, operation_id: str) -> dict[str, StepRecord] | None:
+    """Return the pre-resume step rows iff THIS process holds a live resume grant.
+
+    FR02/NFR01: the operation, its latest recovery event, and its steps are read in
+    ONE ``BEGIN IMMEDIATE`` transaction, so a concurrent grant/terminal transition
+    cannot be observed half-applied. ``None`` means "no grant" and keeps today's
+    zero-effect refusal. The grant is bound to the delivery journal owner AND the
+    calling process id AND an unexpired lease, so it cannot be consumed by another
+    caller and cannot be banked indefinitely.
+    """
+    try:
+        conn = coordinator.store.connect()
+    except Exception:
+        logger.debug("delivery_resume_grant_unreadable", exc_info=True)
+        return None
+    try:
+        now = int(time.time() * 1000)
+        with coordinator.store.immediate(conn):
+            op = coordinator.store.get_operation(conn, operation_id)
+            if op is None or op.state in TERMINAL_OPERATION_STATES:
+                return None
+            if latest_resume_grant(coordinator.store, conn, operation_id) is None:
+                return None
+            if op.lease_owner != DELIVERY_JOURNAL_OWNER or op.lease_pid != os.getpid():
+                return None
+            if not op.lease_expiry_utc_ms or now >= op.lease_expiry_utc_ms:
+                return None
+            return {step.effect_id: step for step in coordinator.store.get_steps(conn, operation_id)}
+    except Exception:
+        logger.debug("delivery_resume_grant_unreadable", exc_info=True)
+        return None
+    finally:
+        conn.close()
 
 
 def _conflict_result(result: ClaimResult, delivery_id: str) -> DeliverResultDict:
@@ -313,8 +459,8 @@ def _conflict_result(result: ClaimResult, delivery_id: str) -> DeliverResultDict
     return _blocked_result(delivery_id, result.status.value, result.reason_code, status=result.status.value)
 
 
-def _existing_operation_result(result: ClaimResult, delivery_id: str) -> DeliverResultDict:
-    """Return a zero-effect idempotent projection for an already-claimed ID."""
+def _existing_operation_refusal(result: ClaimResult, delivery_id: str) -> DeliverResultDict:
+    """Zero-effect projection for an already-claimed ID with no resume grant."""
     terminal_success = result.state is OperationState.SUCCEEDED
     out: DeliverResultDict = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -331,8 +477,9 @@ def _existing_operation_result(result: ClaimResult, delivery_id: str) -> Deliver
     }
     if not terminal_success:
         message = (
-            "delivery operation already exists; query trw_delivery_status and use an authorized "
-            "recovery action instead of replaying effects"
+            "delivery operation already exists and this process holds no resume grant; query "
+            "trw_delivery_status, then call trw_delivery_recover with action='resume' to finish "
+            "it under the same delivery_id instead of replaying effects"
         )
         out["delivery_blocked"] = message
         out["errors"] = [message]

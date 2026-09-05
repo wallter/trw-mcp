@@ -20,13 +20,18 @@ class WalCheckpointResultDict(TypedDict, total=False):
       ``pages_checkpointed``/``busy``/``truncate_busy``). ``mode`` is the
       lowercase mode that actually ran (``"truncate"``/``"passive"``;
       ``"error"`` is mapped from the backend's error sentinel). FR03 requires
-      these telemetry fields on the success path.
+      these telemetry fields on the success path. ``markers_persisted`` reports
+      whether the checkpoint timestamp actually reached disk; when it is
+      ``False`` the checkpoint ran but its clock did not, so ``reason`` and
+      ``advisory`` are populated and the success is a PARTIAL one.
     * **Errored** — ``error=True`` plus ``reason="checkpoint_failed"`` (fail-open:
       the WAL checkpoint must never block session start).
     """
 
     skipped: bool
     reason: str
+    advisory: str
+    markers_persisted: bool
     checkpointed: bool
     mode: str
     wal_size_before_mb: float
@@ -51,16 +56,102 @@ class AutoMaintenanceDict(TypedDict, total=False):
     embeddings_advisory: str
     embeddings_backfill: dict[str, int]
     embeddings_backfill_deferred: dict[str, object]
+    # PRD-CORE-263 DEF-11: NOT a deferral — the standing hot-path policy that
+    # session start never runs bulk embedding backfill; nothing schedules it
+    # for later, so it is named "not performed" rather than "deferred".
+    embeddings_backfill_not_performed: dict[str, object]
     embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01: background backfill on low coverage
     embedder_warmup_scheduled: dict[str, object]  # Option A+ (2026-06-10): first-recall download warm-up guard
     embeddings_coverage_ratio: float  # PRD-FIX-COMPOUNDING-3-FR02: vector coverage ratio (0.0-1.0)
     wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
-    wal_checkpoint_deferred: dict[str, object]
     auto_upgrade_check_deferred: dict[str, object]
     # Learn write-ahead-journal recovery: only present when a prior interrupted
     # session left accepted-but-unstored learnings to replay (omit-when-empty).
     pending_learns_replayed: dict[str, object]
     pending_learns_deferred: dict[str, object]
+    # PRD-CORE-257-FR03: covered steps whose deferral streak reached
+    # session_start_max_deferral_hours and ran anyway, this process winning the
+    # single-winner claim. Omitted when empty.
+    deferral_expired_ran: list[str]
+    # PRD-CORE-257-FR12: one outcome per covered step, from the closed
+    # vocabulary executed | deferred | expired_ran | failed. The aggregate event
+    # is auto_maintenance_evaluated precisely because this map can be all
+    # "deferred" — "complete" is reserved for a pass in which every step ran.
+    step_outcomes: dict[str, str]
+
+
+class ReconciledLocalWritesDict(TypedDict):
+    """The ``reconciled_local_writes`` field on the session-start result (PRD-CORE-247-FR05).
+
+    ``pending`` is what this session was told about; ``cleared`` is how many of
+    those the tag was actually removed from. They differ only when a clear
+    failed, which is precisely the signal an operator needs — a count that keeps
+    rising across sessions means the clear step is broken, not that offline
+    writing is busy.
+    """
+
+    pending: int
+    learning_ids: list[str]
+    cleared: int
+
+
+class OpenHandoffItemDict(TypedDict):
+    """One open project-handoff row as the calling agent sees it (PRD-CORE-249-FR03)."""
+
+    gate_id: str
+    blocking_class: str
+    owner: str
+    run_id: str
+    reason: str
+    first_seen: str
+    age_days: int
+
+
+class OpenHandoffDict(TypedDict, total=False):
+    """The ``open_handoff`` field on the session-start result (PRD-CORE-249-FR03).
+
+    ``status`` is ``measured``, ``not_measured``, or ``absent``. ``total`` is
+    present only when ``status`` is ``measured`` — a ``not_measured`` block must
+    never be indistinguishable from zero open items.
+    """
+
+    status: str
+    reason: str
+    total: int
+    items: list[OpenHandoffItemDict]
+    path: str
+
+
+class MovedCheckoutCandidateDict(TypedDict):
+    """A populated same-slug namespace that this checkout may have come from."""
+
+    namespace: str
+    rows: int
+
+
+class MovedCheckoutDict(TypedDict, total=False):
+    """The ``moved_checkout`` observation as the calling agent sees it (PRD-CORE-253-FR01).
+
+    ``status`` is the tri-state and is ALWAYS present:
+
+    * ``"measured"`` — the census ran and found a same-slug populated sibling.
+      The observation fields below are populated.
+    * ``"absent"`` — the census ran and found nothing to report.
+    * ``"not_measured"`` — the census could not run (no user store, or a census
+      or namespace-resolution error); ``reason`` names the cause.
+
+    Before this, a failed census returned the same "nothing to report" as a
+    successful one, so the session-start key was omitted identically in both
+    cases — reintroducing exactly the ambiguity between "no memory" and
+    "the memory is one rename away" that this feature exists to remove.
+    """
+
+    status: str
+    reason: str
+    current_namespace: str
+    current_rows: int
+    candidates: list[MovedCheckoutCandidateDict]
+    repair_command: str
 
 
 class DeliveryGatesDict(TypedDict, total=False):
@@ -72,6 +163,12 @@ class DeliveryGatesDict(TypedDict, total=False):
     review_block: str
     review_warning: str
     review_advisory: str
+    # PRD-CORE-255-FR05: the typed ReviewReceipt that SATISFIED the review gate —
+    # {receipt_id, scope_digest, age_seconds}. Present only when a typed receipt
+    # was actually trusted, so absence means "no receipt satisfied the gate",
+    # never "one did but is unnamed". Caller-actionable (which review, how
+    # fresh), so it stays in the default response, not behind verbose=True.
+    review_evidence: dict[str, object]
     # PRD-CORE-192-FR04: pre-deliver REVIEW nudge for a STANDARD+ run with no review.
     review_nudge: str
     review_scope_block: str
@@ -90,7 +187,19 @@ class DeliveryGatesDict(TypedDict, total=False):
     missing_gate: str
     # PRD-SEC-013-FR07: open intent-contract violation blocks delivery until dispositioned.
     intent_violation_block: str
+    # PRD-CORE-255-FR04: safety-critical PRD scope with no settled adversarial-audit
+    # receipt. ``_block`` is the STRUCTURED hard block; ``_advisory`` is the same
+    # shortfall under an advisory deliver-gate mode, or the inert "this run
+    # declared no PRD scope" notice. ``safety_critical`` carries the FR03
+    # resolution word — currently only ``not_declared``, since ``true``/``unknown``
+    # already speak through ``_block``/``_advisory`` and ``false`` is silence.
+    safety_critical_adversarial_block: str
+    safety_critical_adversarial_advisory: str
+    safety_critical: str
     blocked_task_type: str
+    # PRD-CORE-244-FR06: a learning this session disproved and never retracted.
+    # ADVISORY — it names entry ids and never sets a blocking condition.
+    retraction_nudge: str
 
 
 class ComplianceArtifactsDict(TypedDict, total=False):
@@ -137,6 +246,67 @@ class InstructionPointerSkipDict(TypedDict):
     healed: bool
 
 
+#: Where an instruction-file write came from (PRD-FIX-123-FR05). Supplied by the
+#: entry point (tool, bootstrap init, bootstrap update); never inferred from a
+#: stack walk. ``unknown`` is a declared member, not a failure mode: provenance
+#: is emitted even when the trigger cannot be resolved.
+InstructionWriteTrigger = Literal[
+    "tool_call",
+    "deliver",
+    "bootstrap_init",
+    "bootstrap_update",
+    "agent_tool_grant",
+    "unknown",
+]
+
+#: Why a guarded instruction-file write was refused (PRD-FIX-123-FR01/FR02/NFR02).
+InstructionRefusalReason = Literal[
+    "oversized",
+    "non_generated_shrink",
+    "total_shrink",
+    "unreadable_target",
+    "backup_failed",
+    "backup_path_escape",
+    "write_failed",
+]
+
+
+class InstructionWriteRefusalDict(TypedDict):
+    """A refused instruction-file write (PRD-FIX-123-FR01/FR02).
+
+    Structurally a superset of ``InstructionSurfaceOversizedError``
+    (``state/claude_md/_agents_md_size_gate.py``): ``error_code``, ``file``,
+    ``lines`` and ``limit`` carry the same meaning, so an oversize refusal is
+    readable by callers that already understand the size-gate shape. The byte
+    counters are the FR02 evidence — the incident this PRD fixes GREW the file
+    while destroying user content, so only the non-generated counters detect it.
+    """
+
+    error_code: Literal["instruction_surface_oversized", "instruction_write_refused"]
+    file: str
+    reason: InstructionRefusalReason
+    lines: int
+    limit: int
+    current_non_generated_bytes: int
+    candidate_non_generated_bytes: int
+    current_total_bytes: int
+    candidate_total_bytes: int
+    detail: str
+
+
+class InstructionDiffDict(TypedDict):
+    """One target's dry-run unified diff (PRD-FIX-123-FR03).
+
+    ``diff_truncated`` states that the DIFF was bounded to ``diff_line_cap``
+    lines. A FILE is never truncated by TRW; only this preview payload is.
+    """
+
+    file: str
+    diff: str
+    diff_truncated: bool
+    diff_line_cap: int
+
+
 class _ClaudeMdSyncResultRequired(TypedDict):
     """Return shape of ``_do_instruction_sync()`` / ``execute_claude_md_sync()``.
 
@@ -147,7 +317,7 @@ class _ClaudeMdSyncResultRequired(TypedDict):
 
     path: str
     scope: str
-    status: Literal["synced", "unchanged", "success"]
+    status: Literal["synced", "unchanged", "success", "dry_run", "refused"]
     learnings_promoted: int
     patterns_included: int
     total_lines: int
@@ -182,6 +352,13 @@ class ClaudeMdSyncResultDict(_ClaudeMdSyncResultRequired, total=False):
     # list means the generated capability listing diverged from the resolved
     # surface manifest and the capability block was dropped fail-loud.
     capability_parity_drift: list[str]
+    # PRD-FIX-123-FR03: per-target unified diffs produced by a ``dry_run=True``
+    # sync. Present (possibly empty) only on the ``"dry_run"`` status.
+    diffs: list[InstructionDiffDict]
+    # PRD-FIX-123-FR01/FR02: per-target refusals. Present when a guarded write
+    # was refused rather than performed — a policy refusal, distinguishable from
+    # an I/O failure without string-matching a message.
+    refusals: list[InstructionWriteRefusalDict]
 
 
 class CeremonyScoreResult(TypedDict):
@@ -313,7 +490,6 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     total_available: int
     response_compacted: bool
     side_effects_deferred: dict[str, object]
-    recall_degraded: dict[str, object]
 
 
 class FinalizeRunResult(TypedDict, total=False):

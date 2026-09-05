@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -133,7 +136,7 @@ class TestProgressiveDisclosure:
 
         config = TRWConfig(max_auto_lines=5)  # Very low limit
         llm = LLMClient()
-        with pytest.raises(StateError, match="exceeds max_auto_lines=5"):
+        with pytest.raises(StateError, match="exceeding max_auto_lines=5"):
             execute_claude_md_sync("root", None, config, reader, llm)
 
     def test_max_auto_lines_gate_passes_at_limit(self, tmp_path: Path) -> None:
@@ -248,12 +251,42 @@ class TestProgressiveDisclosure:
         content = hook_path.read_text(encoding="utf-8")
         assert "## TRW Behavioral Protocol" in content
 
-    def test_session_start_rigid_line_count(self) -> None:
-        """PRD-CORE-062-FR04: session-start.sh RIGID line count is 1."""
-        hook_path = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "session-start.sh"
-        content = hook_path.read_text(encoding="utf-8")
-        rigid_count = content.count("RIGID")
-        assert rigid_count == 1, f"RIGID appears {rigid_count} times, expected 1"
+    def test_session_start_rigid_line_count(self, tmp_path: Path) -> None:
+        """PRD-CORE-062-FR04: the RIGID directive is EMITTED at most once per branch.
+
+        This counted the literal string "RIGID" in the hook SOURCE and required
+        exactly 1. PRD-CORE-247 made that proxy wrong in two ways at once: FR07's
+        phase-to-section table legitimately names the framework's own
+        "RIGID / FLEXIBLE TOOL CLASSIFICATION" section three times, and FR02 adds
+        a comment explaining why the directive says RIGID names an obligation
+        rather than a tool call. Neither is a second directive. The assertion now
+        drives the real hook and counts EMITTED lines, which is the invariant
+        PRD-CORE-062-FR04 was protecting.
+        """
+        hooks_dir = tmp_path / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (tmp_path / ".trw" / "context").mkdir(parents=True)
+        source_dir = Path(__file__).parent.parent / "src" / "trw_mcp" / "data" / "hooks"
+        for name in ("lib-trw.sh", "session-start.sh"):
+            (hooks_dir / name).write_text((source_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path), "TRW_PROJECT_ROOT": str(tmp_path)}
+        emitted = {}
+        for source in ("startup", "resume", "compact", "clear"):
+            stdout = subprocess.run(
+                ["sh", str(hooks_dir / "session-start.sh")],
+                input=json.dumps({"source": source}),
+                text=True,
+                capture_output=True,
+                env=env,
+                cwd=tmp_path,
+                check=False,
+            ).stdout
+            emitted[source] = sum(1 for line in stdout.splitlines() if line.startswith("RIGID"))
+
+        assert emitted["startup"] == 1, f"startup emitted the RIGID directive {emitted['startup']} times"
+        for source in ("resume", "compact", "clear"):
+            assert emitted[source] == 0, f"{source} must not restate the RIGID directive"
 
     def test_skill_exists_in_data_directory(self) -> None:
         """PRD-CORE-061-FR01: trw-ceremony-guide skill exists."""

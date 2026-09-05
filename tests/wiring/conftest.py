@@ -1,8 +1,8 @@
 """Shared fixtures for the wiring-detector regression suite.
 
 The fixture is not synthetic. It is the real repository: the specimens named in
-``docs/research/framework-simplification/DEFECT-LEDGER.md`` and the two
-false-positive sets that a naive implementation of this check gets wrong.
+the monorepo-internal defect ledger and the two false-positive sets that a
+naive implementation of this check gets wrong.
 """
 
 from __future__ import annotations

@@ -47,19 +47,31 @@ def test_published_set_names_only_real_config_fields() -> None:
 
 
 def test_published_set_matches_the_ratchet_baseline() -> None:
-    """The shipped copy and the ratchet ledger are one measurement.
+    """The shipped copy and the ratchet ledger are one measurement, minus class E.
 
     They are written together by ``--write-baseline`` and this is what keeps
-    them that way. Drift in the permissive direction (a field measured unread but
-    missing from the published copy) silently re-opens the null-arm hole the
-    artifact was added to close.
+    them in sync. PRD-CORE-263-FR10 split the single ``fields`` measurement in
+    two: the ratchet baseline's ``fields`` is the raw AST-scanned unread set
+    (which class-E fields ARE textually, since the Python scan cannot see their
+    reader), while the published ``unread_fields`` deliberately excludes the
+    class-E fields ``scripts/_config_consumers_citations.py::published_payload``
+    carries apart, because setting one of those DOES change behaviour (a shell
+    hook or generated file reads it) even though no Python reader exists. So the
+    invariant this test protects is baseline fields minus the externally-consumed
+    class, not baseline fields verbatim — drift in the permissive direction (a
+    field measured unread with no external-consumer citation, but missing from
+    the published copy) would silently re-open the null-arm hole the artifact was
+    added to close.
     """
     from trw_mcp.models.config import unread_config_fields
 
     if not _BASELINE.is_file():  # pragma: no cover - baseline ships with the repo
         pytest.skip("compliance baseline not present in this checkout")
-    baseline = set(json.loads(_BASELINE.read_text(encoding="utf-8"))["fields"])
-    assert unread_config_fields() == baseline
+    baseline_doc = json.loads(_BASELINE.read_text(encoding="utf-8"))
+    baseline = set(baseline_doc["fields"])
+    classifications = baseline_doc.get("classifications", {})
+    externally_consumed = {name for name, record in classifications.items() if record.get("class") == "E"}
+    assert unread_config_fields() == baseline - externally_consumed
 
 
 def test_a_published_name_is_genuinely_unread_in_production() -> None:

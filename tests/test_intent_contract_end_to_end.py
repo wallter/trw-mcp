@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -81,9 +82,22 @@ def _payload(file_path: str, tool: str = "Edit") -> str:
 
 
 def _run_hook(project: Path, hook: str, file_path: str) -> subprocess.CompletedProcess[str]:
-    """Drive a shipped hook exactly as the client would: sh + stdin JSON."""
+    """Drive a shipped hook exactly as the client would: sh + stdin JSON.
+
+    A real client has an interpreter with trw_mcp installed and this scratch
+    project has none: no ``.venv``, no ``.mcp.json``, and PATH ``python3`` is
+    whatever the developer's or CI's shell resolves. The guard's resolution
+    order is ``$TRW_PYTHON`` -> ``$CLAUDE_PROJECT_DIR/.venv/bin/python`` ->
+    the ``.mcp.json`` launcher shebang -> PATH ``python3``
+    (PRD-CORE-250-FR05), and once enrolled it fails CLOSED when all of them
+    fail to import — so without the override every step below returned the
+    resolver's exit 2 instead of the enforcement decision this file exists to
+    walk. Pointing TRW_PYTHON at the suite's own interpreter is what makes the
+    returncodes here mean ALLOW and BLOCK.
+    """
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env.setdefault("TRW_PYTHON", sys.executable)
     # Assert the enforcement decision, not latency. The shipped budgets fail
     # CLOSED on timeout by design, and importing trw_mcp costs ~0.44s idle — so
     # under a parallel full-suite run the 1s pre-write budget is routinely blown
@@ -138,7 +152,7 @@ def project(tmp_path: Path) -> Path:
     # YAML is a superset of JSON, and the loader is strict about structure, not style.
     (root / ".trw" / "contracts" / "must-not-happen.yaml").write_text(json.dumps(contract, indent=2), encoding="utf-8")
 
-    for hook in (_PRE_HOOK, _POST_HOOK):
+    for hook in (_PRE_HOOK, _POST_HOOK, "lib-intent-guard.sh"):
         shutil.copy2(_HOOK_SRC / hook, root / ".claude" / "hooks" / hook)
     lib = _HOOK_SRC / "lib-trw.sh"
     if lib.exists():
@@ -159,7 +173,7 @@ def test_unenrolled_project_is_untouched(tmp_path: Path) -> None:
     """The release-safety property: no enrollment marker means no enforcement."""
     bare = tmp_path / "bare"
     (bare / ".claude" / "hooks").mkdir(parents=True)
-    for hook in (_PRE_HOOK, _POST_HOOK):
+    for hook in (_PRE_HOOK, _POST_HOOK, "lib-intent-guard.sh"):
         shutil.copy2(_HOOK_SRC / hook, bare / ".claude" / "hooks" / hook)
     for hook in (_PRE_HOOK, _POST_HOOK):
         assert _run_hook(bare, hook, "anything.py").returncode == 0

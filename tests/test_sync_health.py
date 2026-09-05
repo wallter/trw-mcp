@@ -71,31 +71,67 @@ def test_healthy_state(tmp_path: Path) -> None:
     assert result["consecutive_failures"] == 0
 
 
-def test_fail_open_on_missing_file(tmp_path: Path) -> None:
-    """No sync-state.json (fresh install) => safe default, no false positive."""
+def test_unreadable_sync_state_reports_not_measured_not_healthy(tmp_path: Path) -> None:
+    """PRD-CORE-263-FR02 — the three unreadable cases, each with its own reason.
+
+    Was ``test_fail_open_on_missing_file`` / ``test_fail_open_on_corrupted_json``,
+    which asserted ``degraded is False`` for a file nobody could read. That is a
+    verdict about a push that was never observed, and it contradicts this step's
+    own documented contract (a missing push is "never" and therefore degraded).
+
+    Attribution: reverting FR02 (restoring ``safe_default``) turns the
+    missing-file case red on the first assertion.
+    """
+    from trw_mcp.tools._ceremony_degradations import DegradationCollector
+    from trw_mcp.tools._sync_health import NOT_MEASURED
+
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir(parents=True, exist_ok=True)
     config = _config(tmp_path)
 
-    result = step_sync_health(trw_dir, config)
+    # 1. absent
+    absent = step_sync_health(trw_dir, config)
+    assert absent["status"] == NOT_MEASURED
+    assert absent["reason"] == "sync_state_absent"
+    assert "degraded" not in absent, "a read that did not happen must not carry a verdict"
+    assert absent["consecutive_failures"] == 0
+    assert absent["last_push_at"] is None
+    assert absent["advisory"] != ""
 
-    assert result["degraded"] is False
-    assert result["advisory"] == ""
-    assert result["consecutive_failures"] == 0
-    assert result["last_push_at"] is None
+    # 2. present but not a mapping
+    (trw_dir / "sync-state.json").write_text("[1, 2, 3]", encoding="utf-8")
+    non_mapping = step_sync_health(trw_dir, config)
+    assert non_mapping["status"] == NOT_MEASURED
+    assert non_mapping["reason"] == "sync_state_not_a_mapping"
+    assert "degraded" not in non_mapping
+    assert non_mapping["reason"] != absent["reason"], "the reasons must be distinguishable"
+
+    # 3. unparseable — raises inside the step
+    (trw_dir / "sync-state.json").write_text("{ this is not valid json ", encoding="utf-8")
+    collector = DegradationCollector()
+    raised = step_sync_health(trw_dir, config, collector)
+    assert raised["status"] == NOT_MEASURED
+    assert str(raised["reason"]).startswith("sync_state_unreadable")
+    assert "degraded" not in raised
+    # The swallow is recorded through the session degradation collector, not
+    # only in a debug log.
+    assert [item["step"] for item in collector.items] == ["sync_health"]
 
 
-def test_fail_open_on_corrupted_json(tmp_path: Path) -> None:
-    """Corrupted sync-state.json => safe default without raising."""
+def test_readable_sync_state_output_is_unchanged_by_fr02(tmp_path: Path) -> None:
+    """PRD-CORE-263-FR02 — the readable path is pinned byte-for-byte."""
     trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir(parents=True, exist_ok=True)
-    (trw_dir / "sync-state.json").write_text("{ this is not valid json ")
-    config = _config(tmp_path)
+    last_push = _iso_ago(0.1)
+    _write_state(trw_dir, {"consecutive_failures": 2, "last_push_at": last_push})
 
-    result = step_sync_health(trw_dir, config)
+    result = step_sync_health(trw_dir, _config(tmp_path))
 
-    assert result["degraded"] is False
-    assert result["advisory"] == ""
+    assert result == {
+        "degraded": False,
+        "consecutive_failures": 2,
+        "last_push_at": last_push,
+        "advisory": "",
+    }
 
 
 def test_config_threshold_override(tmp_path: Path) -> None:
@@ -238,9 +274,18 @@ def test_session_start_contains_sync_health(tmp_path: Path) -> None:
     assert "sync_health" in result, f"sync_health missing; got keys: {sorted(result.keys())}"
     sync_health = result["sync_health"]
     assert isinstance(sync_health, dict)
-    assert "degraded" in sync_health
+    # PRD-CORE-263-FR02: a fresh fixture has no sync-state.json, so the honest
+    # answer is not-measured rather than a ``degraded: False`` verdict about a
+    # push nobody looked at.
     assert "advisory" in sync_health
     assert "consecutive_failures" in sync_health
+    # DEF-14 attribution: the pre-fix OR made this tautological — a reverted
+    # ``degraded: False`` verdict on a missing sync-state.json ALSO satisfies
+    # ``"degraded" in sync_health``, so the assertion passed in both the fixed
+    # and the reverted world and could not discriminate between them. A fresh
+    # fixture (no sync-state.json) must strictly report not-measured.
+    assert sync_health.get("status") == "not_measured"
+    assert "degraded" not in sync_health
 
 
 def test_session_start_sync_health_degraded_warning(

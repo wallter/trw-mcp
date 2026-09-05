@@ -120,3 +120,81 @@ def test_the_rejection_error_republishes_the_accepted_set() -> None:
 def test_accepted_keys_are_derived_from_the_model_never_hand_listed() -> None:
     """``ADVANCED_KEYS`` must track the model so the two cannot diverge."""
     assert set(ADVANCED_KEYS) == set(InitAdvanced.model_fields)
+
+
+# --- PRD-CORE-265-FR01: the typed formation manifest -------------------------
+
+
+def test_formation_manifest_round_trips_and_refuses_unknown_keys() -> None:
+    """FR01. The manifest is a closed model, and each refusal names its cause.
+
+    ATTRIBUTION. Each block below guards one line of
+    ``trw_mcp/formation/_manifest.py``:
+      * round-trip      -> ``render_manifest``'s ``sort_keys=False``
+      * unknown key     -> ``model_config = ConfigDict(extra="forbid")``
+      * closed status   -> the ``FormationMemberStatus`` enum annotation
+      * duplicate id    -> ``_refuse_duplicate_member_ids``
+      * glob overlap    -> ``_refuse_overlapping_globs``
+      * shared prd_id   -> ``_refuse_shared_prd_ids``
+      * escaping glob   -> the ``..``/absolute branches of ``normalise_glob``
+    Delete any one and this test goes red on that block alone.
+    """
+    import yaml
+
+    from trw_mcp.formation import TERMINAL_STATUSES, FormationError, FormationManifest, validate
+    from trw_mcp.formation._store import render_manifest
+
+    payload = {
+        "formation_id": "release-train",
+        "revision": 3,
+        "created_utc": "2026-09-04T00:00:00+00:00",
+        "updated_utc": "2026-09-04T01:00:00+00:00",
+        "orchestrator_run_path": "/tmp/runs/orchestrator",
+        "shared_rules_ref": "docs/rules.md",
+        "members": [
+            {
+                "member_id": "impl-1",
+                "client": "claude-code",
+                "role": "implementer",
+                "run_path": "/tmp/runs/impl-1",
+                "pin_key": "pin-1",
+                "owned_paths": ["src/alpha"],
+                "test_owned_paths": ["tests/test_alpha.py"],
+                "prd_ids": ["PRD-CORE-900"],
+                "status": "joined",
+                "joined_utc": "2026-09-04T00:30:00+00:00",
+                "note": "",
+            }
+        ],
+    }
+    manifest = validate(payload)
+    reparsed = FormationManifest.model_validate(yaml.safe_load(render_manifest(manifest)))
+    assert render_manifest(reparsed) == render_manifest(manifest), "a manifest must round-trip byte-identically"
+    assert manifest.members[0].status == "joined"
+    assert TERMINAL_STATUSES == {"delivered", "abandoned", "reassigned"}
+
+    with pytest.raises(FormationError) as unknown:
+        validate({**payload, "members": [{**payload["members"][0], "owner": "someone"}]})  # type: ignore[dict-item]
+    assert "owner" in str(unknown.value), "an undeclared key must be named in the refusal"
+
+    with pytest.raises(FormationError):
+        validate({**payload, "members": [{**payload["members"][0], "status": "finished"}]})  # type: ignore[dict-item]
+
+    duplicate = [dict(payload["members"][0]), dict(payload["members"][0])]  # type: ignore[arg-type]
+    with pytest.raises(FormationError, match="duplicate member_id"):
+        validate({**payload, "members": duplicate})
+
+    second = {**payload["members"][0], "member_id": "impl-2", "prd_ids": ["PRD-CORE-901"]}  # type: ignore[dict-item]
+    with pytest.raises(FormationError) as overlap:
+        validate({**payload, "members": [payload["members"][0], second]})  # type: ignore[list-item]
+    assert "impl-1" in str(overlap.value) and "impl-2" in str(overlap.value) and "src/alpha" in str(overlap.value)
+
+    disjoint = {**second, "owned_paths": ["src/beta"], "test_owned_paths": ["tests/test_beta.py"]}
+    shared_prd = {**disjoint, "prd_ids": ["PRD-CORE-900"]}
+    with pytest.raises(FormationError, match="PRD-CORE-900"):
+        validate({**payload, "members": [payload["members"][0], shared_prd]})  # type: ignore[list-item]
+
+    for escaping in ("../outside/**", "/etc/passwd", "src/../../elsewhere"):
+        with pytest.raises(FormationError) as escaped:
+            validate({**payload, "members": [{**payload["members"][0], "owned_paths": [escaping]}]})  # type: ignore[dict-item]
+        assert escaping in str(escaped.value), "the refusal must name the offending glob"

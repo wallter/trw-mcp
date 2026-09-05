@@ -70,8 +70,8 @@ class _SyncFields:
     )
 
     # -- Pipeline-health bandit probe (PRD-FIX-105-FR02) --
-    # The bandit_state.json file is written by the BACKEND meta-tune policy
-    # (backend/services/bandit_policy.py), NOT by the MCP runtime. In a dev repo
+    # The bandit_state.json file is written by the TRW platform's meta-tune
+    # bandit policy service, NOT by the MCP runtime. In a self-hosted repo
     # or any deployment where the backend bandit is not actively driven, the file
     # legitimately goes stale and the probe cries wolf. These knobs let operators
     # tune the SLA or disable the probe entirely where no local writer exists.

@@ -11,10 +11,12 @@ must stay advisory after task-type/config policy resolution.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, cast
 
 import pytest
 
+from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from trw_mcp.tools import _deliver_gate_dispatch as gd
 from trw_mcp.tools._deliver_gate_dispatch import (
     GateDescriptor,
@@ -45,7 +47,7 @@ def _run(
 # --------------------------------------------------------------------------- #
 
 
-def test_gate_table_has_six_descriptors_in_precedence_order() -> None:
+def test_gate_table_has_seven_descriptors_in_precedence_order() -> None:
     keys = [d.key for d in gd._GATE_TABLE]
     assert keys == [
         "integration_review_block",
@@ -54,6 +56,9 @@ def test_gate_table_has_six_descriptors_in_precedence_order() -> None:
         "delivery_blocked",
         # PRD-SEC-013-FR07: open intent-contract violation blocks before the advisory build gate.
         "intent_violation_block",
+        # PRD-CORE-255-FR04: missing adversarial audit for safety-critical scope —
+        # also a hard block, so it must precede the advisory build gate.
+        "safety_critical_adversarial_block",
         "build_gate_warning",
     ]
 
@@ -64,6 +69,8 @@ def test_gate_table_policies_map_each_key_to_its_override_class() -> None:
     assert by_key["review_scope_block"] is OverridePolicy.NO_ESCAPE
     assert by_key["review_block"] is OverridePolicy.STRUCTURED
     assert by_key["delivery_blocked"] is OverridePolicy.STRUCTURED
+    assert by_key["intent_violation_block"] is OverridePolicy.STRUCTURED
+    assert by_key["safety_critical_adversarial_block"] is OverridePolicy.STRUCTURED
     assert by_key["build_gate_warning"] is OverridePolicy.ADVISORY
 
 
@@ -405,3 +412,123 @@ def test_bridge_covers_every_key_the_legacy_unpack_does_not_own() -> None:
 
     expected_bridged = all_keys - _DISPATCH_OWNED_KEYS
     assert expected_bridged.issubset(results), f"missing: {expected_bridged - set(results)}"
+
+
+# --------------------------------------------------------------------------- #
+# PRD-CORE-265-FR11 — formation gate on the orchestrator run
+# --------------------------------------------------------------------------- #
+
+
+def _dispatch(resolved_run: object, *, allow_unverified: bool = False, reason: str = "") -> tuple[bool, dict[str, Any]]:
+    results: dict[str, Any] = {}
+    errors: list[str] = []
+    blocked = evaluate_delivery_gates(
+        {}, cast("Any", results), errors, cast("Any", resolved_run), cast("Any", "/tmp/trw"), allow_unverified, reason
+    )
+    return blocked, results
+
+
+def test_formation_gate_blocks_on_non_terminal_member_and_honours_structured_override(
+    formation_env: FormationFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR11. A joined, unfinished member blocks the ORCHESTRATOR, and only it.
+
+    ATTRIBUTION. The block guards the ``_evaluate_formation`` call added to
+    ``evaluate_delivery_gates``; delete it and the first assertion passes
+    delivery through. The member-run assertion guards the ``is_orchestrator``
+    branch in ``_formation_deliver_gate``: without it the gate would block the
+    very members it is waiting for, deadlocking the formation. The override case
+    guards that the gate is STRUCTURED rather than NO_ESCAPE — it routes through
+    the same ``_hard_block_override``/PRD-CORE-191 record every hard gate uses,
+    so free text is refused by that shared validator, not by a private one here.
+    """
+    from trw_mcp.formation import create, join, revise
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+
+    blocked, results = _dispatch(formation_env.orchestrator_run)
+    assert blocked is True
+    assert "impl-1" in results["formation_gate_block"]
+    assert "joined" in results["formation_gate_block"]
+    assert results["success"] is False
+
+    # A member run delivering on its own is untouched by this gate.
+    member_blocked, member_results = _dispatch(formation_env.member_runs["impl-1"])
+    assert member_blocked is False
+    assert "formation_gate_block" not in member_results
+
+    seen: dict[str, object] = {}
+
+    def _fake_apply(**kwargs: object) -> tuple[bool, str | None]:
+        seen.update(kwargs)
+        return True, None
+
+    monkeypatch.setattr("trw_mcp.tools._acceptable_failure_validation.apply_structured_override", _fake_apply)
+    overridden, override_results = _dispatch(
+        formation_env.orchestrator_run, allow_unverified=True, reason='{"failed_command": "x"}'
+    )
+    assert overridden is False
+    assert seen["gate_type"] == "formation_member_incomplete"
+    assert "formation_gate_block" not in override_results, "a granted override must not leave the block key behind"
+
+    # Retiring the member by orchestrator revision clears the gate for real.
+    revise("release-train", formation_env.orchestrator_run, {"impl-1": {"status": "abandoned"}})
+    monkeypatch.undo()
+    cleared, cleared_results = _dispatch(formation_env.orchestrator_run)
+    assert cleared is False
+    assert "formation_gate_block" not in cleared_results
+
+
+def test_formation_gate_rejects_a_delivered_stamp_with_no_delivery_record(
+    formation_env: FormationFixture,
+) -> None:
+    """FR11. The member's self-report is checked against its own run.
+
+    ATTRIBUTION. Guards the ``delivered``-without-a-record branch of
+    ``formation/_status.non_terminal_members``. Drop it and a member could clear
+    the orchestrator's gate by stamping itself delivered, which is precisely the
+    unverified completion claim this gate exists to catch.
+    """
+    from trw_mcp.formation import create, join
+    from trw_mcp.formation._join import mark_member_delivered
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+    mark_member_delivered(
+        trw_dir=formation_env.trw_dir,
+        formation_id="release-train",
+        member_id="impl-1",
+        run_path=formation_env.member_runs["impl-1"],
+        lock_timeout_seconds=5.0,
+    )
+
+    blocked, results = _dispatch(formation_env.orchestrator_run)
+    assert blocked is True
+    assert "no delivery record" in results["formation_gate_block"]
+
+    run_yaml = formation_env.member_runs["impl-1"] / "meta" / "run.yaml"
+    run_yaml.write_text(run_yaml.read_text(encoding="utf-8").replace("status: active", "status: delivered"), "utf-8")
+    cleared, cleared_results = _dispatch(formation_env.orchestrator_run)
+    assert cleared is False
+    assert "formation_gate_block" not in cleared_results
+
+
+def test_formation_gate_advisory_mode_warns_without_blocking(
+    formation_env: FormationFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FR11. ``formation_deliver_gate: advisory`` is the typed kill path."""
+    import trw_mcp.formation as formation_pkg
+    from trw_mcp.formation import create, join
+
+    create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+
+    knobs = formation_pkg.settings()
+    monkeypatch.setattr(formation_pkg, "settings", lambda: replace(knobs, deliver_gate="advisory"), raising=True)
+    blocked, results = _dispatch(formation_env.orchestrator_run)
+    assert blocked is False
+    assert "impl-1" in results["formation_gate_warning"]
+    assert "formation_gate_block" not in results

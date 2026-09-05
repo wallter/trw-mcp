@@ -12,6 +12,13 @@ prd:
   version: "1.0"
   status: draft  # draft | review | approved | implemented | deprecated
   priority: P1   # P0 (critical) | P1 (high) | P2 (medium) | P3 (low)
+  # PRD-CORE-255-FR03: set true when a defect in THIS work would compromise a
+  # safety control (redaction, sanitization, egress, auth, or the deliver-gate
+  # machinery itself). A true value makes an independent adversarial audit a
+  # BLOCKING trw_deliver gate for any run whose scope names this PRD -- the
+  # audit must be relayed through trw_review with a digest-verified
+  # external_receipt_path (or a receipted operator review). Default false.
+  safety_critical: false
 
 # Machine-readable schema opt-in. Keep top-level so parse_frontmatter() retains
 # it after flattening the nested `prd:` identity block.

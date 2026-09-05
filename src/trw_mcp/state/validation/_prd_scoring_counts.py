@@ -19,6 +19,9 @@ from trw_mcp.state.validation._prd_scoring_traceability import (
     _collect_reference_matches,
     _normalize_reference_token,
 )
+from trw_mcp.state.validation._verification_command_lint import (
+    _VERIFICATION_COMMAND_RE as _VERIFICATION_COMMAND_RE,
+)
 
 # Assertion keyword vocabulary for machine-verifiable assertions.
 # Existence types (PRD-QUAL-056-FR02) prove a symbol/file is present.
@@ -55,11 +58,9 @@ _ASSERTION_CLASSIFY_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-# Recognizable verification commands in PRD text.
-_VERIFICATION_COMMAND_RE = re.compile(
-    r"\b(?:pytest|python -m pytest|npx vitest run|npm(?: run)? test|make test|go test|cargo test)\b",
-    re.IGNORECASE,
-)
+# Recognizable verification commands in PRD text. Defined in
+# ``_verification_command_lint`` so the names this scorer counts and the names
+# PRD-INFRA-179-FR02's runnable-command lint accepts cannot drift apart.
 
 
 def _has_assertion_evidence(content: str) -> bool:

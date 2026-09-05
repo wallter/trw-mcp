@@ -85,9 +85,9 @@ def test_portable_learning_federates_across_distinct_project_dirs(tmp_path: Path
     )
 
     # Neither project store holds the row — it routed to the shared user tier.
-    assert memory_adapter.get_backend(project_a).get("L-portable") is None
+    assert memory_adapter.get_backend(project_a).get("L-portable", namespace="default") is None
     memory_adapter.reset_backend()
-    assert memory_adapter.get_backend(project_b).get("L-portable") is None
+    assert memory_adapter.get_backend(project_b).get("L-portable", namespace="default") is None
     memory_adapter.reset_backend()
 
     rows = memory_adapter.recall_learnings(project_b, "commits cadence directive", max_results=10)

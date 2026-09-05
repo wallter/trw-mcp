@@ -18,6 +18,10 @@ import pytest
 
 HOOK_DIR = Path(__file__).resolve().parent.parent / "src/trw_mcp/data/hooks"
 HOOKS = ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh")
+#: The shared control-point library both hooks source (PRD-CORE-250-FR05). It is
+#: copied verbatim rather than stubbed: it holds the trap, decide and recognition
+#: routines these tests exist to exercise, so a stub would test the stub.
+INTENT_LIB = "lib-intent-guard.sh"
 
 pytest_skip_no_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="sh unavailable")
 
@@ -40,7 +44,7 @@ def _project(tmp_path: Path, *, python_rc: int | None, lib: str, enrolled: bool 
     project = tmp_path / "proj"
     hooks = project / ".claude/hooks"
     hooks.mkdir(parents=True)
-    for name in HOOKS:
+    for name in (*HOOKS, INTENT_LIB):
         shutil.copy2(HOOK_DIR / name, hooks / name)
     (hooks / "lib-trw.sh").write_text(lib, encoding="utf-8")
     (project / ".trw/contracts").mkdir(parents=True)

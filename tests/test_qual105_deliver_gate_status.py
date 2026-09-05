@@ -25,14 +25,14 @@ from ._tools_orchestration_support import orch_tools, set_project_root  # noqa: 
 def _passing_build_event() -> dict[str, object]:
     return {
         "event": "build_check_complete",
-        "data": {"tests_passed": True, "static_checks_clean": True},
+        "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": True, "static_checks_clean": True},
     }
 
 
 def _failing_build_event() -> dict[str, object]:
     return {
         "event": "build_check_complete",
-        "data": {"tests_passed": False, "static_checks_clean": True},
+        "data": {"test_count": 12, "scope": "pytest tests", "tests_passed": False, "static_checks_clean": True},
     }
 
 
@@ -93,6 +93,8 @@ class TestBuildGateReadyPredicate:
             {
                 "ts": "2026-06-11T00:00:00Z",
                 "event": "build_check_complete",
+                "test_count": 12,
+                "scope": "pytest tests",
                 "tests_passed": True,
                 "static_checks_clean": True,
             },
@@ -109,6 +111,8 @@ class TestBuildGateReadyPredicate:
             {
                 "ts": "2026-06-11T00:00:05Z",
                 "event": "build_check_complete",
+                "test_count": 12,
+                "scope": "pytest tests",
                 "tests_passed": True,
                 "static_checks_clean": True,
             },

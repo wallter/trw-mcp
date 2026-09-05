@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -42,121 +43,67 @@ def _parse_frontmatter(content: str) -> tuple[dict, str]:
 # ---------------------------------------------------------------------------
 
 
-class TestGenerateCursorIdeSubagents:
-    """test_subagents_* test group."""
+class TestCursorIdeSubagents:
+    """Cursor IDE subagent installation, after PRD-CORE-252-FR04.
 
-    def test_subagents_install(self, tmp_path: Path) -> None:
-        """All 4 subagent files are created with parseable YAML frontmatter."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
+    ``generate_cursor_ide_subagents``, ``cursor_ide_agent_contents`` and the
+    ``_TRW_SUBAGENTS`` description list are retired: four hand-written stubs
+    became the whole bundled specialist set, translated into Cursor's format.
+    ``TestGenerateCursorIdeSubagents`` and
+    ``TestFallbackTemplateBehavior::test_subagents_fallback_when_template_missing``
+    were deleted with them — the latter tested a fallback for a bundled template
+    directory that no longer exists. The properties worth keeping are asserted
+    here on the real path; the format contract itself lives in
+    ``tests/test_agent_materialization_per_client.py``.
+    """
 
-        result = generate_cursor_ide_subagents(tmp_path)
+    def _install(self, tmp_path: Path) -> dict[str, list[str]]:
+        from trw_mcp.bootstrap._init_project_skills import _install_agents
+
+        result: dict[str, list[str]] = {"created": [], "skipped": [], "errors": []}
+        _install_agents(tmp_path, force=False, result=result, clients=["cursor-ide"])
+        return result
+
+    def test_subagents_install_with_parseable_frontmatter(self, tmp_path: Path) -> None:
+        import yaml
+
+        result = self._install(tmp_path)
+        assert not result["errors"], result["errors"]
+
         agents_dir = tmp_path / ".cursor" / "agents"
-
-        expected_names = [
-            "trw-explorer",
-            "trw-implementer",
-            "trw-reviewer",
-            "trw-researcher",
-        ]
-        for name in expected_names:
-            agent_file = agents_dir / f"{name}.md"
-            assert agent_file.is_file(), f"Missing agent file: {name}.md"
-            content = agent_file.read_text(encoding="utf-8")
-            parsed, _ = _parse_frontmatter(content)
-            assert parsed["name"] == name
-            assert "description" in parsed
-            assert "model" in parsed
+        installed = sorted(agents_dir.glob("*.md"))
+        assert installed, "no cursor agents installed"
+        for path in installed:
+            text = path.read_text(encoding="utf-8")
+            assert text.startswith("---\n")
+            block = text[4:].split("\n---\n", 1)[0]
+            parsed = yaml.safe_load(block)
+            assert parsed["name"] == path.stem
+            assert parsed["model"] == "inherit", "cursor agents inherit the active model"
             assert isinstance(parsed["readonly"], bool)
-            assert isinstance(parsed["is_background"], bool)
 
-        assert len(result["created"]) == 4
+    def test_subagents_carry_no_claude_code_tool_namespace(self, tmp_path: Path) -> None:
+        """US-1: no file may contain the ``mcp__trw__`` prefix."""
+        self._install(tmp_path)
+        for path in sorted((tmp_path / ".cursor" / "agents").glob("*.md")):
+            assert "mcp__trw__" not in path.read_text(encoding="utf-8"), path.name
 
     def test_subagents_preserve_user_agents(self, tmp_path: Path) -> None:
-        """User-authored agents outside trw- prefix are preserved after regeneration."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
+        """A user-authored neighbour in `.cursor/agents/` is never touched."""
+        self._install(tmp_path)
+        mine = tmp_path / ".cursor" / "agents" / "my-agent.md"
+        mine.write_text("# mine\n", encoding="utf-8")
 
-        # Seed a user custom agent
-        agents_dir = tmp_path / ".cursor" / "agents"
-        agents_dir.mkdir(parents=True)
-        user_agent = agents_dir / "my-custom.md"
-        user_agent.write_text("---\nname: my-custom\n---\nCustom agent body.\n", encoding="utf-8")
+        self._install(tmp_path)
 
-        generate_cursor_ide_subagents(tmp_path)
+        assert mine.read_text(encoding="utf-8") == "# mine\n"
 
-        # User agent still present and unmodified
-        assert user_agent.is_file()
-        content = user_agent.read_text(encoding="utf-8")
-        assert "my-custom" in content
-
-    def test_subagents_frontmatter_roundtrip(self, tmp_path: Path) -> None:
-        """Parse frontmatter from generated files; all required fields present."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
-
-        generate_cursor_ide_subagents(tmp_path)
-        agents_dir = tmp_path / ".cursor" / "agents"
-        for agent_file in sorted(agents_dir.glob("trw-*.md")):
-            content = agent_file.read_text(encoding="utf-8")
-            parsed, body = _parse_frontmatter(content)
-            assert "name" in parsed, f"{agent_file.name}: missing 'name'"
-            assert "description" in parsed, f"{agent_file.name}: missing 'description'"
-            assert "model" in parsed, f"{agent_file.name}: missing 'model'"
-            assert "readonly" in parsed, f"{agent_file.name}: missing 'readonly'"
-            assert "is_background" in parsed, f"{agent_file.name}: missing 'is_background'"
-            # Body should have some content
-            assert len(body.strip()) > 0, f"{agent_file.name}: empty body"
-
-    def test_subagents_readonly_flags(self, tmp_path: Path) -> None:
-        """explorer/reviewer/researcher are readonly=true; implementer is readonly=false."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
-
-        generate_cursor_ide_subagents(tmp_path)
-        agents_dir = tmp_path / ".cursor" / "agents"
-
-        readonly_true = ["trw-explorer", "trw-reviewer", "trw-researcher"]
-        readonly_false = ["trw-implementer"]
-
-        for name in readonly_true:
-            content = (agents_dir / f"{name}.md").read_text(encoding="utf-8")
-            parsed, _ = _parse_frontmatter(content)
-            assert parsed["readonly"] is True, f"{name}: expected readonly=true"
-
-        for name in readonly_false:
-            content = (agents_dir / f"{name}.md").read_text(encoding="utf-8")
-            parsed, _ = _parse_frontmatter(content)
-            assert parsed["readonly"] is False, f"{name}: expected readonly=false"
-
-    def test_subagents_researcher_is_background(self, tmp_path: Path) -> None:
-        """trw-researcher has is_background=true; others have is_background=false."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
-
-        generate_cursor_ide_subagents(tmp_path)
-        agents_dir = tmp_path / ".cursor" / "agents"
-
-        content = (agents_dir / "trw-researcher.md").read_text(encoding="utf-8")
-        parsed, _ = _parse_frontmatter(content)
-        assert parsed["is_background"] is True
-
-        for name in ["trw-explorer", "trw-implementer", "trw-reviewer"]:
-            content = (agents_dir / f"{name}.md").read_text(encoding="utf-8")
-            parsed, _ = _parse_frontmatter(content)
-            assert parsed["is_background"] is False, f"{name}: expected is_background=false"
-
-    def test_subagents_idempotent_produces_updated(self, tmp_path: Path) -> None:
-        """Second call marks files as updated, not created."""
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
-
-        first = generate_cursor_ide_subagents(tmp_path)
-        assert len(first["created"]) == 4
-        assert len(first["updated"]) == 0
-
-        second = generate_cursor_ide_subagents(tmp_path)
-        assert len(second["created"]) == 0
-        assert len(second["updated"]) == 4
-
-
-# ---------------------------------------------------------------------------
-# Task 9 — Commands generator tests
-# ---------------------------------------------------------------------------
+    def test_subagents_idempotent(self, tmp_path: Path) -> None:
+        first = self._install(tmp_path)
+        assert first["created"]
+        second = self._install(tmp_path)
+        assert second["created"] == []
+        assert len(second["skipped"]) == len(first["created"])
 
 
 class TestGenerateCursorIdeCommands:
@@ -388,12 +335,35 @@ class TestGenerateCursorIdeHooks:
             script_path = hooks_dir / script_name
             if not script_path.is_file():
                 continue  # skip if not installed (missing bundled source)
-            proc = subprocess.run(
-                ["bash", "-n", str(script_path)],
-                capture_output=True,
-                text=True,
-            )
-            assert proc.returncode == 0, f"bash -n failed on {script_name}: {proc.stderr}"
+            if script_path.suffix == ".py":
+                # Python helpers ship alongside the shell hooks; syntax-check them
+                # with the interpreter the hooks invoke them with.
+                cmd = [sys.executable, "-m", "py_compile", str(script_path)]
+            else:
+                cmd = ["bash", "-n", str(script_path)]
+            proc = subprocess.run(cmd, capture_output=True, text=True)
+            assert proc.returncode == 0, f"syntax check failed on {script_name}: {proc.stderr}"
+
+    def test_every_helper_a_hook_invokes_is_deployed(self, tmp_path: Path) -> None:
+        """Deployment closure: a helper a shipped hook executes must itself ship.
+
+        Regression for the 2026-09-03 adapter diagnostic (F1): trw-session-start.sh,
+        trw-pre-compact.sh and trw-stop.sh run ``python3 "${_SCRIPT_DIR}/_nudge_gate.py"``
+        but the helper was absent from ``_IDE_HOOK_SCRIPTS``, so every installed hook
+        died with FileNotFoundError under ``set -euo pipefail``.
+        """
+        import re
+
+        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_hooks
+
+        generate_cursor_ide_hooks(tmp_path)
+        hooks_dir = tmp_path / ".cursor" / "hooks"
+        invoked = re.compile(r'"\$\{_SCRIPT_DIR\}/([A-Za-z0-9_.-]+)"')
+        for script_path in hooks_dir.glob("*.sh"):
+            for helper in invoked.findall(script_path.read_text(encoding="utf-8")):
+                assert (hooks_dir / helper).is_file(), (
+                    f"{script_path.name} invokes {helper}, which the installer did not deploy"
+                )
 
     def test_hooks_event_commands_reference_correct_path(self, tmp_path: Path) -> None:
         """Each registered event handler command starts with .cursor/hooks/trw-."""
@@ -432,34 +402,15 @@ class TestGenerateCursorIdeHooks:
 
 
 class TestFallbackTemplateBehavior:
-    """Verify fallback behavior when bundled templates are absent."""
+    """Verify fallback behavior when bundled templates are absent.
 
-    def test_subagents_fallback_when_template_missing(self, tmp_path: Path) -> None:
-        """generate_cursor_ide_subagents falls back to inline body when template absent."""
-        from unittest.mock import patch
-
-        from trw_mcp.bootstrap._cursor_ide import generate_cursor_ide_subagents
-
-        # Patch the pkg_files traversable to point to an empty dir so templates are missing
-        empty_dir = tmp_path / "empty_pkg"
-        empty_dir.mkdir()
-
-        class _FakeTraversable:
-            def joinpath(self, name: str) -> _FakeTraversable:
-                return self
-
-            def read_text(self, encoding: str = "utf-8") -> str:
-                raise FileNotFoundError("bundled template missing")
-
-        with patch("trw_mcp.bootstrap._cursor_ide._pkg_files", return_value=_FakeTraversable()):
-            result = generate_cursor_ide_subagents(tmp_path)
-
-        # Should still succeed (fail-open) — fallback body used
-        agents_dir = tmp_path / ".cursor" / "agents"
-        created_and_updated = result["created"] + result.get("updated", [])
-        assert len(created_and_updated) == 4, f"Expected 4 agents, got: {created_and_updated}"
-        for name in ["trw-explorer", "trw-implementer", "trw-reviewer", "trw-researcher"]:
-            assert (agents_dir / f"{name}.md").is_file(), f"Agent file missing: {name}.md"
+    ``test_subagents_fallback_when_template_missing`` was deleted by
+    PRD-CORE-252-FR04: it covered a fallback body for the retired
+    ``data/cursor_ide/agents`` template directory, which no longer exists.
+    Cursor's agents come from the shared bundle, whose absence is handled by
+    ``_install_agents``' per-agent error isolation and asserted in
+    ``tests/test_install_agents_destinations.py::test_per_agent_and_per_client_failures_are_isolated``.
+    """
 
     def test_commands_fallback_when_template_missing(self, tmp_path: Path) -> None:
         """generate_cursor_ide_commands falls back to inline body when template absent."""

@@ -219,11 +219,15 @@ def test_prd_core_218_fr04(config: object) -> None:
     assert wired.mode == "standard"
     assert len(wired.tools) == 15
 
-    # Unknown / missing task -> kernel only (discovery is already kernel).
+    # PRD-CORE-246-FR05: an unmapped or missing task falls back to the
+    # ``unknown`` packs (kernel + verification), NOT to kernel only — the
+    # declared authority must state what the runtime actually exposes.
     unknown = resolve_tool_surface("totally-unknown", "standard")
-    assert unknown.packs == ("kernel",)
-    assert len(unknown.tools) == 9
-    assert len(resolve_tool_surface(None, "standard").tools) == 9
+    assert unknown.packs == ("kernel", "verification")
+    assert len(unknown.tools) == 11
+    assert "unknown fallback" in unknown.decision
+    assert len(resolve_tool_surface(None, "standard").tools) == 11
+    assert len(resolve_tool_surface("unknown", "standard").tools) == 11
 
     # Standard -> exact task mapping over the REAL TaskType vocabulary (F2).
     assert len(resolve_tool_surface("coding", "standard").tools) == 15
@@ -232,8 +236,10 @@ def test_prd_core_218_fr04(config: object) -> None:
     assert len(resolve_tool_surface("eval", "standard").tools) == 11
     assert len(resolve_tool_surface("rca", "standard").tools) == 15
     assert len(resolve_tool_surface("planning", "standard").tools) == 12
-    # F2 tombstone: 'audit' is NOT a TaskType -> kernel-only (unmapped).
-    assert len(resolve_tool_surface("audit", "standard").tools) == 9
+    # F2 tombstone: 'audit' is NOT a TaskType. Since PRD-CORE-246-FR05 it
+    # resolves to the verification-bearing ``unknown`` fallback (11) rather than
+    # silently to kernel only (9), which was the shape the tombstone recorded.
+    assert len(resolve_tool_surface("audit", "standard").tools) == 11
 
     # Explicit all -> full eligible set WITH a visible recorded decision.
     full = set(eligible_tool_names())

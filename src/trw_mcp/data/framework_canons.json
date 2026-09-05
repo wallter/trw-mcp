@@ -79,7 +79,7 @@
       "runtime_compact_core": ".trw/frameworks/FRAMEWORK-CORE.md",
       "runtime_reference": ".trw/frameworks/FRAMEWORK-REFERENCE.md",
       "runtime_combined": ".trw/frameworks/FRAMEWORK.md",
-      "frozen_baseline_digest": "2cc2e72ff001c6285651854848d5d5afcb61de885f6e52dd5c015397b84917e2",
+      "frozen_baseline_digest": "9c7a52193d21f56cdff099869ce26b4e47b2becc4b1d23cb0d14b60e731636fb",
       "max_core_ratio": 0.7,
       "compiler_schema": 1
     },
@@ -93,7 +93,7 @@
       "runtime_compact_core": ".trw/frameworks/AARE-F-CORE.md",
       "runtime_reference": ".trw/frameworks/AARE-F-REFERENCE.md",
       "runtime_combined": ".trw/frameworks/AARE-F-FRAMEWORK.md",
-      "frozen_baseline_digest": "09b46d42145d539214adf9671e6628ee9eb829c5dccefd8eb9b3ab917e546120",
+      "frozen_baseline_digest": "b81ce4cc86cc604008eaf845a9dccc6e84862a5d21f1a77709e3338f827c8cf7",
       "max_core_ratio": 0.7,
       "compiler_schema": 1
     }

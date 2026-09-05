@@ -45,7 +45,13 @@ class TestUpdateClaudeMdTrwSection:
         ):
             _update_claude_md_trw_section(claude_md, result)
 
-        assert any("Failed to update" in e for e in result["errors"])
+        # PRD-FIX-123-FR06: the write now lands through the guard, which reports
+        # an unwritable filesystem as a refusal carrying the underlying cause.
+        # The contract under test is unchanged — a failed write is reported,
+        # never silently swallowed — and the guard adds that the target is left
+        # byte-identical (fail-CLOSED, NFR02).
+        assert any("Refused to write" in e and "read-only fs" in e for e in result["errors"])
+        assert claude_md.read_text(encoding="utf-8") == content
 
     def test_malformed_markers_start_without_end(self, tmp_path: Path) -> None:
         """CLAUDE.md with trw:start but no trw:end → error about malformed markers."""
@@ -88,7 +94,7 @@ class TestUpdateClaudeMdTrwSection:
         ):
             _update_claude_md_trw_section(claude_md, result)
 
-        assert any("Failed to update" in e for e in result["errors"])
+        assert any("Refused to write" in e and "disk full" in e for e in result["errors"])
 
     def test_content_without_trailing_newline(self, tmp_path: Path) -> None:
         """Content without trailing newline gets one added before TRW block."""

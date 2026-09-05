@@ -11,11 +11,19 @@ from tests._tools_learning_shared import (
 )
 
 
-class TestMarkerAwareTruncation:
-    """QUAL-018 FR02: Marker-aware truncation preserves TRW section."""
+class TestOverflowIsRefusedNotTruncated:
+    """PRD-FIX-123-FR01, inverting PRD-QUAL-018-FR02.
 
-    def test_trw_section_preserved_on_truncation(self, tmp_path: Path) -> None:
-        """When file exceeds max_lines, TRW section is kept intact."""
+    These three tests asserted the behaviour that destroyed 128 hand-written
+    lines of a user's AGENTS.md: that an oversized merge wrote a truncation
+    marker and clipped the user's region to fit. The requirement they encoded
+    is superseded — an overflow is now a refused write — so each assertion is
+    inverted rather than deleted, and the third one is kept unchanged as the
+    control proving the guard is not a blanket refusal.
+    """
+
+    def test_overflow_refuses_and_preserves_both_sides(self, tmp_path: Path) -> None:
+        """Was: TRW survives and user content is trimmed. Now: nothing is written."""
         from trw_mcp.state.claude_md import (
             TRW_MARKER_END,
             TRW_MARKER_START,
@@ -23,42 +31,39 @@ class TestMarkerAwareTruncation:
         )
 
         target = tmp_path / "CLAUDE.md"
-        # 200 lines of user content
         user_content = "\n".join(f"# User line {i}" for i in range(200)) + "\n"
         target.write_text(user_content, encoding="utf-8")
+        before = target.read_bytes()
 
         trw_section = f"\n{TRW_MARKER_START}\n## TRW Auto\n- learning alpha\n- learning beta\n{TRW_MARKER_END}\n"
-        merge_trw_section(target, trw_section, max_lines=50)
+        verdict = merge_trw_section(target, trw_section, max_lines=50, project_root=tmp_path)
 
+        assert verdict.written is False
+        assert verdict.refusal is not None
+        assert verdict.refusal["reason"] == "oversized"
+        assert verdict.refusal["limit"] == 50
+        assert target.read_bytes() == before
         content = target.read_text(encoding="utf-8")
-        # TRW markers and content must survive
-        assert TRW_MARKER_START in content
-        assert TRW_MARKER_END in content
-        assert "learning alpha" in content
-        assert "learning beta" in content
-        # User content must be trimmed
-        assert "User line 199" not in content
-        # Truncation comment should be present
-        assert "truncated" in content.lower()
+        assert "User line 199" in content
+        assert "truncated" not in content.lower()
 
-    def test_simple_truncation_fallback(self, tmp_path: Path) -> None:
-        """Without TRW markers, truncation falls back to simple line slice."""
+    def test_no_marker_overflow_refuses(self, tmp_path: Path) -> None:
+        """Was: a simple line slice. That dropped 170 of 200 lines AND the section."""
         from trw_mcp.state.claude_md import merge_trw_section
 
         target = tmp_path / "CLAUDE.md"
         content = "\n".join(f"# Line {i}" for i in range(200)) + "\n"
         target.write_text(content, encoding="utf-8")
+        before = target.read_bytes()
 
-        merge_trw_section(target, "\n## New\n- item\n", max_lines=30)
+        verdict = merge_trw_section(target, "\n## New\n- item\n", max_lines=30, project_root=tmp_path)
 
-        result = target.read_text(encoding="utf-8")
-        lines = result.split("\n")
-        # Should not exceed max_lines + truncation comment + trailing newline
-        assert len(lines) <= 33
-        assert "truncated" in result.lower()
+        assert verdict.written is False
+        assert target.read_bytes() == before
+        assert "truncated" not in target.read_text(encoding="utf-8").lower()
 
     def test_no_truncation_under_limit(self, tmp_path: Path) -> None:
-        """Files under the limit are not truncated."""
+        """Control, unchanged: a file within the limit merges exactly as before."""
         from trw_mcp.state.claude_md import (
             TRW_MARKER_END,
             TRW_MARKER_START,
@@ -70,12 +75,13 @@ class TestMarkerAwareTruncation:
         target.write_text(user_content, encoding="utf-8")
 
         trw_section = f"\n{TRW_MARKER_START}\n## TRW\n- item\n{TRW_MARKER_END}\n"
-        merge_trw_section(target, trw_section, max_lines=500)
+        assert merge_trw_section(target, trw_section, max_lines=500, project_root=tmp_path).written is True
 
         content = target.read_text(encoding="utf-8")
         assert "truncated" not in content.lower()
         assert TRW_MARKER_START in content
         assert TRW_MARKER_END in content
+        assert "Some content." in content
 
 
 class TestAutoObsoleteOnCompendium:

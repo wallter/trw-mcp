@@ -1,27 +1,36 @@
 """Per-client command (argv) builder for the dispatch layer.
 
 Belongs to the ``trw_mcp.dispatch`` package. ``build_command`` is a *pure*
-function (no I/O, no subprocess) that turns a :class:`DispatchRequest` into the
-exact ``list[str]`` argv to execute. The prompt is always passed as a single
-argv token — never shell-interpolated — so a malicious prompt body cannot break
-out into shell metacharacters.
+function (no I/O, no subprocess, no PATH lookup) that turns a
+:class:`DispatchRequest` into the exact ``list[str]`` argv to execute. The prompt
+is always passed as a single argv token — never shell-interpolated — so a
+malicious prompt body cannot break out into shell metacharacters.
 
-New clients are a small, data-driven addition: register a ``_ClientSpec`` in
-``_CLIENT_SPECS``. The isolation / read-only / model flags verified live on this
-box (2026-06-21) are encoded here.
+This module holds NO per-client knowledge (PRD-CORE-266-FR02). Every flag,
+subcommand and binary name lives in ``_client_specs.CLIENT_SPECS``; the builder
+only knows the ORDER the fragments are concatenated in. Adding a client is a data
+entry there and no edit here, and there is no ``req.client == ...`` comparison
+left to grow a second branch.
+
+Purity is load-bearing rather than stylistic: it is what makes the same request
+produce the same argv on every box, and what lets the 64 recorded baselines in
+``tests/fixtures/dispatch_argv_baseline.json`` prove the registry migration was
+behaviour-preserving.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from trw_mcp.dispatch._client_specs import (
+    SUPPORTED_CLIENTS,
+    UnknownClientError,
+    client_spec_for,
+)
+from trw_mcp.dispatch._types import DispatchRequest
 
-from trw_mcp.dispatch._types import SUPPORTED_CLIENTS, DispatchClient, DispatchRequest
-
-# ``SUPPORTED_CLIENTS`` is defined in ``_types.py`` (next to the ``DispatchClient``
-# Literal) so config defaults, the env allowlist, and this builder all derive from
-# ONE source. Re-exported here for back-compat (``_commands.SUPPORTED_CLIENTS`` and
-# the package facade import it from here).
+# ``SUPPORTED_CLIENTS`` is derived from the registry key set in ``_client_specs``
+# so config defaults, the env allowlist, and this builder all read ONE source.
+# Re-exported here for back-compat (``_commands.SUPPORTED_CLIENTS`` and the
+# package facade import it from here).
 __all__ = ["SUPPORTED_CLIENTS", "UnsupportedClientError", "build_command"]
 
 
@@ -29,117 +38,41 @@ class UnsupportedClientError(ValueError):
     """Raised for a client id outside :data:`SUPPORTED_CLIENTS`."""
 
 
-@dataclass(frozen=True)
-class _ClientSpec:
-    """Declarative recipe for building one client's argv.
-
-    Each callable takes the request and returns the argv fragment to append, so
-    a client's flag policy lives in one place and is trivially testable.
-    """
-
-    base: list[str]
-    isolation_args: Callable[[DispatchRequest], list[str]] = field(default=lambda _r: [])
-    read_only_args: Callable[[DispatchRequest], list[str]] = field(default=lambda _r: [])
-    model_args: Callable[[DispatchRequest], list[str]] = field(default=lambda _r: [])
-    # How the prompt is appended. Most clients take it as a trailing positional;
-    # claude uses the ``-p`` flag.
-    prompt_args: Callable[[str], list[str]] = field(default=lambda p: [p])
-    # Fixed flags always present (e.g. codex --skip-git-repo-check).
-    always_args: list[str] = field(default_factory=list)
-
-
-_CLIENT_SPECS: dict[DispatchClient, _ClientSpec] = {
-    # claude -p "<prompt>" --output-format json  → {.result: str}
-    # Isolation keeps USER-level auth but drops this project's ceremony:
-    #   --setting-sources user      → load only user settings (skip project/local
-    #                                  CLAUDE.md, hooks, settings)
-    #   --strict-mcp-config + empty --mcp-config → no MCP servers, so the child
-    #                                  cannot recurse into the host trw MCP.
-    # NB: `--bare` was rejected — it also drops user login ("Not logged in"),
-    # verified live 2026-06-21.
-    #
-    # read_only enforcement (claude): in headless ``-p`` mode claude denies edits
-    # by default — there is no approval prompt to satisfy — so read_only=True adds
-    # nothing. read_only=False must EXPLICITLY opt in via --permission-mode
-    # acceptEdits, otherwise --allow-writes would be a silent no-op.
-    #
-    # Isolation limitation: even with --setting-sources user + empty --mcp-config
-    # the child still READS the project CLAUDE.md it is pointed at (that is
-    # intentional — it must see the code it audits); MCP recursion into the host
-    # trw MCP is what the empty --mcp-config blocks.
-    "claude": _ClientSpec(
-        base=["claude"],
-        always_args=["--output-format", "json"],
-        isolation_args=lambda r: (
-            ["--setting-sources", "user", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
-            if r.isolate
-            else []
-        ),
-        read_only_args=lambda r: [] if r.read_only else ["--permission-mode", "acceptEdits"],
-        model_args=lambda r: ["--model", r.model] if r.model else [],
-        prompt_args=lambda p: ["-p", p],
-    ),
-    # codex exec "<prompt>"  — picks up host MCP/hooks unless isolated.
-    # --ignore-user-config isolates. read_only=True → --sandbox read-only;
-    # read_only=False → --sandbox workspace-write (writes actually enabled).
-    "codex": _ClientSpec(
-        base=["codex", "exec"],
-        always_args=["--skip-git-repo-check"],
-        isolation_args=lambda r: ["--ignore-user-config"] if r.isolate else [],
-        read_only_args=lambda r: ["--sandbox", "read-only" if r.read_only else "workspace-write"],
-        model_args=lambda r: ["--model", r.model] if r.model else [],
-    ),
-    # agy -p "<prompt>"  (Antigravity CLI). Raw stdout by default; PTY fallback
-    # is applied by the runner (not here) since it wraps the whole argv.
-    #
-    # read_only enforcement (agy): read_only=True adds --sandbox (its read-only
-    # mode); read_only=False adds --dangerously-skip-permissions to enable writes.
-    # Isolation limitation: agy exposes no host-config/MCP isolation flag in this
-    # version, so TRW MCP recursion is NOT mitigated for agy (documented gap).
-    "agy": _ClientSpec(
-        base=["agy"],
-        read_only_args=lambda r: ["--sandbox"] if r.read_only else ["--dangerously-skip-permissions"],
-        model_args=lambda r: ["--model", r.model] if r.model else [],
-        prompt_args=lambda p: ["-p", p],
-    ),
-    # opencode run "<prompt>" --format json --dir <cwd>  → NDJSON events.
-    #
-    # read_only enforcement (opencode): denies writes by default without
-    # --dangerously-skip-permissions, so read_only=True adds nothing and
-    # read_only=False adds --dangerously-skip-permissions.
-    # Isolation limitation: opencode reads .opencode/ config from --dir and this
-    # version has no --ignore-config flag, so config-driven recursion is a
-    # documented gap.
-    "opencode": _ClientSpec(
-        base=["opencode", "run"],
-        always_args=["--format", "json"],
-        read_only_args=lambda r: [] if r.read_only else ["--dangerously-skip-permissions"],
-        model_args=lambda r: ["--model", r.model] if r.model else [],
-    ),
-}
-
-
 def build_command(req: DispatchRequest) -> list[str]:
     """Build the exact argv for *req*.
 
-    Pure function: no environment, no subprocess, no PTY wrapping (the runner
-    owns PTY). The prompt is always a single argv token.
+    Fragments are concatenated in a fixed order, each one supplied by the
+    client's registry entry::
+
+        base_argv always_argv structured_output_argv [isolation_argv]
+        (read_only_argv | allow_writes_argv) [model_flag MODEL]
+        [cwd_flag CWD] *extra_args (prompt_flag PROMPT | PROMPT)
+
+    ``read_only`` selects between two fragments rather than adding one, which is
+    why an empty ``read_only_argv`` is a posture and not a gap: for a client that
+    denies writes headlessly, read-only IS the omission of ``allow_writes_argv``.
 
     Raises:
-        UnsupportedClientError: if ``req.client`` has no registered spec.
+        UnsupportedClientError: if ``req.client`` has no registered spec. There is
+            no default spec — building some other client's argv would answer the
+            caller with a different agent.
     """
-    spec = _CLIENT_SPECS.get(req.client)
-    if spec is None:  # pragma: no cover - guarded by the Literal type upstream
-        raise UnsupportedClientError(f"No command spec for client {req.client!r}")
+    try:
+        spec = client_spec_for(req.client)
+    except UnknownClientError as exc:  # pragma: no cover - guarded by the Literal upstream
+        raise UnsupportedClientError(f"No command spec for client {req.client!r}") from exc
 
-    argv: list[str] = [*spec.base]
-    argv += spec.always_args
-    argv += spec.isolation_args(req)
-    argv += spec.read_only_args(req)
-    argv += spec.model_args(req)
-    # opencode needs an explicit --dir for the working directory.
-    if req.client == "opencode" and req.cwd is not None:
-        argv += ["--dir", str(req.cwd)]
+    argv: list[str] = [*spec.base_argv, *spec.always_argv, *spec.structured_output_argv]
+    if req.isolate:
+        argv += spec.isolation_argv
+    argv += spec.read_only_argv if req.read_only else spec.allow_writes_argv
+    if spec.model_flag is not None and req.model:
+        argv += [spec.model_flag, req.model]
+    if spec.cwd_flag is not None and req.cwd is not None:
+        argv += [spec.cwd_flag, str(req.cwd)]
     argv += list(req.extra_args)
-    argv += spec.prompt_args(req.prompt)
+    if spec.prompt_flag is not None:
+        argv += [spec.prompt_flag, req.prompt]
+    else:
+        argv.append(req.prompt)
     return argv

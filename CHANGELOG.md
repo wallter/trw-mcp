@@ -4,6 +4,2278 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+### Added
+
+- **`pytest -n auto`/`-n logical`/`-n >4` now refuses to run** (`tests/conftest.py`
+  `pytest_configure`, exit code 3) instead of silently fanning out — a 2026-09-05
+  kernel OOM (191 pytest workers across several packages, ~109GB RSS) was caused
+  by a direct `pytest -n auto` invocation bypassing the Makefile's
+  `PYTEST_WORKERS ?= 4` default. Override with `TRW_PYTEST_ALLOW_WIDE_XDIST=1`.
+  The same cap applies to every package suite this monorepo runs.
+
+## [2.0.0] — 2026-09-03
+
+> Major: breaking changes to the run-status vocabulary, the deliver gate (keys on evidence of code change), the `trw_delivery_recover` action set (`resume` added, `run_compensation` removed), four bundled hooks deleted, instruction sync refusing overflow instead of truncating, and a trw-memory 0.16.0 (schema 5) floor. See the entries below; feedback dispositions in `.trw/feedback/INDEX.md`.
+
+### Fixed
+
+- **`trw-mcp uninstall` now strips the antigravity-cli entry from `~/.gemini/config/mcp_config.json`.** PRD-FIX-133 taught install to write that GLOBAL file but registered no uninstall surface for it, so the install/uninstall parity gate failed and uninstall reported clean while leaving a live `mcpServers.trw` entry behind. `UninstallSurface` gained `home_scoped`, resolved against `Path.home()` exactly as install does.
+- **`trw-mcp formation` no longer resolves the run without a session context.** `_formation_cli._resolve_run` called `resolve_run_path(None)` bare, which the PRD-CORE-141 FR03 call-site gate flags because it can scan-hijack another session's active run; it now builds the call context from `TRW_SESSION_ID` / the process identity.
+- **Build backend pinned to `hatchling>=1.27,<1.29`.** The 2026-09-05 release rehearsal found an unpinned build resolving hatchling 1.32.0, which stamps `Metadata-Version: 2.5` — rejected by twine 7.0 / packaging 26.3 (`'2.5' is not a valid metadata version`) while every previously published wheel carries 2.4. Pinned so the published artifacts match what the upload validators accept.
+- **Degraded-mode detection is now per session (PRD-FIX-128).** The
+  absent-MCP-surface detector read only the pinless session event log, while a
+  session that owns a pinned run writes its tool rows into that run instead — so
+  in a multi-session checkout every session doing tracked work was judged
+  silent. It now scans its own pinned run's event log first and the pinless log
+  second. The session epoch and the emission latch, previously one
+  project-scoped file each and rewritten by every session start on the machine,
+  are now keyed on the same session identifier the server pins on; a session
+  whose identity cannot be resolved makes no degraded claim at all and records
+  `degraded_identity_unresolved` for the operator instead. The emitted block
+  names the log the verdict was computed from, markers are reclaimed at
+  SessionEnd and by a liveness-gated SessionStart sweep bounded by the new
+  `degraded_marker_retention_hours`, and the emitter is no longer the one
+  ownership call site that dropped the payload session id. No version bump.
+
+- **Degraded-mode follow-up: a session key of `.` or a leading `-`, and a
+  pre-migration legacy marker, both slipped past PRD-FIX-128's own
+  admissibility check (external audit, 2026-09-04/05).** `.` resolved the
+  marker path to its own parent directory; a `-`-prefixed key risked being
+  read as a flag. The pre-FR02 `.trw/runtime/degraded-mode` regular file was
+  migrated only via the epoch writer, never via the latch clear path, so an
+  unmigrated copy could be read by the marker sweep as a stale marker and
+  removed. Also fixed: a `task_root` config value containing `..` could widen
+  the run-ownership containment check; the no-jq text-match fallback could
+  false-positive on a malformed line's payload text or read the wrong `ts`
+  field; a malformed `pins.json` entry disabled marker reclamation entirely on
+  a python3-only host but not a jq host; and the event-log tail length is now
+  a typed, bounded config field (`degraded_event_tail_lines`) instead of an
+  unbounded environment variable. No version bump.
+
+- **`trw_session_start` no longer reports a health it did not measure
+  (PRD-CORE-263).** A cross-family audit of the hot path found ten wiring
+  defects, all of the same family: code that runs, is covered, and never
+  arrives. Four of the five steps the table declares critical could fail while
+  the payload reported `success: true`, because each step swallowed its own
+  exception before the runner's critical branch could see it — the flag was live
+  and its branch unreachable; the runner now records a typed reason naming the
+  step and fails the verdict, and never propagates the exception out of the
+  mandated first call. Four of the five compounding-pipeline probes collapsed a
+  crash into a healthy default whose advisory the aggregator then stripped, so a
+  probe that crashed on a locked database and one that measured a healthy corpus
+  rendered identically; every probe now carries a `measured` flag and an
+  unmeasured probe is listed under `unmeasured` rather than counted either way.
+  Sync health returned a healthy verdict for a state file it could not read,
+  contradicting its own documented contract; it reports `status: not_measured`
+  with a distinct reason instead. Three of the results the maintenance step
+  computes — the WAL checkpoint, the embeddings coverage ratio, the embedder
+  warm-up — were paid for on every session and dropped by a propagation
+  allowlist; the allowlist is now held total against the declared result type by
+  a test that fails by name on an unclassified key. The injected-ids write is no
+  longer skipped under writer pressure, so the auto-injection hook stops
+  re-injecting learnings the session had just surfaced. A database classified as
+  too large for inline recovery re-raised one branch above the scheduler its own
+  classification had selected, so background recovery was unreachable through
+  recall; the branch now schedules recovery once, carries the durable
+  recovery-state locator, and returns a degraded empty result. Session-start
+  assertion health hardcoded a 7-day stale window against a configured 30-day
+  threshold, so it and the maintenance verification pass reported different
+  counts from the same store. **Breaking for config:** the inert
+  `run_auto_close_age_days` field is removed — it was declared twice, passed by
+  nothing, and the sweep fell through to `run_stale_ttl_hours`; `TRWConfig`
+  ignores unknown keys, so a project still setting it will load without any
+  signal, which is why the removal is stated here. **Note for operators:** a
+  session start that now returns `success: false` is reporting a failure that
+  was previously invisible, not a new fault.
+
+- **A codex-only `init-project` created 47 files under `.claude/` and a root
+  `CLAUDE.md` no selected client reads, and `doctor` then reported the wrong
+  client for it (PRD-CORE-262-FR05).** Four sinks wrote Claude Code's surfaces
+  with no client parameter at all — the scaffold directory list, the bundled
+  `settings.json` row, the hook copier and the skill copier — so a single-client
+  install produced 17 foreign hook scripts, 29 foreign skill files, a settings
+  file and an empty agents directory. Each now takes the resolved target list
+  the way `_install_agents` already did, and the root instruction write moved
+  BEHIND the ownership check that used to run after it (the file was written and
+  then hollowed out by the orphan-strip). Independently, `doctor` built
+  `TRWConfig()` — the bare constructor — so its profile row printed field
+  defaults rather than the target project's recorded `target_platforms`, the
+  same answer it would print for a project that recorded nothing; it now
+  resolves the target's own config, and `_check_profile` returns WARN naming
+  both values when the requested and resolved profiles disagree instead of
+  PASSing on any known identifier.
+
+- **`include_delegation` had exactly one consumer (codex), so four profiles
+  with the flag True never rendered the delegation block.** PRD-CORE-252
+  OQ-3's 3c4c574245 wired `render_delegation_protocol()` into
+  `render_codex_instructions()` only, leaving `render_agents_trw_section()`
+  (cursor-ide's `.cursor/rules/trw-ceremony.mdc`, copilot's
+  `.github/instructions/trw-ceremony.instructions.md`),
+  `ProtocolRenderer.render_behavioral_protocol()` (claude-code's
+  `.trw/INSTRUCTIONS.md` / `CLAUDE.md`), and `render_antigravity_instructions()`
+  (`ANTIGRAVITY.md`) never calling it — despite `trw_profile_explain` reporting
+  `delegation_enabled=True` for all four. Every one of those renderers now
+  reaches the same `render_delegation_protocol()` gate; a caller that renders a
+  specific client's own file passes that client's resolved profile explicitly
+  rather than relying on the ambient active config, so a platform-generic
+  AGENTS.md render (no client identified) still omits the block.
+- **`execute_claude_md_sync(..., force=True)` was silently dropped on the
+  content-hash cache-hit path.** `dispatch_for_profile`'s early return checked
+  only `stored_hash == current_hash`, so a caller asking to force-regenerate
+  an already-synced instruction file — via the `trw_instructions_sync` MCP
+  tool or the CLI — got a silent no-op: the write guard never ran and the
+  on-disk file was untouched. The condition now requires `not force`, and the
+  bypass is logged at info.
+
+- **The PRD-CORE-257 deferral ledger's single-winner claim was a racy
+  ledger-map read-modify-write, not a real interprocess primitive (external
+  audit, 2026-09-04/05).** An execution probe against the production code
+  returned `{'A': True, 'B': True}` for two concurrent forced-run claimants,
+  and a degraded (corrupt) ledger read returned `True` unconditionally to
+  EVERY contender, turning an unreadable ledger into an N-process thundering
+  herd. Arbitration is now a per-step `O_CREAT|O_EXCL` lease file under
+  `.trw/runtime/deferral-claims/`, independent of ledger read state; a stale
+  claim is reclaimed only when its owner is both past the bound and confirmed
+  dead. Proven with real multi-process races, not monkeypatched liveness.
+  Also fixed on the same path: a missing-but-unwritable ledger could defer a
+  step forever (now runs through the same claim instead); ledger timestamps
+  were never validated, so an unparseable or year-2999 `deferred_since_ts`
+  reported a healthy zero-age streak forever (now degrades the entry); on
+  Python 3.12 `Path.glob` silently swallowed a `scandir` `PermissionError`,
+  so a genuinely unreadable writer-lock directory reported a healthy
+  zero-writer census; and `trw_status["writer_pressure"]` could be omitted
+  entirely on an unhandled exception building the block — it is now
+  `Required` and typed with its real closed-vocabulary Literal fields, with a
+  typed degraded fallback on any failure. `stale_runs` no longer opens a
+  deferral streak while `run_auto_close_enabled` is False, and an expired
+  `nudges` streak is no longer marked complete before a nudge is confirmed
+  actually emitted (bounded evaluation was not the same as bounded emission).
+  No version bump.
+
+### Added
+
+- **A checked-in N-server stdio contention benchmark for the cold handshake
+  (PRD-CORE-262).** `tests/test_stdio_n_server_handshake.py` spawns N real
+  `trw-mcp` subprocesses over stdio against one temporary store, warms each to a
+  writer lock, and times a cold `initialize` plus a first `trw_session_start` on
+  a fresh client at N in 1, 6, 12 and with a WAL of at least 64 MiB pinned open
+  by a held read transaction. Until now the PRD-CORE-248 initialize-ordering
+  contract was asserted only in process, so the four mechanisms that actually
+  decide whether a real client connects — process spawn, interpreter import, the
+  writer-lock population, and a WAL pinned by a live reader — were unmeasured by
+  any gate. Bounds are module constants (15,000 ms absolute, 5.0x the N=1
+  median, 3.0x independence) rather than config fields, so a deployment change
+  cannot disarm the gate. The module is slow-marked and collects zero items
+  under `-m unit`.
+
+### Security
+
+- **A dispatched read-only reviewer is now bounded to nine read-report tools
+  (PRD-SEC-015).** `read_only=True` meant one thing — no filesystem write flag —
+  and said nothing about the MCP surface, so a non-isolated codex reviewer
+  connected to a full `trw-mcp` server of its own: measured 2026-09-04, that lane
+  held 13 `trw_*` tools including `trw_deliver` and `trw_learn`, and a review run
+  on 2026-08-27 produced 74 `trw_*` calls across 11 runs (24 `trw_deliver`, 12
+  `trw_build_check`, 12 `trw_learn`) from processes with no session identity. A
+  new, typed, admitted `surface_role` config field (`Literal["agent",
+  "reviewer"]`, default `agent`, FR02) makes `SurfaceAuthorityMiddleware`
+  replace the resolved surface with `REVIEWER_TOOLS` — `trw_recall`,
+  `trw_code_search`, `trw_code_symbol`, `trw_before_edit_hint`,
+  `trw_before_edit_hint_batch`, `trw_graph_related`, `trw_skill_discovery`,
+  `trw_profile_explain`, `trw_codebase_risk_report` — outranking
+  `tool_resolution_mode` (including `all`), task packs, the never-hide set, and
+  any `trw_request_tool_access` grant, which is itself neither listed nor
+  callable. The `TRW_SURFACE_ROLE=reviewer` environment variable takes
+  precedence over the config field and can never be downgraded by a project's
+  own `.trw/config.yaml` (FR14) — a reviewer inspects a repository it does not
+  control, so the repository being reviewed must not be able to widen the lane
+  auditing it. `surface_role` is a typed `Literal["agent", "reviewer"]`, so an
+  unrecognized `TRW_SURFACE_ROLE` env value (verified 2026-09-05: the field is
+  read by every `TRWConfig()` construction attempt, including the loader's
+  own no-override fallback) is REJECTED at construction and the process fails
+  to boot — fail-closed, not a silent degrade to `agent`; the raw env-marker
+  parser still logs the value once per process as a diagnostic breadcrumb
+  before that crash. An unrecognized `surface_role` set only in a project's
+  `.trw/config.yaml` (no env override) instead falls back to `agent` under the
+  pre-existing PRD-QUAL-110 config-fail-open contract (`TRW_CONFIG_STRICT=1`
+  opts into fail-closed there too) — a residual gap this PRD inherits rather
+  than closes, since narrowing that global loader policy is out of scope here.
+  Denials carry `tool_not_in_reviewer_surface` and no escalation hint, and a
+  reviewer-marked process fails CLOSED on a config fault (keyed on the raw env
+  marker) while every other session keeps the CORE-218 fail-open contract.
+  `scripts/audit-external.sh`'s codex lane now passes the same allowlist from one
+  generator (`scripts/print_reviewer_tools.py`) as a second, independent layer.
+  Nothing changes for a default `agent` session.
+
+- **Eight client permission-bypass flags are now refused as dispatch input.**
+  `DispatchRequest`'s `extra_args` and `model` validators share one forbidden-token
+  set; it covered 12 tokens and none of the codex or opencode approval-bypass
+  spellings, so `--dangerously-bypass-approvals-and-sandbox`, `--auto`, and six
+  siblings were accepted on both surfaces. The set is now 20:
+  `--dangerously-bypass-approvals-and-sandbox`, `--dangerously-bypass-hook-trust`,
+  `--approve-for-me`, and `--ask-for-approval` (all read from codex-cli 0.153.2's
+  help output on 2026-09-04), `--auto` (opencode 1.18.28 `run --help`),
+  `--allow-dangerously-skip-permissions` and `--permission-prompts` (Claude Code
+  2.1.261), plus `--full-auto`, which is ABSENT from codex-cli 0.153.2 and is
+  carried as a legacy/forward spelling rather than a measured one. This is an
+  input-validation widening, not a vulnerability fix: the CLI deliberately exposes
+  no `--extra-args` surface, so the tokens were unblocked rather than reachable
+  from the public tool surface. No predicate, validator, model, or command-builder
+  change — only the rejected-input set grows. (PRD-LOCAL-074 FR07)
+
+- **Tool pre-authorisation is now refused as dispatch input.** A cross-vendor
+  sweep on 2026-09-05 found both live Claude Code 2.1.261 spellings of the
+  tool-allowlist flag — `--allowed-tools` and `--allowedTools` — accepted through
+  `extra_args` and through `model`. Pre-authorising tool use removes the human
+  approval prompt that the `read_only` posture's stated mechanism (a headless
+  child cannot approve writes) depends on, so it is a permission bypass rather
+  than a convenience flag, and blocking one spelling would have been blocking
+  neither. `_FORBIDDEN_EXTRA_ARG_TOKENS` is now 22. (PRD-LOCAL-074 FR09)
+
+- **An `operator` adversarial sign-off is no longer self-mintable.** FR04's
+  safety-critical gate accepted an `operator` reviewer posture on the strength of
+  a caller-supplied string: `adversarial_source_is_verified` returned true for
+  `origin == "operator"` whenever `identity` was any non-empty value, and both
+  came straight from the `reviewer_identity` argument. Combined with
+  `substantive = bool(findings) or review_completed`, the agent under review
+  could call `trw_review(mode="manual", findings=[], review_completed=True,
+  adversarial_pass=True, reviewer_identity={"reviewer_source": "operator",
+  "reviewer_receipt_id": "anything"})` and mint a receipt satisfying every FR04
+  condition — self-certifying the adversarial audit the gate exists to require,
+  on a PRD that already declares `safety_critical: true`. An operator receipt id
+  must now resolve, in `<trw_dir>/approvals/review-signoffs.jsonl`, to an
+  HMAC-signed approval that has not expired, whose window does not exceed the new
+  `review_signoff_ttl_hours` config field (default 24h, `ge=1`/`le=720`), and
+  whose `review_ref` binds it to THIS review's `review_id` or content-binding
+  `scope_digest` — so one approval cannot authorize a second review. Approvals
+  are created out of band with `python -m trw_mcp.state.review_signoffs approve
+  --review-ref <ref> --approver <name>`. Every refusal names its reason
+  (`operator_receipt_unresolved`, `operator_approval_signature_invalid`,
+  `operator_approval_expired`, `operator_approval_scope_mismatch`,
+  `operator_approval_ttl_exceeded`, `operator_approvals_unreadable`,
+  `operator_approval_policy_unreadable`) in `family_downgraded_reason`; an
+  unreadable journal or config refuses rather than defaulting. The delivery gate
+  re-resolves the approval instead of trusting the receipt's own stamp. The
+  digest-verified `cross_model` path is unchanged. Local-sentinel strength, not a
+  cryptographic barrier — see PRD-CORE-255 Amendment 2 (2026-09-04) for the
+  honest scope. (PRD-CORE-255 FR04)
+
+### Changed (BREAKING)
+
+- **Writer pressure now means something: the threshold decides, the deferral is
+  bounded, and pressure is first-class status (PRD-CORE-257).** The optional-work
+  predicate deferred as soon as ONE peer writer existed and let
+  `session_start_writer_pressure_threshold` merely relabel the reason
+  `writer_present` → `writer_pressure`, so raising the knob changed a string and
+  not a decision; a second, differently calibrated predicate counted the caller
+  itself, so two processes were enough to defer surface tracking. Both are
+  replaced by one frozen `WriterCensus` in which `under_pressure` is exactly
+  `peer_writer_count >= threshold`, measured once per `trw_session_start` and
+  threaded to every consumer. The default moves from 2 to **8**, a documented
+  starting point (the highest peer count across three 2026-09-04 censuses is 7,
+  of which only one is an independent machine — not a fitted steady-state
+  figure), retunable from the new census log. **Breaking response shape**: the
+  `writer_present` reason and the legacy `defer_reason` advisory key are removed
+  outright, and the `retain_legacy_reason` parameter with them.
+- **No session-start step can be deferred indefinitely (PRD-CORE-257-FR03).**
+  A new bounded ledger at `.trw/runtime/deferral_ledger.json` records
+  `last_completed_ts`, `deferred_since_ts` and `deferred_count` for the six
+  covered steps (auto-upgrade check, stale-run close, embeddings backfill,
+  learn-journal drain, recall side effects, nudges). Once a streak reaches the
+  new `session_start_max_deferral_hours` (default 6, `ge=1`, `le=168`) the step
+  runs despite pressure and is named in a top-level `deferral_expired_ran` list.
+  A forced run is single-winner — the claimant writes `running_since_ts` and
+  re-reads — so 6-8 concurrent servers do not all force the same expensive step
+  at once, and a claim older than the bound is stale so a process that dies
+  mid-step cannot wedge the ledger. A missing ledger is a cold start
+  (`ledger_state: "ok"`, fresh streak); a ledger that exists but cannot be
+  trusted is a degraded read that RUNS every covered step, because treating a
+  lost ledger as "all fresh streaks" would silently restart every bound.
+- **`trw_status` reports writer pressure on every call (PRD-CORE-257-FR05).**
+  A typed `writer_pressure` block carries `writer_count`, `peer_writer_count`,
+  `threshold`, `under_pressure`, `census_state`, `ledger_state`,
+  `heartbeat_state`, `identity_state` and a `deferred_steps` map of open streaks
+  with their ages. It is independent of the nudge path, which previously skipped
+  the census outright when nudges were disabled — so the only pressure signal
+  disappeared exactly where an operator would look for it. An unreadable
+  registry reports `census_state: "unreadable"` with counts held at 0 for shape
+  stability and logs at WARNING: an absence of measurement is not a measurement
+  of absence, and reading `under_pressure` without `census_state` is reading an
+  unsafe default.
+- **Three wiring defects on the deferral path are closed (PRD-CORE-257
+  FR06/FR08/FR09).** (1) The ceremony deferral branch returned before
+  `increment_tool_call_counter` and `attach_reversion_prompt`, so under
+  steady-state pressure the nudge cooldown counter never advanced and the
+  phase-reversion prompt never reached a response; only nudge emission is
+  skipped now. (2) The embeddings deferral returned before three downstream
+  calls while reporting one key — the read-only coverage probe and the
+  first-recall warm-up now always run, and only the background post-recovery
+  backfill schedule is skipped, named as such in the advisory. (3) The
+  injected-ids dedup write, which opens no SQLite connection, is no longer
+  skipped when side effects defer (it made learnings this session had already
+  surfaced eligible for hook re-injection), and `record_session_start_surfaces`
+  returns a typed result with `recorded`, so the recall receipt is no longer
+  written for ids that were never recorded.
+- **Every deferral advisory states how long it has been deferred
+  (PRD-CORE-257-FR04/FR11/FR12).** One builder emits `deferral_age_hours`,
+  `deferred_count`, `census_state` and `ledger_state` alongside the counts, and
+  the compact fold keeps the threshold, the worst age and both states instead of
+  discarding them — folding never reports the healthiest of several states. A
+  PID-reuse ghost (a lock registered before the birth of the process now holding
+  that pid) is excluded from the census with a WARNING, the pin-heartbeat filter
+  reads the pin store for the project it was given rather than the global one,
+  and an implausibly future-dated heartbeat degrades `heartbeat_state` instead of
+  passing as fresh. Session start emits exactly one INFO `writer_census` event,
+  and the maintenance aggregate is renamed `auto_maintenance_evaluated` with a
+  per-step outcome map — `auto_maintenance_complete` fired identically when every
+  key was a deferral.
+
+- **The post-compaction gate's error key is renamed, with no alias.** A blocked
+  `trw_*` call now returns `error: "post_compaction_recovery_required"`; the old
+  key naming session start is DELETED, not aliased, and no dual-key payload is
+  emitted. The old name described a check this branch has not performed since
+  2026-04-11 — the gate's only condition is a pre-compaction marker on disk —
+  and the message never said the word "compact", so an agent that had just lost
+  its context was handed a correct remedy attached to a wrong diagnosis. The
+  payload gains five keys: `compaction_marker_ts` (the marker's own instant,
+  parsed with `datetime.fromisoformat` and re-emitted with `isoformat`, or
+  `null`), `marker_state` (`read` | `unreadable` — never a substituted value),
+  `blocked_count`, `max_blocks`, and `remedy`. `EVIDENCE_RECORDING_TOOLS` is
+  renamed `COMPACTION_GATE_EXEMPT_TOOLS` and gains a fourth member,
+  `trw_request_tool_access` — the escape hatch two other middlewares tell callers
+  to reach for by name, and which this gate used to refuse. A new
+  `TERMINAL_TOOLS` narrows the bounded escape by one: `trw_deliver` stays blocked
+  past the block bound instead of executing. Published trw-mcp **1.0.5 emits the
+  old key**, so an external consumer branching on it will stop matching; a
+  whole-monorepo grep across `.claude/hooks`, `.codex`, `.opencode`, `.cursor`,
+  `.github`, `.antigravitycli`, `.agents`, `trw-mcp/src/trw_mcp/data/{hooks,skills,agents}`,
+  `platform` and `backend` found **zero** in-repo consumers keying on the string,
+  so there is no in-repo migration to perform. The gate's behaviour is otherwise
+  held constant and asserted so: which tools block, how many blocks precede
+  degradation, the generation-scoping rule, and when the marker is cleared are
+  unchanged. (PRD-CORE-258 FR01/FR02/FR03/FR06/FR09)
+
+- **`trw_session_start` no longer returns `wal_checkpoint_deferred`.** Writer
+  pressure used to CANCEL the WAL checkpoint and report that advisory instead —
+  and `writer_count >= 2` is the ordinary steady state on a machine running two
+  editor sessions, so the checkpoint was skipped permanently and the WAL grew
+  without bound (measured in this repository: 64 MiB against a 10 MB threshold).
+  Pressure now selects the checkpoint MODE rather than whether it runs, so there
+  is no deferral to report. The key is removed from the response shape and from
+  `AutoMaintenanceDict`; `_run_wal_maintenance` no longer takes deferral
+  arguments. (PRD-CORE-248 FR04)
+
+- **`trw_mcp.telemetry.remote_recall` is deleted, and `fetch_shared_learnings`
+  with it.** It was a second HTTP client for the same platform learning-search
+  endpoint `trw-memory` already called, with a divergent redaction posture and
+  no admission gate: its results reached agent context without passing
+  `prepare_entry_for_store`. Recall now reaches the platform through
+  `trw_memory.sync.fetch_shared_memories`, which gates every result. The name is
+  removed from `trw_mcp.telemetry.__all__`; importing the package still
+  succeeds. (PRD-CORE-245 FR06)
+- **Backend reads name the namespace they mean.** trw-memory schema 5 makes a
+  row's identity `(namespace, id)`, so every `get`, `delete`, `upsert_vector`
+  and `delete_vector` call site carries one. The handful that genuinely do not
+  know theirs — federated ownership probes across the project and user tiers —
+  go through one explicit helper that enumerates the store's namespaces, rather
+  than an unscoped read that would answer for whichever row sorted first.
+  (PRD-CORE-245 FR03)
+
+### Changed
+
+- **Every dispatch client's capabilities are now typed data carrying how they
+  were verified, and three more harnesses are registered.** Each client's argv
+  policy was four Python callables on a private dataclass plus one
+  `req.client == "opencode"` branch inside the builder, so a capability could not
+  be serialized, diffed, rendered into documentation, or lifted across a package
+  boundary as a specification — and nothing anywhere recorded *how* any flag had
+  been established. `trw_mcp.dispatch._client_specs.CLIENT_SPECS` replaces it with
+  one frozen entry per client whose every field is data, and each entry carries a
+  `verification` record: `executable` (the binary was run on a box and its own
+  output read), `primary_source` (a dated vendor page stated it, the binary was
+  not run), or `unverified` (neither). `DispatchClient` and `SUPPORTED_CLIENTS`
+  are now derived from that key set rather than restated beside it, growing from
+  four members to seven — `cursor-cli` (primary source: `cursor.com/docs/cli/reference/parameters`,
+  fetched 2026-09-04) and `copilot` (executable: GitHub Copilot CLI 1.0.83 read on
+  this box 2026-09-04 and 2026-09-05) join, and `grok` is registered as
+  `unverified` specifically so it can be *refused*. The four pre-existing clients
+  are proven byte-identical by 64 argv baselines recorded from the previous
+  builder across the full `isolate x read_only x model x cwd` cross-product before
+  any edit, plus four `extra_args`-position cases; a diff on any of them is a
+  regression, not a fixture update. The subprocess credential allowlist and the
+  output-parser table now read `credential_env` and `output_shape` off the entry
+  instead of parallel client-id dictionaries. `DispatchResult.read_only_enforced`
+  stops claiming "any of the four clients" — a count that this change makes wrong
+  and that would be wrong again at eight — and states the registry-derived
+  mechanism instead. (PRD-CORE-266 FR01/FR02/FR03)
+
+- **Dispatch to a client TRW has not verified is refused, and the refusal names
+  what is missing.** Resolution previously rejected only a client absent from
+  `dispatch.enabled_clients`. It now also refuses any client whose registry entry
+  records `verification.method: unverified`, raising the existing
+  `DispatchResolutionError` with `exit_code` 2 *before* argv construction and
+  before any subprocess, so provisional flag data recorded for documentation can
+  never reach a command line. The message quotes the entry's own outstanding-
+  verification text — for `grok`, that the `--sandbox` profile values and the
+  `--output-format` values must be established against the installed executable or
+  a vendor page that enumerates them, since the current reference states neither.
+  No default and no fallback client is substituted: silently answering with a
+  different agent's output is a worse failure than refusing. Prior learning L-bo54
+  records that P0 failures in client integration plans cluster on exactly this
+  — unconfirmed client capabilities recorded as though shipped. (PRD-CORE-266 FR04)
+
+- **Per-client permission-bypass tokens now extend the shared floor as a union.**
+  The forbidden-token set `extra_args` and `model` are checked against was one
+  shared frozenset chosen for the four clients that predate this change, so a
+  newly registered client would have arrived with no bypass floor of its own:
+  copilot's `--yolo` / `--allow-all` and the Cursor CLI's `-f` / `--force` were
+  not in it. The effective set for a client is now the shared floor UNION that
+  client's own `forbidden_tokens`, so a per-client set can only ADD restrictions
+  and the floor stays a subset for every client — asserted as a subset relation
+  against the live constant rather than against a count, so it holds whichever
+  generation of the floor is on disk. Thirteen new tokens are declared, each
+  traceable to its client's cited source: copilot's `--allow-all`,
+  `--allow-all-tools`, `--allow-all-paths`, `--allow-all-urls`, `--allow-tool`,
+  `--allow-url`, `--yolo`, `--autopilot` and `--mode` from `copilot --help` at
+  1.0.83, and cursor-cli's `-f`, `--force`, `--yolo` and `--approve-mcps` from the
+  vendor parameter reference. `--add-dir` and `--assisted-approval` were also
+  observed in that help output and are deliberately NOT blocked; they are recorded
+  in the entry's comment as adjacent risk rather than silently absorbed.
+  (PRD-CORE-266 FR05)
+
+- **Codex now renders the TRW delegation protocol into
+  `.codex/INSTRUCTIONS.md`.** PRD-CORE-252 OQ-3 shipped `include_delegation`
+  as a declared-but-unwired flag: `codex`'s light profile set it `False` on an
+  unmeasured 32K budget concern, and `render_delegation_protocol()` was never
+  called from `render_codex_instructions()` regardless. A real byte
+  measurement (largest single `.codex/agents/*.toml` — `trw-auditor.toml`,
+  18,170 bytes — plus `AGENTS.md`, 5,597 bytes, plus `.codex/config.toml`,
+  2,915 bytes = 26,682 bytes, ~21% of the 32K budget) shows headroom for the
+  ~1KB block, so `_light_profile()` gained an `include_delegation` parameter,
+  `codex` now passes `True`, and `render_codex_instructions()` wires the
+  section in. `opencode` shares the same helper but was not re-measured and
+  keeps the conservative default. (PRD-CORE-252 OQ-3)
+
+### Added
+
+- **A formation is now one typed artifact instead of prose, and four surfaces
+  read it.** A *formation* — one orchestrating session plus N peer sessions —
+  had no representation at all: the framework named four formations in prose and
+  implemented none, and the file-ownership artifact meant to coordinate them was
+  split three ways with no reader. Two bundled skills told the writer to produce
+  `scratch/sprint-coordination/file_ownership.yaml`, every copy that existed on
+  disk sat at `scratch/team-playbooks/`, and the only code that mentioned the
+  concept probed `.trw/context/file_ownership.yaml` — a path that has never
+  existed in this repository — then interpolated the empty result into a
+  pre-compaction recovery line that therefore rendered `not set` on every single
+  compaction. New bounded context `trw_mcp/formation/` replaces all three with
+  one validated `formation.yaml` under the orchestrator's run directory, behind
+  one facade (`load`, `validate`, `join`, `owner_of`, `brief`, `status`, plus
+  the three write verbs FR03/FR05/FR11 each require). The model refuses an
+  undeclared key, a status outside the closed enum, a duplicate `member_id`, an
+  `owned_paths`/`test_owned_paths` glob claimed by two members, a `prd_ids` entry
+  allocated to two members or already naming a PRD on disk, and any glob that
+  escapes the project root. The recovery line now says which formation this run
+  belongs to and as which member, or that none is active, or names the parse
+  error — three answers where there was one reassuring silence.
+  (PRD-CORE-265 FR01/FR02)
+- **A member joins with one call, and its run says so.** `trw_init(advanced=
+  {"formation": {...}})` creates a formation and `trw_init(advanced=
+  {"join_formation": {"formation_id": ..., "member_id": ...}})` joins one, under
+  an exclusive advisory file lock with a bounded, typed timeout that refuses
+  rather than writing unlocked. Join records the member's run path and pin,
+  advances `revision` by exactly one, and stamps `formation_id`/`member_id` onto
+  the member's own `run.yaml`, so the link is bidirectional. A re-join with the
+  same run path is idempotent; a re-join with a DIFFERENT run path is refused
+  rather than rebound, because silently repointing a member would orphan the
+  first run's evidence. Reassignment, removal, ownership changes and teardown
+  are accepted only from a caller whose resolved run path IS the orchestrator's
+  — a payload field or role string claiming otherwise is ignored.
+  (PRD-CORE-265 FR03/FR04/FR05)
+- **Briefs and the status board are rendered, not typed.** `trw-mcp formation
+  brief <member_id>` renders a bundled template by plain substitution over a
+  fixed placeholder set — no engine, no evaluation — with every substituted
+  value stripped of control characters and backticks and wrapped in a code span,
+  so a member declaration that reads like an instruction renders as quoted data.
+  `trw-mcp formation status`, and a `formation` block on `trw_status`, derive one
+  row per member from that member's OWN run: phase, last checkpoint, latest build
+  and review outcome, delivery state, and a `stale` annotation with a distinct
+  reason (`pin absent` / `pin expired` plus the heartbeat age) computed at read
+  time from the existing pin TTL. No scheduler, no heartbeat thread, and no
+  member learning is ever read into the orchestrator's memory — a delegated
+  agent's memory is data, not a command. Zero new MCP tools: the second surface
+  is the CLI, because a tool definition is paid in every session's system prompt
+  of every client. (PRD-CORE-265 FR06/FR07/FR08)
+- **Ownership is enforced where every client crosses, and only warned where
+  hooks are unreliable.** `scripts/git-commit-scoped.sh` gains a second Python
+  precondition beside the import check: a path owned by another member exits
+  non-zero naming the path, the owning `member_id` and the matching glob, with
+  HEAD untouched (`formation_ownership_enforcement: warn` prints the same message
+  and commits). The bundled intent guard gains an advisory that warns and exits
+  zero; its knob vocabulary is `warn`/`off` with `block` deliberately absent,
+  because a gate that fires on some clients and not others teaches agents to
+  distrust it. And an orchestrator can no longer deliver while a joined member is
+  neither delivered, abandoned nor reassigned — a STRUCTURED deliver gate whose
+  only escape is a PRD-CORE-191 acceptable-failure record, and which treats a
+  `delivered` stamp with no delivery record on the member's own run as
+  non-terminal. Every one of the four adapters refuses on an unreadable manifest
+  and proceeds untouched when no formation exists; the two conditions are never
+  conflated. Five typed, bounded config knobs, each a kill path for one surface.
+  (PRD-CORE-265 FR09/FR10/FR11)
+
+- **A generated dispatch-capability table, so no documentation surface states a
+  client capability by hand.** `docs/client-profiles/matrix.md` gains a
+  §Dispatch Targets section rendered from the client-spec registry, carrying each
+  client's binary, headless prompt flag, structured-output flag, sandbox posture,
+  sub-agent support, agent surface, verification method and verification date. It
+  inherits the existing byte-equality drift gate, so adding a registry entry grows
+  the table by exactly one row with no edit anywhere. `docs/CLIENT-PROFILES.md`
+  gains a pointer and restates no capability value: a hand-written per-client
+  capability stops enforcing anything the moment the registry changes, without
+  announcing that it has stopped (PRD-INFRA-174). Sandbox renders as a tri-state
+  — `enforced`, `available_default_off`, `none` — rather than on/off, because
+  copilot's OS-level sandboxing is experimental and disabled by default
+  (`copilot help sandbox` at 1.0.83, requiring `bwrap` 0.5.0+ on Linux), and a
+  boolean would render that either as protection TRW does not provide or as
+  indistinguishable from a client with no sandbox at all. `sub_agents: unknown` is
+  likewise a recorded state, not a `no`. (PRD-CORE-266 FR07)
+
+- **`trw-mcp prd-epoch` — the operator exit from a fail-closed registry.**
+  PRD-CORE-244-FR07 made PRD activation refuse against an `epoch_unset`
+  registry: a scheduling ledger carrying no authorized
+  `advance_evaluation_epoch` action has never evaluated expiry, and an unknown
+  may not consume a WIP slot. That was correct and it had no exit — the action
+  had no caller outside the library, so `trw-mcp prd-state --state active`
+  was unreachable on every project whose epoch had never been advanced. The new
+  command appends the action and prints the resulting epoch alongside the
+  reconciled registry's `expiry_evaluated` verdict and expired list, so the
+  operator sees what the advance evaluated rather than only that it ran.
+
+- **`trw-mcp doctor` reports the memory store's concurrency state in one row.**
+  The new `memory_wal` check reports WAL size in MiB, the live writer count, and
+  seconds since the last checkpoint *attempt* and the last *effective* one
+  (`unknown` when none is recorded yet, never a fabricated age). It is `WARN`
+  only when the WAL is oversized AND nothing has been reclaimed within
+  `wal_checkpoint_max_age_seconds` — a big WAL that was just reclaimed is a busy
+  store, not a fault. Warning on the EFFECTIVE clock is what makes the row able
+  to report the failure it exists for: on an engine below SQLite 3.51.3 only
+  PASSIVE may run, so checkpoints succeed on schedule and reclaim nothing, and a
+  row reading the attempt clock would report a healthy store forever. When that
+  is the cause the message names the engine version and the upgrade; otherwise it
+  points at a long-lived reader. It never returns FAIL. It opens no SQLite connection, and it
+  runs BEFORE the `memory_backend` row, because opening the store rewrites the
+  WAL this row exists to measure. (PRD-CORE-248 FR06)
+- **A boot timeline you can attribute a slow handshake to.** Five `boot_phase`
+  structlog events — `import_complete`, `app_constructed`, `transport_ready`,
+  `initialize_answered`, `deferred_work_complete` — each carrying an integer
+  `elapsed_ms` from one monotonic origin and an `origin` field naming that point.
+  Until now the only boot event was `trw_server_initialized` and it carried no
+  timing at all, so the ~1.0 s of module import that is 99 % of the
+  pre-`initialize` window was invisible, and a reported 16.5 s handshake could
+  not be attributed. Events emitted before logging is configured are buffered
+  rather than printed, because structlog's unconfigured default writes to stdout
+  — which on this process is the JSON-RPC channel. (PRD-CORE-248 FR02)
+- **The WAL checkpoint is evaluated after every write commit and by an idle
+  sweep.** Its only trigger point was session-start auto-maintenance, so a
+  long-lived server that never ran `trw_session_start` never checkpointed at
+  all. A named `trw-wal-checkpoint` daemon thread now evaluates every
+  `wal_checkpoint_idle_interval_seconds`, and the memory adapter evaluates after
+  each store. An evaluation with nothing due costs one `stat` and opens no
+  connection. (PRD-CORE-248 FR04)
+- **A review verdict now expires.** `PRD-CORE-205` bound a `ReviewReceipt` to the
+  BYTES it reviewed, but never to the clock: a `pass` recorded a year ago stayed
+  `VALID` forever as long as nothing in its bound scope moved. The new typed
+  `review_verdict_ttl_hours` (default 24, bounded 1..8760) adds the time axis.
+  Past the window `validate_review_receipt` returns non-`VALID` with
+  `review_verdict_expired`, the deliver gate treats the review as ABSENT, and the
+  message names the expired `receipt_id` plus the remedy. Both axes must pass and
+  neither substitutes for the other; an unreadable TTL or an unparseable
+  `completed_at` is treated as EXPIRED, so no value restores "never expires".
+  (PRD-CORE-255-FR01)
+- **`reviewer_family=cross_model` is now earned, not asserted — and the label the
+  framework has been printing was wrong.** `reviewer_family` was derived from the
+  internal dispatch `mode` string, so a manual-mode relay of a real agy/codex
+  audit was stamped `human_or_self` and every such review reported
+  `single_family` although the cross-family auditors had in fact run. Trusting a
+  bare `reviewer_source=cross_model` claim instead would have been worse — the
+  strongest label mintable by typing it. `trw_review` takes a new
+  `external_receipt_path`: the family verifies to `cross_model` only when
+  `reviewer_receipt_id` equals the SHA-256 of that file, read under the project
+  root after symlink resolution. Anything less downgrades and returns
+  `family_downgraded_reason` naming which check failed
+  (`external_receipt_path_missing` | `_unreadable` | `external_receipt_digest_mismatch`).
+  The in-process `auto`/`cross_model` dispatch paths are unchanged — there the
+  provider call is itself the evidence. (PRD-CORE-255-FR02)
+- **A `safety_critical: true` PRD cannot deliver without an adversarial audit.**
+  The 2026-06-16 Potemkin-gate incident passed BOTH mandatory gates and was
+  caught only by the optional adversarial pass; nothing required that pass and
+  nothing checked it happened. `safety_critical` is now a documented PRD
+  frontmatter key (default `false`), and `trw_deliver` resolves the run's scope
+  as `run.yaml` `prd_scope` UNION the `prd_ids` on its review receipts. When that
+  scope names a flagged PRD — or names one whose file cannot be read — delivery
+  under `deliver_gate_mode=block_coding`/`block_all` requires a receipt that is
+  digest-verified `cross_model` (or a receipted `operator`), structurally
+  substantive, realizes the `adversarial_audit` rubric, carries a settled
+  verdict, and reports a warning-or-worse finding or an earned `adversarial_pass`.
+  Otherwise it hard-blocks with `safety_critical_adversarial_audit_missing`,
+  overridable only by a PRD-CORE-191 acceptable-failure record. A run that
+  declares NO scope is inert: it reports `safety_critical: not_declared` plus a
+  one-line advisory and delivers, because a PRD opts IN by declaring
+  `safety_critical: true` and a run naming no PRD has nothing to opt in. A run
+  that NAMES a PRD it cannot show is the real misrepresentation, so that — and
+  only that — fails closed, with the remedy naming the unreadable id. No shipped
+  PRD is marked `safety_critical` by this change; opting one in stays a
+  maintainer decision. (PRD-CORE-255-FR03/FR04, amended 2026-09-04)
+- **`trw_deliver` names the review receipt it trusted.** The payload carried only
+  free-text block/warning strings and nothing at all when the review gate PASSED,
+  so an operator auditing a delivery could not tell which receipt (if any) was
+  read. `review_evidence` now reports `receipt_id`, `scope_digest`, and
+  `age_seconds` — present only when a typed receipt actually satisfied the gate,
+  so absence never means "one did, unnamed". (PRD-CORE-255-FR05)
+
+- **The intent-contract edit hooks answer an unprotected path in milliseconds
+  instead of a second.** `pre-tool-intent-guard.sh` and
+  `post-tool-intent-check.sh` fire on every `Write|Edit|MultiEdit` and each spawned
+  a fresh interpreter — measured 0.49s and 0.50s, ~2.2s of CPU per edit — only to
+  learn that the edited path is anchored by no `must_not_happen` claim. On a
+  loaded box that crossed the 1s pre-write budget, and the fail-closed timeout
+  turned resource contention into a BLOCK of unrelated work. `enrollment enroll`
+  and `enrollment refresh-hooks` now compile the anchor set into a digest-bound
+  `.trw/contracts/enrollment.globs` sidecar the shell reads with builtins plus one
+  `jq`; a path matching nothing exits 0 in ~4ms (measured; p95 gated at 30ms). The
+  shortcut is negative-only — it can never block, never decide an anchored path,
+  and defers to the unchanged Python entry point on anything it cannot prove:
+  a `..`/absolute/symlinked/hardlinked path, an unusable or out-of-date sidecar,
+  a drifted contract or hook, an unquotable `file_path`, `MultiEdit`, or no `jq`.
+  (PRD-CORE-254-FR01..FR05)
+- **`make refresh-enrollment` — one named command for "the vendor shipped new
+  hooks".** New hook bytes make every enrolled project's marker read `stale`,
+  which fails both control points closed and blocks every edit through no fault
+  of the user. `scripts/check-bundle-sync.sh --fix` now runs the refresh itself
+  after copying hooks, the unsuppressible stale warning names both the hook-only
+  remedy and the contract re-enrollment (and says which is which), and a clone
+  that never enrolled is still left untouched. (PRD-CORE-254-FR06)
+
+- **`make test-release` runs the FULL, unmarked suite of every release-train
+  package.** `make test-fast` filters trw-mcp and trw-memory to `-m unit`
+  and `make test-parallel` covers trw-mcp alone, so an agent that only ran those never executed the tests those filters
+  exclude — and reported a green run on that basis. `test-release` runs every
+  package in the repository's release train, trw-mcp and trw-memory included,
+  with no marker filter; it keeps going after a failure, prints one
+  `<pkg>: PASS|FAIL` line each, and exits non-zero if any package failed. `test`/`test-fast` help text now says plainly
+  that `-m unit` is a dev-loop tier, not release validation. (PRD-INFRA-179-FR06)
+- **`scripts/audit-external.sh <agy|codex> <prompt-file> <out.md>`** — one
+  command for a cross-vendor read-only audit. The working flag sets were
+  re-derived by hand every campaign (`agy --print` swallows `--effort` as the
+  prompt; `--mode plan` auto-denies every command headlessly), and the findings
+  table was copied out of a multi-megabyte stream by hand. The prompt is passed
+  as a single argv element — never through `eval` or `bash -c` — and a missing
+  findings marker exits non-zero instead of writing a false-empty `out.md`.
+  (PRD-INFRA-179-FR03)
+- **Reusable sub-agent brief templates** at `docs/documentation/agent-briefs/`
+  (implementer, diagnostic, prd-author), pointed to from `.claude/rules/` and
+  from the bundled `trw-implementer` / `trw-adversarial-auditor` agents. They
+  previously existed only inside one run's scratch directory, so every campaign
+  re-derived them. (PRD-INFRA-179-FR04)
+
+### Fixed
+
+- **`trw_session_start` no longer replays an unbounded learn-journal backlog on
+  the hot path.** The write-ahead journal added for `trw_learn` durability had a
+  count limit and no clock, so recovering an overnight backlog ran the whole
+  interactive learn pipeline once per record inside the session's mandated first
+  call: 353,590 ms for 77 records and 207,426 ms for 27 on a 9,434-row store,
+  both far past the 120 s bound the journal exists to dodge. The sweep now stops
+  at a typed wall-clock budget (`learn_journal_drain_budget_ms`, default 3000, 0
+  for background-only) and schedules the remainder for same-process continuation
+  on a single-flight daemon thread; a record interrupted by process exit is not
+  lost — it stays on disk with its attempt count and lands on the next
+  `trw_session_start`. The response reports `replayed_inline` and
+  `deferred_to_background` separately, never counts a deferred record as
+  replayed, and says `deferred_to_next_sweep` when a continuation was already in
+  flight rather than reporting zero. Per-sweep work that was being paid per
+  record — the whole-file learnings index rewrite and the active-entry
+  materialization — now runs once per sweep on the session_start path *and* on
+  the `trw-mcp learn-drain` operator path, and a budget-split sweep shares one
+  context across both phases so it still pays each cost once. The merge verdict
+  resolves its survivor by a bounded id-to-path lookup instead of a 6,532-file
+  scan (45,945 ms worst case) and reads the survivor exactly once, and the
+  one-time batch dedup migration no longer executes inside a replay. Every
+  pending record and the migration marker are claimed atomically before their
+  work runs, so two stdio server processes — or one process whose inline sweep
+  overlaps its own continuation — cannot replay the same record or run the
+  quadratic migration twice; a claim whose owner is provably gone is reclaimed.
+  (PRD-FIX-130)
+
+- **An unparseable build timestamp fails toward "unknown", not toward "fresh".**
+  Defense in depth behind the content-hash binding, which remains the primary
+  staleness detector. Two checks silently dropped a timestamp they could not
+  parse and then answered permissively: `phase_gates_build._check_build_status`
+  logged at DEBUG and fell through with `is_stale=False`, accepting a cached
+  build status whose age nobody could read; and
+  `_delivery_build_gates._latest_ts_for` filtered unparseable stamps out of its
+  list, so a damaged `ts` on either side of the build-vs-edit comparison looked
+  like "no such event" and the pass-then-edit detector reported "not stale".
+  Both now report a named reason — `build_timestamp_unparseable` and
+  `build_evidence_timestamp_unparseable` respectively — and the deliver gate
+  surfaces "Unverifiable build evidence: … the edit order cannot be
+  established" instead of the ordinary stale message. Deliberately narrow: an
+  ABSENT `ts` remains ordinary history (legacy and hook-sourced records omit it
+  routinely), and the phase gate does NOT set its stale flag for an unknown age,
+  because that flag relaxes its own strict severity. `trw_status`'s preview
+  shares the predicate, so it cannot report READY for evidence the gate calls
+  unverifiable. The staleness decision moved to
+  `state/validation/_phase_gates_build_staleness.py`. (WD-02, WD-09)
+
+- **A build check that ran zero tests is no longer a passing artifact.**
+  BREAKING for evidence written by an earlier version. `_build_passed` accepted
+  any `build_check_complete` whose `tests_passed` was truthy, so
+  `trw_build_check(tests_passed=True, test_count=0, scope="")` — a report that
+  no tests ran, against no named scope — satisfied the deliver-time build gate.
+  Under `evidence_receipt_mode: enforce` the typed BuildReceipt requirement
+  caught it, but `observe` is the shipped default and there
+  `build_receipt_content_stale_warning` returns `None` for `typed_absent`,
+  leaving this predicate as the only remaining check. `test_count > 0` and a
+  non-empty `scope` are now required regardless of evidence mode, and the gate's
+  warning names which of the two failed instead of reporting a generic "no
+  successful build check". Two supporting changes make the rule correct rather
+  than merely strict: `_log_build_event` now WRITES `test_count` (it was absent
+  from the event payload, so the gate had nothing to measure), and
+  `derive_test_count` rolls a typed `command_results` count up into the recorded
+  status, so an enforce-mode caller that reports the count in the typed form and
+  leaves the flat argument at its default is not blocked for evidence it
+  supplied. A `build_check_complete` with NO `test_count` — one written before
+  this change — is not a pass; re-run `trw_build_check`, or use the
+  `allow_unverified` + acceptable-failure record path. `tests_passed=None` still
+  raises. (WD-01)
+
+- **A corrupt `.trw/config.yaml` can no longer switch the delivery gate off.**
+  `resolve_gate_mode` mapped ANY exception from `get_config()` to `"advisory"`,
+  and `resolve_deliver_gate_decision` returned `False` for `advisory` before the
+  PRD-CORE-246 change-evidence clause ran — so one unparseable config file
+  disabled the gate for a `coding` run with 40 changed files. The inversion was
+  sharpest under `TRW_CONFIG_STRICT=1`, where the loader deliberately raises
+  instead of reverting to defaults: opting into strict config handling made the
+  delivery gate WEAKER. An unreadable mode now falls back to the DECLARED
+  default of the `deliver_gate_mode` field (introspected from
+  `TRWConfig.model_fields`, never a copied literal), is logged as
+  `deliver_gate_mode_unreadable` with the exception, and is carried through as
+  `mode_from_fallback` so the change-evidence clause is evaluated whatever the
+  fallback happens to name. `trw_status`'s preview stops re-deriving the mode
+  inline and calls the same resolver, so it cannot report "not blocked" for a
+  delivery that blocks. A project that EXPLICITLY configures `advisory` is
+  unaffected — that value is read from config and arrives with the flag clear
+  (PRD-CORE-213-NFR02 unchanged). (WD-05)
+
+- **An unreadable run event log no longer reads as "this session changed
+  nothing".** `_read_run_events` collapsed every read failure to `[]`, and `[]`
+  is indistinguishable from an honestly empty log. Both gates that COUNT
+  changed files then measured zero: `count_session_changed_files` returned `0`
+  without raising — so `resolve_deliver_gate_decision`'s fail-closed `None`
+  branch (PRD-CORE-246-NFR02) was present but unreachable — and
+  `_check_review_file_count_gate` compared `0 > 5`, so the >5-file review-scope
+  hard block could never fire. Reproduced with an events.jsonl that exists but
+  cannot be read, a `task_type` outside `{coding, rca, eval}`, and 50 real
+  edits: delivery was allowed with no block of any kind. `_read_run_events` now
+  returns `None` for a read failure, distinct from `[]`;
+  `count_session_changed_files` propagates it as uncomputable; the review-scope
+  gate blocks and NAMES the unreadable file; and the build gate reports the
+  unreadable log separately from an honestly empty one. A substantive
+  `review.yaml` still satisfies the review-scope gate, and per-line JSON damage
+  is unchanged (`read_jsonl` stays lenient about a torn tail line). (WD-03)
+
+- **`trw_prd_validate` is reachable from a coding-task session again.** The
+  requirements pack is named only by the `docs`/`planning`
+  `STANDARD_TASK_PACKS` entries, so `SurfaceAuthorityMiddleware` masked the
+  read-only, side-effect-free requirement-quality validator on every other
+  task type — including `coding`, which is what `trw-prd-groomer` and
+  `trw-requirement-reviewer` sub-agents inherit when dispatched from a coding
+  session, since a dispatched sub-agent shares its parent's stdio connection
+  and therefore its session's masked tool surface. Every PRD groomer run was
+  falling back to importing `validate_prd_quality_v2` directly and the
+  reviewer could not validate at all — "presence, unconsumed"
+  (`docs/documentation/wiring-defect-patterns.md` P12) applied to a tool.
+  `trw_prd_validate` now joins `trw_init` / `trw_submit_feedback` in the
+  bootstrap never-hide set (`middleware/surface_authority.py`), reachable from
+  every task-type surface regardless of pack membership.
+
+- **`trw-mcp local checkpoint|status|deliver` no longer guesses which run is
+  yours.** With no `--run-path`, the offline CLI selected the run whose
+  `run.yaml` had the newest mtime. mtime carries no ownership information, so
+  under concurrency the winner is whichever run *another* agent touched last —
+  and the bundled degraded-mode protocol block instructed agents to run exactly
+  that command, so a sub-agent that lost its MCP surface appended its
+  checkpoints, and an ungated `status: delivered` stamp, to a stranger's audit
+  trail in a form indistinguishable from an honest record. Resolution is now
+  explicit-or-refuse: `--run-path`, else the session pin read through the same
+  `resolve_pin_key` / `.trw/runtime/pins.json` substrate the MCP server and the
+  shell hooks already use, else a typed refusal naming three executable remedies
+  and listing at most five candidate runs as advisory text that selects none. A
+  refusal writes nothing. A pin key that resolved only to the per-process UUID
+  counts as *no* identity, because no other process can reproduce it. The
+  offline protocol block now prints the resolved run directory on every
+  run-scoped line, or states that the identity is unknown instead of printing a
+  command that would refuse. The dormant `find_run_via_mtime_scan` entry point —
+  preserved by PRD-FIX-085 as an explicit opt-in that no production caller ever
+  took — is deleted. (PRD-FIX-132)
+
+- **`_daemon_owns` and the `memory_daemon` doctor row distinguish an untrusted
+  `daemon.json` from an absent one.** A corrupt, unreadable or schema-mismatched
+  discovery record used to read as "no daemon", letting a process TRUNCATE a WAL a
+  live daemon still held and letting `doctor` PASS on a record it could not trust.
+  `_daemon_owns` now fails closed; the doctor row WARNs naming the file and reason.
+- **A health probe that could not read the store no longer reports an empty knowledge graph.** Read failures now reach the degradation collector; `trw_pipeline_health` reports `measured: false` instead of a clean bill.
+- **A WAL checkpoint whose timestamp never reached disk is reported as partial.** `markers_persisted: false` says the hot-loop protection is not in force.
+- **`doctor` can no longer PASS agent parity it never measured.** A missing bundle or an unreadable `.trw/config.yaml` is `WARN: NOT MEASURED`.
+- **The moved-checkout readback always states `measured`, `absent` or `not_measured`.** A failed census no longer looks like a clean one.
+- **A store that cannot list its namespaces no longer reports valid rows as not found.** `trw_learn_update` answers `lookup_unavailable`; `trw_graph_related` carries `lookup_status`.
+- **Team sync reports per-outcome counts.** Skipped, invalid, quarantined and failed items are counted and the batch status is `partial`, not `success`.
+- **A failed inline boot resolution is no longer logged as a completed wait.** `boot_deferred_work_awaited` covered both "another caller finished it" and "this attempt failed"; the failure now emits `boot_deferred_work_failed_inline` at WARNING. The fail-open behaviour is unchanged. (PRD-CORE-248 NFR02)
+- **A remote recall leg that failed or was refused is on the recall payload.** `trw_recall` adds `remote_recall: {status, ...}` when the shared-memory fetch raised or returned anything but `ok`/`disabled`; before, only a log line knew, and an outage looked like an empty shared corpus.
+- **Domain inference no longer assumes TRW's own repository layout.** `infer_domain`
+  shipped a hardcoded table mapping TRW's own monorepo top-level directories to profile
+  domains, so every project that was not this monorepo resolved `unknown` and silently
+  lost its `.trw/profiles/domain-*.yaml` layer. The table is now the typed
+  `profile_domain_path_map` config field, defaulting to generic layout conventions
+  (`frontend/`/`web/`/`ui/`, `api/`/`server/`, `eval/`/`evals/`). State your own prefixes
+  in `.trw/config.yaml`; the setting replaces the defaults and the longest matching
+  prefix wins. BREAKING: a project relying on the old built-in prefixes must declare them.
+- **The published package no longer points at documents you cannot open.** Docstrings,
+  comments, bundled hooks, the installer template and the AARE-F canon referenced
+  internal research paths and private package paths; each now states the decision it
+  stood for in place. `scripts/check-release-leak-boundary.py` is green for both public
+  packages and is now part of `make check`.
+- **`trw-mcp/data/profiles/` per-client overlay YAMLs are removed entirely.** They
+  were never loaded by any production code (no packaging entry, no reader; the real
+  mechanism is `.trw/profiles/{org,domain,task}.yaml`). The effective meta-tune kill
+  switch is `meta_tune.enabled: false` resolved from `.trw/config.yaml`
+  (PRD-HPO-SAFE-001 NFR-7, corrected).
+- **`resolve_capability_packs` / `CapabilityResolution` are deleted.** Dead
+  surface with zero production callers; `resolve_tool_surface` is the live
+  resolver.
+- **Sub-scope instruction sync could never create a file at defaults.** The
+  generated section alone (94 lines) exceeded `sub_claude_md_max_lines` (50),
+  and the PRD-FIX-123 no-truncate guard refused it while protecting zero user
+  bytes. TRW may now shrink its OWN section to a pointer at the root
+  `CLAUDE.md` when the merge would overflow; it never shrinks the user's
+  content, and root scope never collapses (the deliver gate must be stated once).
+- **The intent guard resolved the project root from `$PWD`.** Clients that do
+  not export `CLAUDE_PROJECT_DIR`, and any hook fired from a package
+  subdirectory, missed the root `.venv` and `.mcp.json`, fell through to a
+  foreign PATH `python3`, and blocked. The git top level is tried first. The
+  shell recognizer also hands the directory it found the enrollment marker in
+  to the Python control point as `TRW_PROJECT_ROOT`; before, that side resolved
+  from the cwd, judged the marker "missing but tracked" and blocked every
+  Edit/Write as `stale` for any agent working inside a package directory.
+
+- **The deliver-time graph backfill stopped re-sweeping the whole corpus every
+  time.** It decided an entry had already been graphed by looking for it as an
+  edge `source_id`. That worked only while tag co-occurrence was materialised —
+  95.96% of the reference store's edges — and PRD-CORE-245 FR07 derives it now.
+  An entry with no similarity neighbour and no consolidation lineage therefore
+  never becomes an edge source no matter how often it is enriched, so every
+  `trw_deliver` re-read and re-enriched the entire corpus inside its 2-second
+  budget and the sweep could never report itself finished. The sweep now records
+  its own resume point in `.trw/memory/graph-backfill.json` and pages the store
+  with a keyset cursor: a time-boxed pass continues from the entry after the last
+  one it processed, and once the corpus has been read through, later calls are
+  no-ops. (PRD-CORE-245 FR07)
+
+- **The graph-health advisory stopped firing on healthy graphs.** Both the
+  session-start advisory and the `pipeline_health` probe answered "is the
+  knowledge graph wired?" with `SELECT COUNT(*) FROM memory_graph_edges`. That
+  counts one half of the graph since PRD-CORE-245 FR07 derived tag
+  co-occurrence — 95.96% of the reference store's edges — from `memory_tags` at
+  query time instead of storing it. A corpus whose entries relate by shared
+  tags and carries no embeddings, which is the ordinary shape, therefore read
+  zero edges and drew "knowledge graph empty — re-deliver to trigger graph
+  backfill" on every single session, pointing at a backfill that had nothing to
+  build. Both probes now ask `state/_graph_relations.graph_has_relations`, which
+  checks the materialised edges and, only when there are none, derives the
+  newest entry's tag neighbours through the same production function recall
+  uses. (PRD-CORE-245 FR07)
+
+- **An unanchored learning no longer claims a perfect anchor score.**
+  `trw_learn()` initialised `anchor_validity = 1.0` and returned it unchanged
+  whenever there was nothing to anchor — no modified files, no generated
+  anchors, or a failed anchor pass. That score feeds the recall ranking boost,
+  so every learning written without anchors (7,541 rows in the reference store)
+  carried the top anchor score without a single anchor ever being checked. The
+  write path now stores `None`, which means "never assessed"; only a real
+  `compute_anchor_validity()` result over real anchors sets a number.
+  (PRD-CORE-244 FR01)
+
+- **A verification pass can now record that an entry PASSED.** The verdict
+  vocabulary held only `"stale"`, so `verification_status=None` meant both
+  "healthy" and "no pass has ever looked at this" — and the clean result the
+  pass computed on every recall was thrown away. A pass that examines an entry
+  and finds no failing assertion and no anchor drift below
+  `anchor_validity_verified_floor` now persists `"verified"` together with
+  `verification_checked_at`, in the same single batched write. Two consequences:
+  a clean verdict survives into later sessions, and within
+  `verification_cache_ttl_seconds` (default 1h) it is reused instead of
+  re-reading the filesystem. Reuse is deliberately one-sided — a `"stale"`
+  verdict is always re-examined, so a repaired claim still clears on the very
+  next pass. (PRD-CORE-244 FR03)
+
+- **The WAL checkpoint fires on size OR age, and writer pressure can no longer
+  cancel it.** The trigger was size-only and reachable only from session-start,
+  and the cancel-or-run decision meant two live editors switched it off
+  permanently. It is now due when the WAL reaches
+  `wal_checkpoint_threshold_mb` **or** the last successful checkpoint is older
+  than the new `wal_checkpoint_max_age_seconds`; the timestamp persists in a
+  sidecar beside the store so it survives the restarts a stdio server does
+  constantly, and an absent or unparseable value means "due". Two or more live
+  writers run `PASSIVE`, which never resets the WAL and is safe at any
+  connection count; `TRUNCATE` is requested only when the live-writer set is
+  exactly this process and no PRD-CORE-253 daemon owns the store — and on a
+  SQLite engine below 3.51.3 trw-memory refuses to execute it regardless, so
+  the WAL is written back but not reclaimed until the engine is upgraded. Two
+  timestamps are tracked, not one: the *attempt* clock drives the age trigger
+  (a busy checkpoint still ran, and advancing it stops the trigger hot-looping),
+  while the *effective* clock advances only when frames were written back or the
+  file shrank, which is what the doctor warns on. A checkpoint that raises
+  advances neither, so the age trigger retries instead of going quiet for a full
+  interval. Verified live under two peer writers: the checkpoint ran
+  (`mode=passive`, 37 frames), which was structurally impossible before.
+  (PRD-CORE-248 FR04)
+- **`pin_ttl_hours` finally governs the pin store its description always
+  promised.** The only eviction pass dropped malformed entries and missing
+  `run_path`s, so on the store this was measured against 13 of 15 pins with
+  heartbeats 13.7 to 34.9 days old survived every load — and `trw_session_start`
+  offered all 13 to the agent as `candidate_runs`. An entry is now evicted when
+  its creator PID is not live **and** its `last_heartbeat_ts` parses to a time
+  older than `pin_ttl_hours`; either condition alone retains it, because a dead
+  PID with a fresh heartbeat is a legitimately restarted server. An absent or
+  unparseable heartbeat is "not provably expired" and is kept. `candidate_runs`
+  applies the same cutoff, and eviction removes only the pins.json entry — the
+  referenced run directory is never touched. (PRD-CORE-248 FR05)
+- **Server boot builds one FastMCP and runs each tool registrar once.** The boot
+  parity check obtained the registered names by constructing a second, throwaway
+  `FastMCP` and re-running every registrar against it, duplicating Pydantic
+  schema generation for the whole tool surface on every process start of every
+  client, purely to emit an advisory drift warning. It now reads the names off
+  the live app; `surface_manifest_parity_drift` still fires on a real mismatch,
+  and a FastMCP that stops exposing the raw accessor says so
+  (`surface_manifest_parity_unavailable`) rather than reporting a clean check it
+  never made. Paired measurement, same machine, same session: cumulative import
+  of `trw_mcp.server` 1.060 s -> 1.010 s (N=3, disjoint ranges).
+  (PRD-CORE-248 FR03)
+- **`initialize` is answered before backend-sync and client-profile
+  resolution.** The FastMCP lifespan resolved sync config, sync targets and —
+  through `BackendSyncClient.__init__` -> `resolve_sync_client_id()` — the client
+  profile, all before the lowlevel server processed its first message. That work
+  now runs after the reply, scheduled from the middleware hook that wraps the
+  handshake, bounded by the new `boot_deferred_work_budget_ms`; the lifespan
+  keeps only task lifecycle. If the deferred step has not completed when the
+  first tool call arrives, that call runs it inline, so no tool can observe an
+  unresolved sync configuration. Paired measurement, same machine, same session:
+  single-process `initialize` median 1.097 s -> 1.049 s (N=5, disjoint ranges);
+  4-concurrent median 1.175 s -> 1.099 s (12 observations, disjoint ranges).
+  (PRD-CORE-248 FR01)
+
+- **cursor-cli's AGENTS.md writer emitted a second, disjoint TRW block**
+  (`<!-- TRW:BEGIN -->`/`<!-- TRW:END -->`) instead of merging into the shared
+  `<!-- trw:start -->`/`<!-- trw:end -->` block every other writer uses, so a
+  project targeting both cursor-cli and another client accumulated two TRW
+  blocks in one AGENTS.md — only one of which any later sync ever refreshed
+  (`make instruction-surface-lint-strict`'s `duplicate_block` finding).
+  `generate_cursor_cli_agents_md` now routes through the same guarded
+  `merge_trw_section` seam as every other AGENTS.md/CLAUDE.md writer
+  (PRD-FIX-123), targeting the shared marker pair. A file that still carries
+  the retired legacy block from before this fix is migrated in place — the
+  dead block is stripped, byte-preserving everything else — the first time any
+  writer merges into it. The legacy pair is recognised only as a migration
+  target now; no writer emits it. (PRD-CORE-243 FR06, FR08)
+- **The intent-contract guard resolved its checker interpreter as bare
+  `python3` from PATH**, so a shell whose PATH carried a foreign, unrelated
+  project's venv first (observed live: no `trw_mcp` installed there) made
+  every enrolled Edit/Write block repo-wide with an unhelpful
+  `python3 is unavailable` message. The two hooks now try, in order, an
+  explicit `TRW_PYTHON` override, the project's own venv (via
+  `CLAUDE_PROJECT_DIR`), the interpreter the installer wired into
+  `.mcp.json`'s `trw` entry (read from its shebang), and PATH `python3`
+  last — proving each candidate by actually running the checker rather than a
+  separate import probe, so the common (working) path pays no extra latency.
+  A fully exhausted search now names every interpreter it tried and says how
+  to point `TRW_PYTHON` at the right one. (PRD-SEC-013,
+  `lib-intent-guard.sh`)
+- **`trw_learn` wrote entries with no vector clock**, which is the field an
+  org-shared pull uses to tell a newer local edit from a stale remote one.
+  Without it the pull returned the remote entry outright and the local edit was
+  discarded, not merged, with no error. The write path now builds entries
+  through trw-memory's shared construction helper. (PRD-CORE-245 FR08)
+- **Duplicate detection ran an unscoped vector search**, so a `skip` or `merge`
+  verdict could be computed against a learning belonging to another namespace.
+  Both the search and the row read are now scoped to the project namespace.
+
+### Removed
+
+- **`effective_hooks_enabled`, `effective_learning_recall_enabled`,
+  `effective_mcp_instructions_enabled`, `effective_agents_enabled` and
+  `effective_framework_ref_enabled` are gone from `TRWConfig`.** Scaffolding left
+  behind when `TRWConfig.surfaces` was deleted; nothing called them. The underlying
+  `hooks_enabled` / `agents_enabled` / etc. fields are unaffected.
+- **`trw_code_search(mode="semantic")` is gone.** The branch called
+  `rank_semantic_chunks(query=query, chunks=(), embedder=None)`, so it was
+  registered, callable and structurally incapable of returning a result. The
+  `mode` parameter is removed outright (a one-value Literal is the same dead knob)
+  and is now rejected by the tool's input schema; `code_index/embeddings.py` is deleted.
+- **`nudge_urgency_mode` and `nudge_dedup_enabled` are gone.** Settable public knobs
+  whose only path out of `TRWConfig` was the `surfaces` projection, which nothing
+  read. The live nudge engine already does adaptive urgency and per-phase dedup;
+  setting either changed nothing. Both are registered as retired keys, so a stale
+  `.trw/config.yaml` gets a warning instead of silence.
+- **`TRWConfig.surfaces`, `SurfaceConfig`/`NudgeConfig`/`RecallConfig` and
+  `resolve_surface()` are gone.** PRD-CORE-125 scaffolding for a migration that
+  stayed a draft, with no production call site in either direction.
+- **`_delivery_boundary.active_journal()` is gone.** No caller since it shipped, and
+  handing the bound journal out of its region defeats the restore that keeps a
+  terminal handle from leaking.
+- **`outcome_correlation`, `sessions_surfaced` and `avg_rework_delta` are gone
+  from the learning surface.** trw-memory 0.16.0 dropped all three from
+  `MemoryEntry` and from the schema because they had no producer and were
+  identical on every one of the 9,366 rows ever written (PRD-CORE-244 FR08), and
+  the recall projection stopped populating them at that point. What remained
+  here was pure advertisement: `Learning` still declared them as Pydantic
+  fields, `LearningEntryDict` still declared them as REQUIRED keys of a shape
+  the transform no longer produced, and `rank_by_utility` still multiplied every
+  score by an outcome factor computed from a key its input dicts could not
+  carry -- so the documented seven-factor boost formula was six factors and a
+  guaranteed 1.0. The fields, the `_outcome_boost_factor` helper and the
+  now-unreachable factor are removed; the formula is documented as six factors.
+  No recall score changes, because the removed factor was the multiplicative
+  identity on every entry. The three names also leave
+  `recall_internal_fields` -- a projection cannot strip a key that cannot
+  exist. Unrelated and unaffected: the `outcome_correlation` DELIVERY STEP
+  (D09), which processes Q-learning outcome events, and the
+  `learning_outcome_correlation_*` config fields it reads. (PRD-CORE-108
+  retired by PRD-CORE-244 FR08)
+
+### Changed (BREAKING)
+
+- **`trw_delivery_recover` gains `resume` and loses `run_compensation`.** The
+  action set is the tool's public contract, so this is a breaking change.
+  `run_compensation` was deleted rather than documented: no descriptor registers
+  a compensating effect, so its entire behaviour was to refuse, and shipping a
+  tool action whose only outcome is a refusal is the kind of surface the operator
+  rules exist to prevent. PRD-CORE-208 FR04's rollback clause is preserved
+  exactly — there are still no registered compensating effects, so nothing may
+  run — and a future PRD that registers one reintroduces the action together with
+  its compensator. No data migration: the coordinator returned before its audit
+  insert, so the value was never persisted to a recovery-event row. Requesting it
+  now returns `unsupported_action`, which is the truthful answer.
+  (PRD-FIX-127 FR01/FR06)
+
+### Added
+
+- **A delivery killed mid-journal can now be finished instead of re-run.**
+  Before this, a crashed, timed-out, or disconnected `trw_deliver` left a durable
+  journal nobody could act on: no recovery action called `begin_step` or
+  `finalize_step`, every repeat claim on a non-terminal operation became a
+  zero-effect refusal, and the refusal text told you to "use an authorized
+  recovery action" that did not exist. The only way forward was a new
+  `delivery_id`, which re-ran every effect from the top. `trw_delivery_recover`
+  with `action="resume"` now classifies the crashed steps in one
+  `BEGIN IMMEDIATE` transaction, refuses with `reconciliation_required` while any
+  step is `indeterminate` (a non-replayable effect left `started` is never
+  assumed either way), and otherwise grants your process a fresh lease under the
+  same capability, revision, stale-lease, and dead-owner guards a takeover
+  already requires. Re-invoking `trw_deliver` under the same id then runs ONLY
+  the steps that never started; every step a prior attempt completed is recorded
+  `skipped_no_work` with its attempt counter untouched. Proven by a spawned
+  child SIGKILLed between two real effects, resumed to `succeeded` with zero
+  duplicated effects. (PRD-FIX-127 FR01/FR02)
+
+- **Every registered delivery effect now declares where its crash boundary is.**
+  24 of the 46 census entries had none, including two marked `required` — so a
+  crash inside them left no evidence at all, and nothing could tell you that.
+  `EffectDescriptor` gains a required `boundary` field with three legal forms:
+  `own` (a real `begin_step`/`finalize_step` pair at the effect's call site),
+  `shared_with` (crash fate is a named host's, which must itself declare `own`),
+  or `unjournaled` (permitted only for `diagnostic` and `coordination` effects).
+  The registry rejects an overclaiming, dangling, or chained declaration at
+  import, so this cannot rot back. The two `required` gaps — the ceremony phase
+  mirror and the acceptable-failure override ledger — got real boundaries, not
+  labels. (PRD-FIX-127 FR03)
+
+- **A census gate that can actually fail.** The previous one read the delivery
+  journal's own step rows and compared them to the list the journal was written
+  from, so it could only detect a DELETED `step()` call, never an ADDED
+  unjournaled write — the failure it advertised. It is replaced by a test-scope
+  tracer that observes `FileStateWriter`, `FileEventLogger`, and SQLite commits
+  during a real deliver and attributes each write to the boundary open at that
+  moment. It went red immediately on two durable delivery mutations that had no
+  descriptor at all: the gate decision-set receipts and the meta-tune rollout
+  linkage event, now registered as `S23` and `D26`. It also refuted the belief
+  that the `delivery_metrics` deferred step is pure computation. Production code
+  is untouched — the instrumentation installs and uninstalls inside the test
+  fixture. (PRD-FIX-127 FR05)
+
+- **`trw_mcp._delivery_boundary`** (new, package root): the `ContextVar`
+  binding that lets an effect nested inside a callee — the ceremony phase
+  mirror in `state/phase.py`, the override ledger and its event in the gate
+  dispatcher — open its own crash boundary without a delivery concept being
+  threaded through call chains that `trw_review` and `trw_build_check` also
+  reach. It sits at the package root beside `_locking` because `state/` may
+  never import from `tools/`. (PRD-FIX-127 FR03)
+
+- **`trw_deliver` now refuses to pass over a governing acceptance item nobody
+  addressed.** Every gate in the deliver cascade certified the code that was
+  written or the PRD status that was edited; none of them read the plan, so a
+  run could honestly report "delivered" while its acceptance matrix was
+  materially untouched. A new plan-acceptance gate enumerates the anchored
+  `P-`/`X-`/`AC-` identifiers in `reports/plan.md` and the `FR\d+` headings of
+  every PRD named in `prd_scope`, reads the run's `reports/acceptance.yaml`
+  declaration, and hard-blocks when the resolved mode is `block_coding` or
+  `block_all`, the task type is build-bearing, and at least one identifier is
+  `unaddressed` or `blocked:automatable`. An identifier with no entry counts as
+  unaddressed — omission was the escape this closes. The block message names
+  each offending identifier and, for automatable work, says to dispatch or
+  re-classify it. The PRD-CORE-191 acceptable-failure record remains the
+  sanctioned override; free text is not one. A declaration that cannot be parsed
+  fails CLOSED, because an unreadable declaration is indistinguishable from one
+  that was never written. (PRD-CORE-249 FR04)
+
+- **A `|` in a deferral's owner or reason no longer deletes the row.** The
+  managed-block cell encoding is now a reversible percent codec (`|`, `<`, `>`,
+  newlines, and `%` itself), so a value that carries a pipe round-trips instead
+  of producing an over-wide row the parser skipped — which the next deliver then
+  rebuilt the block without, dropping that row and resetting the age clock of any
+  identifier declared again. A row this code wrote is now always readable, so a
+  row that is not can only be a human edit: those are carried through the next
+  write verbatim rather than silently deleted. An impossible-but-well-shaped
+  `first_seen` (`2026-02-30`) is rejected at parse instead of raising inside the
+  age arithmetic and taking the whole `open_handoff` key with it.
+  (PRD-CORE-249 FR02/FR03)
+
+- **Work a run defers now survives the run.** Declarations accepted as
+  `blocked:human-only` or `blocked:ops-only` are merged at deliver into a
+  marker-bounded managed block in `project_handoff_path` (new typed config
+  field, default `.trw/HANDOFF.md`), keyed on `(run_id, gate_id)` so repeated
+  delivers overwrite in place and never reset the age clock, and declaring a
+  gate `satisfied` later removes its row. The file is yours: markers are matched
+  whole-line only and every byte outside the block is preserved, so you can
+  annotate around it and delete a row to record it as resolved. The read-modify-
+  write holds an exclusive advisory lock and replaces the file atomically, so
+  two sessions delivering against one checkout produce the union of their rows
+  rather than one clobbering the other. The write is fail-open and never blocks
+  a delivery. (PRD-CORE-249 FR01/FR02)
+
+- **`trw_session_start` now hands you the open items and how old they are.** The
+  response carries `open_handoff` with each row's gate, class, owner, reason,
+  first-seen date, and an age in whole UTC days derived at read time, oldest
+  first. `total` is always the untruncated count, so a capped list is
+  distinguishable from a short one, and a managed block past the parse cap
+  reports `not_measured` with a reason rather than a reassuring zero. Until now
+  nothing anywhere read persisted deferred state back. (PRD-CORE-249 FR03)
+
+- **Every completed deliver writes a `## Remaining work handoff` section into
+  the run's `reports/final.md`.** It lists each accepted blocked item with its
+  owner and reason and points at the handoff file where the rows now live. When
+  nothing was deferred the section says so explicitly — an absent section is
+  indistinguishable from a step that did not run. The section is
+  marker-replaced, so a human-authored final report survives around it.
+  (PRD-CORE-249 FR05)
+
+- **`trw-mcp doctor` now reports the loopback memory daemon.** A new
+  `memory_daemon` row names the endpoint, process id, uptime, version and store
+  path when one is serving. It PROBES and never starts: a diagnostic that
+  spawned a daemon would report a healthy one every time. Not running is
+  reported as PASS -- the daemon idle-shuts-down and a client auto-starts one on
+  first need, so a permanent WARN there would just train an operator to ignore
+  the row. What DOES warn is a discovery record naming a process that is gone,
+  because a client reads that file, dials a dead endpoint and fails closed.
+  (PRD-CORE-253 FR03)
+
+- **`trw_session_start` now tells you when a checkout looks moved or renamed.**
+  The project namespace is a digest over the checkout's canonical root, so
+  renaming a directory changes the identity and orphans that checkout's rows —
+  previously indistinguishable from "no memory yet". When the current identity
+  has zero rows and a populated `project:<same-slug>-*` sibling exists, the
+  response carries a `moved_checkout` block with the evidence and the exact
+  `trw-memory namespace rename` command that repairs it. It reports and never
+  writes: a silent auto-merge on a path change cannot be told apart from two
+  different projects that occupied the same path over time. The key is present
+  only when the signal fires, so a normal session pays nothing for it, and the
+  step is non-critical — a rename advisory must never take down the mandated
+  first action. It reads the same census the `memory_namespace_diagnose` tool
+  does, so the two surfaces cannot disagree about whether a checkout looks
+  moved. (PRD-CORE-253 FR01)
+
+### Fixed
+
+- **`finalize_step` accepted `proof_digest`/`proof_ref` params no production
+  caller ever supplied.** The real critical path always finalized with the
+  defaults (`""`), so proof evidence was only ever captured through a separate
+  operator-reconciliation path (`reconcile_effect`) and could be silently
+  wiped by any completion that forgot to forward it. The parameters are
+  removed; `finalize_step` now automatically carries forward whatever proof
+  is already durably recorded for the step, so a normal completion or a
+  resume re-affirmation can never erase previously reconciled evidence.
+  (PRD-FIX-127 OQ-005)
+
+- **The FR06 instruction-write-guard scan could not see
+  `FileStateWriter().write_text(target, content)`.** `_write_target`'s
+  predicate resolved every `.write_text`/`.write_bytes` attribute call to its
+  RECEIVER, which is correct for `target.write_text(content)` but wrong when
+  the receiver is a `FileStateWriter`/`FileStateReader` instance -- there the
+  real write target is the first positional argument. This made
+  `state/claude_md/_instruction_carrier.py::heal_pointer` (and any other
+  persistence-class writer) invisible to the totality scan. The predicate now
+  recognizes both the inline-constructor and stored-instance receiver forms;
+  re-running the scan against the real source tree found no new unguarded
+  sites (the totality invariant already held for every reachable one).
+  `heal_pointer` still cannot be resolved by the scan's one-hop call-site
+  widening (its only caller passes an unresolved parameter, not a literal
+  path) -- its strip-only, content-preserving safety is established directly
+  by `test_instruction_carrier.py::TestHealPointer` instead. (small-fix-4
+  item 4)
+
+- **S21's delivery-effect owner named the tool call, not the writer.** A prior
+  fix moved `S21`'s (structured application log emissions) `owner_call_point`
+  from a nonexistent `delivery_logger` to `run_trw_deliver` -- a real,
+  resolvable, callable symbol, so the reachability test passed even though
+  `run_trw_deliver` is the `trw_deliver` tool's own entry point (a scope on
+  the stack for every delivery write), not the function whose body actually
+  emits the `deliver_ok` / `deliver_failed` / `trw_deliver_complete` log
+  lines. The owner is now `log_deliver_complete`, the function that owns
+  that emission. `_delivery_io_tracer.py`'s matching `run_trw_deliver`
+  special-case (needed only because the old owner sat on every write's call
+  stack) is removed as dead code, and a new registry-level test rejects any
+  descriptor whose owner is a top-level tool entry point. (PRD-FIX-127 FR03)
+
+- **AG-02's Antigravity subagent installer could report a write failure as a
+  successful create.** `AgentWriteResult.status` is
+  `Literal["written", "skipped_same_sha", "error"]`; the bootstrap layer
+  compared it against the string `"skipped"`, which the type can never equal,
+  so every non-matching outcome -- including a real write failure -- fell
+  into the catch-all `else` branch and was recorded under `created` instead
+  of `errors`. The comparison is now exhaustive over the real Literal set,
+  with `assert_never` on the unreachable branch. (wiring-defect-patterns.md P4)
+
+- **A delivery could report `succeeded` with its own results artifact and audit
+  event missing.** The deferred batch wrote both AFTER the terminal transition.
+  `begin_step` refuses on a terminal operation, so those two writes could never
+  be journaled — and a death in that window left an operation truthfully
+  reporting success that a retry could never discover, because `succeeded`
+  returns `already_succeeded`. Both now run before the terminal transition, each
+  inside its own boundary. Separately, the `D22` boundary moved off the
+  pure-compute metrics step onto the run-yaml write it is registered for.
+  (PRD-FIX-127 FR04)
+
+- **A rejected acceptable-failure record could be inherited by a retry.** The
+  crash boundary added around the override ledger inferred success from "the
+  wrapped call did not raise" — but `apply_structured_override` reports a
+  rejected record by return value, and on the prose path never reaches the
+  ledger write at all. The step recorded `succeeded`, and because a blocked
+  operation is non-terminal, a later resume skipped it and proceeded on a verdict
+  nobody re-validated and nothing ledgered. A step now records the business
+  outcome: a refused decision finalizes `failed` with its reason, and the
+  gate-decision effects are re-evaluated on every attempt rather than inherited.
+  Caught in review before release. (PRD-FIX-127 FR03)
+
+- **A phase mirror lost to a crash could never be repaired.** `update_run_phase`
+  is forward-only, so a delivery killed between the run.yaml phase write and the
+  ceremony-state mirror left the two disagreeing permanently — the retry returned
+  before reaching the mirror. The mirror now converges when the run is already at
+  the target phase, which is idempotent and is the mirror's entire job.
+  (PRD-FIX-127 FR03)
+
+- **PRD-CORE-208's own status record overstated what shipped.** Its section 13
+  marked FR03 and FR04 `Implemented`; both are corrected to
+  `Partially Implemented` naming the unmet clause and this PRD, and module
+  docstrings that promised a resume path or a tracer the code did not have are
+  rewritten to describe what the code does. (PRD-FIX-127 FR07)
+
+- **A compiled canon's `max_core_ratio` check now measures the fresh compile on
+  both sides, not the on-disk combined file.** `compile_registry_canon` divided
+  the freshly compiled compact core by whatever bytes `compiled.combined`
+  happened to hold on disk, so the same source could pass or fail
+  `python3 scripts/compile-framework-canons.py --check` purely depending on
+  whether a prior `--write` had run, and a newly added `dest=core` span was
+  measured against a baseline that predated it. The denominator is now
+  `len(result.combined.encode("utf-8"))` from the same in-memory compile the
+  digest check already uses, so the verdict is a pure function of the source
+  text. (`trw_mcp/canons/_generation.py`)
+
+- **Copilot's `force`-regeneration carrier no longer truncates a user-owned
+  instruction file before computing the new content.** `_externalize_copilot_block`
+  wrote `""` to `.github/copilot-instructions.md` to make the carrier treat a
+  forced re-init as an empty file, restoring the captured bytes on any caught
+  failure -- but a crash between the truncate and the restore left the file
+  permanently empty with nothing to recover from. The write path now runs
+  entirely against a not-yet-existing staging file (which classifies identically
+  to empty for the carrier), and lands on the real file only via a single atomic
+  `Path.replace()` once the whole write has succeeded, so the target holds either
+  the original bytes or the fully written new bytes at every instant.
+  (`trw_mcp/bootstrap/_copilot.py`)
+
+- **The FR06 unguarded-instruction-writer scan now follows a bare-parameter
+  write target to its call sites, closing the gap that let a real
+  `init-project --force` clobber of an existing hand-edited `CLAUDE.md`
+  through `_write_if_missing` go undetected for a full cycle.** The scan only
+  recognized a write target named after the surface (e.g. `claude_md`) or
+  matching a filename literal in its own unparsed text -- a generic
+  `dest.write_text(content)` helper resolved to neither, regardless of what
+  its callers actually passed. The widened scan resolves one level of
+  call-site argument for every such helper and classifies by what is actually
+  passed there. It found the `CLAUDE.md` scaffold write, now routed through
+  `guarded_bootstrap_write` (`_guarded_write.guarded_claude_md_scaffold_write`)
+  so a forced rewrite is backed up rather than silently destroyed, and three
+  legitimate non-destructive writes (`_orphan_strip.py`'s marker-only strip,
+  and the residual `_write_if_missing` call that only ever runs when nothing
+  is at risk) recorded in the totality test's `ALLOWLIST` with a justification
+  comment per entry. (`trw_mcp/bootstrap/_init_project.py`,
+  `trw_mcp/bootstrap/_guarded_write.py`)
+
+- **`init_project` / `update_project` now report their own file to `inspect`,
+  not the write-guard's.** `with_instruction_write_trigger` already applied
+  `functools.wraps`, so `__name__`/`__module__`/`__doc__`/`__wrapped__` were
+  correct, but `inspect.getfile()` still pointed at `_write_guard.py` — CPython
+  reads `__code__.co_filename` directly and never follows `__wrapped__`. The
+  decorator now rebinds the wrapper's `__code__` filename and line number to
+  the wrapped function, so any tool, traceback, or `inspect.getsource()` call
+  that asks "where is `init_project` defined" gets the real answer.
+  (`trw_mcp/state/claude_md/_write_guard.py`)
+
+- **The AG-02 `trw-distill-explorer` subagent now installs through the
+  FR01 format registry, at `.agents/agents/` instead of the hardcoded
+  `.antigravitycli/agents/`.** PRD-CORE-252 moved the eleven bundled
+  specialists to the destination and frontmatter shape
+  antigravity.google/docs/subagents documents (`name`, `description`, `model`
+  in `{inherit, flash, pro}`); this generator is dynamically rendered from
+  sidecar data rather than a static bundled file, so that landing did not
+  reach it, and it kept writing `.antigravitycli/agents/` with a literal
+  `gemini-2.5-flash` model id and undocumented `temperature`/`max_turns`/
+  `timeout_mins` keys. Content is now authored in the bundle's claude-code
+  dialect (a capability tier and `{tool:trw_x}` body placeholders) and passed
+  through `materialize_agent`, the same translation the bundled corpus uses,
+  so the frontmatter and body tool references can't drift from the registry
+  again. `trw-distill-explorer.md` also joined `RELOCATED_CLIENT_AGENTS` so
+  `update-project` cleans up a stale pre-move copy at the old location.
+  (`trw_mcp/channels/antigravity/_explorer_subagent.py`,
+  `trw_mcp/bootstrap/_antigravity_distill_channels.py`,
+  `trw_mcp/bootstrap/_version_migration.py`)
+
+### Changed
+
+- **The user-space memory path resolver moved to
+  `trw_memory.user_paths`.** `trw_mcp.state._user_paths` now re-exports it
+  rather than carrying a second copy, so the loopback memory daemon and the
+  ceremony server cannot drift about where the store lives. Import sites,
+  precedence (`TRW_USER_DIR` > `$XDG_DATA_HOME` > `~/.trw`) and the
+  monkeypatch seam are unchanged. The `trw-memory` floor moves to `>=0.16.0`
+  accordingly. (PRD-CORE-253 FR01)
+
+- **Every bundled specialist now reaches every client that has an agent
+  surface, in that client's own format.** TRW ships a set of specialist agents
+  and installed them on exactly one harness. `_install_agents` hardcoded
+  `.claude/agents` whatever its `client` argument said, and the sole production
+  call site never passed `client` at all — so the client plumbing added by
+  PRD-INFRA-104 was unreachable in production, and six of the seven supported
+  clients received a short set of hand-written stubs instead. Seven specialists
+  (`trw-adversarial-auditor`, `trw-auditor`, `trw-prd-groomer`,
+  `trw-requirement-reviewer`, `trw-requirement-writer`, `trw-tester`,
+  `trw-traceability-checker` — the framework's entire audit, requirements and
+  test capability) were available on Claude Code and nowhere else. `init-project`
+  and `update-project` now write the whole bundle into `.claude/agents`,
+  `.cursor/agents`, `.opencode/agents`, `.codex/agents` (TOML),
+  `.github/agents` (`*.agent.md`) and `.agents/agents`. (PRD-CORE-252-FR03)
+
+- **A typed per-client agent-format registry, instead of five hand-copied
+  template dictionaries.** `agents/agent_formats.py` declares one frozen entry
+  per client — destination, filename suffix, serialization, which bundled
+  frontmatter keys are retained and under what names, which are dropped, and
+  whether the client has an agent surface at all. Adding a frontmatter key to a
+  bundled agent without deciding its per-client fate is now a construction
+  error rather than a silent leak of Claude Code's dialect. The tool namespace
+  is read from `ClientProfile.tool_namespace_prefix` rather than restated, so a
+  registry entry cannot disagree with the profile the way the retired
+  Antigravity templates did. (PRD-CORE-252-FR01/FR02)
+
+- **`trw-mcp doctor` reports `agent_parity` per selected client.** PASS when
+  every agent-capable selected client holds the full bundled set; WARN naming
+  the missing agents and their client when one is short; SKIP when no selected
+  client has an agent surface. `--format json` carries the per-client installed
+  and expected counts. It never FAILs — a missing agent degrades capability
+  without breaking the install. Before this, a user missing seven specialists
+  saw a completely clean `doctor` run. (PRD-CORE-252-FR05)
+- **`trw_prd_validate` rejects a `verification_commands` entry that is not a
+  runnable command.** An entry like `FR01: cd trw-mcp && pytest ...` contains
+  `pytest`, so it scored as a verification command — and then died inside
+  `bash -c` as `FR01:: command not found` (exit 127), reported identically to a
+  genuine test failure. The first token must now be a real command or a path
+  that exists; a bad entry is an `error`-severity finding naming the entry, and
+  `make prd-verify-check` reports it as "malformed", separately from stale
+  tests. (PRD-INFRA-179-FR02)
+- **A `valid: False` verdict always names at least one `error`-severity
+  finding.** The dynamic validation refresh flipped `valid` on *any* integrity
+  finding, warnings included, so a PRD could be rejected over an advisory
+  "bare filename has multiple matches" with no error anywhere in the output —
+  nothing for the reader to act on. Warnings are now advisory as documented,
+  the V1 completeness/traceability gate emits a `quality_gate_threshold` error
+  naming the unmet threshold, and a backstop finding fires if any future gate
+  rejects a PRD without explaining itself.
+- **The bundled `trw-implementer` agent converges before its turn budget runs
+  out.** It now stops, runs the full package suite (all markers), commits what
+  is green and reports at roughly 80% of budget or 25 tool calls since its last
+  commit — previously a run could end with green work uncommitted, and a final
+  report backed only by a marker-filtered tier. (PRD-INFRA-179-FR05)
+- **`scripts/git-commit-scoped.sh` regenerates the inventory when a commit bumps
+  a manifest version.** Version bumps landed with a stale `build/inventory.json`,
+  `docs-counts.generated.ts` and markdown count sentinels until someone
+  remembered `make inventory` in a follow-up commit. Versions are compared by
+  parsing TOML/JSON against `HEAD` (never grepped, so a version string in a
+  comment is inert); a failing `make inventory` aborts the commit rather than
+  landing a partial one; `--no-inventory` opts out per invocation.
+  (PRD-INFRA-179-FR01)
+
+### Changed
+
+- **Antigravity subagents move to `.agents/agents/`, drop the invented
+  frontmatter, and stop naming Gemini model ids.** TRW wrote
+  `.antigravitycli/agents/`, a path that appears nowhere in Antigravity's own
+  subagent reference (which documents `.agents/agents`, the same `.agents` tree
+  its workspace rules already use); emitted `temperature`, `max_turns` and
+  `timeout_mins`, none of which that reference declares; wrote literal
+  `gemini-2.5-flash` / `gemini-2.5-pro` into a `model:` field whose schema
+  admits only `inherit`, `flash` and `pro`; and instructed the model to call
+  `mcp_trw_*` tools while that client's own profile declares a bare namespace.
+  All four are fixed. `update-project` removes TRW's four stubs from the old
+  directory; a co-resident `trw-distill-explorer.md` there is left alone.
+  **Breaking**: agent files on six clients change shape and location, and
+  existing installs are migrated forward by `update-project`.
+  (PRD-CORE-252-FR03/FR04)
+
+- **`cursor-cli` is recorded as having no agent surface, rather than silently
+  receiving Claude Code's.** Its instruction carrier is the repo-root
+  `AGENTS.md`, and Cursor's CLI reference does not state that the CLI loads
+  `.cursor/agents`. `init-project` writes no agent file for it and produces one
+  record naming the reason; `doctor` reports SKIP. No empty directory is
+  created. (PRD-CORE-252-FR03)
+
+- **A preserved user edit to an installed agent is now counted in the
+  `preserved` total the CLI prints.** `update-project` recorded it only under
+  `modified`, which nothing surfaces — so the person whose edit was preserved
+  had no way to see that it had been. (PRD-CORE-252-FR03)
+
+### Removed
+
+- **The five hand-maintained per-client agent template sets.**
+  `_CODEX_AGENT_TEMPLATES`, `_COPILOT_AGENT_TEMPLATES`,
+  `_ANTIGRAVITY_AGENT_TEMPLATES` and the bundled `data/cursor_ide/agents` and
+  `data/opencode/agents` directories are deleted, along with
+  `generate_codex_agents`, `generate_copilot_agents`,
+  `generate_antigravity_agents`, `generate_cursor_ide_subagents` and
+  `install_opencode_agents`. Their bodies were independent prose that shared
+  only a filename with the specialist they shadowed, and had already drifted
+  from both the bundle and the profile registry. **Breaking**: the two names
+  that existed only as stubs — `trw-explorer` and `trw-docs-researcher` — are
+  retired outright rather than promoted, and `update-project` removes them from
+  every client destination. (PRD-CORE-252-FR04)
+
+- **The degenerate-result advisory: an empty, truncated, or undated tool result
+  no longer reads as a fact about the world.** The framework has stated the rule
+  since v26 — *absence of a measurement is not a measurement of absence* — with
+  no adapter behind it. `post-tool-degenerate-result.sh` now ships registered and
+  default-on in both `settings.json` and the plugin manifest, and emits at most
+  one line per session per cooldown window as a PostToolUse `additionalContext`
+  block: model-visible, non-blocking, exit 0 on every path. Three shapes trigger
+  it — an empty or whitespace-only result, one carrying a truncation marker, and
+  an undated result from a freshness-sensitive command. The defaults are measured
+  rather than guessed: the truncation markers were harvested from real tool
+  results (the candidates that came to mind instead scored zero and are absent),
+  and the freshness allowlist is matched as a first-line command prefix because
+  the substring matching it was drafted with blew the noise budget several times
+  over on the same seven entries. Every count, with its N and date, is in
+  `.trw/compliance/degenerate-result-calibration.json`, regenerable with
+  `scripts/measure_degenerate_result_calibration.py` — including a replay of the
+  whole live corpus through the shipped hook with the cooldown disabled, which
+  holds well under the 5-per-100 budget with zero non-zero exits.
+  (PRD-CORE-250-FR06/FR07)
+
+- **Five typed, bounded config fields for the advisory, behind one shell
+  accessor.** `degenerate_result_cooldown_calls`, `_max_read_bytes`,
+  `_deadline_ms`, `_truncation_markers` and `_freshness_commands` are Pydantic
+  fields with bounds and descriptions; the hook reads all five through
+  `trw_degenerate_result_setting` in `lib-trw.sh` (env override, then
+  `.trw/config.yaml`, then the default, with a non-numeric value falling back to
+  the default rather than silently disabling the rule). The three numeric fields
+  are also CLAMPED to their own `ge`/`le` in the accessor, because Pydantic
+  validates `.trw/config.yaml` only when the server loads it while the hook reads
+  the same file with `grep` without importing the model — so a hand-edited
+  `degenerate_result_max_read_bytes: 999999999` previously flowed straight into
+  `head -c` and defeated the byte cap it was supposed to enforce. The adapter
+  carries no numeric literal of its own. There is no on/off switch beyond the
+  global `HOOKS_ENABLED` contract. (PRD-CORE-250-FR10)
+
+- **A session whose MCP surface never attached is now told what to do instead
+  of being handed a rule it cannot follow.** The SessionStart hook printed
+  `RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, ...`
+  unconditionally — including in the reported session where the server timed out
+  after 120,000 ms and zero `mcp__trw__*` tools existed. That leaves an agent
+  three bad options: ignore a rule labelled RIGID, halt useful work, or
+  improvise. Detection is observational and staged across two hooks, because the
+  SessionStart hook *cannot* see attach state at the moment it runs: it now
+  writes a session epoch marker under `.trw/runtime/` and claims nothing, and
+  UserPromptSubmit concludes the surface is absent only when all three hold — no
+  `trw_` `tool_invocation` row newer than the epoch, elapsed time past
+  `degraded_detect_grace_seconds` (180), and at least
+  `degraded_detect_min_prompts` (2) prompts. No liveness probe runs:
+  `trw-mcp --version` measures 1.25-1.27 s against a ~23 ms hook budget and
+  answers the wrong question. Every unreadable, absent, or malformed input
+  resolves to "the surface is present" and emits nothing, because a false
+  degraded verdict would route a healthy agent onto a path that records
+  `gate_evaluated: false`. (PRD-CORE-247-FR01)
+
+- **The offline block names a concrete substitute for every RIGID obligation.**
+  `trw_session_start`, `trw_init`, `trw_checkpoint`, `trw_learn`, `trw_recall`,
+  `trw_deliver` and feedback each map to a `trw-mcp local` command;
+  `trw_build_check` maps to a written artifact — run the project-native check
+  yourself, then record the exact command string and its integer exit code in the
+  active run's `reports/` directory, which is where a reviewer already reads
+  build evidence from. The same table now also reaches the generated instruction
+  file, which previously carried only `local init` and `local checkpoint` — two
+  of eight. (PRD-CORE-247-FR02)
+
+- **`trw-mcp local recall` and `trw-mcp local feedback`.** The offline fallback
+  had five subcommands and neither of these, although both underlying callables
+  were already plain functions with no MCP dependency. Both bind to the same
+  top-level callables the MCP tools use, so no second redaction, validation,
+  ranking, or persistence path exists to drift from them, and `trw-mcp local`
+  with no arguments now lists every subcommand with its flags — the capability
+  was previously reachable only by reading argparse source.
+  (PRD-CORE-247-FR03)
+
+- **An offline learning is finally distinguishable from an online one.**
+  `write_local_learning` passed `source_type="local_cli"`, which
+  `_validate_source_type` coerced to `"agent"` before storage: measured across
+  9,398 live rows, the marker appeared nowhere. It now sets
+  `source_identity="local_cli"` (a plain string with no whitelist validator, so
+  it survives) plus a transient `trw-reconcile-pending` tag. The erased
+  `source_type` argument is deleted rather than left beside the working one.
+  Neither whitelist is extended — `trw_mcp` and `trw_memory` have already
+  drifted, and a cross-package change is disproportionate to marking a write
+  path. (PRD-CORE-247-FR04)
+
+- **`trw_session_start` reports and clears the offline-write queue.** A new
+  session-start step reports the pending entries by count and identifier in
+  `reconciled_local_writes`, then removes the tag from exactly the rows it
+  reported, so a row written between the query and the clear survives to the next
+  session rather than being dropped unreported. Forward-only: rows written before
+  this change carry no tag and are invisible to the query. A failure records a
+  structured degradation and leaves `success: true` — a reconciliation report is
+  diagnostic and must never take down the mandated first action.
+  (PRD-CORE-247-FR05)
+
+- **The framework canon states what RIGID means while the transport is down.**
+  A new normative `WHEN THE TRANSPORT IS DOWN` section in the compiled core says
+  three things: the obligation transfers to its offline equivalent and does not
+  lapse; an offline delivery records `gate_evaluated: false` and stays ungated
+  until evidence exists, because inability to evaluate a gate is not a fourth
+  path through it; and offline writes are marked and reported. A rule that cannot
+  be followed in a known, recurring failure mode teaches agents that the rules
+  are advisory. (PRD-CORE-247-FR06)
+
+### Changed
+
+- **The published hook count is now a count of hooks that can fire.** It was a
+  directory listing: `<!-- inv:hooks -->` read 17 while the two shipped templates
+  registered 14. `_extract_hooks` now filters on registration and refuses to
+  publish a count derived from an unreadable template, and the PRD-INFRA-177
+  ratchet — which searched this development repository's own
+  `.claude/settings.json` and so excused three hooks the product does register —
+  now reads the shipped templates with an empty allowlist. The two sides are
+  pinned equal, so neither can drift alone. (PRD-CORE-250-FR08/FR09)
+
+- **The two intent-contract hooks share one library instead of 232 identical
+  lines.** `pre-tool-intent-guard.sh` and `post-tool-intent-check.sh` duplicated
+  four whole function bodies, so a signal-trap or timeout fix applied to one and
+  missed on the other was a live divergence in two registered hooks. They now
+  source `lib-intent-guard.sh`; a 19-case exit-code and stderr matrix is
+  byte-identical before and after. The new library is sourced into the shell that
+  *decides*, so it joins the intent-contract enrollment digest and each hook
+  establishes its fail-safe state before sourcing it — a `.` of a missing file
+  aborts a POSIX shell outright, which measured as exit 2 from a project that
+  never opted in. (PRD-CORE-250-FR05)
+
+- **The mandated framework read is charged only when the tools it describes
+  exist, and is scoped to the phase in hand.** The directive was gated solely on
+  `TRW_FRAMEWORK_MD_ENABLED` and self-described as "~385 lines / ~8k tokens"
+  while the file measured 393 lines and 35,073 characters (~9,230 tokens). It is
+  now suppressed entirely under a degraded verdict — full instruction cost for
+  zero capability was the exact complaint — and otherwise names only the sections
+  for the current phase, at most 6,349 characters (18.1 percent of the document).
+  The phase-to-section mapping is a documented, total table; `framework_read_scope:
+  full` restores the whole-document read. (PRD-CORE-247-FR07)
+
+- **The verbatim tool catalogue is a pointer for clients that can enumerate the
+  live surface.** For the four full-ceremony profiles the 2,777-character table —
+  53 percent of the block — is replaced by a pointer to `trw_skill_discovery` and
+  `trw_status`, cutting the generated protocol block from 5,244 to 2,713
+  characters (48.3 percent, ~1,380 to ~714 estimated tokens; ~10,124 characters
+  saved across the four). A hand-copied list can drift from what is exposed; a
+  pointer cannot. The three light-ceremony profiles keep the catalogue verbatim
+  and their blocks are byte-identical at 5,048 characters: for those clients the
+  generated file IS the protocol carrier, and one may not be able to make the
+  discovery call at all. The profile decides, not the new
+  `instruction_catalogue_mode` field. (PRD-CORE-247-FR08)
+
+### Fixed (review follow-up)
+
+- **The generated protocol block reached bare harnesses with no deliver gate and
+  no offline substitutes.** `ProtocolRenderer.render_closing_reminder` shadowed
+  the module function of the same name and returned session-boundary text only.
+  `session-start.sh` cats that block verbatim out of
+  `.trw/context/behavioral_protocol.md` on resume/compact/clear whenever no
+  instruction file carries the protocol — the not-yet-synced and bare-harness
+  population, exactly the one that most needs the offline path — so it arrived
+  stating the deliver gate **zero** times and naming no substitute. The
+  duplicate method is deleted; there is one implementation. Full-mode blocks are
+  now 5,049 characters (195 smaller than before) while carrying both, and the
+  catalogue substitution the PRD specifies still saves 2,531 characters. This is
+  the same shadowed-renderer shape as the PRD-FIX-073-FR03 wiring defect.
+  (PRD-CORE-247)
+
+- **The session epoch was rewritten on every SessionStart, resetting its own
+  clock.** The marker is the "since when" the absent-surface detector measures
+  against, and `resume`/`compact`/`clear` happen inside a session whose transport
+  state has not changed. A session 170 s into a 180 s grace window with a prompt
+  already banked lost both to a compaction, so a real outage stayed undetected
+  for another full window. Only `startup` writes it now. (PRD-CORE-247-FR01)
+
+- **The reconciliation clear could erase a concurrent tag write.**
+  `update_learning` replaces the whole tag list, and the step computed that list
+  from the query-time snapshot — so a tag added by another process between the
+  query and the clear was silently dropped by the step whose only job is to
+  remove one specific tag. Each row's tags are now re-read immediately before its
+  own write, and a row another session already cleared counts as cleared rather
+  than as a failure. (PRD-CORE-247-NFR04)
+
+- **The degraded-mode block asserted a conclusion the detector cannot observe.**
+  "The MCP surface is very likely absent" outran the evidence: no hook can ask a
+  client whether MCP attached, and the design accepts false negatives precisely
+  because it is inferring. The block now names itself as an inference and tells
+  the reader what to do when it is wrong. (PRD-CORE-247-FR02)
+
+- **The three-path deliver gate is stated in full once per carrier.** It was
+  stated in full five times. `docs/CONSTITUTION.md` stays canonical; the second
+  copy inside the compiled framework core and the repo-root `CLAUDE.md` prose
+  copy become one-line pointers. Every carrier still states it exactly once —
+  never zero, which is the more dangerous failure and is what the light-ceremony
+  profiles' unconditional full statement protects against.
+  (PRD-CORE-247-FR09)
+
+### Removed
+
+- **Four bundled hooks that no shipped template registered — 1,053 lines of
+  shell that could not execute.** `completion-gate.sh`, `helper-idle.sh`,
+  `phase-cycle-stop.sh` and `lib-ide-adapter.sh` were shipped to every user,
+  hashed into `bundle-hashes.json` and (for three of them) published as active,
+  while matching nothing in `settings.json`, nothing in the plugin manifest and
+  nothing under `bootstrap/`. Nothing they claimed to enforce is lost:
+  `pre-tool-deliver-gate.sh` already blocks the build-check condition
+  `completion-gate.sh` described, `helper-idle.sh` read a payload key its event
+  stopped sending in April and would have exited 0 on every invocation, and
+  `phase-cycle-stop.sh`'s one non-duplicated criterion guarded on an event type
+  with no producer anywhere in the repository. `update-project` sweeps the
+  orphaned copies from projects enrolled before this release.
+  (PRD-CORE-250-FR01-FR04)
+
+### Fixed
+
+- **The stale-run sweep's atomic `run.yaml` writer could close another
+  thread's file descriptor mid-write.** `_dump_run_yaml_atomic` wrapped the
+  `mkstemp` fd with `os.fdopen(fd, "w")` inside a `with` block — which already
+  closes `fd` on every exit — and then ran an unconditional
+  `finally: os.close(fd)` on top of it. Single-threaded that was a silently
+  suppressed `EBADF`; under concurrent sweeps the OS could hand the just-freed
+  fd number to an unrelated file opened by another thread in the race window,
+  and the erroneous second close then closed *that* thread's descriptor,
+  reproducing as `EBADF` / `IsADirectoryError` while appending to a different
+  run's `events.jsonl`. Fixed to close the descriptor exactly once: ownership
+  transfers to the file object the moment `os.fdopen` succeeds, and the
+  manual `os.close(fd)` now runs only on the branch where `os.fdopen` itself
+  raised (before it took ownership). Verified this is the only instance of
+  the pattern across `trw-mcp` and `trw-memory` — every other `os.fdopen` +
+  temp-file writer either has no matching second close or already used the
+  correct `fd = -1` ownership-transfer sentinel. (PRD-FIX-126)
+
+- **The Copilot/Antigravity instruction writer bypassed the instruction-write
+  guard.** `bootstrap/_file_ops.py::write_instruction_file_with_merge` was a bare,
+  non-atomic `Path.write_text` targeting `.github/copilot-instructions.md` and
+  `ANTIGRAVITY.md` — files a user owns and may have hand-written. PRD-FIX-123's
+  AST totality scan could not see it: it writes to a bare `target_path`
+  *parameter*, so neither the surface-filename predicate nor the
+  `agents_md`/`claude_md` name hints matched. It now routes through
+  `guarded_instruction_write`, gaining the backup, the non-generated-shrink
+  floor, the atomic write, and the provenance record every other instruction
+  writer already had; a guard refusal is reported through `result["errors"]`
+  rather than recorded as a successful write. (PRD-CORE-247)
+
+- **A failing assertion is now a durable, per-entry negative signal.** The
+  verification pass has always computed `outcome.failing` — a specific,
+  human-free contradiction — and discarded it after down-ranking one recall.
+  Meanwhile the bandit's only reward was a uniform session-wide signal and
+  explicit feedback (`helpful_count`) was measured at **0 of 9,366 rows**, so
+  what it optimised was retrieval *frequency*, which happily promotes a
+  confidently-wrong memory that keeps matching the query.
+  `scoring.apply_contradiction_penalty` now applies a negative Q observation to
+  the contradicted entry alone, through the same two-phase write
+  `process_outcome` uses, in one batched call per pass. `invalidated_by` is
+  deliberately not written: it names a *superseding record*, and a contradiction
+  with no replacement has none — writing one would fabricate a reference.
+  Magnitude is `TRWConfig.contradiction_penalty_reward` (default 0.4), and the
+  penalty is rate-limited to once per entry per UTC day: the same broken
+  assertion surfaced five times in a session is one fact about the claim, not
+  five, and charging per recall would quietly turn the contradiction signal into
+  another retrieval-frequency term. (PRD-CORE-244-FR04)
+
+- **`trw_learn_update` can no longer promote an unsubstantiated entry to
+  `verified`.** FR02 put the substantiation rule at the store chokepoint, but
+  `trw_learn_update` edits an existing row through `backend.update()` and never
+  re-enters that pipeline — so `fields={"confidence": "verified"}` promoted an
+  evidence-less entry, reopening the exact hole one surface over. The update path
+  now calls the *same* `reject_unsubstantiated_verified` the store path uses,
+  against the projected post-update entry so assertions supplied by the same call
+  count, and refuses the whole update rather than letting its other fields land.
+  The offline CLI (`trw-mcp local learn`) and the sync pull path were checked and
+  already reach the store gate. (PRD-CORE-244-FR02)
+
+- **DELIVER now names a learning this session disproved and did not retract.**
+  `invalidated_by` was non-null on **0 of 9,366 rows** after roughly four months
+  of daily use — the write path exists and nothing ever asked anyone to use it.
+  `check_delivery_gates` adds a `retraction_nudge` naming each entry id and the
+  exact `trw_learn_update` call that settles it. It is advisory and sets no
+  blocking condition: an assertion can fail because a project root was
+  unresolvable or a file was renamed, and blocking would convert a false
+  positive into a stopped delivery. (PRD-CORE-244-FR06)
+
+- **A learning that asserts current state is offered a validity window.**
+  `expires` was non-empty on **0 of 9,366 rows**: a learning that records an
+  invariant stays true, one that records state is true the day it is written and
+  silently false later, and nothing marked which kind it was. `trw_learn` now
+  returns a `validity_window_nudge` when the text carries a state marker
+  (`currently`, `not yet`, `is now`, `as of`, `at present`, `no longer`, or a
+  bare measured count) and the type is one in
+  `TRWConfig.state_learning_default_ttl_days` (default `incident` 90,
+  `hypothesis` 30, `workaround` 180). `convention` and `pattern` record
+  invariants and are never offered one. Nothing writes `expires` from it — the
+  author decides, because a classifier that stamps a TTL on an invariant makes
+  the store less true than one that stamps none anywhere.
+  (PRD-CORE-244-FR05)
+
+### Changed
+
+- **The requirements registry now reports expiry as not evaluated instead of as
+  an empty list.** With no authorized `advance_evaluation_epoch` action the
+  ledger yields a `1970-01-01` genesis epoch, against which every renewal date
+  is hugely future-dated — so `is_expired` was never true and the projection
+  rendered `hot path: 350 of 350 executable` with `expired: []`, a
+  positive-looking statement produced by an evaluator that had never run, over
+  350 entries of which **261 were past-dated**. `build_registry` now returns
+  `status="epoch_unset"` with `expiry_evaluated=False` and *skips* the expiry
+  loop, the INDEX/ROADMAP block states
+  `- expiry: not evaluated (no authorized evaluation epoch)`, and
+  `evaluate_activation` treats the state as an unknown that cannot activate —
+  fail-closed for activation, advisory for rendering, so the catalogue keeps
+  projecting. **Breaking**: activating a PRD now requires an authorized epoch.
+  (PRD-CORE-244-FR07)
+
+- **`protection_tier` now protects on every automatic-removal path.** A
+  `permanent` learning was nominated for pruning on the same schedule as a
+  `normal` one. `utility_based_prune_candidates`, `auto_prune_excess_entries`
+  (both its utility scan *and* its independent Jaccard duplicate scan) and the
+  tier sweep now exempt `protected`/`permanent` outright and discount the middle
+  tiers through `TRWConfig.protection_tier_prune_discount`; the trw-memory
+  native prune it delegates to is covered too. Tests assert the
+  protective *effect* on the real prune path against a byte-identical `normal`
+  fixture; the previous coverage only asserted the value survived a round trip,
+  which is exactly why the gap was invisible. (PRD-CORE-244-FR10)
+
+- **Importance decay runs on every deferred delivery.** `memory_decay_pass` was
+  hardened, locked, batched and tested with **zero production callers**, while
+  its sibling `apply_importance_boost` was wired — so importance could rise and
+  structurally never fell, a one-directional ratchet on the field both
+  `compute_utility_score` and prune-candidate selection key on. A `memory_decay`
+  step (census effect `D25`) now runs after the tier sweep over
+  `TRWConfig.memory_decay_cutoff_days` / `memory_decay_batch_size`.
+  (PRD-CORE-244-FR09)
+
+- **The live recall ranker now reads the feedback counters its own tool
+  docstring credits.** `rank_by_utility` routed through a private
+  `scoring._decay._entry_utility`, an independent second implementation that
+  never read `helpful_count`, `unhelpful_count` or `recall_count` — and the test
+  that appeared to prove the wiring imported the *other* implementation. The
+  duplicate is deleted; `scoring.entry_utility` is now a config adapter that
+  binds `TRWConfig` knobs and delegates to
+  `trw_memory.lifecycle.scoring.entry_utility`. The expiry floor, the
+  unverified-incident preservation rule, and the access-count/source-type/
+  per-type half-life terms are all retained and asserted individually.
+  (PRD-CORE-244-FR11)
+
+### Added
+
+- **A build gate now stops the trw-mcp / trw-memory memory-concern fork from
+  re-forming.** Nine memory concerns are implemented in both packages and have
+  drifted to between 0.518 and 0.741 line similarity, so a fix applied to one
+  does not reach the other — 1,668 effective LOC of duplication produced by a
+  convention that nothing enforced. `make memory-boundary-check`
+  (`scripts/check_memory_boundary.py`, wired into `make check`) is the ratchet
+  PRD-CORE-251 collapses them under. It holds the dependency edge one-way
+  (trw-memory must never import `trw_mcp`; the entry in
+  `check_import_boundaries.py` that makes that scan apply was itself unguarded
+  until now), asserts that every trw-mcp-only concern named in PRD-CORE-251
+  section 6 is still present and still carries the one-line rationale that makes
+  it trw-mcp-only, and requires the declared trw-memory floor to rise the moment
+  the first `trw_memory.tools` import lands — so a version skew fails at install
+  time rather than at the first tool call. Its fourth check, the
+  re-implementation scan, is deliberately ARMED WITH NOTHING in this release
+  (nothing is delegated yet) and the gate says so on every run rather than
+  reporting a clean pass; the mechanism is proven against planted violations in
+  `tests/test_memory_boundary.py`. (PRD-CORE-251 FR09)
+
+### Changed
+
+- **BREAKING — `RunStatus` now equals what the runtime actually writes, so 189
+  of 191 run records stopped failing validation.** The enum declared
+  `{active, paused, complete, failed}` while five production writers emitted
+  `{active, complete, delivered, abandoned}`. Measured 2026-09-03 over the live
+  tree (N=191 files matching `.trw/runs/*/*/meta/run.yaml`),
+  `RunState.model_validate` succeeded on 2 and failed on 189 — `status` was the
+  sole failing field on every one. `PAUSED` and `FAILED` are REMOVED: `git log
+  -S` over the trw-mcp source tree returns zero assignments for either in the
+  whole of history, and zero live files carry them. This is an API break for
+  anyone importing `RunStatus.PAUSED` or `RunStatus.FAILED`; a future
+  explicit-failure state is re-added together with the writer that produces it,
+  never ahead of it. Every member now documents its writer and its terminal
+  disposition in `models/run.py`. (PRD-FIX-126 FR01)
+- **A swept run can no longer be adopted as if it were live work.**
+  `trw_adopt_run` refused only `("delivered", "complete", "failed")` and omitted
+  `abandoned` — the status the stale-run sweep writes — so all 185 swept runs on
+  this machine were adoptable without `force`, silently. Four modules each held
+  their own idea of which statuses are terminal and one of them was wrong; they
+  now all read the single `RunStatus.is_terminal` predicate (string-facing entry
+  point: `is_terminal_status`). A status the model cannot name is deliberately
+  NOT terminal, so no gate seals a record on the strength of a typo.
+  (PRD-FIX-126 FR02)
+- **Every writer of a run's status now emits an enum member, not a bare
+  string.** Four of the five took an untyped dict from `read_yaml`, mutated
+  `status` with a literal, and handed it to `write_yaml` — Pydantic was never in
+  the write path, which is how `abandoned` and `delivered` entered the tree
+  without the enum ever learning about them. The on-disk values are byte
+  identical either way; what changed is that the vocabulary now has one owner.
+  (PRD-FIX-126 FR03)
+- **A run.yaml carrying the legacy spelling `completed` loads again.**
+  `RunState` normalises it to `complete` on READ only, by exact case-sensitive
+  match against a closed one-entry alias map. `Completed`, `COMPLETED` and
+  `completed_` are not aliases and still raise, and nothing rewrites a file on
+  disk — the 189 affected runs are terminal and their audit trail stays sealed.
+  The alias key set is pinned by a contract test so a second vocabulary cannot
+  grow back quietly. (PRD-FIX-126 FR04)
+- **`make check` now walks the live run tree and fails when a run.yaml carries a
+  status the model cannot parse.** The new `make run-status-gate`
+  (`scripts/check-run-status-vocabulary.py`) reports `scanned=N parsed=M` and
+  exits non-zero when they differ, naming each offending file and value. It
+  fails closed — a file it cannot read or decode is a finding, never a silent
+  skip — reads only a bounded header per file so the 29,000-line worst case
+  costs nothing, and never opens a run.yaml for writing. This repo went from
+  `scanned=191 parsed=2` to `scanned=191 parsed=191`. (PRD-FIX-126 FR05)
+- **Adopted historical runs get their real tool surface, phase, and work
+  evidence back.** Because the model refused to parse them, `resolve_task_type`
+  fell open to `None` (the kernel-only surface), `resolve_active_phase` fell
+  open to `RESEARCH`, and `trw_agent_work_evidence` raised a `ValidationError`
+  outright — on 189 of 191 runs. All three now read the recorded values. The
+  fail-open and strict postures of those three surfaces are unchanged; this
+  removed the cause, not the guard. (PRD-FIX-126 FR06)
+- **BREAKING — one dead replica can no longer report your whole sync pipeline as
+  failed.** The sync cycle used to require EVERY configured target in
+  `platform_urls` to return `success` before it acknowledged a push or cleared
+  `consecutive_failures`. In this repo that meant a local dev secondary
+  returning HTTP 401 on every cycle pinned the counter at 10,653 for 134 days
+  while the production primary succeeded in 161 of 161 measured cycles — and
+  the same 8 outcome payloads were re-offered to the primary every cycle
+  because the acknowledgement path was blocked behind the same predicate. The
+  cycle verdict, both acknowledgement paths (`_mark_synced`,
+  `record_outcome_push_success`), and the failure counter are now keyed on the
+  PRIMARY target only (`resolved_sync_targets[0]` — no new config field).
+  `_fanout_push` returns the primary's own `PushResult`, so nothing is ever
+  marked synced that the primary did not accept. Secondary targets are
+  best-effort: their health is reported additively under `secondary_targets` in
+  `.trw/sync-state.json` (with `primary_target_label`, so a reader can tell
+  which target the counter describes) and can never move
+  `consecutive_failures`, `last_push_at` or `push_count`. The trade-off is
+  explicit: a permanently failing secondary will now DIVERGE from the primary
+  and be reported rather than gate the pipeline. Pre-existing state files load
+  unchanged; the new keys default to `None` and `{}` and `version` stays `1`.
+  (PRD-FIX-125 FR01)
+- **The two acknowledgement paths no longer share one count.** A target's push
+  result is now split by kind (`TargetPushOutcome`), because summing them let an
+  outcome insert count toward the learning slice: a primary that accepted 2 of 5
+  learnings while inserting 8 outcomes marked all 5 synced, and the three it
+  never took were never retried. The outcomes path stays a whole-batch
+  acknowledgement on purpose — that endpoint counts only `inserted` and has no
+  `skipped`, so slicing it by `pushed` would re-offer a de-duplicated batch
+  forever; it cannot partially accept, and a telemetry-consent-off result is
+  distinguished from a real acceptance rather than inferred from counts.
+  (PRD-FIX-125 FR01)
+- **The session-start pipeline-health warning now names the primary target and
+  when it last worked.** `pipeline_health_warning` gains `primary_target_label`
+  and `primary_last_success_at`, and `enforced_by` became
+  `make check (pipeline-health)` — the gate is a prerequisite of `make check`
+  in the monorepo now, so pointing at the standalone target sent you to the one
+  invocation almost nobody ran. A bare "push staleness: N consecutive failures"
+  could not distinguish "never worked" from "worked until <date>". The warning
+  carries the hostname-style label only — never a URL with userinfo, never the
+  api key. This surface stays fail-OPEN and still injects nothing on a healthy
+  session. (PRD-FIX-125 FR02)
+- **The health gate now catches a misordered `platform_urls`.** With loopback in
+  slot 0 and a remote target behind it, the cycle verdict, both acknowledgement
+  paths and `consecutive_failures` all follow a dev box while the real backend is
+  demoted to a replica that can diverge silently. That ordering was nearly
+  harmless while every target had to succeed; it is the worst configuration now,
+  so it trips the same target signature that already catches localhost-only. The
+  gate CLI also stopped suggesting `pipeline_health_gate_enabled=false` as a way
+  to clear a real breakage — that switch is for installs running TRW with no
+  backend. (PRD-FIX-125 FR02)
+- **BREAKING — instruction sync will never truncate your hand-written content
+  again; an oversized file is now a refused write.** `merge_trw_section` used to
+  slice the user's region to fit `max_auto_lines`, keeping the first
+  `max_lines - trw_size - 1` lines and dropping the tail. That was a satisfied
+  requirement (PRD-QUAL-018-FR02, now superseded), and it cost one reporter 128
+  hand-written AGENTS.md lines on 2026-07-23. Reproduced at HEAD: 322
+  hand-written lines plus the 104-line rendered section at `max_auto_lines=300`
+  kept 194 and destroyed 128 — while the file GREW from 7,618 to 13,417 bytes.
+  Both truncating branches are deleted, including the marker-less fallback that
+  was measured dropping 170 of 200 user lines AND the TRW section it was
+  writing. An overflow now writes nothing and returns a structured refusal
+  naming the file, the would-be line count, and the limit. If this fires on your
+  project, raise `max_auto_lines` or shorten the file — TRW will not choose its
+  own bytes over yours. (PRD-FIX-123 FR01)
+- **No instruction-file write may shrink your non-generated content.** Every
+  writer now passes through one guard that measures the bytes OUTSIDE the TRW
+  markers before and after, and refuses a write that would reduce them
+  (`non_generated_shrink`). A total floor
+  (`instruction_write_max_total_shrink_fraction`, default 0.25) backstops a
+  collapse the marker measurement cannot attribute. The non-generated
+  measurement is the load-bearing one: the incident this fixes grew the file by
+  7,613 bytes, so a total-size floor alone would not have fired. The only bypass
+  is an explicit `force` call argument, which writes and logs
+  `instruction_write_forced` with both byte deltas — deliberately not a config
+  field, because a switch that re-enables destroying user content is the wrong
+  thing to ship. (PRD-FIX-123 FR02)
+- **`trw_instructions_sync` gained `dry_run` and `force`.** `dry_run=True`
+  returns a unified diff per target and writes nothing, so you can see what a
+  sync would do before it does it; a target that would be refused reports the
+  refusal reason in place of a diff. The diff payload is bounded by
+  `instruction_dry_run_diff_max_lines` (default 400) — the DIFF is bounded,
+  never a file. The deprecated `trw_claude_md_sync` alias accepts both
+  arguments. (PRD-FIX-123 FR03)
+- **Every instruction-file write is now backed up first and says who triggered
+  it.** The pre-write bytes land under `.trw/backups/instructions/` as
+  `<filename>.<utc-timestamp>` before the new content, retained
+  `instruction_backup_retention` deep (default 10, oldest pruned first) and
+  gitignored by both a fresh `.trw/.gitignore` and a merge-ensured rule on
+  brownfield projects. Each write emits one `instruction_write_provenance`
+  record at `info` carrying the path, the trigger (`tool_call`,
+  `bootstrap_init`, `bootstrap_update`, … or the literal `unknown`), the calling
+  tool, and the byte delta — so "what changed my instruction file, and why"
+  is answerable. A backup that cannot be taken REFUSES the write: this guard is
+  fail-CLOSED, inverting the surrounding subsystem's convention, because a
+  degraded instruction file is recoverable and destroyed user content is not.
+  (PRD-FIX-123 FR04, FR05, NFR02)
+- **All nine instruction-file writers route through the one guard, and a
+  totality test keeps it that way.** Five bare, non-atomic `Path.write_text`
+  calls in the bootstrap writers are gone, replaced by the temp-file-then-rename
+  path. The two force branches that replaced a file wholesale now take a backup
+  first, and `generate_cursor_cli_agents_md` on an existing file reports
+  `updated` rather than the `created` it used to return after destroying 322 of
+  322 hand-written lines. (PRD-FIX-123 FR06)
+- **The instruction-surface size gate measures what the writer enforces.** The
+  PRD-QUAL-104 gate scored the rendered section (104 lines) while the writer
+  applied the same `max_auto_lines` limit to the merged total (426) — two
+  quantities, one threshold, so the gate reported "safe" and the writer
+  truncated. Both call sites now measure the merged total, and a rendered
+  section that alone exceeds the limit is still reported oversize.
+  (PRD-FIX-123 FR07)
+- **BREAKING — auto-recall now runs on every prompt, and its threshold is
+  reachable.** The `UserPromptSubmit` learning-injection limb shipped by
+  PRD-CORE-095 was unreachable in three independent ways, and had been for
+  months. Its relevance score divided by the *prompt's* keyword count
+  (`matches / len(prompt_keywords)`) and read only a learning's `summary`, so a
+  long, specific prompt — exactly when a stored learning is most likely to
+  matter — scored *lower* than a vague one; measured against this repo's live
+  6,445-entry store, **0 of 20** in-domain prompts fired at the shipped 0.7
+  default. The score is now the IDF-weighted fraction of the prompt's keyword
+  mass found in the learning's own `summary` **plus its `tags`**, matched
+  token-exactly rather than by substring (so `core` no longer matches `score`),
+  which fires **15 of 20** with **0 of 10** off-domain false positives.
+  (PRD-FIX-124 FR01, FR02)
+- **A delivered run no longer switches auto-recall off.** Two early exits sat
+  above the scan: one on phase `done`, one whenever the phase was unchanged from
+  the cached value. `infer_phase` is a monotone ladder that returns `done` from
+  the first `trw_deliver_complete` onward, so the mechanism retired itself the
+  first time a project shipped; and the same-phase exit caught **79 of 86**
+  logged executions, i.e. every prompt after the first in a phase. The recall
+  limb now takes no input from phase at all — it runs whenever it is enabled, a
+  prompt was extracted, and an entries directory exists. The phase-*guidance*
+  limb keeps both suppressions exactly as PRD-CORE-095 specified.
+  (PRD-FIX-124 FR03, FR04)
+- **`auto_recall_min_score` now defaults to 0.35, down from 0.7.** The value is
+  an IDF-weighted prompt-coverage fraction, not a probability, and 0.7 was chosen
+  as if it were one. 0.35 is calibrated against the live store with 0.079 of
+  margin over the highest off-domain score observed, and the field is now bounded
+  `ge=0.0, le=1.0`. A project pinning `auto_recall_min_score` in
+  `.trw/config.yaml` keeps its pinned value; only the unset default moves, and
+  setting `0.7` restores the previous behaviour with no code change.
+  (PRD-FIX-124 FR06)
+- **The hook's phase now comes from the run this session owns, not the newest run
+  on disk.** `infer_phase` resolved through `find_active_run`, so under
+  concurrency a *parallel* instance reaching `trw_deliver_complete` could pin
+  your session's phase to `done`. It now tries `resolve_owned_run` first and
+  falls back to recency only for a genuinely unpinned session. The private
+  `_pcs_infer_phase` copy that `phase-cycle-stop.sh` carried to work around this
+  is deleted; both callers use the library's single `phase_from_events` ladder.
+  (PRD-FIX-124 FR11)
+
+### Added
+
+- **The scan cap is a typed, documented field: `auto_recall_scan_cap`, default
+  10000.** It replaces a hard-coded `MAX_SCAN_FILES = 500` buried in the hook's
+  heredoc that was reachable only through an undocumented environment variable.
+  At 500 it covered 7.8% of a 6,436-entry store, and because the cap is applied
+  after an mtime sort the other 92.2% were excluded by *age* rather than
+  irrelevance — a six-month-old learning could not be a candidate however exactly
+  it matched. A full 6,445-entry scan measures ~231 ms p50 against the hook's
+  500 ms deadline. (PRD-FIX-124 FR07)
+- **Every prompt now leaves one machine-readable auto-recall record.** The hook
+  writes `event=AutoRecall keywords= scanned= top_score= top_id= threshold=
+  injected= decision= elapsed_ms=` to stderr and appends it to
+  `.trw/context/hook-executions.log`, whether or not anything is injected.
+  Previously only `emitted|cached|silent` was recorded, so "the store holds
+  nothing relevant" and "the threshold is above the reachable maximum" were the
+  same log line — which is how an unreachable default survived unnoticed. The
+  record carries counts, scores and learning IDs only: never prompt text, never
+  learning detail. `log_hook_execution` gained an optional fourth `detail`
+  argument; three-argument calls from every other hook are byte-identical.
+  (PRD-FIX-124 FR05)
+- **A deadline mid-scan now emits the best matches found so far** instead of
+  discarding everything, and records `decision=deadline`. With the raised scan
+  cap that is the difference between a partial answer and no answer.
+  (PRD-FIX-124 FR08)
+- **`scripts/measure_auto_recall_calibration.py`** — a repeatable two-arm
+  calibration harness (20 in-domain / 10 off-domain prompts) that drives the real
+  hook over any entries directory and reports N, hit rate and Wilson 95% CI per
+  threshold. The committed measurement and the YAML-mirror read-model contract
+  live in `docs/documentation/operational-knowledge/auto-recall-calibration.md`.
+  (PRD-FIX-124 FR09, FR12)
+
+### Fixed
+
+- **YAML quotes no longer leak into injected recall text.** A folded quoted
+  summary opens its quote on the first line and closes it several lines later, so
+  the per-line unquote never matched and `TRW RECALL:` lines carried a stray
+  leading and trailing `'`. Unquoting now happens once, after the continuation
+  lines are joined. (PRD-FIX-124 FR01)
+
+- **BREAKING — a run that changed files and recorded no passing build check is
+  now blocked at `trw_deliver` whatever its task type.** The gate's strength was
+  conditioned on a keyword guess: `_BUILD_ARTIFACT_TASK_TYPES` was `{coding, rca,
+  eval}`, so a run classified `research`, `docs`, `planning` or `unknown` never
+  blocked for a missing build check however many source files it modified — and
+  the classifier was most likely to be wrong on unusual work, which is where
+  verification pays most. Under `deliver_gate_mode: block_coding` (the default)
+  the predicate is now a disjunction: the task type expects a build artifact
+  **OR** the session recorded at least
+  `deliver_gate_unclassified_change_threshold` distinct modified files. The count
+  comes from the same `file_modified` event stream the review-scope gate already
+  trusts, so there is one notion of "code changed", not two. A ceremony-only run
+  that modified nothing still delivers with the advisory warning, and
+  `allow_unverified` plus a structured acceptable-failure record remains the only
+  sanctioned way past. A project that needs the old posture sets
+  `deliver_gate_mode: advisory` — the pre-existing, documented escape. (PRD-CORE-246 FR03)
+- **The build gate now fails CLOSED on its own evidence.** When the changed-file
+  count cannot be computed the value is treated as meeting the threshold and
+  delivery blocks, inverting an `except: pass` that used to let an unmeasurable
+  session through. Detection and the surface middleware deliberately keep the
+  opposite posture — a classifier must never block `trw_init` and a broken
+  exposure gate must never brick a session. (PRD-CORE-246 NFR02)
+- **`trw_submit_feedback` is now callable from every resolved tool surface.** It
+  is the only member of the `feedback` pack, and no task type named that pack, so
+  it was masked on all eight measured surfaces: an agent that hit a tooling gap
+  could not report the gap it had hit. It joins `trw_init` in the middleware's
+  bootstrap never-hide set — no tool was registered, moved between packs, or
+  added to the version-pinned kernel. (PRD-CORE-246 FR06)
+- **An unclassified task now DECLARES the verification tools the runtime already
+  exposed.** `STANDARD_TASK_PACKS["unknown"]` was `()`, so the declared authority
+  reported 9 tools with neither `trw_build_check` nor `trw_review` while the
+  runtime exposed 12 with both — every consumer reading the table alone, including
+  `TRWConfig.resolve_tool_surface_for_task`, was told the session had no
+  verification tools. `unknown` now maps to the `verification` pack and is the
+  fallback for an unresolvable or unmapped task type, with the substitution named
+  in the resolution's `decision` string instead of resolving silently to
+  kernel-only. (PRD-CORE-246 FR05)
+- **A client that lists once at connect now learns when a tool call widens its
+  surface.** `notifications/tools/list_changed` was emitted only from the
+  `tools/list` path, so the widening caused BY `trw_init` — the call that creates
+  and pins the run whose task type selects the packs — reached no client. The
+  middleware now re-resolves after the call completes and pushes only on an actual
+  change; a notification fault still returns the tool result and never re-runs the
+  tool. (PRD-CORE-246 FR07)
+- **A tool that raised inside `SurfaceAuthorityMiddleware.on_call_tool` no longer
+  runs twice.** The fail-open `except` wrapped the whole gating branch, including
+  the `call_next` invocation inside `_call_then_push`, so a raising tool's own
+  exception was caught by the same handler that retries `call_next` for resolution
+  failures — the tool executed once inside the `try`, then again in the `except`.
+  The fail-open fallback now covers only session/mode/task-type resolution; once
+  `call_next` has been invoked for the call itself, its exception propagates
+  normally instead of triggering a second invocation. (feedback-triage
+  diagnostics 2026-09-03, item 1)
+- **The delivery-effect inventory now actually verifies its owners are reachable
+  code, not just non-empty strings.** `S21`'s `owner_call_point` was
+  `"delivery_logger"`, a name that resolved to no importable symbol anywhere in
+  the codebase; `test_delivery_effect_inventory.py` only asserted
+  `descriptor.owner_call_point` was truthy, so the drift passed silently. `S21`
+  now names its real owner, `run_trw_deliver` (the function whose body emits
+  every structured log event the descriptor describes), and a new test resolves
+  every registered `owner_call_point` to a real `module:function` or
+  `Class.method` symbol via an explicit module map, with a typed (currently
+  empty) allowlist for any future non-code owner. (feedback-triage diagnostics
+  2026-09-03, item 2)
+- **`log_recall_receipt`'s `shard_id` parameter is removed.** It was declared
+  optional and forwarded into the receipt record when truthy, but its sole
+  production caller (`_session_recall_helpers.py`) never supplied it — a
+  dormant parameter matching the same class of bug already fixed for
+  `trw_recall`'s own `shard_id` (2026-07-27, see the comment in
+  `tools/learning.py`). No config, tool, or public call site changes: the
+  parameter carried no observable behavior. (feedback-triage diagnostics
+  2026-09-03, item 3)
+- **`test_no_source_claims_unknown_is_advisory` now also guards
+  `_prd_transition_gate.py`.** PRD-CORE-246 §1 C6 found and corrected a
+  twelfth surface carrying the falsified "scoped identically to the build
+  gate" claim (`_gate_mode_blocks_task`'s docstring), but the FR09 test that
+  guards against this exact class of drift never enumerated the file, so a
+  future regression to the stale claim would have gone undetected. Added to
+  the enumerated surfaces; the code itself needed no change (already
+  corrected). (CORE-246 review, item 6)
+
+### Added
+
+- **Task-type detection finally reads the field that describes the work.**
+  `detect_task_type` saw only the regex-constrained `task_name`, the
+  identifier-shaped `prd_scope` and an enumerated `run_type` — never `objective`,
+  the one free-text field — even though the Scout classifier in the *same*
+  `trw_init` call already joined all three. Both classifiers now read a
+  byte-identical joined text, which also makes the three multi-word keywords
+  (`root cause`, `write `, `add `) reachable for the first time. `_RUN_TYPE_MAP`
+  additionally covers the whole `TaskType` vocabulary instead of two values, and
+  the module docstring now lists the order the code actually executes.
+  (PRD-CORE-246 FR01/FR02)
+- **`trw_init` and `trw_session_start` now report WHY a task type was chosen.**
+  `trw_init` returns `task_type_detection_method` and `task_type_rationale`; the
+  `run` block of `trw_session_start` / `trw_status` gains `task_type` and a
+  three-valued `task_type_source` — `run_yaml` (the key was present),
+  `default_unknown` (absent, and `RunState` supplied its default; measured at 175
+  of 191 on-disk runs) and `unresolved` (the run could not be read). A silent
+  default is no longer indistinguishable from a checked positive result. Both
+  additions are purely additive; nothing is written back to any run.
+  (PRD-CORE-246 FR04)
+- **`deliver_gate_unclassified_change_threshold`** (`int`, default `1`, bounded
+  `ge=1 le=1000`): how many distinct files the current session must have modified
+  before a missing build check blocks a task type that does not inherently expect
+  a build artifact. It is a threshold, not an on/off switch — the task-type clause
+  is an OR, so no value restores the old never-block-on-unknown behavior.
+  (PRD-CORE-246 FR03)
+- **A contract test now fails at authoring time when a delivery gate names a
+  remedy tool the session cannot reach.** `GateDescriptor` carries the `trw_*`
+  tools its message names as the remedy, and a parametrised test computes the
+  effective surface from the REAL resolver and the REAL never-hide set — no
+  monkeypatch of either, enforced by module inspection — across all seven task
+  types plus the unresolvable and unmapped cases. Both known instances of this
+  defect class were previously found by a human in a live session.
+  (PRD-CORE-246 FR08)
+
+- **`trw-mcp doctor` now reports where your embeddings come from.** A new
+  `embedding_egress` row names the configured model's local-cache state
+  (`complete` / `incomplete` / `absent`) and the effective posture: `cache-first`
+  when the snapshot is complete and no Hub request is possible, `offline-forced`
+  when `TRW_OFFLINE` / `HF_HUB_OFFLINE` / `local_only` blocks downloads, or
+  `network-capable` (a WARN) when a request may occur on the next embed. It appears
+  in both the human and `--format json` output, and fails open — an unreadable cache
+  is reported as unknown rather than aborting the report.
+
+### Documented
+
+- **The network-behavior table said the model downloads on the first vector
+  operation; a warm-cache measurement falsified that.** With the cache-first
+  resolution in trw-memory, a complete local snapshot produces zero huggingface.co
+  requests with no offline switch set. The section also now states outright that
+  embedding egress is **independent of the consent flags**: `learning_sharing_enabled`
+  and `platform_telemetry_enabled` govern learning-content publishing and usage
+  telemetry, and neither one gates the model fetch.
+
+### Fixed
+
+- **Three publicly invocable skills were recorded as internal, by a default that
+  disagreed with the model that gates them.** `scripts/generate-inventory.py`
+  defaulted `user-invocable` to `False`, while `SkillManifest.user_invocable`
+  (the model `trw_skill_discovery` actually consults) and
+  `sync_markdown_counts.py` both default to `True`. 23 of 26 bundled skills
+  declare the field explicitly; the three that omitted it —
+  `trw-deliver`, `trw-sprint-team`, `trw-team-playbook`, each of whose own
+  description reads `Use: /<command>` — were therefore written into
+  `build/inventory.json` as non-invocable, and that file is what the public
+  `/docs/skills` page reads. The generator's default is now `True`, matching the
+  two consumers that already agreed, and the manifest additionally publishes
+  `counts.skills_user_invocable` (23) so public "here is what you can type" copy
+  derives from the invocable set rather than the bundled total. The three skills
+  still omit the key and resolve correctly through the corrected default; making
+  all 26 declare it explicitly is a follow-up, not something this release did.
+- **The same three skills were missing their `Use when:` trigger line.** They had
+  been escaping `test_public_skills_have_use_when` precisely *because* the
+  misclassification hid them from it — correcting the classification let the
+  gate reach them for the first time. All three now carry one, so a reader (and
+  a model deciding whether to invoke) gets an explicit trigger rather than
+  inferring it from the body.
+- **`antigravity-cli`'s MCP server entry was written to a file the client never
+  reads.** `generate_antigravity_mcp_config` wrote `mcpServers.trw` into a
+  project-scoped `.antigravitycli/settings.json` — a path invented by TRW that
+  appears nowhere in the `agy` binary, its bundled vendor docs, or its builtin
+  skill bundle. A peer-verified probe (2026-09-04, `agy` 1.1.26) confirmed
+  headless `agy` loaded zero MCP servers from a repo carrying that file, and
+  that `agy` reads MCP servers from exactly one place: the GLOBAL
+  `~/.gemini/config/mcp_config.json`, shared across every project on the
+  machine. The writer now targets that file, keeps the same corrupt/non-UTF-8
+  recovery hardening, and appends an explicit warning naming the change as
+  global/cross-project rather than mutating it silently. `trw-mcp doctor`
+  gained an `antigravity_mcp` row that verifies live registration via
+  `agy mcp list` (bounded timeout) and SKIPs — never PASSes — when `agy` is
+  absent from `PATH`. (PRD-FIX-133)
+
+### Refactor
+
+- **`_fields_ceremony.py` split into three domain mixins to clear the
+  200-raw-line domain-mixin gate.** The file had grown to 244 lines against
+  `tests/test_config_fields.py::test_domain_mixin_files_under_200_lines`. The
+  PRD-CORE-250-FR10 degenerate-result advisory tunables move to the new
+  `_fields_degenerate_result.py`, and the nudge-engine tunables (pool routing,
+  urgency, budget, cooldowns) move to the new `_fields_nudge.py`; both are
+  registered in `_main_fields.py`'s `_TRWConfigFields` MRO alongside the
+  trimmed `_fields_ceremony.py`. No field name, default, bound, alias, or
+  description changed — a before/after dump of `TRWConfig.model_fields`
+  (399 fields) is identical modulo unrelated `frozenset` repr ordering noise
+  on two fields this change never touches. Admission registry entries are
+  untouched.
+
+### Tests
+
+- **PRD-CORE-244-NFR01 (recall verification latency) now has a real test.**
+  `tests/test_recall_verification_p95_latency.py` pins the FR03 warm-cache
+  reuse in `_recall_assertion_verification.py` against a p95-over-30-recalls
+  budget (retry-best-of-3 batches, `xdist_group`-isolated) and asserts
+  `run_verification_pass` is never re-entered while the verdict is warm.
+
 ## [1.0.5] — 2026-07-30
 
 An audit release. Everything in the seven days to 2026-07-30 — 421 commits and
@@ -127,6 +2399,16 @@ extended.
 
 ### Removed
 
+- **BREAKING — `hint_delivery_rate_min` and `hint_delivery_measurement_window_days`
+  are deleted.** Both were admitted with a `consumer=` naming a telemetry
+  aggregation over `.trw/telemetry/channel-events.jsonl` that does not exist;
+  the only references in the whole tree were the declarations, the admission
+  entries, the unread-fields baseline and their own bounds tests. Their
+  admission grandfather expired 2026-08-31 and `config-consumer-check` had been
+  failing on them ever since. Per the rule on dormant knobs there is no alias
+  and no default-preserving stub — reading either attribute off `TRWConfig` now
+  raises `AttributeError`, and setting either in `.trw/config.yaml` or as a
+  `TRW_*` variable does nothing (as it always did). (PRD-FIX-125 FR04)
 - `trw_mcp.channels.check_quota`, `enforce_quota_with_tier_down`, `tier_down` and
   `tier_index`. Commit `b5d104f080` removed the 12 instruction-file injection
   channels — every caller — and the enforcement code survived, still exported and

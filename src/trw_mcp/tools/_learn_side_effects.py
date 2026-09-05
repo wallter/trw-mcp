@@ -306,9 +306,12 @@ def _save_yaml_backup(
             if isinstance(params.protection_tier, str)
             else params.protection_tier,
             anchors=params.anchors or [],
-            anchor_validity=params.anchor_validity,
             source_run_id=_source_run_id,
         )
+        # PRD-CORE-244 FR01: only a computed score is recorded; an unanchored
+        # learning leaves the field unset rather than claiming a perfect one.
+        if params.anchor_validity is not None:
+            entry = entry.model_copy(update={"anchor_validity": params.anchor_validity})
         entry_path: Path = Path(str(save_entry_fn(trw_dir, entry)))
         update_analytics_fn(trw_dir, 1)
         # Keep the scoring-side YAML lookup cache aware of freshly written

@@ -24,14 +24,21 @@ class TestCeremonySessionStartFailurePaths:
         ):
             result = tool()
 
-        # Recall is fail-open by contract: a recall-only failure must NOT flip
-        # ``success`` (which would mislead agents into needless retries). The
-        # failure is surfaced under the non-fatal ``warnings`` channel instead.
-        assert result["success"] is True
-        recall_warnings = [w for w in result.get("warnings", []) if "recall" in w]
-        assert len(recall_warnings) == 1
-        assert "disk failure" in recall_warnings[0]
-        assert "recall" not in " ".join(result.get("errors", []))
+        # PRD-CORE-263-FR01: ``recall`` is one of the five steps the session-start
+        # table declares ``critical``. Before this PRD every critical step body
+        # swallowed its own exception, so the runner's critical branch was
+        # unreachable and a recall failure was misreported as ``success: true``.
+        # The step now raises a typed ``SessionStartStepError`` and the runner's
+        # critical branch degrades the payload: ``success`` is false and
+        # ``errors`` names the step, while the failure is still recorded as an
+        # observable degradation (never a silent swallow).
+        assert result["success"] is False
+        recall_errors = [e for e in result["errors"] if "recall" in e]
+        assert len(recall_errors) >= 1
+        assert "disk failure" in recall_errors[0]
+        recall_degradations = [d for d in result.get("degradations", []) if d["step"] == "recall"]
+        assert len(recall_degradations) == 1
+        assert "disk failure" in recall_degradations[0]["message"]
         assert result["learnings"] == []
         assert result["learnings_count"] == 0
 
@@ -47,8 +54,13 @@ class TestCeremonySessionStartFailurePaths:
         ):
             result = tool()
 
-        status_errors = [e for e in result["errors"] if "status" in e]
-        assert len(status_errors) == 1
+        # PRD-CORE-263-FR01: ``run_resolve`` is also declared ``critical``. Its
+        # failure now flips the payload verdict instead of the pre-fix shape
+        # (a "status" substring buried in ``errors`` with ``success`` untouched).
+        assert result["success"] is False
+        run_resolve_errors = [e for e in result["errors"] if "run_resolve" in e]
+        assert len(run_resolve_errors) == 1
+        assert "permission denied" in run_resolve_errors[0]
         assert result["run"]["status"] == "error"
 
     def test_session_start_pin_failure_does_not_reuse_resolved_run(self, tmp_path: Path) -> None:

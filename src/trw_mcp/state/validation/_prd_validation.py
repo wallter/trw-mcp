@@ -22,6 +22,7 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResult,
 )
+from trw_mcp.state.validation._prd_validation_findings import quality_gate_failures
 from trw_mcp.state.validation._verification_mappings import (
     validate_verification_mappings as validate_verification_mappings,
 )
@@ -181,6 +182,10 @@ def validate_prd_quality(
         completeness >= _gates.completeness_min
         and trace_coverage >= _gates.traceability_coverage_min
         and error_count == 0
+    )
+
+    failures.extend(
+        quality_gate_failures(is_valid=is_valid, completeness=completeness, trace_coverage=trace_coverage, gates=_gates)
     )
 
     result = ValidationResult(

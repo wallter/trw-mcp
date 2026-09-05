@@ -200,7 +200,7 @@ prd:
 evidence:
   sources:
     - "src/module/thing.py demonstrates the bug"
-    - "docs/research/finding.md analysis"
+    - "internal-docs/finding.md analysis"
 traceability:
   implements: []
   depends_on: []

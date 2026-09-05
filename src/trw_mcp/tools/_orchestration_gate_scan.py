@@ -109,42 +109,64 @@ def _build_gate_ready(events: list[dict[str, object]]) -> bool:
     return not _build_evidence_is_stale(events)
 
 
-def _build_gate_would_block(run_path: Path | None, missing_build: bool) -> bool:
+def _build_gate_would_block(
+    run_path: Path | None,
+    missing_build: bool,
+    events: list[dict[str, object]] | None = None,
+) -> bool:
     """True when ``trw_deliver`` would HARD-BLOCK on the missing build (F4 parity).
 
     ``build_gate_ready=False`` means "no fresh passing build evidence"; it does
     NOT mean delivery blocks. ``_deliver_gate_mode.resolve_deliver_gate_decision``
     is the single predicate that decides that, and it says no for
-    ``deliver_gate_mode=advisory`` and — under the shipped ``block_coding``
-    default — for every task type outside coding/rca/eval. A docs or research run
-    with no build check delivers successfully today, so reporting it as BLOCKED
-    is the same over-claim the review half of this summary already fixed: it
-    drives an agent into a build-check-then-retry cycle the gate never demanded.
+    ``deliver_gate_mode=advisory``. Since PRD-CORE-246-FR03 that predicate takes
+    a SECOND input — the count of distinct files this session modified — so the
+    preview must supply it too, or a docs/unknown run that changed code would be
+    previewed as advisory while deliver actually blocks. The count is derived
+    from the same ``events`` list ``compute_deliver_gate_status`` already read,
+    through the same helper the gate itself calls.
 
-    Reuses the deliver-path predicate rather than restating the rule, so the
-    preview cannot drift from enforcement. The per-task-type override map is
-    honored here for the same reason. Fail-open on any error: an undeterminable
-    task type resolves to ``unknown``, which the deliver gate itself treats as
-    advisory, so the preview says advisory too.
+    Reuses the deliver-path predicate AND the deliver-path mode resolver rather
+    than restating either rule, so the preview cannot drift from enforcement.
+    The per-task-type override map and the unreadable-config fallback are
+    honored here for the same reason: a preview that reports "not blocked" for a
+    delivery that will block is the false signal this function exists to
+    prevent. Fail-open only on an error the gate itself did not model: the
+    PREVIEW never asserts a block it did not compute (the gate, not the preview,
+    is the authority).
     """
     if not missing_build:
         return False
     try:
-        from trw_mcp.models.config import get_config
         from trw_mcp.state.persistence import FileStateReader
-        from trw_mcp.tools._deliver_gate_mode import resolve_deliver_gate_decision
+        from trw_mcp.tools._deliver_gate_mode import (
+            count_session_changed_files,
+            resolve_deliver_gate_decision,
+            resolve_gate_mode_with_source,
+        )
 
         task_type = "unknown"
+        files_changed: int | None = 0
         if run_path is not None:
             run_yaml = run_path / "meta" / "run.yaml"
             if run_yaml.is_file():
                 run_data = FileStateReader().read_yaml(run_yaml)
                 if isinstance(run_data, dict):
                     task_type = str(run_data.get("task_type", "unknown")) or "unknown"
-        config = get_config()
-        overrides = config.deliver_gate_task_type_overrides or {}
-        mode = str(overrides.get(task_type, config.deliver_gate_mode))
-        return resolve_deliver_gate_decision(mode=mode, task_type=task_type, build_check_missing=True)
+            files_changed = count_session_changed_files(events=list(events or []), run_path=run_path, session_id=None)
+        # WD-05 parity: resolve the mode through the SAME helper the gate uses,
+        # including its unreadable-config fallback. The inline
+        # overrides/deliver_gate_mode lookup this replaces was a second copy of
+        # the rule that silently kept the pre-WD-05 behaviour, so a corrupt
+        # config would have previewed "not blocked" while deliver blocked.
+        mode, mode_from_fallback = resolve_gate_mode_with_source(task_type)
+        return resolve_deliver_gate_decision(
+            mode=mode,
+            task_type=task_type,
+            build_check_missing=True,
+            files_changed=files_changed,
+            mode_from_fallback=mode_from_fallback,
+        )
     except Exception:  # justified: fail-open — preview must never raise or spurious-block
         logger.debug("build_gate_block_preview_failed", exc_info=True)
         return False
@@ -183,9 +205,11 @@ def _summarize_deliver_gate(
 
     - review — ``review_would_block`` (verdict=block / scope rule / block mode).
     - build — ``build_would_block`` (:func:`_build_gate_would_block`). Under the
-      shipped ``deliver_gate_mode=block_coding`` a missing build blocks only
-      coding/rca/eval; docs/research/planning/unknown deliver successfully, so
-      claiming BLOCKED for them is the same over-claim.
+      shipped ``deliver_gate_mode=block_coding`` a missing build blocks a
+      build-artifact task type (coding/rca/eval) OR any run whose session
+      recorded file modifications (PRD-CORE-246-FR03); a run that changed
+      nothing delivers successfully, so claiming BLOCKED for it is an
+      over-claim.
 
     In both cases the unenforced-but-missing evidence is still surfaced, as an
     advisory rather than a block, so nothing is hidden — only the CONSEQUENCE is
@@ -244,7 +268,7 @@ def compute_deliver_gate_status(
     build_ready = _build_gate_ready(events)
     review_ready = _review_gate_ready(state)
     review_would_block = _review_gate_would_block(run_path, events)
-    build_would_block = _build_gate_would_block(run_path, missing_build=not build_ready)
+    build_would_block = _build_gate_would_block(run_path, missing_build=not build_ready, events=events)
     return {
         "build_gate_ready": build_ready,
         "review_gate_ready": review_ready,

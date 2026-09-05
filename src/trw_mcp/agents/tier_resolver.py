@@ -104,7 +104,24 @@ _CLAUDE_CODE_MAP: dict[str, str] = {
 # special-cased path.
 _CURSOR_IDE_MAP: dict[str, str] = dict.fromkeys(KNOWN_TIERS, "inherit")
 
+# Antigravity CLI: its subagent reference (antigravity.google/docs/subagents)
+# enumerates the accepted ``model:`` values as ``inherit``, ``flash`` and
+# ``pro`` — three tokens, no model ids. TRW's retired templates wrote literal
+# ``gemini-2.5-flash``/``gemini-2.5-pro``, which that schema does not admit, and
+# every unmapped client before this landed a raw tier token instead. Two
+# capability points have to carry four tiers: the two local-* tiers name small,
+# fast models and resolve to ``flash``; ``frontier`` and ``balanced`` both name
+# TRW's strong-reasoning work (audit, review, requirements) and resolve to
+# ``pro`` rather than degrading a reviewer to the fast model.
+_ANTIGRAVITY_MAP: dict[str, str] = {
+    "frontier": "pro",
+    "balanced": "pro",
+    "local-large": "flash",
+    "local-small": "flash",
+}
+
 _CLIENT_MAPS: dict[str, dict[str, str]] = {
+    "antigravity-cli": _ANTIGRAVITY_MAP,
     "claude-code": _CLAUDE_CODE_MAP,
     "cursor-ide": _CURSOR_IDE_MAP,
 }
@@ -236,10 +253,30 @@ def materialize_agent(text: str, *, client: str) -> str:
     they each applied their own subset, an agent that was already up to date
     reported as a pending update forever.
 
+    Three transforms, in this order (PRD-CORE-252-FR02):
+
+    1. ``{tool:trw_x}`` body placeholders render into the client's namespace;
+    2. the capability-tier ``model:`` line resolves to the client's vocabulary;
+    3. the frontmatter block is re-emitted in the client's own agent format —
+       mapped keys under their client names, unsupported keys dropped, derived
+       keys computed, re-serialized as YAML frontmatter or TOML.
+
+    Step 3 runs last so it operates on already-resolved values: the ``model``
+    key a client retains carries the resolved token, not the bundled tier. For
+    claude-code — the dialect the bundle is authored in — step 3 is the
+    identity by derivation, so its output stays byte-identical.
+
     Raises:
         ValueError: propagated from :func:`resolve_tier` for an unknown tier.
+        AgentFormatError: when *client* has no agent surface, is not a
+            registered client id, or the bundled frontmatter cannot be
+            translated for it.
     """
-    return rewrite_model_line(render_agent_tool_names(text, client=client), client=client)
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.agents.agent_frontmatter import translate_agent_document
+
+    resolved = rewrite_model_line(render_agent_tool_names(text, client=client), client=client)
+    return translate_agent_document(resolved, agent_format_for(client))
 
 
 def rewrite_model_line(text: str, *, client: str) -> str:

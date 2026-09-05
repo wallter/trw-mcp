@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests._dedup_test_support import mock_embed, write_entry
+from tests._structlog_capture import captured_structlog  # noqa: F401
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.dedup import batch_dedup, is_migration_needed
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -181,3 +182,167 @@ class TestBatchDedup:
         # One of the two entries should be obsoleted
         data2 = reader.read_yaml(entries_dir / "L-exact02.yaml")
         assert str(data2.get("status", "")) == "obsolete"
+
+
+# ---------------------------------------------------------------------------
+# PRD-FIX-130-FR05: the one-time migration leaves the replay hot path
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationIsOffTheReplayPath:
+    """FR05: a journal replay must never pay the O(N^2) migration inline.
+
+    Measured 2026-09-04: the migration firing inside the FIRST replay turned a
+    33,552 ms drain into 321,050 ms. FR01's "overruns by at most one record's
+    replay" is vacuous if one replay can take 307 s, so this is a correctness
+    dependency of the budget.
+
+    NON-VACUITY: drop ``and not _from_journal`` from the migration branch in
+    ``tools/_learn_impl.py`` and ``test_journal_replay_never_runs_batch_dedup_inline``
+    fails on ``calls == []``.
+    """
+
+    def _config(self) -> TRWConfig:
+        return TRWConfig(embeddings_enabled=False, dedup_enabled=True)
+
+    def _seed_pending(self, trw_dir: Path, learning_id: str) -> None:
+        from trw_mcp.state import learn_journal
+
+        learn_journal.journal_pending(
+            trw_dir,
+            learning_id,
+            {
+                "summary": f"migration off-path probe {learning_id} with a summary past the noise gate",
+                "detail": f"detail body for migration off-path probe {learning_id}",
+                "impact": 0.5,
+            },
+        )
+
+    def test_journal_replay_never_runs_batch_dedup_inline(self, tmp_path: Path) -> None:
+        import trw_mcp.state.dedup as dedup_mod
+        from trw_mcp.tools._learn_journal_wiring import replay_journaled_learn
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        config = self._config()
+        assert is_migration_needed(trw_dir) is True
+
+        calls: list[str] = []
+        real_batch = dedup_mod.batch_dedup
+
+        def _spy(*args: object, **kwargs: object) -> object:
+            calls.append("called")
+            return real_batch(*args, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(dedup_mod, "batch_dedup", _spy):
+            self._seed_pending(trw_dir, "L-mig001")
+            replay_journaled_learn(trw_dir, config, "L-mig001", {"summary": "x", "detail": "y"})
+            assert calls == [], "batch dedup ran INSIDE a journal replay"
+
+            # The interactive path is deliberately unchanged.
+            from trw_mcp.tools._learn_impl import execute_learn
+
+            execute_learn(
+                summary="interactive learn probe with a summary long enough to clear the noise filter",
+                detail="detail body for the interactive migration probe",
+                trw_dir=trw_dir,
+                config=config,
+            )
+            assert calls, "the interactive path must still run the migration inline"
+
+    def test_marker_is_not_written_when_the_replay_skipped_the_migration(self, tmp_path: Path) -> None:
+        """Skipping is not completing: the migration stays owed and the next sweep retries."""
+        from trw_mcp.tools._learn_journal_wiring import replay_journaled_learn
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        config = self._config()
+        self._seed_pending(trw_dir, "L-mig002")
+
+        replay_journaled_learn(trw_dir, config, "L-mig002", {"summary": "x", "detail": "y"})
+
+        assert is_migration_needed(trw_dir) is True
+
+    def test_drain_reschedules_the_migration_onto_the_background_thread(self, tmp_path: Path) -> None:
+        """The migration is not lost by being skipped — the drain hands it to FR02.
+
+        Asserted on the SIDE EFFECT, not on the thread handle: the continuation
+        clears its own handle in a ``finally``, so a fast migration can be done
+        before the caller looks and ``_DRAIN_THREAD is not None`` would flake.
+        """
+        import time as _time
+
+        from trw_mcp.state.memory_pressure import take_writer_census
+        from trw_mcp.tools import _ceremony_maintenance_steps as steps
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        config = self._config()
+        self._seed_pending(trw_dir, "L-mig003")
+        assert is_migration_needed(trw_dir) is True
+        ran: list[str] = []
+        steps._DRAIN_THREAD = None
+
+        from trw_mcp.tools import _learn_journal_background as background
+
+        def _spy(*_a: object, **_kw: object) -> dict[str, object]:
+            ran.append("migrated")
+            return {"status": "completed"}
+
+        with patch.object(background, "run_batch_dedup_migration", _spy):
+            maintenance: dict[str, object] = {}
+            steps._run_learn_journal_drain(
+                trw_dir,
+                config,
+                maintenance,  # type: ignore[arg-type]
+                census=take_writer_census(trw_dir, threshold=2),
+                defer_memory_heavy=False,
+            )
+            deadline = _time.monotonic() + 60.0
+            while not ran and _time.monotonic() < deadline:
+                _time.sleep(0.02)
+            thread = steps._DRAIN_THREAD
+            if thread is not None:
+                thread.join(60.0)
+                assert not thread.is_alive()
+        steps._DRAIN_THREAD = None
+
+        assert ran == ["migrated"], "the owed migration was never rescheduled onto the continuation"
+
+    def test_skipped_migration_is_logged_and_leaves_the_marker_absent(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter, captured_structlog: list[dict]
+    ) -> None:
+        """An unbounded scan still queued to fire must be visible, not silent."""
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+
+        result = batch_dedup(trw_dir, reader, writer, config=TRWConfig(embeddings_enabled=False))
+
+        assert result["status"] == "skipped"
+        skipped = [e for e in captured_structlog if e.get("event") == "batch_dedup_skipped"]
+        assert skipped, captured_structlog
+        assert skipped[0].get("reason")
+        assert is_migration_needed(trw_dir) is True
+
+    def test_migration_emits_a_start_and_a_timed_completion_event(
+        self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter, captured_structlog: list[dict]
+    ) -> None:
+        """A scan that can cost minutes may never be invisible at the default level."""
+        trw_dir = tmp_path / ".trw"
+        entries_dir = trw_dir / "learnings" / "entries"
+        entries_dir.mkdir(parents=True)
+        write_entry(entries_dir, writer, "one", "first migration event probe entry", "detail one")
+        write_entry(entries_dir, writer, "two", "second migration event probe entry", "detail two")
+
+        with (
+            patch("trw_mcp.state.dedup.embedding_available", return_value=True),
+            patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
+        ):
+            result = batch_dedup(trw_dir, reader, writer, config=TRWConfig(embeddings_enabled=True))
+
+        assert result["status"] == "completed"
+        started = [e for e in captured_structlog if e.get("event") == "batch_dedup_started"]
+        completed = [e for e in captured_structlog if e.get("event") == "batch_dedup_complete"]
+        assert started and int(str(started[0]["entries"])) == 2, captured_structlog
+        assert completed and "duration_ms" in completed[0], captured_structlog
+        assert is_migration_needed(trw_dir) is False

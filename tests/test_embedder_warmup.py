@@ -16,6 +16,21 @@ import threading
 from pathlib import Path
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state.memory_pressure import WriterCensus
+
+
+def _unpressured_census(*, threshold: int = 8) -> WriterCensus:
+    """A measured census with no peer writers (PRD-CORE-257-FR01)."""
+    return WriterCensus(
+        writer_pids=(),
+        writer_count=0,
+        peer_writer_count=0,
+        threshold=threshold,
+        under_pressure=False,
+        census_state="measured",
+        identity_state="verified",
+        heartbeat_state="measured",
+    )
 
 
 class TestScheduleEmbedderWarmup:
@@ -229,9 +244,8 @@ class TestLowCoverageAdvisoryIsOneTime:
                 resolved_trw_dir,
                 cfg,
                 maintenance,  # type: ignore[arg-type]
+                census=_unpressured_census(),
                 defer_memory_heavy=False,
-                defer_reason="writer_pressure",
-                writer_pids=[],
             )
         return maintenance
 
@@ -254,3 +268,85 @@ class TestLowCoverageAdvisoryIsOneTime:
 
         assert "embeddings_advisory" in first_project  # type: ignore[operator]
         assert "embeddings_advisory" in second_project  # type: ignore[operator]
+
+
+class TestEmbeddingsDeferralNarrowing:
+    """PRD-CORE-257-FR08: pressure skips the background backfill SCHEDULE only."""
+
+    def _pressured_census(self) -> WriterCensus:
+        return WriterCensus(
+            writer_pids=(1, 2, 3, 4),
+            writer_count=4,
+            peer_writer_count=3,
+            threshold=3,
+            under_pressure=True,
+            census_state="measured",
+            identity_state="verified",
+            heartbeat_state="measured",
+        )
+
+    def test_embeddings_deferral_narrowed_to_backfill_schedule(self, tmp_path: Path) -> None:
+        """The coverage probe and the warm-up run; only the self-heal is skipped.
+
+        The deferral branch used to ``return`` before THREE downstream calls
+        while reporting a single ``embeddings_backfill_deferred`` key: the
+        read-only coverage probe (which populates ``embeddings_coverage_ratio``
+        and the advisory), the PRD-FIX-105 first-recall warm-up (a thread spawn
+        with no store write), and the post-recovery backfill schedule (the
+        expensive database work). Reverting the narrowing turns the first two
+        assertions red.
+        """
+        from unittest.mock import patch
+
+        from trw_mcp.tools import _ceremony_embeddings_maintenance as m
+
+        m.reset_low_coverage_advisory_guard()
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "runtime").mkdir(parents=True)
+        cfg = TRWConfig(embeddings_enabled=True)
+        probe_calls: list[bool] = []
+        warmup_calls: list[int] = []
+        backfill_calls: list[int] = []
+
+        def _status(**kwargs: object) -> dict[str, object]:
+            probe_calls.append(bool(kwargs.get("coverage_probe", False)))
+            return {
+                "enabled": True,
+                "available": True,
+                "initialization_deferred": True,
+                "advisory": "Vector coverage is low: 1/100 entries have embeddings (1.0%).",
+                "coverage_ratio": 0.01,
+                "recent_failures": 0,
+            }
+
+        maintenance: dict[str, object] = {}
+        with (
+            patch("trw_mcp.state.memory_adapter.check_embeddings_status", side_effect=_status),
+            patch(
+                "trw_mcp.state._memory_connection._schedule_embedder_warmup",
+                side_effect=lambda: warmup_calls.append(1) or True,
+            ),
+            patch(
+                "trw_mcp.state._memory_connection._schedule_post_recovery_backfill",
+                side_effect=lambda _d: backfill_calls.append(1) or True,
+            ),
+        ):
+            m.run_embeddings_maintenance(
+                trw_dir,
+                cfg,
+                maintenance,  # type: ignore[arg-type]
+                census=self._pressured_census(),
+                defer_memory_heavy=True,
+            )
+
+        assert probe_calls == [True], "the read-only coverage probe must still run under pressure"
+        assert len(warmup_calls) == 1, "the first-recall warm-up guard must still run under pressure"
+        assert backfill_calls == [], "the expensive post-recovery backfill must be the ONLY skip"
+        assert "embeddings_coverage_ratio" in maintenance
+        assert "embeddings_advisory" in maintenance
+        assert "embeddings_backfill_scheduled" not in maintenance
+        deferred = maintenance["embeddings_backfill_deferred"]
+        assert isinstance(deferred, dict)
+        assert "backfill" in str(deferred["detail"]).lower()
+        assert deferred["reason"] == "writer_pressure"
+        assert "deferral_age_hours" in deferred

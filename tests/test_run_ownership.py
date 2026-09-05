@@ -10,7 +10,6 @@ from trw_mcp.state._paths import (
     _pinned_runs,
     _reset_session_id,
     find_active_run,
-    find_run_via_mtime_scan,
     get_pinned_run,
     get_session_id,
     pin_active_run,
@@ -129,117 +128,16 @@ class TestPerSessionPinning:
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
 
-        # Without pin, filesystem returns newer run
-        assert find_run_via_mtime_scan() == filesystem_run
+        # The newer run on disk is never an answer for a session that did not pin it.
+        assert find_active_run(session_id="my-session") is None
 
-        # Pin older run for a specific session
+        # Pin the OLDER run for a specific session.
         pin_active_run(pinned_run, session_id="my-session")
-        # Default session still gets filesystem result
-        assert find_run_via_mtime_scan() == filesystem_run
-        # Specific session gets pinned result
+        # That session gets its own run, not the newer one on disk.
         assert find_active_run(session_id="my-session") == pinned_run.resolve()
-
-
-class TestStatusAwareDiscovery:
-    """FR02: find_active_run only returns active runs."""
-
-    def test_completed_run_skipped(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        writer: FileStateWriter,
-    ) -> None:
-        project = tmp_path / "project"
-        runs_root = project / ".trw" / "runs"
-        active_run = _make_run(
-            runs_root,
-            "task1",
-            "20260219T100000Z-active",
-            status="active",
-            writer=writer,
-        )
-        _make_run(
-            runs_root,
-            "task1",
-            "20260220T100000Z-done",
-            status="complete",
-            writer=writer,
-        )
-
-        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_run_via_mtime_scan()
-        assert result == active_run
-
-    def test_failed_run_skipped(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        writer: FileStateWriter,
-    ) -> None:
-        project = tmp_path / "project"
-        runs_root = project / ".trw" / "runs"
-        active_run = _make_run(
-            runs_root,
-            "task1",
-            "20260219T100000Z-active",
-            status="active",
-            writer=writer,
-        )
-        _make_run(
-            runs_root,
-            "task1",
-            "20260220T100000Z-fail",
-            status="failed",
-            writer=writer,
-        )
-
-        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_run_via_mtime_scan()
-        assert result == active_run
-
-    def test_all_completed_returns_none(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        writer: FileStateWriter,
-    ) -> None:
-        project = tmp_path / "project"
-        runs_root = project / ".trw" / "runs"
-        _make_run(
-            runs_root,
-            "task1",
-            "20260219T100000Z-done1",
-            status="complete",
-            writer=writer,
-        )
-        _make_run(
-            runs_root,
-            "task1",
-            "20260220T100000Z-done2",
-            status="complete",
-            writer=writer,
-        )
-
-        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_run_via_mtime_scan()
-        assert result is None
-
-    def test_legacy_run_without_status_treated_as_active(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Backward compat: runs without status field are active."""
-        project = tmp_path / "project"
-        runs_root = project / ".trw" / "runs"
-        run_dir = runs_root / "task1" / "20260219T100000Z-legacy"
-        (run_dir / "meta").mkdir(parents=True)
-        # No status field at all
-        (run_dir / "meta" / "run.yaml").write_text("run_id: legacy\n")
-
-        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        result = find_run_via_mtime_scan()
-        assert result == run_dir
+        # A different session still has no answer -- recency grants nothing.
+        assert find_active_run(session_id="other-session") is None
+        assert filesystem_run.exists()
 
 
 class TestRunOwnership:
@@ -312,7 +210,15 @@ class TestMarkRunComplete:
         monkeypatch: pytest.MonkeyPatch,
         writer: FileStateWriter,
     ) -> None:
-        """After marking complete, find_active_run skips the run."""
+        """_mark_run_complete seals the run: the status on disk flips to terminal.
+
+        This used to be asserted through the mtime scan's status filter, which
+        PRD-FIX-132 deleted as dormant. The predicate itself is covered by
+        test_run_status_vocabulary.py; what belongs here is that the sealing
+        writer actually writes a terminal status.
+        """
+        from trw_mcp.models.run import is_terminal_status
+        from trw_mcp.state.persistence import FileStateReader
         from trw_mcp.tools.ceremony import _mark_run_complete
 
         project = tmp_path / "project"
@@ -320,10 +226,12 @@ class TestMarkRunComplete:
         run = _make_run(runs_root, "task1", "20260220T100000Z-test", writer=writer)
 
         monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-        assert find_run_via_mtime_scan() == run
+        before = FileStateReader().read_yaml(run / "meta" / "run.yaml")
+        assert not is_terminal_status(str(before["status"]))
 
         _mark_run_complete(run)
-        assert find_run_via_mtime_scan() is None
+        after = FileStateReader().read_yaml(run / "meta" / "run.yaml")
+        assert is_terminal_status(str(after["status"]))
 
 
 class TestOwnershipWarning:

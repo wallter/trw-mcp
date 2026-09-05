@@ -2,14 +2,27 @@
 
 # Managed by TRW — no trw_distill imports permitted.
 
-Writes ``.antigravitycli/agents/trw-distill-explorer.md`` with valid
-YAML frontmatter matching the existing four Antigravity subagent format.
+Writes the Antigravity subagent surface via the FR01 format registry
+(:func:`trw_mcp.agents.agent_formats.agent_format_for`), the same one the
+eleven bundled specialists use — PRD-CORE-252 moved that surface to
+``.agents/agents`` and trimmed the frontmatter to what
+antigravity.google/docs/subagents documents (``name``, ``description``,
+``model`` in ``{inherit, flash, pro}``); this generator previously kept its
+own hardcoded ``.antigravitycli/agents`` path and undocumented
+``temperature``/``max_turns``/``timeout_mins`` keys because it is dynamically
+rendered from sidecar data rather than a static bundled file, so the FR01
+landing did not reach it. There is no format left to hand-maintain here: the
+content is authored in the bundle's claude-code dialect (a capability-tier
+``model:`` token, ``{tool:trw_x}`` body placeholders) and passed through
+:func:`trw_mcp.agents.tier_resolver.materialize_agent`, which resolves the
+tier and reshapes the frontmatter for this client exactly as it does for the
+bundled corpus.
 
 Default tier: T1 (NOT T2 — audit P1-15, OQ-05 context isolation unconfirmed).
-Operator may upgrade to T2/T3 via .trw/config.yaml: channels.ag02.tier.
-
-Tools list is enumerated individually (not wildcard) pending Gate G-02
-(OQ-03 — wildcard mcp_trw_* confirmation). No mutation tools (FR10).
+Operator may upgrade to T2/T3 via .trw/config.yaml: channels.ag02.tier. This
+is the content-depth tier (T1/T2/T3), independent of the model *capability*
+tier the frontmatter's ``model:`` line carries (see
+:data:`_MODEL_CAPABILITY_TIER`).
 
 Idempotent: skips rewrite if sidecar SHA unchanged since last write.
 Fail-open on missing sidecar: writes placeholder subagent (P2-19 fix).
@@ -17,7 +30,7 @@ Fail-open on missing sidecar: writes placeholder subagent (P2-19 fix).
 Jinja2-free — f-strings only. All template vars pre-rendered.
 Post-write assertion: no ``{{ `` in output (P1-23).
 
-PRD-DIST-2404 FR07-FR11, FR14, FR16-FR18.
+PRD-DIST-2404 FR07-FR11, FR14, FR16-FR18. Format registry routing: PRD-CORE-252.
 """
 
 from __future__ import annotations
@@ -29,9 +42,12 @@ from typing import Any, Literal
 import structlog
 from pydantic import BaseModel, ConfigDict
 
+from trw_mcp.agents.agent_formats import agent_format_for
+from trw_mcp.agents.tier_resolver import materialize_agent
 from trw_mcp.channels._provenance import now_utc_iso8601
 from trw_mcp.channels._state import ChannelState, read_state, state_path_for, write_state
 from trw_mcp.channels._telemetry import append_channel_event
+from trw_mcp.exceptions import AgentFormatError
 
 log = structlog.get_logger(__name__)
 
@@ -47,9 +63,23 @@ __all__ = [
 
 AG02_CHANNEL_ID = "ag-02-distill-explorer-subagent"
 
-_AGENT_RELATIVE_PATH = ".antigravitycli/agents/trw-distill-explorer.md"
+_AGENT_STEM = "trw-distill-explorer"
+_ANTIGRAVITY_CLIENT_ID = "antigravity-cli"
+
+#: Repo-relative destination, read from the FR01 registry rather than
+#: hardcoded — the same lookup :func:`materialize_agent`'s caller uses for the
+#: eleven bundled specialists (PRD-CORE-252-FR03: ``.agents/agents``).
+_AGENT_RELATIVE_PATH = agent_format_for(_ANTIGRAVITY_CLIENT_ID).destination_for(_AGENT_STEM)
 
 _DEFAULT_TIER: str = "T1"
+
+#: Capability tier for the frontmatter ``model:`` line, in the bundle's
+#: vocabulary (``trw_mcp.agents.tier_resolver.KNOWN_TIERS``). Resolves to
+#: ``flash`` for antigravity-cli — the fast/light model this explorer used
+#: before (``gemini-2.5-flash``), now expressed as a tier the registry
+#: translates instead of a literal model id the client's own docs do not
+#: accept.
+_MODEL_CAPABILITY_TIER = "local-small"
 
 # Tools: enumerated individually per Gate G-02 (OQ-03 wildcard unconfirmed).
 # NO mutation tools (FR10): write_file, edit_file, trw_deliver excluded.
@@ -65,7 +95,11 @@ _AGENT_TOOLS = [
     "mcp_trw_trw_code_search",
 ]
 
-# Mutation tools are prohibited (FR10).
+# Mutation tools are prohibited (FR10). The antigravity-cli format registry
+# entry drops the bundled ``tools`` key entirely (that client's documented
+# frontmatter has no tool-grant field), so this list is no longer emitted --
+# the read-only guarantee for THIS client is enforced by the body instructions
+# below, not a host-declared grant. See CHANGELOG for the P1 note.
 _MUTATION_TOOLS = frozenset({"write_file", "edit_file", "trw_deliver"})
 
 _PLACEHOLDER_HOTSPOT_ROW = "| {path} | {score} | {churn} | {callers} |"
@@ -149,11 +183,12 @@ def _conventions_section(conventions: list[Any], count: int = 3) -> str:
 
 
 # PRD-CORE-239 FR01 removed the `channel-render` subcommand. This provenance
-# header is written into `.antigravitycli/agents/trw-distill-explorer.md`, a
-# permanent file in a LICENSED user's repo — the gate opens for them — so a dead
-# command here fails for the paying caller and nobody else. That is the same
-# asymmetry the `trw_entity_risk_map` fix names. Nothing reads
-# `ChannelEntry.regenerate_cmd`, so no test could have caught it.
+# header is written into the installed explorer subagent file (see
+# `_AGENT_RELATIVE_PATH`), a permanent file in a LICENSED user's repo — the
+# gate opens for them — so a dead command here fails for the paying caller
+# and nobody else. That is the same asymmetry the `trw_entity_risk_map` fix
+# names. Nothing reads `ChannelEntry.regenerate_cmd`, so no test could have
+# caught it.
 def _build_agent_content(
     *,
     tier: str,
@@ -161,22 +196,28 @@ def _build_agent_content(
     generated_at: str,
     sidecar_sha: str,
 ) -> str:
-    """Build the full agent file content (frontmatter + body).
+    """Build the full agent file content, translated for antigravity-cli.
 
-    All template variables are pre-rendered with concrete values.
-    No ``{{ }}`` placeholders remain in the output.
+    Authored in the bundle's claude-code dialect — a capability-tier
+    ``model:`` token and ``{tool:trw_x}`` body placeholders — then passed
+    through :func:`materialize_agent` so tool names and the frontmatter shape
+    come from the FR01 registry. The bundled ``tools:`` grant below is kept
+    for documentation parity with the bundled corpus; the registry drops it
+    for this client (see :data:`_MUTATION_TOOLS`'s docstring for why that is
+    safe here).
+
+    All template variables are pre-rendered with concrete values before that
+    translation; no unrendered Jinja2-style ``{{ }}`` remains in the output.
 
     Args:
-        tier: Render tier (T1, T2, T3).
+        tier: Render tier (T1, T2, T3) — content depth, not the model tier.
         sidecar_data: Parsed sidecar or None for placeholder mode.
         generated_at: ISO timestamp string (minute-truncated).
         sidecar_sha: SHA of the sidecar (or "none" if absent).
 
     Returns:
-        Full agent file content string.
+        Full agent file content string, in antigravity-cli's frontmatter shape.
     """
-    tools_yaml = "\n".join(f"  - {t}" for t in _AGENT_TOOLS)
-
     if sidecar_data is not None:
         hotspots: list[dict[str, Any]] = sidecar_data.get("hotspots", [])
         conventions: list[Any] = sidecar_data.get("conventions", [])
@@ -186,19 +227,18 @@ def _build_agent_content(
         table = _placeholder_hotspot_table()
         convs = "_No convention data yet. Run trw-mcp update-project after distill._"
 
-    body = f"""\
+    bundled = f"""\
 ---
 name: trw-distill-explorer
 description: >
   Read-only risk-scored exploration agent with distill intelligence.
-  For lightweight code search and file reading, use @trw-explorer instead.
   This agent surfaces hotspot risk scores and edge cases before file edits.
 tools:
-{tools_yaml}
-model: gemini-2.5-flash
-temperature: 0.1
-max_turns: 20
-timeout_mins: 15
+  - mcp__trw__trw_recall
+  - mcp__trw__trw_before_edit_hint
+  - mcp__trw__trw_codebase_risk_report
+  - mcp__trw__trw_code_search
+model: {_MODEL_CAPABILITY_TIER}
 ---
 
 <!-- TRW:PROVENANCE
@@ -215,7 +255,7 @@ regenerate: trw-mcp init-project --client antigravity-cli
 Stay in **read-only** exploration mode. Do NOT edit files, run tests,
 or call mutation tools. Surface risk data and evidence only.
 
-Before reading any file, call `mcp_trw_trw_before_edit_hint` — its
+Before reading any file, call `{{tool:trw_before_edit_hint}}` — its
 `distill_hint` carries the importers, inferred tests and co-change neighbours
 you need for risky callers and downstream dependencies.
 
@@ -229,13 +269,13 @@ you need for risky callers and downstream dependencies.
 
 ### Workflow
 
-1. Call `mcp_trw_trw_before_edit_hint` with the target file path.
-2. Call `mcp_trw_trw_codebase_risk_report` for full risk analysis.
+1. Call `{{tool:trw_before_edit_hint}}` with the target file path.
+2. Call `{{tool:trw_codebase_risk_report}}` for full risk analysis.
 3. Read files with `read_file` / `read_many_files`, search with `grep_search`.
-4. Call `mcp_trw_trw_recall` to check if the topic has been investigated before.
+4. Call `{{tool:trw_recall}}` to check if the topic has been investigated before.
 5. Report findings — do NOT propose edits unless explicitly asked.
 """
-    return body
+    return materialize_agent(bundled, client=_ANTIGRAVITY_CLIENT_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +303,8 @@ def generate_distill_explorer_agent(
     sidecar_sha: str | None,
     tier_override: str | None = None,
 ) -> AgentWriteResult:
-    """Write ``.antigravitycli/agents/trw-distill-explorer.md``.
+    """Write the antigravity-cli explorer subagent (registry destination, see
+    :data:`_AGENT_RELATIVE_PATH`).
 
     Idempotent: skips rewrite if *sidecar_sha* matches last-write SHA (FR09).
     Fail-open on missing sidecar: writes placeholder subagent (FR14, P2-19).
@@ -310,7 +351,9 @@ def generate_distill_explorer_agent(
         )
         # Post-render assertion: no unsubstituted template vars (P1-23).
         _assert_no_template_vars(content)
-    except ValueError as exc:
+    except (ValueError, AgentFormatError) as exc:
+        # ValueError: an unknown capability tier (tier_resolver.resolve_tier).
+        # AgentFormatError: the registry translation itself (agent_frontmatter).
         log.debug(
             "ag02_subagent_template_error",
             error=str(exc),

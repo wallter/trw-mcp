@@ -1,9 +1,8 @@
 """Antigravity CLI-specific bootstrap configuration.
 
-Generates and smart-merges repo-scoped Antigravity CLI artifacts:
-- ANTIGRAVITY.md  (repo-wide instructions with TRW ceremony protocol)
-- .antigravitycli/settings.json  (MCP server config, JSON deep-merge)
-- .antigravitycli/agents/trw-*.md  (TRW role-based subagent definitions)
+Generates and smart-merges Antigravity CLI artifacts:
+- ANTIGRAVITY.md               (repo-scoped instructions with TRW ceremony protocol)
+- ~/.gemini/config/mcp_config.json  (MCP server config, GLOBAL — see PRD-FIX-133)
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from ._file_ops import (
     _new_result,
     _record_write,
     read_settings_for_merge,
-    write_agent_templates,
     write_instruction_file_with_merge,
 )
 
@@ -55,8 +53,11 @@ def _resolve_trw_mcp_command() -> tuple[str, list[str]]:
 # Path constants
 # ---------------------------------------------------------------------------
 
-_ANTIGRAVITY_SETTINGS_PATH = ".antigravitycli/settings.json"
-_ANTIGRAVITY_AGENTS_DIR = ".antigravitycli/agents"
+#: The directory TRW used to write subagents to. Antigravity documents
+#: ``.agents/agents`` (the same ``.agents`` tree its workspace rules use), so
+#: the bundled specialists now land there via the shared agent installer. This
+#: constant survives only so ``update-project`` can sweep the relocated stubs.
+_LEGACY_ANTIGRAVITY_AGENTS_DIR = ".antigravitycli/agents"
 _ANTIGRAVITY_MD_PATH = "ANTIGRAVITY.md"
 
 #: The workspace-rules folder Antigravity documents. `.agent/rules` (singular)
@@ -174,27 +175,59 @@ def _write_antigravity_workspace_rule(
 # Public API — MCP config
 # ---------------------------------------------------------------------------
 
+#: Display label used in warnings/errors — deliberately ``~``-relative rather
+#: than the resolved absolute path, so messages never leak a machine-specific
+#: home directory.
+_ANTIGRAVITY_GLOBAL_MCP_DISPLAY = "~/.gemini/config/mcp_config.json"
+
+
+def _antigravity_global_mcp_config_path() -> Path:
+    """Resolve Antigravity CLI's GLOBAL MCP config file (PRD-FIX-133).
+
+    Confirmed 2026-09-04 against the installed ``agy`` 1.1.26 binary two ways:
+    its bundled vendor doc (``~/.gemini/antigravity-cli/builtin/skills/
+    agy-customizations/docs/mcp_servers.md``) documents exactly two locations
+    — a global file applied to every session, or a per-plugin file TRW ships no
+    plugin for — and ``agy mcp add`` against a scratch ``HOME`` wrote only this
+    path. There is no project-scoped MCP config file for this client at all;
+    the previous ``.antigravitycli/settings.json`` write was unread by
+    anything in the binary, its docs, or its builtin skills.
+
+    Reads ``$HOME`` via :func:`Path.home`, so tests isolate it with
+    ``monkeypatch.setenv("HOME", ...)`` rather than a path parameter — the same
+    shape ``_isolate_trw_user_dir`` already uses for ``~/.trw``.
+    """
+    return Path.home() / ".gemini" / "config" / "mcp_config.json"
+
 
 def generate_antigravity_mcp_config(
     target_dir: Path,
     *,
     force: bool = False,
 ) -> dict[str, list[str]]:
-    """Deep-merge TRW MCP server entry into ``.antigravitycli/settings.json``.
+    """Deep-merge the TRW MCP server entry into Antigravity's GLOBAL config.
 
-    Only touches ``mcpServers.trw`` — preserves all other settings and servers.
-    Hardened (via the shared :func:`read_settings_for_merge` seam) against
-    pre-existing user files written by the Antigravity CLI itself or other
+    ``target_dir`` is unused — kept so this still structurally matches the
+    shared ``_CopilotInstaller`` Protocol every other client bootstrap
+    function implements — because the destination is not project-scoped (see
+    :func:`_antigravity_global_mcp_config_path`).
+
+    Only touches ``mcpServers.trw`` — preserves all other settings and
+    servers. Hardened (via the shared :func:`read_settings_for_merge` seam)
+    against pre-existing files written by the Antigravity CLI itself or other
     tooling: non-UTF-8 bytes, malformed JSON, or a non-object top level fall
     back to a fresh document rather than crashing or corrupting the file
-    silently. The previous file is preserved alongside as ``settings.json.bak``
-    so the user can recover their customizations.
+    silently. The previous file is preserved alongside as a ``.bak`` sibling.
+
+    Every write appends an explicit ``warnings`` entry naming the file as
+    GLOBAL and cross-project — this is state outside the project tree, and a
+    bootstrap run must never mutate it silently (PRD-FIX-133-FR03).
     """
     result = _new_result()
-    settings_path = target_dir / _ANTIGRAVITY_SETTINGS_PATH
+    settings_path = _antigravity_global_mcp_config_path()
     existed = settings_path.exists()
 
-    existing = read_settings_for_merge(settings_path, rel_path=_ANTIGRAVITY_SETTINGS_PATH, result=result)
+    existing = read_settings_for_merge(settings_path, rel_path=_ANTIGRAVITY_GLOBAL_MCP_DISPLAY, result=result)
     if existing is None:
         # Unrecoverable read error (e.g. permission denied) — already recorded.
         return result
@@ -204,11 +237,9 @@ def generate_antigravity_mcp_config(
         mcp_servers = {}
 
     cmd, args = _resolve_trw_mcp_command()
-    trw_entry: dict[str, object] = {
-        "command": cmd,
-        "args": args,
-        "trust": True,
-    }
+    # No "trust" key: agy's own schema (vendor doc + `agy mcp add` output) is
+    # command/args/env/disabled only — a key it does not read is dead weight.
+    trw_entry: dict[str, object] = {"command": cmd, "args": args}
 
     # Idempotent write
     new_payload = dict(existing)
@@ -225,142 +256,19 @@ def generate_antigravity_mcp_config(
             # fresh JSON we're about to write, so treat it as a non-match.
             current_text = ""
         if current_text == new_text:
-            result.setdefault("preserved", []).append(_ANTIGRAVITY_SETTINGS_PATH)
+            result.setdefault("preserved", []).append(_ANTIGRAVITY_GLOBAL_MCP_DISPLAY)
             return result
 
     try:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(new_text, encoding="utf-8")
-        _record_write(result, _ANTIGRAVITY_SETTINGS_PATH, existed=existed)
+        _record_write(result, _ANTIGRAVITY_GLOBAL_MCP_DISPLAY, existed=existed)
+        result.setdefault("warnings", []).append(
+            f"Antigravity CLI only loads MCP servers from the GLOBAL "
+            f"{_ANTIGRAVITY_GLOBAL_MCP_DISPLAY} (shared by every project on this "
+            f"machine) — {'updated' if existed else 'created'} the 'trw' entry there."
+        )
     except OSError as exc:
         result["errors"].append(f"Failed to write {settings_path}: {exc}")
 
     return result
-
-
-# ---------------------------------------------------------------------------
-# Agents — .antigravitycli/agents/*.md with YAML frontmatter
-# ---------------------------------------------------------------------------
-
-_ANTIGRAVITY_AGENT_TEMPLATES: dict[str, str] = {
-    "trw-explorer.md": """---
-name: trw-explorer
-description: >
-  Read-only codebase explorer for gathering evidence before edits.
-  For lightweight code search and file reading. For risk-scored
-  exploration with distill intelligence, use @trw-distill-explorer.
-tools:
-  - read_file
-  - read_many_files
-  - glob
-  - grep_search
-  - list_directory
-  - mcp_trw_*
-model: gemini-2.5-flash
-temperature: 0.1
-max_turns: 15
-timeout_mins: 10
----
-
-Stay in exploration mode.
-Trace the real execution path, cite files and symbols, and avoid proposing
-fixes unless asked. Prefer fast search and targeted reads over broad scans.
-
-Use `mcp_trw_trw_recall(query)` to check if the topic has been investigated before.
-""",
-    "trw-implementer.md": """---
-name: trw-implementer
-description: >
-  Implementation-focused agent for bounded code changes.
-  Writes tests first, then production code.
-tools:
-  - "*"
-model: gemini-2.5-pro
-temperature: 0.2
-max_turns: 30
-timeout_mins: 30
----
-
-Own the requested fix or feature slice.
-Make the smallest defensible change, keep unrelated files untouched, and
-validate the behavior you changed.
-
-Use `mcp_trw_trw_checkpoint(message)` after each working milestone.
-Run tests after each change — fix failures before moving on.
-Use `mcp_trw_trw_learn(summary, detail)` for any discoveries.
-""",
-    "trw-reviewer.md": """---
-name: trw-reviewer
-description: >
-  Read-only reviewer focused on correctness, regressions, security,
-  and missing tests.
-tools:
-  - read_file
-  - read_many_files
-  - glob
-  - grep_search
-  - list_directory
-  - mcp_trw_*
-model: gemini-2.5-pro
-temperature: 0.1
-max_turns: 20
-timeout_mins: 15
----
-
-Review like an owner.
-Lead with concrete findings, prioritize correctness and missing tests, and
-avoid style-only feedback unless it hides a real defect.
-
-Use `mcp_trw_trw_learn(summary, detail)` to record any patterns or gotchas.
-""",
-    "trw-lead.md": """---
-name: trw-lead
-description: >
-  Orchestration lead that plans work and delegates to specialists.
-  Does NOT write production code — stays in delegate mode.
-tools:
-  - read_file
-  - glob
-  - grep_search
-  - mcp_trw_*
-model: gemini-2.5-pro
-temperature: 0.3
-max_turns: 20
-timeout_mins: 20
----
-
-Plan work, delegate to @trw-explorer, @trw-implementer, and @trw-reviewer.
-Track progress via `mcp_trw_trw_status()`.
-
-Use `mcp_trw_trw_checkpoint(message)` after each milestone.
-Use `mcp_trw_trw_learn(summary, detail)` for discoveries.
-Call `mcp_trw_trw_deliver()` when complete.
-""",
-}
-
-
-def antigravity_agent_contents() -> dict[str, bytes]:
-    """Bundled ``.antigravitycli/agents/*`` content, keyed by repo-relative path."""
-    from ._file_ops import agent_template_contents
-
-    return agent_template_contents(_ANTIGRAVITY_AGENTS_DIR, _ANTIGRAVITY_AGENT_TEMPLATES)
-
-
-def generate_antigravity_agents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> dict[str, list[str]]:
-    """Generate ``.antigravitycli/agents/trw-*.md`` subagent definitions.
-
-    Content-aware: unmodified agents are refreshed when the bundled template
-    changes; user-edited ones are preserved.
-    """
-    return write_agent_templates(
-        target_dir,
-        agents_dir=_ANTIGRAVITY_AGENTS_DIR,
-        templates=_ANTIGRAVITY_AGENT_TEMPLATES,
-        force=force,
-        manifest_hashes=manifest_hashes,
-    )

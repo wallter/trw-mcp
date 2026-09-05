@@ -20,13 +20,21 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts._ceremony import (
     ClaudeMdSyncResultDict,
+    InstructionDiffDict,
     InstructionPointerSkipDict,
+    InstructionWriteRefusalDict,
     ReviewMdResultDict,
 )
 from trw_mcp.state.claude_md._agents_md import (
     _determine_write_target_decision,
     _sync_agents_md_if_needed,
     _sync_instruction_targets,
+)
+from trw_mcp.state.claude_md._profile_dispatch_report import (
+    _cache_hit_carrier_report as _cache_hit_carrier_report,
+)
+from trw_mcp.state.claude_md._profile_dispatch_report import (
+    _capability_parity_drift as _capability_parity_drift,
 )
 from trw_mcp.state.claude_md._profile_render import render_profile_section
 from trw_mcp.state.persistence import FileStateReader
@@ -37,64 +45,6 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-def _capability_parity_drift(write_agents: bool, client: str) -> list[str]:
-    """Return capability-projection parity drift detail strings for the sync.
-
-    PRD-CORE-218-FR06: surface capability/lifecycle/count drift loudly in the
-    sync result. Returns an empty list when AGENTS.md is not written (no
-    capability appendix is generated) or when the generated projection matches
-    the resolved surface manifest. A non-empty list is the same drift that
-    causes the capability block to be dropped from the generated instructions.
-    """
-    if not write_agents:
-        return []
-    from trw_mcp.bootstrap._client_integration_appendix import (
-        build_client_integration_appendix,
-    )
-
-    surface_id = "codex" if client == "codex" else "agents"
-    appendix = build_client_integration_appendix(surface_id)
-    return [f.detail for f in appendix.parity_failures]
-
-
-def _cache_hit_carrier_report(
-    target: Path,
-    write_claude: bool,
-    config: TRWConfig,
-    scope: str,
-) -> tuple[str | None, list[InstructionPointerSkipDict] | None, str | None]:
-    """Read-only carrier classification for the cache-hit path (PRD-CORE-203 FR07).
-
-    No write happens on a cache hit, so this reports the carrier state of the
-    CURRENT CLAUDE.md (``healed=False`` since nothing was modified). Returns
-    ``(None, None, None)`` when CLAUDE.md is not a write target.
-    """
-    if not write_claude or not target.exists():
-        return None, None, None
-    from trw_mcp.models.config._profiles import resolve_client_profile
-    from trw_mcp.state.claude_md._instruction_carrier import (
-        CarrierMode,
-        classify_instruction_file,
-        resolve_carrier_mode,
-    )
-
-    classification = classify_instruction_file(target)
-    mode = resolve_carrier_mode(
-        classification,
-        import_syntax=resolve_client_profile("claude-code").instruction_import_syntax,
-        externalize=config.instruction_externalize,
-        scope=scope,
-    )
-    if mode is CarrierMode.IMPORT:
-        return mode.value, None, config.instruction_external_filename
-    if mode is CarrierMode.POINTER_SKIP:
-        skips: list[InstructionPointerSkipDict] = [
-            {"path": str(target), "import_targets": list(classification.import_targets), "healed": False}
-        ]
-        return mode.value, skips, None
-    return mode.value, None, None
-
-
 def dispatch_for_profile(
     scope: str,
     target_dir: str | None,
@@ -103,6 +53,9 @@ def dispatch_for_profile(
     llm: LLMClient,
     client: str = "auto",
     instruction_manifest_hashes: dict[str, str] | None = None,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
 ) -> ClaudeMdSyncResultDict:
     """Dispatch a CLAUDE.md / AGENTS.md sync for the active profile.
 
@@ -133,6 +86,10 @@ def dispatch_for_profile(
             before reaching here — leaving a user's edit indistinguishable from
             TRW's own output. ``None`` lets the generators read the manifest
             themselves, which is correct for a standalone sync.
+        dry_run: Compute what each target WOULD receive, return a unified diff
+            per target, and write nothing (PRD-FIX-123-FR03).
+        force: Bypass the write guard's shrink floors. A call argument only —
+            never a config field (PRD-FIX-123-FR02).
 
     Returns:
         Dict shaped like :class:`ClaudeMdSyncResultDict` describing the
@@ -173,7 +130,18 @@ def dispatch_for_profile(
     if scope != "sub":
         current_hash = _compute_sync_hash(config)
         stored_hash = _read_stored_hash(trw_dir)
-        if stored_hash is not None and stored_hash == current_hash:
+        # ``force=True`` must bypass the cache-hit early return. Before this
+        # fix, a hash match reported "unchanged" and returned unconditionally
+        # regardless of ``force``, so a caller asking to force-regenerate an
+        # unchanged-hash instruction file (via the MCP tool or the CLI) got a
+        # silent no-op — the write guard never ran, `apply_carrier` was never
+        # called, and the on-disk file was never touched.
+        if force and stored_hash is not None and stored_hash == current_hash:
+            logger.info(
+                "claude_md_sync_force_bypasses_cache_hit",
+                hash=current_hash[:12],
+            )
+        if not force and stored_hash is not None and stored_hash == current_hash:
             decision = _determine_write_target_decision(client, config, project_root, scope)
             instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
                 project_root,
@@ -186,14 +154,17 @@ def dispatch_for_profile(
                 reason="no_changes",
             )
             target = project_root / "CLAUDE.md"
-            agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
+            agents_md_synced, agents_md_path, agents_verdict = _sync_agents_md_if_needed(
                 decision.write_agents,
                 config,
                 project_root,
                 trw_dir,
                 client=client,
                 recall_fn=recall_learnings,
+                force=force,
+                dry_run=dry_run,
             )
+            del agents_verdict  # cache-hit path reports no diff/refusal payload
             try:
                 review_result = generate_review_md(trw_dir, repo_root=project_root)
             except Exception:  # justified: fail-open — REVIEW.md generation must not block cache-hit return
@@ -221,14 +192,18 @@ def dispatch_for_profile(
                 capability_parity_drift=_capability_parity_drift(decision.write_agents, client),
             )
 
-    trw_section = render_profile_section(trw_dir, project_root, config)
-
     if scope == "sub" and target_dir:
         target = Path(target_dir).resolve() / "CLAUDE.md"
         max_lines = config.sub_claude_md_max_lines
     else:
         target = project_root / "CLAUDE.md"
         max_lines = config.claude_md_max_lines
+
+    # Resolved BEFORE the render: PRD-FIX-123-FR07's gate measures the merged
+    # total, which needs the target it would merge into — and the budget, so a
+    # sub-scope section that overflows collapses to the pointer form rather than
+    # having the writer refuse TRW's own output (``_section_budget``).
+    trw_section = render_profile_section(trw_dir, project_root, config, target, max_lines=max_lines, scope=scope)
 
     decision = _determine_write_target_decision(client, config, project_root, scope)
     write_claude = decision.write_claude
@@ -238,6 +213,8 @@ def dispatch_for_profile(
     carrier_mode: str | None = None
     pointer_skips: list[InstructionPointerSkipDict] | None = None
     external_path: str | None = None
+    refusals: list[InstructionWriteRefusalDict] = []
+    diffs: list[InstructionDiffDict] = []
     if write_claude:
         # PRD-CORE-203 FR05/FR06/FR07: resolve the carrier for CLAUDE.md. It is
         # Claude Code's instruction file, so import-capability comes from the
@@ -257,8 +234,14 @@ def dispatch_for_profile(
             scope=scope,
             external_filename=config.instruction_external_filename,
             project_root=project_root,
+            force=force,
+            dry_run=dry_run,
         )
         total_lines = outcome.total_lines
+        if outcome.refusal is not None:
+            refusals.append(outcome.refusal)
+        if outcome.diff is not None:
+            diffs.append(outcome.diff)
         carrier_mode = outcome.mode.value
         external_path = outcome.external_path
         if outcome.mode is CarrierMode.POINTER_SKIP:
@@ -278,17 +261,25 @@ def dispatch_for_profile(
         instruction_manifest_hashes,
     )
 
-    agents_md_synced, agents_md_path = _sync_agents_md_if_needed(
+    agents_md_synced, agents_md_path, agents_verdict = _sync_agents_md_if_needed(
         write_agents,
         config,
         project_root,
         trw_dir,
         client=client,
         recall_fn=recall_learnings,
+        force=force,
+        dry_run=dry_run,
     )
+    if agents_verdict is not None and agents_verdict.refusal is not None:
+        refusals.append(agents_verdict.refusal)
+    if agents_verdict is not None and agents_verdict.diff is not None:
+        diffs.append(agents_verdict.diff)
 
-    # Store hash after successful render (root scope only).
-    if scope != "sub":
+    # Store hash after successful render (root scope only). A dry run and a
+    # refused write must NOT record the hash: doing so would make the next real
+    # sync a cache hit and silently skip the write that never happened.
+    if scope != "sub" and not dry_run and not refusals:
         rendered_hash = _compute_sync_hash(config)
         _write_stored_hash(trw_dir, rendered_hash)
 
@@ -317,7 +308,7 @@ def dispatch_for_profile(
     return _build_sync_result(
         path=str(target),
         scope=scope,
-        status="synced",
+        status="dry_run" if dry_run else ("refused" if refusals else "synced"),
         total_lines=total_lines,
         agents_md_synced=agents_md_synced,
         agents_md_path=agents_md_path,
@@ -329,4 +320,6 @@ def dispatch_for_profile(
         pointer_skips=pointer_skips,
         external_path=external_path,
         capability_parity_drift=_capability_parity_drift(write_agents, client),
+        diffs=diffs if dry_run else None,
+        refusals=refusals or None,
     )

@@ -52,12 +52,24 @@ class TestClaudeMdNoModuleLevelCapture:
         assert hasattr(_parser, "get_config")
 
     def test_submodules_use_function_level_reader_writer(self) -> None:
-        """FR: Submodules instantiate FileStateReader/Writer at function level."""
-        from trw_mcp.state.claude_md import _parser, _static_sections
+        """FR: Submodules instantiate FileStateReader/Writer at function level.
 
-        # Verify persistence classes are imported for function-level use
+        PRD-FIX-123 moved every instruction-file write out of ``_parser`` into the
+        guarded write seam, so ``_parser`` no longer imports ``FileStateWriter`` at
+        all. The FR is "no module-level capture", so assert that directly: neither
+        module holds an instantiated reader/writer at import time, and the one
+        module that does write (the guard) imports the class rather than an instance.
+        """
+        from trw_mcp.state.claude_md import _parser, _static_sections, _write_guard
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        for mod in (_parser, _static_sections, _write_guard):
+            captured = [
+                name for name, value in vars(mod).items() if isinstance(value, (FileStateReader, FileStateWriter))
+            ]
+            assert captured == [], f"{mod.__name__} captures a persistence instance at import: {captured}"
         assert hasattr(_static_sections, "FileStateReader")
-        assert hasattr(_parser, "FileStateWriter")
+        assert hasattr(_write_guard, "FileStateWriter")
 
     def test_no_module_level_config_in_submodules(self) -> None:
         """FR: No submodule has _config at module scope."""

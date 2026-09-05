@@ -23,6 +23,12 @@ from trw_mcp.dispatch._types import SUPPORTED_CLIENTS, DispatchClient
 # API-direct paths agree on the same documented ceiling.
 DEFAULT_DISPATCH_TIMEOUT_SECS: int = 600
 
+# Per-probe bound for the doctor readiness version probe (seconds). 5 s is an
+# order of magnitude above the ~0.3 s a warm CLI takes to print a banner, and an
+# order of magnitude below the dispatch timeout above — it exists to bound a hung
+# binary, not to trim a working one.
+DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS: int = 5
+
 
 class _DispatchFields:
     """Cross-client dispatch domain mixin — mixed into _TRWConfigFields via MI."""
@@ -52,6 +58,22 @@ class _DispatchFields:
     dispatch_default_models: dict[str, str] = Field(
         default_factory=dict,
         description="Per-client model override applied when --model is omitted (e.g. {'codex': 'gpt-5.5'}).",
+    )
+    # Per-probe wall-clock bound for the doctor ``formation_readiness`` version
+    # probe (PRD-CORE-266-NFR01). A typed field rather than a literal because it
+    # is the ONLY thing standing between a hung client binary and a hung doctor
+    # run, and an operator on a slow box must be able to raise it without a code
+    # edit. It bounds each probe INDIVIDUALLY, so the worst case for N enabled
+    # clients is N times this value; the ge/le bounds keep it low enough to stay
+    # a diagnostic and high enough for a cold node-based CLI to start.
+    dispatch_version_probe_timeout_s: int = Field(
+        default=DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS,
+        ge=1,
+        le=60,
+        description=(
+            "Per-client wall-clock bound (seconds) on the doctor formation-readiness "
+            "version probe; N enabled clients are bounded by N times this value."
+        ),
     )
     # Hard wall-clock timeout (seconds) applied when ``--timeout`` is omitted.
     dispatch_default_timeout_s: int = Field(

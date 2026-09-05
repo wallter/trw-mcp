@@ -11,18 +11,26 @@ _pass=0
 
 _here="$(cd "$(dirname "$0")" && pwd)"
 _hook="$_here/../../src/trw_mcp/data/hooks/session-start.sh"
+# PRD-CORE-247-NFR03 moved _sanitize_context_text into lib-trw.sh so the
+# SessionStart and UserPromptSubmit hooks share ONE implementation. The source
+# of truth moved with it; the assertions below are unchanged.
+_lib="$_here/../../src/trw_mcp/data/hooks/lib-trw.sh"
 
-if [ ! -r "$_hook" ]; then
-  echo "FAIL: cannot find hook at $_hook"
+if [ ! -r "$_hook" ] || [ ! -r "$_lib" ]; then
+  echo "FAIL: cannot find hook at $_hook or lib at $_lib"
   exit 1
 fi
 
-# ── Unit: extract the sanitizer function from the hook and eval it ──
-# session-start.sh runs its dispatch on source (it reads stdin and exits), so we
-# cannot simply source it. Copy out just the _sanitize_context_text definition.
-_fn=$(sed -n '/^_sanitize_context_text() {/,/^}/p' "$_hook")
+# ── Unit: extract the sanitizer function from the lib and eval it ──
+# lib-trw.sh runs top-level env bootstrap on source, so we copy out just the
+# _sanitize_context_text definition rather than sourcing the whole file.
+_fn=$(sed -n '/^_sanitize_context_text() {/,/^}/p' "$_lib")
 if [ -z "$_fn" ]; then
-  echo "FAIL: _sanitize_context_text not found in hook"
+  echo "FAIL: _sanitize_context_text not found in lib-trw.sh"
+  exit 1
+fi
+if grep -q '^_sanitize_context_text() {' "$_hook"; then
+  echo "FAIL: session-start.sh redefines _sanitize_context_text — the shared lib copy is the only one"
   exit 1
 fi
 eval "$_fn"

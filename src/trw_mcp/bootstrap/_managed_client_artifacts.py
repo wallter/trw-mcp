@@ -15,8 +15,8 @@ seven supported profiles used to do that with an unconditional write:
 
 so a user's hand edit was destroyed on every update (CONSTITUTION HB-2). The
 mirror-image bug lived in the other three generators
-(``generate_copilot_agents``, ``generate_copilot_path_instructions``,
-``write_agent_templates`` for antigravity): they short-circuited on
+(the per-client agent template writers and
+``generate_copilot_path_instructions``): they short-circuited on
 ``existed and not force``, which preserves user edits but *also* freezes
 TRW-owned files at their first-installed content forever.
 
@@ -134,12 +134,6 @@ class ManagedArtifactSource:
     contents: Callable[[], dict[str, bytes]]
 
 
-def _copilot_agents() -> dict[str, bytes]:
-    from ._copilot import copilot_agent_contents
-
-    return copilot_agent_contents()
-
-
 def _copilot_path_instructions() -> dict[str, bytes]:
     from ._copilot import copilot_path_instruction_contents
 
@@ -152,16 +146,64 @@ def _copilot_skills() -> dict[str, bytes]:
     return copilot_skill_contents()
 
 
-def _antigravity_agents() -> dict[str, bytes]:
-    from ._antigravity_cli import antigravity_agent_contents
+def bundled_agent_contents(client: str) -> dict[str, bytes]:
+    """``{repo-relative path: materialized bytes}`` for one client's agents.
 
-    return antigravity_agent_contents()
+    The SAME transform ``_install_one_agent`` applies, so the ownership guard
+    compares against the exact bytes the installer would write. Derived from the
+    bundled agent directory, so a twelfth specialist is covered with no edit
+    here — the five hand-kept per-client template dictionaries this replaced are
+    what let ``.github/agents`` and ``.cursor/agents`` drift from the bundle
+    (PRD-CORE-252-FR04).
+
+    An agent that cannot be materialized for *client* is omitted rather than
+    recorded: claiming ownership of a path the installer never wrote is the
+    failure direction that costs a user their file.
+    """
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.agents.tier_resolver import materialize_agent
+    from trw_mcp.exceptions import AgentFormatError
+
+    from ._utils import _DATA_DIR
+
+    try:
+        fmt = agent_format_for(client)
+    except AgentFormatError:
+        return {}
+    if not fmt.supports_agents:
+        return {}
+    source = _DATA_DIR / "agents"
+    if not source.is_dir():
+        return {}
+
+    contents: dict[str, bytes] = {}
+    for agent_file in sorted(source.glob("*.md")):
+        try:
+            rel = fmt.destination_for(agent_file.stem)
+            contents[rel] = materialize_agent(agent_file.read_text(encoding="utf-8"), client=client).encode("utf-8")
+        except (OSError, ValueError, AgentFormatError):
+            logger.warning("bundled_agent_render_failed", agent=agent_file.name, client=client, exc_info=True)
+    return contents
 
 
-def _cursor_agents() -> dict[str, bytes]:
-    from ._cursor_ide import cursor_ide_agent_contents
+def _agent_source(client: str) -> Callable[[], dict[str, bytes]]:
+    """Bind *client* into a zero-argument content callable for the registry."""
+    return lambda: bundled_agent_contents(client)
 
-    return cursor_ide_agent_contents()
+
+def _agent_surface(client: str) -> str:
+    """The repo-relative agent directory *client* installs into.
+
+    ``ManagedArtifactSource.surface`` is not a label: every key a source yields
+    must sit under it, and ``test_client_artifact_preservation`` asserts exactly
+    that. A descriptive string here would pass import and fail that invariant.
+    """
+    from trw_mcp.agents.agent_formats import agent_format_for
+
+    destination = agent_format_for(client).destination_dir
+    if destination is None:  # unreachable: _AGENT_CLIENTS all have a surface
+        raise ValueError(f"client {client!r} has no agent destination")
+    return destination
 
 
 def _cursor_commands() -> dict[str, bytes]:
@@ -181,12 +223,17 @@ def _cursor_skills() -> dict[str, bytes]:
 # ``.agents/skills``) and the ``.claude``/``.opencode`` core surfaces are absent
 # because they have their own recorders — all three are registry members in
 # ``_manifest_recorders.py`` and all three now decline user-edited artifacts.
+#: Clients whose agent destination is recorded here. ``claude-code`` is absent
+#: because ``.claude/agents`` has its own recorder, and that one accepts TWO
+#: framework renderings (raw bundled tier form and resolved form) so a
+#: mis-materialized agent can heal; every other client only ever received the
+#: materialized form, so the single-hash guard is exactly right for them.
+_AGENT_CLIENTS: tuple[str, ...] = ("antigravity-cli", "codex", "copilot", "cursor-ide", "opencode")
+
 MANAGED_CLIENT_ARTIFACT_SOURCES: tuple[ManagedArtifactSource, ...] = (
-    ManagedArtifactSource("copilot", ".github/agents", _copilot_agents),
+    *(ManagedArtifactSource(client, _agent_surface(client), _agent_source(client)) for client in _AGENT_CLIENTS),
     ManagedArtifactSource("copilot", ".github/instructions", _copilot_path_instructions),
     ManagedArtifactSource("copilot", ".github/skills", _copilot_skills),
-    ManagedArtifactSource("antigravity-cli", ".antigravitycli/agents", _antigravity_agents),
-    ManagedArtifactSource("cursor-ide", ".cursor/agents", _cursor_agents),
     ManagedArtifactSource("cursor-ide", ".cursor/commands", _cursor_commands),
     ManagedArtifactSource("cursor-ide", ".cursor/skills", _cursor_skills),
 )

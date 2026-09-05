@@ -7,6 +7,8 @@ skip/malformed handling, idempotence, dry-run, and boot-sequence behavior.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -95,6 +97,33 @@ def _make_run(
         _set_mtime(run_yaml, now_ts - run_yaml_age_hours * 3600)
 
     return run_dir
+
+
+_SWEEP_DRIVER = (
+    "import sys;"
+    "from pathlib import Path;"
+    "from trw_mcp.state._run_gc import sweep_stale_runs;"
+    "sweep_stale_runs(Path(sys.argv[1]), 48, 12, [], dry_run=False, _now=float(sys.argv[2]))"
+)
+
+
+def _spawn_sweep(runs_root: Path) -> subprocess.Popen[bytes]:
+    """Start one sweep in its OWN process — NFR04's contended-filesystem model.
+
+    Real subprocesses, not threads: each MCP client spawns its own stdio
+    server, so what these sweeps share is the run tree, not a file-descriptor
+    table. ``_now`` is left to each child so nothing is coordinated but the
+    filesystem itself.
+    """
+    env = dict(os.environ)
+    src = str(Path(__file__).resolve().parent.parent / "src")
+    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
+    return subprocess.Popen(
+        [sys.executable, "-c", _SWEEP_DRIVER, str(runs_root), str(time.time())],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _read_status(run_dir: Path) -> str:
@@ -314,11 +343,22 @@ def test_sweep_emits_near_stale_warning_in_grace_window(tmp_path: Path) -> None:
 
 
 def test_sweep_skips_terminal_status_runs(tmp_path: Path) -> None:
+    """Terminal runs are skipped, and the set comes from RunStatus (PRD-FIX-126-FR02).
+
+    Previously this test enumerated ``("complete", "failed", "delivered",
+    "abandoned")`` — a hand-copy of the module's private literal set that
+    included ``failed``, a member no writer has ever produced. It now derives
+    the terminal set from the enum, so removing or adding a member cannot leave
+    a stale expectation behind.
+    """
+    from trw_mcp.models.run import RunStatus
     from trw_mcp.state._run_gc import sweep_stale_runs
 
     runs_root = tmp_path / "runs"
     now = time.time()
-    for i, status in enumerate(("complete", "failed", "delivered", "abandoned")):
+    terminal = sorted(m.value for m in RunStatus if m.is_terminal)
+    assert terminal == ["abandoned", "complete", "delivered"]
+    for i, status in enumerate(terminal):
         _make_run(
             runs_root,
             "task-a",
@@ -330,7 +370,59 @@ def test_sweep_skips_terminal_status_runs(tmp_path: Path) -> None:
 
     report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
     assert report.runs_abandoned == 0
-    assert report.runs_skipped_terminal == 4
+    assert report.runs_skipped_terminal == len(terminal)
+
+
+def test_sweep_treats_an_unnameable_status_conservatively(tmp_path: Path) -> None:
+    """A status that is neither active nor terminal is skipped, not abandoned.
+
+    ``failed`` and ``paused`` were removed from ``RunStatus`` (PRD-FIX-126-FR01)
+    because nothing has ever written them. A run carrying one anyway — from an
+    older trw-mcp, or a corrupt record — must not be rewritten by the sweep.
+    """
+    from trw_mcp.state._run_gc import sweep_stale_runs
+
+    runs_root = tmp_path / "runs"
+    now = time.time()
+    for i, status in enumerate(("failed", "paused", "abandonded")):
+        _make_run(runs_root, "task-a", f"r-unknown-{i}", status=status, events_age_hours=100.0, now=now)
+
+    report = sweep_stale_runs(runs_root, 48, 12, [], dry_run=False, _now=now)
+    assert report.runs_abandoned == 0
+    assert report.runs_skipped_terminal == 3
+    for i, status in enumerate(("failed", "paused", "abandonded")):
+        assert _read_status(runs_root / "task-a" / f"r-unknown-{i}") == status
+
+
+def test_concurrent_sweep_leaves_parseable_run_yaml(tmp_path: Path) -> None:
+    """PRD-FIX-126-NFR04: concurrent sweeps leave every run.yaml loadable.
+
+    Each MCP client spawns its own stdio server, so several processes sweep the
+    same run tree. The status transition is a single atomic replace
+    (``_dump_run_yaml_atomic``); this proves the invariant that matters
+    downstream — after the dust settles every run.yaml still parses through
+    ``RunState`` and carries exactly one ``status`` key.
+    """
+    import yaml as _yaml
+
+    from trw_mcp.models.run import RunState, RunStatus
+
+    runs_root = tmp_path / "runs"
+    now = time.time()
+    run_dirs = [
+        _make_run(runs_root, "task-a", f"r-conc-{i}", status="active", events_age_hours=100.0, now=now)
+        for i in range(24)
+    ]
+
+    workers = [_spawn_sweep(runs_root) for _ in range(4)]
+    for worker in workers:
+        assert worker.wait(timeout=120) == 0
+
+    for run_dir in run_dirs:
+        text = (run_dir / "meta" / "run.yaml").read_text(encoding="utf-8")
+        assert sum(1 for line in text.splitlines() if line.startswith("status:")) == 1
+        state = RunState.model_validate(_yaml.safe_load(text))
+        assert state.status == RunStatus.ABANDONED.value
 
 
 def test_sweep_skips_malformed_run_yaml(tmp_path: Path) -> None:

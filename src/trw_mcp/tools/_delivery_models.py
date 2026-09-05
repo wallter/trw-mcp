@@ -77,14 +77,26 @@ class QueueState(str, Enum):
     CANCELLED = "cancelled"
 
 
+#: The lease owner the ``trw_deliver`` critical path claims under. FR02's resume
+#: grant is bound to this owner AND the calling process id, so a grant cannot be
+#: consumed by an unrelated caller or banked across a restart.
+DELIVERY_JOURNAL_OWNER = "trw_deliver"
+
+
 class RecoveryAction(str, Enum):
-    """Authorized ``trw_delivery_recover`` actions (§6.5)."""
+    """Authorized ``trw_delivery_recover`` actions (§6.5 + PRD-FIX-127 FR01/FR06).
+
+    PRD-FIX-127 FR06 deleted the rollback member: no descriptor registers a
+    compensator, so the action's entire behaviour was to refuse, and the value was
+    never persisted to a recovery-event row (the coordinator returned before its
+    audit insert), so no stored row becomes unreadable.
+    """
 
     TAKEOVER_PENDING = "takeover_pending"
+    RESUME = "resume"
     RECONCILE_APPLIED = "reconcile_applied"
     RECONCILE_NOT_APPLIED = "reconcile_not_applied"
     REQUEST_CANCEL = "request_cancel"
-    RUN_COMPENSATION = "run_compensation"
 
 
 # --- Persisted row models ---

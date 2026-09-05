@@ -53,6 +53,19 @@ class ReviewReceipt(BaseModel):
     reviewer_origin: str
     reviewer_identity: str
     reviewer_family: str
+    # PRD-CORE-255-FR02: SHA-256 of the external auditor artifact whose bytes the
+    # caller proved knowledge of. Non-empty ONLY when reviewer_family=="cross_model"
+    # was EARNED in manual mode; empty for an in-process dispatch or a downgrade.
+    external_receipt_digest: str = ""
+    # PRD-CORE-255-FR02: which verification condition refused a cross_model claim
+    # (external_receipt_path_missing | _unreadable | external_receipt_digest_mismatch).
+    # Empty means no claim was refused — never "a claim was refused silently".
+    family_downgraded_reason: str = ""
+    # PRD-CORE-255-FR04: the adversarial auditor found nothing blocking. Recorded
+    # True ONLY on a receipt whose family is a digest-verified cross_model or whose
+    # origin is a receipted operator; a caller asserting it from any other posture
+    # has it recorded False, so the flag can never be self-granted.
+    adversarial_pass: bool = False
     reviewer_roles_realized: tuple[str, ...] = Field(default_factory=tuple)
     prd_ids: tuple[str, ...] = Field(default_factory=tuple)
     requirement_ids: tuple[str, ...] = Field(default_factory=tuple)
@@ -69,7 +82,7 @@ class ReviewReceipt(BaseModel):
     config_digest: str = ""
     supersedes_receipt_id: str | None = None
 
-    @field_validator("limitations", "degraded_reason")
+    @field_validator("limitations", "degraded_reason", "family_downgraded_reason")
     @classmethod
     def _bound_text(cls, value: str) -> str:
         return _require_bounded_text(value, "review text")

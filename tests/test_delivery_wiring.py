@@ -113,11 +113,18 @@ def test_conflicting_explicit_id_returns_zero_effect_conflict(tmp_path, monkeypa
 
 @pytest.mark.integration
 def test_live_delivery_dispatches_registered_synchronous_effects(tmp_path, monkeypatch) -> None:
-    """FR03 / FPI-8: the production path journals the declared synchronous families."""
+    """FR03 / FPI-8: the production path journals the declared synchronous families.
+
+    PRD-FIX-127 FR05 narrowed what this asserts. It is a REACHABILITY check on the
+    declared dispatch contract and nothing more: reading back the ids the wiring
+    itself wrote can prove a ``step()`` call was deleted, but never that an
+    unjournaled mutation was added. That second question moved to the real
+    input/output census gate in ``tests/test_delivery_io_tracer.py``.
+    """
     from trw_mcp.tools._delivery_tracer import (
         SYNCHRONOUS_DISPATCH_EFFECTS,
+        read_journaled_step_ids,
         reconcile_runtime_dispatch,
-        trace_journaled_effects,
     )
 
     tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -127,7 +134,7 @@ def test_live_delivery_dispatches_registered_synchronous_effects(tmp_path, monke
     _deliver(tools, tmp_path, run_dir, delivery_id=did, capability_token=strong_capability())
 
     coord = _coord(tmp_path)
-    observed = trace_journaled_effects(coord, did)
+    observed = read_journaled_step_ids(coord, did)
     # Every synchronous dispatch effect is reachable AND every observed sync
     # effect resolves to exactly one descriptor (no unclassified mutation).
     report = reconcile_runtime_dispatch(

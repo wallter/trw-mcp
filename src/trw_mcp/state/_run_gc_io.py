@@ -12,7 +12,6 @@ under the 350 effective-LOC ceiling.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
@@ -122,7 +121,21 @@ def _dump_run_yaml_atomic(run_yaml_path: Path, data: dict[str, Any]) -> None:
     )
     tmp_path = Path(tmp_str)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh = os.fdopen(fd, "w", encoding="utf-8")
+    except Exception:
+        # os.fdopen did not take ownership of the raw fd from mkstemp (it
+        # raised before wrapping it), so close it ourselves here. Once
+        # fdopen succeeds below, the returned file object is the SOLE
+        # owner of fd — closing it a second time via a blanket `finally:
+        # os.close(fd)` would (a) suppress a harmless EBADF single-threaded,
+        # or (b) under concurrent threads close a fd number the OS has
+        # already recycled to an unrelated open file, corrupting that
+        # thread's writes. See PRD-FIX-126 P1 finding.
+        os.close(fd)
+        tmp_path.unlink(missing_ok=True)
+        raise
+    try:
+        with fh:
             yaml.dump(data, fh)
             fh.flush()
             os.fsync(fh.fileno())
@@ -130,13 +143,6 @@ def _dump_run_yaml_atomic(run_yaml_path: Path, data: dict[str, Any]) -> None:
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
-    finally:
-        # Parity with FileStateWriter (the pattern this mirrors): if os.fdopen
-        # raised it did NOT take ownership of the raw fd from mkstemp, so it
-        # would leak. Close it here; on the success path the with-block already
-        # closed it, so suppress the resulting EBADF.
-        with contextlib.suppress(OSError):
-            os.close(fd)
 
 
 def _iso_utc_now() -> str:

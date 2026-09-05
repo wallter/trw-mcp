@@ -30,7 +30,7 @@ from trw_mcp.state.analytics import (
     save_learning_entry,
     update_analytics,
 )
-from trw_mcp.state.claude_md import execute_claude_md_sync
+from trw_mcp.state.claude_md import execute_claude_md_sync, instruction_write_trigger
 from trw_mcp.state.memory_adapter import (
     list_active_learnings,
     recall_learnings as adapter_recall,
@@ -465,16 +465,19 @@ def register_learning_tools(server: FastMCP) -> None:
         scope: str = "root",
         target_dir: str | None = None,
         client: str = "auto",
+        dry_run: bool = False,
+        force: bool = False,
     ) -> ClaudeMdSyncResultDict:
         """Sync TRW protocol and ceremony guidance into the client's instruction file.
 
         Use when onboarding a project whose instruction file — CLAUDE.md,
         AGENTS.md, or the equivalent for the active client — lacks the TRW
         auto-generated block, after changing the protocol template, or when
-        switching IDE clients.
+        switching IDE clients. Your hand-written content is never truncated: a
+        write that would shrink it is refused and reported.
         Learnings are not promoted into the instruction file — trw_session_start() recall covers that.
 
-        Output: {status: "success" | "error", files_written, sections_synced}.
+        Output: {status: "synced" | "unchanged" | "dry_run" | "refused", diffs, refusals}.
 
         Args:
             scope: "root" for the project instruction file, "sub" for module-level.
@@ -482,13 +485,18 @@ def register_learning_tools(server: FastMCP) -> None:
             client: "auto" (detect from IDE config dirs), "claude-code"
                 (CLAUDE.md), "opencode" (AGENTS.md), "codex"
                 (.codex/INSTRUCTIONS.md), or "all" for every known surface.
+            dry_run: Return a unified diff per target and write nothing.
+            force: Write even when the guard measures a loss of your content.
         """
         # Maintainer note: rendering targets the auto-generated block of whichever
         # client surface is present. Dropping learning promotion was PRD-CORE-093.
+        # PRD-FIX-123-FR05: this entry point SUPPLIES the provenance trigger; it
+        # is never inferred from a stack walk.
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
-        return execute_claude_md_sync(scope, target_dir, config, reader, llm, client)
+        with instruction_write_trigger("tool_call", "trw_instructions_sync"):
+            return execute_claude_md_sync(scope, target_dir, config, reader, llm, client, dry_run=dry_run, force=force)
 
     @server.tool(name="trw_claude_md_sync", output_schema=None)
     @log_tool_call
@@ -496,6 +504,8 @@ def register_learning_tools(server: FastMCP) -> None:
         scope: str = "root",
         target_dir: str | None = None,
         client: str = "auto",
+        dry_run: bool = False,
+        force: bool = False,
     ) -> ClaudeMdSyncResultDict:
         """Deprecated alias for ``trw_instructions_sync`` — call that instead.
 
@@ -513,4 +523,5 @@ def register_learning_tools(server: FastMCP) -> None:
         config = get_config()
         reader = FileStateReader()
         llm = _create_llm_client()
-        return execute_claude_md_sync(scope, target_dir, config, reader, llm, client)
+        with instruction_write_trigger("tool_call", "trw_claude_md_sync"):
+            return execute_claude_md_sync(scope, target_dir, config, reader, llm, client, dry_run=dry_run, force=force)

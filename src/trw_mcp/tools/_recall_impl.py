@@ -34,6 +34,7 @@ from trw_mcp.state.recall_context import (
     build_recall_context as build_recall_context,
 )
 from trw_mcp.state.surface_tracking import log_surface_event
+from trw_mcp.tools._recall_compact import build_ultra_compact_recall_result
 
 logger = structlog.get_logger(__name__)
 
@@ -115,6 +116,15 @@ def execute_recall(
     rank_fn: Callable[..., list[dict[str, object]]] = _rank_by_utility or _default_rank
     collect_fn = _collect_context or _default_collect
 
+    # PRD-SEC-015 round-2 audit (Row 3): trw_recall is an allowlisted reviewer
+    # tool but otherwise mutates access_count/recall_count in the shared
+    # learnings store, appends propensity/surface/recall-tracking records, and
+    # increments the ceremony tool-call counter. Resolved ONCE and threaded
+    # through every write site below rather than re-checked per site.
+    from trw_mcp.state._surface_role import reviewer_role_active
+
+    _reviewer = reviewer_role_active()
+
     # FIX-071: Default to active status to exclude obsolete/corrupted entries
     if status is None:
         status = "active"
@@ -183,21 +193,25 @@ def execute_recall(
         topic_filter_warning = _apply_topic_filter(trw_dir, config, topic, matching_learnings)
     topic_filter_ignored = bool(topic_filter_warning)
 
-    # Update access tracking for recalled IDs
+    # Update access tracking for recalled IDs. Skipped entirely under the
+    # reviewer role (Row 3): access_count/recall_count are fields IN the
+    # shared learnings store, so incrementing them is a write to it.
     matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
-    # The default adapter understands federated ownership; injected legacy
-    # doubles retain the historical two-argument contract.
-    if access_fn is _default_access:
-        access_fn(trw_dir, matched_ids, federated=True)
-    else:
-        access_fn(trw_dir, matched_ids)
+    if not _reviewer:
+        # The default adapter understands federated ownership; injected legacy
+        # doubles retain the historical two-argument contract.
+        if access_fn is _default_access:
+            access_fn(trw_dir, matched_ids, federated=True)
+        else:
+            access_fn(trw_dir, matched_ids)
 
-    # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
-    _track_recall(matched_ids, query)
+        # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
+        _track_recall(matched_ids, query)
 
     # Augment local results with remote shared learnings (PRD-CORE-033)
+    remote_recall_status: dict[str, object] | None = None
     if not is_wildcard:
-        matching_learnings = _augment_with_remote(query, matching_learnings)
+        matching_learnings, remote_recall_status = _augment_with_remote(query, matching_learnings)
 
     # Search patterns and rank all results by utility
     matching_patterns = search_fn(
@@ -268,8 +282,10 @@ def execute_recall(
 
     # --- Surface event logging (PRD-CORE-103-FR01) ---
     # Log each surfaced learning for telemetry/fatigue detection.
-    # Skip compact/wildcard queries (bulk operations, not intentional surfacings).
-    if not use_compact:
+    # Skip compact/wildcard queries (bulk operations, not intentional
+    # surfacings) and skip entirely under the reviewer role (Row 3: propensity
+    # + surface records are writes into the shared learnings store).
+    if not use_compact and not _reviewer:
         _log_recall_surface_events(trw_dir, ranked_learnings, recall_context)
 
     # --- Assertion verification (PRD-CORE-086 FR06) ---
@@ -298,7 +314,7 @@ def execute_recall(
     )
 
     if ultra_compact:
-        return _build_ultra_compact_recall_result(ranked_learnings)
+        return build_ultra_compact_recall_result(ranked_learnings)
 
     recall_result: RecallResultDict = {
         "query": query,
@@ -319,16 +335,22 @@ def execute_recall(
     if topic is not None:
         recall_result["topic_filter_ignored"] = topic_filter_ignored
         recall_result["topic_filter_warning"] = topic_filter_warning
+    if remote_recall_status is not None:
+        recall_result["remote_recall"] = remote_recall_status
 
     # Ledger UF-043: trw_recall's ceremony-status injection was dropped by merge
     # 70bb84843f (2026-04-11), leaving ToolName.RECALL with no production
     # producer. Restored through the ``_ceremony_status_context`` seam, which
     # owns the nudge-model import so this module keeps none (see
     # tests/test_nudge_isolation.py). Skipped on the ultra_compact path above,
-    # which returns a deliberately minimal payload.
-    from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
+    # which returns a deliberately minimal payload, and skipped entirely under
+    # the reviewer role (Row 3: ``append_ceremony_status`` increments the
+    # ceremony tool-call counter -- a write to shared run state -- as a side
+    # effect of attaching the status line).
+    if not _reviewer:
+        from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
-    append_ceremony_status_for_tool(cast("dict[str, object]", recall_result), trw_dir, tool_name="recall")
+        append_ceremony_status_for_tool(cast("dict[str, object]", recall_result), trw_dir, tool_name="recall")
 
     return recall_result
 
@@ -415,21 +437,6 @@ def _log_recall_surface_events(
         logger.debug("surface_logging_failed", exc_info=True)
 
 
-def _build_ultra_compact_recall_result(ranked_learnings: list[dict[str, object]]) -> RecallResultDict:
-    """Build the ultra-compact recall response payload."""
-    return {
-        "learnings": [
-            {
-                "id": str(entry.get("id", "")),
-                "summary": _truncate_ultra_compact_summary(str(entry.get("summary", ""))),
-            }
-            for entry in ranked_learnings
-        ],
-        "count": len(ranked_learnings),
-        "ceremony_hint": "Call trw_session_start() first to load prior learnings and active run state.",
-    }
-
-
 def _apply_topic_filter(
     trw_dir: Path,
     config: TRWConfig,
@@ -493,15 +500,48 @@ def _track_recall(matched_ids: list[str], query: str) -> None:
 def _augment_with_remote(
     query: str,
     matching_learnings: list[dict[str, object]],
-) -> list[dict[str, object]]:
-    """Augment local results with remote shared learnings (PRD-CORE-033)."""
-    try:
-        from trw_mcp.telemetry.remote_recall import fetch_shared_learnings
+) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+    """Augment local results with remote shared learnings (PRD-CORE-033).
 
-        remote = fetch_shared_learnings(query)
-        if remote:
-            return list(matching_learnings) + [dict(r) for r in remote]
-    except Exception:  # justified: boundary, remote recall hits network/auth
+    Returns the (possibly augmented) learnings plus a ``remote_recall`` status
+    payload when the remote leg was incomplete or failed, ``None`` when it
+    succeeded or is disabled. The caller puts that payload on the response so
+    a fetch that raised is not indistinguishable from an empty remote corpus
+    (wiring-defect pattern P5: the warning log never reached the agent).
+
+    PRD-CORE-245 FR06: this reaches the platform through trw-memory's
+    ``fetch_shared_memories``, which is now the ONE client for the platform
+    learning-search endpoint and runs every result through the admission gate
+    before returning it. The duplicate client this used to call
+    (``trw_mcp.telemetry.remote_recall``) is deleted: it had a divergent
+    redaction posture and no gate at all, so unvetted peer text reached agent
+    context directly.
+    """
+    try:
+        from trw_memory.models.config import MemoryConfig
+        from trw_memory.sync import fetch_shared_memories
+
+        from trw_mcp.state.memory_adapter import get_backend
+
+        remote = fetch_shared_memories(query, MemoryConfig(), backend=get_backend())
+        status: dict[str, object] | None = None
+        if remote.status not in {"ok", "disabled"}:
+            status = {"status": remote.status, "fetched": remote.fetched, "refused": remote.refused}
+            # ``remote.results`` being empty has several causes and they are not
+            # interchangeable: nothing matched, nothing was asked, the platform
+            # did not answer, or the admission gate refused everything it sent.
+            logger.warning(
+                "remote_recall_incomplete",
+                component="recall",
+                op="augment_with_remote",
+                outcome=remote.status,
+                fetched=remote.fetched,
+                refused=remote.refused,
+            )
+        if remote.results:
+            return list(matching_learnings) + [dict(r) for r in remote.results], status
+        return list(matching_learnings), status
+    except Exception as exc:  # justified: boundary, remote recall hits network/auth
         logger.warning(
             "remote_recall_failed_unexpected",
             component="recall",
@@ -510,25 +550,7 @@ def _augment_with_remote(
             query_excerpt=query[:80],
             exc_info=True,
         )
-    return list(matching_learnings)
-
-
-def _truncate_ultra_compact_summary(summary: str, token_limit: int = 32) -> str:
-    """Trim summaries to a small token budget while preserving a readable suffix."""
-    from trw_memory.retrieval.token_budget import estimate_tokens
-
-    normalized = " ".join(summary.split())
-    if estimate_tokens(normalized) <= token_limit:
-        return normalized
-
-    words = normalized.split()
-    while words:
-        candidate = " ".join(words) + "…"
-        if estimate_tokens(candidate) <= token_limit:
-            return candidate
-        words.pop()
-
-    return "…"
+        return list(matching_learnings), {"status": "failed", "reason": type(exc).__name__}
 
 
 # Assertion verification helpers extracted to _recall_assertion_verification

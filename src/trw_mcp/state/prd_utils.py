@@ -33,6 +33,9 @@ logger = structlog.get_logger(__name__)
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 _SECTION_HEADING_RE = re.compile(r"^##\s+\d+\.\s+(.+)$", re.MULTILINE)
 _PRD_REF_RE = re.compile(r"PRD-[A-Z]+-\d{3}")
+# Same shape without the three-digit restriction — used by extract_prd_identifier
+# to normalise a prd_scope entry that may be a bare ID or a full file path.
+_PRD_SCOPE_ID_RE = re.compile(r"PRD-[A-Z]+-\d+")
 _QUICK_REFERENCE_RE = re.compile(
     r"^(?:\*\*Quick Reference\*\*:?|#{1,6}\s+Quick Reference)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -135,6 +138,27 @@ def extract_prd_refs(content: str) -> list[str]:
     """
     matches = _PRD_REF_RE.findall(content)
     return sorted(set(matches))
+
+
+def extract_prd_identifier(entry: str) -> str | None:
+    """Normalise ONE ``prd_scope`` entry to a bare PRD ID, or ``None``.
+
+    ``RunState.prd_scope`` is declared ``list[str]`` and populated in the live
+    corpus with a mix of bare IDs, full paths to a PRD file, and source-file
+    globs such as ``src/seeds/**`` (measured 2026-09-03: 6 of 7
+    build-bearing runs with a non-empty scope carry at least one non-ID entry).
+    ``discover_governing_prds`` returns those strings unchecked, so any consumer
+    treating them as identifiers enumerates nothing and calls it a pass.
+
+    This is the narrow normaliser that makes the failure visible: it accepts the
+    bare-ID and full-path forms and returns ``None`` for everything else, so the
+    caller can report the entry as unresolved rather than silently dropping it
+    (PRD-CORE-249-FR04, the ``FRAMEWORK-CORE.md:50`` rule). Unlike
+    :data:`_PRD_REF_RE` it does not require exactly three digits, because IDs
+    beyond ``PRD-X-999`` are valid.
+    """
+    match = _PRD_SCOPE_ID_RE.search(entry)
+    return match.group(0) if match else None
 
 
 def _quick_reference_block_span(body: str) -> tuple[int, int] | None:

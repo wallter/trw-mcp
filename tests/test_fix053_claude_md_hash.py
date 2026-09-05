@@ -150,3 +150,36 @@ class TestClaudeMdHashDetection:
             # Next sync should re-render
             result = execute_claude_md_sync(**args)
             assert result["status"] == "synced"
+
+    def test_force_bypasses_cache_hit(self, tmp_path: Path) -> None:
+        """``force=True`` must bypass the hash cache-hit early return.
+
+        Before this fix, a hash match returned ``status='unchanged'``
+        unconditionally, so a caller forcing a regen via the MCP tool or CLI
+        (``force=True``) got a silent no-op on an already-synced project: the
+        write guard never ran and the on-disk instruction file was never
+        touched. Red if the cache-hit branch's condition ever drops the
+        ``force`` check again.
+        """
+        import trw_mcp.state.claude_md as _pkg
+        from trw_mcp.state.claude_md._sync import execute_claude_md_sync
+
+        args = _make_sync_args(tmp_path)
+        trw_dir = tmp_path / ".trw"
+
+        with (
+            patch.object(_pkg, "resolve_trw_dir", return_value=trw_dir),
+            patch.object(_pkg, "resolve_project_root", return_value=tmp_path),
+        ):
+            result1 = execute_claude_md_sync(**args)
+            assert result1["status"] in ("synced", "unchanged")
+
+            # Same inputs, no force -> hash cache hit, no re-render.
+            result2 = execute_claude_md_sync(**args)
+            assert result2["status"] == "unchanged"
+
+            # Same inputs, force=True -> cache-hit bypassed, real re-render.
+            result3 = execute_claude_md_sync(**args, force=True)
+            assert result3["status"] == "synced", (
+                "force=True must bypass the hash cache-hit and re-render, not silently report 'unchanged'"
+            )

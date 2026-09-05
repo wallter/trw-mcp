@@ -10,6 +10,7 @@ from __future__ import annotations
 import structlog
 
 from trw_mcp.server._app import mcp
+from trw_mcp.server._boot_timeline import emit_boot_phase
 
 
 def resolve_and_run_transport(
@@ -30,4 +31,7 @@ def resolve_and_run_transport(
         transport="stdio",
         mode="standalone",
     )
+    # PRD-CORE-248 FR02: the last thing this process controls before mcp.run()
+    # takes over and the client's first frame decides what happens next.
+    emit_boot_phase("transport_ready")
     mcp.run()

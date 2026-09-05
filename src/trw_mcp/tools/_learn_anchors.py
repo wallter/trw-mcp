@@ -7,7 +7,8 @@ in isolation.
 Determines recently-modified files (run ``events.jsonl`` first, ``git diff``
 fallback) and their changed line ranges (``git diff -U0``), generates code
 anchors, and computes the initial anchor validity. Fail-open throughout: any
-failure yields ``([], 1.0)`` so a learning is still created without anchors.
+failure yields ``([], None)`` so a learning is still created without anchors
+and without a fabricated validity score (PRD-CORE-244 FR01).
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ import subprocess
 from pathlib import Path
 
 import structlog
+
+from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 
 logger = structlog.get_logger(__name__)
 
@@ -148,11 +151,15 @@ def resolve_learn_anchors(
     learning_id: str,
     *,
     session_id: str | None = None,
-) -> tuple[list[dict[str, object]], float]:
+) -> tuple[list[dict[str, object]], float | None]:
     """Resolve code anchors + initial validity for a new learning (FR04).
 
-    Returns ``(anchors, anchor_validity)``. Always fail-open: on any error the
-    learning is created with no anchors and validity 1.0.
+    Returns ``(anchors, anchor_validity)``. ``anchor_validity`` is ``None``
+    whenever no anchor was actually scored — PRD-CORE-244 FR01: an unanchored
+    learning has never been assessed, and reporting a perfect ``1.0`` for it is
+    the defect that put a top anchor score on 7,541 rows that never earned one.
+    Always fail-open: on any error the learning is created with no anchors and
+    no validity score.
     """
     anchors: list[dict[str, object]] = []
     try:
@@ -161,7 +168,7 @@ def resolve_learn_anchors(
         if not modified_rel:
             modified_rel = _git_diff_name_only(project_root, session_id=session_id)
         if not modified_rel:
-            return [], 1.0
+            return [], None
 
         # FR04 step 2: changed line ranges from git diff -U0.
         line_ranges_rel = _git_diff_line_ranges(project_root, session_id=session_id)
@@ -180,12 +187,12 @@ def resolve_learn_anchors(
             anchors = [dict(a) for a in raw_anchors]
     except Exception:  # justified: fail-open, anchor generation is best-effort
         logger.debug("anchor_generation_skipped", exc_info=True)
-        return [], 1.0
+        return [], None
 
     if not anchors:
-        return [], 1.0
+        return [], None
 
-    anchor_validity = 1.0
+    anchor_validity: float | None = None
     try:
         from trw_memory.lifecycle.anchor_validation import compute_anchor_validity
 
@@ -215,9 +222,9 @@ def reverify_entry_anchors(trw_dir: Path, project_root: Path, learning_id: str) 
         from trw_mcp.state.memory_adapter import get_backend
 
         backend = get_backend(trw_dir)
-        entry = backend.get(learning_id)
+        entry = resolve_entry_in_backend(backend, learning_id)
         anchors = list(getattr(entry, "anchors", []) or []) if entry is not None else []
-        if not anchors:
+        if entry is None or not anchors:
             return None
 
         validity = compute_anchor_validity(
@@ -225,7 +232,7 @@ def reverify_entry_anchors(trw_dir: Path, project_root: Path, learning_id: str) 
             str(project_root),
             learning_id=learning_id,
         )
-        backend.update(learning_id, anchor_validity=validity)
+        backend.update(learning_id, namespace=entry.namespace, anchor_validity=validity)
         logger.info("anchor_validity_reverified", entry_id=learning_id, anchor_validity=validity)
         return validity
     except Exception:  # justified: fail-open, re-verification must not block the update

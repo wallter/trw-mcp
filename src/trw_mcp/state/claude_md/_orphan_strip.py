@@ -130,6 +130,18 @@ def _strip_orphaned_block(path: Path, *, surface: str) -> bool:
 
     Only ever removes what lies between the markers (CONSTITUTION HB-2); user
     content outside them is untouched, and a file with no block is left alone.
+
+    CORE262-14: the write goes through :class:`FileStateWriter`, not a bare
+    ``path.write_text()`` -- the same shape ``heal_pointer`` already uses for
+    this exact strip-only, content-preserving contract. A bare write's
+    ``OSError`` handler returned ``False`` indistinguishably from the (much
+    more common) "nothing to strip" case, so a genuine disk failure and a
+    no-op looked identical to every caller, and both this init path's caller
+    and the update path's caller merged that ``False`` into a silent no-op --
+    reporting a clean result while a foreign TRW block stayed in the file.
+    ``FileStateWriter.write_text`` raises ``StateError`` instead, so a write
+    failure is now distinguishable from a no-op and can propagate as a loud
+    refusal rather than a silently-ignored return value.
     """
     if not path.is_file():
         return False
@@ -142,11 +154,9 @@ def _strip_orphaned_block(path: Path, *, surface: str) -> bool:
     if not stripped:
         return False
 
-    try:
-        path.write_text(remaining.rstrip() + "\n" if remaining.strip() else "", encoding="utf-8")
-    except OSError:
-        logger.warning("instruction_orphan_strip_failed", surface=surface, path=str(path), exc_info=True)
-        return False
+    from trw_mcp.state.persistence import FileStateWriter
+
+    FileStateWriter().write_text(path, remaining.rstrip() + "\n" if remaining.strip() else "")
     logger.info("instruction_orphan_block_removed", surface=surface, path=str(path))
     return True
 

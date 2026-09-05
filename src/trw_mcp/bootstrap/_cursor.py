@@ -354,8 +354,10 @@ def generate_cursor_rules_mdc(
     When ``client_id == "cursor-ide"``, a cursor-IDE-specific appendix is
     concatenated after the platform-generic ``trw_section`` — trigger-phrase
     table, verification-pass guidance, drift-recovery hints, Plan Mode note,
-    and pre-compaction checkpoint reminder. See docs/research/providers/cursor/
-    cursor-ide/eval-and-customizations-2026-04-13.md §C3/C7/C8/C10.
+    and pre-compaction checkpoint reminder. Those additions exist because the
+    cursor-IDE surface has no hook channel of its own: the rule file is the only
+    place a trigger phrase, a verification reminder, or a Plan Mode caveat can
+    reach the agent, so they are inlined here rather than delegated.
 
     Args:
         target_dir: Root of the target git repository.

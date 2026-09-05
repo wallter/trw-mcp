@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from trw_mcp.state._paths import find_active_run, find_run_via_mtime_scan
+from trw_mcp.state._paths import find_active_run
 from trw_mcp.tools.ceremony import _do_reflect, _get_run_status
 from trw_mcp.tools.checkpoint import _do_checkpoint
 
@@ -29,17 +29,30 @@ class TestFindActiveRun:
                 result = find_active_run()
         assert result is None
 
-    def test_finds_run_directory(self, tmp_path: Path, run_dir: Path) -> None:
-        # PRD-FIX-085: find_active_run() is pin-only; the disk-scan discovery
-        # this asserts now lives in find_run_via_mtime_scan(). Use it to keep
-        # the original scan-behavior intent without weakening the assertion.
+    def test_returns_the_pinned_run_and_never_discovers_one(self, tmp_path: Path, run_dir: Path) -> None:
+        """PRD-FIX-085/132: a run on disk is not an answer; only a pin is.
+
+        The disk-scan discovery this class used to assert lived in the explicit
+        legacy mtime-scan entry point, which PRD-FIX-132 deleted as dormant.
+        What remains testable -- and is the property that matters -- is that the
+        run directory sitting on disk is returned when, and only when, it is
+        pinned for this session.
+        """
         from trw_mcp.models.config import TRWConfig
+        from trw_mcp.state._paths import pin_active_run, unpin_active_run
 
         cfg = TRWConfig()
         object.__setattr__(cfg, "runs_root", ".trw/runs")
         with patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path):
             with patch("trw_mcp.state._paths.get_config", return_value=cfg):
-                result = find_run_via_mtime_scan()
+                unpin_active_run()
+                assert find_active_run() is None, "an unpinned run on disk must not be discovered"
+
+                pin_active_run(run_dir)
+                try:
+                    result = find_active_run()
+                finally:
+                    unpin_active_run()
         assert result is not None
         assert "20260211T120000Z-test" in str(result)
 

@@ -23,6 +23,7 @@ from trw_memory.retrieval.dense import cosine_similarity
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import BatchDedupResult
+from trw_mcp.state._constants import DEFAULT_NAMESPACE
 from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.memory_adapter import embedding_available
@@ -123,7 +124,11 @@ def _check_duplicate_via_backend(
         backend = get_backend(trw_dir)
         # Ask for more candidates than we strictly need so we can
         # filter by status and still find the best match.
-        hits = backend.search_vectors(new_vector, top_k=10)
+        # PRD-CORE-245: scope the KNN to this project's namespace. An unscoped
+        # dense search can surface an id whose canonical row belongs to another
+        # namespace, and a dedup verdict computed against a foreign row is both
+        # a leak and wrong.
+        hits = backend.search_vectors(new_vector, top_k=10, namespace=DEFAULT_NAMESPACE)
         if not hits:
             return None  # No vectors indexed yet — fall back to YAML
 
@@ -136,7 +141,7 @@ def _check_duplicate_via_backend(
             if sim <= best_similarity:
                 continue
 
-            entry = backend.get(entry_id)
+            entry = backend.get(entry_id, namespace=DEFAULT_NAMESPACE)
             if entry is None:
                 continue
 
@@ -330,8 +335,15 @@ def merge_entries(
     writer: FileStateWriter,
     *,
     max_merge_tags: int = 20,
+    existing_data: dict[str, object] | None = None,
+    merged_out: dict[str, object] | None = None,
 ) -> Path:
     """Merge a new learning into an existing entry.
+
+    PRD-FIX-130-FR07 read bound: ``existing_data`` accepts the survivor body the
+    caller ALREADY parsed while resolving its path, and ``merged_out`` receives
+    the merged body so the caller does not have to read the file back. Both are
+    optional; omitting them keeps the original read-then-write behaviour.
 
     Merge strategy:
     - Tags: union of both sets, capped at max_merge_tags (FIX-071-FR04)
@@ -353,7 +365,7 @@ def merge_entries(
     Returns:
         Path to the updated entry file (same as existing_path).
     """
-    existing = reader.read_yaml(existing_path)
+    existing = reader.read_yaml(existing_path) if existing_data is None else existing_data
 
     # Tags: union, capped at max_merge_tags (FIX-071-FR04)
     raw_existing_tags = existing.get("tags") or []
@@ -428,6 +440,8 @@ def merge_entries(
     existing["updated"] = today
 
     writer.write_yaml(existing_path, existing)
+    if merged_out is not None:
+        merged_out.update(existing)
     logger.debug(
         "dedup_merge_complete",
         existing_id=str(existing.get("id", "")),
@@ -472,6 +486,20 @@ def is_migration_needed(trw_dir: Path) -> bool:
     return not marker.exists()
 
 
+def _skipped(reason: str) -> BatchDedupResult:
+    """Report a batch-dedup early return — PRD-FIX-130-FR05.
+
+    These three paths decline to write the completion marker, which is correct
+    (the work genuinely did not happen) but leaves the migration PERMANENTLY
+    pending, so the full unbounded scan fires on the first learn after the
+    condition clears. That is a queued cost an operator must be able to see, so
+    it is reported at INFO rather than returned silently. Writing the marker here
+    is explicitly refused: it would be a false completion.
+    """
+    logger.info("batch_dedup_skipped", reason=reason)
+    return BatchDedupResult(status="skipped", reason=reason)
+
+
 def batch_dedup(
     trw_dir: Path,
     reader: FileStateReader,
@@ -499,14 +527,14 @@ def batch_dedup(
 
     # Respect embeddings_enabled config — batch dedup requires embeddings
     if not cfg.embeddings_enabled:
-        return BatchDedupResult(status="skipped", reason="embeddings not enabled in config")
+        return _skipped("embeddings not enabled in config")
 
     entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
     if not entries_dir.exists():
-        return BatchDedupResult(status="skipped", reason="no entries directory")
+        return _skipped("no entries directory")
 
     if not embedding_available():
-        return BatchDedupResult(status="skipped", reason="embeddings unavailable")
+        return _skipped("embeddings unavailable")
 
     # Load all active entries with their embeddings
     active_entries: list[tuple[Path, dict[str, object], list[float] | None]] = []
@@ -520,6 +548,12 @@ def batch_dedup(
             active_entries.append((yaml_file, data, vec))
         except (OSError, StateError, ValueError):
             continue
+
+    # PRD-FIX-130-FR05: announce the scan BEFORE the O(N^2) comparison, carrying
+    # the entry count it is about to run over. A 300-second scan that logs
+    # nothing at the default level is indistinguishable from a hang — which is
+    # exactly how it was misread as journal-drain cost (PC-3).
+    logger.info("batch_dedup_started", entries=len(active_entries))
 
     merged_count = 0
     skipped_ids: set[str] = set()
@@ -573,9 +607,12 @@ def batch_dedup(
     }
     writer.write_yaml(marker, marker_data)
 
-    logger.debug(
+    # FR05: INFO, not DEBUG. A default install emits nothing below INFO, so the
+    # only record of a scan that can cost minutes was being destroyed.
+    logger.info(
         "batch_dedup_complete",
         duration_ms=round((time.monotonic() - _t0) * 1000, 2),
+        entries=len(active_entries),
         merged=merged_count,
         skipped=len(skipped_ids),
     )

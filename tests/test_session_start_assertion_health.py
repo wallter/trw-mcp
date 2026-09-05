@@ -153,3 +153,91 @@ class TestHealthCountsMatchStates:
         # Verify total assertions across all entries sum correctly
         total_assertions = health["passing"] + health["failing"] + health["stale"] + health["unverifiable"]
         assert total_assertions == 5
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-263-FR08 — the step reads the configured stale threshold
+# ---------------------------------------------------------------------------
+
+
+def _entry_verified_days_ago(days: int) -> MagicMock:
+    return _make_mock_entry(
+        [_make_mock_assertion(last_result=True, last_verified_at=datetime.now(timezone.utc) - timedelta(days=days))]
+    )
+
+
+def _run_step(stale_days: int, entries: list[MagicMock]) -> dict[str, int] | None:
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.tools._ceremony_session_start_steps import step_assertion_health
+
+    backend = MagicMock()
+    backend.entries_with_assertions.return_value = entries
+    cfg = TRWConfig(assertion_stale_threshold_days=stale_days)  # type: ignore[call-arg]
+    with patch("trw_mcp.state.memory_adapter.get_backend", return_value=backend):
+        return step_assertion_health(Path("/nonexistent"), None, cfg)
+
+
+def test_assertion_health_uses_the_configured_stale_threshold() -> None:
+    """PRD-CORE-263-FR08 — a 10-day-old assertion at the 30-day default is FRESH.
+
+    At HEAD the step hardcoded ``timedelta(days=7)`` while the admitted config
+    field defaults to 30, so session start and ``_verification_pass`` reported
+    different stale counts from the same store. Attribution: reverting FR08
+    turns the 30-day case red (the assertion is counted stale under the
+    hardcoded 7-day window).
+    """
+    ten_days = [_entry_verified_days_ago(10)]
+
+    at_default = _run_step(30, ten_days)
+    assert at_default is not None
+    assert at_default["stale"] == 0
+    assert at_default["passing"] == 1
+
+    at_seven = _run_step(7, ten_days)
+    assert at_seven is not None
+    assert at_seven["stale"] == 1
+    assert at_seven["passing"] == 0
+
+
+def test_assertion_health_agrees_with_the_maintenance_pass_on_the_same_store() -> None:
+    """PRD-CORE-263-FR08 — the two surfaces read ONE threshold.
+
+    ``_verification_pass`` already honoured ``assertion_stale_threshold_days``;
+    this pins that both now classify the same corpus identically.
+    """
+    from datetime import datetime as _dt
+
+    from trw_mcp.models.config import TRWConfig
+
+    threshold_days = TRWConfig().assertion_stale_threshold_days
+    entries = [_entry_verified_days_ago(d) for d in (1, 10, 29, 31, 400)]
+
+    session_start = _run_step(threshold_days, entries)
+    assert session_start is not None
+
+    # The maintenance pass's own classification, expressed the way
+    # ``_verification_pass`` expresses it.
+    cutoff = _dt.now(timezone.utc) - timedelta(days=threshold_days)
+    maintenance_stale = sum(
+        1 for e in entries for a in e.assertions if a.last_verified_at is None or a.last_verified_at < cutoff
+    )
+    assert session_start["stale"] == maintenance_stale == 2
+
+
+def test_assertion_health_returns_no_summary_when_the_config_cannot_resolve() -> None:
+    """PRD-CORE-263-FR08 refuse-on-exception — no hardcoded fallback window."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from trw_mcp.tools._ceremony_degradations import DegradationCollector
+    from trw_mcp.tools._ceremony_session_start_steps import step_assertion_health
+
+    collector = DegradationCollector()
+    with patch("trw_mcp.models.config.get_config", side_effect=RuntimeError("config unreadable")):
+        result = step_assertion_health(Path("/nonexistent"), collector, None)
+
+    assert result is None
+    assert [item["step"] for item in collector.items] == ["assertion_health"]

@@ -12,9 +12,9 @@ task-profile resolution. The catalog only changes the mapping decision, and
 every decision remains advice — never a claim of harness application.
 
 Provenance: Anthropic model docs verified 2026-07-09, re-verified and
-extended 2026-07-26 (Claude Opus 5 + Sonnet 4.5 entries). See
-docs/research/providers/claude-code/CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md §1/§7
-and docs/documentation/prompting/OPUS-5-BEST-PRACTICES.md §Effort.
+extended 2026-07-26 (Claude Opus 5 + Sonnet 4.5 entries). Each entry records what
+the vendor's published API accepts, so a change is a re-read of those model docs —
+not a tuning decision.
 """
 
 from __future__ import annotations

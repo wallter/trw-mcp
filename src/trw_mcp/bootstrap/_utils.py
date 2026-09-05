@@ -189,10 +189,9 @@ def _write_installer_metadata(
     # Count deployed artifacts
     hooks_dir = target_dir / ".claude" / "hooks"
     skills_dir = target_dir / ".claude" / "skills"
-    agents_dir = target_dir / ".claude" / "agents"
     hooks_count = len(list(hooks_dir.glob("*.sh"))) if hooks_dir.is_dir() else 0
     skills_count = len([d for d in skills_dir.iterdir() if d.is_dir()]) if skills_dir.is_dir() else 0
-    agents_count = len(list(agents_dir.glob("*.md"))) if agents_dir.is_dir() else 0
+    agents_count = _installed_agent_count(target_dir)
 
     recorded_at = datetime.now(timezone.utc).isoformat()
     meta = {
@@ -278,16 +277,16 @@ def _verify_installation(
                     "run update-project to migrate to features.hooks"
                 )
 
+            # Every `.codex/agents/trw-*.toml` on disk, not a fixed list of four
+            # stub filenames. That list was the retired `_CODEX_AGENT_TEMPLATES`
+            # key set (PRD-CORE-252-FR04); two of its names no longer exist and
+            # the bundle now supplies many more, so a hardcoded roster would
+            # miss the pin on every agent it does not happen to name. Scanning
+            # is also what lets the warning still fire on a PRE-upgrade install,
+            # which is the only place the legacy pin can be.
             agents_dir = target_dir / ".codex" / "agents"
-            for agent_name in (
-                "trw-explorer.toml",
-                "trw-implementer.toml",
-                "trw-reviewer.toml",
-                "trw-docs-researcher.toml",
-            ):
-                agent_path = agents_dir / agent_name
-                if not agent_path.exists():
-                    continue
+            for agent_path in sorted(agents_dir.glob("trw-*.toml")) if agents_dir.is_dir() else ():
+                agent_name = agent_path.name
                 try:
                     agent_config = tomllib.loads(agent_path.read_text(encoding="utf-8"))
                 except (tomllib.TOMLDecodeError, OSError):
@@ -466,6 +465,38 @@ def is_git_repo(target_dir: Path) -> bool:
     return git_path.is_dir() or git_path.is_file()
 
 
+def _installed_agent_count(target_dir: Path) -> int:
+    """Agent files TRW installed, summed over EVERY agent-capable destination.
+
+    Counting ``.claude/agents`` alone was right while that was the only place
+    agents were ever written. Since PRD-CORE-252-FR03 each client gets the whole
+    bundle in its own directory with its own suffix, so a Codex-only or
+    Cursor-only project recorded ``agents_count: 0`` in its installer metadata
+    while holding a complete set — a snapshot that says the install did nothing.
+
+    Destinations and suffixes come from the FR01 registry, so a client added
+    there is counted the day it lands. Fail-open: an unreadable registry yields
+    the Claude Code count rather than aborting a metadata write.
+    """
+    from trw_mcp.agents.agent_formats import agent_format_for
+    from trw_mcp.agents.tier_resolver import KNOWN_CLIENTS
+
+    total = 0
+    try:
+        for client in sorted(KNOWN_CLIENTS):
+            fmt = agent_format_for(client)
+            if not fmt.supports_agents or fmt.destination_dir is None:
+                continue
+            dest = target_dir / fmt.destination_dir
+            if dest.is_dir():
+                total += len([p for p in dest.iterdir() if p.name.endswith(fmt.filename_suffix)])
+    except Exception:  # justified: fail-open, metadata must still be written
+        logger.debug("installed_agent_count_failed", exc_info=True)
+        claude_agents = target_dir / ".claude" / "agents"
+        return len(list(claude_agents.glob("*.md"))) if claude_agents.is_dir() else 0
+    return total
+
+
 def resolve_ide_targets(
     target_dir: Path,
     ide_override: str | None = None,
@@ -505,6 +536,32 @@ def resolve_ide_targets(
             )
     detected = detect_ide(target_dir)
     return detected or ["claude-code"]  # default to Claude Code
+
+
+def resolve_client_write_targets(target_dir: Path, ide_override: str | None = None) -> list[str]:
+    """The clients an update should WRITE artifacts for.
+
+    One authority, because the record and raw detection disagree. Detection
+    reports claude-code for any project containing ``.claude/`` — which TRW
+    creates for EVERY client, since hooks and skills are universal artifacts —
+    so a bare update on a Codex project would otherwise scaffold Claude Code's
+    surfaces from TRW's own scaffolding. The recorded client list is honoured
+    when the caller names no override; detection answers only where there is no
+    record (a pre-record install).
+
+    Extracted so the agent update path (``_template_updater._update_agents``)
+    and the client-integration update path (``_update_project``) cannot
+    disagree about which clients an update is for — install and update
+    diverging over exactly this is what PRD-CORE-252-FR03 routes through one
+    function.
+    """
+    if not ide_override:
+        from ._template_claude_md import _recorded_plus_newly_adopted
+
+        recorded = _recorded_plus_newly_adopted(target_dir)
+        if recorded:
+            return list(recorded)
+    return resolve_ide_targets(target_dir, ide_override=ide_override)
 
 
 # ---------------------------------------------------------------------------

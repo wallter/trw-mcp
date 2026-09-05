@@ -59,7 +59,7 @@ Do NOT call `trw_deliver` unless at least one of:
 - (c) an authorized operator/config override is recorded with technical rationale.
 
 A review-verdict label or free-text reason alone is not an acceptable-failure record.
-For task types `coding`, `rca`, `eval` the gate blocks by default (`deliver_gate_mode: block_coding`). Docs, research, planning, and unknown types remain advisory and surface the missing-build warning without requiring an exception record.
+Under the default `deliver_gate_mode: block_coding` a missing build check blocks when the task type expects a build artifact (`coding`, `rca`, `eval`) OR when the session recorded modifications to at least `deliver_gate_unclassified_change_threshold` distinct files — so an unclassified or misclassified run that changed code still blocks. A run that modified nothing surfaces the missing-build warning as an advisory without requiring an exception record.
 """
 
 
@@ -137,26 +137,61 @@ def render_framework_reference() -> str:
     return renderer.render_framework_reference()
 
 
+#: PRD-CORE-247-FR02: a substitute for EVERY obligation the protocol labels
+#: RIGID, not the two commands PRD-FIX-073-FR03 shipped.
+#:
+#: The old text named ``local init`` and ``local checkpoint`` only, so an agent
+#: that lost the transport was told how to open a run and save progress and
+#: nothing about recall, learning, feedback, build evidence, or delivery — the
+#: three obligations with the highest cost of being skipped. Naming a partial
+#: substitute set is what makes "improvise" the remaining option.
+#:
+#: The build-check row is a written artifact rather than a command, because the
+#: offline path has no gate to evaluate: recording the command and its exit code
+#: in ``reports/`` produces the same evidence a reviewer needs, in the same place
+#: ``trw_build_check`` results are read from.
+_OFFLINE_SUBSTITUTES = """### Troubleshooting: the MCP surface is absent
+
+If the `trw_*` tools are missing or fail (`fetch failed`, a connect timeout, an
+empty tool list), every obligation still binds — RIGID names an OBLIGATION, not a
+tool call. Use the offline substitute:
+
+| Obligation | Offline substitute |
+|---|---|
+| `trw_session_start` | `trw-mcp local status`, then `trw-mcp local recall --query "<domain>"` |
+| `trw_init` | `trw-mcp local init --task NAME` |
+| `trw_checkpoint` | `trw-mcp local checkpoint --message MSG` |
+| `trw_learn` | `trw-mcp local learn --summary S --detail D --tag T` |
+| `trw_recall` | `trw-mcp local recall --query Q` |
+| `trw_build_check` | run the project-native check yourself, then write the exact command string and its integer exit code into the active run's `reports/` directory |
+| `trw_deliver` | `trw-mcp local deliver --message MSG` — records `gate_evaluated: false`, which is an UNGATED delivery; the gate above still binds until evidence exists |
+| Feedback | `trw-mcp local feedback --category C --subject S --message M` |
+
+Writes made offline are marked (`source_identity=local_cli` plus a transient
+`trw-reconcile-pending` tag) and the next successful `trw_session_start` reports
+them back, so you do not have to track them by hand.
+"""
+
+
 def render_closing_reminder() -> str:
     """Render closing reminder with session boundaries and fallback guidance.
 
-    PRD-FIX-073-FR03: Includes local CLI fallback troubleshooting.
-    PRD-QUAL-104 FR02: the deliver-gate language is now derived from the
-    bundled ``tool-lifecycle.md`` source (loaded via ``importlib.resources``
-    with fail-open fallback) rather than a hand-written copy, and a whole-line
-    content-hash sync marker (FR04) precedes the synced block.
+    PRD-FIX-073-FR03: includes local CLI fallback troubleshooting.
+    PRD-CORE-247-FR02: that troubleshooting is now a substitute for every RIGID
+    obligation rather than two of eight. This function is the INSTRUCTION-SURFACE
+    arm of FR02 — the hook emits the same contract at the moment detection fires,
+    and this puts it in a file the agent is already reading.
+    PRD-QUAL-104 FR02: the deliver-gate language is derived from the bundled
+    ``tool-lifecycle.md`` source (loaded via ``importlib.resources`` with
+    fail-open fallback) rather than a hand-written copy, and a whole-line
+    content-hash sync marker (FR04) precedes the synced block. It is stated in
+    full exactly once here, which is this carrier's single statement (FR09).
     """
     return (
         render_deliver_gate_statement().rstrip("\n") + "\n"
         "\n"
         "### Session Boundaries\n"
-        "\n" + _SESSION_BOUNDARY_TEXT + "\n"
-        "### Troubleshooting\n"
-        "\n"
-        "If MCP tools fail with 'fetch failed', use the local CLI fallback:\n"
-        "- `trw-mcp local init --task NAME` to create a run directory\n"
-        "- `trw-mcp local checkpoint --message MSG` to save progress\n"
-        "\n"
+        "\n" + _SESSION_BOUNDARY_TEXT + "\n" + _OFFLINE_SUBSTITUTES + "\n"
     )
 
 
@@ -182,11 +217,25 @@ def render_codex_instructions() -> str:
     ``model_instructions_file = "INSTRUCTIONS.md"``, project-scoped
     ``.codex/config.toml`` is documented as supported, and relative paths
     "resolve from the config file that declares the role" — so it resolves to
-    ``.codex/INSTRUCTIONS.md``. Corroborated by this repo's own provider
-    research (``docs/research/providers/codex/codex-cli.md``: "Codex-relative
-    path ... resolved from ``.codex/``").
+    ``.codex/INSTRUCTIONS.md``. Corroborated by Codex's own documented rule that a
+    Codex-relative path resolves from ``.codex/``.
+
+    PRD-CORE-252 OQ-3 (resolved 2026-09-04): appends
+    ``render_delegation_protocol()`` — a no-op string when
+    ``include_delegation`` is False (opencode, cursor-cli), content when True
+    (codex, on the byte measurement in ``_light_profile``'s docstring). This
+    used to be the ONLY call site for ``render_delegation_protocol()`` in the
+    codebase, which meant claude-code, cursor-ide, copilot, and
+    antigravity-cli all had the flag True but never rendered the block — a
+    wiring defect, not a deliberate scope choice. Every other client's
+    renderer (``ProtocolRenderer.render_behavioral_protocol``,
+    ``render_agents_trw_section``, ``render_antigravity_instructions``) now
+    reaches the same gate through the same shared function.
     """
-    from trw_mcp.state.claude_md.sections._delegation import render_codex_trw_section
+    from trw_mcp.state.claude_md.sections._delegation import (
+        render_codex_trw_section,
+        render_delegation_protocol,
+    )
 
     return (
         "# Codex TRW Instructions\n"
@@ -211,7 +260,7 @@ def render_codex_instructions() -> str:
         "- **Hooks and nudges are optional**: treat them as additive hints, not correctness gates\n"
         "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
         "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
-        "\n" + render_deliver_gate_statement() + "\n" + render_codex_trw_section()
+        "\n" + render_deliver_gate_statement() + "\n" + render_codex_trw_section() + "\n" + render_delegation_protocol()
     )
 
 

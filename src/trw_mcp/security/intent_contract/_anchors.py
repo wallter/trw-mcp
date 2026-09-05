@@ -37,13 +37,41 @@ from pathlib import Path
 
 from trw_mcp.security.intent_contract._models import Contract, MustNotHappenClaim
 
-__all__ = ["anchor_matches", "claims_matching_path", "enforceable_claims"]
+__all__ = ["anchor_matches", "claims_matching_path", "eligible_claims", "enforceable_claims", "is_glob_anchor"]
 
 _GLOB_CHARS = frozenset("*?[")
 
 #: Bound on glob expansion per anchor so a pathological anchor cannot blow the
 #: hook latency budget while resolving inode identity.
 _MAX_GLOB_MATCHES = 256
+
+
+def is_glob_anchor(anchor: str) -> bool:
+    """True when *anchor* carries a glob metacharacter rather than naming a path.
+
+    The one place the ``*?[`` set is interpreted. :func:`anchor_matches` and the
+    FR01 sidecar renderer must agree about which anchors are globs — a renderer
+    that classified one of them differently would emit a pattern the Python
+    matcher does not use, and the shell fast path would then answer a question
+    Python never asked.
+    """
+    return bool(_GLOB_CHARS & set(anchor))
+
+
+def eligible_claims(contract: Contract) -> tuple[MustNotHappenClaim, ...]:
+    """The enforcement-eligibility filter, exactly once (FR02/FR05/FR07 + FR01).
+
+    Extracted from :func:`enforceable_claims` so the PRD-CORE-254 sidecar renders
+    the SAME claim set the hooks enforce. A sidecar built from a wider filter
+    would be harmless (extra deferrals); one built from a narrower filter would
+    let the shell self-approve a write a claim covers, which is the one direction
+    the fast path may never take.
+    """
+    return tuple(
+        claim
+        for claim in contract.claims
+        if claim.binding_channel == "blocking_hook" and claim.machine_checkable and claim.state == "active"
+    )
 
 
 def anchor_matches(anchor: str, rel_path: str) -> bool:
@@ -55,7 +83,7 @@ def anchor_matches(anchor: str, rel_path: str) -> bool:
     if not anchor or not rel_path:
         return False
     normalized = anchor.rstrip("/")
-    if _GLOB_CHARS & set(normalized):
+    if is_glob_anchor(normalized):
         return fnmatchcase(rel_path, normalized)
     return rel_path == normalized or rel_path.startswith(f"{normalized}/")
 
@@ -92,7 +120,7 @@ def _anchor_paths(root: Path, anchor: str) -> list[Path]:
     normalized = anchor.rstrip("/")
     if not normalized:
         return []
-    if _GLOB_CHARS & set(normalized):
+    if is_glob_anchor(normalized):
         matches: list[Path] = []
         try:
             for index, match in enumerate(root.glob(normalized)):
@@ -162,11 +190,7 @@ def enforceable_claims(
     the match is path-only (that is the git-side callers' case — they have no
     working tree to stat).
     """
-    eligible = tuple(
-        claim
-        for claim in contract.claims
-        if claim.binding_channel == "blocking_hook" and claim.machine_checkable and claim.state == "active"
-    )
+    eligible = eligible_claims(contract)
     matched = claims_matching_path(eligible, rel_path)
     if matched or root is None or target is None or not _may_be_aliased(target):
         return matched

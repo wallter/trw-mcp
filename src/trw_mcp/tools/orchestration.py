@@ -108,8 +108,9 @@ def register_orchestration_tools(server: FastMCP) -> None:
         Args:
             advanced: rarely-needed settings, as an object (or JSON object
                 string). Accepted keys: artifacts, complexity_signals,
-                config_overrides, planning_mode, protected, task_root,
-                wave_manifest. An unknown key is rejected, never ignored.
+                config_overrides, formation, join_formation, planning_mode,
+                protected, task_root, wave_manifest. An unknown key is rejected,
+                never ignored.
         """
 
         # ``advanced`` collapses seven rare flat parameters into one schema entry
@@ -212,6 +213,7 @@ def register_orchestration_tools(server: FastMCP) -> None:
         prof = _scaling.resolve_init_profile(
             config,
             task_name=task_name,
+            objective=objective,
             run_type=run_type,
             prd_scope=prd_scope,
             task_type=task_type,
@@ -291,12 +293,26 @@ def register_orchestration_tools(server: FastMCP) -> None:
             "status": "initialized",
             "phase": initial_phase.value,
             "task_type": resolved_task_type,
+            # PRD-CORE-246-FR04: the classification's PROVENANCE, not just its
+            # value. Without these a caller cannot tell a DETECTED type from a
+            # DEFAULTED one, which is the "unset value indistinguishable from a
+            # checked positive result" shape this PRD exists to close.
+            "task_type_detection_method": detection.detection_method,
+            "task_type_rationale": detection.rationale,
         }
 
         if complexity_class_val is not None:
             result["complexity_class"] = complexity_class_val.value
         result["task_profile_hash"] = task_profile.profile_hash
         apply_task_profile_observability(cast("dict[str, object]", result), task_profile.model_dump())
+
+        # PRD-CORE-265-FR03/FR04: create a formation, or join one, from the same
+        # validated bag. Delegated to the sibling so this facade stays small; it
+        # runs AFTER run.yaml is written because join stamps the two ids onto it.
+        if adv.formation is not None or adv.join_formation is not None:
+            from trw_mcp.tools._orchestration_formation import apply_formation_init
+
+            apply_formation_init(adv.formation, adv.join_formation, run_root, ctx, result)
 
         if wave_manifest is not None:
             from trw_mcp.tools._orchestration_wave_manifest import create_wave_plan

@@ -344,8 +344,37 @@ def recall_learnings(
             # ``._memory_recovery_in_progress`` / ``.logger`` still apply after
             # the FR06 recall-path split.
             if isinstance(exc, CorruptDatabaseUnsalvageableError):
+                # The terminal log line is retained: an operator watching logs
+                # sees exactly what they saw before this change.
                 _facade._log_terminal_recovery(trw_dir / "memory" / "memory.db", exc)
-                raise
+                # PRD-CORE-263-FR07. This branch used to re-raise, ONE branch
+                # above the scheduler below — so a database the storage layer had
+                # just classified "degraded_open_with_background_recovery" (and
+                # written that status for) got no background recovery at all
+                # through recall, and the caller received an exception instead of
+                # a degraded result. ``backup_path`` on this typed error IS the
+                # durable recovery-state locator the preflight reads on the next
+                # open, so it travels with the scheduling record.
+                #
+                # Scheduling is single-flight inside ``_schedule_deferred_recovery``
+                # (it returns False without starting a second worker), so a repeat
+                # error while recovery runs schedules nothing new.
+                try:
+                    _facade._schedule_deferred_recovery(
+                        trw_dir,
+                        reason="recall_unsalvageable_background_recovery",
+                        context={"query": query[:80], "recovery_state": exc.backup_path},
+                    )
+                except Exception:
+                    # Refuse-on-exception: if the SCHEDULING fails there is no
+                    # repair pending, so an empty list would read as "nothing
+                    # recalled". Surface the original terminal error instead.
+                    _facade.logger.exception(
+                        "memory_recall_recovery_scheduling_failed",
+                        recovery_state=exc.backup_path,
+                    )
+                    raise exc from None
+                return []
             if attempt == 0 and _facade._is_corruption_error(exc):
                 _facade.logger.warning(
                     "memory_recall_degraded_recovery_scheduled",

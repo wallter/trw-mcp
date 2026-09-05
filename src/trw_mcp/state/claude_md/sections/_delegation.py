@@ -5,16 +5,29 @@ PRD-CORE-149-FR01: extracted from ``_static_sections.py`` facade.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 # PRD-CORE-149-FR01: resolve ``get_config`` via the facade.
 import trw_mcp.state.claude_md._static_sections as _facade
 from trw_mcp.state.claude_md._renderer import SESSION_BOUNDARY_TEXT as _SESSION_BOUNDARY_TEXT
 from trw_mcp.state.claude_md.sections._memory_routing import _load_analytics_counts
 
+if TYPE_CHECKING:
+    from trw_mcp.models.config._client_profile import ClientProfile
 
-def render_delegation_protocol() -> str:
-    """Render model- and harness-neutral delegation discipline guidance."""
-    config = _facade.get_config()
-    if not config.client_profile.include_delegation:
+
+def render_delegation_protocol(client_profile: ClientProfile | None = None) -> str:
+    """Render model- and harness-neutral delegation discipline guidance.
+
+    ``client_profile`` lets a caller that already holds a specific profile
+    (e.g. ``ProtocolRenderer``, which may render a profile other than the
+    globally active one) gate on that profile instead of the ambient active
+    config — the default (``None``) preserves the original behaviour of
+    gating on ``get_config().client_profile`` for call sites (codex's
+    dedicated renderer) that render only the currently active client.
+    """
+    profile = client_profile if client_profile is not None else _facade.get_config().client_profile
+    if not profile.include_delegation:
         return ""
 
     return (
@@ -88,8 +101,19 @@ def render_rationalization_watchlist() -> str:
 
 def render_agents_trw_section(
     exposed_tools: frozenset[str] | set[str] | None = None,
+    *,
+    client_profile: ClientProfile | None = None,
 ) -> str:
     """Render the complete TRW section for AGENTS.md — platform-generic.
+
+    This is the shared carrier body for cursor-ide's
+    ``.cursor/rules/trw-ceremony.mdc``, copilot's
+    ``.github/instructions/trw-ceremony.instructions.md``, and full-ceremony
+    AGENTS.md (generic / opencode-full-mode). ``client_profile`` lets a caller
+    that knows which client's file it is producing gate the delegation block
+    on THAT profile rather than the ambient active config — needed because a
+    multi-client project's active ``config.client_profile`` need not match the
+    client whose file this particular call is rendering.
 
     PRD-QUAL-104 (third bypass instance, 2026-06-11): the deliver-gate line is
     sourced from the canonical ``render_deliver_gate_statement()`` (bundled
@@ -111,6 +135,7 @@ def render_agents_trw_section(
     session_label = "session" if sessions_tracked == 1 else "sessions"
 
     tool_list = render_tool_list(exposed_tools)
+    delegation_block = "\n\n" + render_delegation_protocol(client_profile) if client_profile is not None else ""
 
     return (
         "TRW (The Real Work) is an engineering memory framework that persists "
@@ -136,6 +161,10 @@ def render_agents_trw_section(
         # generated AGENTS.md carries the transport-loss retry protocol and the
         # live three-class capability listing.
         + render_client_integration_appendix("agents")
+        # PRD-CORE-252 OQ-3 wiring-defect fix (2026-09-04): "" (no stray
+        # whitespace) when the caller doesn't identify which client's file
+        # this is — see ``delegation_block``'s assignment above.
+        + delegation_block
     )
 
 

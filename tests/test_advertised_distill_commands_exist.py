@@ -159,7 +159,7 @@ def test_no_shipped_artifact_advertises_a_dead_trw_mcp_subcommand() -> None:
 
     `channels/antigravity/_explorer_subagent.py` wrote
     `regenerate: trw-mcp channel-render --channel ag-02-...` into the provenance
-    header of `.antigravitycli/agents/trw-distill-explorer.md` — a permanent
+    header of the installed AG-02 explorer subagent file — a permanent
     file in a **licensed** user's repo, since the entitlement gate opens for
     them. PRD-CORE-239 FR01 deleted that subcommand, so following the header
     exits 2 with "invalid choice". The paying caller got the broken advice and

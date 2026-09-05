@@ -236,10 +236,15 @@ def resolve_tool_surface(task_type: str | None, mode: str = "standard") -> ToolR
     """Resolve the tool surface for a task under a resolution mode (FR04).
 
     ``standard`` is the default and is bounded: a mapped task gets kernel plus
-    its standard packs; a missing/unknown task gets kernel only (discovery is
-    already kernel). Only an EXPLICIT ``all`` mode returns the full eligible
-    surface, and the decision is recorded so the choice is visible. Any other
-    mode value degrades to ``standard`` (never silently widens to full).
+    its standard packs. A missing (``None``/empty) or UNMAPPED task type falls
+    back to the ``unknown`` entry of :data:`STANDARD_TASK_PACKS` — kernel plus
+    verification — rather than to kernel only, so an unclassified session still
+    declares the tools its delivery gates name as their remedy
+    (PRD-CORE-246-FR05); the ``decision`` string names the fallback, so the
+    substitution is visible rather than silent. Only an EXPLICIT ``all`` mode
+    returns the full eligible surface, and the decision is recorded so the
+    choice is visible. Any other mode value degrades to ``standard`` (never
+    silently widens to full).
     """
     if mode == "all":
         tools = eligible_tool_names()
@@ -259,13 +264,19 @@ def resolve_tool_surface(task_type: str | None, mode: str = "standard") -> ToolR
             ),
         )
 
-    selected = STANDARD_TASK_PACKS.get(task_type or "", ())
-    packs = ("kernel", *selected)
+    requested = task_type or "unknown"
+    fallback = STANDARD_TASK_PACKS["unknown"]
+    selected = STANDARD_TASK_PACKS.get(requested)
+    packs = ("kernel", *(selected if selected is not None else fallback))
     tools_list = [tool for pack in packs for tool in PACK_TOOLS[pack]]
-    if selected:
-        decision = f"standard: task '{task_type}' -> kernel + {', '.join(selected)}"
+    if selected is None:
+        decision = (
+            f"standard: task '{task_type}' unmapped -> unknown fallback: kernel + {', '.join(fallback) or 'no packs'}"
+        )
+    elif selected:
+        decision = f"standard: task '{requested}' -> kernel + {', '.join(selected)}"
     else:
-        decision = f"standard: task '{task_type}' unmapped -> kernel only"
+        decision = f"standard: task '{requested}' -> kernel only"
     return ToolResolution(
         mode="standard",
         task_type=task_type,
@@ -322,49 +333,67 @@ class SurfaceReductionException(BaseModel):
 #: the PRD §5 committed receipt (45 tools / 29 skills / 436 fields); ``measured``
 #: is the census at approval. Expiry is the PRD target completion — after it the
 #: miss blocks completion (the NFR04 test enforces "unexpired").
+#:
+#: Renewed 2026-09-03 (feedback-triage-framework-release-2026-09 campaign): the
+#: 2026-08-28 expiry lapsed with the phase-3 subtraction (FR07 skill/tool
+#: retirement queue) still not scheduled — none of the three metrics regressed
+#: because of new *unbounded* growth, so a fresh 90-day exception is the honest
+#: record rather than a retroactive one. Owner + review cadence unchanged.
 SURFACE_REDUCTION_EXCEPTIONS: dict[str, SurfaceReductionException] = {
     "tools": SurfaceReductionException(
         metric="tools",
         baseline=45,
         target=36,
-        measured=50,
+        measured=48,
         owner="framework-consolidation",
         rationale=(
-            "Kernel + pack classification landed, but pack tools are still fully "
-            "registered; net removal of ~14 tools is staged behind the FR07 "
-            "skill/tool retirement queue and the trw_claude_md_sync alias removal."
+            "CORE-218 phase-3 subtraction (FR07 skill/tool retirement queue) is "
+            "not yet scheduled; kernel + pack classification landed but pack "
+            "tools are still fully registered. The 2026-09-03 feedback-triage "
+            "campaign net +/-2 vs the prior 50-tool measurement (some pack "
+            "tools retired elsewhere in the same window) while adding "
+            "trw_submit_feedback, which is always exposed by design (it is the "
+            "feedback capture path a session must reach in every phase, not a "
+            "task-scoped pack tool) and confirming trw_review / trw_build_check "
+            "as RIGID_TOOLS (models/phase_policy.py) -- the never-hide deliver-"
+            "gate verification pair. All +N tools this campaign touches are "
+            "kernel/verification/feedback-required, not discretionary pack "
+            "growth, so none are candidates for the FR07 queue; net reduction "
+            "still depends on that queue landing."
         ),
-        expiry_iso="2026-08-28",
+        expiry_iso="2026-12-02",
         reduction_plan_ref="docs/requirements-aare-f/prds/PRD-CORE-218.md#8-rollout-plan",
     ),
     "skills": SurfaceReductionException(
         metric="skills",
         baseline=29,
         target=23,
-        measured=27,
+        measured=26,
         owner="framework-consolidation",
         rationale=(
-            "Duplicate-skill consolidation (FR07) flags near-duplicates but does "
-            "not auto-merge; retiring the flagged skills to reach <=23 is a "
-            "reversible lifecycle transition scheduled in the same wave."
+            "Renewed 2026-09-03: duplicate-skill consolidation (FR07) flags "
+            "near-duplicates but does not auto-merge; retiring the flagged "
+            "skills to reach <=23 is a reversible lifecycle transition still "
+            "scheduled behind the same FR07 wave as the tools metric."
         ),
-        expiry_iso="2026-08-28",
+        expiry_iso="2026-12-02",
         reduction_plan_ref="docs/requirements-aare-f/prds/PRD-CORE-218.md#8-rollout-plan",
     ),
     "config_fields": SurfaceReductionException(
         metric="config_fields",
         baseline=436,
         target=370,
-        measured=434,
+        measured=402,
         owner="framework-consolidation",
         rationale=(
-            "FR05 admission budget is enforced for NEW fields; collapsing ~64 "
-            "existing top-level fields into nested policy/derived values is the "
-            "consolidation task tracked by the admission-budget migration. The "
-            "CORE-125 tool_exposure_mode/list removal at FR03/FR04 activation "
-            "trimmed 2 (436->434)."
+            "Renewed 2026-09-03: FR05 admission budget is enforced for NEW "
+            "fields; collapsing existing top-level fields into nested "
+            "policy/derived values is the consolidation task tracked by the "
+            "admission-budget migration, which has not landed. No new fields "
+            "were admitted by the 2026-09-03 feedback-triage campaign outside "
+            "the FR05 budget."
         ),
-        expiry_iso="2026-08-28",
+        expiry_iso="2026-12-02",
         reduction_plan_ref="docs/requirements-aare-f/prds/PRD-CORE-218.md#8-rollout-plan",
     ),
 }

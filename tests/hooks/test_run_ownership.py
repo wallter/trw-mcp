@@ -13,7 +13,9 @@ other requirement in the PRD is unimplementable.
 
 Scope note (honest): this PRD's owned hooks were ``session-start.sh`` and
 ``post-tool-event.sh`` (plus the shared ``lib-trw.sh`` primitive). Ledger UF-047
-migrated the remaining six.
+migrated the remaining six; PRD-CORE-250 FR01-FR03 then deleted three of them
+(``completion-gate.sh``, ``helper-idle.sh``, ``phase-cycle-stop.sh``) as
+registered by no shipped template, so the sets below name six hooks, not nine.
 ``test_remaining_recency_call_sites_are_the_documented_ones`` pins the hooks that
 still resolve by recency so the remaining debt is machine-visible rather than
 implied; its expected set is now empty.
@@ -72,9 +74,6 @@ _OWNED_HOOKS = (
     "session-start.sh",
     "post-tool-event.sh",
     "stop-ceremony.sh",
-    "completion-gate.sh",
-    "helper-idle.sh",
-    "phase-cycle-stop.sh",
     "pre-compact.sh",
     "session-end.sh",
     "subagent-start.sh",
@@ -337,9 +336,6 @@ def test_remaining_recency_call_sites_are_the_documented_ones(hook_dir: Path) ->
         "session-start.sh",
         "post-tool-event.sh",
         "stop-ceremony.sh",
-        "completion-gate.sh",
-        "helper-idle.sh",
-        "phase-cycle-stop.sh",
         "pre-compact.sh",
         "session-end.sh",
         "subagent-start.sh",
@@ -364,9 +360,6 @@ def test_remaining_recency_call_sites_are_the_documented_ones(hook_dir: Path) ->
 _RECENCY_BOUND_LIB_HELPERS = ("infer_phase", "check_ceremony_status")
 
 _MIGRATED_HOOKS = (
-    "completion-gate.sh",
-    "helper-idle.sh",
-    "phase-cycle-stop.sh",
     "pre-compact.sh",
     "session-end.sh",
     "subagent-start.sh",
@@ -385,8 +378,9 @@ def test_migrated_hooks_do_not_call_recency_bound_lib_helpers(hook_dir: Path, ho
         for line in (hook_dir / hook_name).read_text(encoding="utf-8").splitlines()
         if not line.lstrip().startswith("#")
     )
-    # \b will not match inside a prefixed local override such as _pcs_infer_phase,
-    # which is the sanctioned replacement, so only the LIB symbol is caught.
+    # \b will not match inside a prefixed local override, so only the LIB symbol
+    # is caught. (The one such override, _pcs_infer_phase, went with
+    # phase-cycle-stop.sh in PRD-CORE-250-FR03.)
     called = [helper for helper in _RECENCY_BOUND_LIB_HELPERS if re.search(rf"\b{helper}\b", code)]
     assert called == [], f"{hook_name} calls recency-bound lib helper(s): {called}"
 
@@ -532,6 +526,69 @@ def test_pinned_run_tier_is_never_printed(hook_dir: Path, tmp_path: Path) -> Non
 
     assert "COMPREHENSIVE" not in res.stdout
     assert "trw_session_start" in res.stdout, "the hook must point at the single authority"
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-128-FR06 — the degraded emitter takes the payload identity too
+# --------------------------------------------------------------------------- #
+@_HOOK_COPIES
+def test_degraded_emitter_passes_the_payload_session_id(tmp_path: Path, hook_dir: Path) -> None:
+    """FR06: identity reaches the emitter from the hook PAYLOAD, not only the env.
+
+    Of the eight shipped ``resolve_owned_run`` call sites, this was the only one
+    that called the primitive with no argument -- so on a client whose profile
+    publishes no session variable (every profile except claude-code, and
+    therefore every tree whose generated hook-env.sh was written by one of them)
+    the emitter could never name a run and silently took the placeholder branch.
+    """
+    root, own = _project(tmp_path)
+    emit = f'trw_emit_offline_protocol_block "" "{_SESSION_ID}"'
+
+    # (a) Payload identity only: no session variable is exported at all.
+    payload_only = subprocess.run(
+        ["sh", "-c", f'. "{hook_dir / "lib-trw.sh"}"\n{emit}'],
+        capture_output=True,
+        text=True,
+        env=_shell_env(root),
+        timeout=60,
+        check=False,
+    )
+    assert payload_only.returncode == 0, payload_only.stderr
+    assert str(own) in payload_only.stdout, (
+        "the emitter resolved no run from the payload identity, so every run-scoped offline "
+        "command it printed carried the DIR placeholder instead of a path"
+    )
+    assert "RUN IDENTITY UNKNOWN" not in payload_only.stdout
+
+    # (b) The exported session variable still wins when both are present.
+    both = subprocess.run(
+        ["sh", "-c", f'. "{hook_dir / "lib-trw.sh"}"\ntrw_emit_offline_protocol_block "" "not-a-real-session"'],
+        capture_output=True,
+        text=True,
+        env=_shell_env(root, TRW_SESSION_ID=_SESSION_ID),
+        timeout=60,
+        check=False,
+    )
+    assert str(own) in both.stdout, "the exported session variable must outrank the payload value"
+
+
+@_HOOK_COPIES
+def test_no_hook_resolves_ownership_with_an_empty_argument_list(hook_dir: Path) -> None:
+    """FR06 static half: an argument-less call drops the payload fallback silently.
+
+    The failure is invisible at the call site -- the primitive still returns 0
+    with empty output -- so it is pinned here rather than left to review.
+    """
+    offenders: list[str] = []
+    call = re.compile(r"""resolve_owned_run(?!\s*\(\))(?!\s+["'$])""")
+    for path in sorted(hook_dir.rglob("*.sh")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or "command -v resolve_owned_run" in stripped:
+                continue
+            if call.search(stripped):
+                offenders.append(f"{path.name}:{lineno}: {stripped}")
+    assert offenders == [], f"resolve_owned_run called with no identity fallback: {offenders}"
 
 
 # --------------------------------------------------------------------------- #

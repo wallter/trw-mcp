@@ -18,8 +18,8 @@ class TestInferDomains:
         from trw_mcp.scoring._recall import infer_domains
 
         result = infer_domains(
-            file_paths=["backend/payments/x.py"],
-            path_domain_map={"backend/payments": "payments"},
+            file_paths=["web/payments/x.py"],
+            path_domain_map={"web/payments": "payments"},
         )
         assert "payments" in result
 
@@ -27,8 +27,8 @@ class TestInferDomains:
         """Without mapping, directory stems are used as fallback."""
         from trw_mcp.scoring._recall import infer_domains
 
-        result = infer_domains(file_paths=["backend/payments/x.py"])
-        assert "backend" in result
+        result = infer_domains(file_paths=["web/payments/x.py"])
+        assert "web" in result
         assert "payments" in result
 
     def test_infer_domains_security_traversal(self) -> None:
@@ -41,16 +41,16 @@ class TestInferDomains:
             assert ".." not in domain
 
     def test_infer_domains_absolute_path_stripped(self) -> None:
-        """Absolute path '/backend/payments/x.py' is treated as relative."""
+        """Absolute path '/web/payments/x.py' is treated as relative."""
         from trw_mcp.scoring._recall import infer_domains
 
         result_abs = infer_domains(
-            file_paths=["/backend/payments/x.py"],
-            path_domain_map={"backend/payments": "payments"},
+            file_paths=["/web/payments/x.py"],
+            path_domain_map={"web/payments": "payments"},
         )
         result_rel = infer_domains(
-            file_paths=["backend/payments/x.py"],
-            path_domain_map={"backend/payments": "payments"},
+            file_paths=["web/payments/x.py"],
+            path_domain_map={"web/payments": "payments"},
         )
         assert result_abs == result_rel
 
@@ -59,15 +59,15 @@ class TestInferDomains:
         from trw_mcp.scoring._recall import infer_domains
 
         result = infer_domains(
-            file_paths=["backend/payments/stripe/handler.py"],
+            file_paths=["web/payments/stripe/handler.py"],
             path_domain_map={
-                "backend": "backend-general",
-                "backend/payments": "payments",
-                "backend/payments/stripe": "stripe",
+                "web": "web-general",
+                "web/payments": "payments",
+                "web/payments/stripe": "stripe",
             },
         )
         assert "stripe" in result
-        assert "backend-general" not in result
+        assert "web-general" not in result
         assert "payments" not in result
 
     def test_infer_domains_empty_input(self) -> None:
@@ -89,17 +89,17 @@ class TestInferDomains:
         """Deprecated modified_files param still works as alias for file_paths."""
         from trw_mcp.scoring._recall import infer_domains
 
-        result = infer_domains(modified_files=["backend/payments/x.py"])
+        result = infer_domains(modified_files=["web/payments/x.py"])
         assert "payments" in result
-        assert "backend" in result
+        assert "web" in result
 
     def test_infer_domains_prefix_map_traversal_dropped(self) -> None:
         """Prefix map entries with '..' are silently dropped."""
         from trw_mcp.scoring._recall import infer_domains
 
         result = infer_domains(
-            file_paths=["backend/payments/x.py"],
-            path_domain_map={"../etc": "hacked", "backend/payments": "payments"},
+            file_paths=["web/payments/x.py"],
+            path_domain_map={"../etc": "hacked", "web/payments": "payments"},
         )
         assert "hacked" not in result
         assert "payments" in result
@@ -108,5 +108,5 @@ class TestInferDomains:
         """Paths containing null bytes are sanitized out."""
         from trw_mcp.scoring._recall import infer_domains
 
-        result = infer_domains(file_paths=["backend/payments\x00evil/x.py"])
+        result = infer_domains(file_paths=["web/payments\x00evil/x.py"])
         assert "evil" not in result

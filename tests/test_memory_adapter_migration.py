@@ -69,7 +69,7 @@ class TestEnsureMigrated:
         backend = SQLiteBackend(db_path)
         try:
             ensure_migrated(trw_dir_with_entries, backend)
-            entry = backend.get("L-test0001")
+            entry = backend.get("L-test0001", namespace="default")
             assert entry is not None
             assert entry.content == "Test learning about Python"
             assert entry.importance == 0.8

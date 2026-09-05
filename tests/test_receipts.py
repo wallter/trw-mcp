@@ -68,23 +68,17 @@ class TestLogRecallReceipt:
         assert lines[1]["query"] == "q2"
         assert lines[1]["match_count"] == 2
 
-    def test_shard_id_included_when_provided(self, tmp_project: Path) -> None:
-        """Shard ID is included in the record when provided."""
-        trw_dir = tmp_project / ".trw"
-        log_recall_receipt(trw_dir, query="test", matched_ids=["L-aaa"], shard_id="shard-01")
+    def test_call_signature_has_no_shard_id_parameter(self) -> None:
+        """Regression: shard_id was a dormant, never-supplied parameter.
 
-        path = _receipt_path(trw_dir)
-        record = json.loads(path.read_text().strip())
-        assert record["shard_id"] == "shard-01"
+        Diagnostic finding item 3 (feedback-triage-framework-release-2026-09):
+        the sole caller (`_session_recall_helpers.py`) never passed `shard_id`,
+        so it was dropped rather than kept dormant.
+        """
+        import inspect
 
-    def test_shard_id_omitted_when_none(self, tmp_project: Path) -> None:
-        """Shard ID is not present in record when not provided."""
-        trw_dir = tmp_project / ".trw"
-        log_recall_receipt(trw_dir, query="test", matched_ids=["L-aaa"], shard_id=None)
-
-        path = _receipt_path(trw_dir)
-        record = json.loads(path.read_text().strip())
-        assert "shard_id" not in record
+        params = inspect.signature(log_recall_receipt).parameters
+        assert "shard_id" not in params
 
     def test_empty_matched_ids(self, tmp_project: Path) -> None:
         """Empty matched_ids results in match_count of 0."""

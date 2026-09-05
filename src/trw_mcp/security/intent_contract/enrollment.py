@@ -55,6 +55,7 @@ from trw_mcp.security.intent_contract._control_plane import (
     _pre_commit_intent_hooks,
 )
 from trw_mcp.security.intent_contract._git_run import path_in_history
+from trw_mcp.security.intent_contract._sidecar import glob_sidecar_path, write_glob_sidecar
 from trw_mcp.security.intent_contract.paths import (
     ENROLLMENT_EVIDENCE_PATH,
     ENROLLMENT_PATH,
@@ -83,6 +84,7 @@ __all__ = [
     "record_enrollment_evidence",
     "refresh_hook_digest",
     "stale_enrollment_warning",
+    "sync_glob_sidecar",
     "write_enrollment",
 ]
 
@@ -355,7 +357,11 @@ def stale_enrollment_warning(root: Path, contract_rel_path: str = DEFAULT_CONTRA
         "INTENT-CONTRACT HEALTH WARNING (unsuppressible): this project is ENROLLED but its "
         f"protection is stale — drifted: {', '.join(drifted) or 'schema_version'}. "
         "A contract, hook, or pre-commit registration changed or is missing since enrollment. "
-        "Re-run enrollment after verifying the change was intentional."
+        "Verify the change was intentional, then re-enrol: `make refresh-enrollment` when the "
+        "vendor shipped new HOOK bytes (it re-blesses the hook digest and the glob sidecar "
+        "only), or `python3 -m trw_mcp.security.intent_contract.enrollment enroll` when the "
+        "CONTRACT itself changed — re-blessing a contract is an operator acknowledgement of the "
+        "new claim set, so no resync command does it for you."
     )
 
 
@@ -373,6 +379,37 @@ def _write_marker(root: Path, fields: dict[str, object]) -> None:
     lines = [f"schema_version: {version if isinstance(version, int) else ENROLLMENT_SCHEMA_VERSION}"]
     lines += [f"{key}: '{value}'" for key, value in sorted(fields.items()) if key != "schema_version"]
     write_text_confined(root, enrollment_path(root), "\n".join(lines) + "\n")
+
+
+def sync_glob_sidecar(root: Path, marker: dict[str, object], contract_rel_path: str, digests: dict[str, str]) -> bool:
+    """PRD-CORE-254-FR01: the ONE place the glob sidecar is written or removed.
+
+    Both writers (:func:`write_enrollment`, :func:`refresh_hook_digest`) route
+    through here so the sidecar and the marker cannot be refreshed independently
+    — the risk that a partially-wired second writer would leave the fast path
+    reading a glob set the marker no longer attests to.
+
+    The sidecar is written ONLY when *marker* records every recomputed digest,
+    i.e. only when this project reads ``current``. That matters most for
+    ``refresh-hooks``, which deliberately re-blesses the hook half alone: with a
+    drifted contract the marker stays stale, Python keeps failing closed, and a
+    sidecar rendered from the NEW contract would have handed the shell an ALLOW
+    for a write Python blocks. Stale in any half therefore REMOVES the sidecar
+    rather than refreshing it.
+
+    ORDERING IS PART OF THE CONTRACT. Every caller must write the MARKER after
+    this returns, never before: the hooks refuse a sidecar that is NEWER than the
+    marker, which is what makes a sidecar rewritten on its own — the one shape a
+    contract-digest binding cannot catch, because that digest is copied rather
+    than derived from this file — visible to the shell as "written outside an
+    enrollment". It is a speed bump, not a boundary (see the RESIDUAL note in
+    ``_sidecar.py``), and it is stated here so a future edit does not reorder the
+    two writes and silently remove it.
+    """
+    if any(str(marker.get(key, "")) != value for key, value in digests.items()):
+        unlink_confined(root, glob_sidecar_path(root))
+        return False
+    return write_glob_sidecar(root, contract_rel_path, digests["expected_contract_digest"])
 
 
 def missing_intent_hooks(root: Path) -> tuple[str, ...]:
@@ -433,15 +470,16 @@ def write_enrollment(
     # evidence file fails CLOSED (and says so), while an orphan marker would be
     # the pre-fix exposure again.
     record_enrollment_evidence(root)
-    _write_marker(
-        root,
-        {
-            "schema_version": ENROLLMENT_SCHEMA_VERSION,
-            "enrolled_at": datetime.now(timezone.utc).isoformat(),
-            "contract_path": contract_rel_path,
-            **digests,
-        },
-    )
+    marker: dict[str, object] = {
+        "schema_version": ENROLLMENT_SCHEMA_VERSION,
+        "enrolled_at": datetime.now(timezone.utc).isoformat(),
+        "contract_path": contract_rel_path,
+        **digests,
+    }
+    # Sidecar BEFORE the marker (see sync_glob_sidecar): a half-written enrollment
+    # then leaves an orphan sidecar with no valid marker, which every hook refuses.
+    sync_glob_sidecar(root, marker, contract_rel_path, digests)
+    _write_marker(root, marker)
     return digests
 
 
@@ -481,14 +519,27 @@ def refresh_hook_digest(root: Path) -> bool:
     if not marker or marker.get("schema_version") != ENROLLMENT_SCHEMA_VERSION:
         return False
     contract_rel_path = str(marker.get("contract_path", "") or DEFAULT_CONTRACT_PATH)
-    fresh = compute_digests(root, contract_rel_path)["expected_hook_digest"]
-    if str(marker.get("expected_hook_digest", "")) == fresh:
-        return False
-    updated = dict(marker)
-    updated["expected_hook_digest"] = fresh
-    updated["hook_digest_refreshed_at"] = datetime.now(timezone.utc).isoformat()
-    _write_marker(root, updated)
-    return True
+    digests = compute_digests(root, contract_rel_path)
+    fresh = digests["expected_hook_digest"]
+    changed = str(marker.get("expected_hook_digest", "")) != fresh
+    if changed:
+        marker = dict(marker)
+        marker["expected_hook_digest"] = fresh
+        marker["hook_digest_refreshed_at"] = datetime.now(timezone.utc).isoformat()
+    # FR01/FR06: the sidecar rides EVERY refresh, not only the ones that moved a
+    # digest. `check-bundle-sync.sh --fix` calls this after copying hook bytes
+    # that may be identical to what was already installed, and an operator whose
+    # hook digest was already current still needs the sidecar (re)written --
+    # otherwise `make refresh-enrollment` would print "no change" and leave the
+    # fast path off with no way to name what to run instead.
+    if sync_glob_sidecar(root, marker, contract_rel_path, digests):
+        # The marker is rewritten even when its CONTENT did not change: the hooks
+        # refuse a sidecar newer than the marker, so re-stamping it is what keeps
+        # the ordering invariant true for the no-op refresh as well.
+        _write_marker(root, marker)
+    elif changed:
+        _write_marker(root, marker)
+    return changed
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -526,6 +577,8 @@ def main(argv: list[str] | None = None) -> int:
         # project whose hooks were updated out of band. Hook half only.
         changed = refresh_hook_digest(root)
         print("hook digest refreshed" if changed else "no change (absent marker, or already current)")
+        if is_regular_file(glob_sidecar_path(root)):
+            print(f"glob sidecar refreshed: {glob_sidecar_path(root)}")
         return 0
     if command == "status":
         status = check_enrollment_status(root)

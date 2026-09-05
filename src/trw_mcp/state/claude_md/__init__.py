@@ -31,9 +31,9 @@ from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
     TRW_MARKER_END,
     TRW_MARKER_START,
-    _truncate_with_markers,
     load_claude_md_template,
     merge_trw_section,
+    render_merged_content,
     render_template,
 )
 from trw_mcp.state.claude_md._promotion import (
@@ -64,6 +64,12 @@ from trw_mcp.state.claude_md._templates import (
     PHASE_DESCRIPTIONS,
     CeremonyTool,
 )
+from trw_mcp.state.claude_md._write_guard import (
+    InstructionWriteVerdict,
+    guarded_instruction_write,
+    instruction_write_trigger,
+    non_generated_bytes,
+)
 
 __all__ = [
     "BEHAVIORAL_PROTOCOL_CAP",
@@ -79,16 +85,19 @@ __all__ = [
     "CeremonyTool",
     "InstructionFileClass",
     "InstructionFileClassification",
-    "_truncate_with_markers",
+    "InstructionWriteVerdict",
     "apply_carrier",
     "classify_instruction_file",
     "collect_context_data",
     "collect_patterns",
     "collect_promotable_learnings",
     "execute_claude_md_sync",
+    "guarded_instruction_write",
     "heal_pointer",
+    "instruction_write_trigger",
     "load_claude_md_template",
     "merge_trw_section",
+    "non_generated_bytes",
     "pointer_skip_guard",
     "render_agents_trw_section",
     "render_behavioral_protocol",
@@ -99,6 +108,7 @@ __all__ = [
     "render_delegation_protocol",
     "render_imperative_opener",
     "render_memory_harmonization",
+    "render_merged_content",
     "render_phase_descriptions",
     "render_rationalization_watchlist",
     "render_shared_learnings",

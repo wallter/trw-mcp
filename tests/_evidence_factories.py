@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from trw_mcp.models._evidence_core import ContentBinding, RunOwnedScope
@@ -94,18 +95,30 @@ def review_receipt(
     realized_rubric_ids: tuple[str, ...] | None = None,
     realized_roles: tuple[str, ...] | None = None,
     degraded_reason: str = "",
+    completed_at: str | None = None,
+    reviewer_origin: str = "human",
+    reviewer_identity: str = "alice",
+    reviewer_family: str = "human",
+    external_receipt_digest: str = "",
+    adversarial_pass: bool = False,
 ) -> ReviewReceipt:
     realized_rubric_ids = plan.required_rubric_ids if realized_rubric_ids is None else realized_rubric_ids
     realized_roles = plan.required_reviewer_roles if realized_roles is None else realized_roles
+    # PRD-CORE-255-FR01: default to NOW. The former hard-coded 2026-07-10 stamp
+    # made every receipt built here permanently expired the moment a TTL existed,
+    # which would have turned an unrelated suite red for the wrong reason. Tests
+    # that care about age pass ``completed_at`` explicitly.
     receipt = ReviewReceipt(
         receipt_id="review-test",
         review_id="rv1",
         run_id="run1",
-        completed_at="2026-07-10T00:00:00Z",
+        completed_at=completed_at or datetime.now(timezone.utc).isoformat(),
         method="independent_manual",
-        reviewer_origin="human",
-        reviewer_identity="alice",
-        reviewer_family="human",
+        reviewer_origin=reviewer_origin,
+        reviewer_identity=reviewer_identity,
+        reviewer_family=reviewer_family,
+        external_receipt_digest=external_receipt_digest,
+        adversarial_pass=adversarial_pass,
         reviewer_roles_realized=realized_roles,
         content_binding=binding,
         review_plan_id=plan.plan_id,

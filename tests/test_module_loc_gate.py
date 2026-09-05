@@ -173,3 +173,57 @@ def test_ceremony_facade_under_gate() -> None:
     assert ceremony.exists()
     assert "ceremony.py" not in _TOOLS_EFF_LOC_BASELINE
     assert _effective_line_count(ceremony) <= _MAX_LINES
+
+
+# --- PRD-CORE-265-NFR04: the formation package is a DEEP module --------------
+
+_FORMATION_DIR = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "formation"
+
+#: Adapters outside the package. Each may import ``trw_mcp.formation`` and
+#: nothing beneath it — that is what makes the facade an interface rather than a
+#: directory. Derived by scanning the source tree, not listed by hand, so a new
+#: adapter is covered the moment it is written.
+_FACADE = "trw_mcp.formation"
+
+
+def test_formation_package_within_effective_loc_gate() -> None:
+    """NFR04. Every file at or under 350 effective LOC, from the first commit.
+
+    ATTRIBUTION. This is the ratchet the PRD's phase-1 rollback criterion names:
+    if the bounded context cannot hold its files under the gate, the answer is
+    to re-scope, not to ship a shallow package. It has no baseline entry on
+    purpose — a package born grandfathered has learned nothing.
+    """
+    over = {
+        py.name: _effective_line_count(py)
+        for py in _iter_py_files(_FORMATION_DIR)
+        if _effective_line_count(py) > _MAX_LINES
+    }
+    assert not over, f"formation package files over {_MAX_LINES} effective LOC: {over}"
+
+
+def test_no_adapter_imports_a_private_formation_module() -> None:
+    """NFR04. Adapters import the facade, never an internal sibling.
+
+    ATTRIBUTION. Guards the import DIRECTION that makes ``trw_mcp/formation/``
+    one module rather than six. Reach past ``__init__`` from any consumer —
+    checkpoint.py, the CLI, the commit gate, the hook advisory, the deliver gate
+    — and this names the file and the symbol.
+    """
+    import re
+
+    import trw_mcp
+
+    package_root = Path(trw_mcp.__file__).parent
+    private_import = re.compile(r"from\s+trw_mcp\.formation\.(_\w+)\s+import|import\s+trw_mcp\.formation\.(_\w+)")
+    offenders: dict[str, list[str]] = {}
+    for py in sorted(package_root.rglob("*.py")):
+        if _FORMATION_DIR in py.parents or py.parent == _FORMATION_DIR:
+            continue
+        hits = [m.group(1) or m.group(2) for m in private_import.finditer(py.read_text(encoding="utf-8"))]
+        if hits:
+            offenders[str(py.relative_to(package_root))] = hits
+    assert not offenders, (
+        f"these adapters reach past the {_FACADE} facade into a private sibling: {offenders}. "
+        "Add the verb to the facade instead."
+    )

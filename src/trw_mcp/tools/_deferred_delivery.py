@@ -59,6 +59,7 @@ from trw_mcp.tools._deferred_steps_learning import (
 from trw_mcp.tools._deferred_steps_memory import (
     _step_auto_prune as _step_auto_prune,
     _step_consolidation as _step_consolidation,
+    _step_memory_decay as _step_memory_decay,
     _step_tier_sweep as _step_tier_sweep,
 )
 from trw_mcp.tools._deferred_steps_telemetry import (
@@ -90,6 +91,7 @@ DEFERRED_STEPS: tuple[str, ...] = (
     "auto_prune",
     "consolidation",
     "tier_sweep",
+    "memory_decay",
     "index_sync",
     "auto_progress",
     "publish_learnings",
@@ -243,6 +245,7 @@ def _run_deferred_steps(
         "auto_prune": lambda: _step_auto_prune(trw_dir),
         "consolidation": lambda: _step_consolidation(trw_dir),
         "tier_sweep": lambda: _step_tier_sweep(trw_dir),
+        "memory_decay": lambda: _step_memory_decay(trw_dir),
         "index_sync": lambda: _do_index_sync(),
         "auto_progress": lambda: _step_auto_progress(resolved_run),
         "publish_learnings": lambda: _step_publish_learnings(),
@@ -264,10 +267,13 @@ def _run_deferred_steps(
         "delivery_metrics": lambda: _step_delivery_metrics(trw_dir, resolved_run),
     }
 
-    # PRD-CORE-208 FR02/FR06: journal each roster step over the already-claimed
-    # operation so a process death mid-batch (e.g. after the NON_REPLAYABLE trust
-    # increment) leaves a durable ``started`` step for FR04 recovery. Fully
-    # fail-open — a disabled journal makes every ``.step`` a no-op.
+    # PRD-CORE-208 FR02/FR06 + PRD-FIX-127 FR01/FR02: journal each roster step over
+    # the already-claimed operation so a process death mid-batch (e.g. after the
+    # NON_REPLAYABLE trust increment) leaves a durable ``started`` step, which the
+    # ``resume`` action classifies as indeterminate and refuses to replay. When this
+    # process holds a resume grant the handle opens in resume mode and the roster
+    # skips the steps a prior attempt already completed. Fully fail-open — a disabled
+    # journal makes every ``.step`` a no-op that yields "run".
     from trw_mcp.tools._delivery_journal_wiring import open_deferred_journal
     from trw_mcp.tools._delivery_models import OperationState
     from trw_mcp.tools._delivery_tracer import DEFERRED_STEP_EFFECT_IDS
@@ -281,8 +287,11 @@ def _run_deferred_steps(
                 results["index_sync"] = {"status": "skipped"}
                 logger.warning("deferred_step_skip", step="index_sync", reason="skip_index_sync=True")
                 continue
-            with deferred_journal.step(DEFERRED_STEP_EFFECT_IDS.get(_step_name, "")):
-                _timed_step(_step_name, step_map[_step_name])
+            with deferred_journal.step(DEFERRED_STEP_EFFECT_IDS.get(_step_name, "")) as _run_roster_step:
+                if _run_roster_step:
+                    _timed_step(_step_name, step_map[_step_name])
+                else:
+                    results[_step_name] = {"status": "skipped", "reason": "resume_already_succeeded"}
 
         metrics_result = results.get("delivery_metrics")
         if isinstance(metrics_result, dict):
@@ -290,7 +299,13 @@ def _run_deferred_steps(
 
             rework_metrics = _step_collect_rework_metrics(resolved_run, FileStateReader())
             metrics_result.update(rework_metrics)
-            _persist_session_metrics(metrics_result, resolved_run)
+            # PRD-FIX-127 FR04: D22 is "session metrics persistence". Its boundary
+            # used to enclose the pure-compute ``delivery_metrics`` roster step (a
+            # git diff plus scoring that writes nothing) while THIS run-yaml write
+            # sat outside it.
+            with deferred_journal.step("D22") as _run_metrics_persist:
+                if _run_metrics_persist:
+                    _persist_session_metrics(metrics_result, resolved_run)
         # Surface the watchdog outcome alongside the step results so the
         # audit log records WHY a batch returned early.
         if _ds._cancel_event.is_set():
@@ -341,6 +356,12 @@ def _run_deferred_steps(
         # idempotent retries, and retention all observe the same truth.
         if not deferred_journal.wait_for_step_terminal("S20"):
             errors.append("delivery_journal_terminal_failed: timed out waiting for synchronous S20")
+        # Cancel the per-batch watchdog before the evidence writes so it can't
+        # fire after the roster already stopped and spuriously flip the cancel
+        # event for the next batch's first step.
+        if batch_watchdog is not None:
+            batch_watchdog.cancel()
+        _write_deferred_evidence(deferred_journal, trw_dir, resolved_run, results, errors)
         terminal_state = (
             OperationState.CANCELLED
             if _ds._cancel_event.is_set()
@@ -358,15 +379,47 @@ def _run_deferred_steps(
                 terminal_state=terminal_state.value,
                 error=str(exc),
             )
-        # Cancel the per-batch watchdog before we drop the file lock so it
-        # can't fire after the batch already exited and spuriously flip
-        # the cancel event for the next batch's first step.
-        if batch_watchdog is not None:
-            batch_watchdog.cancel()
-        _persist_deferred_results(results, resolved_run)
-        _log_deferred_result(trw_dir, results, errors)
         _release_deferred_lock(lock_fd)
     return results
+
+
+def _write_deferred_evidence(
+    journal: object,
+    trw_dir: Path,
+    resolved_run: Path | None,
+    results: dict[str, object],
+    errors: list[str],
+) -> None:
+    """Commit D23 + D24 under their own boundaries, BEFORE the terminal state.
+
+    PRD-FIX-127 FR04. These two writes used to run AFTER the aggregate terminal
+    transition, which had two consequences: ``begin_step`` refuses on a terminal
+    operation, so they could not be journaled at all; and a process death in that
+    window left an operation truthfully reporting ``succeeded`` with no results
+    artifact and no audit event — which a retry could never discover, because
+    ``succeeded`` returns ``already_succeeded``.
+
+    Each failure is captured rather than raised: this runs in the batch's
+    ``finally`` block, so an escape would skip the terminal transition entirely.
+    A D23 failure is an error (the evidence is missing); a D24 failure is logged,
+    because by then the error list it would record is already closed.
+    """
+    from trw_mcp.tools._delivery_journal_wiring import DeliverJournal
+
+    assert isinstance(journal, DeliverJournal)  # noqa: S101  # trw:intentional narrow the handle
+    try:
+        with journal.step("D23") as run_persist:
+            if run_persist:
+                _persist_deferred_results(results, resolved_run)
+    except Exception as exc:  # justified: fail-open, the terminal transition must still commit
+        errors.append(f"deferred_results_persist_failed: {exc}")
+        logger.warning("deferred_results_persist_failed", error=str(exc), exc_info=True)
+    try:
+        with journal.step("D24") as run_audit:
+            if run_audit:
+                _log_deferred_result(trw_dir, results, errors)
+    except Exception as exc:  # justified: fail-open, the terminal transition must still commit
+        logger.warning("deferred_audit_append_failed", error=str(exc), exc_info=True)
 
 
 def _launch_deferred(

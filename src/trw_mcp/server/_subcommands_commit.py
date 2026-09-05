@@ -72,6 +72,54 @@ def _run_commit_candidate(args: argparse.Namespace) -> None:
     print(json.dumps(dict(result), indent=2))
 
 
+def _run_prd_epoch(args: argparse.Namespace) -> None:
+    """Handle ``trw-mcp prd-epoch`` — advance the registry evaluation epoch.
+
+    The operator exit from the fail-closed ``epoch_unset`` state
+    (PRD-CORE-244-FR07). A ledger carrying no authorized
+    ``advance_evaluation_epoch`` action reports expiry as NOT evaluated, and
+    ``prd-state`` refuses every WIP-consuming transition against that unknown.
+    Until this command existed the refusal had no exit: nothing outside the
+    library could append the action, so ``prd-state --state active`` was
+    unreachable on every project whose epoch had never been advanced.
+
+    Prints the resulting epoch and the reconciled registry's expiry verdict, so
+    the operator sees WHAT the advance evaluated rather than only that it ran.
+    """
+    from trw_mcp.state.requirements_registry import (
+        LEDGER_FILENAME,
+        RegistryWriter,
+        SchedulingLedgerError,
+        build_registry,
+        persist_registry,
+    )
+
+    root = Path(args.project_root).resolve()
+    prds_dir = root / args.prds_dir
+    registry_dir = root / ".trw" / "registry"
+    ledger_path = registry_dir / LEDGER_FILENAME
+    writer = RegistryWriter(ledger_path)
+    try:
+        action = writer.advance_evaluation_epoch(authorization_receipt=args.receipt, actor=args.actor)
+        registry = build_registry(prds_dir, ledger_path)
+        persist_registry(registry, registry_dir)
+    except SchedulingLedgerError as exc:
+        print(json.dumps({"error": str(exc)}))
+        sys.exit(1)
+    print(
+        json.dumps(
+            {
+                "epoch": action.effective_utc_date,
+                "sequence": action.sequence,
+                "registry_status": registry.status,
+                "expiry_evaluated": registry.expiry_evaluated,
+                "expired": registry.expired,
+            },
+            indent=2,
+        )
+    )
+
+
 def _run_prd_state(args: argparse.Namespace) -> None:
     """Handle ``trw-mcp prd-state`` — WIP-limited PRD execution-state transition.
 

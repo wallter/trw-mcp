@@ -13,28 +13,25 @@ module nor its parent can create an import cycle with ``TRWConfig``.
 
 from __future__ import annotations
 
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict
-
-BudgetDecision = Literal["admitted", "legacy-admitted", "rejected", "deferred"]
-
-
-class ConfigAdmission(BaseModel):
-    """Full admission record for one public configuration field."""
-
-    model_config = ConfigDict(frozen=True)
-
-    field_name: str
-    owner: str
-    consumer: str
-    default_rationale: str
-    interaction_analysis: str
-    deprecation_plan: str
-    docs_pointer: str
-    test_pointer: str
-    budget_decision: BudgetDecision
-
+from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
+from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
+from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
+from trw_mcp.models.config._field_admission_drain_budget import DRAIN_BUDGET_ADMISSIONS
+from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSIONS
+from trw_mcp.models.config._field_admission_formation_readiness import FORMATION_READINESS_ADMISSIONS
+from trw_mcp.models.config._field_admission_instruction_writes import INSTRUCTION_WRITE_ADMISSIONS
+from trw_mcp.models.config._field_admission_memory_truth import MEMORY_TRUTH_ADMISSIONS
+from trw_mcp.models.config._field_admission_project_handoff import PROJECT_HANDOFF_ADMISSIONS
+from trw_mcp.models.config._field_admission_registry_types import (
+    BudgetDecision as BudgetDecision,
+)
+from trw_mcp.models.config._field_admission_registry_types import (
+    ConfigAdmission as ConfigAdmission,
+)
+from trw_mcp.models.config._field_admission_review_verdict import REVIEW_VERDICT_ADMISSIONS
+from trw_mcp.models.config._field_admission_surface_role import SURFACE_ROLE_ADMISSIONS
+from trw_mcp.models.config._field_admission_wal_checkpoint import WAL_CHECKPOINT_ADMISSIONS
+from trw_mcp.models.config._field_admission_writer_pressure import WRITER_PRESSURE_ADMISSIONS
 
 #: Explicit full-metadata admissions for public fields added by PRD-CORE-218
 #: itself (or later). Every current field outside the frozen legacy baseline
@@ -43,6 +40,33 @@ class ConfigAdmission(BaseModel):
 #: exposure authority (the legacy CORE-125 tool_exposure_mode/list fields and
 #: their TOOL_PRESETS vocabulary were removed at activation).
 FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
+    "profile_domain_path_map": ConfigAdmission(
+        field_name="profile_domain_path_map",
+        owner="PRD-HPO-PROF-001-FR-6",
+        consumer="trw_mcp.profile.session_resolve.resolve_session_profile -> trw_mcp.profile.inference.infer_domain",
+        default_rationale=(
+            "Defaults to a small table of GENERIC source-layout conventions "
+            "(frontend/web/ui -> frontend, api/server -> backend, eval/evals -> eval). The prior "
+            "table was a code constant naming one specific repository's package tree, which made "
+            "domain inference silently wrong for every other project that installs this package. "
+            "A layout is a property of the consuming project, so it is stated by the project."
+        ),
+        interaction_analysis=(
+            "Read only on the FR-6 inference branch, i.e. when trw_session_start resolves a profile "
+            "and no explicit domain was supplied; an explicit domain still wins. The resolved value "
+            "selects which .trw/profiles/domain-*.yaml layer discover_layers loads, so a mapping "
+            "naming a domain with no layer file simply contributes nothing (fail-open). Setting the "
+            "field REPLACES the defaults rather than merging, and matching is longest-prefix-wins so "
+            "the result does not depend on YAML key order."
+        ),
+        deprecation_plan=(
+            "Retain; removing it would return a project-specific directory table to shipped code, "
+            "which is the defect this field exists to make impossible."
+        ),
+        docs_pointer="docs/requirements-aare-f/prds/agentic-hpo/PRD-HPO-PROF-001-profile-system.md",
+        test_pointer="trw-mcp/tests/unit/profile/test_inference.py::test_infer_domain_uses_config_supplied_map",
+        budget_decision="admitted",
+    ),
     "tool_resolution_mode": ConfigAdmission(
         field_name="tool_resolution_mode",
         owner="PRD-CORE-218-FR04",
@@ -127,48 +151,14 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
         ),
         interaction_analysis=(
             "Bounds the per-commit subprocess fan-out only; gated behind hint_sidecar_refresh_enabled. "
-            "A cap lower than a commit's changed-file count reduces the FR01 delivery rate measured by "
-            "hint_delivery_rate_min, which is the intended latency/coverage trade-off (OQ-06)."
+            "A cap lower than a commit's changed-file count reduces the share of eligible edits that "
+            "receive a T2 hint, which is the intended latency/coverage trade-off (OQ-06). The typed "
+            "delivery-rate pair that once named this trade-off was deleted by PRD-FIX-125-FR04: "
+            "neither field had a reader and both admission grandfathers expired 2026-08-31."
         ),
         deprecation_plan="Retain; removing it would reintroduce an unbounded per-commit fan-out.",
         docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-231-track-r-memory-truthfulness-repair.md",
         test_pointer="trw-mcp/tests/test_post_commit_sidecar_refresh.py::test_file_cap_bounds_the_plan",
-        budget_decision="admitted",
-    ),
-    "hint_delivery_rate_min": ConfigAdmission(
-        field_name="hint_delivery_rate_min",
-        owner="PRD-CORE-231-FR01",
-        consumer="hint_delivered telemetry aggregation over .trw/telemetry/channel-events.jsonl (NFR02 gate)",
-        default_rationale=(
-            "Defaults to 0.90 — the >=90%-of-eligible-edits delivery gate specified by the Track R "
-            "synthesis; expressed as a bounded float so the gate is tunable without a code edit."
-        ),
-        interaction_analysis=(
-            "Compared against the delivered/eligible ratio computed over the trailing "
-            "hint_delivery_measurement_window_days window; the two are always read together and are "
-            "meaningless apart. No interaction with the sidecar-refresh knobs beyond the causal one "
-            "(a lower file cap lowers the measured rate)."
-        ),
-        deprecation_plan="Retain while the T2 delivery gate is measured; superseded by the FR01 expiry decision.",
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-231-track-r-memory-truthfulness-repair.md",
-        test_pointer="trw-mcp/tests/test_config_field_bounds.py::test_hint_delivery_rate_min_bounds",
-        budget_decision="admitted",
-    ),
-    "hint_delivery_measurement_window_days": ConfigAdmission(
-        field_name="hint_delivery_measurement_window_days",
-        owner="PRD-CORE-231-FR01",
-        consumer="hint_delivered telemetry aggregation over .trw/telemetry/channel-events.jsonl (NFR02 gate)",
-        default_rationale=(
-            "Defaults to 14 days, the trailing window the Track R synthesis specifies for both the "
-            "delivery-rate and silent-stale gates; ge=1 rejects a zero-length window."
-        ),
-        interaction_analysis=(
-            "Sole companion of hint_delivery_rate_min — defines the window the ratio is computed over. "
-            "Widening it smooths the measurement; it changes no runtime behavior, only the gate reading."
-        ),
-        deprecation_plan="Retain alongside hint_delivery_rate_min; the pair is removed or kept together.",
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-231-track-r-memory-truthfulness-repair.md",
-        test_pointer="trw-mcp/tests/test_config_field_bounds.py::test_hint_delivery_window_bounds",
         budget_decision="admitted",
     ),
     "wiring_gate_mode_overrides": ConfigAdmission(
@@ -211,7 +201,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
             "so exact-content/semantic dedup still collapses a replay against an existing row (exactly-once)."
         ),
         deprecation_plan="Retain as the durability kill switch; removal requires proving the loss window is closed by other means.",
-        docs_pointer="docs/research/framework-simplification/SURFACE-CENSUS-2026-07-24.md",
+        docs_pointer="trw-mcp/CHANGELOG.md — learn-journal durability + recovery entries",
         test_pointer="trw-mcp/tests/test_learn_journal.py::TestDurability::test_disabled_journal_writes_nothing",
         budget_decision="admitted",
     ),
@@ -229,7 +219,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
             "entirely under writer pressure (session_start deferral). No interaction with other fields."
         ),
         deprecation_plan="Retain; removing it would reintroduce an unbounded recovery loop on session_start.",
-        docs_pointer="docs/research/framework-simplification/SURFACE-CENSUS-2026-07-24.md",
+        docs_pointer="trw-mcp/CHANGELOG.md — learn-journal durability + recovery entries",
         test_pointer="trw-mcp/tests/test_learn_journal.py::TestJournalModule::test_drain_respects_limit_and_defers_remainder",
         budget_decision="admitted",
     ),
@@ -315,11 +305,69 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
             "Retain as the termination bound; removal reinstates 'a record may be re-attempted forever', "
             "which is the defect this field exists to make impossible."
         ),
-        docs_pointer="docs/research/framework-simplification/SURFACE-CENSUS-2026-07-24.md",
+        docs_pointer="trw-mcp/CHANGELOG.md — learn-journal durability + recovery entries",
         test_pointer=(
             "trw-mcp/tests/test_learn_journal_drain_accounting.py::TestRetryBudget::"
             "test_transient_failure_dead_letters_once_the_budget_is_exhausted"
         ),
         budget_decision="admitted",
     ),
+    "deliver_gate_unclassified_change_threshold": ConfigAdmission(
+        field_name="deliver_gate_unclassified_change_threshold",
+        owner="PRD-CORE-246-FR03",
+        consumer="trw_mcp.tools._deliver_gate_mode._meets_change_threshold (resolve_deliver_gate_decision)",
+        default_rationale=(
+            "Defaults to 1, meaning ANY recorded file modification in the current session arms the "
+            "missing-build-check gate for a task type that does not inherently expect a build artifact. "
+            "1 is chosen because the neighbouring review-scope gate already owns the 'large change' case "
+            "at its own threshold of 5; this gate is about the PRESENCE of change, not its size. Bounded "
+            "ge=1/le=1000 so 0 (which would arm the gate on a ceremony-only run) and an absurd value are "
+            "rejected at config load rather than silently clamped."
+        ),
+        interaction_analysis=(
+            "Read ONLY inside the block_coding/block_all branch of resolve_deliver_gate_decision, where "
+            "it is the right-hand side of an OR with the build-artifact task-type set. It therefore "
+            "cannot restore the pre-CORE-246 never-block-on-unknown behavior at any value: raising it "
+            "narrows the change-evidence clause but leaves coding/rca/eval blocking as before. The count "
+            "it is compared against is the same distinct-path, session-scoped count the review-scope gate "
+            "uses (_count_file_modified_current_session), so the framework keeps one notion of 'code "
+            "changed'. An uncomputable count is treated as meeting the threshold (fail-closed, NFR02), "
+            "and deliver_gate_task_type_overrides still selects the mode before this field is consulted."
+        ),
+        deprecation_plan=(
+            "Retain as the evidence threshold; removal reinstates 'a misclassified run switches the "
+            "build gate off', which is the defect PRD-CORE-246 exists to close."
+        ),
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-246-fail-closed-unknown-task-type.md",
+        test_pointer=(
+            "trw-mcp/tests/test_task_type_visibility.py::test_rationale_is_bounded_and_threshold_is_validated"
+        ),
+        budget_decision="admitted",
+    ),
+    # PRD-FIX-123: instruction-write guard tunables (own table, see module docstring).
+    **INSTRUCTION_WRITE_ADMISSIONS,
+    # PRD-FIX-124: auto-recall scan cap (own table, see module docstring).
+    **AUTO_RECALL_ADMISSIONS,
+    # PRD-CORE-244: memory-truth invariants (own table, see module docstring).
+    **MEMORY_TRUTH_ADMISSIONS,
+    # PRD-CORE-247: degraded-mode + instruction-budget tunables (own table).
+    **DEGRADED_MODE_ADMISSIONS,
+    # PRD-CORE-250: degenerate-result advisory tunables (own table).
+    **DEGENERATE_RESULT_ADMISSIONS,
+    # PRD-CORE-249: project-handoff write location (own table, see module docstring).
+    **PROJECT_HANDOFF_ADMISSIONS,
+    # PRD-CORE-248: WAL-checkpoint trigger + resetting-permit tunables (own table).
+    **WAL_CHECKPOINT_ADMISSIONS,
+    # PRD-CORE-255: review-verdict TTL (own table, see module docstring).
+    **REVIEW_VERDICT_ADMISSIONS,
+    # PRD-CORE-257: bounded writer-pressure deferral (own table).
+    **WRITER_PRESSURE_ADMISSIONS,
+    # PRD-CORE-265: formation manifest + enforcement tunables (own table).
+    **FORMATION_ADMISSIONS,
+    # PRD-FIX-130: learn-journal wall-clock drain budget (own table).
+    **DRAIN_BUDGET_ADMISSIONS,
+    # PRD-CORE-266: doctor formation-readiness probe bound (own table).
+    **FORMATION_READINESS_ADMISSIONS,
+    # PRD-SEC-015: reviewer-role selector (own table, see module docstring).
+    **SURFACE_ROLE_ADMISSIONS,
 }

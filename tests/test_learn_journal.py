@@ -248,3 +248,49 @@ class TestJournalModule:
         assert len(calls) == 2  # bounded
         assert result["replayed"] == 2
         assert result["deferred"] == 1
+
+
+# ---------------------------------------------------------------------------
+# PRD-FIX-130 regression: the operator CLI drain stays unbounded
+# ---------------------------------------------------------------------------
+
+
+class TestCliDrainRemainsUnbounded:
+    """An operator-invoked drain is not a hot path and keeps its old semantics."""
+
+    def test_cli_drain_remains_unbounded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import argparse
+
+        from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+        from trw_mcp.state import learn_journal as lj
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        for index in range(3):
+            lj.journal_pending(
+                trw_dir,
+                f"L-cli{index:03d}",
+                {
+                    "summary": f"cli drain probe record {index} with a summary past the noise gate",
+                    "detail": f"detail body for cli drain probe record {index}",
+                },
+            )
+
+        seen: list[object] = []
+        real_drain = lj.drain_pending
+
+        def _spy(*args: object, **kwargs: object) -> object:
+            seen.append(kwargs.get("budget_seconds", "<absent>"))
+            return real_drain(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(lj, "drain_pending", _spy)
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda *_a, **_kw: trw_dir)
+        monkeypatch.setattr(
+            "trw_mcp.models.config.get_config",
+            lambda: TRWConfig(embeddings_enabled=False, dedup_enabled=False),
+        )
+
+        SUBCOMMAND_HANDLERS["learn-drain"](argparse.Namespace(limit=None, as_json=True))
+
+        assert seen == ["<absent>"], f"the CLI must not pass a budget; got {seen}"
+        assert lj.pending_count(trw_dir) == 0

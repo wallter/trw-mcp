@@ -23,6 +23,7 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.models.run import RunStatus
 from trw_mcp.models.typed_dicts import (
     ClaudeMdSyncResultDict,
     ReflectResultDict,
@@ -44,31 +45,43 @@ def _read_pre_compact_recovery() -> tuple[str, str]:
     """Read caller-supplied directive + context-anchor from pre-compact state.
 
     PRD-CORE-165 FR-01 recovery readback. Cheap and GUARDED for the session_start
-    hot path: a single existence check + small JSON read, performed only when an
-    active run already exists (the caller gates this) and the state file is
-    present. Never scans run dirs. Returns ``("", "")`` when absent/unreadable.
-    """
-    import json
+    hot path: one small typed read, performed only when an active run already
+    exists (the caller gates this). Never scans run dirs. Returns ``("", "")``
+    when the marker is absent or unreadable.
 
-    from trw_mcp.state._paths import resolve_trw_dir
+    PRD-CORE-258-FR04: the bespoke JSON read this used to carry was one of four
+    independent marker readers with three different failure postures. The typed
+    reader owns the path and the shape; a ``None`` result maps onto the
+    documented empty pair.
+    """
+    from trw_mcp.state.pre_compact_marker import read_pre_compact_marker
 
     try:
-        state_file = resolve_trw_dir() / "context" / "pre_compact_state.json"
-        if not state_file.exists():
-            return "", ""
-        data = json.loads(state_file.read_text(encoding="utf-8"))
+        marker = read_pre_compact_marker()
     except Exception:  # justified: fail-open, recovery readback must not block session start
         logger.debug("pre_compact_recovery_read_failed", exc_info=True)
         return "", ""
-    if not isinstance(data, dict):
+    if marker is None:
         return "", ""
-    return str(data.get("directive", "")), str(data.get("context_anchor", ""))
+    return marker.directive, marker.context_anchor
 
 
 def _get_run_status(run_dir: Path) -> RunStatusDict:
-    """Extract status summary from a run directory."""
+    """Extract status summary from a run directory.
+
+    PRD-CORE-246-FR04: also reports the run's ``task_type`` and, crucially,
+    ``task_type_source`` — whether the value was READ from run.yaml, DEFAULTED
+    because the key was absent (measured at 175 of 191 on-disk runs), or left
+    UNRESOLVED because the run could not be read. Seeded to the unresolved case
+    BEFORE the read so a raising or missing run.yaml cannot report a defaulted
+    ``unknown`` as if it had been observed. Read-only: nothing is written back.
+    """
     reader = FileStateReader()
-    result: RunStatusDict = {"active_run": str(run_dir)}
+    result: RunStatusDict = {
+        "active_run": str(run_dir),
+        "task_type": "unknown",
+        "task_type_source": "unresolved",
+    }
     try:
         run_yaml = run_dir / "meta" / "run.yaml"
         if run_yaml.exists():
@@ -76,6 +89,12 @@ def _get_run_status(run_dir: Path) -> RunStatusDict:
             result["phase"] = str(data.get("phase", "unknown"))
             result["status"] = str(data.get("status", "unknown"))
             result["task_name"] = str(data.get("task", ""))
+            raw_task_type = str(data.get("task_type", "")).strip()
+            if raw_task_type:
+                result["task_type"] = raw_task_type
+                result["task_type_source"] = "run_yaml"
+            else:
+                result["task_type_source"] = "default_unknown"
             apply_task_profile_observability(cast("dict[str, object]", result), data.get("task_profile"))
             if "owner_session_id" in data:
                 sid = data["owner_session_id"]
@@ -97,11 +116,22 @@ def _get_run_status(run_dir: Path) -> RunStatusDict:
 
 
 def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
-    """Return recent pinned run candidates without adopting any of them."""
+    """Return recent pinned run candidates without adopting any of them.
+
+    PRD-CORE-248 FR05: filtered by the SAME TTL-and-liveness cutoff the pin
+    store evicts on, not by ``run_path`` existence alone. Path existence is a
+    weak signal — a run directory outlives its session indefinitely, which is
+    why 13 of 15 live pins with heartbeats 13.7 to 34.9 days old were still
+    being offered to the agent as adoptable runs. Applying the cutoff here as
+    well as in the store means a pin that is due for eviction can never be
+    surfaced by a load that happened to be served from the read cache.
+    """
     try:
         from trw_mcp.state._pin_store import load_pin_store
+        from trw_mcp.state._pin_ttl import pin_entry_is_expired, resolve_pin_ttl_hours
 
         pins = load_pin_store()
+        pin_ttl_hours = resolve_pin_ttl_hours()
     except Exception:  # justified: guidance only, never block ceremony tools
         logger.debug("candidate_run_hints_failed", exc_info=True)
         return []
@@ -111,6 +141,9 @@ def _candidate_run_hints(limit: int = 3) -> list[dict[str, object]]:
         if not isinstance(run_path, str) or not run_path:
             continue
         if not Path(run_path).exists():
+            continue
+        expired, _age = pin_entry_is_expired(entry, pin_ttl_hours=pin_ttl_hours)
+        if expired:
             continue
         # No per-entry adopt_command — it just repeats run_path; the
         # accompanying hint states the trw_adopt_run(run_path=...) convention.
@@ -148,7 +181,7 @@ def _mark_run_complete(run_dir: Path) -> None:
         return
     try:
         data = reader.read_yaml(run_yaml)
-        data["status"] = "complete"
+        data["status"] = RunStatus.COMPLETE.value
         writer.write_yaml(run_yaml, data)
     except Exception:  # justified: fail-open, marking complete is best-effort
         logger.warning("mark_run_complete_failed", exc_info=True, run_dir=str(run_dir))

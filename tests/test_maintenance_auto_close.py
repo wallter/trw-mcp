@@ -300,3 +300,67 @@ class TestAutoCloseStaleRuns:
 
         assert result["count"] == 0
         assert result["errors"] == []
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-263-FR09 — the run auto-close age field is wired or retired
+# ---------------------------------------------------------------------------
+
+
+def test_run_auto_close_age_days_reaches_the_stale_run_sweep() -> None:
+    """PRD-CORE-263-FR09 — RETIRED branch. No third state.
+
+    The field was declared twice (flat and on ``BuildConfig``) and named as a
+    parameter of ``auto_close_stale_runs``, but the session-start maintenance
+    call passed neither the day-level nor the hour-level argument, so the sweep
+    fell through to ``run_stale_ttl_hours``. Its only appearance outside the two
+    declarations was a test pinning its default, which is not a consumer.
+
+    OQ-04's lean was RETIRE, and retiring is also the only option that does not
+    change behaviour: wiring the day-level default (7 days = 168h) would have
+    silently tripled the shipped 48-hour stale window. Wiring it remains
+    available if a consumer is ever found who set it and expected it to work.
+
+    Attribution: re-adding the declaration turns this red, and the
+    config-consumer ratchet reports it as a NEW unread field.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._sub_models import BuildConfig
+
+    assert "run_auto_close_age_days" not in TRWConfig.model_fields
+    # The sweep's day-level parameter is retained: it is a legitimate API for a
+    # caller that has a value, and PRD-FIX-028's hour-level precedence over it
+    # is unchanged. What is gone is the config knob nothing passed.
+    from trw_mcp.state.analytics._stale_runs import auto_close_stale_runs
+
+    assert "age_days" in auto_close_stale_runs.__code__.co_varnames
+
+    # BOTH declarations, per the acceptance criterion. ``_sub_config`` copies by
+    # exact field-name match, so a sub-model declaration surviving the flat one's
+    # removal would leave ``config.build.run_auto_close_age_days`` answering a
+    # hardcoded 7 to every reader forever — the same settable-with-no-consumer
+    # shape one layer down.
+    assert "run_auto_close_age_days" not in BuildConfig.model_fields
+
+
+def test_stale_run_sweep_precedence_is_unchanged_by_the_retirement() -> None:
+    """PRD-CORE-263-FR09 — the hour-level TTL still wins over the day-level one."""
+    import inspect
+
+    from trw_mcp.state.analytics import _stale_runs
+
+    source = inspect.getsource(_stale_runs.auto_close_stale_runs)
+    ttl_at = source.index("if ttl_hours is not None:")
+    age_at = source.index("elif age_days is not None:")
+    assert ttl_at < age_at, "hour-level TTL must be checked before the day-level value"
+
+
+def test_run_auto_close_age_days_is_absent_from_the_ratchet_baseline() -> None:
+    """PRD-CORE-263-FR09 — the entry is REMOVED, not re-annotated."""
+    import json
+    from pathlib import Path
+
+    baseline_path = Path(__file__).resolve().parents[2] / ".trw" / "compliance" / "config-field-consumers-baseline.json"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    assert "run_auto_close_age_days" not in baseline["fields"]
+    assert "run_auto_close_age_days" not in baseline.get("classifications", {})

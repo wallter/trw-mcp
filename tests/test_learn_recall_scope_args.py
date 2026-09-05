@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from trw_memory.namespaces.validation import DEFAULT_NAMESPACE
 
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state import memory_adapter
+from trw_mcp.state._tier_routing import USER_NAMESPACE
 from trw_mcp.state._user_tier import reset_user_backend
 
 from .conftest import extract_tool_fn, make_test_server
@@ -78,12 +80,12 @@ def test_scope_user_routes_to_user_store(tmp_path: Path) -> None:
     )
     lid = res["learning_id"]
     # Not in the project store...
-    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid) is None
+    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid, namespace=DEFAULT_NAMESPACE) is None
     # ...and the user store exists + holds it.
     assert _user_db_exists()
     from trw_mcp.state._user_tier import get_user_backend
 
-    assert get_user_backend().get(lid) is not None
+    assert get_user_backend().get(lid, namespace=USER_NAMESPACE) is not None
 
 
 def test_scope_project_overrides_portable(tmp_path: Path) -> None:
@@ -96,7 +98,7 @@ def test_scope_project_overrides_portable(tmp_path: Path) -> None:
         scope="project",
     )
     lid = res["learning_id"]
-    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid) is not None
+    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid, namespace=DEFAULT_NAMESPACE) is not None
 
 
 def test_scope_auto_portable_routes_user(tmp_path: Path) -> None:
@@ -108,10 +110,10 @@ def test_scope_auto_portable_routes_user(tmp_path: Path) -> None:
         source_type="human",
     )
     lid = res["learning_id"]
-    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid) is None
+    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid, namespace=DEFAULT_NAMESPACE) is None
     from trw_mcp.state._user_tier import get_user_backend
 
-    assert get_user_backend().get(lid) is not None
+    assert get_user_backend().get(lid, namespace=USER_NAMESPACE) is not None
 
 
 def test_scope_auto_project_stays_project(tmp_path: Path) -> None:
@@ -121,7 +123,7 @@ def test_scope_auto_project_stays_project(tmp_path: Path) -> None:
         detail="repo-relative path is a project signal",
     )
     lid = res["learning_id"]
-    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid) is not None
+    assert memory_adapter.get_backend(_project_trw_dir(tmp_path)).get(lid, namespace=DEFAULT_NAMESPACE) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -145,7 +147,7 @@ def test_recall_default_includes_user_tier(tmp_path: Path) -> None:
     # The learning lives in the user store, not the project store.
     from trw_mcp.state._user_tier import get_user_backend
 
-    assert get_user_backend().get(user_lid) is not None
+    assert get_user_backend().get(user_lid, namespace=USER_NAMESPACE) is not None
     # Default recall (no include_tiers) federates it in from the user tier.
     out = _recall(query="commit frequently cadence directive", max_results=10)
     assert user_lid in _ids(out), "expected the user-tier learning to surface by default"

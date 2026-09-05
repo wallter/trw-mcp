@@ -97,19 +97,28 @@ class TestMergeTrwSectionTruncationNoMarkers:
         assert "New content" in result
         assert "Old TRW content" not in result
 
-    def test_truncation_no_intact_markers(self, tmp_path: Path) -> None:
+    def test_overflow_no_intact_markers_refuses(self, tmp_path: Path) -> None:
+        """PRD-FIX-123-FR01: the marker-less fallback no longer slices the file.
+
+        This test previously asserted the truncation scar was written. That
+        fallback was measured destroying 170 of 200 user lines AND dropping the
+        TRW section it was writing, so the assertion is inverted.
+        """
         from trw_mcp.state.claude_md import merge_trw_section
 
         target = tmp_path / "CLAUDE.md"
-        # Large content without TRW markers — should use simple truncation
         big_content = "\n".join(f"Line {i}" for i in range(100))
-        # Write a section without any TRW markers to trigger simple truncation
         short_section = "\nNo markers here at all\n"
         target.write_text(big_content, encoding="utf-8")
+        before = target.read_bytes()
 
-        merge_trw_section(target, short_section, max_lines=10)
-        result = target.read_text(encoding="utf-8")
-        assert "trw: truncated to line limit" in result
+        verdict = merge_trw_section(target, short_section, max_lines=10, project_root=tmp_path)
+
+        assert verdict.written is False
+        assert verdict.refusal is not None
+        assert verdict.refusal["reason"] == "oversized"
+        assert target.read_bytes() == before
+        assert "truncated to line limit" not in target.read_text(encoding="utf-8")
 
     def test_no_existing_file_creates_new(self, tmp_path: Path) -> None:
         from trw_mcp.state.claude_md import (

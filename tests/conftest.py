@@ -20,6 +20,7 @@ To classify a new test file:
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -30,6 +31,56 @@ import structlog
 from fastmcp import FastMCP
 
 pytest_plugins = ("tests._ceremony_helpers_support",)
+
+
+# --------------------------------------------------------------------------
+# xdist fan-out cap (2026-09-05 OOM incident)
+# --------------------------------------------------------------------------
+# A 2026-09-05 kernel OOM (191 pytest workers, ~109GB RSS) traced to delegated
+# agents running `pytest -n auto` directly in several packages at once,
+# bypassing the Makefile's `PYTEST_WORKERS ?= 4` default (which only guards
+# `make test-parallel`/`make test-release`, not a raw `pytest` invocation).
+# This guard is duplicated verbatim in every package conftest of the
+# monorepo it is developed in — no shared test-support module exists across
+# these independently-distributed packages (trw-mcp and trw-memory ship to
+# PyPI; a new cross-package test dependency is not worth it for 15 lines).
+_MAX_XDIST_WORKERS = 4
+_ALLOW_WIDE_XDIST_ENV = "TRW_PYTEST_ALLOW_WIDE_XDIST"
+
+
+def _xdist_fanout_violation(numprocesses: object, allow_wide: bool) -> str | None:
+    """Return a violation reason if ``numprocesses`` exceeds the workstation
+    cap, else ``None``.
+
+    ``numprocesses`` is ``config.option.numprocesses`` as pytest-xdist sets
+    it: ``None`` when ``-n`` was not passed, the literal string ``"auto"`` or
+    ``"logical"`` when the caller asked xdist to size itself off the CPU core
+    count, or an ``int``/int-like value from an explicit ``-n N``.
+    """
+    if allow_wide or numprocesses is None:
+        return None
+    if isinstance(numprocesses, str):
+        return f"xdist fan-out -n {numprocesses!r} is uncapped"
+    if not isinstance(numprocesses, int):
+        return None
+    worker_count = numprocesses
+    if worker_count > _MAX_XDIST_WORKERS:
+        return f"xdist fan-out -n {worker_count} exceeds the cap of {_MAX_XDIST_WORKERS}"
+    return None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse a wide xdist fan-out before it OOMs the workstation again."""
+    allow_wide = os.environ.get(_ALLOW_WIDE_XDIST_ENV) == "1"
+    violation = _xdist_fanout_violation(getattr(config.option, "numprocesses", None), allow_wide)
+    if violation is not None:
+        pytest.exit(
+            f"{violation}. xdist fan-out capped at 4 workers on this "
+            "workstation (2026-09-05 OOM); use -n 4 or set "
+            "TRW_PYTEST_ALLOW_WIDE_XDIST=1",
+            returncode=3,
+        )
+
 
 # Prefer monorepo sources over stale site-packages when tests run from the checkout.
 _TESTS_DIR = Path(__file__).resolve().parent
@@ -111,16 +162,21 @@ def get_prompts_sync(server: FastMCP) -> dict[str, Any]:
 # Registry mapping short group name -> (module_path, function_name).
 # Imports are deferred so conftest doesn't eagerly pull in all tool modules.
 _TOOL_GROUPS: dict[str, tuple[str, str]] = {
+    "before_edit_hint": ("trw_mcp.tools.before_edit_hint", "register_before_edit_hint_tools"),
+    "before_edit_hint_batch": ("trw_mcp.tools.before_edit_hint_batch", "register_before_edit_hint_batch_tools"),
     "build": ("trw_mcp.tools.build", "register_build_tools"),
     "ceremony": ("trw_mcp.tools.ceremony", "register_ceremony_tools"),
     "ceremony_feedback": ("trw_mcp.tools.ceremony_feedback", "register_ceremony_feedback_tools"),
     "checkpoint": ("trw_mcp.tools.checkpoint", "register_checkpoint_tools"),
+    "code_search": ("trw_mcp.tools.code_search", "register_code_search_tools"),
+    "codebase_risk_report": ("trw_mcp.tools.codebase_risk_report", "register_codebase_risk_report_tools"),
     "knowledge": ("trw_mcp.tools.knowledge", "register_knowledge_tools"),
     "learning": ("trw_mcp.tools.learning", "register_learning_tools"),
     "meta_tune": ("trw_mcp.tools.meta_tune_ops", "register_meta_tune_tools"),
     "orchestration": ("trw_mcp.tools.orchestration", "register_orchestration_tools"),
     "phase_overrides": ("trw_mcp.tools.phase_overrides", "register_phase_override_tools"),
     "pipeline_health": ("trw_mcp.tools._pipeline_health_tool", "register_pipeline_health_tools"),
+    "profile_explain": ("trw_mcp.tools.trw_profile_explain", "register_trw_profile_explain_tools"),
     "requirements": ("trw_mcp.tools.requirements", "register_requirements_tools"),
     "review": ("trw_mcp.tools.review", "register_review_tools"),
     "skill_discovery": ("trw_mcp.tools.skill_discovery", "register_skill_discovery_tools"),
@@ -209,7 +265,6 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_middleware_response_optimizer.py",
         "test_prompts_messaging.py",
         "test_telemetry_embeddings.py",
-        "test_telemetry_remote_recall.py",
         "test_validation_v2.py",
         "test_prd_utils_edge.py",
         "test_fix055_traceability_lang.py",
@@ -281,6 +336,15 @@ _SLOW_FILES: frozenset[str] = frozenset(
         "test_bootstrap_version_utils.py",
         # PRD-CORE-146-NFR01: 1000-iteration latency benchmark (~1-3s)
         "test_nudge_performance.py",
+        # PRD-FIX-130-FR04: 2000-row fixture stores + a bounded background join
+        "test_session_start_step_latency.py",
+        # PRD-CORE-262-FR01/NFR01: spawns up to 12 real trw-mcp subprocesses per
+        # arm and grows a 64 MiB WAL. ``slow`` is ADDITIVE to the default
+        # integration marker, so this file collects ZERO items under -m unit and
+        # ``make test-fast`` never pays for it.
+        "test_stdio_n_server_handshake.py",
+        # PRD-CORE-262-FR05: runs full init-project flows into tmp projects.
+        "test_init_scaffold_containment.py",
     }
 )
 
@@ -373,6 +437,25 @@ def _isolate_trw_user_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     # Also clear XDG_DATA_HOME so platform-default path resolution does not
     # slip through on Linux when TRW_USER_DIR is absent from getenv().
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_home_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Redirect ``$HOME`` (and therefore ``Path.home()``) to an isolated directory.
+
+    PRD-FIX-133: Antigravity CLI's MCP config lives at a GLOBAL,
+    cross-project path (``~/.gemini/config/mcp_config.json``) rather than
+    inside the project tree — the same shape ``_isolate_trw_user_dir`` above
+    already guards for ``~/.trw/``. Any bootstrap test that exercises the full
+    ``init-project``/``update-project`` flow with ``antigravity-cli`` selected
+    calls a writer that resolves ``Path.home()``; without this floor that
+    writer would target the developer's REAL home directory during a test run.
+
+    Function-scoped so no test's write to the fake global config leaks into a
+    later test's read of it.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path / ".home"))
     yield
 
 

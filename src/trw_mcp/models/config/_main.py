@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from typing import Literal
 
     from trw_mcp.models.config._fields_ceremony import NudgeMessengerLiteral
-    from trw_mcp.models.config._surface_config import SurfaceConfig
 
 _SubT = TypeVar("_SubT")
 
@@ -82,7 +81,8 @@ class TRWConfig(_TRWConfigFields):
         nudge_density: Literal["low", "medium", "high"] | None = None
         pricing_table_path: str = ""
         session_start_defer_under_writer_pressure: bool = True
-        session_start_writer_pressure_threshold: int = 2
+        session_start_writer_pressure_threshold: int = 8
+        session_start_max_deferral_hours: int = 6
 
     # -- Meta-Tune Safety (PRD-HPO-SAFE-001 FR-7) --
     # Nested sub-config (not projected from flat fields) because the meta-
@@ -197,40 +197,15 @@ class TRWConfig(_TRWConfigFields):
         """Tool exposure and MCP server instruction sub-config."""
         return self._sub_config(ToolsConfig)
 
-    @cached_property
-    def surfaces(self) -> SurfaceConfig:
-        """Unified surface configuration resolved from profile + flat fields.
-
-        PRD-CORE-125 Phase 3 (FR13): Single frozen model for all surface
-        control flags, eliminating scattered getattr calls at gate sites.
-        """
-        from trw_mcp.models.config._surface_config import (
-            NudgeConfig,
-            RecallConfig,
-            SurfaceConfig,
-        )
-
-        return SurfaceConfig(
-            nudge=NudgeConfig(
-                enabled=self.effective_nudge_enabled,
-                urgency_mode=self.nudge_urgency_mode,
-                budget_chars=self.nudge_budget_chars,
-                dedup_enabled=self.nudge_dedup_enabled,
-            ),
-            recall=RecallConfig(
-                enabled=self.effective_learning_recall_enabled,
-                max_results=self.recall_max_results,
-                session_start_recall=self.session_start_recall_enabled
-                if self.session_start_recall_enabled is not None
-                else True,
-            ),
-            mcp_instructions_enabled=self.effective_mcp_instructions_enabled,
-            hooks_enabled=self.effective_hooks_enabled,
-            skills_enabled=self.effective_skills_enabled,
-            agents_enabled=self.effective_agents_enabled,
-            framework_ref_enabled=self.effective_framework_ref_enabled,
-            tool_descriptions_variant=self.tool_descriptions_variant,
-        )
+    # There is no ``surfaces`` projection. PRD-CORE-125 FR13 added one -- a frozen
+    # ``SurfaceConfig`` "eliminating scattered getattr calls at gate sites" -- and
+    # no gate site ever read it. Its single consumer was
+    # ``state/surface_resolver.py::resolve_surface``, itself scaffolding for a
+    # PRD-CORE-126 migration that stayed a draft, so the projection was the only
+    # path out of this model for ``nudge_urgency_mode``/``nudge_dedup_enabled``
+    # and made two dead knobs look plumbed. Removed in 2.0.0 with both, and with
+    # the resolver (WD-02). The ``effective_*`` properties below are the live
+    # profile-aware resolution; they are read directly at their gate sites.
 
     @property
     def effective_ceremony_mode(self) -> str:
@@ -308,54 +283,11 @@ class TRWConfig(_TRWConfigFields):
         return None
 
     @property
-    def effective_hooks_enabled(self) -> bool:
-        """Profile-aware hook gate. Explicit config=False wins."""
-        if self.hooks_enabled is not None:
-            return self.hooks_enabled
-        return self.client_profile.hooks_enabled
-
-    @property
     def effective_skills_enabled(self) -> bool:
         """Profile-aware skill loading. Explicit config=False wins."""
         if self.skills_enabled is not None:
             return self.skills_enabled
         return self.client_profile.skills_enabled
-
-    @property
-    def effective_learning_recall_enabled(self) -> bool:
-        """Profile-aware recall gate. Explicit config=False wins."""
-        if self.learning_recall_enabled is not None:
-            return self.learning_recall_enabled
-        return self.client_profile.learning_recall_enabled
-
-    @property
-    def effective_mcp_instructions_enabled(self) -> bool:
-        """Profile-aware MCP instructions gate. Explicit config=False wins."""
-        if self.mcp_server_instructions_enabled is not None:
-            return self.mcp_server_instructions_enabled
-        return self.client_profile.mcp_instructions_enabled
-
-    @property
-    def effective_agents_enabled(self) -> bool:
-        """Profile-aware agent definitions gate.
-
-        No profile field yet for agents; default is enabled.
-        Explicit ``agents_enabled=False`` in config disables agent loading.
-        """
-        if self.agents_enabled is not None:
-            return self.agents_enabled
-        return True  # No profile field yet; default enabled
-
-    @property
-    def effective_framework_ref_enabled(self) -> bool:
-        """Profile-aware framework reference gate.
-
-        Delegates to ``client_profile.include_framework_ref`` when the
-        config sentinel (None) is present.
-        """
-        if self.framework_md_enabled is not None:
-            return self.framework_md_enabled
-        return self.client_profile.include_framework_ref
 
     @property
     def client_profile(self) -> ClientProfile:

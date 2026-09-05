@@ -126,6 +126,26 @@ class TestRenderCodexInstructions:
         assert "optional and trust-gated" in result.lower()
         assert "AGENTS.md" in result
 
+    def test_codex_instructions_carry_delegation_protocol(self) -> None:
+        """PRD-CORE-252 OQ-3 (resolved 2026-09-04): codex's rendered
+        `.codex/INSTRUCTIONS.md` carries the delegation protocol block, since
+        its measured carrier stack (largest agent + AGENTS.md + config.toml)
+        fits comfortably within its 32K budget. Red if `include_delegation`
+        is ever reverted to False for codex, or if the wiring into
+        ``render_codex_instructions`` regresses.
+        """
+        result = render_codex_instructions()
+
+        assert "## TRW Delegation & Orchestration (Auto-Generated)" in result
+        assert "focused helpers only when the active harness supports them" in result
+
+    def test_opencode_instructions_omit_delegation_protocol(self) -> None:
+        """opencode shares `_light_profile(...)` with codex but was not
+        re-measured for this change, so it must stay unaffected."""
+        result = render_opencode_instructions("generic")
+
+        assert "## TRW Delegation & Orchestration (Auto-Generated)" not in result
+
     def test_codex_agents_section_avoids_stale_guidance(self) -> None:
         """Codex AGENTS.md guidance should stay portable and fail open on hooks."""
         result = render_codex_trw_section()
@@ -262,7 +282,12 @@ class TestGenerateOpencodeInstructions:
         def mock_write(*args: object, **kwargs: object) -> None:
             raise OSError("Disk full")
 
+        # PRD-FIX-123-FR06 moved this write onto the atomic
+        # ``FileStateWriter.write_text`` path (temp file + rename), which does not
+        # go through ``Path.write_text`` — patching only the latter would leave the
+        # write succeeding and assert nothing.
         monkeypatch.setattr(Path, "write_text", mock_write)
+        monkeypatch.setattr("trw_mcp.state.persistence.FileStateWriter.write_text", mock_write)
 
         result = generate_opencode_instructions(tmp_path, "qwen")
 

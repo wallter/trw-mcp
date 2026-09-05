@@ -52,7 +52,15 @@ INTENT_HOOK_FILES = ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh")
 #: own, which is exactly why they were the blind spot: `chmod 000
 #: .claude/hooks/lib-trw.sh` was a git-invisible total disarm (probe finding N6).
 #: They belong to the enrollment digest even though they belong to no registration.
-HOOK_SUPPORT_FILES = ("lib-trw.sh",)
+#:
+#: `lib-intent-guard.sh` (PRD-CORE-250-FR05) joined the tuple with the extraction
+#: that created it, and it matters MORE than its sibling: `lib-trw.sh` is sourced
+#: only inside a detached subshell, while this one is sourced into the deciding
+#: shell and defines the recognition and decision routines. It is therefore
+#: inside the hooks' trusted computing base — the same trust the hook body has —
+#: and a content or mode change to it must read as `stale` for the same reason a
+#: change to the hook itself does.
+HOOK_SUPPORT_FILES = ("lib-trw.sh", "lib-intent-guard.sh")
 
 #: Evidence files whose CONTENT is control-plane: the override ledger, its
 #: anchoring checkpoint, and the approval records. The checkpoint shares a trust

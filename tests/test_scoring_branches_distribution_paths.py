@@ -104,12 +104,12 @@ class TestEnforceTierDistributionWithDates:
 
 
 class TestDoubleDecayFix:
-    """Verify that _entry_utility no longer double-decays entries."""
+    """Verify that entry_utility no longer double-decays entries."""
 
     @pytest.mark.unit
     def test_30_day_old_entry_no_double_decay(self) -> None:
-        """_entry_utility must not apply apply_time_decay before compute_utility_score."""
-        from trw_mcp.scoring import _entry_utility, apply_time_decay, compute_utility_score
+        """entry_utility must not apply apply_time_decay before compute_utility_score."""
+        from trw_mcp.scoring import apply_time_decay, compute_utility_score, entry_utility
 
         created_dt = datetime.now(timezone.utc) - timedelta(days=30)
         created_iso = created_dt.isoformat()
@@ -123,7 +123,7 @@ class TestDoubleDecayFix:
             "created": created_iso,
             "last_accessed": created_iso,
         }
-        actual_score = _entry_utility(entry, today=datetime.now(tz=timezone.utc).date())
+        actual_score = entry_utility(entry, today=datetime.now(tz=timezone.utc).date())
 
         decayed_impact = apply_time_decay(0.8, created_dt)
         decayed_q = apply_time_decay(0.8, created_dt)

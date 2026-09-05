@@ -1,4 +1,4 @@
-"""Crash-safe delivery operation config fields — PRD-CORE-208."""
+"""Delivery-path config fields — PRD-CORE-208 crash safety, PRD-CORE-255 sign-offs."""
 
 from __future__ import annotations
 
@@ -25,4 +25,17 @@ class _DeliveryFields:
     )
     delivery_busy_timeout_ms: int = Field(
         default=5000, ge=100, le=60000, description="SQLite busy timeout for the delivery operation store."
+    )
+    #: PRD-CORE-255-FR04 (2026-09-04 Amendment 2): the MAXIMUM validity window an
+    #: operator may grant a review sign-off in
+    #: ``<trw_dir>/approvals/review-signoffs.jsonl``, which is what the
+    #: safety-critical adversarial gate resolves an operator receipt id against.
+    #: 24h matches review_verdict_ttl_hours so an approval cannot outlive the
+    #: verdict it authorizes. Applied twice — the default TTL at mint time AND a
+    #: cap at verification — so a hand-written longer window is refused
+    #: (operator_approval_ttl_exceeded) rather than honored. Bounded ge=1/le=720:
+    #: 0 would expire every approval instantly and wedge the operator path, and
+    #: 30 days is the longest sign-off that can still describe today's code.
+    review_signoff_ttl_hours: int = Field(
+        default=24, ge=1, le=720, description="Max validity window of an operator review sign-off, in hours."
     )

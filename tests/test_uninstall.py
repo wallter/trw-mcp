@@ -1106,6 +1106,12 @@ _PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER: tuple[tuple[str, str], ...] = (
         "PRD-CORE-239 stopped writing the copilot C2 path-instructions stub; "
         "the surface is retained to clean up installs that predate it",
     ),
+    (
+        ".antigravitycli/agents",
+        "PRD-CORE-252 moved antigravity's subagents to `.agents/agents`, the "
+        "directory that client's own reference documents; the surface is "
+        "retained to clean up installs that predate the move",
+    ),
 )
 
 
@@ -1133,7 +1139,19 @@ class TestInstallUninstallParity:
         assert not result["errors"], result["errors"]
         install_git_post_commit_hook(tmp_path)
 
-        surfaces = [s.relpath for s in uninstall_surfaces()]
+        home = Path.home().resolve()
+        surfaces: list[str] = []
+        for s in uninstall_surfaces():
+            if not s.home_scoped:
+                surfaces.append(s.relpath)
+                continue
+            # A home-scoped surface only counts when the sandboxed HOME sits inside
+            # tmp_path (the autouse fixture guarantees it); rebase it so the rglob
+            # below can match the install-time write.
+            try:
+                surfaces.append((home / s.relpath).relative_to(tmp_path.resolve()).as_posix())
+            except ValueError:
+                continue
         exempt = tuple(prefix for prefix, _reason in _UNINSTALL_EXEMPT_PREFIXES)
 
         def covered(rel: str) -> bool:

@@ -67,10 +67,19 @@ _TRW_CEREMONY_INSTRUCTIONS_FILENAME = "trw-ceremony.instructions.md"
 
 
 def _trw_ceremony_instruction_template() -> PathScopedTemplate:
-    """Build the always-applied TRW protocol rule for Copilot."""
+    """Build the always-applied TRW protocol rule for Copilot.
+
+    PRD-CORE-252 OQ-3 wiring-defect fix (2026-09-04): gate the delegation
+    block on copilot's OWN profile, not whichever client is ambiently
+    active — this file is always copilot's.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
     from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
-    return {"applyTo": "**", "content": render_agents_trw_section()}
+    return {
+        "applyTo": "**",
+        "content": render_agents_trw_section(client_profile=resolve_client_profile("copilot")),
+    }
 
 
 _PATH_SCOPED_TEMPLATES: dict[str, PathScopedTemplate] = {
@@ -151,127 +160,6 @@ def generate_copilot_path_instructions(
         existed = path.exists()
         if existed and not force and artifact_user_edited(path, rel_path, incoming, manifest_hashes):
             logger.info("copilot_path_instruction_user_modified", path=rel_path)
-            result["preserved"].append(rel_path)
-            continue
-
-        try:
-            path.write_bytes(incoming)
-            _record_write(result, rel_path, existed=existed)
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {path}: {exc}")
-
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Agents generation — .agent.md format
-# ---------------------------------------------------------------------------
-
-_COPILOT_AGENT_TEMPLATES: dict[str, str] = {
-    "trw-explorer.agent.md": """---
-name: trw-explorer
-description: "Read-only codebase explorer for gathering evidence before edits."
-tools:
-  - read
-  - glob
-  - grep
-  - web
-mcp-servers:
-  - trw
----
-
-Stay in exploration mode.
-Trace the real execution path, cite files and symbols, and avoid proposing fixes unless asked.
-Prefer fast search and targeted reads over broad scans.
-
-Use `trw_recall(query)` to check if the topic has been investigated before.
-""",
-    "trw-implementer.agent.md": """---
-name: trw-implementer
-description: "Implementation-focused agent for bounded code changes."
-tools:
-  - read
-  - edit
-  - execute
-  - glob
-  - grep
-mcp-servers:
-  - trw
----
-
-Own the requested fix or feature slice.
-Make the smallest defensible change, keep unrelated files untouched, and validate the behavior you changed.
-
-Use `trw_checkpoint(message)` after each working milestone.
-Run tests after each change — fix failures before moving on.
-""",
-    "trw-reviewer.agent.md": """---
-name: trw-reviewer
-description: "Read-only reviewer focused on correctness, regressions, security, and missing tests."
-tools:
-  - read
-  - glob
-  - grep
-  - web
-mcp-servers:
-  - trw
----
-
-Review like an owner.
-Lead with concrete findings, prioritize correctness and missing tests, and avoid style-only feedback unless it hides a real defect.
-
-Use `trw_learn(summary, detail)` to record any patterns or gotchas discovered.
-""",
-    "trw-docs-researcher.agent.md": """---
-name: trw-docs-researcher
-description: "Documentation specialist that researches APIs and runtime behavior."
-tools:
-  - read
-  - glob
-  - grep
-  - web
-mcp-servers:
-  - trw
----
-
-Use web search and configured MCP servers to confirm APIs, options, and version-specific behavior.
-Return concise answers with links or exact references when available.
-Do not make code changes.
-""",
-}
-
-
-def copilot_agent_contents() -> dict[str, bytes]:
-    """Bundled ``.github/agents/*`` content, keyed by repo-relative path."""
-    return {
-        f"{_COPILOT_AGENTS_DIR}/{filename}": content.encode("utf-8")
-        for filename, content in _COPILOT_AGENT_TEMPLATES.items()
-    }
-
-
-def generate_copilot_agents(
-    target_dir: Path,
-    *,
-    force: bool = False,
-    manifest_hashes: dict[str, str] | None = None,
-) -> dict[str, list[str]]:
-    """Generate ``.github/agents/*.agent.md``.
-
-    Content-aware: unmodified agents are refreshed when the bundled template
-    changes; user-edited ones are preserved.
-    """
-    from ._managed_client_artifacts import artifact_user_edited
-
-    result = _new_result()
-    agents_dir = target_dir / _COPILOT_AGENTS_DIR
-    agents_dir.mkdir(parents=True, exist_ok=True)
-
-    for rel_path, incoming in copilot_agent_contents().items():
-        path = target_dir / rel_path
-        existed = path.exists()
-
-        if existed and not force and artifact_user_edited(path, rel_path, incoming, manifest_hashes):
-            logger.info("copilot_agent_user_modified", path=rel_path)
             result["preserved"].append(rel_path)
             continue
 

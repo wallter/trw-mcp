@@ -15,7 +15,7 @@ import re
 import shlex
 import shutil
 import stat
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -48,54 +48,6 @@ def _record_write(result: dict[str, list[str]], rel_path: str, *, existed: bool)
         result.setdefault("updated", []).append(rel_path)
     else:
         result.setdefault("created", []).append(rel_path)
-
-
-def agent_template_contents(agents_dir: str, templates: Mapping[str, str]) -> dict[str, bytes]:
-    """Render a client's agent templates as ``{repo-relative path: bytes}``.
-
-    Single source of truth shared by :func:`write_agent_templates` and the
-    managed-artifact manifest sweep, so the guard and the baseline recorder can
-    never key on different paths.
-    """
-    return {f"{agents_dir}/{filename}": content.encode("utf-8") for filename, content in templates.items()}
-
-
-def write_agent_templates(
-    target_dir: Path,
-    *,
-    agents_dir: str,
-    templates: Mapping[str, str],
-    force: bool,
-    manifest_hashes: dict[str, str] | None = None,
-) -> dict[str, list[str]]:
-    """Write one client's managed agent templates without touching user files.
-
-    Content-aware (CONSTITUTION HB-2): an on-disk agent that matches the bundled
-    template or TRW's recorded last write is refreshed; one that diverges from
-    both is a user edit and is preserved. The previous ``existed and not force``
-    short-circuit preserved user edits but also froze TRW-owned agents at their
-    first-installed content, so upstream fixes never reached an installed
-    project.
-    """
-    from ._managed_client_artifacts import artifact_user_edited
-
-    result = _new_result()
-    target_agents_dir = target_dir / agents_dir
-    target_agents_dir.mkdir(parents=True, exist_ok=True)
-
-    for rel_path, incoming in agent_template_contents(agents_dir, templates).items():
-        path = target_dir / rel_path
-        existed = path.exists()
-        if existed and not force and artifact_user_edited(path, rel_path, incoming, manifest_hashes):
-            logger.info("client_agent_user_modified", path=rel_path)
-            result["preserved"].append(rel_path)
-            continue
-        try:
-            path.write_bytes(incoming)
-            _record_write(result, rel_path, existed=existed)
-        except OSError as exc:
-            result["errors"].append(f"Failed to write {path}: {exc}")
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -501,27 +453,59 @@ def write_instruction_file_with_merge(
 
     Failures are appended to ``result["errors"]`` and the function returns
     normally — the caller decides whether to escalate.
+
+    **The write goes through the PRD-FIX-123 guard** (PRD-CORE-247). This helper
+    is the Copilot and Antigravity writer, and it targets
+    ``.github/copilot-instructions.md`` and ``ANTIGRAVITY.md`` — files a USER
+    owns and may have written by hand. It was a bare, non-atomic
+    ``Path.write_text`` outside the one seam where the data-loss invariant is
+    expressed, which made the guard's totality claim false for exactly the two
+    shared-namespace artifacts most likely to hold hand-written content. Routing
+    it through :func:`guarded_instruction_write` gives it the backup, the
+    non-generated-shrink floor, the atomic write, and the provenance record every
+    other instruction writer already had.
+
+    A refusal is reported through ``result["errors"]`` rather than raised, which
+    matches this helper's existing contract: the caller decides whether a refused
+    instruction write is fatal.
     """
+    from trw_mcp.state.claude_md._write_guard import guarded_instruction_write
+
     existed = target_path.exists()
     try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
         if existed and not force:
             existing = target_path.read_text(encoding="utf-8")
-            merged = smart_merge_marker_section(
+            candidate = smart_merge_marker_section(
                 existing,
                 trw_section,
                 start_marker=start_marker,
                 end_marker=end_marker,
             )
-            if merged == existing:
+            if candidate == existing:
                 result.setdefault("preserved", []).append(rel_path)
                 return
-            target_path.write_text(merged, encoding="utf-8")
         else:
-            target_path.write_text(trw_section, encoding="utf-8")
-        _record_write(result, rel_path, existed=existed)
+            candidate = trw_section
     except OSError as exc:
         result.setdefault("errors", []).append(f"Failed to write {target_path}: {exc}")
+        return
+
+    verdict = guarded_instruction_write(
+        target_path,
+        candidate,
+        markers=(start_marker, end_marker),
+        # ``force`` here means "the caller asked for a full overwrite of a
+        # TRW-managed region", which is exactly the guard's own force semantics:
+        # bypass the shrink floors, keep the backup and the provenance record.
+        force=force,
+    )
+    if not verdict.written:
+        refusal = verdict.refusal
+        reason = refusal["reason"] if refusal is not None else "unknown"
+        detail = refusal["detail"] if refusal is not None else "no detail"
+        result.setdefault("errors", []).append(f"Refused to write {target_path}: {reason} ({detail})")
+        return
+    _record_write(result, rel_path, existed=existed)
 
 
 def replace_marker_region(

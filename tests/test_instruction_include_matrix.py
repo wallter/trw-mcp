@@ -395,26 +395,47 @@ class TestClaudeMdWrittenOnlyWhereRead:
     opposite decisions.
     """
 
-    def _install(self, root: Path, client: str) -> str:
+    def _install(self, root: Path, client: str) -> str | None:
         import subprocess
 
         from trw_mcp.bootstrap import init_project
 
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         init_project(root, ide=client)
-        return (root / "CLAUDE.md").read_text(encoding="utf-8")
+        claude_md = root / "CLAUDE.md"
+        return claude_md.read_text(encoding="utf-8") if claude_md.is_file() else None
 
     @pytest.mark.parametrize("client", ["codex", "copilot", "cursor-cli", "opencode", "antigravity-cli"])
     def test_unclaimed_client_gets_no_trw_block(self, tmp_path: Path, client: str) -> None:
+        """PRD-CORE-262-FR05: a codex-only install gets no CLAUDE.md at all.
+
+        None of the other four unclaimed clients here changed -- they still
+        receive the import-free scaffold shell this class exists to verify.
+        Only codex-only drops the file entirely, so "no TRW block" holds
+        trivially (there is no file for one to appear in).
+        """
         text = self._install(tmp_path, client)
 
+        if client == "codex":
+            assert text is None, "codex-only must get no root CLAUDE.md (FR05)"
+            return
+
+        assert text is not None, f"{client} must still receive the scaffolded CLAUDE.md shell"
         assert TRW_MARKER_START not in text
         assert "trw_session_start" not in text
 
     def test_the_scaffold_itself_survives(self, tmp_path: Path) -> None:
-        """Skipping the block must not stop CLAUDE.md being scaffolded."""
-        text = self._install(tmp_path, "codex")
+        """Skipping the block must not stop CLAUDE.md being scaffolded.
 
+        Uses copilot, not codex: PRD-CORE-262-FR05 made codex-only the ONE
+        selection that gets no CLAUDE.md at all (see
+        ``test_unclaimed_client_gets_no_trw_block``), so it can no longer
+        stand in for "an unclaimed client whose file still scaffolds."
+        copilot is unclaimed the same way and is unaffected by FR05.
+        """
+        text = self._install(tmp_path, "copilot")
+
+        assert text is not None
         assert "# Project Instructions" in text
 
     def test_claude_code_still_gets_the_import(self, tmp_path: Path) -> None:
@@ -531,15 +552,23 @@ class TestTheDecisionSurvivesReinstall:
         assert data["target_platforms"] == ["codex"]
 
     def test_recorded_targets_beat_detection(self, tmp_path: Path) -> None:
-        """The whole point: our own install artifacts must not outvote the record."""
+        """The whole point: our own install artifacts must not outvote the record.
+
+        Uses opencode, not codex: PRD-CORE-262-FR05 made codex-only the one
+        selection that no longer scaffolds `.claude/`, so a codex-only install
+        can no longer manufacture the false-positive claude-code detection
+        this test needs to prove the record wins over it. opencode is
+        unaffected by FR05 and still gets the full `.claude/` scaffold, so the
+        same false-positive-detection setup still applies.
+        """
         from trw_mcp.bootstrap._template_claude_md import _recorded_or_detected_targets
         from trw_mcp.bootstrap._utils import detect_ide
 
-        self._init(tmp_path, "codex")
+        self._init(tmp_path, "opencode")
 
         # Detection sees claude-code because installing created `.claude/`.
         assert "claude-code" in detect_ide(tmp_path)
-        assert _recorded_or_detected_targets(tmp_path) == ["codex"]
+        assert _recorded_or_detected_targets(tmp_path) == ["opencode"]
 
     def test_detection_is_the_fallback_when_nothing_was_recorded(self, tmp_path: Path) -> None:
         """Projects predating the record still resolve, just less reliably."""
@@ -609,7 +638,13 @@ class TestReviewerFoundReinjection:
 
     @pytest.mark.parametrize("client", ["codex", "opencode", "cursor-cli"])
     def test_instructions_sync_defaults_do_not_reinject(self, tmp_path: Path, client: str) -> None:
-        """`trw_instructions_sync()` client="auto" is what the protocol tells agents to call."""
+        """`trw_instructions_sync()` client="auto" is what the protocol tells agents to call.
+
+        PRD-CORE-262-FR05: a codex-only ``init_project`` no longer scaffolds a
+        root CLAUDE.md at all, so there is nothing for the sync to reinject
+        into -- and the sync call must not fabricate one either, since codex
+        reads `.codex/INSTRUCTIONS.md`, not CLAUDE.md.
+        """
         import os
 
         from trw_mcp.models.config import _reset_config, get_config
@@ -626,7 +661,12 @@ class TestReviewerFoundReinjection:
             os.chdir(cwd)
             _reset_config()
 
-        assert TRW_MARKER_START not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        claude_md = tmp_path / "CLAUDE.md"
+        if client == "codex":
+            assert not claude_md.exists(), "codex-only must get no root CLAUDE.md, sync must not fabricate one (FR05)"
+            return
+
+        assert TRW_MARKER_START not in claude_md.read_text(encoding="utf-8")
 
     def test_a_second_well_formed_block_is_reported_not_silently_frozen(self, tmp_path: Path) -> None:
         """merge_trw_section binds the FIRST pair; the rest go stale without a word.

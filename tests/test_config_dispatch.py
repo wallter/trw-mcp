@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
 from trw_mcp.models.config import DispatchConfig, TRWConfig, get_config, reload_config
 
 
@@ -20,8 +21,20 @@ def test_default_dispatch_config_has_documented_defaults() -> None:
     cfg = TRWConfig().dispatch
     assert isinstance(cfg, DispatchConfig)
     # Default derives from SUPPORTED_CLIENTS (the single source) — order follows
-    # the DispatchClient Literal, not the prior hand-written list.
-    assert cfg.dispatch_enabled_clients == ["claude", "codex", "agy", "opencode"]
+    # the client-spec registry, not a hand-written list. PRD-CORE-266 grew that
+    # registry from four entries to seven; the assertion is stated against the
+    # live derivation AND against the literal roster, so a silently shrunk
+    # registry fails here rather than quietly narrowing the operator's targets.
+    assert cfg.dispatch_enabled_clients == list(SUPPORTED_CLIENTS)
+    assert cfg.dispatch_enabled_clients == [
+        "claude",
+        "codex",
+        "agy",
+        "opencode",
+        "cursor-cli",
+        "copilot",
+        "grok",
+    ]
     assert cfg.dispatch_default_client == "codex"
     assert cfg.dispatch_default_models == {}
     assert cfg.dispatch_default_timeout_s == 600
@@ -120,3 +133,58 @@ def test_config_yaml_override_reflected_in_dispatch(_project: Path) -> None:
     assert sub.dispatch_default_timeout_s == 120
     assert sub.dispatch_enabled_clients == ["claude", "codex"]
     assert sub.dispatch_default_models == {"codex": "gpt-5.5"}
+
+
+# --------------------------------------------------------------------------- #
+# PRD-CORE-266-NFR01: the version-probe timeout is a typed knob, not a literal
+# --------------------------------------------------------------------------- #
+
+
+def test_version_probe_timeout_knob_bounds_the_readiness_row(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """An operator-set probe timeout actually bounds the doctor's live probe.
+
+    A wiring test, not an existence test: a binary that hangs for 30 s must be
+    abandoned at the CONFIGURED bound, and the record must name that bound so the
+    row proves which value applied.
+    """
+    import stat
+    import time
+
+    from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    hung = bin_dir / "claude"
+    # /bin/sleep by absolute path: PATH is pinned to the fixture dir below, so a
+    # bare `sleep` would exit 127 and this would pass for the wrong reason.
+    hung.write_text("#!/bin/sh\nexec /bin/sleep 30\n", encoding="utf-8")
+    hung.chmod(hung.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    config = TRWConfig(
+        trw_dir=str(tmp_path / ".trw"),
+        dispatch_enabled_clients=["claude"],
+        dispatch_version_probe_timeout_s=1,
+    )
+    started = time.monotonic()
+    _status, _message, rows = formation_readiness_report(config)
+    elapsed = time.monotonic() - started
+
+    assert rows[0]["verdict"] == "not_measured"
+    assert "1s" in str(rows[0]["reason"])
+    assert elapsed < 10, f"the configured 1 s bound did not apply ({elapsed:.1f}s)"
+
+
+def test_version_probe_timeout_is_a_bounded_documented_field() -> None:
+    """No timeout literal outside the field: the default comes from the constant."""
+    from pydantic import ValidationError
+
+    from trw_mcp.models.config._fields_dispatch import DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS
+
+    assert TRWConfig().dispatch.dispatch_version_probe_timeout_s == DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS
+    assert TRWConfig(dispatch_version_probe_timeout_s=17).dispatch.dispatch_version_probe_timeout_s == 17
+    field = TRWConfig.model_fields["dispatch_version_probe_timeout_s"]
+    assert field.description
+    for bad in (0, 600):
+        with pytest.raises(ValidationError):
+            TRWConfig(dispatch_version_probe_timeout_s=bad)

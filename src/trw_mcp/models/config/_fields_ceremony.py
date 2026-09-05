@@ -1,4 +1,14 @@
-"""Ceremony, compliance, documentation generation, and enforcement fields."""
+"""Ceremony, compliance, documentation generation, and enforcement fields.
+
+PRD-CORE-250-FR10's degenerate-result advisory tunables and the nudge-engine
+tunables (pool routing, urgency, budget, cooldowns) were split out to
+``_fields_degenerate_result.py`` and ``_fields_nudge.py`` respectively when
+this file reached the 200-raw-line domain-mixin ceiling
+(``tests/test_config_fields.py::test_domain_mixin_files_under_200_lines``).
+``NudgeMessengerLiteral`` stays declared here -- imported by ``_main.py``'s
+TYPE_CHECKING re-declaration, ``tests/test_nudge_messengers.py``, and
+``_fields_nudge.py`` -- rather than moved, so those import paths are unchanged.
+"""
 
 from __future__ import annotations
 
@@ -130,6 +140,7 @@ class _CeremonyFields:
     atdd_enabled: bool = True
     test_skeleton_dir: str = ""
     completion_hooks_blocking: bool = False
+
     self_review_blocking: bool = False
     enforcement_variant: str = "baseline"
     incremental_validation_enabled: bool = True
@@ -158,38 +169,6 @@ class _CeremonyFields:
     max_audit_cycles: int = Field(default=3, ge=1, le=10, description="Maximum audit cycles before escalation")
     audit_pattern_promotion_threshold: int = Field(
         default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
-    )
-
-    nudge_enabled: bool | None = None
-    nudge_urgency_mode: Literal["adaptive", "always_low", "always_high", "off"] = "adaptive"
-    nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
-    nudge_dedup_enabled: bool = True
-    nudge_messenger: NudgeMessengerLiteral | None = None
-
-    # Live A/B arm label stamped onto nudge surface events for real-traffic
-    # comparison. Routing stays via ``nudge_messenger``; this only labels the
-    # arm (e.g. "control", "structural-v2"). None => unlabelled.
-    nudge_variant: str | None = None
-
-    nudge_density: Literal["low", "medium", "high"] | None = Field(
-        default=None,
-        description="Nudge injection density: low=less frequent, high=more frequent; None defers to profile default.",
-    )
-
-    # The four flat nudge_pool_weight_* fields were removed 2026-07-28
-    # (PRD-QUAL-131-FR05). The nudge pool is LIVE and its weights ARE read --
-    # from the client profile. 85490eb73c (2026-06-09) made
-    # ``client_profile.nudge_pool_weights`` the authority (read at
-    # tools/_ceremony_status_pool.py) and left these four behind, so setting one
-    # was not a no-op that looked like a no-op: it was a no-op that looked like a
-    # working control, and the profile silently won. The two cooldowns below are
-    # read from TRWConfig by the SAME function -- two neighbours in one config
-    # family wired, four not, which is what made this the sharpest case in the
-    # census. Five trw-eval ablation arms rode on these and were retired first.
-    nudge_pool_cooldown_after: int = Field(default=3, ge=1, le=20)
-    nudge_pool_cooldown_calls: int = Field(default=10, ge=1, le=100)
-    nudge_pool_cooldown_wall_clock_max_hours: int = Field(
-        default=24, ge=1, le=720, description="Max wall-clock hours a nudge pool stays cooled down before re-engaging."
     )
 
     hooks_enabled: bool | None = None

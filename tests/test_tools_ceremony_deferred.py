@@ -327,3 +327,133 @@ class TestDeferredAtexitJoin:
                 _ds._deferred_thread.join(timeout=10)
 
         assert len(registered) == 1, f"expected exactly one atexit registration, got {len(registered)}"
+
+
+class TestMemoryDecayStep:
+    """PRD-CORE-244 FR09 — importance decay has a production caller AND a
+    predicate that can match rows.
+
+    Both halves are load-bearing. ``memory_decay_pass`` was hardened, locked,
+    batched and tested with ZERO production callers, while its sibling
+    ``apply_importance_boost`` WAS wired — so importance could rise and
+    structurally never fell. And its predicate required ``cross_validated = 1``,
+    re-measured at 0 of 9,366 rows, so wiring it alone would have produced a step
+    that reported success while decaying nothing.
+    """
+
+    @staticmethod
+    def _store_aged(trw_dir: Path, entry_id: str, *, days_old: int, importance: float = 0.8) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from trw_memory.models.memory import MemoryEntry
+
+        from trw_mcp.state.memory_adapter import get_backend
+
+        aged = datetime.now(timezone.utc) - timedelta(days=days_old)
+        get_backend(trw_dir).store(
+            MemoryEntry(
+                id=entry_id,
+                content=f"content for {entry_id}",
+                created_at=aged,
+                updated_at=aged,
+                last_accessed_at=aged,
+                importance=importance,
+            )
+        )
+
+    @staticmethod
+    def _importance(trw_dir: Path, entry_id: str) -> float:
+        from trw_mcp.state.memory_adapter import get_backend
+
+        entry = get_backend(trw_dir).get(entry_id, namespace="default")
+        assert entry is not None
+        return float(entry.importance)
+
+    @pytest.fixture()
+    def trw_dir(self, tmp_path: Path) -> Path:
+        d = tmp_path / ".trw"
+        (d / "memory").mkdir(parents=True)
+        (d / "learnings" / "entries").mkdir(parents=True)
+        return d
+
+    def test_decay_step_runs_and_lowers_importance(self, trw_dir: Path) -> None:
+        """The step executes and the number of rows decayed is > 0."""
+        from trw_mcp.models.config import get_config
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        cfg = get_config()
+        self._store_aged(trw_dir, "L-aged", days_old=cfg.memory_decay_cutoff_days + 30)
+        before = self._importance(trw_dir, "L-aged")
+
+        result = _step_memory_decay(trw_dir)
+
+        assert result["status"] == "success"
+        assert int(result["processed"]) > 0
+        assert self._importance(trw_dir, "L-aged") < before
+
+    def test_a_recently_used_entry_is_not_decayed(self, trw_dir: Path) -> None:
+        """Decay is a function of DISUSE — the cutoff must actually discriminate."""
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        self._store_aged(trw_dir, "L-fresh", days_old=1)
+        before = self._importance(trw_dir, "L-fresh")
+
+        result = _step_memory_decay(trw_dir)
+
+        assert int(result["processed"]) == 0
+        assert self._importance(trw_dir, "L-fresh") == before
+
+    def test_predicate_no_longer_requires_cross_validated(self, trw_dir: Path) -> None:
+        """FR09 half two: an aged entry with cross_validated=0 IS decayed.
+
+        This is the test that fails against the pre-change predicate. Nothing in
+        the corpus sets cross_validated (0 of 9,366 rows), so the old
+        ``cross_validated = 1`` conjunct made the whole sweep a guaranteed no-op.
+        """
+        from trw_memory._graph_decay import _DECAY_PREDICATE
+
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state.memory_adapter import get_backend
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        assert "cross_validated" not in _DECAY_PREDICATE
+
+        cfg = get_config()
+        self._store_aged(trw_dir, "L-uncross", days_old=cfg.memory_decay_cutoff_days + 30)
+        backend = get_backend(trw_dir)
+        row = backend._conn.execute("SELECT cross_validated FROM memories WHERE id = ?", ("L-uncross",)).fetchone()
+        assert row[0] in (0, None), "fixture must be an entry nothing cross-validated"
+
+        assert int(_step_memory_decay(trw_dir)["processed"]) == 1
+
+    def test_decay_step_respects_configured_batch_size(
+        self,
+        trw_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The batch bound comes from typed config, not a literal parameter default."""
+        from trw_mcp.models.config import TRWConfig, get_config
+        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+        cfg = get_config()
+        for index in range(3):
+            self._store_aged(trw_dir, f"L-batch{index}", days_old=cfg.memory_decay_cutoff_days + 30)
+
+        bounded = TRWConfig(memory_decay_batch_size=2)
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: bounded)
+
+        result = _step_memory_decay(trw_dir)
+
+        assert int(result["processed"]) == 2
+        assert int(result["remaining"]) == 1
+
+    def test_decay_is_wired_into_the_deferred_roster(self) -> None:
+        """FR09 half one: a real production call site, not a library function."""
+        from trw_mcp.tools._deferred_delivery import DEFERRED_STEPS
+        from trw_mcp.tools._delivery_tracer import DEFERRED_STEP_EFFECT_IDS
+
+        assert "memory_decay" in DEFERRED_STEPS
+        # It runs AFTER the tier sweep so a row demoted this delivery is not also
+        # decayed in the same pass.
+        assert DEFERRED_STEPS.index("memory_decay") > DEFERRED_STEPS.index("tier_sweep")
+        assert DEFERRED_STEP_EFFECT_IDS["memory_decay"] == "D25"

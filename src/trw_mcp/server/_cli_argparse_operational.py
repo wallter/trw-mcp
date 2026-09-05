@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 
+from trw_mcp.server._cli_argparse_prd import add_prd_subcommands
+from trw_mcp.tools._formation_cli import add_formation_subcommands
+
 __all__ = ["add_operational_subcommands"]
 
 
@@ -88,30 +91,11 @@ def add_operational_subcommands(
         help="Require a verifiable commit signature before publication",
     )
 
-    # prd-state (PRD-QUAL-121-FR04 production caller)
-    prd_state_parser = subparsers.add_parser(
-        "prd-state",
-        help="Transition a PRD's execution state through the WIP-limited scheduling ledger",
-    )
-    prd_state_parser.add_argument("--prd-id", required=True, help="PRD identifier (PRD-XXX-NNN)")
-    prd_state_parser.add_argument(
-        "--state",
-        required=True,
-        help="Target execution state (candidate|queued|active|blocked_external|...)",
-    )
-    prd_state_parser.add_argument(
-        "--receipt",
-        required=True,
-        help="Authorization receipt for the scheduling action (required, non-empty)",
-    )
-    prd_state_parser.add_argument("--actor", required=True, help="Acting identity")
-    prd_state_parser.add_argument("--owner", default="", help="Owner consuming the WIP slot")
-    prd_state_parser.add_argument("--project-root", default=".", help="Project root (default: current directory)")
-    prd_state_parser.add_argument(
-        "--prds-dir",
-        default="docs/requirements-aare-f/prds",
-        help="PRD directory relative to the project root",
-    )
+    add_prd_subcommands(subparsers)
+
+    # PRD-CORE-265-FR03/FR06/FR07: the formation verbs. Registered here rather
+    # than as MCP tools — a tool definition is paid in every session's prompt.
+    add_formation_subcommands(subparsers)
 
     # channel-doctor (PRD-DIST-2400 FR18)
     cd_parser = subparsers.add_parser(

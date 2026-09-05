@@ -278,7 +278,16 @@ def test_load_pin_store_evicts_stale_run_paths(tmp_path: Path) -> None:
 
 
 def test_load_pin_store_retains_dead_creator_pid(tmp_path: Path) -> None:
-    """Creator PID is diagnostic; durable pins survive server restarts."""
+    """Creator PID alone is diagnostic; durable pins survive server restarts.
+
+    PRD-CORE-248 FR05 narrowed this: a dead creator PID now evicts, but ONLY in
+    conjunction with a parseable heartbeat older than ``pin_ttl_hours``. This
+    fixture's ``last_heartbeat_ts: "t"`` is unparseable, so the entry is not
+    provably expired and retention still holds — which is exactly the
+    restart-survival contract this test has always protected. Its sibling
+    :func:`test_load_pin_store_evicts_dead_creator_pid_past_ttl` covers the
+    other half.
+    """
     from trw_mcp.state._pin_store import invalidate_pin_store_cache, load_pin_store, pin_store_path
 
     pins_path = pin_store_path()
@@ -301,6 +310,40 @@ def test_load_pin_store_retains_dead_creator_pid(tmp_path: Path) -> None:
 
     result = load_pin_store()
     assert "orphan" in result
+
+
+def test_load_pin_store_evicts_dead_creator_pid_past_ttl(tmp_path: Path) -> None:
+    """PRD-CORE-248 FR05: a dead creator PID with a REAL past-TTL heartbeat is evicted.
+
+    The sibling above supplies an unparseable heartbeat and is retained; the
+    only difference here is a parseable timestamp older than pin_ttl_hours,
+    which is what turns "restarted server" into "abandoned session".
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, load_pin_store, pin_store_path
+
+    stale = (datetime.now(timezone.utc) - timedelta(hours=72)).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    pins_path = pin_store_path()
+    pins_path.parent.mkdir(parents=True, exist_ok=True)
+    pins_path.write_text(
+        json.dumps(
+            {
+                "orphan": {
+                    "run_path": str(tmp_path),
+                    "created_ts": stale,
+                    "last_heartbeat_ts": stale,
+                    "client_hint": None,
+                    "pid": 4194303,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalidate_pin_store_cache()
+
+    assert "orphan" not in load_pin_store()
+    assert tmp_path.exists(), "eviction must not touch the run directory (NFR03)"
 
 
 def test_prune_pin_store_orphans_persists_eviction(tmp_path: Path) -> None:

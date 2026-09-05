@@ -150,7 +150,7 @@ class TestComputeUtilityScoreAccessBoost:
 
 
 class TestEntryUtilityInvalidCreatedDate:
-    """Cover ValueError handling for unparseable created dates in _entry_utility."""
+    """Cover ValueError handling for unparseable created dates in entry_utility."""
 
     def test_invalid_created_date_uses_raw_values(self) -> None:
         """When created field has invalid date, ValueError is caught and raw values used."""

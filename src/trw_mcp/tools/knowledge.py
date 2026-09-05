@@ -6,12 +6,17 @@ exposes only bounded, read-only traversal from a known learning ID.
 
 from __future__ import annotations
 
+import structlog
 from fastmcp import FastMCP
 from trw_memory.graph import MAX_TRAVERSAL_DEPTH, VALID_EDGE_TYPES, graph_query
 from trw_memory.models.memory import MemoryStatus
 from typing_extensions import TypedDict
 
+from trw_mcp.exceptions import NamespaceEnumerationError
+from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.state.memory_adapter import get_backend
+
+logger = structlog.get_logger(__name__)
 
 _DEFAULT_RELATED_LIMIT = 50
 _MAX_RELATED_LIMIT = 100
@@ -28,12 +33,22 @@ class GraphRelatedItem(TypedDict):
 
 
 class GraphRelatedResult(TypedDict, total=False):
+    """Neighbours for one learning.
+
+    ``found=False`` means the store was searched and does not hold the id. When
+    the store could not be searched at all, ``lookup_status`` is
+    ``"unavailable"`` and ``lookup_error`` names the cause — an unenumerable
+    store used to answer with the same bare ``found=False`` as a genuine miss.
+    """
+
     learning_id: str
     namespace: str
     related: list[GraphRelatedItem]
     count: int
     found: bool
     truncated: bool
+    lookup_status: str
+    lookup_error: str
 
 
 def graph_related(
@@ -57,7 +72,19 @@ def graph_related(
         raise ValueError(f"limit must be between 1 and {_MAX_RELATED_LIMIT}")
 
     backend = get_backend()
-    root = backend.get(normalized_id)
+    try:
+        root = resolve_entry_in_backend(backend, normalized_id)
+    except NamespaceEnumerationError as exc:
+        logger.warning("graph_related_lookup_unavailable", learning_id=normalized_id, exc_info=True)
+        return {
+            "learning_id": normalized_id,
+            "related": [],
+            "count": 0,
+            "found": False,
+            "truncated": False,
+            "lookup_status": "unavailable",
+            "lookup_error": str(exc),
+        }
     if root is None:
         return {
             "learning_id": normalized_id,
@@ -78,7 +105,7 @@ def graph_related(
     truncated = len(nodes) > limit
     related: list[GraphRelatedItem] = []
     for node in nodes[:limit]:
-        entry = backend.get(str(node["id"]))
+        entry = backend.get(str(node["id"]), namespace=root.namespace)
         if entry is None or entry.status != MemoryStatus.ACTIVE:
             continue
         related.append(

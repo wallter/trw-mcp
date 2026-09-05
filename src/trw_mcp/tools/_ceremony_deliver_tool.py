@@ -18,14 +18,16 @@ from typing import cast
 import structlog
 from fastmcp import Context
 
+from trw_mcp._delivery_boundary import bind_journal
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.models.typed_dicts import DeliverResultDict
+from trw_mcp.models.typed_dicts import ComplianceArtifactsDict, DeliverResultDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._ceremony_degradations import record_into
 from trw_mcp.tools._ceremony_deliver_steps import (
     log_deliver_complete,
     step_clear_score,
     step_knowledge_sync,
+    step_project_handoff,
     step_session_changelog,
     unpack_gate_result,
 )
@@ -151,10 +153,10 @@ def run_trw_deliver(
     # PRD-CORE-208 FR01: claim a caller-stable delivery operation BEFORE the first
     # delivery mutation. An explicit-ID conflict/rejection returns zero effects
     # here; a legacy no-ID call is journaled but not caller-recoverable (NFR01).
-    journal, block_result = _open_journal(
+    journal, block_result = open_delivery_journal(
         trw_dir,
         config,
-        resolved_run,
+        run_identity=_relative_run_identity(resolved_run),
         skip_reflect=skip_reflect,
         skip_index_sync=skip_index_sync,
         allow_unverified=allow_unverified,
@@ -168,13 +170,18 @@ def run_trw_deliver(
     from trw_mcp.state.phase import try_update_phase
     from trw_mcp.tools._ceremony_helpers import check_delivery_gates, copy_compliance_artifacts
 
-    with journal.step("S01"):  # run phase write
-        try_update_phase(resolved_run, Phase.DELIVER)
+    # bind_journal makes S02 (the ceremony phase mirror inside update_run_phase)
+    # journalable without threading the handle through a state-layer signature.
+    with bind_journal(journal), journal.step("S01") as run_phase_step:  # run phase write
+        if run_phase_step:
+            try_update_phase(resolved_run, Phase.DELIVER)
     gate_result = check_delivery_gates(resolved_run, reader, trw_dir, session_id=call_ctx.session_id)
     unpack_gate_result(gate_result, results)
 
-    with journal.step("S05"):  # review/integration compliance copies
-        compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
+    compliance_result: ComplianceArtifactsDict = {}
+    with journal.step("S05") as run_compliance_step:  # review/integration compliance copies
+        if run_compliance_step:
+            compliance_result = copy_compliance_artifacts(resolved_run, trw_dir, config, reader, writer)
     if "compliance_artifacts_copied" in compliance_result:
         results["compliance_artifacts_copied"] = compliance_result["compliance_artifacts_copied"]
     if "compliance_dir" in compliance_result:
@@ -182,9 +189,11 @@ def run_trw_deliver(
 
     from trw_mcp.tools._deliver_gate_dispatch import evaluate_delivery_gates
 
-    if evaluate_delivery_gates(
-        gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
-    ):
+    with bind_journal(journal):  # S06/S07 live inside the gate dispatcher
+        gate_blocked = evaluate_delivery_gates(
+            gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
+        )
+    if gate_blocked:
         # A blocked gate is a durable operation terminal/provisional state, not an
         # absent operation (FR02 acceptance).
         journal.mark_state(OperationState.BLOCKED)
@@ -194,14 +203,16 @@ def run_trw_deliver(
 
     results_view: dict[str, object] = cast("dict[str, object]", results)
     if not skip_reflect:
-        with journal.step("S08"):  # mechanically extracted learning writes
-            _run_step("reflect", lambda: _ceremony._do_reflect(trw_dir, resolved_run), results_view, errors)
+        with journal.step("S08") as run_reflect_step:  # mechanically extracted learning writes
+            if run_reflect_step:
+                _run_step("reflect", lambda: _ceremony._do_reflect(trw_dir, resolved_run), results_view, errors)
     else:
         results["reflect"] = {"status": "skipped"}
 
     if resolved_run is not None:
-        with journal.step("S11"):  # checkpoint record append
-            _run_step("checkpoint", lambda: _ceremony._step_checkpoint(resolved_run), results_view, errors)
+        with journal.step("S11") as run_checkpoint_step:  # checkpoint record append
+            if run_checkpoint_step:
+                _run_step("checkpoint", lambda: _ceremony._step_checkpoint(resolved_run), results_view, errors)
     else:
         checkpoint_skip: dict[str, object] = {
             "status": "skipped",
@@ -216,20 +227,37 @@ def run_trw_deliver(
         # do not re-embed the same list inside the checkpoint block.
         results["checkpoint"] = checkpoint_skip
 
+    # PRD-CORE-265-FR11: a member self-reports its OWN completion, after the gate
+    # cascade passed. Runs on every delivering run and is a no-op outside a
+    # formation; the orchestrator's own gate re-checks the record it writes.
+    if resolved_run is not None:
+        from trw_mcp.tools._orchestration_formation import record_member_delivery
+
+        record_member_delivery(resolved_run, results_view)
+
     critical_elapsed = round(time.monotonic() - t0, 2)
     results["critical_elapsed_seconds"] = critical_elapsed
 
     _probe_integrity(trw_dir, resolved_run, results)
     if resolved_run is not None:
-        with journal.step("S14"):  # CLEAR score JSON replace
-            step_clear_score(resolved_run, results)
-    with journal.step("S15"):  # knowledge topic synchronization
-        step_knowledge_sync(trw_dir, results)
+        with journal.step("S14") as run_clear_step:  # CLEAR score JSON replace
+            if run_clear_step:
+                step_clear_score(resolved_run, results)
+    with journal.step("S15") as run_knowledge_step:  # knowledge topic synchronization
+        if run_knowledge_step:
+            step_knowledge_sync(trw_dir, results)
     # PRD-LOCAL-049: durable session changelog artifact. Only runs with an
     # active run dir; fail-open inside the step so it never blocks deliver.
     if resolved_run is not None:
-        with journal.step("S17"):  # session changelog write
-            step_session_changelog(resolved_run, results)
+        with journal.step("S17") as run_changelog_step:  # session changelog write
+            if run_changelog_step:
+                step_session_changelog(resolved_run, results)
+        # PRD-CORE-249-FR02/FR05: durable project handoff rows + the run's own
+        # remaining-work section. Runs after the gate cascade passed and the
+        # critical steps completed; fail-open inside the step.
+        with journal.step("S22") as run_handoff_step:  # project handoff + remaining-work section
+            if run_handoff_step:
+                step_project_handoff(resolved_run, results)
 
     # PRD-CORE-208: critical synchronous effects are journaled; record the
     # milestone and the deferred-batch digest (FR06) before launching the batch.
@@ -248,20 +276,24 @@ def run_trw_deliver(
     # never varies at runtime, so it is not re-emitted per deliver response. The
     # roster size is guarded directly by a unit test on DEFERRED_STEP_COUNT.
     _ceremony._aggregate_advisory_warnings(results)
-    with journal.step("S18"):  # ceremony deliver-called flag
-        _mark_deliver_and_reflect_learning(trw_dir, results)
-    _write_nudge_analysis_artifact(trw_dir, results)
+    with journal.step("S18") as run_mark_step:  # ceremony deliver-called flag
+        if run_mark_step:
+            _mark_deliver_and_reflect_learning(trw_dir, results)
+    with journal.step("S19") as run_nudge_step:  # nudge-analysis JSON write
+        if run_nudge_step:
+            _write_nudge_analysis_artifact(trw_dir, results)
     _attach_deliver_ceremony_status(trw_dir, results)
-    with journal.step("S20"):  # delivery-complete event append
-        _log_deliver_event(
-            trw_dir,
-            resolved_run,
-            results,
-            errors,
-            deferred_status,
-            critical_elapsed,
-            call_ctx.session_id,
-        )
+    with journal.step("S20") as run_event_step:  # delivery-complete event append
+        if run_event_step:
+            _log_deliver_event(
+                trw_dir,
+                resolved_run,
+                results,
+                errors,
+                deferred_status,
+                critical_elapsed,
+                call_ctx.session_id,
+            )
     log_deliver_complete(
         resolved_run=resolved_run,
         results=results,
@@ -284,30 +316,6 @@ def _relative_run_identity(resolved_run: Path | None) -> str:
         return str(resolved_run.relative_to(resolve_project_root().resolve()))
     except Exception:  # justified: fall back to the bare run dir name, never abs path
         return resolved_run.name
-
-
-def _open_journal(
-    trw_dir: Path,
-    config: TRWConfig,
-    resolved_run: Path | None,
-    *,
-    skip_reflect: bool,
-    skip_index_sync: bool,
-    allow_unverified: bool,
-    delivery_id: str,
-    capability_token: str,
-) -> tuple[DeliverJournal, DeliverResultDict | None]:
-    """Open the PRD-CORE-208 delivery journal for this call (FR01 claim-first)."""
-    return open_delivery_journal(
-        trw_dir,
-        config,
-        run_identity=_relative_run_identity(resolved_run),
-        skip_reflect=skip_reflect,
-        skip_index_sync=skip_index_sync,
-        allow_unverified=allow_unverified,
-        delivery_id=delivery_id,
-        capability_token=capability_token,
-    )
 
 
 def _journal_enqueue_deferred(journal: DeliverJournal, resolved_run: Path | None, *, skip_index_sync: bool) -> None:

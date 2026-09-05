@@ -60,11 +60,15 @@ class TestUpdateCursorArtifactsCursorIde:
         assert (repo / ".cursor" / "rules" / "trw-ceremony.mdc").is_file(), "rules MDC missing"
         assert (repo / ".cursor" / "hooks.json").is_file(), "hooks.json missing"
 
-        # Subagents
-        assert (repo / ".cursor" / "agents" / "trw-explorer.md").is_file()
-        assert (repo / ".cursor" / "agents" / "trw-implementer.md").is_file()
-        assert (repo / ".cursor" / "agents" / "trw-reviewer.md").is_file()
-        assert (repo / ".cursor" / "agents" / "trw-researcher.md").is_file()
+        # Subagents. PRD-CORE-252-FR03/FR04: cursor-ide receives the WHOLE
+        # bundled specialist set, not the four hand-written stubs it used to,
+        # and `trw-explorer` was retired with them. Asserted against the bundle
+        # so a twelfth agent is covered without editing this list.
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        expected_agents = sorted(path.stem for path in (_DATA_DIR / "agents").glob("*.md"))
+        assert expected_agents, "no bundled agents; this assertion has stopped testing anything"
+        assert sorted(p.stem for p in (repo / ".cursor" / "agents").glob("*.md")) == expected_agents
 
         # Commands
         assert (repo / ".cursor" / "commands" / "trw-deliver.md").is_file()
@@ -140,10 +144,21 @@ class TestUpdateCursorArtifactsCursorIde:
             assert event in registered, f"Missing event in hooks.json: {event}"
 
     def test_subagents_have_correct_readonly_flags(self, tmp_path: Path) -> None:
-        """Subagent frontmatter readonly flags are correct after full bootstrap."""
+        """Subagent frontmatter readonly flags are correct after full bootstrap.
+
+        PRD-CORE-252: the flag is now DERIVED from the agent's own bundled tool
+        grants rather than from a hardcoded name test, and cursor's agents are
+        installed by the shared bundle installer rather than by the retired
+        `generate_cursor_ide_subagents`. `trw-explorer` was retired with the
+        stub set, so the write-capable/read-only pair is implementer/researcher.
+        """
         import yaml
 
-        self._call_update(tmp_path, ide_override="cursor-ide")
+        from trw_mcp.bootstrap._init_project_skills import _install_agents
+
+        result: dict = {"created": [], "skipped": [], "errors": []}
+        _install_agents(tmp_path, force=False, result=result, clients=["cursor-ide"])
+        assert not result["errors"], result["errors"]
         agents_dir = tmp_path / ".cursor" / "agents"
 
         def get_frontmatter(path: Path) -> dict:
@@ -152,7 +167,6 @@ class TestUpdateCursorArtifactsCursorIde:
             return yaml.safe_load(parts[1])
 
         assert get_frontmatter(agents_dir / "trw-implementer.md")["readonly"] is False
-        assert get_frontmatter(agents_dir / "trw-explorer.md")["readonly"] is True
         assert get_frontmatter(agents_dir / "trw-reviewer.md")["readonly"] is True
         assert get_frontmatter(agents_dir / "trw-researcher.md")["readonly"] is True
 

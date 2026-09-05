@@ -135,6 +135,15 @@ async def test_coding_run_exposes_coding_packs(
     # removed, so the assertion had become trivially true and would pass
     # forever whether or not the code_risk pack was actually excluded.
     assert "trw_codebase_risk_report" not in names  # code_risk pack NOT in coding standard
+    # 2026-09-04 wiring-defect fix: "coding" names no "requirements" pack entry
+    # (STANDARD_TASK_PACKS), so trw_prd_validate is masked from a coding-task
+    # session UNLESS it is bootstrap-critical. A trw-prd-groomer /
+    # trw-requirement-reviewer sub-agent dispatched from a coding session shares
+    # this same masked surface (same stdio connection -> same session_id), so
+    # without this it could never call the validator it is grafted to. This
+    # assertion is a hardcoded literal (not derived from _ALWAYS_EXPOSED) so it
+    # goes red if trw_prd_validate is ever dropped from the bootstrap set.
+    assert "trw_prd_validate" in names
 
 
 # ── FR04: explicit all is a strict no-op (operator escape) ──────────────
@@ -230,6 +239,34 @@ async def test_grant_unmasks_for_exactly_one_call(
     assert calls["n"] == 1
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_surface"
+
+
+# ── Diagnostic finding: a raising tool must execute exactly once ────────
+
+
+@pytest.mark.asyncio
+async def test_raising_tool_call_next_invoked_exactly_once(
+    middleware: SurfaceAuthorityMiddleware, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool that raises inside ``call_next`` must be invoked exactly once.
+
+    Regression for the double-invocation bug: ``on_call_tool`` used to call
+    ``call_next`` inside ``try`` (via ``_call_then_push``) AND again in the
+    fail-open ``except`` when the tool's own exception propagated up, so a
+    raising tool ran twice. A kernel tool is used so the call reaches the
+    tool (in-surface) rather than being denied.
+    """
+    _force(monkeypatch, mode="standard", task_type=None)
+    calls = {"n": 0}
+
+    async def call_next(_ctx: Any) -> Any:
+        calls["n"] += 1
+        raise RuntimeError("tool exploded")
+
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_session_start"), fastmcp_context=_FakeContext())
+    with pytest.raises(RuntimeError, match="tool exploded"):
+        await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+    assert calls["n"] == 1
 
 
 # ── NFR02: resolution failure fails OPEN ────────────────────────────────
@@ -441,3 +478,70 @@ async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeyp
 
     allow_ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_prd_create"), fastmcp_context=_FakeContext(session_id))
     assert await mw.on_call_tool(allow_ctx, call_next_allow) is _SENTINEL  # type: ignore[arg-type]
+
+
+# ── PRD-FIX-126-FR06: the three readers on a real swept run ─────────────
+
+
+@pytest.mark.integration
+def test_resolve_task_type_reads_a_swept_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR06: a run the stale-run sweep abandoned still resolves its real context.
+
+    Before PRD-FIX-126 the enum did not contain ``abandoned``, so
+    ``RunState.model_validate`` raised on 189 of the 191 live runs and all three
+    readers degraded to their defaults: ``resolve_task_type`` returned ``None``
+    (kernel-only surface), ``resolve_active_phase`` returned ``RESEARCH``, and
+    ``assemble_agent_work_evidence`` raised a ``ValidationError`` straight out
+    of ``trw_agent_work_evidence``.
+
+    The proof runs on the REAL path — a real run directory, the real pin store,
+    the real ``RunState``. Nothing here monkeypatches ``RunState``,
+    ``resolve_run_dir_for_session``, or ``FileStateReader``; only the project
+    root env var is redirected, which is how every isolated test in this repo
+    points the production resolvers at a scratch tree.
+    """
+    from trw_mcp.middleware.phase_exposure import _DEFAULT_PHASE, resolve_active_phase
+    from trw_mcp.middleware.surface_authority import resolve_task_type
+    from trw_mcp.models.config import _reset_config, get_config
+    from trw_mcp.models.run import RunStatus
+    from trw_mcp.state import _pin_store as pin_store_mod
+    from trw_mcp.state._paths import _pinned_runs
+    from trw_mcp.state._pin_store import upsert_pin_entry
+    from trw_mcp.state.agent_work_evidence import assemble_agent_work_evidence
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("TRW_SESSION_ID", raising=False)
+    _reset_config()
+    _pinned_runs.clear()
+    pin_store_mod.invalidate_pin_store_cache()
+
+    config = get_config()
+    run_id = "20260903T000000Z-swept001"
+    run_dir = tmp_path / config.runs_root / "swept-task" / run_id
+    (run_dir / "meta").mkdir(parents=True, exist_ok=True)
+    (run_dir / "meta" / "run.yaml").write_text(
+        f"run_id: {run_id}\n"
+        "task: swept-task\n"
+        "framework: v26.2_TRW\n"
+        f"status: {RunStatus.ABANDONED.value}\n"
+        "phase: review\n"
+        "task_type: coding\n"
+        "objective: prove the readers survive a swept run\n",
+        encoding="utf-8",
+    )
+    (run_dir / "meta" / "events.jsonl").touch()
+
+    session_id = "sess-swept"
+    upsert_pin_entry(session_id, run_dir)
+
+    assert resolve_task_type(session_id=session_id) == "coding"
+    assert resolve_active_phase(session_id=session_id) == "REVIEW" != _DEFAULT_PHASE
+
+    evidence = assemble_agent_work_evidence(run_dir)
+    assert evidence.identity.run_id == run_id
+    assert evidence.status == RunStatus.ABANDONED.value
+    assert evidence.phase == "review"
+
+    _pinned_runs.clear()
+    pin_store_mod.invalidate_pin_store_cache()
+    _reset_config()

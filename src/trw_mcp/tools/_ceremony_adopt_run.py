@@ -19,6 +19,7 @@ import structlog
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
+from trw_mcp.models.run import is_terminal_status
 from trw_mcp.state._paths import resolve_pin_key
 from trw_mcp.state._pin_store import (
     _iso_now,
@@ -96,7 +97,10 @@ def adopt_run(
 
     target_status = _validate_adoptable_run(resolved, project_root)
 
-    if target_status in ("delivered", "complete", "failed") and not force:
+    # PRD-FIX-126-FR02: the shared predicate, not a private tuple. The old tuple
+    # omitted ``abandoned``, so every run the stale-run sweep had swept was
+    # adoptable without ``force`` as if it were live work.
+    if is_terminal_status(target_status) and not force:
         raise StateError(
             f"cannot adopt terminal-status run (status={target_status}); pass force=True to override",
             path=str(resolved),

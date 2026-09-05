@@ -80,7 +80,7 @@ def run_backfill_embeddings(
                 failed += 1
                 continue
 
-            backend.upsert_vector(entry.id, vector)
+            backend.upsert_vector(entry.id, vector, namespace=entry.namespace)
             embedded += 1
         except (OSError, ValueError, RuntimeError):
             failed += 1

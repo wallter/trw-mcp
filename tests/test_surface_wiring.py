@@ -67,7 +67,7 @@ def _run_execute_recall(
         patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
         patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+        patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
         patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
     ]
     if extra_patches:
@@ -217,7 +217,7 @@ class TestSurfaceLoggingFailOpen:
             patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
             patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
         ):
             result = execute_recall(
@@ -253,7 +253,7 @@ class TestSurfaceLoggingFailOpen:
             patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
             patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
         ):
             result = execute_recall(
@@ -281,7 +281,7 @@ class TestSurfaceLoggingFailOpen:
             patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
             patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch(
                 "trw_mcp.state.recall_context.build_recall_context",
                 side_effect=ImportError("context module missing"),
@@ -323,7 +323,7 @@ class TestSurfacePhaseDetection:
             patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
             patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
             patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
         ):
@@ -354,7 +354,7 @@ class TestSurfacePhaseDetection:
             patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
             patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
-            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=list(entries)),
+            patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
             patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
         ):

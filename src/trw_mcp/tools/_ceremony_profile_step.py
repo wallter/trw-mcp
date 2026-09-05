@@ -16,11 +16,16 @@ Result keys written:
   * ``session_override_hash`` — session-layer delta hash (FR-13).
   * ``profile_explanation``  — per-field attribution (FR-11 input).
 
-Fail-open (PRD NFRs / Behavior Switch Matrix): a missing/invalid layer (or a
-disabled feature flag) degrades to omitting the block — session start NEVER
-crashes on a profile error. The artifact-registry ``surface_snapshot_id``
-(MEAS-001) written by ``step_surface_stamp`` is a DISTINCT key and is left
-untouched.
+A missing/invalid LAYER (``LayerLoadError``) degrades to a structured
+``profile_resolution_error`` key and leaves the verdict alone — that is FR-12
+fail-closed-with-visibility and it is unchanged. Any OTHER failure is a
+``profile_resolve`` step failure: the session-start table declares that step
+critical, so PRD-CORE-263-FR01 has it raise a typed
+:class:`SessionStartStepError` and lets the runner decide, instead of logging a
+warning under a ``success: true`` payload. Session start still never crashes —
+the runner degrades the payload rather than propagating. The artifact-registry
+``surface_snapshot_id`` (MEAS-001) written by ``step_surface_stamp`` is a
+DISTINCT key and is left untouched.
 """
 
 from __future__ import annotations
@@ -29,6 +34,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
+
+from trw_mcp.tools._ceremony_degradations import SessionStartStepError
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
@@ -44,8 +51,10 @@ def step_resolve_profile(
 ) -> None:
     """Resolve the hierarchical profile and write it onto ``results`` (FR-4).
 
-    No-op (block omitted) when ``profile_system_enabled`` is False or when any
-    error occurs during resolution. Reads the SCALE-001 session-layer file at
+    No-op (block omitted) when ``profile_system_enabled`` is False. A layer that
+    fails to load writes ``profile_resolution_error`` and returns; any other
+    failure raises :class:`SessionStartStepError` for the runner's critical
+    branch (PRD-CORE-263-FR01). Reads the SCALE-001 session-layer file at
     ``{run_dir}/meta/session_profile.yaml`` when present.
     """
     if not getattr(config, "profile_system_enabled", True):
@@ -87,8 +96,8 @@ def step_resolve_profile(
             layers_applied=resolved.layers_applied,
             profile_snapshot_id=resolved.surface_snapshot_id,
         )
-    except Exception:  # justified: fail-open, profile resolution must not block session start
-        logger.warning("profile_resolution_failed", exc_info=True)
+    except Exception as exc:
+        raise SessionStartStepError("profile_resolve", exc) from exc
 
 
 __all__ = ["step_resolve_profile"]
