@@ -122,6 +122,11 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
         [
             "install-trw.py",
             "--script",
+            # No optional user-installed engines: sqlite-vec is bundled + on by
+            # default, so a no-flags --script run now threads an extras step.
+            # This test isolates the pip-target-into-project-setup contract
+            # from that default by explicitly declining extras.
+            "--no-sqlite-vec",
             "--pip-target",
             "/tmp/trw-pip",
             str(project_dir),

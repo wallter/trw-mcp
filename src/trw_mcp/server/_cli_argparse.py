@@ -220,6 +220,30 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     local_learn.add_argument("--summary", required=True, help="One-line learning summary")
     local_learn.add_argument("--detail", required=True, help="Learning detail")
     local_learn.add_argument("--tag", action="append", default=[], help="Learning tag; may be passed more than once")
+    # Mirrors the trw_learn MCP tool's contract (PRD-CORE-247 offline-parity
+    # fix) so the same learning is recordable through either surface.
+    local_learn.add_argument(
+        "--type",
+        default="pattern",
+        help="Learning type: incident | pattern | convention | hypothesis | workaround (default: pattern)",
+    )
+    local_learn.add_argument(
+        "--confidence",
+        default="unverified",
+        help="unverified | low | medium | high | verified (default: unverified). 'verified' still requires --evidence.",
+    )
+    local_learn.add_argument(
+        "--impact",
+        type=float,
+        default=0.5,
+        help="Impact 0.0-1.0, higher surfaces more often (default: 0.5)",
+    )
+    local_learn.add_argument(
+        "--evidence",
+        action="append",
+        default=None,
+        help="Evidence item (file:line, log excerpt, etc.); may be passed more than once",
+    )
     # PRD-CORE-247-FR03: the two offline surfaces the fallback lacked. Both bind
     # to the SAME top-level callables the MCP tools use — no second
     # redaction/ranking/persistence path exists to drift from them.

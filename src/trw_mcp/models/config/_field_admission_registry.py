@@ -16,6 +16,7 @@ from __future__ import annotations
 from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
+from trw_mcp.models.config._field_admission_doctor_thread_hotspots import DOCTOR_THREAD_HOTSPOT_ADMISSIONS
 from trw_mcp.models.config._field_admission_drain_budget import DRAIN_BUDGET_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation_readiness import FORMATION_READINESS_ADMISSIONS
@@ -370,4 +371,6 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **FORMATION_READINESS_ADMISSIONS,
     # PRD-SEC-015: reviewer-role selector (own table, see module docstring).
     **SURFACE_ROLE_ADMISSIONS,
+    # PRD-FIX-131 follow-up: doctor thread-hotspot WARN threshold (own table).
+    **DOCTOR_THREAD_HOTSPOT_ADMISSIONS,
 }

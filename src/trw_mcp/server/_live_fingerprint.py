@@ -3,15 +3,28 @@
 This is the FastMCP adapter for the standard-library-only
 ``trw_mcp.canons.fingerprint`` core: it resolves the loaded package/canon/
 template versions, reads the registry-managed bundled source digests, and lists
-the *realized public* MCP surface AFTER exposure filtering, then freezes an
-immutable process fingerprint. Volatile metadata (timestamp, PID, checkout path,
-discovery order, secrets) is excluded by the core, so two identical surfaces in
-different locations/orders produce the same digest.
+the *registered* MCP surface, then freezes an immutable process fingerprint.
+Volatile metadata (timestamp, PID, checkout path, discovery order, secrets) is
+excluded by the core, so two identical surfaces in different locations/orders
+produce the same digest.
 
-The freeze runs once, after all tools/resources/prompts are registered and the
-exposure filter has run (``server/_tools.py``). It is fully fail-safe: any
-failure leaves the frozen fingerprint UNSET so currentness comparison reports
-UNKNOWN (never a false-green), and server boot is never blocked.
+The freeze runs once, after all tools/resources/prompts are registered
+(``server/_tools.py``), and enumerates them with ``run_middleware=False`` —
+this call happens at MODULE IMPORT time, before any real client has connected,
+and FastMCP cannot distinguish that self-check from a genuine request (it
+synthesizes its own ``Context`` either way), so running the full middleware
+chain here made merely IMPORTING the package write a real
+``MCPSecurityMiddleware`` audit event to disk for every registered tool. The
+per-session exposure masks (``SurfaceAuthorityMiddleware``,
+``PhaseExposureMiddleware``) are consequently not reflected in this
+fingerprint's surface — acceptable because its purpose is DRIFT DETECTION
+(does this process's deployed code match a prior digest), which needs the
+registered surface to be deterministic across restarts of the same code, not
+an authoritative statement about what one particular session can see.
+
+It is fully fail-safe: any failure leaves the frozen fingerprint UNSET so
+currentness comparison reports UNKNOWN (never a false-green), and server boot
+is never blocked.
 """
 
 from __future__ import annotations
@@ -97,7 +110,20 @@ def resolve_loaded_versions() -> tuple[str, str, str, str]:
 
 def _tool_decls(server: FastMCP) -> tuple[PublicToolDecl, ...]:
     decls: list[PublicToolDecl] = []
-    for tool in _run_async(server.list_tools()):
+    # ``run_middleware=False``: this call runs once, at MODULE IMPORT time
+    # (``server/_tools.py``'s ``_register_tools()``), before any real client
+    # has connected. FastMCP synthesizes its own ``Context`` for a
+    # middleware-enabled ``list_tools()`` call whether or not a genuine
+    # client is asking, so ``MCPSecurityMiddleware`` could not tell this
+    # self-check apart from a real request — it wrote a real audit event to
+    # disk for every registered tool on every process start (merely
+    # importing the package wrote to ``.trw/context/``). This returns the
+    # REGISTERED surface (session transforms + enabled-filter still apply,
+    # just not the per-session masking middlewares add) — sufficient for
+    # this fingerprint's purpose, which is DRIFT DETECTION via digest
+    # comparison across restarts of the same deployed code, not an
+    # authoritative statement about what one particular session can see.
+    for tool in _run_async(server.list_tools(run_middleware=False)):
         input_schema = getattr(tool, "inputSchema", None) or getattr(tool, "input_schema", None) or {}
         output_schema = getattr(tool, "outputSchema", None) or getattr(tool, "output_schema", None) or {}
         decls.append(
@@ -118,7 +144,7 @@ def _resource_decls(server: FastMCP) -> tuple[PublicResourceDecl, ...]:
             name=str(getattr(res, "name", "") or ""),
             description=str(getattr(res, "description", "") or ""),
         )
-        for res in _run_async(server.list_resources())
+        for res in _run_async(server.list_resources(run_middleware=False))
     )
 
 
@@ -128,12 +154,14 @@ def _prompt_decls(server: FastMCP) -> tuple[PublicPromptDecl, ...]:
             name=str(getattr(prompt, "name", "")),
             description=str(getattr(prompt, "description", "") or ""),
         )
-        for prompt in _run_async(server.list_prompts())
+        for prompt in _run_async(server.list_prompts(run_middleware=False))
     )
 
 
 def build_realized_surface(server: FastMCP) -> RealizedSurface:
-    """Read the realized public tool/resource/prompt surface after exposure filtering."""
+    """Read the registered public tool/resource/prompt surface (module docstring: why
+    this is ``run_middleware=False``, not the per-session exposure-filtered surface).
+    """
     return RealizedSurface(
         tools=_tool_decls(server),
         resources=_resource_decls(server),

@@ -164,6 +164,55 @@ def test_audit_parses(parser) -> None:  # type: ignore[no-untyped-def]
     assert ns.fix is True
 
 
+def test_local_learn_parses_full_trw_learn_parity_args(parser) -> None:  # type: ignore[no-untyped-def]
+    """``trw-mcp local learn`` accepts the same fields as the ``trw_learn`` MCP tool.
+
+    PRD-CORE-247 offline-parity fix: --type/--confidence/--impact/--evidence
+    were missing, so the offline path could not record a typed/substantiated
+    learning the online path can.
+    """
+    ns = parser.parse_args(
+        [
+            "local",
+            "learn",
+            "--summary",
+            "s",
+            "--detail",
+            "d",
+            "--tag",
+            "t1",
+            "--tag",
+            "t2",
+            "--type",
+            "incident",
+            "--confidence",
+            "verified",
+            "--impact",
+            "0.9",
+            "--evidence",
+            "path/to/file.py:42",
+            "--evidence",
+            "log excerpt",
+        ]
+    )
+    assert ns.summary == "s"
+    assert ns.detail == "d"
+    assert ns.tag == ["t1", "t2"]
+    assert ns.type == "incident"
+    assert ns.confidence == "verified"
+    assert ns.impact == pytest.approx(0.9)
+    assert ns.evidence == ["path/to/file.py:42", "log excerpt"]
+
+
+def test_local_learn_defaults_match_trw_learn_tool_defaults(parser) -> None:  # type: ignore[no-untyped-def]
+    """Omitted fields default identically to the MCP ``trw_learn`` tool."""
+    ns = parser.parse_args(["local", "learn", "--summary", "s", "--detail", "d"])
+    assert ns.type == "pattern"
+    assert ns.confidence == "unverified"
+    assert ns.impact == pytest.approx(0.5)
+    assert ns.evidence is None
+
+
 def test_all_operational_and_project_subcommands_registered(parser) -> None:  # type: ignore[no-untyped-def]
     """The full set of subcommands must be reachable from the top-level parser."""
     import argparse

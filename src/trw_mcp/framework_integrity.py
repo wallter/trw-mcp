@@ -229,6 +229,16 @@ def repair_framework_runtime(
     written last (after bodies), and when ``registry_digest`` is supplied the
     stamp records ``registry_digest`` plus per-body digests so the deployed
     generation is byte-bound (PRD-INFRA-164 FR04).
+
+    Only the canon bodies and compiled projections are receipt-bound. The
+    project config and the human ``VERSION.yaml`` stamp are deployed in the same
+    atomic generation but stay unbound, because writers outside this deployer own
+    their bytes: the standalone installer persists ``target_platforms`` into
+    ``.trw/config.yaml`` after the receipt is promoted, and operators edit that
+    file by design. Digest-binding them made every fresh bundle install — and
+    every subsequent config edit — fail its own ``framework_integrity`` check
+    (L-QhRy). Their version pins and registry digest are still verified
+    field-by-field by :func:`inspect_framework_runtime`.
     """
     target = target.resolve()
     artifacts: dict[Path, bytes] = {
@@ -237,6 +247,7 @@ def repair_framework_runtime(
     }
     if additional_artifacts:
         artifacts.update(additional_artifacts)
+    mutable_artifacts: dict[Path, bytes] = {}
 
     config_path = target / _CONFIG_PATH
     if config_path.is_file():
@@ -247,7 +258,7 @@ def repair_framework_runtime(
         ):
             if re.search(rf"^{re.escape(field)}:", config_text, re.MULTILINE):
                 config_text = _replace_or_append_scalar(config_text, field, value)
-        artifacts[_CONFIG_PATH] = config_text.encode("utf-8")
+        mutable_artifacts[_CONFIG_PATH] = config_text.encode("utf-8")
 
     version_path = target / _VERSION_PATH
     version_text = version_path.read_text(encoding="utf-8") if version_path.is_file() else ""
@@ -264,7 +275,7 @@ def repair_framework_runtime(
         version_text = _replace_or_append_scalar(version_text, "aaref_digest", _sha256(aaref_source))
     deployed_at = datetime.now(timezone.utc).isoformat()
     version_text = _replace_or_append_scalar(version_text, "deployed_at", f"'{deployed_at}'")
-    artifacts[_VERSION_PATH] = version_text.encode("utf-8")
+    mutable_artifacts[_VERSION_PATH] = version_text.encode("utf-8")
 
     # The deployment receipt is authoritative only when a registry digest is
     # available. Legacy callers still receive atomic body/stamp deployment,
@@ -276,6 +287,7 @@ def repair_framework_runtime(
         framework_version=framework_version,
         aaref_version=aaref_version,
         failure_after_promotions=failure_after_promotions,
+        mutable_artifacts=mutable_artifacts,
     )
 
     return inspect_framework_runtime(

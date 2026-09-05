@@ -506,7 +506,10 @@ class TrwHeartbeatResultDict(TypedDict, total=False):
     All fields optional: the success path populates
     ``run_id``/``last_heartbeat_ts``/``stale_after_ts``/``age_hours``/
     ``should_checkpoint``/``rate_limited`` while the missing-pin path
-    populates ``error``/``hint`` instead.
+    populates ``error``/``hint`` instead. ``thread_hotspot`` (PRD-FIX-131
+    operator-visibility follow-up) is the CALLING server's own hottest-thread
+    CPU share of its own process uptime -- omitted entirely on a platform or
+    ``/proc`` state that cannot measure it, never a fabricated zero.
     """
 
     run_id: str
@@ -517,6 +520,7 @@ class TrwHeartbeatResultDict(TypedDict, total=False):
     rate_limited: bool
     error: str
     hint: str
+    thread_hotspot: dict[str, float]
 
 
 class TrwAdoptRunResultDict(TypedDict):

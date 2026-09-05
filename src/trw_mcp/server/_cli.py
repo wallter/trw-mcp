@@ -96,16 +96,43 @@ def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -
     )
 
 
-def _register_thread_dump_signal() -> bool:
-    """Make ``kill -USR1 <pid>`` dump every thread's Python stack to stderr.
+_THREAD_DUMP_FILENAME = "thread-dump-{pid}.txt"
+_thread_dump_handle: object | None = None  # kept alive: faulthandler writes to its fd
+
+
+def _thread_dump_path(dump_dir: Path | None) -> Path | None:
+    """Where ``kill -USR1`` dumps go: ``<project>/.trw/logs/thread-dump-<pid>.txt``.
+
+    The server's stderr is a socket owned by the MCP client and is not
+    persisted anywhere an operator can read after the fact (verified
+    2026-09-05: a live dump vanished into the client), so a file under the
+    project's own log directory is the record. ``None`` when no ``.trw``
+    directory is resolvable, in which case the dump falls back to stderr.
+    """
+    import os
+
+    base = (
+        dump_dir if dump_dir is not None else (Path.cwd() / ".trw" / "logs" if (Path.cwd() / ".trw").is_dir() else None)
+    )
+    if base is None:
+        return None
+    return base / _THREAD_DUMP_FILENAME.format(pid=os.getpid())
+
+
+def _register_thread_dump_signal(dump_dir: Path | None = None) -> bool:
+    """Make ``kill -USR1 <pid>`` dump every thread's Python stack.
 
     Operators diagnosing a wedged or CPU-bound server (observed 2026-09-05: one
     worker thread at 6,321 s of user CPU while ``trw_deliver`` hung for 1,800 s)
     cannot use ``py-spy``/``gdb`` on a box with ``ptrace_scope=1`` and no sudo.
-    ``faulthandler`` needs no ptrace. Returns True when registered; False on a
-    platform without ``SIGUSR1`` or when registration fails — never raises,
+    ``faulthandler`` needs no ptrace and works at C level, so it fires even
+    when the event loop is stuck. The dump goes to ``.trw/logs/thread-dump-<pid>.txt``
+    when a project ``.trw`` is resolvable (stderr otherwise); the path is
+    announced on stderr at registration. Returns True when registered; False on
+    a platform without ``SIGUSR1`` or when registration fails — never raises,
     because a diagnostic hook must not stop the server from serving.
     """
+    global _thread_dump_handle
     import faulthandler
     import signal
     import sys as _sys
@@ -113,8 +140,19 @@ def _register_thread_dump_signal() -> bool:
     signum = getattr(signal, "SIGUSR1", None)
     if signum is None:
         return False
+    target = _sys.stderr
+    path = _thread_dump_path(dump_dir)
+    if path is not None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _thread_dump_handle = path.open("a", encoding="utf-8")
+            target = _thread_dump_handle
+            print(f"trw-mcp: SIGUSR1 thread dumps -> {path}", file=_sys.stderr)
+        except OSError as exc:
+            print(f"trw-mcp: thread-dump file unavailable ({exc}); dumping to stderr", file=_sys.stderr)
+            target = _sys.stderr
     try:
-        faulthandler.register(signum, file=_sys.stderr, all_threads=True, chain=False)
+        faulthandler.register(signum, file=target, all_threads=True, chain=False)
     except (RuntimeError, ValueError, AttributeError, OSError):
         return False
     return True

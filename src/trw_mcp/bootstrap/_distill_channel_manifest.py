@@ -7,7 +7,13 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from trw_mcp.channels._manifest_loader import ManifestValidationError, auto_recreate_empty, load, write
+from trw_mcp.channels._manifest_loader import (
+    ManifestMissingError,
+    ManifestValidationError,
+    auto_recreate_empty,
+    load,
+    write,
+)
 from trw_mcp.channels._manifest_models import ChannelEntry
 from trw_mcp.channels._provenance import now_utc_iso8601
 
@@ -28,7 +34,13 @@ def merge_distill_channel_manifest(repo_root: Path, manifest_data: Path, client_
     manifest_path = repo_root / ".trw" / "channels" / "manifest.yaml"
     try:
         manifest = load(manifest_path)
-    except Exception:
+    except ManifestMissingError:
+        # Normal on first init-project: nothing was recovered, so no WARNING
+        # and no manifest_recovered telemetry event (see auto_recreate_empty).
+        auto_recreate_empty(manifest_path, reason="missing")
+        manifest = load(manifest_path)
+    except ManifestValidationError:
+        # Real corruption — keep the WARNING + telemetry recovery signal.
         auto_recreate_empty(manifest_path)
         manifest = load(manifest_path)
 

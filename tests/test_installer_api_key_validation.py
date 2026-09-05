@@ -242,14 +242,17 @@ def _read(path: Path) -> str:
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP])
 def test_bootstrap_has_pipx_fallback_rung(bootstrap: Path) -> None:
-    """Both bootstraps must invoke ``pipx install trw-mcp`` in the ladder.
+    """Both bootstraps must invoke ``pipx install "$TRW_MCP_SPEC"`` in the ladder.
 
     Wiring guard: proves the pipx rung exists in the fallback ladder. It does
     NOT execute the shell (no e2e harness in-repo), so it cannot prove runtime
-    behavior — only that the rung is present.
+    behavior — only that the rung is present. ``$TRW_MCP_SPEC`` resolves to
+    ``trw-mcp[vectors]`` — no optional user-installed engines; sqlite-vec is
+    bundled and requested on every install path (PRD fresh-install fix).
     """
     text = _read(bootstrap)
-    assert "pipx install trw-mcp" in text
+    assert 'pipx install "$TRW_MCP_SPEC"' in text
+    assert 'TRW_MCP_SPEC="trw-mcp[vectors]"' in text
     # Guard the fallback is a real command-gated rung, not just prose in --help.
     assert "command -v pipx" in text
 
@@ -258,7 +261,7 @@ def test_bootstrap_has_pipx_fallback_rung(bootstrap: Path) -> None:
 def test_bootstrap_pipx_rung_precedes_break_system_gate(bootstrap: Path) -> None:
     """The pipx rung must come BEFORE the --break-system-packages gate."""
     text = _read(bootstrap)
-    pipx_at = text.find("pipx install trw-mcp")
+    pipx_at = text.find('pipx install "$TRW_MCP_SPEC"')
     # Anchor on the ladder's break-system SUCCESS warn (identical in both
     # bootstrap styles and unique to the rung region) — the bare
     # ``--break-system-packages`` token also appears earlier in --help / comment

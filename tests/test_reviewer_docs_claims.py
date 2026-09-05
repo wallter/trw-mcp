@@ -17,9 +17,8 @@ from trw_mcp.models.surface_packs import REVIEWER_TOOLS
 _REPO = Path(__file__).resolve().parents[2]
 _AGENTS = _REPO / "AGENTS.md"
 _PROFILES = _REPO / "docs/CLIENT-PROFILES.md"
-_CODEX_DOC = (
-    _REPO / "docs/research/providers/codex/codex-cli.md"
-)  # trw-leak-allow: internal_docs monorepo-only claims test, skipped outside it
+_CODEX_DOC_REL = "docs/research/providers/codex/codex-cli.md"  # trw-leak-allow: internal_docs monorepo-only claims test
+_CODEX_DOC = _REPO / _CODEX_DOC_REL
 _CHANGELOG = _REPO / "trw-mcp/CHANGELOG.md"
 
 # The public trw-mcp repository ships without the monorepo documents these

@@ -197,6 +197,59 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer="trw-mcp/tests/test_trw_recall_verification.py::test_warm_verdict_is_reused_within_ttl",
         budget_decision="admitted",
     ),
+    "recall_verification_budget_ms": ConfigAdmission(
+        field_name="recall_verification_budget_ms",
+        owner="PRD-CORE-267-FR04 (the recall verification pass is wall-clock budgeted)",
+        consumer="trw_mcp.tools._recall_assertion_verification._verify_assertions",
+        default_rationale=(
+            "A measured recall on the development store took 14,518 ms with 12,900 ms of it inside this "
+            "pass, having checked four entries. 1000 ms keeps verification in the same order as the rest "
+            "of the call while still examining the top-ranked entries, which are the ones the caller reads "
+            "first. 0 disables the bound and restores the unbounded pass."
+        ),
+        interaction_analysis=(
+            "Read once per pass and compared against a monotonic clock before each entry, so it can only "
+            "ever REDUCE work; it never causes an entry to be verified that otherwise would not be. A "
+            "deferred entry is marked not_checked_budget on the response only — nothing is persisted for "
+            "it, so verification_cache_ttl_seconds cannot be warmed by a deferral and the FR04 "
+            "contradiction penalty is not applied on its behalf. Deferred entries remain reachable by "
+            "maintain_verify_batch_limit's sweep, which is not budget-bound."
+        ),
+        deprecation_plan=(
+            "Retain while recall verifies inline. It becomes unnecessary only if the pass moves fully to a "
+            "background worker, at which point the bound belongs to that worker instead."
+        ),
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-267-session-scoped-learning-anchors.md",
+        test_pointer=("trw-mcp/tests/test_recall_verification_budget.py::test_budget_exhaustion_marks_and_defers"),
+        budget_decision="admitted",
+    ),
+    "anchor_shared_set_migration_threshold": ConfigAdmission(
+        field_name="anchor_shared_set_migration_threshold",
+        owner="PRD-CORE-267-FR03 (the one-off shared-anchor-set migration)",
+        consumer="trw_mcp.tools._anchor_migration.clear_shared_anchor_sets (via the maintain-verify CLI)",
+        default_rationale=(
+            "Measured on the development store: 2,006 anchored rows across 370 distinct anchor sets, of "
+            "which 344 hold seven members or fewer. The observed size distribution is empty at nine, so 10 "
+            "sits below every fabricated cluster (the largest holds 381 entries) and above every plausible "
+            "case of several learnings genuinely concerning the same symbols. Another store's distribution "
+            "will differ, which is exactly why this is a field rather than a literal."
+        ),
+        interaction_analysis=(
+            "Read once per migration invocation and only by an operator-run CLI — no server path consults "
+            "it, so no value here can change tool behaviour. Raising it narrows the selection; lowering it "
+            "widens it, and the dry-run default means the widened selection is reported before anything is "
+            "written. Independent of anchor_validity_verified_floor: the migration clears anchors outright "
+            "rather than scoring them, so a cleared entry is subsequently unscored (validity None) rather "
+            "than scored zero."
+        ),
+        deprecation_plan=(
+            "Retire once every store predating PRD-CORE-267's derivation fix has been migrated. The "
+            "migration is idempotent, so leaving the field in place costs nothing."
+        ),
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-267-session-scoped-learning-anchors.md",
+        test_pointer="trw-mcp/tests/test_anchor_migration.py::test_apply_clears_and_is_idempotent",
+        budget_decision="admitted",
+    ),
 }
 
 __all__ = ["MEMORY_TRUTH_ADMISSIONS"]

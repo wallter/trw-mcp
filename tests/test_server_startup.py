@@ -51,6 +51,43 @@ class TestModuleImports:
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "ok"
 
+    def test_import_never_writes_to_the_caller_cwd(self, tmp_path: Path) -> None:
+        """Importing ``trw_mcp.server`` must not create ``.trw/`` as a side effect.
+
+        Two regressions, both module-level code triggered by IMPORT alone
+        (never calling ``serve()`` or a tool):
+
+        1. ``AnomalyDetector.__init__`` (constructed inside ``create_app()``)
+           used to write ``.trw/security/mcp_shadow_start.yaml`` eagerly rather
+           than on the first actual observation.
+        2. ``_tools.py``'s module-level ``_register_tools()`` used to eagerly
+           call ``freeze_live_process_fingerprint(mcp)``, which enumerates
+           tools via FastMCP's public ``list_tools()`` — running the FULL
+           middleware chain (FastMCP synthesizes its own ``Context`` for this
+           self-check, so ``MCPSecurityMiddleware`` cannot tell it apart from a
+           real client request) and writing a real security-audit event to
+           ``.trw/context/events-*.jsonl`` / ``tool_call_events.jsonl`` for
+           every registered tool, before any client had connected.
+
+        Runs with ``cwd=tmp_path`` and NO ``TRW_PROJECT_ROOT`` override, so a
+        stray write lands somewhere this test can see it.
+        """
+        env = os.environ.copy()
+        env.pop("TRW_PROJECT_ROOT", None)
+        result = subprocess.run(
+            [sys.executable, "-c", "import trw_mcp.server; print('ok')"],
+            cwd=str(tmp_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "ok"
+        trw_dir = tmp_path / ".trw"
+        assert not trw_dir.exists(), f"import created {list(trw_dir.rglob('*'))}"
+
     def test_import_app(self) -> None:
         from trw_mcp._logging import configure_logging
         from trw_mcp.server._app import mcp

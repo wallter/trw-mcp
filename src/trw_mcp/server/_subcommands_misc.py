@@ -40,6 +40,8 @@ def _run_config_reference(args: argparse.Namespace) -> None:
 
 def _run_local(args: argparse.Namespace) -> None:
     """Handle the ``local`` subcommand — offline ceremony fallback (PRD-FIX-073)."""
+    from trw_memory.exceptions import MemoryError as TrwMemoryError
+
     from trw_mcp.services.orchestration_service import (
         mark_local_delivered,
         read_local_status,
@@ -85,14 +87,30 @@ def _run_local(args: argparse.Namespace) -> None:
             sys.exit(1)
     elif local_cmd == "learn":
         tags = list(getattr(args, "tag", []) or [])
+        evidence = list(getattr(args, "evidence", []) or []) or None
         try:
             result = write_local_learning(
                 summary=str(getattr(args, "summary", "")),
                 detail=str(getattr(args, "detail", "")),
                 tags=tags,
+                evidence=evidence,
+                impact=float(getattr(args, "impact", 0.5) or 0.5),
+                type=str(getattr(args, "type", "pattern") or "pattern"),
+                confidence=str(getattr(args, "confidence", "unverified") or "unverified"),
             )
+            if result.get("status") == "rejected":
+                print(f"Error: {result.get('message', result.get('reason', 'rejected'))}")
+                sys.exit(1)
             print(f"Learning {result.get('status', 'saved')}: {result.get('id', result.get('learning_id', 'unknown'))}")
         except (OSError, ValueError) as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+        except TrwMemoryError as exc:
+            # confidence="verified" without --evidence (and other write-time
+            # schema/policy refusals) raise trw_memory.exceptions.MemoryError
+            # (e.g. SchemaValidationError) here — the same gate the MCP
+            # trw_learn tool enforces, surfaced as a clean CLI message instead
+            # of a traceback.
             print(f"Error: {exc}")
             sys.exit(1)
     elif local_cmd == "recall":
@@ -151,7 +169,8 @@ def _run_local(args: argparse.Namespace) -> None:
         print("  init        Create a run directory (--task NAME required)")
         print("  checkpoint  Save progress (--message MSG)")
         print("  status      Show active local run status")
-        print("  learn       Persist a learning (--summary, --detail, --tag)")
+        print("  learn       Persist a learning (--summary, --detail, --tag, --type,")
+        print("              --confidence, --impact, --evidence)")
         print("  recall      Recall learnings (--query Q, --tag T, --max-results N)")
         print("  feedback    Submit feedback (--category C, --subject S, --message M)")
         print("  deliver     Mark active run delivered (--message MSG)")

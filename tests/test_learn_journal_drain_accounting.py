@@ -218,6 +218,33 @@ class TestNoRecordIsRetriedForever:
         assert result.get("dead_lettered") == 1
         assert learn_journal.pending_count(trw_dir) == 0
 
+    def test_schema_validation_error_dead_letters_on_the_first_attempt(self, tmp_path: Path) -> None:
+        """A permanently-invalid pending record (trw-memory's own validation
+        exception) must dead-letter on attempt 1, not replay to exhaustion.
+
+        Regression: ``DETERMINISTIC_EXCEPTIONS`` only listed the stdlib
+        ``ValueError``/``TypeError`` pair, so ``trw_memory.exceptions.
+        SchemaValidationError`` (e.g. ``confidence="verified"`` without
+        evidence) fell to the TRANSIENT branch and replayed with a full ERROR
+        traceback up to ``max_attempts`` times before dead-lettering.
+        """
+        from trw_memory.exceptions import SchemaValidationError
+
+        trw_dir = _trw_dir(tmp_path)
+        _journal(trw_dir, "L-badschema")
+
+        def _replay(_lid: str, _payload: dict[str, object]) -> str:
+            raise SchemaValidationError("confidence='verified' requires evidence", reason="unsubstantiated_verified")
+
+        result = learn_journal.drain_pending(trw_dir, _replay, limit=10, max_attempts=5)
+
+        assert result.get("dead_lettered") == 1
+        assert learn_journal.pending_count(trw_dir) == 0
+        (record_path,) = _dead_letter_files(trw_dir)
+        dead_letter = json.loads(record_path.read_text(encoding="utf-8"))["dead_letter"]
+        assert dead_letter["reason"] == "deterministic_error:SchemaValidationError"
+        assert dead_letter["attempts"] == 1
+
     def test_transient_failure_is_retried_within_the_budget(self, tmp_path: Path) -> None:
         """A store error is the case the journal exists for — keep retrying it."""
         trw_dir = _trw_dir(tmp_path)

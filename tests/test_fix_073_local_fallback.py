@@ -230,6 +230,82 @@ class TestOrchestrationServiceCheckpoint:
         assert not (Path(scaffold["run_path"]) / "meta" / "checkpoints.jsonl").exists()
 
 
+class TestOrchestrationServiceLearnParity:
+    """write_local_learning mirrors the trw_learn MCP tool's contract.
+
+    PRD-CORE-247 offline-parity fix: type/confidence/impact/evidence were
+    accepted by the online tool but silently unreachable offline.
+    """
+
+    def test_forwards_type_confidence_impact_evidence_to_execute_learn(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Each new field reaches execute_learn unchanged — the payload mapping."""
+        import trw_mcp.tools._learn_impl as _learn_impl
+        from trw_mcp.services import orchestration_service
+
+        captured: dict[str, object] = {}
+
+        def _fake_execute_learn(**kwargs: object) -> dict[str, object]:
+            captured.update(kwargs)
+            return {"status": "recorded", "learning_id": "L-test", "path": "sqlite://L-test"}
+
+        monkeypatch.setattr(_learn_impl, "execute_learn", _fake_execute_learn)
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        result = orchestration_service.write_local_learning(
+            "summary text",
+            "detail text",
+            trw_dir=trw_dir,
+            tags=["t1"],
+            evidence=["path/to/file.py:10", "log excerpt"],
+            impact=0.9,
+            type="incident",
+            confidence="high",
+        )
+
+        assert result["status"] == "recorded"
+        assert captured["evidence"] == ["path/to/file.py:10", "log excerpt"]
+        assert captured["impact"] == pytest.approx(0.9)
+        assert captured["type"] == "incident"
+        assert captured["confidence"] == "high"
+
+    def test_invalid_type_is_rejected_not_raised(self, tmp_path: Path) -> None:
+        """An out-of-range type returns the same structured rejection trw_learn does."""
+        from trw_mcp.services.orchestration_service import write_local_learning
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        result = write_local_learning("summary text", "detail text", trw_dir=trw_dir, type="not-a-real-type")
+
+        assert result["status"] == "rejected"
+        assert result["reason"] == "invalid_type"
+
+    def test_verified_without_evidence_is_refused(self, tmp_path: Path) -> None:
+        """confidence='verified' still requires substantiation (reused validation).
+
+        Enforced by trw-memory's own write-time schema contract
+        (SchemaValidationError), the same gate the MCP tool goes through --
+        not re-implemented in the offline path.
+        """
+        from trw_memory.exceptions import SchemaValidationError
+
+        from trw_mcp.services.orchestration_service import write_local_learning
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        with pytest.raises(SchemaValidationError):
+            write_local_learning(
+                "summary text long enough to pass the noise filter",
+                "detail text",
+                trw_dir=trw_dir,
+                confidence="verified",
+            )
+
+
 # ---------------------------------------------------------------------------
 # FR01 — Local CLI subcommand
 # ---------------------------------------------------------------------------
@@ -360,6 +436,74 @@ class TestLocalCLISubcommand:
         assert result.returncode == 0, result.stderr
         assert "Learning" in result.stdout
         assert any((tmp_path / ".trw" / "memory").glob("**/*.yaml"))
+
+    def test_local_learn_records_type_confidence_impact_and_evidence(self, tmp_path: Path) -> None:
+        """The trw_learn-parity flags round-trip through the offline CLI (PRD-CORE-247)."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "trw_mcp.server",
+                "local",
+                "learn",
+                "--summary",
+                "Local fallback parity learning",
+                "--detail",
+                "Proves --type/--confidence/--impact/--evidence round-trip offline.",
+                "--type",
+                "incident",
+                "--confidence",
+                "high",
+                "--impact",
+                "0.9",
+                "--evidence",
+                "trw-mcp/src/trw_mcp/services/orchestration_service.py:210",
+                "--evidence",
+                "second evidence item",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "Learning" in result.stdout
+        entry_files = list((tmp_path / ".trw" / "learnings" / "entries").glob("*.yaml"))
+        assert entry_files, "no learning entry sidecar was written"
+        entry_text = entry_files[0].read_text(encoding="utf-8")
+        assert "type: incident" in entry_text
+        assert "confidence: high" in entry_text
+        assert "second evidence item" in entry_text
+
+    def test_local_learn_verified_without_evidence_fails_cleanly(self, tmp_path: Path) -> None:
+        """confidence=verified with no evidence is a clean error, not a traceback."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "trw_mcp.server",
+                "local",
+                "learn",
+                "--summary",
+                "Local fallback unsubstantiated verified learning",
+                "--detail",
+                "This claims verified confidence with no substantiation at all.",
+                "--confidence",
+                "verified",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+
+        # A clean, structured rejection message on stdout with a non-zero exit —
+        # never an unhandled-exception traceback out of the CLI process itself
+        # (structlog WARNING noise on stderr, e.g. an offline embedder falling
+        # back, is unrelated background logging, not a crash).
+        assert result.returncode != 0
+        assert "Error:" in result.stdout
+        assert "verified" in result.stdout
+        assert "TRW MCP CRASH" not in result.stderr
 
     def test_local_no_subcommand_shows_help(self) -> None:
         """trw-mcp local (no subcommand) shows usage."""

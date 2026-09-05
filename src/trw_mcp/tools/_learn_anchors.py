@@ -1,188 +1,107 @@
 """Anchor resolution for the ``trw_learn()`` flow (PRD-CORE-111 FR04).
 
 Belongs to the ``_learn_impl.py`` flow; extracted so ``_learn_impl`` stays under
-the module-size gate and the modified-file/line-range discovery is unit-testable
-in isolation.
+the module-size gate and anchor derivation is unit-testable in isolation.
 
-Determines recently-modified files (run ``events.jsonl`` first, ``git diff``
-fallback) and their changed line ranges (``git diff -U0``), generates code
-anchors, and computes the initial anchor validity. Fail-open throughout: any
-failure yields ``([], None)`` so a learning is still created without anchors
-and without a fabricated validity score (PRD-CORE-244 FR01).
+Composes the session-scoped inputs in :mod:`trw_mcp.tools._learn_anchor_sources`
+(PRD-CORE-267 FR01: the caller's OWN pinned run, never the mtime-newest events
+file anywhere under ``.trw``) with the overlap-gated generator in
+:mod:`trw_mcp.state.anchor_generation` (FR02: no anchor without demonstrated
+relevance, and no first-symbol fallback).
+
+Fail-open throughout: any failure yields ``([], None)`` so a learning is still
+created without anchors and without a fabricated validity score
+(PRD-CORE-244 FR01).
 """
 
 from __future__ import annotations
 
-import json
-import os
-import re
-import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
+from trw_mcp.tools._learn_anchor_sources import (
+    git_diff_line_ranges,
+    learning_mentions,
+    modified_files_for_run,
+    resolve_session_run,
+)
+
+if TYPE_CHECKING:
+    from trw_mcp.state._paths import TRWCallContext
 
 logger = structlog.get_logger(__name__)
 
-_GIT_TIMEOUT = 5
 
-# +++ b/<path> header in a unified diff identifies the file for following hunks.
-_DIFF_FILE_PREFIX = "+++ b/"
+def _absolute(project_root: Path, recorded: str) -> str:
+    """Resolve a recorded event path against *project_root*.
 
-# @@ -a,b +c,d @@  — capture the new-side start line (c) and optional count (d).
-_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-
-
-def _modified_files_from_events(trw_dir: Path) -> list[str]:
-    """Read ``file_modified`` event paths from the most recent run's events.jsonl.
-
-    Run directories nest ``events.jsonl`` under ``meta/`` and may use several
-    layouts, so we glob rather than assume the PROPER layout. The newest file by
-    mtime is treated as the active run. Returns relative paths (as recorded).
+    Hook-written events carry absolute paths; tool-written ones are relative.
+    ``Path.__truediv__`` already returns the absolute operand unchanged, so one
+    expression handles both.
     """
-    try:
-        candidates = list(trw_dir.glob("**/meta/events.jsonl"))
-    except OSError:
-        return []
-    if not candidates:
-        return []
-
-    try:
-        latest = max(candidates, key=lambda p: p.stat().st_mtime)
-    except OSError:
-        return []
-
-    paths: list[str] = []
-    try:
-        raw = latest.read_text(encoding="utf-8")
-    except OSError:
-        return []
-
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        # Support both {"event": "file_modified", "data": {"path": ...}} and the
-        # flatter {"type": "file_modified", "path": ...} shape.
-        kind = str(event.get("event") or event.get("type") or "")
-        if kind != "file_modified":
-            continue
-        path = ""
-        data = event.get("data")
-        if isinstance(data, dict):
-            path = str(data.get("path") or "")
-        if not path:
-            path = str(event.get("path") or "")
-        if path and path not in paths:
-            paths.append(path)
-    return paths
-
-
-def _child_env(session_id: str | None) -> dict[str, str]:
-    """Copy the process environment and preserve the caller's pin identity."""
-    env = dict(os.environ)
-    if session_id:
-        env["TRW_SESSION_ID"] = session_id
-    return env
-
-
-def _git_diff_name_only(project_root: Path, *, session_id: str | None = None) -> list[str]:
-    """Return files changed vs HEAD via ``git diff --name-only HEAD``."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT,
-        cwd=str(project_root),
-        env=_child_env(session_id),
-    )
-    if result.returncode != 0:
-        return []
-    return [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
-
-
-def _git_diff_line_ranges(project_root: Path, *, session_id: str | None = None) -> dict[str, list[tuple[int, int]]]:
-    """Parse ``git diff -U0 HEAD`` hunk headers into per-file changed line ranges.
-
-    Ranges use new-side (post-change) line numbers. A pure-deletion hunk
-    (``+c,0``) anchors at line ``c``.
-    """
-    result = subprocess.run(
-        ["git", "diff", "-U0", "HEAD"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT,
-        cwd=str(project_root),
-        env=_child_env(session_id),
-    )
-    if result.returncode != 0:
-        return {}
-
-    ranges: dict[str, list[tuple[int, int]]] = {}
-    current: str | None = None
-    for line in result.stdout.splitlines():
-        if line.startswith(_DIFF_FILE_PREFIX):
-            current = line[len(_DIFF_FILE_PREFIX) :].strip()
-            continue
-        if line.startswith("+++ "):  # e.g. "+++ /dev/null" — no trackable file
-            current = None
-            continue
-        if current and line.startswith("@@"):
-            match = _HUNK_RE.match(line)
-            if match is None:
-                continue
-            start = int(match.group(1))
-            count = int(match.group(2)) if match.group(2) else 1
-            end = start if count == 0 else start + count - 1
-            ranges.setdefault(current, []).append((start, end))
-    return ranges
+    return str(project_root / recorded)
 
 
 def resolve_learn_anchors(
     project_root: Path,
-    trw_dir: Path,
     learning_id: str,
     *,
     session_id: str | None = None,
+    context: TRWCallContext | None = None,
+    summary: str = "",
+    detail: str = "",
+    evidence: list[str] | None = None,
 ) -> tuple[list[dict[str, object]], float | None]:
-    """Resolve code anchors + initial validity for a new learning (FR04).
+    """Resolve code anchors + initial validity for a new learning.
 
     Returns ``(anchors, anchor_validity)``. ``anchor_validity`` is ``None``
     whenever no anchor was actually scored — PRD-CORE-244 FR01: an unanchored
     learning has never been assessed, and reporting a perfect ``1.0`` for it is
-    the defect that put a top anchor score on 7,541 rows that never earned one.
-    Always fail-open: on any error the learning is created with no anchors and
-    no validity score.
+    the defect that put a top anchor score on rows that never earned one.
+
+    PRD-CORE-267 FR01: candidate files come ONLY from the run this caller has
+    pinned. With no resolvable run the answer is no anchors — deriving nothing
+    is truthful, whereas deriving from a peer session's working tree is not.
     """
     anchors: list[dict[str, object]] = []
     try:
-        # FR04 step 1: run events first, git diff fallback.
-        modified_rel = _modified_files_from_events(trw_dir)
-        if not modified_rel:
-            modified_rel = _git_diff_name_only(project_root, session_id=session_id)
+        run_dir = resolve_session_run(context=context, session_id=session_id)
+        if run_dir is None:
+            logger.debug("anchor_generation_no_session_run", entry_id=learning_id)
+            return [], None
+
+        modified_rel = modified_files_for_run(run_dir)
         if not modified_rel:
             return [], None
 
-        # FR04 step 2: changed line ranges from git diff -U0.
-        line_ranges_rel = _git_diff_line_ranges(project_root, session_id=session_id)
+        mentions = learning_mentions(summary, detail, evidence)
 
-        # Key both the file list and range map by absolute path so
-        # generate_anchors can read the files and match ranges.
-        modified_abs = [str(project_root / f) for f in modified_rel]
+        # FR02 predicate 3 inputs: changed line ranges for the caller's own
+        # files. The diff is repo-wide, but only files the run named are ever
+        # looked up, so a peer's hunks in an untouched file cannot be read.
+        line_ranges_rel = git_diff_line_ranges(project_root, session_id=session_id)
+
+        modified_abs = [_absolute(project_root, rel) for rel in modified_rel]
         ranges_abs: dict[str, list[tuple[int, int]]] = {
-            str(project_root / rel): rng for rel, rng in line_ranges_rel.items()
+            _absolute(project_root, rel): rng for rel, rng in line_ranges_rel.items()
         }
+        mentioned_files = frozenset(
+            abs_path
+            for abs_path, rel in zip(modified_abs, modified_rel, strict=True)
+            if mentions.mentions_file(Path(rel))
+        )
 
         from trw_mcp.state.anchor_generation import generate_anchors
 
-        raw_anchors = generate_anchors(modified_abs, ranges_abs)
+        raw_anchors = generate_anchors(
+            modified_abs,
+            ranges_abs,
+            mentioned_names=mentions.names,
+            mentioned_files=mentioned_files,
+        )
         if raw_anchors:
             anchors = [dict(a) for a in raw_anchors]
     except Exception:  # justified: fail-open, anchor generation is best-effort

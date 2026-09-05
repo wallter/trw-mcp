@@ -6,6 +6,7 @@ compatibility with tests and callers that import via the parent module.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,15 @@ from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
 
 logger = structlog.get_logger(__name__)
+
+#: PRD-CORE-267-FR04: the response-only status for an entry this pass ran out
+#: of budget before reaching. It is deliberately NOT a member of
+#: ``_verification_pass.VerificationStatus`` — a deferral is a statement about
+#: THIS pass, not a verdict about the entry, so it must never be persisted.
+#: Marking is what keeps the deferral visible: a silently skipped entry would
+#: carry whatever verdict a previous pass left behind, and the caller would
+#: read it as this pass's finding.
+BUDGET_DEFERRED_STATUS = "not_checked_budget"
 
 # The per-result normaliser moved to _verification_pass (PRD-CORE-231, shared
 # with the maintain-verify sweep). Re-exported so the _recall_impl facade — and
@@ -64,6 +74,11 @@ def _verify_assertions(
     verified = 0
     stale_count = 0
     cache_hits = 0
+    deferred = 0
+    # FR04: a monotonic deadline, not a per-entry timeout — the cost this bounds
+    # is the WHOLE pass, which is what dominated the measured 14.5 s recall.
+    budget_ms = max(int(config.recall_verification_budget_ms), 0)
+    deadline = time.monotonic() + (budget_ms / 1000.0) if budget_ms else None
     project_root_path: Path | None = None
     try:
         from trw_mcp.state._paths import resolve_project_root
@@ -84,6 +99,13 @@ def _verify_assertions(
                 continue
             entry_id = str(learning.get("id", ""))
             namespace = str(learning.get("namespace") or DEFAULT_NAMESPACE)
+            if deadline is not None and time.monotonic() >= deadline:
+                # FR04: out of budget. Say so on the payload and persist
+                # nothing — the maintain-verify sweep is not budget-bound and
+                # reaches this entry on its next run.
+                deferred += 1
+                learning["verification_status"] = BUDGET_DEFERRED_STATUS
+                continue
             try:
                 # FR03: a CLEAN verdict reached inside the TTL is reused and
                 # costs no filesystem verification for this entry. An adverse or
@@ -164,6 +186,8 @@ def _verify_assertions(
             stale=stale_count,
             contradicted=len(contradicted_ids),
             cache_hits=cache_hits,
+            deferred=deferred,
+            budget_ms=budget_ms,
         )
         _apply_contradiction_penalties(contradicted_ids)
 

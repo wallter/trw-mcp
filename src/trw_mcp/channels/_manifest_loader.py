@@ -243,18 +243,24 @@ def write(manifest: ChannelManifest, path: Path) -> None:
     log.debug("manifest_written", path=str(path))
 
 
-def auto_recreate_empty(path: Path, *, log_path: Path | None = None) -> None:
+def auto_recreate_empty(path: Path, *, log_path: Path | None = None, reason: str = "corrupt") -> None:
     """Write a minimal valid manifest to *path*.
 
-    Used for manifest auto-recovery (FR15 / SYS-04 fix).
     Creates parent directories if needed.
-    Emits a ``manifest_recovered`` telemetry event (FR15-AC4).
 
     Args:
         path: Destination path for the recovered manifest.
         log_path: Override for the telemetry log path.  Defaults to the
             standard ``append_channel_event`` resolution (TRW_REPO_ROOT or
             ``.trw/telemetry/channel-events.jsonl``).
+        reason: ``"corrupt"`` (default, FR15 / SYS-04 fix) — the manifest
+            existed but failed validation, which is a real recovery: logs at
+            WARNING and emits a ``manifest_recovered`` telemetry event
+            (FR15-AC4). ``"missing"`` — no manifest existed yet, which is the
+            normal shape of a first ``init-project``: logs at INFO with no
+            recovery event, since nothing was recovered. Conflating the two
+            under one bare-except caller used to warn (and page on the
+            telemetry stream) every first-time install.
     """
     data: dict[str, Any] = {
         "format_version": MANIFEST_FORMAT_VERSION,
@@ -263,6 +269,11 @@ def auto_recreate_empty(path: Path, *, log_path: Path | None = None) -> None:
         "channels": [],
     }
     _atomic_dump_yaml(data, path)
+
+    if reason == "missing":
+        log.info("manifest_created", path=str(path))
+        return
+
     log.warning("manifest_auto_recreated", path=str(path))
 
     # FR15-AC4: emit manifest_recovered telemetry event on auto-recovery.

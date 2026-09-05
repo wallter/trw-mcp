@@ -214,7 +214,16 @@ enabled = true
         assert any("direct TRW MCP HTTP URL" in w for w in result["warnings"])
 
     def test_claude_md_missing_markers_warns(self, tmp_path: Path) -> None:
-        """CLAUDE.md without TRW markers → warning."""
+        """CLAUDE.md without TRW markers → warning.
+
+        ``target_platforms`` is recorded explicitly so this test's outcome does
+        not depend on ``detect_ide``'s machine-global Cursor-binary signal
+        (a Cursor install on the host resolves an evidence-free tmp_path to
+        cursor-ide, which does not declare CLAUDE.md as a write target).
+        """
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text("target_platforms:\n  - claude-code\n", encoding="utf-8")
         mcp_path = tmp_path / ".mcp.json"
         mcp_path.write_text(json.dumps({"mcpServers": {"trw": {}}}), encoding="utf-8")
         claude_md = tmp_path / "CLAUDE.md"
@@ -224,6 +233,52 @@ enabled = true
         _verify_installation(tmp_path, result)
 
         assert any("missing TRW" in w for w in result["warnings"])
+
+    def test_codex_project_leftover_claude_md_not_flagged(self, tmp_path: Path) -> None:
+        """A codex-only project's carrier is ``.codex/INSTRUCTIONS.md``, never ``CLAUDE.md``.
+
+        Regression test: the marker check used to be hardcoded to ``CLAUDE.md``
+        regardless of the resolved client profile, so a codex project (which
+        never declares ``claude_md`` as a write target) got a false warning off
+        a leftover/unrelated CLAUDE.md.
+        """
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text("target_platforms:\n  - codex\n", encoding="utf-8")
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(json.dumps({"mcpServers": {"trw": {}}}), encoding="utf-8")
+        # Unrelated leftover CLAUDE.md without TRW markers must NOT be flagged —
+        # codex does not declare claude_md as a write target.
+        (tmp_path / "CLAUDE.md").write_text("# Unrelated project notes\n", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"warnings": []}
+        _verify_installation(tmp_path, result)
+
+        assert not any("CLAUDE.md" in w for w in result["warnings"])
+
+    def test_copilot_project_checks_its_own_carrier_not_claude_md(self, tmp_path: Path) -> None:
+        """copilot's real carrier (.github/copilot-instructions.md) is flagged when unmarked.
+
+        Same regression class as codex but for a client whose managed-block
+        carrier genuinely differs from ``CLAUDE.md``, proving the resolved-
+        profile lookup surfaces a real defect rather than just suppressing the
+        old false positive.
+        """
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        (trw_dir / "config.yaml").write_text("target_platforms:\n  - copilot\n", encoding="utf-8")
+        mcp_path = tmp_path / ".mcp.json"
+        mcp_path.write_text(json.dumps({"mcpServers": {"trw": {}}}), encoding="utf-8")
+        github_dir = tmp_path / ".github"
+        github_dir.mkdir()
+        (github_dir / "copilot-instructions.md").write_text("# Copilot\n", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"warnings": []}
+        _verify_installation(tmp_path, result)
+
+        assert any(
+            ".github/copilot-instructions.md missing TRW auto-generated markers" in w for w in result["warnings"]
+        )
 
     def test_healthy_install_no_warnings(self, initialized_repo: Path) -> None:
         """Healthy install produces no verification warnings."""

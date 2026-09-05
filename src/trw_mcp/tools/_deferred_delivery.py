@@ -233,7 +233,20 @@ def _run_deferred_steps(
             _last_err = errors[-1]
             logger.error("deferred_step_failed", step=name, error=_last_err)
         elif _step_result is None or (isinstance(_step_result, dict) and _step_result.get("status") == "skipped"):
-            logger.warning("deferred_step_skip", step=name, reason=str(_step_result))
+            # Log the structured fields directly rather than stringifying the
+            # whole result dict — ``reason=str(_step_result)`` produced the
+            # literal text "None" when a step never populated ``results`` at
+            # all, and a single-quoted dict repr (invalid JSON) otherwise,
+            # inside an otherwise-structured JSON log line.
+            if isinstance(_step_result, dict):
+                logger.warning(
+                    "deferred_step_skip",
+                    step=name,
+                    status=_step_result.get("status", ""),
+                    reason=_step_result.get("reason", ""),
+                )
+            else:
+                logger.warning("deferred_step_skip", step=name, status="no_result", reason="")
         else:
             logger.info("deferred_step_ok", step=name, duration_ms=_duration_ms)
 

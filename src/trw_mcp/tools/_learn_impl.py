@@ -325,15 +325,18 @@ def execute_learn(
         consume_journal(trw_dir, config, learning_id)
         return cast("LearnResultDict", dedup_result)
 
-    # PRD-CORE-111 FR04: code-grounded anchors from recently modified files
-    # (run events.jsonl first, git-diff fallback) + initial validity. Delegated
-    # to _learn_anchors so this module stays under the size gate.
+    # PRD-CORE-111 FR04 + PRD-CORE-267 FR01/FR02: code-grounded anchors drawn
+    # from THIS session's own pinned run, gated on demonstrated overlap with
+    # the learning's own text. Delegated to _learn_anchors so this module stays
+    # under the size gate.
     project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
     anchors, anchor_validity = resolve_learn_anchors(
         project_root,
-        trw_dir,
         learning_id,
         session_id=session_id,
+        summary=summary,
+        detail=detail,
+        evidence=safe_evidence,
     )
 
     # Store via SQLite adapter (primary path).  Preserve compatibility with

@@ -1862,13 +1862,37 @@ def _resolve_path_trw_mcp_version() -> str | None:
     return parts[-1] if parts else None
 
 
+def _merge_yaml_scalar(text: str, field: str, value: str) -> str:
+    """Replace ``field:`` in ``text`` or append it, preserving every other key.
+
+    Deliberately duplicated from ``trw_mcp.framework_integrity`` rather than
+    imported: this installer is a single self-contained file that must run
+    before (and independently of) any importable trw-mcp.
+    """
+    pattern = re.compile(rf"^{re.escape(field)}:.*$", re.MULTILINE)
+    replacement = f"{field}: {value}"
+    if pattern.search(text):
+        return pattern.sub(replacement, text, count=1)
+    suffix = "" if not text or text.endswith("\n") else "\n"
+    return f"{text}{suffix}{replacement}\n"
+
+
 def _write_version_yaml_metadata(target_dir: Path) -> None:
     """Best-effort VERSION.yaml refresh for upgrade-only installer runs.
 
     `init-project` / `update-project` already write this file through the
-    installed package. The standalone installer must also refresh it when
-    `--upgrade` skips project setup, otherwise `.trw/installed-version.json`
-    and `.trw/frameworks/VERSION.yaml` drift apart.
+    installed package — including the `registry_digest` / `framework_digest` /
+    `aaref_digest` fields that bind the deployed canon generation. The
+    standalone installer must also refresh it when `--upgrade` skips project
+    setup, otherwise `.trw/installed-version.json` and
+    `.trw/frameworks/VERSION.yaml` drift apart.
+
+    The refresh is a MERGE of the fields this installer is authoritative for,
+    never a whole-file rewrite. Rewriting destroyed the digest fields the
+    installed package had just written, so every fresh bundle install reported
+    a deployment stamp with no `registry_digest` — `needs_upgrade` on a
+    brand-new install, and a `framework_integrity` FAIL while the stamp was
+    still receipt-bound (L-QhRy).
     """
     version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
     try:
@@ -1889,18 +1913,15 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
         )
         if framework_version is None or aaref_version is None:
             return
-        version_path.write_text(
-            "\n".join(
-                [
-                    f"framework_version: {framework_version}",
-                    f"aaref_version: {aaref_version}",
-                    f"trw_mcp_version: {TRW_VERSION}",
-                    f"deployed_at: '{_iso_now()}'",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
+        text = version_path.read_text(encoding="utf-8") if version_path.is_file() else ""
+        for field, value in (
+            ("framework_version", framework_version),
+            ("aaref_version", aaref_version),
+            ("trw_mcp_version", TRW_VERSION),
+            ("deployed_at", f"'{_iso_now()}'"),
+        ):
+            text = _merge_yaml_scalar(text, field, value)
+        version_path.write_text(text, encoding="utf-8")
     except OSError:
         pass  # Best-effort; the sentinel remains the runtime restart signal.
 
@@ -2604,6 +2625,14 @@ def phase_prompt_features(
 
     When both extras are already configured (prior install or CLI flags),
     shows a compact summary line instead of the full prompt section.
+
+    ``install_sqlitevec`` is a vestigial parameter as of the "no optional
+    user-installed engines" fix: ``main()`` now always resolves sqlite-vec's
+    on/off state to a concrete bool BEFORE calling this function (bundled +
+    on by default; see the ``TRW_INSTALL_SQLITE_VEC`` / ``--no-sqlite-vec``
+    resolution), so the ``install_sqlitevec is None`` branches below are
+    unreachable from ``main()`` — retained only so this function's own unit
+    tests can still exercise the prompt path directly.
     """
     if prior_extras is None:
         prior_extras = {}
@@ -4256,9 +4285,18 @@ def main() -> None:
     parser.add_argument("--ai", dest="install_ai", action="store_true", default=None, help="Install AI/LLM extras")
     parser.add_argument("--no-ai", dest="install_ai", action="store_false", help="Skip AI extras")
     parser.add_argument(
-        "--sqlite-vec", dest="install_vec", action="store_true", default=None, help="Install sqlite-vec"
+        "--sqlite-vec",
+        dest="install_vec",
+        action="store_true",
+        default=None,
+        help="Install sqlite-vec (default: on; also set via TRW_INSTALL_SQLITE_VEC)",
     )
-    parser.add_argument("--no-sqlite-vec", dest="install_vec", action="store_false", help="Skip sqlite-vec")
+    parser.add_argument(
+        "--no-sqlite-vec",
+        dest="install_vec",
+        action="store_false",
+        help="Skip sqlite-vec (vector search degrades to keyword-only; same as TRW_INSTALL_SQLITE_VEC=0)",
+    )
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     parser.add_argument("--script", action="store_true", help="Force non-interactive mode")
     parser.add_argument("--name", default="", help="Project name (installation ID)")
@@ -4415,12 +4453,21 @@ def main() -> None:
     # install must still ask which clients to configure. `--script` forces off.
     interactive = (not args.script) and (sys.stdin.isatty() or _has_controlling_tty())
 
-    # Script-mode defaults
+    # No optional user-installed engines: sqlite-vec ([vectors]) is bundled
+    # and on by default in EVERY mode (interactive or --script) unless the
+    # user explicitly opts out with --no-sqlite-vec / TRW_INSTALL_SQLITE_VEC=0
+    # — it's what makes the default `embeddings_enabled: true` config actually
+    # work instead of silently degrading to keyword-only search. AI/LLM
+    # extras (anthropic client + the sentence-transformers embeddings model,
+    # several hundred MB with torch) stay a genuine opt-in.
     install_ai = args.install_ai
-    install_vec = args.install_vec
+    if args.install_vec is not None:
+        install_vec = args.install_vec
+    else:
+        env_vec = os.environ.get("TRW_INSTALL_SQLITE_VEC", "").strip().lower()
+        install_vec = env_vec not in {"0", "false", "no"} if env_vec else True
     if not interactive:
         install_ai = install_ai if install_ai is not None else False
-        install_vec = install_vec if install_vec is not None else False
 
     # Resolve target
     target_dir = Path(args.target_dir).resolve()

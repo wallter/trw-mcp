@@ -64,3 +64,31 @@ class _VerificationFields:
         le=604_800,
         description="Seconds a persisted verification verdict is reused before the pass re-checks an entry.",
     )
+
+    # -- PRD-CORE-267-FR04: a bounded recall verification pass ---------------
+    #: Wall-clock ceiling for the inline verification pass a recall runs. Once
+    #: exceeded, the remaining ranked entries are marked ``not_checked_budget``
+    #: on the response and left to the maintain-verify sweep. A measured pass
+    #: consumed 12.9 s of a 14.5 s recall; 1000 ms keeps verification in the
+    #: same order as the rest of the call while still examining the
+    #: top-ranked entries a caller actually reads. 0 disables the bound.
+    recall_verification_budget_ms: int = Field(
+        default=1000,
+        ge=0,
+        le=600_000,
+        description="Wall-clock milliseconds a recall may spend verifying assertions/anchors before deferring the rest.",
+    )
+
+    # -- PRD-CORE-267-FR03: the shared-anchor-set migration ------------------
+    #: Minimum number of entries sharing one IDENTICAL anchor set before that
+    #: set is treated as derivation noise rather than topical convergence. On
+    #: the development store (2,006 anchored rows, 370 distinct sets) 344 sets
+    #: hold 7 members or fewer and the distribution is empty at 9, so 10 sits
+    #: below every fabricated cluster and above every plausible case of several
+    #: learnings genuinely concerning the same symbols.
+    anchor_shared_set_migration_threshold: int = Field(
+        default=10,
+        ge=2,
+        le=10_000,
+        description="Entries sharing one identical anchor set before the clear-shared-anchors migration selects it.",
+    )

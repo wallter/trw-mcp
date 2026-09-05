@@ -37,22 +37,41 @@ def test_hash_tool_args_is_deterministic_and_stable() -> None:
     assert len(h1) == 64  # sha256 hex
 
 
-def test_shadow_clock_bootstraps_idempotently(tmp_path: Path) -> None:
-    """Deliverable #7: shadow clock writes once, then returns existing contents."""
+def test_constructing_the_detector_never_writes_to_disk(tmp_path: Path) -> None:
+    """The detector is built inside ``create_app()``, which runs at MODULE
+    IMPORT time (``server/__init__.py``'s ``mcp = _load_mcp()`` -> ``_app.py``'s
+    module-level ``mcp = create_app()``). Writing the shadow clock in
+    ``__init__`` made merely ``import trw_mcp.server`` create
+    ``.trw/security/mcp_shadow_start.yaml`` with no tool ever having been
+    called — the shadow clock must be written on first OBSERVATION only.
+    """
+    cfg = _cfg(tmp_path)
+    AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    assert not cfg.shadow_clock_path.exists()
+
+
+def test_shadow_clock_bootstraps_on_first_observation_then_idempotently(tmp_path: Path) -> None:
+    """Deliverable #7: shadow clock writes on first ``observe()``, then returns existing contents."""
     cfg = _cfg(tmp_path)
     det = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    obs = AnomalyObservation(ts=datetime.now(tz=timezone.utc), server="trw", tool="trw_learn")
+    det.observe(obs)
     assert cfg.shadow_clock_path.exists()
     original = yaml.safe_load(cfg.shadow_clock_path.read_text())
-    # Instantiate a second detector — should NOT overwrite.
-    AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
-    again = yaml.safe_load(cfg.shadow_clock_path.read_text())
-    assert original == again
     assert original["phase"] == "shadow"
     # threshold_review_at should be ~21 days after started_at
     started = datetime.fromisoformat(original["started_at"])
     review = datetime.fromisoformat(original["threshold_review_at"])
     assert (review - started).days == SHADOW_WINDOW_DAYS
-    _ = det
+
+    # A second observation on the SAME detector must not overwrite.
+    det.observe(obs)
+    assert yaml.safe_load(cfg.shadow_clock_path.read_text()) == original
+
+    # A second detector instance sharing the same path also does not overwrite.
+    det2 = AnomalyDetector(config=cfg, run_dir=None, fallback_dir=tmp_path)
+    det2.observe(obs)
+    assert yaml.safe_load(cfg.shadow_clock_path.read_text()) == original
 
 
 def test_rate_spike_fires_at_configured_sigma(tmp_path: Path) -> None:

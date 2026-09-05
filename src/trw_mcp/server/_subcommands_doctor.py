@@ -305,7 +305,9 @@ def _check_memory_backend(target: Path, _config: TRWConfig) -> CheckResult:
             "memory_backend",
             "WARN",
             f"memory store healthy ({count} entries) but sqlite-vec unavailable — "
-            "vector search degraded (install the [vectors] extra).",
+            "vector search degraded. The installer bundles this by default; if it "
+            "is missing here, run: pip install 'trw-mcp[vectors]' (or 'trw-memory[vectors]' "
+            "in a standalone trw-memory install), then reconnect the MCP client.",
         )
     return CheckResult("memory_backend", "PASS", f"memory store healthy ({count} entries, vectors ok).")
 
@@ -341,6 +343,29 @@ def _check_memory_daemon(_target: Path, _config: TRWConfig) -> CheckResult:
 
     status, message = memory_daemon_row()
     return CheckResult("memory_daemon", cast("DoctorStatus", status), message)
+
+
+# ── PRD-FIX-131 follow-up: operator visibility for hot worker threads ────────
+
+
+def _check_thread_hotspots(target: Path, config: TRWConfig) -> CheckResult:
+    """Report the hottest thread's CPU share on each live trw-mcp server process.
+
+    Delegates to the ``_doctor_thread_hotspots`` sibling (kept out of this file
+    for the eLOC gate). Read-only ``/proc`` census; it never sends a signal
+    itself — an operator runs the WARN's named ``kill -USR1 <pid>`` remedy.
+    SKIPs (never PASSes) on non-Linux or when ``/proc`` is unreadable, since
+    those platforms make the census genuinely unmeasured rather than clean.
+    """
+    from trw_mcp.server._doctor_thread_hotspots import thread_hotspot_row
+
+    status, message = thread_hotspot_row(
+        target,
+        share_threshold=config.doctor_thread_hotspot_share,
+        min_seconds=float(config.doctor_thread_hotspot_min_seconds),
+        is_linux=sys.platform.startswith("linux"),
+    )
+    return CheckResult("thread_hotspots", cast("DoctorStatus", status), message)
 
 
 # ── PRD-SEC-014-FR04: embedding cache state + egress posture ─────────────────
@@ -516,6 +541,7 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("memory_wal", "_check_memory_wal"),
     ("memory_backend", "_check_memory_backend"),
     ("memory_daemon", "_check_memory_daemon"),
+    ("thread_hotspots", "_check_thread_hotspots"),
     ("embedding_egress", "_check_embedding_egress"),
     ("backend_connectivity", "_check_backend_connectivity"),
     ("installer_flag_advisory", "_check_installer_flag_advisory"),

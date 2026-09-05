@@ -1,4 +1,10 @@
-"""Tests for anchor wiring in the trw_learn() flow — PRD-CORE-111."""
+"""Tests for anchor wiring in the trw_learn() flow — PRD-CORE-111, PRD-CORE-267.
+
+PRD-CORE-267 FR01 moved the candidate-file source from "the mtime-newest
+events.jsonl anywhere under .trw, else a name-only git diff over the shared
+working tree" to "the run THIS caller pinned, and nothing else". Every test
+here that used to lean on the git fallback now seeds a real pinned run.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 
 
@@ -15,14 +23,53 @@ def _make_config() -> TRWConfig:
     return TRWConfig()
 
 
+def _pin_run(
+    project_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    session_id: str,
+    modified: list[str],
+    run_id: str = "20260101T000000Z-aaaa1111",
+) -> Path:
+    """Seed a run owned by *session_id* whose events name *modified*, and pin it.
+
+    Returns the run directory. The event shape is the FLAT one the bundled
+    ``post-tool-event.sh`` hook actually writes (path under the key ``file``).
+    """
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(project_root))
+    from trw_mcp.models.config import _reset_config
+    from trw_mcp.state import _pin_store as pin_store_mod
+    from trw_mcp.state._paths import _pinned_runs, pin_active_run
+
+    _reset_config()
+    _pinned_runs.clear()
+    pin_store_mod.invalidate_pin_store_cache()
+
+    run_dir = project_root / ".trw" / "runs" / "task-a" / run_id
+    (run_dir / "meta").mkdir(parents=True, exist_ok=True)
+    (run_dir / "meta" / "events.jsonl").write_text(
+        "".join(json.dumps({"event": "file_modified", "file": path}) + "\n" for path in modified),
+        encoding="utf-8",
+    )
+    pin_active_run(run_dir, session_id=session_id)
+    return run_dir
+
+
 class TestLearnCreatesAnchors:
     """Verify anchor generation is wired into execute_learn."""
 
-    def test_learn_creates_anchors_when_git_diff_returns_py_files(self, tmp_path: Path) -> None:
-        """When git diff returns modified .py files, anchors are generated and passed to store."""
+    def test_learn_creates_anchors_from_the_sessions_own_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Files the caller's OWN run recorded become anchors (FR01 + FR02).
+
+        Rewritten from ``test_learn_creates_anchors_when_git_diff_returns_py_files``,
+        which mocked a name-only ``git diff`` over the whole working tree — the
+        source FR01 deletes because on a shared checkout it is every concurrent
+        agent's edits, not the caller's.
+        """
         from trw_mcp.tools._learn_impl import execute_learn
 
-        # Create a real .py file that anchor_generation can read
         py_file = tmp_path / "mod.py"
         py_file.write_text("def my_func(): pass\n")
 
@@ -38,34 +85,24 @@ class TestLearnCreatesAnchors:
             return {"learning_id": learning_id, "path": "sqlite://x", "status": "recorded", "distribution_warning": ""}
 
         trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
+        _pin_run(tmp_path, monkeypatch, session_id="sess-anchor", modified=[str(py_file)])
 
-        # Mock git diff to return the py_file path
-        git_stdout = str(py_file.relative_to(trw_dir.parent)) + "\n"
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = git_stdout
-
-        with patch("trw_mcp.tools._learn_anchors.subprocess.run", return_value=mock_result):
-            # Run the actual flow with real file
-            result = execute_learn(
-                summary="Test anchor wiring",
-                detail="Verifying anchors flow through execute_learn",
-                trw_dir=trw_dir,
-                config=_make_config(),
-                _adapter_store=fake_store,
-                _generate_learning_id=lambda: "L-test",
-                _save_learning_entry=lambda *a, **kw: tmp_path / "entry.yaml",
-                _update_analytics=lambda *a, **kw: None,
-                _list_active_learnings=lambda *a, **kw: [],
-                _check_and_handle_dedup=lambda *a, **kw: None,
-            )
+        result = execute_learn(
+            summary="Test anchor wiring",
+            detail="Verifying anchors flow through execute_learn for my_func",
+            trw_dir=trw_dir,
+            config=_make_config(),
+            session_id="sess-anchor",
+            _adapter_store=fake_store,
+            _generate_learning_id=lambda: "L-test",
+            _save_learning_entry=lambda *a, **kw: tmp_path / "entry.yaml",
+            _update_analytics=lambda *a, **kw: None,
+            _list_active_learnings=lambda *a, **kw: [],
+            _check_and_handle_dedup=lambda *a, **kw: None,
+        )
 
         assert result.get("status") == "recorded"
-        # Anchors should have been captured
-        assert len(captured_anchors) >= 1
-        assert captured_anchors[0]["symbol_name"] == "my_func"
+        assert [a["symbol_name"] for a in captured_anchors] == ["my_func"]
 
     def test_learn_no_modified_files_empty_anchors(self, tmp_path: Path) -> None:
         """When git diff returns nothing, anchors passed to store are empty."""
@@ -83,25 +120,21 @@ class TestLearnCreatesAnchors:
             return {"learning_id": learning_id, "path": "sqlite://x", "status": "recorded", "distribution_warning": ""}
 
         trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
+        trw_dir.mkdir(exist_ok=True)
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = ""  # no modified files
-
-        with patch("trw_mcp.tools._learn_anchors.subprocess.run", return_value=mock_result):
-            execute_learn(
-                summary="No anchors test",
-                detail="Git returns empty diff",
-                trw_dir=trw_dir,
-                config=_make_config(),
-                _adapter_store=fake_store,
-                _generate_learning_id=lambda: "L-test2",
-                _save_learning_entry=lambda *a, **kw: tmp_path / "entry.yaml",
-                _update_analytics=lambda *a, **kw: None,
-                _list_active_learnings=lambda *a, **kw: [],
-                _check_and_handle_dedup=lambda *a, **kw: None,
-            )
+        execute_learn(
+            summary="No anchors test",
+            detail="No pinned run, so nothing can be anchored",
+            trw_dir=trw_dir,
+            config=_make_config(),
+            session_id="sess-no-run",
+            _adapter_store=fake_store,
+            _generate_learning_id=lambda: "L-test2",
+            _save_learning_entry=lambda *a, **kw: tmp_path / "entry.yaml",
+            _update_analytics=lambda *a, **kw: None,
+            _list_active_learnings=lambda *a, **kw: [],
+            _check_and_handle_dedup=lambda *a, **kw: None,
+        )
 
         assert captured_anchors[0] == []
 
@@ -115,8 +148,8 @@ class TestLearnCreatesAnchors:
         # anchors must NOT be a parameter of execute_learn
         assert "anchors" not in sig.parameters, "anchors should be auto-generated, not a caller-supplied parameter"
 
-    def test_learn_git_failure_still_records(self, tmp_path: Path) -> None:
-        """If git subprocess fails, anchor generation is skipped but learn still records."""
+    def test_learn_git_failure_still_records(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A failing ``git diff -U0`` costs the ranges, never the learning."""
         from trw_mcp.tools._learn_impl import execute_learn
 
         stored: list[dict[str, object]] = []
@@ -130,20 +163,23 @@ class TestLearnCreatesAnchors:
             stored.append({"anchors": kwargs.get("anchors", [])})
             return {"learning_id": learning_id, "path": "sqlite://x", "status": "recorded", "distribution_warning": ""}
 
+        py_file = tmp_path / "mod.py"
+        py_file.write_text("def my_func(): pass\n")
         trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
+        _pin_run(tmp_path, monkeypatch, session_id="sess-gitfail", modified=[str(py_file)])
 
-        # Simulate git failure
+        # Simulate git failure — no ranges at all.
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = ""
 
-        with patch("trw_mcp.tools._learn_anchors.subprocess.run", return_value=mock_result):
+        with patch("trw_mcp.tools._learn_anchor_sources.subprocess.run", return_value=mock_result):
             result = execute_learn(
                 summary="Git fails gracefully",
                 detail="Anchor failure must not block learning",
                 trw_dir=trw_dir,
                 config=_make_config(),
+                session_id="sess-gitfail",
                 _adapter_store=fake_store,
                 _generate_learning_id=lambda: "L-test3",
                 _save_learning_entry=lambda *a, **kw: tmp_path / "entry.yaml",
@@ -153,10 +189,11 @@ class TestLearnCreatesAnchors:
             )
 
         assert result.get("status") == "recorded"
-        # Anchors should be empty (git failed, returncode != 0)
+        # No ranges and no name overlap: nothing qualifies, and that is the
+        # answer rather than the file's first symbol (PRD-CORE-267 FR02).
         assert stored[0]["anchors"] == []
 
-    def test_learn_subprocess_exception_still_records(self, tmp_path: Path) -> None:
+    def test_learn_subprocess_exception_still_records(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """If subprocess.run raises, anchor generation is skipped but learn still records."""
         from trw_mcp.tools._learn_impl import execute_learn
 
@@ -171,11 +208,13 @@ class TestLearnCreatesAnchors:
             stored.append({"anchors": kwargs.get("anchors", [])})
             return {"learning_id": learning_id, "path": "sqlite://x", "status": "recorded", "distribution_warning": ""}
 
+        py_file = tmp_path / "mod.py"
+        py_file.write_text("def my_func(): pass\n")
         trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
+        _pin_run(tmp_path, monkeypatch, session_id="sess-timeout", modified=[str(py_file)])
 
         with patch(
-            "trw_mcp.tools._learn_anchors.subprocess.run",
+            "trw_mcp.tools._learn_anchor_sources.subprocess.run",
             side_effect=subprocess.TimeoutExpired(["git"], 5),
         ):
             result = execute_learn(
@@ -183,6 +222,7 @@ class TestLearnCreatesAnchors:
                 detail="Timeout must not block learning",
                 trw_dir=trw_dir,
                 config=_make_config(),
+                session_id="sess-timeout",
                 _adapter_store=fake_store,
                 _generate_learning_id=lambda: "L-test4",
                 _save_learning_entry=lambda *a, **kw: tmp_path / "entry.yaml",
@@ -280,85 +320,85 @@ class TestAnchorYamlRoundTrip:
         assert entry.anchors == []
 
 
-class TestModifiedFilesFromEvents:
-    """FR04 step 1: read file_modified paths from run events.jsonl."""
+class TestModifiedFilesForRun:
+    """PRD-CORE-267 FR01: read ``file_modified`` paths from ONE run's events."""
 
-    def _write_events(self, trw_dir: Path, lines: list[dict[str, object]]) -> Path:
-        meta = trw_dir / "runs" / "task-x" / "run-1" / "meta"
-        meta.mkdir(parents=True)
+    def _write_events(self, run_dir: Path, lines: list[dict[str, object]]) -> Path:
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True, exist_ok=True)
         events = meta / "events.jsonl"
         events.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
         return events
 
     def test_reads_nested_data_path_shape(self, tmp_path: Path) -> None:
-        from trw_mcp.tools._learn_anchors import _modified_files_from_events
+        from trw_mcp.tools._learn_anchor_sources import modified_files_for_run
 
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
+        run_dir = tmp_path / "runs" / "task-x" / "run-1"
         self._write_events(
-            trw_dir,
+            run_dir,
             [
                 {"event": "session_start", "ts": "t0"},
                 {"event": "file_modified", "data": {"path": "src/a.py"}},
                 {"event": "file_modified", "data": {"path": "src/b.py"}},
             ],
         )
-        assert _modified_files_from_events(trw_dir) == ["src/a.py", "src/b.py"]
+        assert modified_files_for_run(run_dir) == ["src/a.py", "src/b.py"]
 
     def test_reads_flat_type_path_shape(self, tmp_path: Path) -> None:
-        from trw_mcp.tools._learn_anchors import _modified_files_from_events
+        from trw_mcp.tools._learn_anchor_sources import modified_files_for_run
 
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
+        run_dir = tmp_path / "runs" / "task-x" / "run-1"
+        self._write_events(run_dir, [{"type": "file_modified", "path": "lib/c.py"}])
+        assert modified_files_for_run(run_dir) == ["lib/c.py"]
+
+    def test_reads_the_flat_file_key_the_bundled_hook_writes(self, tmp_path: Path) -> None:
+        """FR01: the shape ``data/hooks/post-tool-event.sh`` actually appends.
+
+        The hook writes ``{"event": "file_modified", "tool": ..., "file": ...}``.
+        The pre-FR01 reader looked only for ``data.path`` and ``path``, so it
+        returned nothing for every hook-written run and the caller silently fell
+        through to a name-only diff over the whole shared working tree. This is
+        the assertion that fails on the parent commit.
+        """
+        from trw_mcp.tools._learn_anchor_sources import modified_files_for_run
+
+        run_dir = tmp_path / "runs" / "task-x" / "run-1"
         self._write_events(
-            trw_dir,
-            [{"type": "file_modified", "path": "lib/c.py"}],
+            run_dir,
+            [{"event": "file_modified", "tool": "Edit", "file": "/abs/src/hooked.py"}],
         )
-        assert _modified_files_from_events(trw_dir) == ["lib/c.py"]
+        assert modified_files_for_run(run_dir) == ["/abs/src/hooked.py"]
 
-    def test_no_events_returns_empty(self, tmp_path: Path) -> None:
-        from trw_mcp.tools._learn_anchors import _modified_files_from_events
+    def test_torn_tail_line_does_not_lose_the_complete_records(self, tmp_path: Path) -> None:
+        """A partially-written JSONL line is skipped; everything before it survives."""
+        from trw_mcp.tools._learn_anchor_sources import modified_files_for_run
 
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        assert _modified_files_from_events(trw_dir) == []
-
-    def test_events_used_before_git_fallback(self, tmp_path: Path) -> None:
-        """resolve_learn_anchors prefers events.jsonl over git diff (FR04 step 1)."""
-        from trw_mcp.tools import _learn_anchors
-
-        project_root = tmp_path
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        # A real source file the events point at.
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "a.py").write_text("def from_events(): pass\n")
-        self._write_events(
-            trw_dir,
-            [{"event": "file_modified", "data": {"path": "src/a.py"}}],
+        run_dir = tmp_path / "runs" / "task-x" / "run-1"
+        meta = run_dir / "meta"
+        meta.mkdir(parents=True)
+        (meta / "events.jsonl").write_text(
+            json.dumps({"event": "file_modified", "file": "src/a.py"}) + '\n{"event": "file_mod',
+            encoding="utf-8",
         )
+        assert modified_files_for_run(run_dir) == ["src/a.py"]
 
-        # git must NOT be consulted for the file list when events exist; make it
-        # explode if called for name-only. -U0 (ranges) may still be called.
-        def fake_run(cmd: list[str], **_kw: Any) -> MagicMock:
-            result = MagicMock()
-            result.returncode = 1  # ranges: no git repo -> empty ranges
-            result.stdout = ""
-            assert "--name-only" not in cmd, "events present: name-only diff should be skipped"
-            return result
+    def test_absent_events_file_returns_empty(self, tmp_path: Path) -> None:
+        from trw_mcp.tools._learn_anchor_sources import modified_files_for_run
 
-        with patch.object(_learn_anchors.subprocess, "run", side_effect=fake_run):
-            anchors, validity = _learn_anchors.resolve_learn_anchors(project_root, trw_dir, "L-x")
-
-        assert [a["symbol_name"] for a in anchors] == ["from_events"]
-        assert validity == 1.0
+        run_dir = tmp_path / "runs" / "task-x" / "run-1"
+        run_dir.mkdir(parents=True)
+        assert modified_files_for_run(run_dir) == []
 
 
 class TestGitDiffLineRanges:
-    """FR04 step 2: parse git diff -U0 hunk headers into changed line ranges."""
+    """FR04 step 2: parse git diff -U0 hunk headers into changed line ranges.
+
+    Moved to ``_learn_anchor_sources`` by PRD-CORE-267; the parsing contract is
+    unchanged, only the module that owns it.
+    """
 
     def test_parses_hunk_headers(self, tmp_path: Path) -> None:
-        from trw_mcp.tools import _learn_anchors
+        from trw_mcp.tools import _learn_anchor_sources
 
         diff = (
             "diff --git a/src/mod.py b/src/mod.py\n"
@@ -378,8 +418,8 @@ class TestGitDiffLineRanges:
         result = MagicMock()
         result.returncode = 0
         result.stdout = diff
-        with patch.object(_learn_anchors.subprocess, "run", return_value=result):
-            ranges = _learn_anchors._git_diff_line_ranges(tmp_path)
+        with patch.object(_learn_anchor_sources.subprocess, "run", return_value=result):
+            ranges = _learn_anchor_sources.git_diff_line_ranges(tmp_path)
 
         # +2,3 -> lines 2..4 ; +14,1 -> line 14 ; +5 (no count) -> line 5
         assert ranges == {
@@ -389,16 +429,16 @@ class TestGitDiffLineRanges:
 
     def test_git_child_inherits_explicit_session_pin(self, tmp_path: Path) -> None:
         """FR12: producer-owned subprocesses propagate the caller session pin."""
-        from trw_mcp.tools import _learn_anchors
+        from trw_mcp.tools import _learn_anchor_sources
 
         result = MagicMock(returncode=0, stdout="")
-        with patch.object(_learn_anchors.subprocess, "run", return_value=result) as run:
-            _learn_anchors._git_diff_line_ranges(tmp_path, session_id="session-from-caller")
+        with patch.object(_learn_anchor_sources.subprocess, "run", return_value=result) as run:
+            _learn_anchor_sources.git_diff_line_ranges(tmp_path, session_id="session-from-caller")
 
         assert run.call_args.kwargs["env"]["TRW_SESSION_ID"] == "session-from-caller"
 
     def test_deletion_hunk_anchors_at_start(self, tmp_path: Path) -> None:
-        from trw_mcp.tools import _learn_anchors
+        from trw_mcp.tools import _learn_anchor_sources
 
         diff = (
             "--- a/x.py\n"
@@ -408,19 +448,19 @@ class TestGitDiffLineRanges:
         result = MagicMock()
         result.returncode = 0
         result.stdout = diff
-        with patch.object(_learn_anchors.subprocess, "run", return_value=result):
-            ranges = _learn_anchors._git_diff_line_ranges(tmp_path)
+        with patch.object(_learn_anchor_sources.subprocess, "run", return_value=result):
+            ranges = _learn_anchor_sources.git_diff_line_ranges(tmp_path)
         assert ranges == {"x.py": [(6, 6)]}
 
     def test_dev_null_target_skipped(self, tmp_path: Path) -> None:
-        from trw_mcp.tools import _learn_anchors
+        from trw_mcp.tools import _learn_anchor_sources
 
         diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n"
         result = MagicMock()
         result.returncode = 0
         result.stdout = diff
-        with patch.object(_learn_anchors.subprocess, "run", return_value=result):
-            ranges = _learn_anchors._git_diff_line_ranges(tmp_path)
+        with patch.object(_learn_anchor_sources.subprocess, "run", return_value=result):
+            ranges = _learn_anchor_sources.git_diff_line_ranges(tmp_path)
         assert ranges == {}
 
 
@@ -428,7 +468,7 @@ class TestAnchorStoredInSqliteAndYaml:
     """FR04 (PRD :467): a learning created via execute_learn persists anchors to
     BOTH the SQLite entry and the YAML backup file."""
 
-    def test_anchor_stored_in_sqlite_and_yaml(self, tmp_project: Path) -> None:
+    def test_anchor_stored_in_sqlite_and_yaml(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import subprocess as _sp
 
         from trw_mcp.models.config import TRWConfig
@@ -455,11 +495,16 @@ class TestAnchorStoredInSqliteAndYaml:
         # Modify the function body (line 2 changes) so a hunk targets `handle`.
         src.write_text("def handle():\n    return 42\n")
 
+        # PRD-CORE-267 FR01: the candidate file must come from THIS session's
+        # own run, so the run that recorded the edit is pinned to this caller.
+        _pin_run(tmp_project, monkeypatch, session_id="sess-persist", modified=[str(src)])
+
         result = execute_learn(
             summary="Anchor persistence across SQLite and YAML",
             detail="Verifying dual-write of anchors for FR04",
             trw_dir=trw_dir,
             config=config,
+            session_id="sess-persist",
         )
         learning_id = str(result["learning_id"])
 
@@ -490,20 +535,15 @@ class TestUnanchoredLearningHasNoValidity:
     """
 
     def test_no_anchors_resolves_to_none_validity(self, tmp_path: Path) -> None:
-        """The resolver reports "not assessed", not "perfect"."""
+        """The resolver reports "not assessed", not "perfect".
+
+        With no pinned run there is no candidate file set at all (PRD-CORE-267
+        FR01), so the resolver never reaches generation.
+        """
         from trw_mcp.tools import _learn_anchors
 
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-
-        def fake_run(_cmd: list[str], **_kw: Any) -> MagicMock:
-            result = MagicMock()
-            result.returncode = 1  # not a git repo: no modified files at all
-            result.stdout = ""
-            return result
-
-        with patch.object(_learn_anchors.subprocess, "run", side_effect=fake_run):
-            anchors, validity = _learn_anchors.resolve_learn_anchors(tmp_path, trw_dir, "L-none")
+        (tmp_path / ".trw").mkdir()
+        anchors, validity = _learn_anchors.resolve_learn_anchors(tmp_path, "L-none", session_id="sess-with-no-pin")
 
         assert anchors == []
         assert validity is None

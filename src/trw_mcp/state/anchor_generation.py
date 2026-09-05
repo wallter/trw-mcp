@@ -48,7 +48,11 @@ _PATTERNS: dict[str, list[tuple[str, re.Pattern[str]]]] = {
     "python": [
         ("class", re.compile(r"^class\s+(\w+)", re.MULTILINE)),
         ("function", re.compile(r"^(?:async\s+)?def\s+(\w+)", re.MULTILINE)),
-        ("method", re.compile(r"^\s+(?:async\s+)?def\s+(\w+)", re.MULTILINE)),
+        # ``[ \t]+`` rather than ``\s+``: ``\s`` matches a NEWLINE, so the old
+        # pattern also matched a top-level ``def`` preceded by blank lines and
+        # reported it a second time, at the blank line's number. Invisible while
+        # only the first symbol per file was ever emitted (PRD-CORE-267 FR02).
+        ("method", re.compile(r"^[ \t]+(?:async\s+)?def\s+(\w+)", re.MULTILINE)),
     ],
     "javascript": [
         ("function", re.compile(r"^(?:export\s+)?(?:async\s+)?function\s+(\w+)", re.MULTILINE)),
@@ -103,18 +107,49 @@ def extract_marker_ids(text: str) -> list[str]:
     return ids
 
 
-# A single extracted symbol definition: (line_num, symbol_type, symbol_name, signature)
-_SymbolDef = tuple[int, str, str, str]
+# A single extracted symbol definition:
+# (line_num, symbol_type, symbol_name, signature, span_end).
+#
+# ``span_end`` is the last line that belongs to the definition's own body
+# (PRD-CORE-267 FR02). It is deliberately NOT "the line before the next
+# definition": that tiling makes every change in a file land inside some
+# symbol, which is precisely how a change to module-level code acquired the
+# file's first function as an anchor.
+_SymbolDef = tuple[int, str, str, str, int]
+
+
+def _span_end(lines: list[str], def_line: int, next_def_line: int) -> int:
+    """Return the last line belonging to the definition starting at *def_line*.
+
+    The body is the run of lines indented more deeply than the definition
+    itself, ignoring blank lines, bounded above by *next_def_line*. This works
+    for indent-scoped languages and for brace languages alike (a closing brace
+    at the definition's own indentation ends the run).
+    """
+    raw = lines[def_line - 1]
+    base_indent = len(raw) - len(raw.lstrip())
+    end = def_line
+    limit = min(next_def_line - 1, len(lines))
+    for index in range(def_line, limit):
+        line = lines[index]
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent <= base_indent:
+            break
+        end = index + 1
+    return end
 
 
 def _collect_symbol_defs(content: str, lang: str) -> list[_SymbolDef]:
     """Extract every symbol definition in *content* for language *lang*.
 
-    Returns the definitions sorted ascending by line number. Each language's
-    patterns are mutually exclusive per line (they anchor on distinct
-    leading tokens), so a definition line contributes at most one entry.
+    Returns the definitions sorted ascending by line number, each carrying the
+    end of its own body. Each language's patterns are mutually exclusive per
+    line (they anchor on distinct leading tokens), so a definition line
+    contributes at most one entry.
     """
-    defs: list[_SymbolDef] = []
+    found: list[tuple[int, str, str, str]] = []
     for symbol_type, pattern in _PATTERNS.get(lang, []):
         for match in pattern.finditer(content):
             symbol_name = match.group(1)
@@ -127,27 +162,39 @@ def _collect_symbol_defs(content: str, lang: str) -> list[_SymbolDef]:
                 line_end = len(content)
             signature = content[line_start:line_end].strip()[:200]
 
-            defs.append((line_num, symbol_type, symbol_name, signature))
+            found.append((line_num, symbol_type, symbol_name, signature))
 
-    defs.sort(key=lambda d: d[0])
+    found.sort(key=lambda d: d[0])
+    # Enforce "at most one definition per line" instead of asserting it: two
+    # patterns that overlap would otherwise emit the same symbol twice and the
+    # FR02 selection would return duplicate anchors.
+    deduped: list[tuple[int, str, str, str]] = []
+    for candidate in found:
+        if not deduped or deduped[-1][0] != candidate[0]:
+            deduped.append(candidate)
+    found = deduped
+    lines = content.splitlines()
+    defs: list[_SymbolDef] = []
+    for index, (line_num, symbol_type, symbol_name, signature) in enumerate(found):
+        next_line = found[index + 1][0] if index + 1 < len(found) else len(lines) + 1
+        defs.append((line_num, symbol_type, symbol_name, signature, _span_end(lines, line_num, next_line)))
     return defs
 
 
-def _nearest_def(defs: list[_SymbolDef], range_start: int) -> _SymbolDef:
-    """Return the definition whose start line is nearest at-or-before *range_start*.
+def _nearest_def(defs: list[_SymbolDef], range_start: int) -> _SymbolDef | None:
+    """Return the definition nearest at-or-before *range_start*, or ``None``.
 
     ``defs`` must be sorted ascending by line. When every definition begins
-    after the changed range (e.g. a change above the first symbol), the first
-    definition in the file is returned so a plausible anchor is still emitted.
+    after the changed range there is no enclosing symbol, and ``None`` is the
+    only truthful answer — the previous behaviour returned the file's FIRST
+    definition, which is the fabrication PRD-CORE-267 FR02 removes.
     """
     before = [d for d in defs if d[0] <= range_start]
-    if before:
-        return before[-1]  # largest line <= range_start == nearest at-or-before
-    return defs[0]
+    return before[-1] if before else None
 
 
 def _anchor_from_def(file_str: str, symbol: _SymbolDef) -> AnchorDict:
-    line_num, symbol_type, symbol_name, signature = symbol
+    line_num, symbol_type, symbol_name, signature, _span = symbol
     return {
         "file": file_str,
         "symbol_name": symbol_name,
@@ -157,61 +204,89 @@ def _anchor_from_def(file_str: str, symbol: _SymbolDef) -> AnchorDict:
     }
 
 
+def _overlaps(symbol: _SymbolDef, ranges: list[tuple[int, int]]) -> bool:
+    """True when any changed range intersects the symbol's own body span."""
+    start, end = symbol[0], symbol[4]
+    return any(range_start <= end and range_end >= start for range_start, range_end in ranges)
+
+
 def _anchors_for_file(
     file_str: str,
     defs: list[_SymbolDef],
     ranges: list[tuple[int, int]] | None,
     limit: int,
+    *,
+    mentioned_names: frozenset[str],
+    file_mentioned: bool,
 ) -> list[AnchorDict]:
-    """Select up to *limit* anchors for a single file.
+    """Select up to *limit* anchors for a single file (PRD-CORE-267 FR02).
 
-    With changed line *ranges*, one anchor is emitted per range (deduplicated)
-    anchored to the symbol nearest at-or-before that range's start. Without
-    ranges, the first symbol in the file is emitted (legacy fallback so callers
-    that supply no ranges keep working).
+    A definition is selected when at least one overlap predicate holds:
+
+    1. its name appears in the learning's own text (``mentioned_names``);
+    2. a changed line range intersects its body span;
+    3. the learning names the FILE and the definition is the nearest one
+       at-or-before a changed range — the relaxation that lets a change to
+       module-level code in an explicitly-cited file still anchor.
+
+    A file with definitions but no qualifying predicate contributes NOTHING.
+    There is no first-symbol fallback.
     """
     if limit <= 0 or not defs:
         return []
 
-    if not ranges:
-        return [_anchor_from_def(file_str, defs[0])]
-
+    effective_ranges = ranges or []
     chosen: list[_SymbolDef] = []
     seen_lines: set[int] = set()
-    for range_start, _range_end in ranges:
-        symbol = _nearest_def(defs, range_start)
-        if symbol[0] not in seen_lines:
-            seen_lines.add(symbol[0])
-            chosen.append(symbol)
 
-    if not chosen:  # ranges were empty tuples / produced nothing usable
-        chosen = [defs[0]]
+    def _take(symbol: _SymbolDef | None) -> None:
+        if symbol is None or symbol[0] in seen_lines:
+            return
+        seen_lines.add(symbol[0])
+        chosen.append(symbol)
 
-    return [_anchor_from_def(file_str, s) for s in chosen[:limit]]
+    for symbol in defs:
+        if symbol[2] in mentioned_names or (effective_ranges and _overlaps(symbol, effective_ranges)):
+            _take(symbol)
+
+    if file_mentioned:
+        for range_start, _range_end in effective_ranges:
+            _take(_nearest_def(defs, range_start))
+
+    chosen.sort(key=lambda d: d[0])
+    return [_anchor_from_def(file_str, symbol) for symbol in chosen[:limit]]
 
 
 def generate_anchors(
     modified_files: list[str],
     changed_line_ranges: dict[str, list[tuple[int, int]]],
+    *,
+    mentioned_names: frozenset[str] = frozenset(),
+    mentioned_files: frozenset[str] = frozenset(),
 ) -> list[AnchorDict]:
     """Extract code symbol anchors from recently modified files (PRD-CORE-111 FR02).
 
-    For each modified file the nearest symbol definition at-or-before each
-    changed line range is selected. A file with N changed ranges yields up to
-    N anchors (bounded globally by ``_MAX_ANCHORS``). When no ranges are
-    supplied for a file, the first symbol in that file is used (legacy
-    fallback). Best-effort — parse/read failures and unsupported files are
-    skipped, never raised.
+    Every emitted anchor carries demonstrated overlap with the learning
+    (PRD-CORE-267 FR02): its name was stated by the author, a changed line
+    range intersects its body span, or the learning named the file and the
+    definition encloses a change. A file with no qualifying definition yields
+    NOTHING — there is no first-symbol fallback. Best-effort otherwise:
+    parse/read failures and unsupported files are skipped, never raised.
 
     Args:
         modified_files: File paths (relative to project root or absolute).
         changed_line_ranges: Mapping of file path -> list of (start, end)
             changed line ranges. Keys should match the entries in
-            ``modified_files``. Missing/empty entries trigger the fallback.
+            ``modified_files``.
+        mentioned_names: Identifier-shaped tokens the learning's own text
+            states; a definition whose name is in this set is anchorable
+            without any diff evidence.
+        mentioned_files: File-path strings (as supplied in *modified_files*)
+            the learning names explicitly.
 
     Returns:
         List of AnchorDict with keys: file, symbol_name, symbol_type,
-        signature, line_range. Empty list if no symbols are found.
+        signature, line_range. Empty list if no symbol qualifies.
     """
     if not modified_files:
         return []
@@ -252,7 +327,16 @@ def generate_anchors(
             ranges = changed_line_ranges.get(str(file_path))
 
         file_str = str(file_path)
-        anchors.extend(_anchors_for_file(file_str, defs, ranges, _MAX_ANCHORS - len(anchors)))
+        anchors.extend(
+            _anchors_for_file(
+                file_str,
+                defs,
+                ranges,
+                _MAX_ANCHORS - len(anchors),
+                mentioned_names=mentioned_names,
+                file_mentioned=file_path_str in mentioned_files or file_str in mentioned_files,
+            )
+        )
 
     return anchors[:_MAX_ANCHORS]
 

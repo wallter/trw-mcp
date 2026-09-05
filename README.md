@@ -55,8 +55,10 @@ trw-mcp doctor .
 ### Manual / advanced install
 
 ```bash
-# Install from PyPI
-pip install trw-mcp
+# Install from PyPI (the [vectors] extra bundles sqlite-vec so vector search
+# works out of the box; add [embeddings] for sentence-transformers, several
+# hundred MB with torch — opt-in given its size)
+pip install 'trw-mcp[vectors]'
 
 # Or install from source
 git clone https://github.com/wallter/trw-mcp.git
@@ -250,7 +252,7 @@ This is normal on first use — learnings accumulate as you work. Call `trw_lear
 Run `trw-mcp update-project .` to migrate your project state to the latest schema. If issues persist, backup and re-initialize with `trw-mcp init-project . --force`.
 
 **Embeddings not working despite `embeddings_enabled=true`**
-Embeddings require the `[vectors]` extra: `pip install 'trw-mcp[vectors]'`. Without it, vector search silently degrades to keyword-only.
+Vector search requires the `[vectors]` extra (sqlite-vec) — every install path (`install.sh`, `pip`, `pipx`, `uv tool`) requests it by default, so this is normally already installed. If it is missing (e.g. an old install predating the bundling fix, or `--no-sqlite-vec` was passed), run `pip install 'trw-mcp[vectors]'` and reconnect the MCP client. Without it, vector search silently degrades to keyword-only.
 
 ### Debugging
 

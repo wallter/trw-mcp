@@ -73,6 +73,21 @@ def compute_heartbeat_result(
     run_id = run_dir.name if run_dir is not None else ""
 
     age_hours = _compute_run_age_hours(run_dir)
+    # PRD-FIX-131 operator-visibility follow-up: surface this server's own
+    # hottest-thread CPU share in-band, so a caller sees the same signal
+    # `trw-mcp doctor`'s thread_hotspots row exists to expose without waiting
+    # for a separate doctor run. Read once (not per return branch); omitted
+    # from the response entirely when unmeasurable (non-Linux, unreadable
+    # /proc) rather than shipping a fabricated zero. Imported here, not at
+    # module level: `trw_mcp.server` eagerly registers every tool (including
+    # this one) at package-init time, so a top-level import back into
+    # `trw_mcp.server` from a tool module it is still in the middle of
+    # importing is a real circular-import hazard (reproduced via
+    # `make_test_server("ceremony")`, which imports this module directly
+    # before `trw_mcp.server` has ever loaded).
+    from trw_mcp.server._doctor_thread_hotspots import own_thread_hotspot
+
+    hotspot = own_thread_hotspot()
 
     if rate_limited:
         stale_after_ts = ""
@@ -85,7 +100,7 @@ def compute_heartbeat_result(
             run_id=run_id,
             age_hours=age_hours,
         )
-        return {
+        rate_limited_result: TrwHeartbeatResultDict = {
             "run_id": run_id,
             "last_heartbeat_ts": last_ts_str,
             "stale_after_ts": stale_after_ts,
@@ -93,6 +108,9 @@ def compute_heartbeat_result(
             "should_checkpoint": should_checkpoint,
             "rate_limited": True,
         }
+        if hotspot is not None:
+            rate_limited_result["thread_hotspot"] = hotspot
+        return rate_limited_result
 
     new_ts = _iso_now()
     upsert_pin_entry(
@@ -118,7 +136,7 @@ def compute_heartbeat_result(
         age_hours=age_hours,
         should_checkpoint=should_checkpoint,
     )
-    return {
+    result: TrwHeartbeatResultDict = {
         "run_id": run_id,
         "last_heartbeat_ts": new_ts,
         "stale_after_ts": stale_after_ts,
@@ -126,3 +144,6 @@ def compute_heartbeat_result(
         "should_checkpoint": should_checkpoint,
         "rate_limited": False,
     }
+    if hotspot is not None:
+        result["thread_hotspot"] = hotspot
+    return result

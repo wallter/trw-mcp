@@ -449,7 +449,8 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
         Output: run_id, staleness timestamps, age_hours, should_checkpoint and
         rate_limited (nothing is written within 60s of the last call); or
-        "no_active_pin".
+        "no_active_pin". thread_hotspot (share, cpu_seconds) is included when
+        this server's own hottest thread is measurable (Linux only).
         """
         # ``message`` is optional context appended to the heartbeat event.
         # Rate-limit state lives in pins.json::<pin_key>::last_heartbeat_ts, so

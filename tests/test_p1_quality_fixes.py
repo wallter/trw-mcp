@@ -197,7 +197,9 @@ class TestAnchorDictTypedDict:
 
         f = tmp_path / "mod.py"
         f.write_text("def hello(): pass\n")
-        result = generate_anchors([str(f)], {})
+        # PRD-CORE-267 FR02: a changed range is now required — the shape check
+        # is unchanged, only the (real) evidence that produces an anchor.
+        result = generate_anchors([str(f)], {str(f): [(1, 1)]})
         assert len(result) == 1
         # Each item matches AnchorDict shape
         anchor = result[0]

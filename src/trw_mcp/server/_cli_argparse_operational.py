@@ -259,6 +259,24 @@ def add_operational_subcommands(
         action="store_true",
         help="Emit the sweep summary as JSON instead of a human-readable line.",
     )
+    # PRD-CORE-267-FR03 — one-off migration for anchors fabricated by the
+    # pre-FR01 derivation. Dry-run by default because clearing is irreversible.
+    maintain_verify_parser.add_argument(
+        "--clear-shared-anchors",
+        dest="clear_shared_anchors",
+        action="store_true",
+        help=(
+            "Run the shared-anchor-set migration instead of the sweep: report entries whose exact "
+            "anchor set is shared by at least anchor_shared_set_migration_threshold entries. "
+            "Reports only unless --apply is given."
+        ),
+    )
+    maintain_verify_parser.add_argument(
+        "--apply",
+        dest="apply",
+        action="store_true",
+        help="With --clear-shared-anchors, actually clear the selected entries' anchors (irreversible).",
+    )
 
     # learn-drain (PRD-INFRA-171-FR06) — on-demand learn-journal flush
     learn_drain_parser = subparsers.add_parser(

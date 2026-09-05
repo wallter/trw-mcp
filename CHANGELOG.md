@@ -13,6 +13,44 @@ All notable changes to the TRW MCP server package.
   `PYTEST_WORKERS ?= 4` default. Override with `TRW_PYTEST_ALLOW_WIDE_XDIST=1`.
   The same cap applies to every package suite this monorepo runs.
 
+## [2.0.1] — 2026-09-05
+
+### Fixed
+- **Importing `trw_mcp.server` no longer writes to `.trw/` in the caller's working directory.** Two boot-time self-checks — the anomaly detector's shadow clock and the live-process fingerprint freeze, which ran the security middleware for every registered tool — wrote real state and audit files before any client had connected; the clock is now written on first observation and the fingerprint enumerates the registry without middleware.
+- **`update-project` checks the instruction file the client profile actually owns.** The marker check was hardcoded to `CLAUDE.md`, so a codex project (whose managed file is `.codex/INSTRUCTIONS.md`) got a false "client instruction file missing TRW auto-generated markers" warning.
+- **Learning anchors are session-scoped and evidence-backed** (PRD-CORE-267). Anchors derive only from the run the calling session pinned — read in the flat `file`-keyed shape the bundled `post-tool-event.sh` hook writes, which the old reader never matched — and every anchor must be named in the learning's own summary/detail/evidence or enclosed by one of its own `git diff -U0` hunks. The tree-wide "newest `events.jsonl` anywhere" selection, the name-only `git diff` over the shared working tree, and the first-symbol fallback are removed; on the development store those three defects had put one identical set of three unrelated backend symbols on 381 learnings about entirely different subjects. A Python method pattern that also matched blank lines (`\s` spans newlines) is fixed.
+- **`sqlite-vec` is installed by default on every install path** (`install.sh`, the bundle installer, `pip`/`pipx`/`uv tool` branches), so vector search works out of the box instead of silently degrading to keyword-only on a fresh install; opt out with `--no-sqlite-vec` / `TRW_INSTALL_SQLITE_VEC=0`. `sentence-transformers` (`[embeddings]`) stays an explicit opt-in (`--with-embeddings` / `TRW_INSTALL_EMBEDDINGS=1`; `--ai` on the bundle installer) given its size.
+- **A permanently invalid pending learning is dead-lettered on its first replay.** `trw_memory` validation errors (e.g. `confidence=verified` without evidence) were not classified as deterministic, so the record replayed with a full ERROR traceback up to five times before dead-lettering.
+- **First `init-project` no longer logs a manifest recovery.** A missing distill-channel manifest is a normal first-init create (INFO); only a manifest that fails validation reports `manifest_auto_recreated` and emits the recovery telemetry.
+- **`deferred_step_skip` logs structured fields.** The skip reason was a stringified dict (`"reason": "None"`, single-quoted reprs) inside the JSON log stream.
+
+- **Every fresh bundle install failed its own `framework_integrity` doctor check.**
+  `repair_framework_runtime` bound two mutable files — `.trw/config.yaml` and
+  `.trw/frameworks/VERSION.yaml` — into the authoritative deployment receipt
+  (`.trw/frameworks/DEPLOYMENT.json`), but `install-trw.py --script` legitimately
+  rewrites both *after* the receipt is promoted (persisting `target_platforms`,
+  refreshing install metadata), so the recorded digests could never match. The
+  receipt now binds only the immutable generation — canon bodies and compiled
+  projections. The project config and the human `VERSION.yaml` stamp are still
+  promoted inside the same atomic transaction and covered by the rollback
+  snapshot, but are no longer digest-bound; their version pins and registry
+  digest are verified field-by-field, so operator edits to `.trw/config.yaml` no
+  longer masquerade as framework corruption. The generation id is now a function
+  of the canon bytes alone.
+- **The standalone installer destroyed the deployment stamp's generation binding.**
+  `install-trw.py` refreshed `.trw/frameworks/VERSION.yaml` by rewriting the whole
+  file with four keys, discarding the `registry_digest` / `framework_digest` /
+  `aaref_digest` fields `init-project` had just written — so a brand-new install
+  reported a stamp that looked like a legacy, pre-digest deployment
+  (`needs_upgrade`). The refresh is now a merge of the fields the installer is
+  authoritative for; every other key is preserved.
+
+### Added
+- **`trw-mcp local learn` has parity with `trw_learn`**: `--type`, `--confidence`, `--impact` and repeatable `--evidence` use the same validation (`confidence=verified` still requires evidence), so the offline path records the same learning the MCP path does.
+- **`trw-mcp maintain-verify --clear-shared-anchors` and a budgeted recall verification pass** (PRD-CORE-267). The new mode reports — and with `--apply` clears — anchors on entries whose exact anchor set is shared by at least `anchor_shared_set_migration_threshold` others (default 10, from the measured distribution); dry-run by default, idempotent. Recall's inline verification stops at `recall_verification_budget_ms` (default 1000) and marks the entries it did not reach `not_checked_budget` on the response instead of letting a previous pass's verdict stand for this one; `maintain-verify` still sweeps them unbudgeted. Measured over four anchored entries: 9.7 s → 2.5 s.
+- **`trw-mcp doctor` warns on a hot worker thread** (`thread_hotspots` row: per live server, hottest thread CPU seconds and share of uptime from `/proc`, thresholds `doctor_thread_hotspot_share` 0.5 / `doctor_thread_hotspot_min_seconds` 300; SKIP, never PASS, where `/proc` is unreadable) and `trw_heartbeat` carries an optional `thread_hotspot` field — the zero-permission way to find which pid to `kill -USR1` after the 2026-09-05 spinning-thread incident.
+- **`kill -USR1 <pid>` dumps every thread's stack to `.trw/logs/thread-dump-<pid>.txt`** (stderr fallback when no project `.trw` is resolvable, path announced at registration). A dump sent to the MCP client's stderr socket was unrecoverable afterwards.
+
 ## [2.0.0] — 2026-09-03
 
 > Major: breaking changes to the run-status vocabulary, the deliver gate (keys on evidence of code change), the `trw_delivery_recover` action set (`resume` added, `run_compensation` removed), four bundled hooks deleted, instruction sync refusing overflow instead of truncating, and a trw-memory 0.16.0 (schema 5) floor. See the entries below; feedback dispositions in `.trw/feedback/INDEX.md`.

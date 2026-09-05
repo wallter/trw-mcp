@@ -196,7 +196,14 @@ class AnomalyDetector:
         # per-pair cap is reached so novel-arg flooding cannot grow memory
         # without bound.
         self._baseline_arg_hashes: dict[tuple[str, str], OrderedDict[str, None]] = defaultdict(OrderedDict)
-        _ensure_shadow_clock(config.shadow_clock_path, now=self._now_fn())
+        # PRD-INFRA-SEC-001 FR-3 NFR: the shadow clock is written on the FIRST
+        # OBSERVATION (see ``observe``), not on construction. The detector is
+        # built as part of ``create_app()``, which runs at MODULE IMPORT time
+        # (``server/__init__.py`` -> ``_app.py``'s module-level ``mcp =
+        # create_app()``) — writing here made merely importing ``trw_mcp.server``
+        # create ``.trw/security/mcp_shadow_start.yaml`` in the caller's cwd with
+        # no tool ever having been called.
+        self._shadow_clock_ensured = False
         self._load_arg_hash_baseline()
 
     def _remember_arg_hash(self, key: tuple[str, str], args_hash: str) -> None:
@@ -375,6 +382,9 @@ class AnomalyDetector:
 
     def observe(self, obs: AnomalyObservation) -> list[str]:
         """Process a single observation; return list of anomaly types emitted."""
+        if not self._shadow_clock_ensured:
+            _ensure_shadow_clock(self._config.shadow_clock_path, now=self._now_fn())
+            self._shadow_clock_ensured = True
         fired: list[str] = []
         spike, rate_fields = self._check_rate_spike(obs)
         if spike:

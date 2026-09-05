@@ -351,6 +351,43 @@ class TestDeliverTelemetryIntegration:
         assert complete["steps"] == DEFERRED_STEP_COUNT
         assert complete["steps"] == len(executed)
 
+    def test_deferred_step_skip_logs_structured_fields_not_a_stringified_dict(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """``deferred_step_skip`` must carry ``status``/``reason`` as fields.
+
+        Regression: the log call used to be ``reason=str(_step_result)``,
+        which produced the literal text "None" for a step that never
+        populated its results key, and a single-quoted Python dict repr
+        (invalid JSON) for a real ``{"status": "skipped", "reason": ...}``
+        result, inside an otherwise-structured JSON log line.
+        """
+        import structlog
+
+        trw_dir = _make_deferred_trw_dir(tmp_path)
+        stubs = _stub_all_deferred_steps()
+        with (
+            patch(
+                "trw_mcp.tools._deferred_delivery._step_delivery_metrics",
+                return_value={"status": "skipped", "reason": "disabled"},
+            ),
+            _apply_stubs(stubs),
+            structlog.testing.capture_logs() as cap_logs,
+        ):
+            _run_deferred_steps(trw_dir, None, {})
+
+        skip_events = [
+            e for e in cap_logs if e["event"] == "deferred_step_skip" and e.get("step") == "delivery_metrics"
+        ]
+        assert len(skip_events) == 1
+        entry = skip_events[0]
+        assert entry["status"] == "skipped"
+        assert entry["reason"] == "disabled"
+        # Never a stringified dict/None leaking into a structured field.
+        assert "reason" not in entry or "{" not in str(entry["reason"])
+        assert entry.get("reason") != "None"
+
 
 @pytest.mark.integration
 class TestStepTelemetryTornEvents:

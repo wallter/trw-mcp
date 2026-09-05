@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Final, Literal, NamedTuple
 
 import structlog
+from trw_memory.exceptions import PIIBlockError, PoisoningError, SchemaValidationError
 
 from trw_mcp.state._learn_journal_io import fsync_dir, read_record, write_record_atomic
 
@@ -58,10 +59,23 @@ DEAD_LETTER_DIRNAME: Final = "dead_letter"
 DETERMINISTIC_STATUSES: Final[frozenset[str]] = frozenset({"rejected", "invalid"})
 
 # Exception types that mean "this payload can never be replayed as-is":
-# invalid enum values, schema/shape violations. Narrow on purpose — a broader
-# net (AttributeError, RuntimeError) would dead-letter records failing on a CODE
-# bug that a later upgrade fixes. Those fall to the retry budget instead.
-DETERMINISTIC_EXCEPTIONS: Final[tuple[type[BaseException], ...]] = (ValueError, TypeError)
+# invalid enum values, schema/shape violations (incl. ``Utf8ValidationError``,
+# a ``SchemaValidationError`` subclass), PII/poisoning content refusals — the
+# payload itself is what fails these trw-memory checks, so replaying the
+# identical bytes fails identically every time. Narrow on purpose — a broader
+# net (AttributeError, RuntimeError) would dead-letter records failing on a
+# CODE bug that a later upgrade fixes, and trw-memory's TRANSIENT exceptions
+# (StorageError, MemoryConnectionError, StaleConnectionError, RateLimitError)
+# and MemoryQuarantinedError (holds the entry for human review rather than
+# refusing it — a later approval makes replay meaningless, not
+# deterministic-fail) deliberately stay off this list.
+DETERMINISTIC_EXCEPTIONS: Final[tuple[type[BaseException], ...]] = (
+    ValueError,
+    TypeError,
+    SchemaValidationError,
+    PIIBlockError,
+    PoisoningError,
+)
 
 ReplayOutcome = Literal["recovered", "dead_lettered", "retained"]
 

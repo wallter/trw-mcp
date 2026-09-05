@@ -301,14 +301,43 @@ def _verify_installation(
         except (tomllib.TOMLDecodeError, OSError):
             result["warnings"].append(".codex/config.toml is not valid TOML")
 
-    # Check client instruction file has TRW markers
-    from trw_mcp.bootstrap._update_project import _TRW_END_MARKER, _TRW_START_MARKER
+    _check_instruction_markers(target_dir, result)
 
-    claude_md = target_dir / "CLAUDE.md"
-    if claude_md.exists():
-        content = claude_md.read_text(encoding="utf-8")
-        if _TRW_START_MARKER not in content or _TRW_END_MARKER not in content:
-            result["warnings"].append("client instruction file missing TRW auto-generated markers")
+
+def _check_instruction_markers(target_dir: Path, result: dict[str, list[str]]) -> None:
+    """Warn when a resolved client's managed-block instruction file lacks TRW markers.
+
+    This used to hard-code ``CLAUDE.md`` regardless of the project's client
+    profile, so a codex-only project (write_targets: ``agents_md=True``,
+    ``claude_md=False``) was checked against a file it never writes and its
+    real carrier (``AGENTS.md``) was never inspected — a false "markers
+    missing" warning that also masked a real one. Resolve the client(s) the
+    project actually recorded/detected (same authority
+    ``bootstrap/_template_claude_md.py`` uses for its own write decision) and
+    check every *managed-block* surface those clients declare. Per-client
+    generated-whole files (``.opencode/INSTRUCTIONS.md``,
+    ``.codex/INSTRUCTIONS.md``) carry no marker block by design and are not
+    checked here.
+    """
+    from trw_mcp.bootstrap._template_claude_md import _recorded_or_detected_targets
+    from trw_mcp.client_profiles.catalog import client_surfaces
+    from trw_mcp.server._subcommands_uninstall_config import _MANAGED_BLOCK_MARKERS
+
+    client_ids = _recorded_or_detected_targets(target_dir)
+    relpaths: set[str] = set()
+    for client_id in client_ids:
+        for surface in client_surfaces(client_id):
+            if surface.managed_block:
+                relpaths.add(surface.relpath)
+
+    for relpath in sorted(relpaths):
+        instruction_path = target_dir / relpath
+        if not instruction_path.exists():
+            continue
+        content = instruction_path.read_text(encoding="utf-8")
+        has_markers = any(start in content and end in content for start, end in _MANAGED_BLOCK_MARKERS)
+        if not has_markers:
+            result["warnings"].append(f"client instruction file {relpath} missing TRW auto-generated markers")
 
 
 def _check_package_version(result: dict[str, list[str]]) -> None:

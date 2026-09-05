@@ -212,6 +212,10 @@ def write_local_learning(
     *,
     trw_dir: Path | None = None,
     tags: list[str] | None = None,
+    evidence: list[str] | None = None,
+    impact: float = 0.5,
+    type: str = "pattern",
+    confidence: str = "unverified",
 ) -> dict[str, object]:
     """Write a local learning through the same learn implementation used by MCP.
 
@@ -229,15 +233,28 @@ def write_local_learning(
     ``VALID_SOURCES`` to ``"agent"`` before storage, so it was a silently erased
     marker sitting beside a working one — the same "unevaluated gate that reads
     like a passed gate" shape :func:`mark_local_delivered` already corrected.
+
+    ``type``/``confidence``/``impact``/``evidence`` mirror the ``trw_learn`` MCP
+    tool's contract (PRD-CORE-247 offline-parity fix): the same
+    ``_coerce_learn_type``/``_validate_learn_enums`` helpers run here, so an
+    invalid enum returns the same structured rejection instead of an unhandled
+    ``ValueError``, and ``confidence="verified"`` still requires ``evidence`` —
+    enforced downstream by ``execute_learn`` -> trw-memory's own write-time
+    schema/policy contract (``SchemaValidationError``), not re-implemented here.
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.state._constants import LOCAL_CLI_SOURCE_IDENTITY, RECONCILE_PENDING_TAG
     from trw_mcp.tools._learn_impl import execute_learn
+    from trw_mcp.tools._learning_module_helpers import _coerce_learn_type, _validate_learn_enums
 
     if not summary:
         raise ValueError("summary is required")
     if not detail:
         raise ValueError("detail is required")
+    resolved_type = _coerce_learn_type(type)
+    enum_reject = _validate_learn_enums(type=resolved_type, confidence=confidence, protection_tier="normal")
+    if enum_reject is not None:
+        return dict(enum_reject)
     marked_tags = list(tags or [])
     if RECONCILE_PENDING_TAG not in marked_tags:
         marked_tags.append(RECONCILE_PENDING_TAG)
@@ -248,6 +265,10 @@ def write_local_learning(
             trw_dir=trw_dir or (Path.cwd() / ".trw"),
             config=get_config(),
             tags=marked_tags,
+            evidence=evidence,
+            impact=impact,
+            type=resolved_type,
+            confidence=confidence,
             source_identity=LOCAL_CLI_SOURCE_IDENTITY,
         )
     )

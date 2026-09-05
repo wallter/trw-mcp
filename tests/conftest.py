@@ -30,6 +30,10 @@ import pytest
 import structlog
 from fastmcp import FastMCP
 
+from tests._trw_home import (
+    isolated_trw_home,  # noqa: F401  (shared HOME/XDG/TRW_USER_DIR floor; see that module's docstring)
+)
+
 pytest_plugins = ("tests._ceremony_helpers_support",)
 
 

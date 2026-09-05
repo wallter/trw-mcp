@@ -165,11 +165,30 @@ def deploy_framework_generation(
     framework_version: str,
     aaref_version: str,
     failure_after_promotions: int | None = None,
+    mutable_artifacts: Mapping[Path, bytes] | None = None,
 ) -> DeploymentResult:
-    """Stage, verify, and promote one receipt-bound complete generation."""
+    """Stage, verify, and promote one receipt-bound complete generation.
+
+    ``artifacts`` are the immutable members of the generation — canon bodies and
+    compiled projections. The receipt digests exactly those bytes and the
+    generation id derives from them, so any later drift is an integrity failure.
+
+    ``mutable_artifacts`` (the project ``config.yaml``, the human
+    ``VERSION.yaml`` stamp) are promoted inside the same atomic transaction and
+    covered by the rollback snapshot, but are deliberately NOT digest-bound:
+    their bytes are owned by later writers (the installer's ``update_config``,
+    operator edits), so binding them would turn every legitimate edit into a
+    permanent ``framework_integrity`` failure (L-QhRy). Their *meaning* —
+    version pins and the registry digest they carry — is verified separately and
+    field-by-field by ``inspect_framework_runtime``.
+    """
     target = target.resolve()
     normalized = {Path(path): bytes(data) for path, data in artifacts.items()}
-    for relative in normalized:
+    mutable = {Path(path): bytes(data) for path, data in (mutable_artifacts or {}).items()}
+    overlap = sorted(path.as_posix() for path in set(normalized) & set(mutable))
+    if overlap:
+        raise ValueError(f"deployment path declared both bound and mutable: {', '.join(overlap)}")
+    for relative in (*normalized, *mutable):
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"deployment path escapes target: {relative}")
         if any(relative == reserved or reserved in relative.parents for reserved in _RESERVED_ARTIFACT_PATHS):
@@ -200,7 +219,7 @@ def deploy_framework_generation(
             "deployed_at": deployed_at,
         }
     )
-    all_paths = (*normalized, DEPLOYMENT_RELATIVE_PATH)
+    all_paths = (*normalized, *mutable, DEPLOYMENT_RELATIVE_PATH)
     with _deployment_lock(target):
         prior = _current_generation_id(target)
         rollback_id = f"{prior}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
@@ -210,15 +229,21 @@ def deploy_framework_generation(
             shutil.rmtree(stage)
         stage.mkdir(parents=True)
         try:
-            staged = {**normalized, DEPLOYMENT_RELATIVE_PATH: receipt}
+            staged = {**normalized, **mutable, DEPLOYMENT_RELATIVE_PATH: receipt}
             for relative, data in staged.items():
                 path = stage / relative
                 _write_durable(path, data)
                 if _digest(path.read_bytes()) != _digest(data):
                     raise OSError(f"staged artifact verification failed: {relative}")
 
-            # DEPLOYMENT.json is always last; it is the atomic acceptance pointer.
-            for promoted, relative in enumerate(sorted(normalized, key=lambda path: path.as_posix()), start=1):
+            # Bound artifacts first, then the mutable projections, then
+            # DEPLOYMENT.json — the receipt is always last, it is the atomic
+            # acceptance pointer.
+            promotion_order = [
+                *sorted(normalized, key=lambda path: path.as_posix()),
+                *sorted(mutable, key=lambda path: path.as_posix()),
+            ]
+            for promoted, relative in enumerate(promotion_order, start=1):
                 destination = _contained_path(target, relative)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 _replace_durable(stage / relative, destination)

@@ -24,6 +24,7 @@ from trw_mcp.models.config._fields_degenerate_result import _DegenerateResultFie
 from trw_mcp.models.config._fields_degraded_mode import _DegradedModeFields
 from trw_mcp.models.config._fields_delivery import _DeliveryFields
 from trw_mcp.models.config._fields_dispatch import _DispatchFields
+from trw_mcp.models.config._fields_doctor_thread_hotspots import _DoctorThreadHotspotFields
 from trw_mcp.models.config._fields_feedback import _FeedbackFields
 from trw_mcp.models.config._fields_formation import _FormationFields
 from trw_mcp.models.config._fields_instruction_surfaces import _InstructionSurfaceFields
@@ -73,6 +74,7 @@ class _TRWConfigFields(
     _ScoutFields,
     _VerificationFields,
     _BootMaintenanceFields,
+    _DoctorThreadHotspotFields,
     BaseSettings,
 ):
     """All TRW configuration fields.
