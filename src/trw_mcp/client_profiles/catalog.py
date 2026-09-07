@@ -394,7 +394,9 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
         # ``bootstrap/_antigravity_cli.py::generate_antigravity_mcp_config`` writes the
         # ``mcpServers.trw`` entry into the GLOBAL agy config (PRD-FIX-133); without a
         # home-scoped surface uninstall left it behind (install/uninstall parity gate).
-        UninstallSurface(".gemini/config/mcp_config.json", merged_config=True, config_shape="mcp-server-map", home_scoped=True),
+        UninstallSurface(
+            ".gemini/config/mcp_config.json", merged_config=True, config_shape="mcp-server-map", home_scoped=True
+        ),
     ),
 }
 

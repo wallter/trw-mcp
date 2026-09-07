@@ -58,7 +58,7 @@ def _target_path(raw: str) -> str | None:
     """The single file path this payload writes, or ``None``."""
     try:
         payload = json.loads(raw)
-    except ValueError:
+    except ValueError:  # trw-fail-silent-allow: this advisory only warns, never blocks (module docstring); a malformed hook payload is silently skipped, not a failure to surface
         return None
     if not isinstance(payload, dict):
         return None

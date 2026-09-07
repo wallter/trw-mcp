@@ -162,10 +162,10 @@ def _exemption(observation: DurableWrite) -> str | None:
     callers = set(observation.callers)
     owned = callers & _unjournaled_owners()
     if owned:
-        return f"unjournaled descriptor owner: {sorted(owned)[0]}"
+        return f"unjournaled descriptor owner: {min(owned)}"
     non_delivery = callers & NON_DELIVERY_CALLERS
     if non_delivery:
-        return f"non-delivery seam: {sorted(non_delivery)[0]}"
+        return f"non-delivery seam: {min(non_delivery)}"
     return None
 
 

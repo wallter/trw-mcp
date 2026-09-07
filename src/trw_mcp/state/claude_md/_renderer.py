@@ -325,5 +325,9 @@ class ProtocolRenderer:
         """
         from trw_mcp.state.claude_md.renderers import _review_and_opencode as ro
 
-        by_family = {"qwen": ro.render_opencode_qwen, "gpt": ro.render_opencode_gpt, "claude": ro.render_opencode_claude}
+        by_family = {
+            "qwen": ro.render_opencode_qwen,
+            "gpt": ro.render_opencode_gpt,
+            "claude": ro.render_opencode_claude,
+        }
         return by_family.get(self.model_family, ro.render_opencode_generic)()

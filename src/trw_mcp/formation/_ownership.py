@@ -60,7 +60,7 @@ def relative_to_root(raw: str, project_root: Path) -> str | None:
         root = PurePosixPath(project_root.as_posix())
         try:
             candidate = candidate.relative_to(root)
-        except ValueError:
+        except ValueError:  # trw-fail-silent-allow: outside the project root IS unowned per the module docstring's matching rules, not a read failure
             return None
     parts = [part for part in candidate.parts if part not in (".", "")]
     if any(part == ".." for part in parts):

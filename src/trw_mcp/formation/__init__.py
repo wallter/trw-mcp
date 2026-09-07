@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.formation._brief import render_brief
 from trw_mcp.formation._join import create as _create
 from trw_mcp.formation._join import join as _join
@@ -64,6 +66,8 @@ from trw_mcp.formation._store import (
 )
 from trw_mcp.formation._store import manifest_path_for_run as manifest_path_for_run
 from trw_mcp.formation._store import resolve_active
+
+logger = structlog.get_logger(__name__)
 
 __all__ = [
     "MANIFEST_FILENAME",
@@ -116,13 +120,19 @@ class FormationStatus:
 
 def settings() -> FormationSettings:
     """Resolve the typed knobs. Falls back to the FIELD DEFAULTS, never to
-    hardcoded literals, so an unreadable config cannot silently disarm a gate."""
-    from trw_mcp.models.config import TRWConfig, get_config
+    hardcoded literals, so an unreadable config cannot silently disarm a gate.
 
-    try:
-        cfg: object = get_config()
-    except Exception:  # justified: an unreadable config must not crash an adapter
-        cfg = TRWConfig()
+    ``get_config()`` already owns the fail-open/fail-closed decision (a
+    malformed ``config.yaml`` logs and returns ``TRWConfig()`` defaults, unless
+    ``TRW_CONFIG_STRICT`` asks it to re-raise instead). A second broad catch
+    HERE would silently swallow that re-raise and hand back defaults anyway —
+    exactly the "missing config mixin silently disarms five gates" defect an
+    audit flagged 2026-09-04 — so this call is unguarded and lets strict mode's
+    signal reach its caller.
+    """
+    from trw_mcp.models.config import get_config
+
+    cfg: object = get_config()
     return FormationSettings(
         ownership_enforcement=str(getattr(cfg, "formation_ownership_enforcement", "refuse")),
         hook_ownership_mode=str(getattr(cfg, "formation_hook_ownership_mode", "warn")),
@@ -181,7 +191,11 @@ def _default_prds_dir() -> Path | None:
         from trw_mcp.models.config import get_config
 
         return _project_root() / str(get_config().prds_relative_path)
-    except Exception:  # justified: allocation check is skipped, never faked
+    except Exception as exc:
+        # PRD-id allocation validation is skipped, never faked: `create()` gets
+        # `prds_dir=None`, which `_create` treats as "cannot verify", not as
+        # "every id is valid".
+        logger.debug("formation_prds_dir_unresolved", reason=str(exc))
         return None
 
 

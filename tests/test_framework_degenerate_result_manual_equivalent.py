@@ -20,9 +20,12 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.unit
+from tests._layout import requires_monorepo
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Canon mirrors live in the monorepo only; the public package repo has nothing to compare.
+pytestmark = [pytest.mark.unit, requires_monorepo]
 _SOURCE = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "framework.source.md"
 
 #: The phrase the advisory itself uses, so the adapter and the manual equivalent

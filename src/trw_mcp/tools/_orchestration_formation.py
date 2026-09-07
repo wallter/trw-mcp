@@ -87,8 +87,8 @@ def _resolve_pin_key(ctx: object | None) -> str | None:
         from trw_mcp.state._paths import resolve_pin_key
 
         return resolve_pin_key(ctx) or None
-    except Exception:  # justified: liveness is advisory; an unresolved pin is reported, not fatal
-        logger.debug("formation_pin_key_unresolved", exc_info=True)
+    except Exception as exc:  # liveness is advisory; an unresolved pin is reported, not fatal
+        logger.debug("formation_pin_key_unresolved", reason=str(exc), exc_info=True)
         return None
 
 

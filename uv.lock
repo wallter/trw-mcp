@@ -2737,7 +2737,7 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "2.0.1"
+version = "2.0.2"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -2817,7 +2817,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rank-bm25", marker = "extra == 'dev'", specifier = ">=0.2.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.0,<0.16" },
     { name = "sqlite-vec", marker = "extra == 'vectors'", specifier = ">=0.1.0" },
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=24.0.0" },

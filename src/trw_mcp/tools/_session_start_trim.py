@@ -255,7 +255,7 @@ def _worst_state(seen: set[str], ranked: tuple[str, ...]) -> str:
     for candidate in ranked:
         if candidate in seen:
             return candidate
-    return sorted(seen)[0]
+    return min(seen)
 
 
 def _compact_connection_fingerprint(results: SessionStartResultDict) -> None:

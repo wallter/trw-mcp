@@ -2,7 +2,13 @@
 
 All notable changes to the TRW MCP server package.
 
-## [Unreleased]
+## [2.0.2] — 2026-09-07
+
+> Installer hardening release. The 2.0.1 bundle was re-published once with new bytes while its
+> release record kept the first checksums, so every `install.sh` run aborted with
+> "Installer checksum mismatch" until the first artifacts were restored (2026-09-07). The publish
+> pipeline now treats a version's bytes as immutable and verifies every publish through the same
+> download path users hit; an independent audit of the upgrade path found and fixed the gaps below.
 
 ### Added
 
@@ -12,6 +18,66 @@ All notable changes to the TRW MCP server package.
   by a direct `pytest -n auto` invocation bypassing the Makefile's
   `PYTEST_WORKERS ?= 4` default. Override with `TRW_PYTEST_ALLOW_WIDE_XDIST=1`.
   The same cap applies to every package suite this monorepo runs.
+
+### Fixed
+
+- **`install-trw.py --upgrade` actually refreshes the project again.** The
+  staleness check compared the framework PROTOCOL version on both sides, and that
+  version is deliberately stable across package releases — so every upgrade printed
+  "framework already current" and never ran `update-project`, leaving the deployed
+  framework bodies, hooks, skills and client surfaces at the previous release. It now
+  compares the trw-mcp version stamped into `.trw/frameworks/VERSION.yaml` (and any
+  mismatch `version-status` reports), and `trw-mcp doctor` runs on the upgrade path too.
+  An upgrade of a project that records no client no longer guesses `claude-code` (which
+  scaffolded a client surface the user never asked for) — it says what is missing and skips.
+  A `version-status` probe that exits non-zero is now reported as "cannot tell" with its
+  return code and stderr, instead of having its output parsed as a verdict.
+- **A re-run of the installer no longer leaves the proprietary packages behind — and a
+  teammate's install no longer inherits your entitlement.** `.trw/proprietary-installed.json`
+  was written and never read, so re-running without `TRW_WITH_PROPRIETARY=1` upgraded
+  trw-mcp/trw-memory and silently stranded the licensed proprietary packages at the previous release. The marker is now read back (prompted interactively,
+  announced headlessly, declinable with `TRW_WITH_PROPRIETARY=0`), and a package already at
+  the entitled version is skipped instead of re-downloaded. The marker is also git-ignored
+  now — on fresh installs and, via `update-project`, on existing ones. Committed, it made
+  every clone infer the proprietary path, so a colleague with no platform key had their
+  whole *public* install abort on a precondition for packages they never asked for. A path
+  inferred from the marker now warns and continues; only an explicit `--with-proprietary` /
+  `TRW_WITH_PROPRIETARY=1` still fails hard.
+- **A single-client install no longer drops your other configured clients.** The
+  installer rewrote `target_platforms` with only the clients that one run named, undoing
+  the append-only guarantee `update-project` maintains: `--ide codex` on a
+  `[claude-code, codex]` project narrowed the record to `[codex]`. It is now a union.
+- **`update-project` now tells you when it refused to write your instruction file — and
+  the installer shows you.** A guarded write the size policy declined (oversized
+  `CLAUDE.md`/`AGENTS.md`, or a shrink guard) was reported as "CLAUDE.md synced": the file
+  was left stale and the operator — the only person who can fix it — was never told. Each
+  refusal is now a warning naming the file, the reason and the limit, and the sync line is
+  withheld. Those warnings are printed whether or not the update also errored (they used to
+  hang off the no-errors summary, so the runs most likely to carry one swallowed it), under
+  a `WARNING:` prefix that `install-trw.py` re-surfaces once its progress spinner stops
+  instead of repainting over it.
+- **`trw-mcp doctor` no longer promises a memory daemon that starts itself.** The
+  "no memory daemon running" row said the next store or recall would start one;
+  nothing does — the daemon is started by hand with `trw-memory-server serve http`,
+  and client attach is still a planned slice. The row now says so.
+- **Setting the removed `run_auto_close_age_days` in `.trw/config.yaml` now names its
+  replacement.** 2.0.0 deleted the field, and the loader was telling operators to
+  "check for a typo" instead of pointing them at `run_stale_ttl_hours`.
+- **An in-place upgrade via the pipx/uv fallback rungs now gets the `[vectors]`
+  extra.** `pipx install || pipx upgrade` and `uv tool install || uv tool upgrade`
+  re-ran the upgrade half with the bare `trw-mcp` name (no extras) whenever
+  trw-mcp was already installed — a pre-2.0.1 install (which used the bare
+  name) never picked up bundled `sqlite-vec` on upgrade. Both rungs now use a
+  single `--force` reinstall from the full spec, covering fresh install and
+  upgrade identically.
+- **The bundled installer now installs into the interpreter that actually owns
+  the freshly-installed `trw-mcp` binary**, not unconditionally the bootstrap's
+  own Python. `install.sh` exports `TRW_TARGET_PYTHON` per fallback rung (a
+  pipx venv, the managed `${XDG_DATA_HOME}/trw/venv`, or a `uv tool` venv);
+  `install-trw.py`'s `check_python_version()` validates and honors it, falling
+  back to the bootstrap interpreter when absent or invalid. The post-install
+  stale-shadow check also re-runs after the full installer step, not only
+  after the initial trw-mcp install.
 
 ## [2.0.1] — 2026-09-05
 

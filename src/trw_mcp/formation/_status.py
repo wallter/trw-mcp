@@ -152,14 +152,15 @@ def _has_delivery_event(events_path: Path) -> bool:
         return False
     try:
         lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+    except OSError as exc:
+        logger.debug("formation_events_unreadable", path=str(events_path), reason=str(exc))
         return False
     for line in reversed(lines):
         if DELIVERY_EVENT not in line:
             continue
         try:
             record = json.loads(line)
-        except ValueError:
+        except ValueError:  # trw-fail-silent-allow: a torn tail line in an append-only event log is ordinary; every complete record before it is still read
             continue
         if isinstance(record, dict) and str(record.get("event") or record.get("event_type") or "") == DELIVERY_EVENT:
             return True
@@ -195,7 +196,7 @@ def _read_yaml(path: Path) -> dict[str, object] | None:
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
-        logger.debug("formation_member_yaml_unreadable", path=str(path), error=str(exc))
+        logger.debug("formation_member_yaml_unreadable", path=str(path), reason=str(exc))
         return None
     return data if isinstance(data, dict) else None
 
@@ -213,7 +214,7 @@ def _last_checkpoint(run_path: Path | None) -> tuple[str, str]:
     for line in reversed(lines):
         try:
             record = json.loads(line)
-        except ValueError:
+        except ValueError:  # trw-fail-silent-allow: a torn tail line in an append-only event log is ordinary; every complete record before it is still read
             continue
         if isinstance(record, dict):
             return str(record.get("message", "")), str(record.get("ts", ""))
@@ -238,7 +239,7 @@ def _latest_outcomes(run_path: Path | None) -> tuple[str, str]:
             break
         try:
             record = json.loads(line)
-        except ValueError:
+        except ValueError:  # trw-fail-silent-allow: a torn tail line in an append-only event log is ordinary; every complete record before it is still read
             continue
         if not isinstance(record, dict):
             continue
@@ -266,7 +267,8 @@ def _raw_pin_store() -> dict[str, Any]:
         return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        logger.debug("formation_pin_store_unreadable", path=str(path), reason=str(exc))
         return {}
     return raw if isinstance(raw, dict) else {}
 

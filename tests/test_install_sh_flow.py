@@ -73,6 +73,15 @@ exit 0
 """
 
 
+def _shell_code(text: str) -> str:
+    """Shell source with comment-only lines removed.
+
+    A negative assertion over raw source is defeated by the comment that
+    EXPLAINS the removed command, so strip comments before asserting absence.
+    """
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
 def _write_stub(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
     path.chmod(0o755)
@@ -140,6 +149,12 @@ def test_bootstrap_pep668_uses_pipx_and_persists_path_and_succeeds(
     assert (markers / "pipx_install").is_file(), f"pipx install was never invoked.\n--- output ---\n{output}"
     install_log = (markers / "pipx_install").read_text(encoding="utf-8")
     assert "trw-mcp" in install_log
+    # C05: ONE code path for absent-or-present. The `install || upgrade` form
+    # re-ran `pipx upgrade trw-mcp` — the bare name — so an in-place upgrade
+    # never gained the [vectors] extra the fresh-install rung requested.
+    assert "--force" in install_log, install_log
+    assert "[vectors]" in install_log, install_log
+    assert not (markers / "pipx_upgrade").exists(), (markers / "pipx_upgrade").read_text(encoding="utf-8")
     assert "trw-mcp installed (pipx)" in output, output
 
     # 2. PATH persistence: pipx ensurepath ran (finding 2).
@@ -377,12 +392,20 @@ def test_both_bootstraps_carry_venv_and_uv_pep668_rungs(bootstrap: Path) -> None
     text = bootstrap.read_text(encoding="utf-8")
     assert "_install_via_managed_venv" in text, f"{bootstrap} lost the managed-venv PEP 668 rung"
     assert "_install_via_uv" in text, f"{bootstrap} lost the uv deepest-fallback rung"
-    assert "python3 -m venv" not in text or "-m venv" in text  # venv is actually invoked
+    assert '"$PYTHON" -m venv "$TRW_TOOL_VENV"' in _shell_code(text), f"{bootstrap} no longer creates the managed venv"
     # The two copies must stay in lockstep on the helper set (DRY guard).
     assert "_expose_trw_bin" in text and "TRW_TOOL_VENV" in text, bootstrap
     # Option A polish (agy 2nd-opinion): launcher shim + post-install shadow guard.
     assert "_verify_no_stale_shadow" in text, f"{bootstrap} lost the stale-shadow guard"
     assert "TRW launcher shim" in text, f"{bootstrap} lost the launcher-shim exposure"
+    # C05 lockstep: both copies force-reinstall from the full spec. `pipx/uv
+    # upgrade trw-mcp` drops the extras, so an in-place upgrade silently ships
+    # without [vectors] — the bug 9de11063a7 fixed in the served copy only.
+    assert 'pipx install "$TRW_MCP_SPEC" --force' in text, f"{bootstrap} pipx rung lost --force"
+    assert 'uv tool install --force "$TRW_MCP_SPEC"' in text, f"{bootstrap} uv rung lost --force"
+    code = _shell_code(text)  # comments explain the old form; only real code may not use it
+    assert "pipx upgrade trw-mcp" not in code, f"{bootstrap} still falls back to a bare pipx upgrade"
+    assert "uv tool upgrade trw-mcp" not in code, f"{bootstrap} still falls back to a bare uv tool upgrade"
 
 
 # ── Option A: a stale shadow winning PATH must be DETECTED and warned about ──

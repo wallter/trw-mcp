@@ -183,7 +183,7 @@ class TestOtherConfidenceSurfacesReachTheGate:
         source = inspect.getsource(_memory_update._reject_unverifiable_promotion)
         assert "from trw_memory.security.poisoning import reject_unsubstantiated_verified" in source
 
-    def test_offline_cli_learn_routes_through_the_store_gate(self) -> None:
+    def test_offline_cli_learn_routes_through_the_store_gate(self, tmp_path: Path) -> None:
         """``trw-mcp local learn`` calls execute_learn, which stores via guarded_store."""
         import inspect
 
@@ -191,8 +191,20 @@ class TestOtherConfidenceSurfacesReachTheGate:
 
         source = inspect.getsource(orchestration_service.write_local_learning)
         assert "execute_learn" in source
-        # It never passes a confidence, so it cannot promote anything.
-        assert "confidence" not in source
+        # Since 2.0.1 the offline path accepts --confidence, so the gate itself must
+        # refuse a verified claim with no substantiation — the same store gate the
+        # MCP tool runs, not a local shortcut that could promote anything.
+        from trw_memory.exceptions import SchemaValidationError
+
+        trw_dir = tmp_path / ".trw"
+        trw_dir.mkdir()
+        with pytest.raises(SchemaValidationError):
+            orchestration_service.write_local_learning(
+                "verified without evidence must be refused",
+                "This claims verified confidence with no substantiation at all.",
+                trw_dir=trw_dir,
+                confidence="verified",
+            )
 
     def test_sync_pull_routes_through_the_store_gate(self) -> None:
         """A pulled peer entry passes prepare_entry_for_store, which runs the gate."""

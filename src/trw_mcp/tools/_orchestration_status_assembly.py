@@ -81,9 +81,10 @@ def _apply_formation_block(result: TrwStatusDict, resolved_path: Path) -> None:
         board = formation_status(run_path=resolved_path)
     except FormationError as exc:
         result["formation_error"] = str(exc)
+        logger.info("formation_status_error", run=str(resolved_path), reason=str(exc))
         return
-    except Exception:  # justified: fail-open, the board is observability
-        logger.warning("formation_status_degraded", run=str(resolved_path), exc_info=True)
+    except Exception as exc:  # fail-open: the board is observability
+        logger.warning("formation_status_degraded", run=str(resolved_path), reason=str(exc), exc_info=True)
         return
     if board is None:
         return

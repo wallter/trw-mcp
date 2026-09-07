@@ -113,23 +113,23 @@ def _publish(claim: Path, payload: bytes) -> bool:
     tmp = claim.with_name(f"{claim.name}.{os.getpid()}.tmp")
     try:
         tmp.write_bytes(payload)
-    except OSError:  # justified: fail-open, an unwritable claim dir means "no claim"
-        logger.warning("learn_journal_claim_write_failed", path=str(claim), exc_info=True)
+    except OSError as exc:  # fail-open: an unwritable claim dir means "no claim"
+        logger.warning("learn_journal_claim_write_failed", path=str(claim), reason=str(exc), exc_info=True)
         return False
     try:
         os.link(tmp, claim)
         return True
-    except FileExistsError:
+    except FileExistsError:  # trw-fail-silent-allow: losing the atomic link race means another process already holds the claim, the expected contended outcome
         return False
     except (OSError, NotImplementedError):
         # link(2) unsupported here — fall back to O_EXCL, which is still atomic
         # for the NAME even though the content lands a syscall later.
         try:
             fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
+        except FileExistsError:  # trw-fail-silent-allow: losing the O_CREAT|O_EXCL race means another process already holds the claim, the expected contended outcome
             return False
-        except OSError:  # justified: fail-open, claiming is best-effort
-            logger.warning("learn_journal_claim_open_failed", path=str(claim), exc_info=True)
+        except OSError as exc:  # fail-open: claiming is best-effort
+            logger.warning("learn_journal_claim_open_failed", path=str(claim), reason=str(exc), exc_info=True)
             return False
         try:
             os.write(fd, payload)
@@ -157,8 +157,8 @@ def acquire_claim(target: Path) -> Claim | None:
             return None
         try:
             claim.unlink(missing_ok=True)
-        except OSError:  # justified: fail-open, a claim we cannot clear is simply held
-            logger.warning("learn_journal_claim_reclaim_failed", path=str(claim), exc_info=True)
+        except OSError as exc:  # fail-open: a claim we cannot clear is simply held
+            logger.warning("learn_journal_claim_reclaim_failed", path=str(claim), reason=str(exc), exc_info=True)
             return None
         logger.info("learn_journal_claim_reclaimed", path=str(claim), reason="owner_gone")
     return None
@@ -170,5 +170,5 @@ def release_claim(claim: Claim | None) -> None:
         return
     try:
         claim.path.unlink(missing_ok=True)
-    except OSError:  # justified: fail-open, a leaked claim is reclaimed by the staleness rule
-        logger.warning("learn_journal_claim_release_failed", path=str(claim.path), exc_info=True)
+    except OSError as exc:  # fail-open: a leaked claim is reclaimed by the staleness rule
+        logger.warning("learn_journal_claim_release_failed", path=str(claim.path), reason=str(exc), exc_info=True)

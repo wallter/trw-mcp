@@ -39,7 +39,7 @@ def _publish(paths: DaemonPaths, pid: int) -> DaemonInfo:
 
 
 def test_no_daemon_is_pass_not_warn(user_dir: Path) -> None:
-    """The daemon idle-shuts-down and auto-starts, so "not running" is healthy.
+    """Nothing attaches to the daemon yet, so "not running" is healthy.
 
     Reporting it as WARN would make a permanent warning out of correct
     behaviour and train an operator to ignore the row.
@@ -51,6 +51,34 @@ def test_no_daemon_is_pass_not_warn(user_dir: Path) -> None:
     assert status == "PASS"
     assert "trw-memory-server serve http" in message
     assert str(user_dir / "memory") in message
+
+
+def test_the_no_daemon_remedy_does_not_promise_an_auto_start(user_dir: Path) -> None:
+    """The row must not tell the operator a client will start the daemon for it.
+
+    No shipped client does: ``trw-mcp`` reads and writes its store directly, and
+    the only ``DaemonClient`` caller in the tree is ``trw_memory.cli_namespace``
+    (client attach is PRD-CORE-253 Slice B, deferred). The retired message said
+    "the next store or recall starts one", so an operator who read the row and
+    then stored a learning would believe a daemon had come up. The manual start
+    command is the whole remedy, and both the row and the module docstring that
+    explains it have to say so.
+    """
+    import re
+
+    import trw_mcp.server._doctor_memory_daemon as row_module
+    from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
+
+    _status, message = memory_daemon_row()
+
+    assert "the next store or recall starts one" not in message
+    assert "manually" in message, "the operator must be told the start is theirs to do"
+    assert "trw-memory-server serve http" in message
+
+    # The docstring is the other half of the same claim: a maintainer who trusts
+    # it would put the auto-start promise straight back into the message.
+    docstring = re.sub(r"\s+", " ", row_module.__doc__ or "")
+    assert "a client auto-starts one on first need" not in docstring
 
 
 def test_row_reports_pid_uptime_and_store_for_a_live_daemon(user_dir: Path) -> None:

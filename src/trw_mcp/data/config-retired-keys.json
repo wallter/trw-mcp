@@ -35,6 +35,7 @@
     "phase_cap_research": "",
     "phase_cap_review": "",
     "phase_cap_validate": "",
+    "run_auto_close_age_days": "run_stale_ttl_hours",
     "simplifier_backup_dir": "",
     "simplifier_verification_timeout_secs": "",
     "simplifier_wave_size": "",

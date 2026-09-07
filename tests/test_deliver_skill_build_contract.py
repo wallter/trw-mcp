@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).resolve().parents[2]
+from tests._layout import PACKAGE_ROOT as _ROOT
 
 #: Every bundled projection of the delivery skill. Unlike the module this
 #: replaces, these are NOT existence-guarded: they ship in the public wheel, so
@@ -34,10 +34,10 @@ _ROOT = Path(__file__).resolve().parents[2]
 #: its first run: the module this replaces named only two paths, and both were
 #: vendored. The live surface is twice as wide as the retired guard implied.
 DELIVER_SKILLS = (
-    _ROOT / "trw-mcp/src/trw_mcp/data/skills/trw-deliver/SKILL.md",
-    _ROOT / "trw-mcp/src/trw_mcp/data/codex/skills/trw-deliver/SKILL.md",
-    _ROOT / "trw-mcp/src/trw_mcp/data/copilot/skills/trw-deliver/SKILL.md",
-    _ROOT / "trw-mcp/src/trw_mcp/data/opencode/skills/trw-deliver/SKILL.md",
+    _ROOT / "src/trw_mcp/data/skills/trw-deliver/SKILL.md",
+    _ROOT / "src/trw_mcp/data/codex/skills/trw-deliver/SKILL.md",
+    _ROOT / "src/trw_mcp/data/copilot/skills/trw-deliver/SKILL.md",
+    _ROOT / "src/trw_mcp/data/opencode/skills/trw-deliver/SKILL.md",
 )
 
 #: Phrasings that would tell an agent the tool executes validation itself.
@@ -100,9 +100,7 @@ def test_every_bundled_deliver_projection_is_covered() -> None:
     matching what was on disk, and nothing said so.
     """
     discovered = {
-        path
-        for path in (_ROOT / "trw-mcp/src/trw_mcp/data").rglob("skills/trw-deliver/SKILL.md")
-        if "plugin" not in path.parts
+        path for path in (_ROOT / "src/trw_mcp/data").rglob("skills/trw-deliver/SKILL.md") if "plugin" not in path.parts
     }
     assert discovered, "no bundled trw-deliver skill found — has the layout changed?"
     missing = sorted(str(p.relative_to(_ROOT)) for p in discovered - set(DELIVER_SKILLS))

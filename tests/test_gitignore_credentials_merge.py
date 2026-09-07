@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from trw_mcp.bootstrap._gitignore_merge import _REQUIRED_RULES
 from trw_mcp.bootstrap._template_updater import _ensure_credentials_gitignored
 
 # The legacy custom .trw/.gitignore format shipped before SEC-005 — it has NO
@@ -62,15 +63,18 @@ def test_appends_credentials_rule_to_old_custom_gitignore(tmp_path: Path) -> Non
 def test_idempotent_when_every_rule_already_present(tmp_path: Path) -> None:
     """If every required rule is already ignored, the file is left untouched.
 
-    PRD-FIX-123-FR04 added a second required rule (``backups/``), so the fixture
-    now has to carry both for the no-op branch to be the one under test. The
-    single-rule variant is covered by
+    The fixture has to carry EVERY entry of ``_REQUIRED_RULES`` for the no-op
+    branch to be the one under test — ``backups/`` (PRD-FIX-123-FR04) and
+    ``proprietary-installed.json`` (PRD-INFRA-126) as well as the SEC-005 rule.
+    Derived from the list rather than restated, so the next rule added does not
+    silently turn this into a test of the append branch. The partial-coverage
+    variant is covered by
     ``test_missing_rule_is_appended_without_disturbing_the_others``.
     """
     trw = tmp_path / ".trw"
     trw.mkdir()
     gi = trw / ".gitignore"
-    gi.write_text("credentials.yaml\nbackups/\nreflections/\n", encoding="utf-8")
+    gi.write_text("".join(f"{rule}\n" for rule, _ in _REQUIRED_RULES) + "reflections/\n", encoding="utf-8")
     before = _read(gi)
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}

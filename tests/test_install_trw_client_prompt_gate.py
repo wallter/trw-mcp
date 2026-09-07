@@ -1,7 +1,6 @@
-"""Tests for the install-trw.py phase_project_setup gate that decides whether
-to prompt the user for client selection.
+"""The install-trw.py client-selection gate, exercised on the REAL function.
 
-Background: the Mac install bug — bash bootstrap pre-creates ``.trw/`` so
+Background: the Mac install bug — the bash bootstrap pre-creates ``.trw/`` so
 ``trw-mcp auth login`` can save ``config.yaml``. The legacy gate treated *any*
 ``.trw/`` directory as evidence of a prior install and silently auto-selected
 detected client surfaces, never prompting the user. The fix gates ``is_update``
@@ -9,265 +8,291 @@ on a stronger sentinel: ``.trw/installer-meta.yaml`` (only written by
 ``init-project`` / ``update-project``) OR a non-empty ``target_platforms`` in
 prior config.
 
-The functions under test live in ``install-trw.template.py`` (a standalone
-script that cannot be imported). We replicate the gate logic here so the
-behavior is testable. The replicated logic must mirror the template — when
-the template changes, this file must be updated to match.
+These tests used to run against a hand-maintained "pure-function replica" of the
+gate that lived in this file, with a comment asking the next editor to keep it in
+sync with the template. A replica cannot fail when the real gate regresses — it
+is a test of the copy — so it is gone. ``phase_project_setup`` is now driven
+directly and the assertions are on observable behaviour: which client surfaces
+were configured, and whether the first client got ``init-project`` (first-time
+install) or ``update-project`` (prior install).
+
+Only the TEMPLATE is loaded, not ``dist/install-trw.py``: the dist artifact is a
+generated build output (gitignored) whose parity with the template is a separate
+gate (``make installer-drift-check`` / ``tests/test_installer_drift_gate.py``).
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import MagicMock
 
 import pytest
 
-_SUPPORTED_IDES = [
-    "claude-code",
-    "cursor-ide",
-    "cursor-cli",
-    "opencode",
-    "codex",
-    "copilot",
-    "antigravity-cli",
-]
+from tests._install_trw_pip_target_contract_support import _load_installer_module
+
+_TEMPLATE = Path(__file__).resolve().parents[1] / "scripts" / "install-trw.template.py"
 
 
-def _normalize(ides: list[str]) -> list[str]:
-    """Minimal stand-in for the template's normalize helper."""
-    return list(dict.fromkeys(i for i in ides if i in _SUPPORTED_IDES))
+@pytest.fixture(scope="module")
+def installer() -> ModuleType:
+    return _load_installer_module(_TEMPLATE)
 
 
-def _resolve_client_targets(
+def _project(tmp_path: Path, *, prior_targets: list[str] | None = None, meta: bool = False) -> Path:
+    """A target dir shaped like the state under test."""
+    target = tmp_path / "project"
+    (target / ".git").mkdir(parents=True)
+    trw = target / ".trw"
+    trw.mkdir()
+    if meta:
+        (trw / "installer-meta.yaml").write_text("framework_version: v25_TRW\n", encoding="utf-8")
+    config = "installation_id: proj\n"
+    if prior_targets is not None:
+        config += "target_platforms:\n" + "".join(f"  - {t}\n" for t in prior_targets)
+    (trw / "config.yaml").write_text(config, encoding="utf-8")
+    return target
+
+
+def _drive(
+    installer: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    target: Path,
     *,
-    target_dir: Path,
-    detected_clis: list[str],
-    detected_ides: list[str],
-    prior_targets: list[str],
     interactive: bool,
-    ide_override: list[str] | None,
+    ide: list[str] | None = None,
+    detected_clis: list[str] | None = None,
+    detected_ides: list[str] | None = None,
     prompt_choice: list[str] | None = None,
-) -> tuple[list[str] | None, bool]:
-    """Pure-function replica of phase_project_setup's client-target gate.
+) -> tuple[list[str], list[list[str]], list[tuple[list[str], list[str], list[str] | None]]]:
+    """Run the real ``phase_project_setup``.
 
-    Returns ``(resolved_targets, is_update)``. ``resolved_targets`` is the
-    final list of client IDs to configure (or None when the user skipped
-    interactively). ``is_update`` is whether the run is treated as an update
-    (vs. first-time install) — drives ``init-project`` vs. ``update-project``.
-
-    ``prompt_choice`` is what the interactive prompt would have returned;
-    pass it to verify that the prompt path was actually taken.
+    Returns ``(resolved_targets, trw_cmds_run, prompt_calls)``.
     """
-    if ide_override is not None:
-        # CLI flag takes precedence; first-time vs. update determined by sentinel.
-        has_prior_install = (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
-        return _normalize(ide_override), bool(has_prior_install)
+    run_calls: list[list[str]] = []
+    prompt_calls: list[tuple[list[str], list[str], list[str] | None]] = []
 
-    has_prior_install = (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
-    is_update = (target_dir / ".trw").is_dir() and has_prior_install
+    def _fake_prompt(
+        clis: list[str], ides: list[str], prior_targets: list[str] | None = None
+    ) -> list[str] | None:
+        prompt_calls.append((clis, ides, prior_targets))
+        return prompt_choice
 
-    if has_prior_install and interactive and prior_targets:
-        return _normalize(prior_targets), is_update
+    monkeypatch.setattr(installer, "_detect_installed_clis", lambda: list(detected_clis or []))
+    monkeypatch.setattr(installer, "_detect_project_ides", lambda _p: list(detected_ides or []))
+    monkeypatch.setattr(installer, "_prompt_ide_selection", _fake_prompt)
+    monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
+    monkeypatch.setattr(
+        installer, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True
+    )
+    monkeypatch.setattr(installer, "_provision_user_scope", lambda _c: False)
 
-    if interactive:
-        # Always prompt on first-time install OR prior install missing target_platforms.
-        return prompt_choice, is_update
+    resolved = installer.phase_project_setup(
+        MagicMock(),
+        3,
+        4,
+        sys.executable,
+        target,
+        False,
+        interactive=interactive,
+        ide=ide,
+    )
+    return resolved, run_calls, prompt_calls
 
-    # Headless: prior_targets if any, else detected, else default claude-code.
-    headless = _normalize(prior_targets or list(dict.fromkeys(detected_ides + detected_clis)))
-    if not headless:
-        headless = ["claude-code"]
-    return headless, is_update
 
-
-# ── Tests ────────────────────────────────────────────────────────────────
+def _first_action(run_calls: list[list[str]]) -> str:
+    assert run_calls, "phase_project_setup ran no trw-mcp command"
+    return run_calls[0][1]
 
 
 class TestFreshInstallWithBashBootstrap:
-    """Mac/Linux user runs `curl ...install.sh | bash` for the first time.
+    """First `curl ...install.sh | bash`: ``.trw/`` exists, ``installer-meta.yaml`` does not."""
 
-    Bash bootstrap created ``.trw/`` (for auth) and wrote ``config.yaml`` with
-    ``platform_api_key``. There is NO ``installer-meta.yaml`` because no
-    init-project has run yet.
-    """
-
-    def test_prompts_when_clients_detected_in_project(self, tmp_path: Path) -> None:
+    def test_prompts_when_clients_detected_in_project(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A pre-existing client config must NOT auto-select that client silently."""
-        (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "config.yaml").write_text("platform_api_key: trw_dk_x\n")
-        # User had .cursor/ from prior tooling — but no prior TRW install.
-        (tmp_path / ".cursor").mkdir()
+        target = _project(tmp_path)
+        (target / ".cursor").mkdir()
 
-        result, is_update = _resolve_client_targets(
-            target_dir=tmp_path,
+        resolved, run_calls, prompts = _drive(
+            installer,
+            monkeypatch,
+            target,
+            interactive=True,
             detected_clis=["claude-code"],
             detected_ides=["cursor-ide"],
-            prior_targets=[],
-            interactive=True,
-            ide_override=None,
             prompt_choice=["claude-code", "cursor-ide"],
         )
 
-        assert is_update is False, "no installer-meta.yaml ⇒ first-time install"
-        assert result == ["claude-code", "cursor-ide"], "user's prompt choice is honored"
+        assert prompts, "the user must be asked; no installer-meta.yaml means no prior install"
+        assert resolved == ["claude-code", "cursor-ide"], "the prompt choice is honored"
+        assert _first_action(run_calls) == "init-project", "no prior install ⇒ init, not update"
 
-    def test_prompts_even_when_only_trw_dir_exists(self, tmp_path: Path) -> None:
-        """``.trw/`` from bash bootstrap must not be mistaken for prior install."""
-        (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "config.yaml").write_text("platform_api_key: trw_dk_x\n")
+    def test_prompts_even_when_only_trw_dir_exists(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``.trw/`` from the bash bootstrap must not be mistaken for a prior install."""
+        target = _project(tmp_path)
 
-        result, is_update = _resolve_client_targets(
-            target_dir=tmp_path,
-            detected_clis=[],
-            detected_ides=[],
-            prior_targets=[],
-            interactive=True,
-            ide_override=None,
-            prompt_choice=["claude-code"],
+        resolved, run_calls, prompts = _drive(
+            installer, monkeypatch, target, interactive=True, prompt_choice=["claude-code"]
         )
 
-        assert is_update is False
-        assert result == ["claude-code"]
+        assert prompts
+        assert resolved == ["claude-code"]
+        assert _first_action(run_calls) == "init-project"
 
-    def test_user_skipping_prompt_returns_none(self, tmp_path: Path) -> None:
-        (tmp_path / ".trw").mkdir()
+    def test_user_skipping_prompt_configures_nothing(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = _project(tmp_path)
 
-        result, _ = _resolve_client_targets(
-            target_dir=tmp_path,
+        resolved, run_calls, _ = _drive(
+            installer,
+            monkeypatch,
+            target,
+            interactive=True,
             detected_clis=["cursor-ide"],
             detected_ides=["cursor-ide"],
-            prior_targets=[],
-            interactive=True,
-            ide_override=None,
             prompt_choice=None,  # user pressed 's' to skip
         )
 
-        assert result is None
+        assert resolved == []
+        assert run_calls == [], "a skipped prompt must not configure a client anyway"
 
 
 class TestRealPriorInstall:
     """A real prior init-project / update-project wrote installer-meta.yaml."""
 
-    def test_reuses_prior_targets_without_prompt(self, tmp_path: Path) -> None:
-        (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v25_TRW\n")
+    def test_reuses_prior_targets_without_prompt(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = _project(tmp_path, prior_targets=["claude-code"], meta=True)
 
-        result, is_update = _resolve_client_targets(
-            target_dir=tmp_path,
+        resolved, run_calls, prompts = _drive(
+            installer,
+            monkeypatch,
+            target,
+            interactive=True,
             detected_clis=["claude-code", "cursor-ide"],
             detected_ides=["claude-code"],
-            prior_targets=["claude-code"],
-            interactive=True,
-            ide_override=None,
             prompt_choice=["should-not-be-used"],
         )
 
-        assert is_update is True, "installer-meta.yaml ⇒ real prior install"
-        assert result == ["claude-code"], "prior target_platforms is reused"
+        assert prompts == [], "a recorded prior choice must not be re-asked"
+        assert resolved == ["claude-code"]
+        assert _first_action(run_calls) == "update-project", "installer-meta.yaml ⇒ update"
 
-    def test_meta_present_but_no_prior_targets_still_prompts(self, tmp_path: Path) -> None:
-        """Edge: legacy install left meta but no target_platforms field."""
-        (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v25_TRW\n")
+    def test_meta_present_but_no_prior_targets_still_prompts(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Edge: a legacy install left meta but no target_platforms field."""
+        target = _project(tmp_path, meta=True)
 
-        result, is_update = _resolve_client_targets(
-            target_dir=tmp_path,
+        resolved, run_calls, prompts = _drive(
+            installer,
+            monkeypatch,
+            target,
+            interactive=True,
             detected_clis=["claude-code"],
             detected_ides=["claude-code"],
-            prior_targets=[],
-            interactive=True,
-            ide_override=None,
             prompt_choice=["claude-code"],
         )
 
-        assert is_update is True, "installer-meta.yaml is the strong sentinel"
-        assert result == ["claude-code"], "user is prompted; their choice wins"
+        assert prompts, "nothing recorded ⇒ ask"
+        assert resolved == ["claude-code"]
+        assert _first_action(run_calls) == "update-project"
 
 
 class TestPriorTargetsWithoutMeta:
     """Defensive: someone hand-edited config.yaml to add target_platforms."""
 
-    def test_prior_targets_alone_treated_as_prior_install(self, tmp_path: Path) -> None:
-        (tmp_path / ".trw").mkdir()
-        # No installer-meta.yaml, but config has target_platforms entries.
+    def test_prior_targets_alone_treated_as_prior_install(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = _project(tmp_path, prior_targets=["codex"])
 
-        result, is_update = _resolve_client_targets(
-            target_dir=tmp_path,
-            detected_clis=[],
-            detected_ides=[],
-            prior_targets=["codex"],
-            interactive=True,
-            ide_override=None,
-            prompt_choice=["should-not-be-used"],
+        resolved, run_calls, prompts = _drive(
+            installer, monkeypatch, target, interactive=True, prompt_choice=["should-not-be-used"]
         )
 
-        assert is_update is True
-        assert result == ["codex"]
+        assert prompts == []
+        assert resolved == ["codex"]
+        assert _first_action(run_calls) == "update-project"
 
 
 class TestHeadlessMode:
     """Non-interactive (CI) installs auto-configure without prompting."""
 
-    def test_headless_first_install_uses_detected(self, tmp_path: Path) -> None:
-        (tmp_path / ".trw").mkdir()
+    def test_headless_first_install_uses_detected(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = _project(tmp_path)
 
-        result, is_update = _resolve_client_targets(
-            target_dir=tmp_path,
+        resolved, run_calls, prompts = _drive(
+            installer,
+            monkeypatch,
+            target,
+            interactive=False,
             detected_clis=["claude-code"],
             detected_ides=["cursor-ide"],
-            prior_targets=[],
-            interactive=False,
-            ide_override=None,
         )
 
-        assert is_update is False, "headless first install"
-        assert result == ["cursor-ide", "claude-code"]
+        assert prompts == []
+        assert resolved == ["cursor-ide", "claude-code"]
+        assert _first_action(run_calls) == "init-project"
 
-    def test_headless_first_install_default_when_nothing_detected(self, tmp_path: Path) -> None:
-        (tmp_path / ".trw").mkdir()
+    def test_headless_first_install_default_when_nothing_detected(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        target = _project(tmp_path)
 
-        result, _ = _resolve_client_targets(
-            target_dir=tmp_path,
-            detected_clis=[],
-            detected_ides=[],
-            prior_targets=[],
-            interactive=False,
-            ide_override=None,
-        )
+        resolved, _run_calls, _ = _drive(installer, monkeypatch, target, interactive=False)
 
-        assert result == ["claude-code"]
+        assert resolved == ["claude-code"]
 
 
 class TestExplicitIDEFlag:
-    """``--ide`` flag bypasses prompt entirely."""
+    """``--ide`` bypasses the prompt entirely."""
 
     @pytest.mark.parametrize("interactive", [True, False])
-    def test_ide_override_wins(self, tmp_path: Path, interactive: bool) -> None:
-        (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "installer-meta.yaml").write_text("framework_version: v25_TRW\n")
+    def test_ide_override_wins(
+        self,
+        installer: ModuleType,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        interactive: bool,
+    ) -> None:
+        target = _project(tmp_path, prior_targets=["codex"], meta=True)
 
-        result, _ = _resolve_client_targets(
-            target_dir=tmp_path,
+        resolved, run_calls, prompts = _drive(
+            installer,
+            monkeypatch,
+            target,
+            interactive=interactive,
+            ide=["copilot"],
             detected_clis=["claude-code"],
             detected_ides=["cursor-ide"],
-            prior_targets=["codex"],
-            interactive=interactive,
-            ide_override=["copilot"],
             prompt_choice=["should-not-be-used"],
         )
 
-        assert result == ["copilot"]
+        assert prompts == []
+        assert resolved == ["copilot"]
+        assert _first_action(run_calls) == "update-project"
 
 
 class TestInstallerTemplateAntigravityContract:
     """Contract tests ensuring install-trw.template.py includes antigravity-cli.
 
-    The installer template is a standalone script (not importable); these tests
-    scan it as text to verify _SUPPORTED_IDES parity with bootstrap._utils.SUPPORTED_IDES.
-    When the template _SUPPORTED_IDES drifts from the runtime list, users selecting
+    The installer template is a standalone script; these tests scan it as text to
+    verify _SUPPORTED_IDES parity with bootstrap._utils.SUPPORTED_IDES. When the
+    template _SUPPORTED_IDES drifts from the runtime list, users selecting
     antigravity-cli interactively get a silent ValueError at install time.
     """
 
-    _TEMPLATE = Path(__file__).resolve().parent.parent / "scripts" / "install-trw.template.py"
+    _TEMPLATE = _TEMPLATE
 
     @pytest.mark.unit
     def test_template_supported_ides_contains_antigravity_cli(self) -> None:
@@ -283,7 +308,6 @@ class TestInstallerTemplateAntigravityContract:
     def test_template_ide_meta_contains_antigravity_cli(self) -> None:
         """install-trw.template.py _IDE_META must have an antigravity-cli entry for the menu."""
         text = self._TEMPLATE.read_text(encoding="utf-8")
-        # _IDE_META is a dict; antigravity-cli key must appear after the _SUPPORTED_IDES block
         ide_meta_pos = text.find("_IDE_META")
         assert ide_meta_pos != -1, "_IDE_META dict not found in installer template"
         assert '"antigravity-cli"' in text[ide_meta_pos:], (
@@ -303,8 +327,6 @@ class TestInstallerTemplateAntigravityContract:
         assert "def _resolve_path_trw_mcp_version" in text, (
             "installer must resolve the PATH trw-mcp version to write an honest marker"
         )
-        # The sentinel write must use the resolved marker_version, never a bare
-        # {"version": TRW_VERSION ...} that ignores a shadowing install.
         assert '"version": marker_version' in text, (
             "installed-version.json must record the resolved marker_version, not TRW_VERSION"
         )

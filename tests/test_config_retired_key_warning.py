@@ -138,6 +138,30 @@ def test_the_two_wd02_nudge_knobs_are_audible_on_removal(capsys: pytest.CaptureF
     assert "always_high" not in err
 
 
+def test_run_auto_close_age_days_is_audible_on_removal(capsys: pytest.CaptureFixture[str]) -> None:
+    """2.0.0 removed ``run_auto_close_age_days``; ``run_stale_ttl_hours`` replaced it.
+
+    Without a retired-map entry the operator who tuned the day-level knob is told
+    to "check for a typo" — advice that sends them looking for a misspelling of a
+    field that was deliberately deleted, instead of at the hour-level TTL that now
+    owns the behaviour.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    assert "run_auto_close_age_days" not in TRWConfig.model_fields
+    assert retired_config_keys()["run_auto_close_age_days"] == "run_stale_ttl_hours"
+    assert "run_stale_ttl_hours" in TRWConfig.model_fields, "the named replacement must be a live field"
+
+    warned = warn_unrecognised_config_keys({"run_auto_close_age_days": 14}, set(TRWConfig.model_fields))
+
+    err = capsys.readouterr().err
+    assert warned == ["run_auto_close_age_days"]
+    assert "run_stale_ttl_hours" in err
+    assert "typo" not in err
+    assert "14" not in err
+
+
 def test_the_shipped_retired_map_is_valid_json() -> None:
     """Non-vacuity for the test above: a corrupt map would read as empty."""
     resource = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "config-retired-keys.json"

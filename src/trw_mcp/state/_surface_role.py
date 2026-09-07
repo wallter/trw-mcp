@@ -56,8 +56,8 @@ def reviewer_role_active() -> bool:
         from trw_mcp.models.config import get_config
 
         config = get_config()
-    except Exception:  # justified: an unreadable config resolves to agent, not a crash
-        logger.debug("reviewer_role_active_config_read_failed", exc_info=True)
+    except Exception as exc:  # an unreadable config resolves to agent, not a crash
+        logger.debug("reviewer_role_active_config_read_failed", reason=str(exc), exc_info=True)
         return False
     return str(getattr(config, "surface_role", "agent")) == _REVIEWER_SENTINEL
 

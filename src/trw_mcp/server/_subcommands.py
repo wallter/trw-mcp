@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
@@ -89,6 +89,25 @@ def _print_cli_line(message: str, *, stream: TextIO | None = None) -> None:
     print(message, file=stream or sys.stdout)
 
 
+def _print_warning_block(warnings: Sequence[str]) -> None:
+    """Render *warnings* on the CLI under one stable, machine-visible prefix.
+
+    ``WARNING: <text>`` is the ONLY form. ``install-trw.py`` pipes these
+    subcommands through its progress spinner and keys on that prefix to
+    re-surface the lines once the spinner stops (``run_with_progress`` /
+    ``_WARNING_LINE_RE``). The previous decorative ``- <text>`` bullet matched
+    nothing there, so an ``update-project`` policy refusal — the operator's only
+    signal that their CLAUDE.md was deliberately left stale — was read off the
+    pipe and discarded.
+    """
+    if not warnings:
+        return
+    _print_cli_line("")
+    _print_cli_line("Warnings:")
+    for warning in warnings:
+        _print_cli_line(f"WARNING: {warning}")
+
+
 def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_run: bool, ide: str | None) -> None:
     """Render a concise human summary for update-project."""
     updated = len(result["updated"])
@@ -96,7 +115,6 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
     preserved = len(result["preserved"])
     cleaned = len(result.get("cleaned", []))
     errors = len(result["errors"])
-    warnings = result.get("warnings", [])
 
     codex_touched = any(
         path.startswith((".codex/", ".agents/skills/")) or path == "AGENTS.md"
@@ -113,11 +131,6 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
         _print_cli_line(f"Target IDE: {ide}")
     if codex_touched:
         _print_cli_line("Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced")
-    if warnings:
-        _print_cli_line("")
-        _print_cli_line("Warnings:")
-        for warning in warnings:
-            _print_cli_line(f"- {warning}")
     if not dry_run:
         _print_cli_line("")
         _print_cli_line("Use -v for per-file changes or --log-json for structured output.")
@@ -164,12 +177,7 @@ def _run_init_project(args: argparse.Namespace) -> None:
             _print_cli_line(
                 f"Changes: {len(updated)} updated, {len(result['created'])} created, {len(preserved)} preserved"
             )
-            warnings = result.get("warnings", [])
-            if warnings:
-                _print_cli_line("")
-                _print_cli_line("Warnings:")
-                for warning in warnings:
-                    _print_cli_line(f"- {warning}")
+            _print_warning_block(result.get("warnings", []))
             _print_cli_line("")
             _print_cli_line("Next: run your AI coding tool in this directory.")
 
@@ -202,8 +210,12 @@ def _run_update_project(args: argparse.Namespace) -> None:
     if detailed:
         for w in result.get("warnings", []):
             logger.warning("update_project_warning", op="update_project", detail=str(w))
-    elif not quiet and result.get("warnings"):
-        pass
+    elif not quiet:
+        # Unconditionally, ahead of the summary: warnings used to be rendered
+        # only from _summarize_update_result, which runs only when the update
+        # had NO errors — so the runs most likely to carry a warning were
+        # exactly the runs that swallowed it.
+        _print_warning_block(result.get("warnings", []))
     for e in result["errors"]:
         logger.error("update_project_error", op="update_project", error=str(e))
 

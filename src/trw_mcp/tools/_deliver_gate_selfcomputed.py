@@ -53,8 +53,8 @@ def evaluate_acceptance_integrity(
         from trw_mcp.tools._prd_transition_gate import evaluate_transition_gate
 
         outcome = evaluate_transition_gate(resolved_run)
-    except Exception:  # justified: gate resolution failure degrades to no-block (NFR02)
-        logger.warning("acceptance_integrity_dispatch_degraded", run=str(resolved_run), exc_info=True)
+    except Exception as exc:  # gate resolution failure degrades to no-block (NFR02)
+        logger.warning("acceptance_integrity_dispatch_degraded", run=str(resolved_run), reason=str(exc), exc_info=True)
         return False
     # Surface a non-blocking advisory so the delivering agent SEES it (mirrors the
     # build_gate_warning idiom; no dormant warn path). Present whenever the gate
@@ -115,8 +115,8 @@ def evaluate_plan_acceptance(
         run_yaml = resolved_run / "meta" / "run.yaml"
         run_data = FileStateReader().read_yaml(run_yaml) if run_yaml.is_file() else {}
         outcome = evaluate_plan_acceptance(resolved_run, run_data)
-    except Exception:  # justified: run-state resolution failure degrades to no-block (NFR02)
-        logger.warning("plan_acceptance_dispatch_degraded", run=str(resolved_run), exc_info=True)
+    except Exception as exc:  # run-state resolution failure degrades to no-block (NFR02)
+        logger.warning("plan_acceptance_dispatch_degraded", run=str(resolved_run), reason=str(exc), exc_info=True)
         return False
     if outcome.unresolved_scope_entries:
         results["unresolved_scope_entries"] = list(outcome.unresolved_scope_entries)

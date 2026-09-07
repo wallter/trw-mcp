@@ -27,18 +27,24 @@ logger = structlog.get_logger(__name__)
 #    tracked (PRD-SEC-005-FR02).
 #  - ``backups/`` — the PRD-FIX-123-FR04 pre-write copies of CLAUDE.md /
 #    AGENTS.md, which mirror files that may hold private project rules.
-_CREDENTIALS_IGNORE_RULE = "credentials.yaml"
-_CREDENTIALS_IGNORE_COMMENT = (
-    "# Secret: credentials.yaml holds the platform_api_key (mode 0600) — never track it (PRD-SEC-005)."
-)
-_BACKUPS_IGNORE_RULE = "backups/"
-_BACKUPS_IGNORE_COMMENT = "# Pre-write copies of your instruction files — never track them (PRD-FIX-123)."
-
-#: ``(rule, comment)`` pairs merge-ensured into an existing custom ignore file,
-#: in the order they are appended.
+#  - ``proprietary-installed.json`` — the proprietary-entitlement record. It is
+#    a per-machine install fact, not project config: committed, it told a
+#    teammate's credential-less clone to take the proprietary path, whose
+#    missing-key precondition then aborted their whole PUBLIC install
+#    (PRD-INFRA-126 FR05).
+#
+#: A new entry here must ALSO be added to the bundled ``data/gitignore.txt``
+#: (fresh installs deploy that file; this list is the brownfield half).
 _REQUIRED_RULES: tuple[tuple[str, str], ...] = (
-    (_CREDENTIALS_IGNORE_RULE, _CREDENTIALS_IGNORE_COMMENT),
-    (_BACKUPS_IGNORE_RULE, _BACKUPS_IGNORE_COMMENT),
+    (
+        "credentials.yaml",
+        "# Secret: credentials.yaml holds the platform_api_key (mode 0600) — never track it (PRD-SEC-005).",
+    ),
+    ("backups/", "# Pre-write copies of your instruction files — never track them (PRD-FIX-123)."),
+    (
+        "proprietary-installed.json",
+        "# Your proprietary-entitlement record — a local install fact, never track it (PRD-INFRA-126).",
+    ),
 )
 
 
@@ -91,8 +97,9 @@ def _ensure_credentials_gitignored(
 ) -> None:
     """Merge-ensure ``.trw/.gitignore`` carries every required rule.
 
-    Covers the SEC-005 ``credentials.yaml`` rule (FR02) and the PRD-FIX-123-FR04
-    ``backups/`` rule. Appends only the MISSING rules to an existing custom
+    Covers every entry in ``_REQUIRED_RULES`` — the SEC-005 ``credentials.yaml``
+    rule (FR02), the PRD-FIX-123-FR04 ``backups/`` rule, and the PRD-INFRA-126
+    ``proprietary-installed.json`` record. Appends only the MISSING rules to an existing custom
     ``.trw/.gitignore`` WITHOUT discarding any user customizations (the safe
     alternative to a blind ``_ALWAYS_UPDATE`` overwrite), and is idempotent.
     Creates a minimal ``.gitignore`` when one is absent.

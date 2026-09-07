@@ -22,7 +22,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.formation._manifest import FormationError, FormationManifest
+
+logger = structlog.get_logger(__name__)
 
 __all__ = ["PLACEHOLDERS", "render_brief", "template_path"]
 
@@ -138,5 +142,9 @@ def _read_addendum(path: Path) -> str:
     """
     try:
         return path.read_text(encoding="utf-8").strip()
-    except OSError:
+    except OSError as exc:
+        # The orchestrator DECLARED shared_rules_ref, so an unreadable file here
+        # is worth a maintainer's attention even though the brief degrades to
+        # "not declared" rather than failing the render.
+        logger.info("formation_addendum_unreadable", path=str(path), reason=str(exc))
         return ""

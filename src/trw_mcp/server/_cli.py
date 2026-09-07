@@ -153,7 +153,8 @@ def _register_thread_dump_signal(dump_dir: Path | None = None) -> bool:
             target = _sys.stderr
     try:
         faulthandler.register(signum, file=target, all_threads=True, chain=False)
-    except (RuntimeError, ValueError, AttributeError, OSError):
+    except (RuntimeError, ValueError, AttributeError, OSError) as exc:
+        structlog.get_logger(__name__).warning("thread_dump_signal_unavailable", reason=str(exc))
         return False
     return True
 

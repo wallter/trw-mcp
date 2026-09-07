@@ -349,3 +349,99 @@ class TestSyncRunsWithoutApiKey:
             f"no-API-key must not gate the sync; warnings={result['warnings']}"
         )
         assert result["errors"] == []
+
+
+class TestSyncSurfacesWriteRefusals:
+    """A policy-refused instruction write must reach the operator (PRD-FIX-123).
+
+    ``execute_claude_md_sync`` reports a guarded write it declined to perform in
+    ``refusals`` and still returns normally. ``_run_claude_md_sync`` read only
+    ``learnings_promoted``, so an oversized CLAUDE.md/AGENTS.md produced the line
+    "CLAUDE.md synced" — the operator was told their instruction file had been
+    updated when the writer had deliberately left it alone. Nobody but them can
+    fix that, and nothing else in the update report said so.
+    """
+
+    _REFUSAL = {
+        "error_code": "instruction_surface_oversized",
+        "file": "AGENTS.md",
+        "reason": "oversized",
+        "lines": 900,
+        "limit": 350,
+        "current_non_generated_bytes": 40_000,
+        "candidate_non_generated_bytes": 40_000,
+        "current_total_bytes": 41_000,
+        "candidate_total_bytes": 42_000,
+        "detail": "instruction surface over the line limit",
+    }
+
+    @staticmethod
+    def _blank_result() -> dict[str, list[str]]:
+        return {"updated": [], "created": [], "preserved": [], "errors": [], "warnings": []}
+
+    def test_a_refused_write_warns_naming_file_reason_and_limit(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md.execute_claude_md_sync",
+            lambda **_kwargs: {"learnings_promoted": 0, "refusals": [self._REFUSAL]},
+        )
+        monkeypatch.setattr("trw_mcp.state.llm_helpers.LLMClient", lambda: MagicMock())
+
+        init_project(fake_git_repo)
+        result = self._blank_result()
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+
+        warnings = result["warnings"]
+        assert any("AGENTS.md" in w for w in warnings), f"the refused file must be named: {warnings}"
+        assert any("oversized" in w for w in warnings), f"the refusal reason must be named: {warnings}"
+        assert any("350" in w for w in warnings), f"the limit must be named: {warnings}"
+
+    def test_a_refused_write_is_not_reported_as_synced(
+        self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The truthfulness half: a write that did not happen is not an update."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md.execute_claude_md_sync",
+            lambda **_kwargs: {"learnings_promoted": 0, "refusals": [self._REFUSAL]},
+        )
+        monkeypatch.setattr("trw_mcp.state.llm_helpers.LLMClient", lambda: MagicMock())
+
+        init_project(fake_git_repo)
+        result = self._blank_result()
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+
+        assert not any("synced" in u for u in result["updated"]), (
+            f"a refused write must not be reported as a sync: {result['updated']}"
+        )
+        assert result["errors"] == [], "a refusal is a warning, not an error — the update continues"
+
+    def test_no_refusal_still_reports_the_sync(self, fake_git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Negative branch. An empty ``refusals`` list must not suppress the line."""
+        from unittest.mock import MagicMock
+
+        from trw_mcp.bootstrap._update_project import _run_claude_md_sync
+
+        monkeypatch.setattr(
+            "trw_mcp.state.claude_md.execute_claude_md_sync",
+            lambda **_kwargs: {"learnings_promoted": 2, "refusals": []},
+        )
+        monkeypatch.setattr("trw_mcp.state.llm_helpers.LLMClient", lambda: MagicMock())
+
+        init_project(fake_git_repo)
+        result = self._blank_result()
+
+        _run_claude_md_sync(fake_git_repo, result, timeout=10)
+
+        assert any("synced" in u and "2" in u for u in result["updated"])
+        assert result["warnings"] == []

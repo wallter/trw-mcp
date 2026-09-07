@@ -42,16 +42,13 @@ none of the four currently depends on the real operator HOME being reachable
 
 from __future__ import annotations
 
-import shutil
-import tempfile
 from collections.abc import Iterator
-from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def isolated_trw_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def isolated_trw_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Redirect HOME, XDG_DATA_HOME, and TRW_USER_DIR to isolated tmp dirs.
 
     ``monkeypatch.setenv`` restores the prior value (or absence) automatically
@@ -63,10 +60,12 @@ def isolated_trw_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     # Outside ``tmp_path``: tests that enumerate their own tmp tree (the FIX-128
     # traversal checks list ``tmp_path`` and expect only what they created)
     # must not see the fixture's home directory beside their project.
-    home_dir = Path(tempfile.mkdtemp(prefix="trw-home-"))
+    # pytest owns the directory (no rmtree call of our own at teardown: installer
+    # tests monkeypatch shutil.rmtree with a one-argument stand-in), and it sits
+    # beside — never inside — the test's own tmp_path.
+    home_dir = tmp_path_factory.mktemp("trw-home")
     home_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setenv("XDG_DATA_HOME", str(home_dir / ".local" / "share"))
     monkeypatch.setenv("TRW_USER_DIR", str(home_dir / ".trw-user"))
     yield
-    shutil.rmtree(home_dir, ignore_errors=True)

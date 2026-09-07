@@ -131,6 +131,57 @@ def _update_config_target_platforms(
         )
 
 
+#: Human-readable gloss per ``InstructionRefusalReason``. A refusal reaches an
+#: operator who is watching an installer, not a maintainer reading the PRD, so
+#: the bare enum value ("non_generated_shrink") is not a message on its own.
+_REFUSAL_REASON_TEXT: dict[str, str] = {
+    "oversized": "the file is over the instruction-surface line limit",
+    "non_generated_shrink": "the write would have deleted your own (non-generated) content",
+    "total_shrink": "the write would have shrunk the file more than the guard allows",
+    "unreadable_target": "the existing file could not be read",
+    "backup_failed": "the safety backup could not be written",
+    "backup_path_escape": "the backup path resolved outside the project",
+    "write_failed": "the write itself failed",
+}
+
+
+def _record_sync_refusals(
+    sync_result: ClaudeMdSyncResultDict,
+    result: dict[str, list[str]],
+    target_dir: Path,
+) -> bool:
+    """Surface PRD-FIX-123 policy refusals; return True when any was recorded.
+
+    ``execute_claude_md_sync`` reports a guarded write it declined to perform in
+    ``refusals`` and still returns normally. Reading only ``learnings_promoted``
+    turned that into "CLAUDE.md synced" — the operator was told their instruction
+    file had been updated when the writer had deliberately left it alone, which
+    is the one outcome they need to know about (their CLAUDE.md/AGENTS.md is now
+    stale and only they can fix it).
+    """
+    refusals = sync_result.get("refusals") or []
+    if not refusals:
+        return False
+    warnings = result.setdefault("warnings", [])
+    for refusal in refusals:
+        name = refusal.get("file") or "instruction file"
+        reason = str(refusal.get("reason") or "unspecified")
+        explanation = _REFUSAL_REASON_TEXT.get(reason, reason)
+        limit = refusal.get("limit")
+        limit_text = f"; limit {limit} lines, file is {refusal.get('lines')}" if limit else ""
+        warnings.append(f"{name} NOT updated — refused ({reason}): {explanation}{limit_text}")
+        logger.warning(
+            "claude_md_sync_write_refused",
+            refused_file=name,
+            reason=reason,
+            lines=refusal.get("lines"),
+            limit=limit,
+            detail=refusal.get("detail"),
+            target_dir=str(target_dir),
+        )
+    return True
+
+
 def _run_claude_md_sync(
     target_dir: Path,
     result: dict[str, list[str]],
@@ -215,6 +266,11 @@ def _run_claude_md_sync(
             learnings_promoted=learnings_promoted,
             target_dir=str(target_dir),
         )
+        if _record_sync_refusals(sync_result, result, target_dir):
+            # A refused write did not happen. Claiming "CLAUDE.md synced" on top
+            # of the warning would leave the truthful line and the false one in
+            # the same report, and update-project's summary shows `updated`.
+            return
         result["updated"].append(f"CLAUDE.md synced (learnings promoted: {learnings_promoted})")
     except concurrent.futures.TimeoutError:
         logger.warning(

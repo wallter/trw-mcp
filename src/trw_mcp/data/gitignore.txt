@@ -2,6 +2,11 @@
 # Tracked: config.yaml, frameworks/, learnings/, scripts/, templates/
 # Secret: credentials.yaml holds the platform_api_key (mode 0600) — never track it (PRD-SEC-005).
 credentials.yaml
+# The proprietary-entitlement record is a per-machine install fact, not project
+# config. Tracked, it told a teammate's credential-less clone to take the
+# proprietary path, which then aborted their whole public install
+# (PRD-INFRA-126 FR05).
+proprietary-installed.json
 context/
 reflections/
 logs/

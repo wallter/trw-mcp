@@ -211,6 +211,7 @@ class UI:
         self.interactive = interactive
         self.quiet = quiet
         self._spinner: _Spinner | None = None
+        self._deferred_warnings: list[str] = []
 
     def info(self, msg: str) -> None:
         if not self.quiet:
@@ -243,6 +244,26 @@ class UI:
             print(f"            {YELLOW}!{NC} {msg}")
         else:
             self.warn(msg)
+
+    def defer_warn(self, msg: str) -> None:
+        """Queue a warning to be shown once the current spinner has stopped.
+
+        A warning printed while the spinner thread is repainting the same line
+        is overwritten and lost — which is how ``update-project``'s policy
+        refusals (the operator's only signal that their CLAUDE.md was left
+        stale) disappeared in interactive mode. With no spinner running there is
+        nothing to wait for, so the warning is emitted immediately.
+        """
+        if self._spinner is None:
+            self.step_warn(msg)
+            return
+        self._deferred_warnings.append(msg)
+
+    def flush_deferred_warnings(self) -> None:
+        """Emit and clear every queued warning. Idempotent."""
+        pending, self._deferred_warnings = self._deferred_warnings, []
+        for msg in pending:
+            self.step_warn(msg)
 
     def step_fail(self, msg: str) -> None:
         if self.interactive:
@@ -289,6 +310,9 @@ class UI:
             self.step_ok(ok_msg)
         else:
             self.step_fail(fail_msg)
+        # Warnings the child emitted under the spinner are shown here, after the
+        # step's own verdict line, so they survive the repaint.
+        self.flush_deferred_warnings()
 
 
 class _Spinner:
@@ -800,12 +824,70 @@ def validate_api_key(key: str) -> bool:
 # ── Python discovery ─────────────────────────────────────────────────
 
 
+def _probe_target_python_version(target: str) -> tuple[int, int] | None:
+    """Return ``(major, minor)`` as reported BY *target* itself, or None on failure.
+
+    Runs *target* rather than trusting a caller-supplied path string: a
+    ``TRW_TARGET_PYTHON`` env var could name a non-Python executable, a shell
+    shim, or an interpreter too old to satisfy ``MIN_PYTHON_VERSION`` — this
+    is the validation step (C06) that keeps a bad env var from silently
+    routing the wheel install somewhere it can't run.
+    """
+    try:
+        probe = subprocess.run(
+            [target, "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if probe.returncode != 0:
+        return None
+    try:
+        major_s, minor_s = probe.stdout.strip().split(".", 1)
+        return int(major_s), int(minor_s)
+    except ValueError:
+        return None
+
+
 def check_python_version(ui: UI) -> str:
-    """Verify Python meets minimum version. Returns executable path."""
+    """Verify Python meets minimum version. Returns the interpreter to install into.
+
+    Honors ``TRW_TARGET_PYTHON`` (set by install.sh to the interpreter that
+    owns the trw-mcp binary it just installed — a pipx venv, the managed
+    ``${XDG_DATA_HOME}/trw/venv``, or a ``uv tool`` venv) instead of
+    unconditionally returning ``sys.executable``. ``sys.executable`` is the
+    BOOTSTRAP interpreter running this script; install.sh always invokes
+    ``"$PYTHON" install-trw.py``, which may differ from the isolated venv a
+    PEP-668 fallback rung installed trw-mcp into (C06) — installing the
+    bundled wheels into the wrong interpreter leaves trw-mcp unable to import
+    them. Falls back to ``sys.executable`` when the env var is absent, does
+    not point at an executable file, or reports an unsupported version.
+    """
     major, minor = sys.version_info[:2]
     if (major, minor) < MIN_PYTHON_VERSION:
         ui.error(f"Python {major}.{minor} found but >= {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]} required")
         sys.exit(1)
+
+    target = os.environ.get("TRW_TARGET_PYTHON", "").strip()
+    if target and target != sys.executable:
+        target_path = Path(target)
+        if not (target_path.is_file() and os.access(target_path, os.X_OK)):
+            ui.step_warn(f"TRW_TARGET_PYTHON={target} is not an executable file — using {sys.executable}")
+        else:
+            target_version = _probe_target_python_version(target)
+            if target_version is None:
+                ui.step_warn(f"TRW_TARGET_PYTHON={target} did not run — using {sys.executable}")
+            elif target_version < MIN_PYTHON_VERSION:
+                ui.step_warn(
+                    f"TRW_TARGET_PYTHON={target} reports Python "
+                    f"{target_version[0]}.{target_version[1]} "
+                    f"(< {MIN_PYTHON_VERSION[0]}.{MIN_PYTHON_VERSION[1]}) — using {sys.executable}"
+                )
+            else:
+                return target
+
     return sys.executable
 
 
@@ -1366,6 +1448,16 @@ def build_install_cmd(
 
 # ── Run command with live progress ───────────────────────────────────
 
+#: A child line carrying a warning the operator must not lose. `trw-mcp`
+#: subcommands emit warnings as ``WARNING: <text>`` (see
+#: ``server/_subcommands.py::_print_warning_block``) — the contract between the
+#: two surfaces. The lines this loop reads are already stripped, so neither
+#: pattern may require leading whitespace: the pre-2026-09-07 `r"  *(…)"` did,
+#: which is why every matched line was in fact discarded.
+_WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
+#: A per-file progress line, used only to advance the spinner's counter.
+_PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
+
 
 def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 180) -> bool:
     """Run *cmd* showing live progress. Returns True on success.
@@ -1407,9 +1499,14 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
                 if line.startswith("Phase:"):
                     phase_label = line.partition(":")[2].strip()
                     ui.update_spinner(f"{fallback_msg} ({file_count} files) {phase_label}")
-                elif re.match(r"  *(Updated|Created|Preserved|Skipped|synced|WARNING|Error):? ", line):
+                elif _WARNING_LINE_RE.match(line):
+                    # A warning is the one child line the operator MUST still
+                    # see after the spinner has scrolled away (e.g. an
+                    # update-project refusal that left their CLAUDE.md stale).
+                    ui.defer_warn(_WARNING_LINE_RE.sub("", line, count=1).strip())
+                elif _PROGRESS_LINE_RE.match(line):
                     file_count += 1
-                    short = re.sub(r"^  *(Updated|Created|Created \(new\)|Preserved|Skipped|Error): ", "", line)[:60]
+                    short = _PROGRESS_LINE_RE.sub("", line, count=1)[:60]
                     ui.update_spinner(f"{fallback_msg} ({file_count} files) {DIM}{short}{NC}")
         else:
             for line in proc.stdout:
@@ -1431,7 +1528,7 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
         watchdog.cancel()
 
     if killed_by_watchdog:
-        ui.step_warn(f"{fallback_msg} timed out after {timeout}s")
+        ui.defer_warn(f"{fallback_msg} timed out after {timeout}s")
 
     return proc.returncode == 0
 
@@ -3262,6 +3359,16 @@ _PROPRIETARY_PRECONDITION_ERROR: str = (
 )
 
 
+#: Shown instead of the hard precondition failure when the proprietary path was
+#: INFERRED from a committed ``.trw/proprietary-installed.json`` rather than
+#: asked for by this invocation (PRD-INFRA-126 FR05).
+_PROPRIETARY_INFERRED_SKIP_WARNING: str = (
+    "Proprietary packages recorded but no platform key — skipping them and "
+    "continuing with the public install. Set TRW_API_KEY (or re-run with "
+    "TRW_WITH_PROPRIETARY=1 for the full diagnosis) to install them."
+)
+
+
 def _resolve_proprietary_license(
     *,
     with_proprietary: bool,
@@ -3270,6 +3377,7 @@ def _resolve_proprietary_license(
     prior_config: dict[str, object],
     ui: "UI",
     target_dir: "Path | None" = None,
+    inferred: bool = False,
 ) -> tuple[str, bool]:
     """Resolve the effective license key + with_proprietary flag.
 
@@ -3289,6 +3397,15 @@ def _resolve_proprietary_license(
     - Auto-derive requested but no resolvable platform key:
       raise ``ValueError`` carrying an actionable hint enumerating every
       consulted source (PRD-INFRA-129 FR05/FR06) — never a raw argparse dump.
+      UNLESS *inferred* is set: then the proprietary path was not asked for by
+      this invocation at all, it was read off a
+      ``.trw/proprietary-installed.json`` the project carries (historically a
+      git-TRACKED file). A teammate cloning that project with no credentials
+      would otherwise have their whole PUBLIC install exit 2 on a precondition
+      for packages they never requested, which is exactly what PRD-INFRA-126
+      FR05 forbids. So the inferred path warns and downgrades to
+      ``with_proprietary=False``; only an explicit ``--with-proprietary`` /
+      ``TRW_WITH_PROPRIETARY=1`` still fails hard.
 
     PRD-INFRA-129 FR05: when *target_dir* is provided the platform key is
     resolved through ``_resolve_prior_api_key`` (env > credentials.yaml; the
@@ -3313,6 +3430,9 @@ def _resolve_proprietary_license(
         platform_api_key = raw.strip() if isinstance(raw, str) else ""
 
     if not platform_api_key:
+        if inferred:
+            ui.step_warn(_PROPRIETARY_INFERRED_SKIP_WARNING)
+            return "", False
         raise ValueError(_PROPRIETARY_PRECONDITION_ERROR)
     try:
         return _fetch_proprietary_license(backend_url, platform_api_key), True
@@ -3537,6 +3657,13 @@ def phase_install_proprietary(
     # trw-distill depending on trw-metaharness) resolve via pip --find-links
     # regardless of which order the packages appear in the tuple.
     downloaded: list[tuple[str, Path, str, str]] = []  # (package, wheel_path, resolved_version, sha256)
+    # PRD-INFRA-126 NFR05 idempotency: the marker records what a prior run
+    # installed, so a re-run can skip a package the entitlement resolves to the
+    # SAME version for. The interpreter probe is the second half of the test on
+    # purpose \u2014 a marker alone would skip a package the user has since removed
+    # (or that lives in a --target dir this interpreter cannot see), and the
+    # probe failing open to None means "not proven current", so we install.
+    entitled_marker = read_proprietary_marker(project_dir) if project_dir is not None else {}
     try:
         # Pass 1 \u2014 fetch all
         for package in PROPRIETARY_PACKAGES_TUPLE:
@@ -3552,6 +3679,13 @@ def phase_install_proprietary(
                     True,
                     f"Entitlement issued: {package} {resolved_version}",
                 )
+                if (
+                    entitled_marker.get(package) == resolved_version
+                    and _probe_installed_version(python, package) == resolved_version
+                ):
+                    ui.step_ok(f"{package} {resolved_version} already installed \u2014 skipped")
+                    installed.append(f"{package} {resolved_version}")
+                    continue
                 ui.start_spinner(f"Downloading {package} {resolved_version}...")
                 wheel = _download_proprietary_wheel(
                     payload["url"], wheel_sha256, tmpdir
@@ -3658,40 +3792,125 @@ def _emit_install_completed_event(
         fp.write(_json.dumps(record, sort_keys=True) + "\n")
 
 
+#: Where the proprietary-entitlement record lives, relative to the project root.
+PROPRIETARY_MARKER_RELPATH = Path(".trw") / "proprietary-installed.json"
+
+
+def read_proprietary_marker(target_dir: Path) -> dict[str, str]:
+    """``{package: version}`` recorded by a prior proprietary install.
+
+    Returns ``{}`` when the marker is absent, unreadable, or malformed, and
+    drops any package name outside ``PROPRIETARY_PACKAGES_TUPLE`` — a hand-edited
+    marker must not be able to widen what the installer fetches.
+    """
+    try:
+        data = json.loads((target_dir / PROPRIETARY_MARKER_RELPATH).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(name): str(version)
+        for name, version in data.items()
+        if name in PROPRIETARY_PACKAGES_TUPLE and isinstance(version, str) and version
+    }
+
+
 def write_proprietary_marker(
     target_dir: Path, installed: list[str]
 ) -> Path | None:
     """Persist a record of which proprietary versions are installed.
 
-    Used by subsequent installs to skip already-current packages
-    (PRD-INFRA-126 NFR05 idempotency). Returns the marker path on success
-    or None when no installations succeeded.
+    Read back by subsequent installs (``read_proprietary_marker``) to re-enable
+    the proprietary path without the flag and to skip already-current packages
+    (PRD-INFRA-126 NFR05 idempotency). Returns the marker path on success or
+    None when there is nothing to record.
+
+    MERGES over the prior record rather than replacing it: a run that fails to
+    fetch an entitlement for one package must not erase the evidence that the
+    package is installed, or the next run stops recognising the project as an
+    entitled one.
     """
     if not installed:
         return None
 
-    mapping: dict[str, str] = {}
+    mapping: dict[str, str] = read_proprietary_marker(target_dir)
     for entry in installed:
         parts = entry.split()
         if len(parts) == 2:
             mapping[parts[0]] = parts[1]
-    marker = target_dir / ".trw" / "proprietary-installed.json"
+    marker = target_dir / PROPRIETARY_MARKER_RELPATH
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
     return marker
 
 
-def _deployed_framework_is_stale(target_dir: Path, python: str, pip_target: str = "") -> bool:
-    """True when the project's DEPLOYED framework version differs from the
-    freshly-installed package's framework version.
+def _resolve_proprietary_from_marker(
+    target_dir: Path,
+    with_proprietary: bool,
+    interactive: bool,
+    ui: UI,
+    offline: bool = False,
+) -> bool:
+    """Re-enable the proprietary path for a project that already has it.
 
-    An ``--upgrade`` run bumps the trw-mcp package but skips project setup, so the
-    deployed framework bodies + config (``.trw/frameworks/``, ``.trw/config.yaml``)
-    can drift behind the package (e.g. a ``v25_TRW`` project on a ``v26.1`` package).
-    Detect that via ``trw-mcp version-status``, comparing the package's
-    ``framework_protocol_version`` to the deployed ``installed_asset_version``.
-    Best-effort: any probe failure returns False, so a detection error never
-    blocks the upgrade or spuriously re-runs update-project.
+    ``--with-proprietary`` / ``TRW_WITH_PROPRIETARY`` are per-invocation, but the
+    entitlement is a property of the PROJECT. A user who installed the
+    proprietary packages once and then re-ran the installer the ordinary way
+    (``curl … | bash``, no env var) had trw-mcp/trw-memory upgraded underneath
+    trw-distill, trw-metaharness, trw-loop and trw-swarm, which silently stayed
+    at the previous release. The marker this install wrote is the record that
+    says otherwise, and reading it is what makes it more than a write-only file.
+
+    Non-interactive: yes, with an INFO line naming the marker so the decision is
+    never invisible. Interactive: prompt, defaulting to yes. Two ways to decline
+    without deleting the marker: answer no, or export
+    ``TRW_WITH_PROPRIETARY=0`` (an explicit falsy value, which is the only
+    opt-out a headless run has).
+
+    ``offline`` short-circuits: the proprietary path is an entitlement POST plus
+    a wheel download, and ``--offline`` already refuses to be combined with
+    ``--with-proprietary``. Inferring the flag from a marker must not route
+    around that refusal.
+    """
+    if with_proprietary:
+        return True
+    if offline:
+        return False
+    if os.environ.get("TRW_WITH_PROPRIETARY", "").strip().lower() in {"0", "false", "no"}:
+        return False
+    entitled = read_proprietary_marker(target_dir)
+    if not entitled:
+        return False
+    marker_path = target_dir / PROPRIETARY_MARKER_RELPATH
+    packages = ", ".join(f"{name} {version}" for name, version in sorted(entitled.items()))
+    if not interactive:
+        ui.info(f"Proprietary packages recorded in {marker_path} ({packages}) — upgrading them too")
+        return True
+    ui.info(f"This project already has proprietary packages installed ({packages}).")
+    ui.hint(f"Record: {marker_path}")
+    if prompt_yes_no("Upgrade the proprietary packages as well?", default="y"):
+        return True
+    ui.step_warn("Proprietary packages left at their current versions")
+    return False
+
+
+def _version_status_payload(
+    target_dir: Path, python: str, pip_target: str = "", ui: UI | None = None
+) -> dict[str, object]:
+    """Parsed ``trw-mcp version-status --project-root <target_dir>`` JSON.
+
+    The probe seam for ``_deployed_framework_is_stale``: any failure to run or
+    parse yields ``{}`` so the caller degrades to "not stale" rather than
+    blocking the upgrade on a diagnostic error.
+
+    A NON-ZERO exit is one of those failures. It used to be ignored: the JSON on
+    stdout was parsed regardless, so a partially-written or error payload from a
+    failed probe was read as a verdict about the project. The exit status is the
+    only thing that distinguishes "the project is current" from "the probe could
+    not tell you". Both still fail OPEN (the upgrade proceeds), but the failure
+    is reported through *ui* with the return code and the tail of stderr rather
+    than passing silently.
     """
     trw_cmd = find_trw_cmd(python, pip_target=pip_target)
     try:
@@ -3701,15 +3920,63 @@ def _deployed_framework_is_stale(target_dir: Path, python: str, pip_target: str 
             text=True,
             timeout=60,
         )
+        if proc.returncode != 0:
+            if ui is not None:
+                tail = (proc.stderr or "").strip().splitlines()
+                detail = f": {tail[-1][:200]}" if tail else ""
+                ui.step_warn(
+                    f"version-status exited {proc.returncode} — cannot tell whether the "
+                    f"deployed framework is current; continuing{detail}"
+                )
+            return {}
         data = json.loads(proc.stdout or "{}")
     except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _deployed_framework_is_stale(
+    target_dir: Path, python: str, pip_target: str = "", ui: UI | None = None
+) -> bool:
+    """True when the project's DEPLOYED assets are behind the installed package.
+
+    An ``--upgrade`` run bumps the trw-mcp package but skips project setup, so the
+    deployed framework bodies + config (``.trw/frameworks/``, ``.trw/config.yaml``)
+    can drift behind the package. Detected via ``trw-mcp version-status``.
+
+    Comparing ONLY ``framework_protocol_version`` against ``installed_asset_version``
+    -- what this did until 2026-09-07 -- was a check that could not fire in practice:
+    both are the framework PROTOCOL version, which is deliberately stable across
+    package releases (unchanged since 2026-07-27, identical on 1.0.5 and 2.0.1). So
+    ``install-trw.py --upgrade`` printed "framework already current" and never ran
+    update-project, and every user upgrading a package kept the previous release's
+    deployed assets. The signal that actually moves per release is the package
+    version stamped into ``.trw/frameworks/VERSION.yaml``
+    (``installed_asset_trw_mcp_version``), and ``version-status`` already computes the
+    whole comparison as ``mismatches``.
+
+    Stale when ANY of: the asset manifest is absent; the asset's trw_mcp version
+    differs from the package version being installed; the protocol versions differ;
+    or ``version-status`` reported any mismatch at all. Best-effort: an unparseable
+    or empty payload returns False, so a probe error never blocks the upgrade.
+    """
+    data = _version_status_payload(target_dir, python, pip_target=pip_target, ui=ui)
+    versions = data.get("versions", {})
+    if not isinstance(versions, dict):
         return False
-    versions = data.get("versions", {}) if isinstance(data, dict) else {}
     if versions.get("installed_asset_present") is False:
         return True
     pkg_fw = versions.get("framework_protocol_version")
     deployed_fw = versions.get("installed_asset_version")
-    return bool(pkg_fw and deployed_fw and pkg_fw != deployed_fw)
+    if pkg_fw and deployed_fw and pkg_fw != deployed_fw:
+        return True
+    packages = versions.get("packages", {})
+    pkg_mcp = packages.get("trw-mcp") if isinstance(packages, dict) else None
+    asset_mcp = versions.get("installed_asset_trw_mcp_version")
+    if pkg_mcp and asset_mcp and pkg_mcp != "unknown" and pkg_mcp != asset_mcp:
+        return True
+    mismatches = data.get("mismatches")
+    return bool(isinstance(mismatches, list) and mismatches)
 
 
 def phase_project_setup(
@@ -3741,8 +4008,19 @@ def phase_project_setup(
         has_prior_install = (
             (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
         )
-        if has_prior_install and _deployed_framework_is_stale(target_dir, python, pip_target):
-            targets = _normalize_ide_targets([str(t) for t in prior_targets]) or ["claude-code"]
+        if has_prior_install and _deployed_framework_is_stale(target_dir, python, pip_target, ui=ui):
+            targets = _normalize_ide_targets([str(t) for t in prior_targets])
+            if not targets:
+                # Defaulting to claude-code here would scaffold a client surface
+                # the user never asked for (.claude/, CLAUDE.md, hooks) into a
+                # project that records none. An upgrade is not the place to guess
+                # — say what is missing and let the operator name the client.
+                ui.step_warn(
+                    "Deployed framework is out of date, but no client is recorded in "
+                    ".trw/config.yaml (target_platforms) — skipping the refresh. "
+                    "Re-run without --upgrade, or with --ide <client>, to refresh it."
+                )
+                return []
             trw_cmd = find_trw_cmd(python, pip_target=pip_target)
             ui.step_ok("Deployed framework is out of date — refreshing with update-project")
             for selected_ide in targets:
@@ -3828,12 +4106,24 @@ def phase_project_setup(
     project_name = str(refreshed_config.get("project_name", sanitize_project_name(target_dir.name)))
     api_key = str(refreshed_config.get("api_key", ""))
     telemetry_enabled = bool(refreshed_config.get("telemetry", False))
+    # UNION, never replace. `update_config` rewrites the target_platforms block
+    # wholesale, but the recorder it runs after — bootstrap
+    # `_update_config_target_platforms` — is append-only BY DESIGN (PRD-FIX-076):
+    # it exists so a single-client run cannot silently un-configure the client
+    # surfaces a user already has. Passing only this run's targets threw that
+    # away as the last write, so `--ide codex` on a [claude-code, codex] project
+    # narrowed the list to [codex] and the next bare update-project stopped
+    # maintaining the Claude Code surface.
+    recorded_targets = refreshed_config.get("target_platforms", [])
+    if not isinstance(recorded_targets, list):
+        recorded_targets = []
+    merged_targets = _unique([str(t) for t in recorded_targets] + list(resolved_targets))
     update_config(
         config_path,
         project_name,
         api_key,
         telemetry_enabled,
-        target_platforms=resolved_targets,
+        target_platforms=merged_targets,
     )
     # PRD-SEC-005-FR01: persist the bearer credential to the ignored, 0600
     # credentials.yaml — config.yaml never receives the secret.
@@ -4399,7 +4689,7 @@ def main() -> None:
     # ── Proprietary install env-var fallback + pin validation ────────
     with_proprietary = bool(args.with_proprietary) or os.environ.get(
         "TRW_WITH_PROPRIETARY", ""
-    ).lower() in {"1", "true", "yes"}
+    ).strip().lower() in {"1", "true", "yes"}
     license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
     # PRD-INFRA-129 FR02 — auto-derive license from the configured
     # platform_api_key when --with-proprietary is given without an
@@ -4489,6 +4779,21 @@ def main() -> None:
     if is_reinstall and interactive:
         ui.info("Existing TRW installation detected \u2014 reusing prior settings")
 
+    # A prior proprietary install is a property of the PROJECT, not of this
+    # invocation's flags: without this, a re-run without TRW_WITH_PROPRIETARY=1
+    # upgraded the public packages and left the proprietary ones stale.
+    # Resolved BEFORE the license derivation and the step count, both of which
+    # branch on with_proprietary.
+    proprietary_requested = with_proprietary
+    with_proprietary = _resolve_proprietary_from_marker(
+        target_dir, with_proprietary, interactive, ui, offline=args.offline
+    )
+    # Whether the proprietary path came from the MARKER rather than this
+    # invocation. It decides whether a missing platform key is fatal: a
+    # committed marker must never abort a teammate's public install
+    # (PRD-INFRA-126 FR05).
+    proprietary_inferred = with_proprietary and not proprietary_requested
+
     # PRD-INFRA-129 FR02 / PRD-INFRA-130 FR03 — auto-derive
     # proprietary license from the existing platform_api_key. Logic
     # lives in the testable helper ``_resolve_proprietary_license``
@@ -4504,6 +4809,7 @@ def main() -> None:
             prior_config=prior_config,
             ui=ui,
             target_dir=target_dir,
+            inferred=proprietary_inferred,
         )
     except ValueError as exc:
         # PRD-INFRA-129 FR05/FR06: surface the actionable hint, NOT a raw
@@ -4635,9 +4941,11 @@ def main() -> None:
 
         # PRD-INFRA-170-FR06: run doctor at install end. A residual framework
         # FAIL (e.g. a deploy that silently failed) is surfaced LOUDLY here
-        # instead of being hidden behind a green success banner.
-        if not args.upgrade:
-            run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
+        # instead of being hidden behind a green success banner. This runs on
+        # the --upgrade path too: an upgrade now refreshes deployed assets
+        # (_deployed_framework_is_stale), and an upgrade that left the framework
+        # broken is exactly the case a green "Upgrade complete" would hide.
+        run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
 
         # Step N+1 (conditional): Configure
         platform_status = "offline"

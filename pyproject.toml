@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "2.0.1"
+version = "2.0.2"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -96,7 +96,7 @@ dev = [
     "types-pyyaml>=6.0.0",
     "hypothesis>=6.0.0",
     "rank-bm25>=0.2.0",
-    "ruff>=0.15.0",
+    "ruff>=0.15.0,<0.16",  # CI installs .[dev]; a newer minor adds rules the repo has not adopted yet
     "pip-audit>=2.7.0",
     "vulture>=2.11",
     "deptry>=0.21.0",

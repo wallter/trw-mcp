@@ -70,7 +70,7 @@ def _create_claim(claim_path: Path) -> bool:
     """Atomically create the claim file. True = this process owns it now."""
     try:
         fd = os.open(str(claim_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    except FileExistsError:
+    except FileExistsError:  # trw-fail-silent-allow: losing the O_CREAT|O_EXCL race means another process already holds the claim, the expected contended outcome
         return False
     except OSError:
         # trw-fail-silent-allow: cannot arbitrate at all (e.g. unwritable claim

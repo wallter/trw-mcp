@@ -15,13 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.agents.agent_formats import agent_format_for
 from trw_mcp.agents.tier_resolver import KNOWN_CLIENTS, materialize_agent
 from trw_mcp.bootstrap._init_project_skills import _install_agents
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-BUNDLED_AGENTS_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
-BOOTSTRAP_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "bootstrap"
+REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT
+BUNDLED_AGENTS_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents"
+BOOTSTRAP_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "bootstrap"
 
 AGENT_CAPABLE_CLIENTS = sorted(c for c in KNOWN_CLIENTS if agent_format_for(c).supports_agents)
 
@@ -77,6 +78,7 @@ def test_all_eleven_land_in_client_destination(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+@requires_monorepo
 def test_cursor_cli_is_recorded_once_and_creates_no_directory(tmp_path: Path) -> None:
     """FR03 / US-3: an absence is reported, not silently skipped."""
     result = _empty_result()
@@ -184,7 +186,7 @@ def test_stub_template_sets_are_gone_and_names_survive(tmp_path: Path) -> None:
         assert f"{retired}: dict" not in bootstrap_source, f"{retired} is still defined"
         assert f"{retired}.items()" not in bootstrap_source, f"{retired} is still consumed"
 
-    data_root = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data"
+    data_root = PACKAGE_ROOT / "src" / "trw_mcp" / "data"
     assert not (data_root / "cursor_ide" / "agents").exists()
     assert not (data_root / "opencode" / "agents").exists()
 
