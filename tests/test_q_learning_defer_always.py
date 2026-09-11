@@ -1,18 +1,7 @@
-"""PRD-FIX-088 FR01: Q-learning is ALWAYS deferred to a background worker.
+"""R10: builds no longer schedule temporal Q attribution.
 
-Pre-fix: ``trw_build_check`` ran ``process_outcome_for_event`` inline unless
-writer pressure was detected. With a 60-min correlation window and ~5K
-recall receipts/hour, a single call could correlate >2800 entries and
-take 91 seconds, holding the MCP response on the SSE stream the whole time.
-
-Post-fix: every ``trw_build_check`` schedules Q-learning on
-``_q_learning_state._q_thread``. The response always carries
-``q_learning_deferred`` with a stable shape. Concurrent calls coalesce
-onto a bounded queue (single-flight worker).
-
-These tests are the regression guard. If a future change reverts to
-inline Q-learning (or drops the ``q_learning_deferred`` field), the
-assertions below fail loudly.
+The retained dispatcher primitive is tested directly for its concurrency behavior;
+that mechanism is not evidence that lifecycle events should invoke it.
 """
 
 from __future__ import annotations
@@ -24,32 +13,15 @@ from typing import Any
 import pytest
 
 
-def test_response_carries_q_learning_deferred_field(
-    build_check_invoke: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """FR01 acceptance: ``q_learning_deferred`` is ALWAYS present, with reason='deferred_always'."""
-    # Patch process_outcome_for_event so the bg thread does no real work.
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
+def test_build_does_not_claim_deferred_attribution(build_check_invoke: Any) -> None:
     result = build_check_invoke()
+    assert "q_learning_deferred" not in result
 
-    assert "q_learning_deferred" in result, (
-        "FR01: response MUST always include q_learning_deferred. Pre-fix this field was only set under writer pressure."
-    )
-    deferred = result["q_learning_deferred"]
-    assert isinstance(deferred, dict)
-    assert deferred["reason"] == "deferred_always"
-    assert isinstance(deferred["scheduled_at"], str)
-    assert deferred["thread_state"] in {"launched", "queued"}, (
-        f"thread_state must be one of launched/queued/queue_full, got {deferred['thread_state']!r}"
-    )
-    # PRD-FIX-088 P1 Fix 2: tool_call_id MUST appear on the deferred dict so
-    # log readers can correlate the async completion to the originating call.
-    assert isinstance(deferred["tool_call_id"], str)
-    assert deferred["tool_call_id"], "tool_call_id must be a non-empty string"
+
+def _dispatch_only() -> dict[str, object]:
+    from trw_mcp.tools.build._q_learning_dispatch import _dispatch_q_learning_async
+
+    return {"q_learning_deferred": _dispatch_q_learning_async("build_passed", "test", "primitive-test")}
 
 
 def test_q_learning_runs_in_background_not_inline(
@@ -75,7 +47,7 @@ def test_q_learning_runs_in_background_not_inline(
     monkeypatch.setattr("trw_mcp.scoring.process_outcome_for_event", slow_correlation)
 
     t0 = time.monotonic()
-    result = build_check_invoke()
+    result = _dispatch_only()
     elapsed = time.monotonic() - t0
 
     # The worker should have started (background thread launched and ran
@@ -121,14 +93,14 @@ def test_concurrent_calls_coalesce_via_queue(
     monkeypatch.setattr("trw_mcp.scoring.process_outcome_for_event", gated_correlation)
 
     # First call: launches the worker (which blocks on `proceed`).
-    first = build_check_invoke()
+    first = _dispatch_only()
     assert started.wait(timeout=2.0)
     deferred_first = first["q_learning_deferred"]
     assert isinstance(deferred_first, dict)
     assert deferred_first["thread_state"] == "launched"
 
     # Second call: worker is alive, so this MUST enqueue.
-    second = build_check_invoke()
+    second = _dispatch_only()
     deferred_second = second["q_learning_deferred"]
     assert isinstance(deferred_second, dict)
     assert deferred_second["thread_state"] == "queued", (
@@ -174,7 +146,7 @@ def test_worker_crash_clears_thread_handle(
     # ``try/except`` in ``_process_q_learning_inline`` shadowed the worker's
     # outer handler, so this regression catch was untested.
     with structlog.testing.capture_logs() as logs:
-        build_check_invoke()
+        _dispatch_only()
 
         import trw_mcp.tools._q_learning_state as _qls
 

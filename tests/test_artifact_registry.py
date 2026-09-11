@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from tests._layout import MONOREPO_ROOT, requires_monorepo
 from trw_mcp.telemetry.artifact_registry import (
     ComponentFingerprint,
     SurfaceArtifact,
@@ -338,9 +339,9 @@ class TestUnreadableFileResilience:
 # ---------------------------------------------------------------------------
 
 
-def test_prd_core_181_nfr01(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prd_core_181_nfr01(tmp_path: Path) -> None:
     """Every precedence fixture retains its protected artifact even though age
-    alone would collect it, both via classify_artifact and the WIRED cleanup."""
+    alone would collect it through the shipped classifier."""
     from trw_mcp.telemetry.retention_registry import (
         REASON_AUTHORITATIVE,
         REASON_NOT_EXPIRED,
@@ -354,7 +355,6 @@ def test_prd_core_181_nfr01(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         SensitivityClass,
         classify_artifact,
         digest_file,
-        save_registry,
     )
 
     root = tmp_path
@@ -402,6 +402,21 @@ def test_prd_core_181_nfr01(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     for name in ("legal.log", "pin.log", "run.log", "receipt.log", "authority.yaml"):
         assert classify(name).decision is RetentionDecision.RETAINED
 
+
+@requires_monorepo
+def test_prd_core_181_nfr01_wired_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The monorepo cleanup consumer preserves the same authoritative override."""
+    from trw_mcp.telemetry.retention_registry import (
+        REASON_AUTHORITATIVE,
+        AuthorityClass,
+        RetentionClass,
+        RetentionEntry,
+        SensitivityClass,
+        digest_file,
+        save_registry,
+    )
+
+    root = tmp_path
     # Drive the WIRED cleanup: an authoritative sidecar under .trw matches the
     # cleanup suffixes and is old, yet the registry gate retains it.
     # Must be undone at teardown. A bare sys.path.insert(0, <monorepo root>) leaks
@@ -412,7 +427,9 @@ def test_prd_core_181_nfr01(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     # the inherited sys.path and dies with
     # `ModuleNotFoundError: No module named 'tests.<victim_module>'` — which is
     # why the spawn-based concurrency tests failed only in a full-suite run.
-    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
+    assert MONOREPO_ROOT is not None
+    assert (MONOREPO_ROOT / "scripts/trw_runtime_hygiene.py").is_file()
+    monkeypatch.syspath_prepend(str(MONOREPO_ROOT))
     from scripts.trw_runtime_hygiene import collect_report
 
     wal_rel = ".trw/authority.db-wal"

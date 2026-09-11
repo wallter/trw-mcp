@@ -545,12 +545,14 @@ def test_session_start_escalates_to_prominent_warning_when_gate_trips(tmp_path: 
     assert "make check" in advisory
 
 
-def test_session_start_silent_when_healthy(tmp_path: Path) -> None:
+def test_session_start_silent_when_healthy(tmp_path: Path, monkeypatch) -> None:
     """A healthy pipeline injects neither the advisory nor the escalated warning."""
     from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
 
     trw_dir = _make_trw_dir(tmp_path)
     _healthy_pipeline(trw_dir)
+    # This fixture's vec table is ordinary SQL, not an extension-loading probe.
+    monkeypatch.setattr("trw_mcp.tools._pipeline_health._load_sqlite_vec", lambda _conn: None)
 
     results: dict[str, object] = {}
     config = _make_config(platform_urls=["https://api.trwframework.com"])

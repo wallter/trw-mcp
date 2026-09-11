@@ -15,8 +15,8 @@ class TestRankByUtilityEdgeCases:
         result = rank_by_utility([], query_tokens=["payments"], lambda_weight=0.3)
         assert result == []
 
-    def test_combined_score_clamped_to_2(self) -> None:
-        """Combined score is clamped to max 2.0."""
+    def test_wildcard_combined_score_clamped_to_2(self) -> None:
+        """Wildcard browsing retains the historical upper clamp."""
         from trw_mcp.scoring._recall import RecallContext, rank_by_utility
 
         entry = _make_entry(
@@ -35,8 +35,8 @@ class TestRankByUtilityEdgeCases:
             prd_knowledge_ids={"L-max"},
         )
 
-        result = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
-        assert _score_of(result) <= 2.0
+        result = rank_by_utility([entry], query_tokens=[], lambda_weight=0.0, context=ctx)
+        assert _score_of(result) == 2.0
 
     def test_results_sorted_descending(self) -> None:
         """Results are sorted by combined_score descending."""

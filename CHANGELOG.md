@@ -2,6 +2,176 @@
 
 All notable changes to the TRW MCP server package.
 
+## [2.1.0] — Unreleased
+
+### Added
+
+- Cross-model review now actually runs. `trw_review`'s cross-family second opinion dispatches
+  another installed coding-agent CLI read-only (`codex`, `agy`, …) instead of degrading with
+  `provider_integration_absent` on every call. `cross_model_provider` now names a **dispatch
+  client**, not a model; the model override lives in `dispatch_default_models[client]`. Its old
+  default named a stale model that was reported as the provider of a review that never ran, and
+  is now empty, meaning no reviewer is configured. An unavailable or incomplete reviewer is
+  reported as such and never as "found nothing".
+
+### Removed
+
+- The bundled per-model-family prompting profiles (`data/prompting/{claude,gpt,qwen,generic}.md`)
+  and their loader. All four files were byte-identical, and the loader that selected between
+  them had no caller anywhere in the package — the emitted v25 instructions have been
+  capability-based and model-agnostic since that guidance landed. Nothing rendered changes.
+
+### Changed
+
+- Targeted recall ranks against the current query; stored utility breaks relevance
+  ties rather than overriding the query. Negative evidence penalties remain signed.
+- Semantic recall admits vectors only with compatible generation provenance;
+  unqualified legacy vectors retain keyword fallback.
+- Prepare requirements and an embedded execution plan together; sprint setup
+  references accepted plans instead of duplicating their task authority.
+- Existing learning correction is available in the ordinary tool kernel without
+  an extra access-unlock step; read-only reviewer restrictions remain enforced.
+- **A learning whose stored assertion failed now loses reward, at delivery.** The
+  bandit's only signal was a uniform session-wide one, so it optimised how OFTEN a
+  memory was retrieved — which happily promotes a confidently wrong entry that keeps
+  matching the query. `trw_deliver` now applies a per-entry negative observation to
+  the learnings this session recalled whose stored assertions had failed and were
+  never superseded, alongside the existing advisory naming them.
+
+  Two bounds on it, because the reward is not reversible. It fires only on evidence
+  observed within `verification_cache_ttl_seconds`, so one verification event can
+  produce at most one penalty rather than one per day for as long as the claim stays
+  unretracted — without that bound a recalled entry decays toward automatic
+  obsoletion, and the more useful the memory the faster it goes. And the whole step
+  is fail-open: a reward signal may never fail a delivery, so a failure is logged and
+  skipped. The advisory is unchanged and still names a contradiction of any age.
+
+  Nothing is deleted by this. It moves a ranking number, and `trw_learn_update`
+  settles the claim.
+- Startup skips supplemental wildcard retrieval when no focused query, task or
+  phase exists. Primary baseline/recent recall and contextual retrieval remain.
+- Ordinary capture no longer triggers implicit corpus-wide duplicate/quota work.
+  Explicit embedding repair is bounded and requires qualified provider provenance.
+- PRD creation consolidated on `/trw-prd-ready`, which now prepares requirements and
+  their execution plan together; `/trw-prd-new` remains as a compatibility entry that
+  routes there, so required validation still runs. `data/playbook-template.yaml` was
+  removed. `/trw-deliver` now states that it is for accepting *completed* work, and
+  that material unfinished work belongs in a checkpoint or durable handoff — stopping
+  is not acceptance.
+
+### Fixed
+
+- **The wheel no longer ships monorepo-internal `CLAUDE.md` files.** Build excludes are
+  applied per target, and both packages declared them only for the sdist — so the
+  artifact `pip install` delivers carried internal engineering notes, including ones
+  describing which security components are unwired scaffolding. The wheel now excludes
+  them explicitly. No importable code, bundled skill, agent, hook or `py.typed` marker
+  changed; only those documents are gone.
+
+- **The WAL health check can report bad news, and now reports the right news.**
+  The `memory_wal` doctor row warns on `oversized AND stale`, and `stale` reads a
+  last-effective-checkpoint clock. That clock advanced whenever frames were
+  *written back* — which a PASSIVE checkpoint does on every run of a busy store
+  while freeing nothing — so past a store's first checkpoint the row could not
+  warn at any WAL size. The check was disarmed by the exact failure it exists to
+  catch.
+
+  The row now asks two questions, because they are two questions. **Is the store
+  keeping up?** — the WAL frame backlog, `checkpointed >= wal_frames`, counts the
+  PRAGMA result was already returning and this code was discarding. **Is the WAL
+  ever being reclaimed?** — a separate clock written only when a resetting
+  checkpoint actually runs. An oversized WAL warns if either answer is no.
+
+  The second clock exists because the first is not a substitute for it, and
+  finding that out took three attempts. Frames-written-back made the warning
+  unreachable; a file-size decrease made it fire forever on healthy stores, since
+  SQLite reuses a fully checkpointed WAL's allocation rather than shrinking it;
+  and the backlog alone made it unreachable again, because below SQLite 3.51.3
+  PASSIVE clears the entire backlog on every run of the very store that can never
+  reclaim a byte. Each revision replaced the previous proxy instead of adding the
+  measurement that was missing. Reclamation happens on a reset, so a reset is now
+  what gets observed.
+
+  **The response** gained `backlog_cleared` and `reclaimed` — the second
+  labelled as a disk fact, not health — plus an advisory that says how many
+  frames were left behind and carries the engine-upgrade remedy when that is the
+  cause. A checkpoint that failed is now reported as an error instead of being
+  classified as a successful reset and silencing its own retry.
+
+  **The `wal_checkpoint_complete` log event**, not the response, carries the
+  frame counts (`wal_frames`), the reclaimed byte delta (`reclaimed_mb`) and a
+  four-state `truncate_state` (`not_attempted` / `refused_unsafe_engine` /
+  `busy` / `reset`) that replaces the old `truncate_busy` bool, which read
+  `False` both when a reset was cleanly attempted and when it was never
+  attempted at all. That split is deliberate: this response is paid on every
+  `trw_session_start` by every calling agent, and carrying all three measured 76
+  tokens against a 60-token hot-path budget, so they live where a maintainer
+  reads them for free. An earlier draft of this entry said the *payload* gained
+  `wal_frames` and `reclaimed_mb`; it did not, and the `WalCheckpointResultDict`
+  that still declared them — invisibly, because `total=False` hides an
+  unpopulated key from the type checker — has been corrected to match what is
+  actually returned.
+
+  **The checkpoint mode is unchanged and deliberately so.** Below SQLite 3.51.3
+  a resetting checkpoint is refused with no caller escape; that refusal is the
+  fix for a corruption class this project has already lost a store to, and it is
+  guarded by behavioural tests over `normalize_mode`
+  (`test_wal_reset_hardening.py::TestNormalizeMode`). The WAL growing to the
+  64 MiB `journal_size_limit` on such an engine is the accepted, documented
+  cost. What was wrong was that nothing told the operator so.
+
+  Worth knowing if your WAL looks stuck: a PASSIVE checkpoint does not shrink
+  the file, and SQLite rewinds the WAL only when it is fully backed up and no
+  reader holds a snapshot of it. A machine running several concurrent stdio
+  servers rarely reaches that moment, so the file stays large; a clean shutdown
+  of every process holding the store lets SQLite remove it. `journal_size_limit`
+  is a truncation target applied when the WAL resets, **not** a hard cap — an
+  earlier draft of this entry and of the doctor row called it a cap, and it is
+  not one.
+
+- **`backend_connectivity` no longer certifies the opposite of the truth.** It
+  read the raw `backend_url` and answered "fully offline (no network call made)"
+  whenever it was empty — while every real consumer reads `resolved_backend_url`,
+  which on the shipped configuration resolves `platform_urls` and a key to a live
+  host. The one row an operator reads to audit egress said the process talked to
+  nobody while it was posting. It now states the resolved posture and the probe
+  decision as separate facts. The probe scope is unchanged: it still probes only
+  an explicitly configured local or owned `backend_url`, never a prod host.
+
+- The `memory_wal` row honors the target project's configuration instead of
+  constructing a bare default, and applies the heartbeat TTL when counting live
+  writers, so a wedged peer no longer inflates the count indefinitely.
+
+- **One tool-access grant now survives both masking layers.** A grant is
+  documented as permitting one masked *call*, and one call passes through both
+  `surface_authority` and `phase_exposure`. Both consumed it, so the first gate
+  spent the grant and the second denied the call — the caller got
+  `granted: true`, executed nothing, and lost the grant. Authorization is now
+  stamped on the per-call request, so one grant admits one call across every
+  gate and a later call finds it genuinely spent.
+
+- **A tool-access grant now tells the calling agent to use it.**
+  `trw_request_tool_access` returned `granted: true` and then advised refreshing
+  the tool list or asking an operator to reconfigure — a human keystroke, in the
+  one situation the tool exists for: an autonomous session that needs a masked
+  tool. The grant does not depend on the listing (the server resolves a call by
+  name and both masking layers honor an active override), so the guidance now
+  says to call the tool. A grant request for a registered tool outside the phase
+  policy no longer returns a false "not a registered MCP tool", and the grant TTL
+  ceiling is configurable as `tool_access_grant_max_ttl_seconds` instead of being
+  a hardcoded constant.
+
+- Installer optional sqlite-vec verification honors the validated `--pip-target`
+  import environment instead of accidentally checking only global packages.
+
+### Compatibility
+
+- Requires trw-memory 0.17.0 or later for schema-6 vector provenance and repair.
+  Release that dependency before this package; older published memory versions
+  cannot satisfy the new runtime imports. Do not replace published 2.0.2 artifacts.
+- Back up memory before migration. No automatic model download or GPU work is
+  introduced by this upgrade. These changes do not establish a productivity claim.
+
 ## [2.0.2] — 2026-09-07
 
 > Installer hardening release. The 2.0.1 bundle was re-published once with new bytes while its

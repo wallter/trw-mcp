@@ -16,7 +16,12 @@ from typing import Any
 
 import pytest
 
-_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "migrate_nudge_history.py"
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+# Every case exercises scripts absent from the standalone package.
+pytestmark = requires_monorepo
+
+_SCRIPT = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "scripts" / "migrate_nudge_history.py"
 
 
 def _pathological_entry() -> dict[str, Any]:

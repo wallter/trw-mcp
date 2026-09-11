@@ -82,30 +82,29 @@ def register_learning_tools(server: FastMCP) -> None:
         scope: str = "auto",
         metadata: dict[str, object] | str = "",
     ) -> LearnResultDict:
-        """Persist a non-obvious discovery so future agents inherit the finding.
+        """Use when capturing discoveries. Routine observations dilute recall.
 
-        Use when you hit a root cause, gotcha, constraint, or a validated
-        approach worth reusing. Routine observations dilute recall.
+        Record root causes before fixing; label uncertainty. After validation,
+        update the entry rather than duplicate it.
 
-        Required: summary (headline) + detail (context, symptoms, why it
-        matters). tags: list or comma/space string. impact 0.0-1.0, higher
-        surfacing more often. type: incident | pattern | convention |
-        hypothesis | workaround. confidence: unverified | low | medium | high |
-        verified. scope picks the write tier: "auto" (default) prefers the
-        machine-local user store; "project"/"user" force one.
+        Required: summary + detail (context, symptoms, significance).
+        tags: list or comma/space string. impact: 0-1.
+        type: incident | pattern | convention | hypothesis | workaround.
+        confidence: unverified | low | medium | high | verified.
+        scope: auto prefers the machine-local user store; project/user force one.
 
-        metadata is an optional object for rare fields; unknown keys are
-        rejected. Accepted: source_identity, client_profile, model_id,
+        metadata keys (unknown keys are rejected): source_identity, client_profile, model_id,
         consolidated_from, assertions, nudge_line, task_type, domain,
         phase_origin, phase_affinity, protection_tier. client_profile and
         model_id auto-detect when omitted.
 
-        Output: {status, learning_id, path}. status is "recorded",
-        "skipped"/"merged" when dedup collapsed it into an existing entry, or
-        "rejected" with a reason.
+        consolidated_from lists predecessor IDs to obsolete. Check
+        consolidation_warning and recall: retirement can partially fail.
 
-        See Also: trw_recall reads learnings back; trw_learn_update corrects one
-        in place.
+        Output: status, learning_id, path. Status: recorded, skipped/merged
+        (dedup), or rejected with reason.
+
+        See Also: trw_recall reads back; trw_learn_update corrects in place.
         """
         # Maintainer notes (kept out of the docstring — callers pay for that text):
         #   scope is PRD-CORE-185 FR07's write-tier override.
@@ -214,7 +213,7 @@ def register_learning_tools(server: FastMCP) -> None:
         summary: str | None = None,
         detail: str | None = None,
         impact: float | None = None,
-        tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         feedback: str | None = None,
         supersedes: str | None = None,
         reverify_anchors: bool = False,
@@ -227,8 +226,8 @@ def register_learning_tools(server: FastMCP) -> None:
 
         Pass learning_id (e.g. "L-abc12345") plus only what changes; anything
         you omit is left untouched. status: active | resolved | obsolete (last
-        two drop out of recall). feedback: helpful | unhelpful. tags replace the
-        existing set; [] clears it.
+        two drop out of recall). feedback: helpful | unhelpful. tags (list or
+        comma/space string) replace the existing set; [] clears it.
 
         supersedes: id of a PRIOR learning this replaces; closes its validity
         window (never a delete). reverify_anchors rechecks anchors against the
@@ -261,6 +260,16 @@ def register_learning_tools(server: FastMCP) -> None:
         config = get_config()
         writer = FileStateWriter()
         trw_dir = resolve_trw_dir()
+
+        # PRD-IMPROVE-MCP-01 FR1, extended to the update path: agents routinely
+        # pass tags="a,b,c" and trw_learn already accepts it, so rejecting the
+        # identical value here was a live trap (hit 2026-09-10). Coerce ONLY the
+        # string shape; a list is left untouched so the existing element-type
+        # validation below still rejects e.g. ["ok", 42] — an update REPLACES the
+        # tag set, and silently stringifying a stray int in a replace is worse
+        # than failing loudly.
+        if isinstance(tags, str):
+            tags = _coerce_tags(tags)
 
         upd, _fields_reject = parse_learn_update_fields(fields)
         if _fields_reject is not None:
@@ -365,7 +374,7 @@ def register_learning_tools(server: FastMCP) -> None:
     def trw_recall(
         ctx: Context | None = None,
         query: str = "",
-        tags: list[str] | None = None,
+        tags: list[str] | str | None = None,
         min_impact: float = 0.0,
         status: str | None = "active",
         max_results: int | None = None,
@@ -387,8 +396,8 @@ def register_learning_tools(server: FastMCP) -> None:
         Output: relevance-ranked learnings and a count.
 
         Shaping: compact trims fields (auto-on for "*"), ultra_compact leaves
-        id+summary only, token_budget (>0) caps size, max_results defaults to
-        25 (0 = unlimited). Filters: tags, topic slug, min_impact 0.0-1.0,
+        id+summary only. token_budget (>0) budgets learning entries (minimum one),
+        not metadata/advisories. max_results defaults to 25 (0 = unlimited). Filters: tags (list or comma/space string), topic slug, min_impact 0.0-1.0,
         as_of (ISO-8601 instant: returns records whose validity window covered
         it; omitted means open records only), include_superseded (ranked below
         open records).
@@ -425,11 +434,18 @@ def register_learning_tools(server: FastMCP) -> None:
         trw_dir = resolve_trw_dir()
         injected_ids = _read_injected_ids(trw_dir)
         # Resolve from this module's namespace so test patches work
+        from trw_mcp.tools._interactive_recall import prepare_interactive_recall
+
+        config = get_config()
+        interactive_adapter, retrieval_warning = prepare_interactive_recall(
+            adapter_recall, embeddings_enabled=config.embeddings_enabled, query=query
+        )
         result = execute_recall(
             query=query,
             trw_dir=trw_dir,
-            config=get_config(),
-            tags=tags,
+            config=config,
+            # PRD-IMPROVE-MCP-01 FR1: same tags coercion as trw_learn.
+            tags=_coerce_tags(tags),
             min_impact=min_impact,
             status=status,
             max_results=max_results,
@@ -443,12 +459,14 @@ def register_learning_tools(server: FastMCP) -> None:
             as_of=as_of,
             include_superseded=include_superseded,
             # Dependency injection: pass module-level refs for testability
-            _adapter_recall=adapter_recall,
+            _adapter_recall=interactive_adapter,
             _adapter_update_access=adapter_update_access,
             _search_patterns=search_patterns,
             _rank_by_utility=rank_by_utility,
             _collect_context=collect_context,
         )
+        if retrieval_warning:
+            result["retrieval_warning"] = retrieval_warning
 
         # PRD-CORE-095 FR15: Annotate already-injected learnings
         if not ultra_compact:

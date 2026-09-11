@@ -45,7 +45,9 @@ memory — patterns, gotchas, and project knowledge accumulate across sessions.
 | `trw_session_start()` | First action | Loads prior learnings |
 | `trw_learn(summary, detail)` | On errors, discoveries, or gotchas | Saves a non-obvious pattern or mistake so no future agent repeats it — this is how institutional knowledge grows. Routine status ("task completed", "PRD groomed") is not a learning; a session that genuinely produced none is a valid result. |
 | `trw_checkpoint(message)` | After milestones | Resume point if context compacts |
-| `trw_deliver()` | Last action after validation | Persists session work only after `trw_build_check()` evidence or a structured acceptable-failure record |
+| `trw_deliver()` | Completed-work acceptance | Existing delivery gates apply; recorded learnings already persist. |
+
+Preserve material unfinished work with a checkpoint or durable native handoff and a next-read pointer. Nothing material to preserve: do not manufacture artifacts. Use trw_deliver only for completed-work acceptance under unchanged delivery gates; recorded learnings already persist.
 
 ### Deliver Gate
 
@@ -136,7 +138,7 @@ def _render_opencode_portable_body() -> str:
         "3. **Implement**: keep changes bounded; use focused helpers only when available\n"
         "4. **Verify**: run targeted project-native checks and fix failures immediately\n"
         "5. **Learn**: call `trw_learn()` for durable technical discoveries (no status reports)\n"
-        "6. **Finish**: call `trw_deliver()` only after `trw_build_check()` records validation or `allow_unverified=true` carries a structured acceptable-failure record\n"
+        "6. Preserve material unfinished work via checkpoint or durable native handoff with next-read pointer; nothing material to preserve: no artifact needed. Use `trw_deliver()` for completed-work acceptance under the delivery gates\n"
         "\n"
         "## Ceremony Protocol\n"
         "\n"
@@ -145,7 +147,7 @@ def _render_opencode_portable_body() -> str:
         "- `trw_recall(query)` — retrieve relevant prior learnings before re-solving\n"
         "- `trw_learn(summary, detail)` — record durable gotchas/patterns, not routine status\n"
         "- `trw_build_check()` — record project-native validation before delivery after code changes\n"
-        "- `trw_deliver()` — **last action after validation**; persists learnings and syncs instruction state\n"
+        "- `trw_deliver()` — completed-work acceptance under unchanged delivery gates\n"
         "\n"
         "## Nudge Policy\n"
         "\n"

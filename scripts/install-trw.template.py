@@ -3131,9 +3131,10 @@ def phase_install_extras(
             # silent trap — the user sees success here, then every trw_learn
             # call fails with "sqlite extension error" later.
             ui.start_spinner("Verifying sqlite-vec loads on this Python...")
-            smoke = _run_quiet(
+            smoke = _run_python_smoke(
                 [
                     python,
+                    "-B",
                     "-c",
                     "import sqlite3, sqlite_vec; "
                     "c = sqlite3.connect(':memory:'); "
@@ -3142,6 +3143,7 @@ def phase_install_extras(
                     "c.enable_load_extension(False); "
                     "c.close()",
                 ],
+                target_dir=validated_target,
                 timeout=15,
             )
             if smoke:

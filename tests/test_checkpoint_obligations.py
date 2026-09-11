@@ -111,14 +111,15 @@ def test_gate_predicate_failure_degrades_to_advisory(tmp_path: Path, monkeypatch
     assert obligations._BLOCKS not in _row(pending, "trw_review()")
 
 
-def test_deliver_obligation_states_loss_not_an_unenforced_gate() -> None:
-    """No tool blocks on a missing trw_deliver, so the line must not imply one.
-
-    The obligation is real (VISION Principle 5) and stays in the list; what it
-    may not do is borrow the authority of a gate that does not exist.
-    """
+def test_preservation_obligation_does_not_claim_capture_loss() -> None:
+    """CORE269: keep pending evidence truthful without forcing no-work artifacts."""
     line = _row(compute_pending_ceremony(_ALL_PENDING), "trw_deliver()")
-    assert "persists this session's learnings" in line
+    assert "for completed work under existing evidence gates" in line
+    assert "if you have material unfinished work" in line
+    assert "native handoff with a next-read pointer" in line
+    assert "Recorded learnings remain recorded" in line
+    assert "no material state requires no new artifact" in line
+    assert "nothing else persists" not in line
     assert "block" not in line.lower()
 
 

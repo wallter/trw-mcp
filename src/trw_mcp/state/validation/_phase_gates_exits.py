@@ -68,16 +68,6 @@ def _check_plan_exit(
     failures: list[ValidationFailure],
 ) -> None:
     """Check PLAN phase exit criteria."""
-    plan_path = run_path / "reports" / "plan.md"
-    if not plan_path.exists():
-        failures.append(
-            ValidationFailure(
-                field="plan.md",
-                rule="plan_exists",
-                message="Plan document not found in reports/",
-                severity="error",
-            )
-        )
     failures.extend(_check_prd_enforcement(run_path, config, PRDStatus.DRAFT, "plan"))
 
 

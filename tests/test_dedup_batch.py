@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tests._dedup_test_support import mock_embed, write_entry
 from tests._structlog_capture import captured_structlog  # noqa: F401
 from trw_mcp.models.config import TRWConfig
@@ -190,17 +192,7 @@ class TestBatchDedup:
 
 
 class TestMigrationIsOffTheReplayPath:
-    """FR05: a journal replay must never pay the O(N^2) migration inline.
-
-    Measured 2026-09-04: the migration firing inside the FIRST replay turned a
-    33,552 ms drain into 321,050 ms. FR01's "overruns by at most one record's
-    replay" is vacuous if one replay can take 307 s, so this is a correctness
-    dependency of the budget.
-
-    NON-VACUITY: drop ``and not _from_journal`` from the migration branch in
-    ``tools/_learn_impl.py`` and ``test_journal_replay_never_runs_batch_dedup_inline``
-    fails on ``calls == []``.
-    """
+    """Capture and recovery never invoke whole-corpus maintenance implicitly."""
 
     def _config(self) -> TRWConfig:
         return TRWConfig(embeddings_enabled=False, dedup_enabled=True)
@@ -228,30 +220,31 @@ class TestMigrationIsOffTheReplayPath:
         assert is_migration_needed(trw_dir) is True
 
         calls: list[str] = []
-        real_batch = dedup_mod.batch_dedup
 
         def _spy(*args: object, **kwargs: object) -> object:
             calls.append("called")
-            return real_batch(*args, **kwargs)  # type: ignore[arg-type]
+            return {"status": "completed"}  # Sentinel: never load a semantic model.
 
         with patch.object(dedup_mod, "batch_dedup", _spy):
             self._seed_pending(trw_dir, "L-mig001")
             replay_journaled_learn(trw_dir, config, "L-mig001", {"summary": "x", "detail": "y"})
             assert calls == [], "batch dedup ran INSIDE a journal replay"
 
-            # The interactive path is deliberately unchanged.
+            # Ordinary capture has the same no-batch boundary.
             from trw_mcp.tools._learn_impl import execute_learn
 
-            execute_learn(
+            result = execute_learn(
                 summary="interactive learn probe with a summary long enough to clear the noise filter",
                 detail="detail body for the interactive migration probe",
                 trw_dir=trw_dir,
                 config=config,
             )
-            assert calls, "the interactive path must still run the migration inline"
+            assert calls == [], "ordinary capture must not run batch migration"
+            assert result["status"] == "recorded"
+            assert is_migration_needed(trw_dir) is True
 
     def test_marker_is_not_written_when_the_replay_skipped_the_migration(self, tmp_path: Path) -> None:
-        """Skipping is not completing: the migration stays owed and the next sweep retries."""
+        """Capture does not forge completion of explicit maintenance."""
         from trw_mcp.tools._learn_journal_wiring import replay_journaled_learn
 
         trw_dir = tmp_path / ".trw"
@@ -263,15 +256,8 @@ class TestMigrationIsOffTheReplayPath:
 
         assert is_migration_needed(trw_dir) is True
 
-    def test_drain_reschedules_the_migration_onto_the_background_thread(self, tmp_path: Path) -> None:
-        """The migration is not lost by being skipped — the drain hands it to FR02.
-
-        Asserted on the SIDE EFFECT, not on the thread handle: the continuation
-        clears its own handle in a ``finally``, so a fast migration can be done
-        before the caller looks and ``_DRAIN_THREAD is not None`` would flake.
-        """
-        import time as _time
-
+    def test_drain_does_not_schedule_for_missing_migration_marker(self, tmp_path: Path) -> None:
+        from trw_mcp.state import learn_journal
         from trw_mcp.state.memory_pressure import take_writer_census
         from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
@@ -279,40 +265,24 @@ class TestMigrationIsOffTheReplayPath:
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
         config = self._config()
         self._seed_pending(trw_dir, "L-mig003")
-        assert is_migration_needed(trw_dir) is True
-        ran: list[str] = []
-        steps._DRAIN_THREAD = None
-
-        from trw_mcp.tools import _learn_journal_background as background
-
-        def _spy(*_a: object, **_kw: object) -> dict[str, object]:
-            ran.append("migrated")
-            return {"status": "completed"}
-
-        with patch.object(background, "run_batch_dedup_migration", _spy):
-            maintenance: dict[str, object] = {}
+        with patch.object(steps, "_schedule_background_drain", return_value=False) as schedule:
+            maintenance = {}
             steps._run_learn_journal_drain(
                 trw_dir,
                 config,
-                maintenance,  # type: ignore[arg-type]
+                maintenance,
                 census=take_writer_census(trw_dir, threshold=2),
                 defer_memory_heavy=False,
             )
-            deadline = _time.monotonic() + 60.0
-            while not ran and _time.monotonic() < deadline:
-                _time.sleep(0.02)
-            thread = steps._DRAIN_THREAD
-            if thread is not None:
-                thread.join(60.0)
-                assert not thread.is_alive()
-        steps._DRAIN_THREAD = None
-
-        assert ran == ["migrated"], "the owed migration was never rescheduled onto the continuation"
+        schedule.assert_not_called()
+        assert learn_journal.pending_count(trw_dir) == 0
+        assert maintenance["pending_learns_replayed"]["recovered"] == 1
+        assert is_migration_needed(trw_dir) is True
 
     def test_skipped_migration_is_logged_and_leaves_the_marker_absent(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter, captured_structlog: list[dict]
     ) -> None:
-        """An unbounded scan still queued to fire must be visible, not silent."""
+        """An explicit skipped scan is visible and does not forge completion."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
 
@@ -346,3 +316,36 @@ class TestMigrationIsOffTheReplayPath:
         assert started and int(str(started[0]["entries"])) == 2, captured_structlog
         assert completed and "duration_ms" in completed[0], captured_structlog
         assert is_migration_needed(trw_dir) is False
+
+
+@pytest.mark.parametrize("remainder", [0, 2])
+def test_maintenance_continuation_requests_replay_only(tmp_path, monkeypatch, remainder):
+    from unittest.mock import Mock
+
+    from trw_mcp.tools import _ceremony_maintenance_steps as steps
+
+    trw_dir = tmp_path / ".trw"
+    trw_dir.mkdir()
+    schedule = Mock(return_value=True)
+    monkeypatch.setattr(steps, "_schedule_background_drain", schedule)
+    sweep = Mock()
+    sweep.index_failed.return_value = False
+    sweep.degraded.return_value = False
+    maintenance = {}
+    steps._finish_drain_sweep(
+        trw_dir,
+        TRWConfig(embeddings_enabled=False, dedup_enabled=True),
+        maintenance,
+        {"replayed": 1, "deferred": remainder, "budget_exhausted": bool(remainder)},
+        sweep=sweep,
+        limit=3,
+        budget_ms=1,
+        under_pressure=False,
+    )
+    if remainder:
+        assert schedule.call_args.args[2:] == (2, False)
+        sweep.flush.assert_not_called()
+    else:
+        schedule.assert_not_called()
+        sweep.flush.assert_called_once()
+    assert maintenance["pending_learns_replayed"]["deferred_to_background"] == remainder

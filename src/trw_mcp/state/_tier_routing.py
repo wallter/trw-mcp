@@ -1,7 +1,7 @@
 """Portability classifier + write-tier router -- PRD-CORE-185 FR05.
 
 The ``trw_learn`` store path historically forced ``namespace="default"`` at
-``_memory_transforms._learning_to_memory_entry``. This module adds a small,
+the entry builder in ``_memory_transforms``. This module adds a small,
 pure, heuristic classifier (NO LLM call) that decides whether a learning is
 *portable* (cross-cutting; belongs in the machine-local USER tier) or
 *project-specific* (file paths / repo-local symbols / this-repo gotchas; stays
@@ -16,8 +16,8 @@ store is present, routing collapses to project-only -- byte-identical to today
 Default is PROJECT when signals are ambiguous (conservative: under-promote
 rather than over-promote -- truthfulness > velocity).
 
-This is a focused sibling of ``_memory_transforms.py`` (NFR07); all routing
-logic lives here so the transforms/adapter modules stay under the 350 gate.
+This is a focused sibling of ``_store_arguments.py`` (NFR07); all routing
+logic lives here so the argument/adapter modules stay under the 350 gate.
 """
 
 from __future__ import annotations
@@ -240,8 +240,8 @@ def user_scope_present() -> bool:
 def tier_of_entry(entry: object) -> Tier:
     """Read the routed tier off a built :class:`MemoryEntry`'s metadata.
 
-    ``_learning_to_memory_entry`` stamps ``metadata["tier"]`` with the routing
-    decision. Falls back to inspecting the namespace, then to ``"project"``.
+    ``_store_arguments.build_store_arguments`` stamps ``metadata["tier"]`` with
+    the routing decision. Falls back to the namespace, then to ``"project"``.
     """
     meta = getattr(entry, "metadata", None)
     if isinstance(meta, dict):

@@ -188,6 +188,12 @@ def test_phase_install_extras_passes_pip_target_to_all_optional_installs(install
     # This unit test verifies pip-target propagation, not the heavyweight
     # sentence-transformers runtime. Keep it deterministic under xdist host load.
     monkeypatch.setattr(module, "verify_embeddings_runtime", lambda _python, target_dir="": True)
+    smoke_calls = []
+    monkeypatch.setattr(
+        module,
+        "_run_python_smoke",
+        lambda command, target_dir="", timeout=120: smoke_calls.append((command, target_dir, timeout)) or True,
+    )
 
     features = module.phase_install_extras(
         ui,
@@ -205,3 +211,27 @@ def test_phase_install_extras_passes_pip_target_to_all_optional_installs(install
         ("sqlite-vec", "/tmp/trw-pip"),
     ]
     assert features == ["AI/LLM", "embeddings", "sqlite-vec"]
+    assert len(smoke_calls) == 1
+    command, target, timeout = smoke_calls[0]
+    assert command[:3] == [sys.executable, "-B", "-c"]
+    assert "sqlite_vec.load(c)" in command[3]
+    assert target == "/tmp/trw-pip"
+    assert timeout == 15
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_phase_install_extras_does_not_advertise_failed_target_runtime(installer_path: Path, monkeypatch) -> None:
+    module = _load_installer_module(installer_path)
+    ui = MagicMock()
+    monkeypatch.setattr(module, "pip_install", lambda *args, **kwargs: True)
+    smoke = MagicMock(return_value=False)
+    monkeypatch.setattr(module, "_run_python_smoke", smoke)
+
+    features = module.phase_install_extras(
+        ui, 3, 5, sys.executable, install_ai=False, install_sqlitevec=True, pip_target="/tmp/trw-pip"
+    )
+
+    assert features == []
+    smoke.assert_called_once()
+    assert smoke.call_args.kwargs == {"target_dir": "/tmp/trw-pip", "timeout": 15}
+    ui.step_warn.assert_called()

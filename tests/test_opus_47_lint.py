@@ -29,14 +29,20 @@ from typing import Any
 import pytest
 import yaml
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SCAN_GLOBS: tuple[tuple[Path, str], ...] = (
-    (REPO_ROOT / ".claude" / "agents", "*.md"),
-    (REPO_ROOT / ".claude" / "skills", "**/SKILL.md"),
-    (REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents", "*.md"),
-    (REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "skills", "**/SKILL.md"),
+    (PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents", "*.md"),
+    (PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "skills", "**/SKILL.md"),
 )
+
+if MONOREPO_ROOT is not None:
+    SCAN_GLOBS += (
+        (MONOREPO_ROOT / ".claude" / "agents", "*.md"),
+        (MONOREPO_ROOT / ".claude" / "skills", "**/SKILL.md"),
+    )
 
 REMOVED_KEYS: frozenset[str] = frozenset({"budget_tokens", "temperature", "top_p", "top_k"})
 
@@ -69,9 +75,10 @@ def _iter_scan_files() -> list[Path]:
     """Collect every markdown file matching the scan globs."""
     files: list[Path] = []
     for base, pattern in SCAN_GLOBS:
-        if not base.exists():
-            continue
-        files.extend(sorted(base.glob(pattern)))
+        assert base.is_dir(), f"required scan tree missing: {base}"
+        matches = sorted(base.glob(pattern))
+        assert matches, f"required scan tree is empty: {base}"
+        files.extend(matches)
     return files
 
 
@@ -103,11 +110,25 @@ def test_no_removed_sampling_params_in_frontmatter() -> None:
         )
 
 
+@requires_monorepo
 def test_lint_scans_both_mirror_trees() -> None:
     """FR05: both .claude/ and trw-mcp/src/trw_mcp/data/ are inspected."""
     files = _iter_scan_files()
     assert any(".claude/agents" in str(p) for p in files), "missing .claude/agents/ in scan set"
     assert any("trw_mcp/data/agents" in str(p) for p in files), "missing bundled trw-mcp data/agents/ in scan set"
+
+
+def test_lint_scans_packaged_agents_and_skills() -> None:
+    files = _iter_scan_files()
+    data = PACKAGE_ROOT / "src/trw_mcp/data"
+    for directory in (data / "agents", data / "skills"):
+        assert any(path.is_relative_to(directory) for path in files), f"unscanned package tree: {directory}"
+
+
+def test_missing_required_scan_tree_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setitem(globals(), "SCAN_GLOBS", ((tmp_path / "missing", "*.md"),))
+    with pytest.raises(AssertionError, match="required scan tree missing"):
+        _iter_scan_files()
 
 
 # ---------------------------------------------------------------------------

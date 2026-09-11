@@ -18,6 +18,11 @@ def build_ultra_compact_recall_result(ranked_learnings: list[dict[str, object]])
             {
                 "id": str(entry.get("id", "")),
                 "summary": _truncate_ultra_compact_summary(str(entry.get("summary", ""))),
+                **(
+                    {"verification_evidence": entry["verification_evidence"]}
+                    if "verification_evidence" in entry
+                    else {}
+                ),
             }
             for entry in ranked_learnings
         ],

@@ -17,9 +17,13 @@ from trw_mcp.wiring.detector import DetectorResult, run_detector
 def _find_repo_root() -> Path:
     here = Path(__file__).resolve()
     for candidate in here.parents:
-        if (candidate / "Makefile").is_file() and (candidate / ".trw" / "channels" / "manifest.yaml").is_file():
+        # Identify the repository independently of the subject being checked.
+        # Missing subjects inside a recognized monorepo are failures, not skips.
+        if (candidate / "release-packages.yaml").is_file():
+            assert (candidate / "Makefile").is_file(), "monorepo Makefile is missing"
+            assert (candidate / ".trw/channels/manifest.yaml").is_file(), "monorepo channel manifest is missing"
             return candidate
-    raise RuntimeError("could not locate the monorepo root from the wiring test package")
+    pytest.skip("real-monorepo wiring subject is not shipped in the standalone package")
 
 
 @pytest.fixture(scope="session")

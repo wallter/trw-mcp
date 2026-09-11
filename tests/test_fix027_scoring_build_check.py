@@ -65,8 +65,10 @@ class TestBuildCheckQLearningWiring:
             return tools["trw_build_check"].fn
         return None
 
-    def test_build_check_calls_process_outcome_on_pass(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When build passes, process_outcome_for_event('build_passed') must be called."""
+    def test_build_check_does_not_attribute_outcome_on_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R10: passing builds must not grant temporal memory credit."""
         called_events: list[str] = []
 
         monkeypatch.setattr(
@@ -80,13 +82,12 @@ class TestBuildCheckQLearningWiring:
         tool_fn(tests_passed=True, test_count=100, coverage_pct=95.0, scope="full")
         _drain_q_learning_worker()
 
-        assert "build_passed" in called_events, (
-            "trw_build_check did not call process_outcome_for_event('build_passed') — "
-            "Q-learning gets no reward signal from successful builds"
-        )
+        assert called_events == []
 
-    def test_build_check_calls_process_outcome_on_fail(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When build fails, process_outcome_for_event('build_failed') must be called."""
+    def test_build_check_does_not_attribute_outcome_on_fail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R10: failing builds must not penalize unrelated recalled memories."""
         called_events: list[str] = []
 
         monkeypatch.setattr(
@@ -100,10 +101,7 @@ class TestBuildCheckQLearningWiring:
         tool_fn(tests_passed=False, test_count=50, failure_count=5, coverage_pct=60.0, scope="full")
         _drain_q_learning_worker()
 
-        assert "build_failed" in called_events, (
-            "trw_build_check did not call process_outcome_for_event('build_failed') — "
-            "Q-learning gets no negative signal from build failures"
-        )
+        assert called_events == []
 
     def test_build_check_static_checks_alias_controls_outcome(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -131,7 +129,7 @@ class TestBuildCheckQLearningWiring:
 
         assert result["static_checks_clean"] is False
         assert result["mypy_clean"] is True
-        assert "build_failed" in called_events
+        assert called_events == []
 
     def test_build_check_q_learning_failure_does_not_block_result(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -199,13 +197,13 @@ class TestBuildCheckMypyOnlyScope:
         tool_fn(tests_passed=True, mypy_clean=True, scope="mypy")
         _drain_q_learning_worker()
 
-        assert "build_passed" in called_events, "scope='mypy' fires 'build_passed' event in current implementation"
+        assert called_events == []
 
-    def test_q_observations_increments_in_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FR04: After build_check, correlated learning's q_observations increments in YAML.
+    def test_q_observations_remain_unchanged_in_yaml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """R10: build_check leaves a recalled learning's q_observations unchanged.
 
         Full integration: write entry + receipt, patch scoring module, run build_check,
-        verify q_observations > 0.
+        verify q_observations remains zero.
         """
         from fastmcp import FastMCP
 
@@ -277,7 +275,7 @@ class TestBuildCheckMypyOnlyScope:
 
         stored = reader.read_yaml(entry_path)
         q_obs = int(str(stored.get("q_observations", 0)))
-        assert q_obs >= 1, f"FR04: q_observations should be >= 1 after build_check, got {q_obs}"
+        assert q_obs == 0, "R10: a build is not a learning-specific usefulness observation"
 
     def test_build_check_leaves_no_q_learning_worker_running(
         self,
@@ -308,7 +306,7 @@ class TestBuildCheckMypyOnlyScope:
         _drain_q_learning_worker()
 
         assert result["tests_passed"] is True
-        assert "build_passed" in called_events
+        assert called_events == []
         health = reg_mod.get_q_learning_health()
         assert health["worker_alive"] is False
         assert health["queue_size"] == 0

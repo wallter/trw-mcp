@@ -16,6 +16,7 @@ Cohesive implementation lives in sibling modules and is re-exported here so
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 import structlog
@@ -59,31 +60,20 @@ def rank_by_utility(
     matches: list[dict[str, object]],
     query_tokens: list[str],
     lambda_weight: float,
-    assertion_penalties: dict[str, float] | None = None,
+    assertion_penalties: dict[str, float] | Callable[[dict[str, object]], float] | None = None,
     *,
     context: RecallContext | None = None,
 ) -> list[dict[str, object]]:
-    """Re-rank matched learnings by combined relevance + utility score.
+    """Order targeted recall by query relevance, then utility/context ties.
 
-    PRD-CORE-116 + PRD-INFRA-053: 6-factor multiplicative boost formula:
-    ``combined = base * domain * phase * team * anchor * prd * intel``
-
-    The PRD-CORE-116-FR01 outcome-correlation factor is gone: trw-memory
-    0.16.0 dropped ``outcome_correlation`` (PRD-CORE-244 FR08 — no producer
-    ever wrote it), so the recall dicts reaching this function never carried
-    the key and the factor was the multiplicative identity on every entry.
-
-    Args:
-        matches: List of matched learning entry dicts.
-        query_tokens: Lowercased query tokens for relevance scoring.
-        lambda_weight: Blend factor. 0.0 = pure relevance, 1.0 = pure utility.
-        assertion_penalties: Optional mapping of entry ID to penalty amount
-            for failing assertions (PRD-CORE-086 FR06).
-        context: Optional RecallContext for contextual score boosting.
-            When None, all boosts default to 1.0 (neutral).
-
-    Returns:
-        Sorted list (highest combined score first) with ``combined_score`` field.
+    CORE-116 RA1–RA6 supersede the historical blended targeted formula. A
+    positive lambda enables utility preferences only for equal relevance;
+    lambda=0 disables those preferences. Even lambda=1 cannot ignore a query.
+    Wildcards retain historical utility/context ordering. ``combined_score``
+    is signed, evidence-qualified relevance for targeted recall, the legacy scalar for
+    wildcards; ``preference_score`` exposes the secondary targeted score.
+    Dated failure penalties and anchor invalidity qualify relevance, separately
+    from positive context. No assertion verification is performed here.
     """
     if not matches:
         return matches
@@ -91,7 +81,10 @@ def rank_by_utility(
     today = datetime.now(tz=timezone.utc).date()
     # PRD-CORE-244 FR11: bound ONCE per pass, not per entry.
     utility_params = utility_params_for(get_config())
-    scored: list[tuple[float, dict[str, object]]] = []
+    scored: list[tuple[float, float, dict[str, object]]] = []
+    from trw_mcp.scoring._query_relevance import query_relevance
+
+    relevances = query_relevance(matches, query_tokens) if query_tokens else [1.0] * len(matches)
     bandit_params: dict[str, float] | None = None
     boosted_entries = 0
     intel_boosted_entries = 0
@@ -100,38 +93,19 @@ def rank_by_utility(
     if context is not None and context.intel_cache is not None:
         bandit_params = context.intel_cache.get_bandit_params()
 
-    for entry in matches:
-        # Text relevance score (token overlap with field weighting)
-        summary = str(entry.get("summary", "")).lower()
-        detail = str(entry.get("detail", "")).lower()
-        raw_tags = entry.get("tags", [])
-        tag_text = " ".join(str(t).lower() for t in raw_tags) if isinstance(raw_tags, list) else ""
-
-        if query_tokens:
-            summary_hits = sum(1 for t in query_tokens if t in summary)
-            tag_hits = sum(1 for t in query_tokens if t in tag_text)
-            detail_hits = sum(1 for t in query_tokens if t in detail)
-            weighted_hits = summary_hits * 3 + tag_hits * 2 + detail_hits
-            max_possible = len(query_tokens) * 3
-            relevance = min(1.0, weighted_hits / max(max_possible, 1))
-        else:
-            relevance = 1.0  # wildcard query
-
+    for entry, relevance in zip(matches, relevances, strict=True):
         utility = entry_utility(entry, today, params=utility_params)
-
-        combined = (1.0 - lambda_weight) * relevance + lambda_weight * utility
-
-        # Apply assertion failure penalty (PRD-CORE-086 FR06)
-        if assertion_penalties:
-            entry_id = str(entry.get("id", ""))
-            if entry_id in assertion_penalties:
-                combined = max(0.0, combined - assertion_penalties[entry_id])
+        penalty = 0.0
+        if callable(assertion_penalties):
+            penalty = assertion_penalties(entry)
+        elif assertion_penalties:
+            penalty = assertion_penalties.get(str(entry.get("id", "")), 0.0)
 
         # --- 6-factor multiplicative boosts (PRD-CORE-116-FR01, PRD-INFRA-053) ---
         domain_boost = 1.0
         phase_boost = 1.0
         team_boost = 1.0
-        anchor_val = 1.0
+        anchor_val = safe_float(entry, "anchor_validity", 1.0) if query_tokens else 1.0
         prd_boost = 1.0
         intel_boost = 1.0
 
@@ -191,13 +165,24 @@ def rank_by_utility(
                         ),
                     }
 
-        combined *= domain_boost * phase_boost * team_boost * anchor_val * prd_boost * intel_boost
-        # Clamp final score
-        combined = max(0.0, min(2.0, combined))
+        positive_boost = domain_boost * phase_boost * team_boost * prd_boost * intel_boost
+        if query_tokens:
+            # Negative evidence qualifies primary relevance. Positive priors
+            # cannot restore it or overtake a more relevant candidate.
+            # Do not floor targeted scores: that would erase failure penalties
+            # for lexical-zero candidates and let preferences restore their tie.
+            combined = relevance * max(0.0, min(1.0, anchor_val)) - penalty
+            preference = utility * positive_boost if lambda_weight > 0 else 0.0
+        else:
+            combined = max(0.0, (1.0 - lambda_weight) * relevance + lambda_weight * utility - penalty)
+            combined = max(0.0, min(2.0, combined * positive_boost * anchor_val))
+            preference = 0.0
 
         entry_copy = dict(entry)
         entry_copy["combined_score"] = round(combined, 4)
-        scored.append((combined, entry_copy))
+        if query_tokens:
+            entry_copy["preference_score"] = round(preference, 4)
+        scored.append((combined, preference, entry_copy))
 
     # ``structlog.get_logger`` may resolve to the generic BoundLogger before
     # stdlib logging is configured; that wrapper has no ``is_enabled_for``.
@@ -211,5 +196,5 @@ def rank_by_utility(
             **boost_log_payload,
         )
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [entry for _, entry in scored]
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [entry for _, _, entry in scored]

@@ -227,11 +227,22 @@ def test_recall_response_carries_ceremony_status(tmp_project: Path) -> None:
     assert isinstance(result.get("ceremony_status"), str)
 
 
-def test_ultra_compact_recall_stays_minimal(tmp_project: Path) -> None:
-    """The ultra-compact projection is a token-budget contract; do not decorate it."""
+@pytest.mark.parametrize("warning", [None, "Semantic retrieval unavailable; lexical fallback only."])
+def test_ultra_compact_recall_stays_minimal(
+    tmp_project: Path, monkeypatch: pytest.MonkeyPatch, warning: str | None
+) -> None:
+    """No ceremony decoration; material retrieval limitations must still surface."""
+    monkeypatch.setattr(
+        "trw_mcp.tools._interactive_recall.prepare_interactive_recall",
+        lambda adapter, **kwargs: (adapter, warning),
+    )
     server = make_test_server("learning")
     result = extract_tool_fn(server, "trw_recall")(query="nudge attribution", ultra_compact=True)
-    assert set(result) == {"learnings", "count", "ceremony_hint"}
+    expected = {"learnings", "count", "ceremony_hint"}
+    if warning:
+        expected.add("retrieval_warning")
+        assert result["retrieval_warning"] == warning
+    assert set(result) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -430,16 +441,11 @@ def test_real_nudge_then_real_build_check_produces_a_proximal_signal(tmp_project
     assert [s["learning_id"] for s in signals] == ["L-e2e-prox"], read_proximal_event_window(trw_dir, run_dir)
 
 
-def test_delivery_metrics_feeds_signals_into_the_reward_path(
+def test_delivery_metrics_preserves_signals_without_inventing_usefulness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """UF-026 wiring: the deferred metrics step must CALL the bridge.
-
-    The signals were previously terminal — assigned to a reporting key and
-    dropped. This asserts the call happens with the detected signals, which is
-    the seam that was missing, not the arithmetic (covered above).
-    """
+    """R10: detected proximity remains observable but never grants persistent credit."""
     from trw_mcp.tools import _deferred_steps_learning as mod
 
     run_dir = tmp_path / "run"
@@ -462,5 +468,6 @@ def test_delivery_metrics_feeds_signals_into_the_reward_path(
 
     result = mod._step_delivery_metrics(tmp_path / ".trw", run_dir)
 
-    assert forwarded == [detected], "detected signals never reached apply_proximal_rewards"
-    assert result["proximal_q_updates"] == ["L-bridge"]
+    assert forwarded == []
+    assert result["proximal_signals"] == detected
+    assert "proximal_q_updates" not in result

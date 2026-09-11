@@ -216,8 +216,11 @@ def test_prd_eval_037_fixture_validates_clean(tmp_path: Path, _config_with_extra
     frontmatter = yaml.safe_load(parts[1]).get("prd", {})
     body = parts[2]
 
-    # Point project_root at the real monorepo root so the full path resolves.
-    repo_root = Path(__file__).resolve().parents[2]
+    # Materialize the named proof in this synthetic project; no monorepo is needed.
+    repo_root = tmp_path
+    proof = repo_root / "trw-mcp/src/trw_mcp/state/validation/prd_integrity.py"
+    proof.parent.mkdir(parents=True)
+    proof.write_text("# Synthetic proof subject\n", encoding="utf-8")
     failures, _warnings = run_prd_integrity_checks(
         body,
         frontmatter,
@@ -227,6 +230,13 @@ def test_prd_eval_037_fixture_validates_clean(tmp_path: Path, _config_with_extra
     categories = [f.rule for f in failures]
     assert "aaref_category_allowlist" not in categories
     assert "repo_path_exists" not in categories
+
+    # Removing the full path must still be a real integrity failure.
+    proof.unlink()
+    missing, _ = run_prd_integrity_checks(
+        body, frontmatter, project_root=repo_root, prds_relative_path="docs/requirements-aare-f/prds"
+    )
+    assert "repo_path_exists" in [failure.rule for failure in missing]
 
 
 def test_ellipsis_tokens_do_not_produce_path_failures(tmp_path: Path) -> None:

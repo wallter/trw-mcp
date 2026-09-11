@@ -257,7 +257,7 @@ class TestAntipatternAlertFailOpen:
         config = _make_config()
         reader = FileStateReader()
 
-        # Must not raise — and must return the entry UNMODIFIED. `isinstance(
+        # Must not raise or lose caller fields while adding qualified evidence. `isinstance(
         # learnings, list)` also held when the entry was swallowed, which is the
         # failure this class exists to catch: a fail-open path that quietly
         # drops the caller's data is not fail-open, it is silent loss.
@@ -267,7 +267,19 @@ class TestAntipatternAlertFailOpen:
             config=config,
             reader=reader,
         )
-        assert learnings == [bad_learning]
+        assert learnings == [
+            {
+                **bad_learning,
+                "verification_status": "unknown",
+                "verification_evidence": {
+                    "observation": "unknown",
+                    "assertions": [],
+                    "aggregate": {"observation": "unknown", "checked_at": None, "freshness": "unknown"},
+                    "current_tree_verified": False,
+                },
+            }
+        ]
+        assert bad_learning == {"id": "L-BAD", "summary": None, "impact": 0.5}
 
     def test_missing_id_field_is_dropped_not_raised(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.tools._ceremony_helpers import perform_session_recalls

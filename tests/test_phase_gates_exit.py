@@ -212,13 +212,13 @@ class TestCheckDeliverExit:
 class TestCheckPlanExit:
     """Tests for plan phase exit checker."""
 
-    def test_missing_plan_md_adds_error(self, tmp_path: Path, writer: FileStateWriter) -> None:
+    def test_missing_plan_md_is_not_an_exit_gate(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig()
         _check_plan_exit(run_dir, config, failures)
         rules = [f.rule for f in failures]
-        assert "plan_exists" in rules
+        assert "plan_exists" not in rules
 
     def test_plan_md_exists_no_error(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)

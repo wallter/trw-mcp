@@ -475,3 +475,120 @@ def test_sweep_preserves_run_at_exact_grace_boundary(
     assert "20260101T000000Z-boundary01" not in abandoned, (
         f"Run at exact grace boundary must be preserved (>= semantics). report={report_d!r}"
     )
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+@pytest.mark.parametrize(
+    "log_kind", ["short", "large", "missing", "directory", "symlink", "escape", "meta_escape", "metadata_error"]
+)
+def test_registered_startup_checkpoint_pointer_is_bounded_and_nonmutating(
+    isolated_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verbose: bool,
+    log_kind: str,
+) -> None:
+    """CORE269 FR04/NFR02: real registered startup, no checkpoint body acquisition."""
+    from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.state._paths import pin_active_run
+    from trw_mcp.tools import ceremony
+
+    run = _seed_active_run(isolated_project, "owned", "20260101T000000Z-owned111")
+    log = run / "meta" / "checkpoints.jsonl"
+    if log_kind in {"short", "large", "metadata_error"}:
+        log.write_text("private checkpoint content\n" * (100000 if log_kind == "large" else 1))
+    elif log_kind == "directory":
+        log.mkdir()
+    elif log_kind in {"symlink", "escape"}:
+        target = run / "alternate.jsonl" if log_kind == "symlink" else isolated_project / "foreign.jsonl"
+        target.write_text("foreign private checkpoint")
+        log.symlink_to(target)
+    elif log_kind == "meta_escape":
+        external_meta = isolated_project / "external-meta"
+        (run / "meta").rename(external_meta)
+        (run / "meta").symlink_to(external_meta, target_is_directory=True)
+        log.write_text("private checkpoint outside selected run")
+    ctx = _fresh_ctx("pointer-owner")
+    pin_active_run(run, session_id=ctx.session_id)
+    before = (run / "meta" / "run.yaml").read_bytes()
+    monkeypatch.setattr(
+        ceremony, "SESSION_START_STEPS", tuple(s for s in ceremony.SESSION_START_STEPS if s.key == "run_resolve")
+    )
+    real_open, real_stat = Path.open, Path.stat
+    metadata_calls: list[str] = []
+
+    def guarded_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        assert path.name != "checkpoints.jsonl", "startup must not read checkpoint content"
+        return real_open(path, *args, **kwargs)
+
+    def observed_stat(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path == log:
+            metadata_calls.append("stat")
+            if log_kind == "metadata_error":
+                raise PermissionError("synthetic metadata denial")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    monkeypatch.setattr(Path, "stat", observed_stat)
+    result = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")(ctx=ctx, verbose=verbose)
+    assert result["success"] is True
+    assert result["run"]["status"] == "active"
+    if log_kind in {"short", "large"}:
+        assert result["run"]["checkpoint_log_path"] == str(log)
+        assert metadata_calls == ["stat"]  # identical path operations for either log size
+    else:
+        assert "checkpoint_log_path" not in result["run"]
+    assert "private checkpoint" not in str(result)
+    assert (run / "meta" / "run.yaml").read_bytes() == before
+
+
+def test_registered_startup_checkpoint_pointer_two_pins_and_unpinned(
+    isolated_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE269 NFR01: candidate hints never receive the selected-run enrichment."""
+    from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.state._paths import pin_active_run
+    from trw_mcp.tools import ceremony
+
+    runs = [_seed_active_run(isolated_project, f"task-{i}", f"20260101T00000{i}Z-owned111") for i in range(2)]
+    for i, run in enumerate(runs):
+        (run / "meta" / "checkpoints.jsonl").write_text(f"private-body-{i}")
+        pin_active_run(run, session_id=f"owner-{i}")
+    monkeypatch.setattr(
+        ceremony, "SESSION_START_STEPS", tuple(s for s in ceremony.SESSION_START_STEPS if s.key == "run_resolve")
+    )
+    startup = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")
+    for i, run in enumerate(runs):
+        result = startup(ctx=_fresh_ctx(f"owner-{i}"))
+        assert result["run"]["checkpoint_log_path"] == str(run / "meta" / "checkpoints.jsonl")
+        assert str(runs[1 - i]) not in str(result)
+        assert "private-body" not in str(result)
+    fresh = startup(ctx=_fresh_ctx("no-pin"))
+    assert fresh["run"]["active_run"] is None
+    assert {item["run_path"] for item in fresh["candidate_runs"]} == {str(run) for run in runs}
+    assert "checkpoint_log_path" not in str(fresh)
+    assert "private-body" not in str(fresh)
+
+
+def test_registered_adoption_then_startup_exposes_checkpoint_location(
+    isolated_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CORE269 FR04: explicit existing adoption, not a replacement authority path."""
+    from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.tools import ceremony
+
+    run = _seed_active_run(isolated_project, "handoff", "20260101T000000Z-adopt111")
+    log = run / "meta" / "checkpoints.jsonl"
+    log.write_text('{"message":"unfinished; failing check; fix next"}\n')
+    before = (run / "meta" / "run.yaml").read_bytes()
+    monkeypatch.setattr(
+        ceremony, "SESSION_START_STEPS", tuple(s for s in ceremony.SESSION_START_STEPS if s.key == "run_resolve")
+    )
+    server = make_test_server("ceremony")
+    ctx = _fresh_ctx("explicit-adopter")
+    extract_tool_fn(server, "trw_adopt_run")(ctx=ctx, run_path=str(run))
+    result = extract_tool_fn(server, "trw_session_start")(ctx=ctx)
+    assert result["run"]["checkpoint_log_path"] == str(log)
+    assert result["run"]["status"] == "active"
+    assert (run / "meta" / "run.yaml").read_bytes() == before

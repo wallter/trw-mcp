@@ -27,9 +27,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
 _TESTS_DIR = Path(__file__).resolve().parent
-_TEMPLATE = _TESTS_DIR.parent / "scripts" / "install-trw.template.py"
-_REPO_ROOT = _TESTS_DIR.parent.parent
+_TEMPLATE = PACKAGE_ROOT / "scripts" / "install-trw.template.py"
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _SERVED_BOOTSTRAP = _REPO_ROOT / "platform" / "public" / "install.sh"
 _REPO_BOOTSTRAP = _REPO_ROOT / "scripts" / "install.sh"
 
@@ -241,6 +243,7 @@ def _read(path: Path) -> str:
 
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP])
+@requires_monorepo
 def test_bootstrap_has_pipx_fallback_rung(bootstrap: Path) -> None:
     """Both bootstraps must invoke ``pipx install "$TRW_MCP_SPEC"`` in the ladder.
 
@@ -258,6 +261,7 @@ def test_bootstrap_has_pipx_fallback_rung(bootstrap: Path) -> None:
 
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP])
+@requires_monorepo
 def test_bootstrap_pipx_rung_precedes_break_system_gate(bootstrap: Path) -> None:
     """The pipx rung must come BEFORE the --break-system-packages gate."""
     text = _read(bootstrap)
@@ -272,6 +276,7 @@ def test_bootstrap_pipx_rung_precedes_break_system_gate(bootstrap: Path) -> None
 
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP])
+@requires_monorepo
 def test_bootstrap_does_not_suggest_the_failed_pip_command(bootstrap: Path) -> None:
     """The final failure guidance must not echo the pip command that just failed."""
     text = _read(bootstrap)
@@ -280,6 +285,7 @@ def test_bootstrap_does_not_suggest_the_failed_pip_command(bootstrap: Path) -> N
 
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP])
+@requires_monorepo
 def test_bootstrap_pipx_runs_ensurepath_for_path_persistence(bootstrap: Path) -> None:
     """Codex MEDIUM: after a pipx install, persist the bin dir via ensurepath.
 
@@ -292,6 +298,7 @@ def test_bootstrap_pipx_runs_ensurepath_for_path_persistence(bootstrap: Path) ->
 
 
 @pytest.mark.parametrize("bootstrap", [_SERVED_BOOTSTRAP, _REPO_BOOTSTRAP])
+@requires_monorepo
 def test_bootstrap_warns_when_pipx_bindir_not_on_path(bootstrap: Path) -> None:
     """The bootstrap must warn (naming the dir) when the pipx bin dir is off PATH.
 

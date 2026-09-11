@@ -69,13 +69,15 @@ def test_intel_boost_applied_from_cache() -> None:
 
     ctx = RecallContext(intel_cache=mock_cache)
 
-    entries = [_make_entry("L-boosted"), _make_entry("L-normal")]
+    entries = [_make_entry("L-normal"), _make_entry("L-boosted")]
     result = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
 
-    # The boosted entry should have a higher score
+    # CORE116 RA2: a prior breaks a relevance tie, never changes relevance.
     boosted = next(e for e in result if e["id"] == "L-boosted")
     normal = next(e for e in result if e["id"] == "L-normal")
-    assert boosted["combined_score"] > normal["combined_score"]
+    assert boosted["combined_score"] == normal["combined_score"]
+    assert boosted["preference_score"] > normal["preference_score"]
+    assert result[0]["id"] == "L-boosted"
 
 
 def test_intel_boost_clamped_to_range() -> None:
@@ -90,14 +92,18 @@ def test_intel_boost_clamped_to_range() -> None:
 
     entries = [_make_entry("L-1")]
     result = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
-    # Score should reflect max boost of 2.0, not 5.0
-    assert result[0]["combined_score"] > 0
+    mock_cache.get_bandit_params.return_value = {"L-1": 2.0}
+    upper = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
+    assert result[0]["preference_score"] == upper[0]["preference_score"]
 
     # Test value below 0.5 gets clamped to 0.5
     mock_cache.get_bandit_params.return_value = {"L-1": 0.1}
     result_low = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
-    # Score should reflect min boost of 0.5
-    assert result_low[0]["combined_score"] > 0
+    mock_cache.get_bandit_params.return_value = {"L-1": 0.5}
+    lower = rank_by_utility(entries, ["test"], lambda_weight=0.5, context=ctx)
+    assert result_low[0]["preference_score"] == lower[0]["preference_score"]
+    assert upper[0]["preference_score"] > lower[0]["preference_score"]
+    assert result[0]["combined_score"] == result_low[0]["combined_score"]
 
 
 def test_intel_boost_none_bandit_params_is_neutral() -> None:

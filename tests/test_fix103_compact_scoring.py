@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.state.prd_utils import extract_sections, parse_frontmatter
 from trw_mcp.state.validation import (
     validate_prd_quality,
@@ -32,7 +33,7 @@ from trw_mcp.state.validation._prd_scoring import (
 )
 from trw_mcp.state.validation._prd_scoring_counts import _count_planned_requirements
 
-_PRD_DIR = Path(__file__).resolve().parents[2] / "docs" / "requirements-aare-f" / "prds"
+_PRD_DIR = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "docs" / "requirements-aare-f" / "prds"
 
 
 # ---------------------------------------------------------------------------
@@ -97,12 +98,14 @@ def test_table_fr_count() -> None:
     assert _count_planned_requirements(_TABLE_FR_PRD) == 4
 
 
+@requires_monorepo
 def test_table_fr_count_real_fix_102() -> None:
     """FR01: the real PRD-FIX-102 (4-row FR table) counts 4 FRs, not 1."""
     content = (_PRD_DIR / "PRD-FIX-102.md").read_text(encoding="utf-8")
     assert _count_planned_requirements(content) == 4
 
 
+@requires_monorepo
 def test_fix102_false_negative_materially_reduced() -> None:
     """NFR01 (honest): the scorer fix materially reduces FIX-102's false-negative.
 
@@ -114,8 +117,7 @@ def test_fix102_false_negative_materially_reduced() -> None:
     that honest delta, NOT a fabricated >=60.
     """
     matches = sorted(_PRD_DIR.glob("PRD-FIX-102*.md"))
-    if not matches:
-        pytest.skip("PRD-FIX-102 not present in the live corpus")
+    assert matches, "required PRD-FIX-102 missing from the monorepo corpus"
     content = matches[0].read_text(encoding="utf-8")
     assert _count_planned_requirements(content) >= 4
     score = validate_prd_quality_v2(content).total_score
@@ -351,9 +353,10 @@ def _sample_passing_feature_infra_prds(limit: int = 12) -> list[Path]:
 # state; the regression guard asserts both are within +/- 2.0. To make this a
 # genuine before/after we store the expected values produced by the CURRENT
 # (post-change) code and assert determinism + the >= 60 invariant holds.
-_REGRESSION_SAMPLE = _sample_passing_feature_infra_prds()
+_REGRESSION_SAMPLE = _sample_passing_feature_infra_prds() if MONOREPO_ROOT is not None else []
 
 
+@requires_monorepo
 def test_no_regression_sample_has_enough_prds() -> None:
     """FR03 guard: at least 10 real passing feature/infra PRDs are available."""
     assert len(_REGRESSION_SAMPLE) >= 10, (
@@ -361,6 +364,7 @@ def test_no_regression_sample_has_enough_prds() -> None:
     )
 
 
+@requires_monorepo
 def test_no_regression_sample_stays_passing() -> None:
     """FR03: every sampled feature/infra PRD still scores >= 58 (was >= 60, +/-2 band).
 
@@ -381,6 +385,7 @@ def test_no_regression_sample_stays_passing() -> None:
 # ---------------------------------------------------------------------------
 
 
+@requires_monorepo
 def test_variant_section_count_fix_no_error() -> None:
     """FR04: a FIX PRD with 8 sections has NO section_count error and is valid."""
     content = (_PRD_DIR / "PRD-FIX-103-fix-variant-scoring-false-negative.md").read_text(encoding="utf-8")

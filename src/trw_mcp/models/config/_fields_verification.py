@@ -14,14 +14,14 @@ class _VerificationFields:
     """Verification/hint-delivery domain mixin — mixed into _TRWConfigFields."""
 
     # -- FR02: maintain-verify batch sweep ---------------------------------
-    #: Max entries-with-assertions pulled in the sweep's single bulk fetch.
-    #: 1000 is the entry count NFR01 budgets at <30s; raise only with a fresh
-    #: measurement, since the bound exists to keep a scheduled run bounded.
+    #: CORE268: maximum decoded entries per page, including anchor-only entries.
+    #: The sweep traverses multiple pages; this is not a total-work, runtime,
+    #: byte-size or staleness bound, and no scheduler is installed.
     maintain_verify_batch_limit: int = Field(
         default=1000,
         ge=1,
         le=100_000,
-        description="Max entries the maintain-verify assertion sweep processes per run.",
+        description="Max entries per maintain-verify page; the explicit sweep traverses all eligible pages.",
     )
 
     # -- FR01: T2 hint sidecar generation + delivery measurement -----------
@@ -53,30 +53,24 @@ class _VerificationFields:
         description="Minimum recomputed anchor_validity for a 'verified' verification verdict.",
     )
 
-    #: How long a persisted verification verdict stays reusable. Within this
-    #: window the recall pass reuses ``verification_checked_at``'s verdict and
-    #: performs NO filesystem verification for that entry. 3600s bounds the
-    #: staleness of a reused verdict to an hour while removing the repeated
-    #: per-recall filesystem scan that dominated the pass. 0 disables reuse.
+    #: CORE268: age qualification for stored evidence, not current-tree truth.
+    #: Expiry never launches a scan; explicit maintain-verify refreshes evidence.
+    #: Zero means no fresh classification, not unconditional inline verification.
     verification_cache_ttl_seconds: int = Field(
         default=3600,
         ge=0,
         le=604_800,
-        description="Seconds a persisted verification verdict is reused before the pass re-checks an entry.",
+        description="Freshness window for last-known evidence; never proves current-tree validity or triggers verification.",
     )
 
-    # -- PRD-CORE-267-FR04: a bounded recall verification pass ---------------
-    #: Wall-clock ceiling for the inline verification pass a recall runs. Once
-    #: exceeded, the remaining ranked entries are marked ``not_checked_budget``
-    #: on the response and left to the maintain-verify sweep. A measured pass
-    #: consumed 12.9 s of a 14.5 s recall; 1000 ms keeps verification in the
-    #: same order as the rest of the call while still examining the
-    #: top-ranked entries a caller actually reads. 0 disables the bound.
+    #: Compatibility-only input since CORE268 removed inline verification.
+    #: It does not bound recall or maintenance runtime. Retain parsing for old
+    #: configuration files until a deliberate configuration migration removes it.
     recall_verification_budget_ms: int = Field(
         default=1000,
         ge=0,
         le=600_000,
-        description="Wall-clock milliseconds a recall may spend verifying assertions/anchors before deferring the rest.",
+        description="Deprecated compatibility input; inline recall verification is retired and this value has no effect.",
     )
 
     # -- PRD-CORE-267-FR03: the shared-anchor-set migration ------------------

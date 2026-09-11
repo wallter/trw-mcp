@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 class LearningEntryCompactDict(TypedDict):
@@ -13,6 +13,11 @@ class LearningEntryCompactDict(TypedDict):
     tags: list[str]
     impact: float
     status: str
+    # CORE-268: the adapter emits these even in compact mode. Optional for
+    # legacy/manual producers; stored and response-qualified verdicts coexist.
+    verification_status: NotRequired[str | None]
+    verification_checked_at: NotRequired[str | None]
+    anchor_validity: NotRequired[float]
 
 
 class LearningEntryDict(LearningEntryCompactDict, total=False):
@@ -63,7 +68,6 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     protection_tier: str
     # Code-grounded anchors (PRD-CORE-111).
     anchors: list[dict[str, object]]
-    anchor_validity: float
     session_count: int
     # Bi-temporal validity (PRD-CORE-194 FR03). ``superseded`` surfaces WHY a
     # record is down-ranked/excluded; ``invalidated_by`` names the superseding

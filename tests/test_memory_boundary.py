@@ -1,7 +1,7 @@
 """Integration tests for the trw-mcp → trw-memory boundary.
 
 These tests target the serialization fragility at the adapter layer:
-- ``_learning_to_memory_entry`` maps summary→content, impact→importance
+- the store path maps summary→content, impact→importance
 - ``_memory_to_learning_dict`` reverses that mapping on read-back
 - Any regression in either direction breaks the entire learning store
 
@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from trw_memory.embeddings.provenance import EmbeddingSpace, StoredVector, VectorProvenance
 from trw_memory.exceptions import StorageError
 from trw_memory.models.memory import MemoryEntry
 
@@ -30,6 +31,18 @@ from trw_mcp.state.memory_adapter import (
     store_learning,
     update_learning,
 )
+
+
+def _qualified_vectors(backend, vector: list[float]) -> dict[str, StoredVector]:
+    """Deterministic test evidence, bound to real SQLite candidate text."""
+    space = EmbeddingSpace("a" * 64, "boundary-fixture-v1", len(vector))
+    return {
+        entry.id: StoredVector(
+            tuple(vector), VectorProvenance.for_vector(space, f"{entry.content} {entry.detail}", vector)
+        )
+        for entry in backend.list_entries(namespace="default")
+    }
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -125,8 +138,8 @@ class TestStorageErrorPropagation:
         ``list_entries`` candidate pool. The exception it "protected against"
         never fired, so the test proved nothing about the seam it named.
 
-        What is worth pinning is the routing fact itself: with an embedder
-        available, keyword ``search`` is not on the path. If that changes, the
+        What is worth pinning is the routing fact itself: with a qualified
+        embedder and compatible generation records, keyword ``search`` is not on the path. If that changes, the
         StorageError translation seam DOES become reachable and needs its own
         coverage — this test is the tripwire for that.
         """
@@ -134,10 +147,13 @@ class TestStorageErrorPropagation:
 
         embedder = MagicMock()
         embedder.embed.return_value = [0.1] * 384
+        embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
         embedder.available.return_value = True
         monkeypatch.setattr("trw_mcp.state._memory_connection.get_embedder", lambda: embedder)
 
         backend = get_backend(trw_dir)
+        records = _qualified_vectors(backend, [0.1] * 384)
+        monkeypatch.setattr(backend, "get_vector_records", lambda *args, **kwargs: records)
         search_calls: list[object] = []
 
         def raise_storage_error(*args: object, **kwargs: object) -> list[MemoryEntry]:
@@ -186,7 +202,7 @@ class TestFieldRenameRoundTrip:
     trw-mcp uses:  summary / impact  (learning API)
     trw-memory uses: content / importance  (storage layer)
 
-    _learning_to_memory_entry():  summary → content, impact → importance
+    store_learning():             summary → content, impact → importance
     _memory_to_learning_dict():   content → summary, importance → impact
 
     Any regression in either direction silently stores/returns data under the
@@ -319,12 +335,12 @@ class TestFieldRenameRoundTrip:
 
 
 class TestHybridSearchPath:
-    """P2-C: When LocalEmbeddingProvider is available, recall_learnings() must
+    """P2-C: With a qualified provider and generation records, recall_learnings() must
     exercise the hybrid (keyword + vector RRF) path rather than the keyword-only
     fallback. Tests that the embedder wiring in _search_entries is functional."""
 
     def test_hybrid_path_called_when_embedder_available(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """When an embedder is available, recall must exercise the hybrid pipeline.
+        """With qualified encoder/vector evidence, recall must exercise the hybrid pipeline.
 
         PRD-DIST-254 §FR03 follow-up: ``_search_entries`` now delegates to
         ``trw_memory.retrieval.pipeline.hybrid_search`` (BM25 + dense + RRF) — the
@@ -338,6 +354,10 @@ class TestHybridSearchPath:
         fixed_vector = [0.1] * 384
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = fixed_vector
+        mock_embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
+        backend = get_backend(trw_dir)
+        records = _qualified_vectors(backend, fixed_vector)
+        monkeypatch.setattr(backend, "get_vector_records", lambda *args, **kwargs: records)
         mock_embedder.available.return_value = True
 
         # Patch get_embedder at its definition site (local import in
@@ -407,6 +427,7 @@ class TestHybridSearchPath:
 
         mock_embedder = MagicMock()
         mock_embedder.embed.side_effect = RuntimeError("model load failed")
+        mock_embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
         mock_embedder.available.return_value = True
 
         # Patch definition site
@@ -417,7 +438,8 @@ class TestHybridSearchPath:
 
         try:
             results = recall_learnings(trw_dir, "exception fallback")
-            assert isinstance(results, list)
+            assert [entry["id"] for entry in results] == ["L-hyb003"]
+            mock_embedder.embed.assert_called_once_with("exception fallback")
         except RuntimeError:
             pytest.fail(
                 "RuntimeError from embedder.embed() propagated through _search_entries. "
@@ -489,6 +511,10 @@ class TestEmbeddingBackfill:
         fixed_vector = [0.5] * 384
         mock_embedder = MagicMock()
         mock_embedder.embed.return_value = fixed_vector
+        mock_embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
+        backend = get_backend(trw_dir)
+        records = _qualified_vectors(backend, fixed_vector)
+        monkeypatch.setattr(backend, "get_vector_records", lambda *args, **kwargs: records)
         mock_embedder.available.return_value = True
 
         monkeypatch.setattr(conn_mod, "_embedder", mock_embedder)
@@ -739,19 +765,34 @@ def test_kept_concern_check_fails_when_a_module_is_swept_away(tmp_path: Path) ->
 def test_no_memory_concern_is_reimplemented() -> None:
     """FR09 — the headline gate over the real tree.
 
-    Vacuous today by design: ``DELEGATED_CONCERNS`` is empty in Phase 1. The
-    companion tests below prove the mechanism on a planted tree so that
-    emptiness cannot be mistaken for a clean tree.
+    No longer vacuous: Phase 2 armed the store concern, so this scan now has
+    something to find. The companion tests below still prove the mechanism on a
+    planted tree, because a pass here is a pass over the concerns registered so
+    far, not over every memory concern.
     """
     assert _load_gate().scan_reimplementations() == []
 
 
 @monorepo_only
-def test_the_ratchet_is_honest_about_being_unarmed() -> None:
-    """Phase 1 arms nothing; a later phase that forgets to register its concern is visible here."""
-    assert _load_gate().DELEGATED_CONCERNS == (), (
-        "DELEGATED_CONCERNS is no longer empty — update this test with the phase that armed it, "
-        "and confirm the concern's trw-mcp implementation was actually deleted."
+def test_the_ratchet_is_armed_with_the_phases_that_shipped() -> None:
+    """A phase that delegates a concern but forgets to register it is visible here.
+
+    Phase 2 (FR03) is the store concern. Each later phase adds its own entry in
+    the change that lands it; the assertion is on the phases DELEGATED, so a
+    registration that runs ahead of the delegation fails just as loudly as one
+    that lags behind it.
+    """
+    concerns = _load_gate().DELEGATED_CONCERNS
+    assert {concern.phase for concern in concerns} == {2}, (
+        "DELEGATED_CONCERNS no longer matches the phases that have shipped — register the "
+        "concern in the change that delegates it, and confirm its trw-mcp implementation "
+        "was actually deleted."
+    )
+    store = next(concern for concern in concerns if concern.name == "store")
+    assert store.owner == "trw_memory.tools.store.memory_store_impl"
+    assert "_learning_to_memory_entry" in store.symbols, (
+        "the retired hand builder must stay in the ratchet — re-introducing it is exactly "
+        "the second-write-path regression FR03 removed"
     )
 
 
@@ -798,20 +839,29 @@ def test_an_allowlisted_module_may_define_a_delegated_symbol(tmp_path: Path) -> 
 
 
 @monorepo_only
-def test_trw_mcp_imports_no_tool_surface_module_yet() -> None:
-    """Measured 2026-09-03 and re-measured here: Phase 1 wires no delegation.
+def test_the_store_path_is_the_first_tool_surface_importer() -> None:
+    """PRD-CORE-251 Phase 2 landed the first delegation; Phase 1 measured zero.
 
-    This is the counter FR09 hands to the floor check. When Phase 2 lands the
-    first import, this test is the one that must be updated — deliberately, in
-    the change that raises the floor.
+    This is the counter FR09 hands to the floor check, and it is now non-zero,
+    which is what ARMS that check. Each later phase adds importers; this asserts
+    the store path is among them rather than pinning an exact list.
     """
-    assert _load_gate().count_tool_surface_imports() == []
+    importers = _load_gate().count_tool_surface_imports()
+    assert "state/memory_adapter.py" in importers, importers
 
 
 @monorepo_only
-def test_the_floor_check_is_inert_until_the_first_delegation() -> None:
-    """No import, no floor requirement — a premature raise makes trw-mcp unresolvable."""
-    assert _load_gate().check_delegation_floor() == []
+def test_the_declared_floor_covers_the_live_delegation() -> None:
+    """With a live importer the floor check is armed, and the declared floor clears it.
+
+    Phase 1 could only assert this check was inert. It is now evaluated against
+    the real tree and the real pyproject: a floor below the release that first
+    ships ``MemoryToolSurface`` would fail HERE rather than at a user's first
+    tool call.
+    """
+    gate = _load_gate()
+    assert gate.count_tool_surface_imports(), "no importer — this assertion would be vacuous"
+    assert gate.check_delegation_floor() == []
 
 
 @monorepo_only

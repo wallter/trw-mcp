@@ -1,8 +1,14 @@
-"""Boost-factor coverage for CORE-116 recall scoring."""
+"""CORE-116 RA2: positive preferences break ties; anchor evidence qualifies relevance."""
 
 from __future__ import annotations
 
 from tests._core_116_recall_scoring_support import _make_entry, _score_of
+
+
+def _preference_of(ranked: list[dict[str, object]], index: int = 0) -> float:
+    """Positive context changes only the secondary score, never relevance."""
+    assert _score_of(ranked, index) == 1.0
+    return float(str(ranked[index]["preference_score"]))
 
 
 class TestDomainBoost:
@@ -17,14 +23,15 @@ class TestDomainBoost:
 
         ctx = RecallContext(inferred_domains={"payments"})
         ranked = rank_by_utility(
-            [entry_match, entry_no],
+            [entry_no, entry_match],
             query_tokens=["payments"],
             lambda_weight=0.3,
             context=ctx,
         )
 
-        scores = {str(r["id"]): _score_of([r]) for r in ranked}
+        scores = {str(r["id"]): _preference_of([r]) for r in ranked}
         assert scores["L-match"] > scores["L-no"]
+        assert ranked[0]["id"] == "L-match"
 
     def test_domain_boost_no_match(self) -> None:
         """Entry with non-matching domain gets 1.0x (no boost)."""
@@ -36,7 +43,7 @@ class TestDomainBoost:
         result_ctx = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert abs(_score_of(result_ctx) - _score_of(result_no)) < 1e-6
+        assert abs(_preference_of(result_ctx) - _preference_of(result_no)) < 1e-6
 
 
 class TestPhaseBoost:
@@ -52,7 +59,7 @@ class TestPhaseBoost:
         result_ctx = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert _score_of(result_ctx) > _score_of(result_no)
+        assert _preference_of(result_ctx) > _preference_of(result_no)
 
     def test_phase_boost_case_insensitive(self) -> None:
         """Phase matching is case-insensitive: 'validate' matches 'VALIDATE'."""
@@ -64,7 +71,7 @@ class TestPhaseBoost:
         result = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx_lower)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert _score_of(result) > _score_of(result_no)
+        assert _preference_of(result) > _preference_of(result_no)
 
 
 class TestTeamBoost:
@@ -80,7 +87,7 @@ class TestTeamBoost:
         result_ctx = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert _score_of(result_ctx) > _score_of(result_no)
+        assert _preference_of(result_ctx) > _preference_of(result_no)
 
     def test_team_boost_empty_string(self) -> None:
         """Empty team string in context produces no boost."""
@@ -92,7 +99,7 @@ class TestTeamBoost:
         result_ctx = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert abs(_score_of(result_ctx) - _score_of(result_no)) < 1e-6
+        assert abs(_preference_of(result_ctx) - _preference_of(result_no)) < 1e-6
 
 
 class TestPrdBoost:
@@ -108,7 +115,7 @@ class TestPrdBoost:
         result_ctx = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert _score_of(result_ctx) > _score_of(result_no)
+        assert _preference_of(result_ctx) > _preference_of(result_no)
 
     def test_prd_boost_not_in_set(self) -> None:
         """Entry not in prd_knowledge_ids gets no PRD boost."""
@@ -120,7 +127,7 @@ class TestPrdBoost:
         result_ctx = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_no = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert abs(_score_of(result_ctx) - _score_of(result_no)) < 1e-6
+        assert abs(_preference_of(result_ctx) - _preference_of(result_no)) < 1e-6
 
 
 class TestAnchorValidity:
@@ -197,9 +204,13 @@ class TestCombinedBoosts:
         result_all = rank_by_utility([entry_all], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
         result_none = rank_by_utility([entry_none], query_tokens=["payments"], lambda_weight=0.3, context=ctx)
 
-        score_all = _score_of(result_all)
-        score_none = _score_of(result_none)
-        assert score_all > score_none * 2.0
+        score_all = _preference_of(result_all)
+        score_none = _preference_of(result_none)
+        assert abs(score_all / score_none - 1.4 * 1.3 * 1.2 * 1.5) < 0.01
+        # Reverse the input so a passing tie-break cannot be a stable-sort accident.
+        ranked = rank_by_utility([entry_none, entry_all], ["payments"], 0.3, context=ctx)
+        assert ranked[0]["id"] == "L-all"
+        assert _score_of(ranked, 0) == _score_of(ranked, 1)
 
     def test_no_context_all_boosts_neutral(self) -> None:
         """context=None produces same scores as having no context at all."""
@@ -214,4 +225,4 @@ class TestCombinedBoosts:
         result_none = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3, context=None)
         result_omit = rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
-        assert abs(_score_of(result_none) - _score_of(result_omit)) < 1e-6
+        assert abs(_preference_of(result_none) - _preference_of(result_omit)) < 1e-6

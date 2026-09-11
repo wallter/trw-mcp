@@ -38,11 +38,8 @@ from trw_mcp.middleware._phase_session import (
     safe_session_id_from_context,
 )
 from trw_mcp.middleware._phase_transitions import (
-    client_supports_list_changed,
     detect_transition,
     emit_list_changed,
-    resolve_transition_action,
-    set_list_changed_capability,
 )
 from trw_mcp.models.phase_policy import (
     DEFAULT_PHASE_POLICY,
@@ -54,27 +51,6 @@ from trw_mcp.models.phase_policy import (
 logger = structlog.get_logger(__name__)
 
 _DEFAULT_PHASE = "RESEARCH"
-
-
-def _advertises_list_changed(message: object) -> bool:
-    """Best-effort: did the client advertise ``tools.listChanged`` support?
-
-    The MCP client capability surface does not expose a first-class tools
-    capability today, so we probe the ``experimental`` capability bag for a
-    ``tools.listChanged`` opt-in. Absence → False (the safe default; the
-    profile's ``on_transition`` policy then governs the refresh path).
-    """
-    try:
-        capabilities = getattr(message, "capabilities", None)
-        experimental = getattr(capabilities, "experimental", None)
-        if isinstance(experimental, dict):
-            tools_cap = experimental.get("tools")
-            if isinstance(tools_cap, dict):
-                return bool(tools_cap.get("listChanged"))
-            return bool(experimental.get("tools.listChanged"))
-        return False
-    except Exception:  # justified: fail-open — unknown capability shape → unsupported
-        return False
 
 
 def resolve_active_phase(
@@ -199,69 +175,17 @@ class PhaseExposureMiddleware(Middleware):
             return self._policy_override
         return _resolve_policy(session_id=session_id, fastmcp_context=fastmcp_context)
 
-    async def on_initialize(
-        self,
-        context: MiddlewareContext[Any],
-        call_next: CallNext[Any, Any],
-    ) -> Any:
-        """Persist the client's advertised tools.listChanged capability (FR05b).
-
-        Best-effort: clients rarely advertise this explicitly, so absence
-        defaults to unsupported and the per-profile ``on_transition`` policy
-        decides the refresh path on a transition.
-        """
-        result = await call_next(context)
-        try:
-            ctx = context.fastmcp_context
-            session_id = safe_session_id_from_context(ctx)
-            if session_id:
-                set_list_changed_capability(session_id, advertised=_advertises_list_changed(context.message))
-        except Exception:  # justified: fail-open — capability capture is advisory
-            logger.warning("phase_capability_capture_failed", exc_info=True)
-        return result
-
     async def _on_phase_transition(self, *, session_id: str, phase: str, ctx: object | None) -> None:
-        """Refresh the client tool view on a phase transition (FR04/FR05b).
+        """Best-effort standard notification on a newly observed phase.
 
-        Resolves the (advertised capability × profile on_transition) action and
-        either emits ``notifications/tools/list_changed`` (notify), records the
-        ``X-Phase-Changed`` reconnect signal (require_reconnect), or no-ops
-        (silent). Fail-open throughout.
+        Emission is not proof of client refresh. Legacy ``on_transition``
+        profile metadata does not control this protocol notification.
         """
         try:
-            if not detect_transition(session_id, phase):
-                return
-            advertised = client_supports_list_changed(session_id)
-            action = resolve_transition_action(advertised=advertised, on_transition=self._on_transition_policy())
-            if action == "notify":
-                # FR04/FR05b notify path: emit notifications/tools/list_changed
-                # (session capability key: tools_list_changed) so capable
-                # clients re-fetch tools/list after the transition.
+            if detect_transition(session_id, phase):
                 await emit_list_changed(ctx)
-            elif action == "require_reconnect":
-                # The transport layer surfaces ``X-Phase-Changed`` so the client
-                # reconnects and re-fetches tools/list (FR05b reconnect path).
-                logger.info(
-                    "phase_transition_require_reconnect",
-                    component="phase_exposure",
-                    op="on_transition",
-                    session_id=session_id,
-                    phase=phase,
-                    header="X-Phase-Changed",
-                )
-            # silent → no notification; stale cache until next connect.
-        except Exception:  # justified: fail-open — refresh must not break list_tools
+        except Exception:  # justified: advisory refresh must not break dispatch
             logger.warning("phase_transition_refresh_failed", exc_info=True)
-
-    @staticmethod
-    def _on_transition_policy() -> str:
-        try:
-            from trw_mcp.models.config import get_config
-
-            return str(getattr(get_config().client_profile, "on_transition", "require_reconnect"))
-        except Exception:  # justified: fail-open — default to the safest policy
-            logger.warning("phase_on_transition_resolve_failed", exc_info=True)
-            return "require_reconnect"
 
     async def on_list_tools(
         self,
@@ -308,29 +232,39 @@ class PhaseExposureMiddleware(Middleware):
             session_id = safe_session_id_from_context(ctx)
             phase = resolve_active_phase(session_id=session_id, fastmcp_context=ctx)
             visible = self._policy(session_id=session_id, fastmcp_context=ctx).list_for(phase) | RIGID_TOOLS
-            if tool_name in visible:
-                return await call_next(context)
-            # Masked: an active single-use override grants exactly one call.
-            if self._consume_override(session_id, tool_name):
-                logger.info(
-                    "phase_override_call_allowed",
-                    component="phase_exposure",
-                    op="call_tool",
-                    session_id=session_id,
-                    tool=tool_name,
-                    phase=phase,
-                )
-                return await call_next(context)
-            self._emit_mask_event(
-                session_id=session_id,
-                fastmcp_context=ctx,
-                tool_name=tool_name,
-                phase=phase,
-            )
-            return self._deny(tool_name=tool_name, phase=phase, available=visible)
-        except Exception:  # justified: fail-open — execute rather than wrongly block
+            if tool_name not in visible:
+                # Masked: an active single-use override grants exactly one call.
+                if self._consume_override(session_id, tool_name, context):
+                    logger.info(
+                        "phase_override_call_allowed",
+                        component="phase_exposure",
+                        op="call_tool",
+                        session_id=session_id,
+                        tool=tool_name,
+                        phase=phase,
+                    )
+                else:
+                    self._emit_mask_event(
+                        session_id=session_id,
+                        fastmcp_context=ctx,
+                        tool_name=tool_name,
+                        phase=phase,
+                    )
+                    return self._deny(tool_name=tool_name, phase=phase, available=visible)
+        except Exception:  # justified: fail-open policy evaluation, never redispatch handlers
             logger.warning("phase_exposure_call_failed", outcome="fail_open", tool=tool_name, exc_info=True)
+        try:
             return await call_next(context)
+        finally:
+            # Handlers may change the phase even when they raise. Observe after
+            # the single dispatch, without replacing its result or exception.
+            try:
+                ctx = context.fastmcp_context
+                session_id = safe_session_id_from_context(ctx)
+                phase = resolve_active_phase(session_id=session_id, fastmcp_context=ctx)
+                await self._on_phase_transition(session_id=session_id, phase=phase, ctx=ctx)
+            except Exception:  # justified: advisory observation cannot break the handler
+                logger.warning("phase_transition_observation_failed", exc_info=True)
 
     # ── override helpers ────────────────────────────────────────────────
 
@@ -347,11 +281,11 @@ class PhaseExposureMiddleware(Middleware):
             return frozenset()
 
     @staticmethod
-    def _consume_override(session_id: str, tool_name: str) -> bool:
+    def _consume_override(session_id: str, tool_name: str, request: object | None = None) -> bool:
         try:
             from trw_mcp.tools.phase_overrides import consume_override
 
-            return consume_override(session_id, tool_name)
+            return consume_override(session_id, tool_name, request)
         except Exception:  # justified: fail-open — no override consumed on error
             logger.warning("phase_override_consume_failed", exc_info=True)
             return False

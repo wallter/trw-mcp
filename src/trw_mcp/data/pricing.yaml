@@ -7,7 +7,9 @@
 #
 # Rates are USD per 1K tokens, matching Anthropic's public pricing page.
 # Conventions across every row: cache_write = 1.25x input (5-minute TTL),
-# cache_read = 0.1x input.
+# cache_read = 0.1x input -- EXCEPT the Fable/Mythos 5.1 line, whose cache
+# reads are 0.025x input. Do not assume 0.1x when adding a row; check the
+# vendor page. (Verified 2026-09-10.)
 #
 # Keys are bare model aliases. The lookup normalises the incoming id
 # before matching (telemetry/tool_call_timing.py::_usd_cost_estimate), so
@@ -19,7 +21,7 @@
 # `pricing_model_unknown` once per distinct id. Add the row rather than
 # leaving a real cost reported as free.
 
-version: "2026-07-26"
+version: "2026-09-10"
 
 models:
   # --- Frontier tier -------------------------------------------------
@@ -36,6 +38,29 @@ models:
     output_per_1k: 0.050
     cache_write_per_1k: 0.0125
     cache_read_per_1k: 0.001
+
+  # trw:intentional Released 2026-09-01. Same $10/$50 sticker as Fable 5, but
+  # cache reads are 0.025x input, NOT the 0.1x every other row uses -- the one
+  # place this table's stated convention does not hold. An explicit key is
+  # required: without it the `-`-boundary prefix match resolves
+  # `claude-fable-5-1` onto `claude-fable-5` and over-reports cache reads 4x.
+  # Source: platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1
+  claude-fable-5-1:
+    input_per_1k: 0.010
+    output_per_1k: 0.050
+    cache_write_per_1k: 0.0125
+    cache_read_per_1k: 0.00025
+
+  # ASSUMED identical to Fable 5.1, NOT independently sourced. Mythos is invite-only
+  # (Project Glasswing), so its cache-read rate has no public page to cite the way
+  # Fable 5.1's does. The 0.025x below is inherited from its sibling on the strength
+  # of the corpus describing the two as sharing specs and pricing — treat as a
+  # working assumption and re-check if a Mythos cost estimate ever matters.
+  claude-mythos-5-1:
+    input_per_1k: 0.010
+    output_per_1k: 0.050
+    cache_write_per_1k: 0.0125
+    cache_read_per_1k: 0.00025
 
   # --- Opus tier ($5/$25 per MTok across the whole line) --------------
   claude-opus-5:
@@ -67,14 +92,18 @@ models:
 
   # --- Sonnet tier ---------------------------------------------------
   # Standard rates. Sonnet 5 carries introductory pricing of $2/$10 per
-  # MTok through 2026-08-31; this table has no time dimension, so it
-  # states the durable rate — over-reporting slightly until then rather
-  # than under-reporting from 2026-09-01 onward.
+  # Corrected 2026-09-10: this row previously held 0.003/0.015 on the premise
+  # that $2/$10 was introductory through 2026-08-31 and $3/$15 was the durable
+  # rate. That premise is false. Anthropic's pricing page (note id
+  # `claude-sonnet-5-introductory-pricing`) states the $2/$10 rate "is now the
+  # standard price" and "the previously scheduled increase to $3/$15 ... on
+  # September 1, 2026 will not occur." The old row over-reported every Sonnet 5
+  # cost estimate by 1.5x. Batch table ($1/$5) agrees.
   claude-sonnet-5:
-    input_per_1k: 0.003
-    output_per_1k: 0.015
-    cache_write_per_1k: 0.00375
-    cache_read_per_1k: 0.0003
+    input_per_1k: 0.002
+    output_per_1k: 0.010
+    cache_write_per_1k: 0.0025
+    cache_read_per_1k: 0.0002
 
   claude-sonnet-4-6:
     input_per_1k: 0.003

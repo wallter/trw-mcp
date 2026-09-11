@@ -56,16 +56,6 @@ def _check_implement_input(
     failures: list[ValidationFailure],
 ) -> None:
     """Check IMPLEMENT phase input prerequisites."""
-    plan_path = run_path / "reports" / "plan.md"
-    if not plan_path.exists():
-        failures.append(
-            ValidationFailure(
-                field="plan.md",
-                rule="plan_exists",
-                message="Plan document not found — complete plan phase first",
-                severity=severity,
-            )
-        )
     manifest_path = run_path / "shards" / "manifest.yaml"
     if not manifest_path.exists():
         failures.append(

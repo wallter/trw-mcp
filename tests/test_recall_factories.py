@@ -49,7 +49,7 @@ def test_recall_focused_pins_min_impact(tmp_path: Path) -> None:
     kwargs = _captured_call.kwargs  # type: ignore[attr-defined]
     assert kwargs["query"] == "auth scoring"
     assert kwargs["min_impact"] == 0.3
-    assert kwargs["compact"] is True
+    assert kwargs["compact"] is False
     assert kwargs["max_results"] == 10
     assert kwargs["status"] == "active"
 

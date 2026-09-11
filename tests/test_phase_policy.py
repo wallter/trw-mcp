@@ -10,20 +10,24 @@ These tests prove:
   - ``list_for(phase)`` returns phase subset ∪ Safe Set,
   - the rigid tools live in the Safe Set,
   - none of the FIX-076-removed tools appear anywhere,
-  - every registered tool (read live from build/inventory.json) is covered.
+  - every public registered tool is covered, independently of monorepo inventory,
+  - operator-only registrations do not enter the default agent phase policy.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
+import pytest
+
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.models.phase_policy import (
     DEFAULT_PHASE_POLICY,
     RIGID_TOOLS,
     PhaseToolPolicy,
     from_resolved_allowlist,
 )
+from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS
 
 # Tools that PRD-FIX-076 removed; they must never appear in any phase bucket.
 _FIX_076_REMOVED = frozenset(
@@ -39,7 +43,7 @@ _FIX_076_REMOVED = frozenset(
 def _inventory_tool_names() -> set[str]:
     """Read the live tool catalogue from build/inventory.json at test time."""
     # tests/ -> trw-mcp/ -> repo root
-    root = Path(__file__).resolve().parents[2]
+    root = MONOREPO_ROOT or PACKAGE_ROOT.parent
     data = json.loads((root / "build" / "inventory.json").read_text())
     return {t["name"] for t in data["tools"]}
 
@@ -115,16 +119,31 @@ def test_default_policy_excludes_fix076_removed_tools() -> None:
     assert all_named.isdisjoint(_FIX_076_REMOVED)
 
 
-def test_all_tool_names_are_registered() -> None:
-    """FR01: every registered MCP tool (build/inventory.json) is covered.
+@pytest.mark.parametrize(
+    "catalogue",
+    ["runtime", pytest.param("monorepo-inventory", marks=requires_monorepo)],
+)
+def test_all_tool_names_are_registered(catalogue: str) -> None:
+    """FR01: cover public registrars everywhere and monorepo inventory independently.
 
-    Reading the inventory manifest at test time means a newly-registered tool
-    forces a policy update via CI failure (the maintainability gate).
+    Neither source is a fallback for the other: a missing inventory still fails
+    in a recognized monorepo, and shipped registrars are always exercised.
     """
-    registered = _inventory_tool_names()
+    if catalogue == "runtime":
+        from trw_mcp.server._tools import raw_registered_tool_names
+
+        raw_registered = set(raw_registered_tool_names())
+        assert OPERATOR_ONLY_TOOLS <= raw_registered
+        # The inventory and default phase policy cover the public agent surface,
+        # not operator-only registrations. Use the production authority, not a
+        # test-specific exemption list; full registrar/manifest parity is separate.
+        registered = raw_registered - OPERATOR_ONLY_TOOLS
+    else:
+        registered = _inventory_tool_names()
     covered = set(DEFAULT_PHASE_POLICY.safe_set)
     for tools in DEFAULT_PHASE_POLICY.allowed_tools_by_phase.values():
         covered.update(tools)
+    assert covered.isdisjoint(OPERATOR_ONLY_TOOLS)
     missing = registered - covered
     assert not missing, f"tools not in any phase set or Safe Set: {sorted(missing)}"
     # No dangling policy names that aren't real tools.

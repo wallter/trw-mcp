@@ -241,7 +241,9 @@ class TestRecallCompactMode:
         assert result["count"] == len(result["learnings"])
         assert "trw_session_start" in result["ceremony_hint"]
         assert result["learnings"]
-        assert set(result["learnings"][0].keys()) == {"id", "summary"}
+        assert set(result["learnings"][0].keys()) == {"id", "summary", "verification_evidence"}
+        assert result["learnings"][0]["verification_evidence"]["observation"] == "unknown"
+        assert result["learnings"][0]["verification_evidence"]["current_tree_verified"] is False
 
     def test_recall_ultra_compact_truncates_oversized_summaries(self, tmp_path: Path) -> None:
         """FR09: ultra_compact compacts long summaries to stay within the token budget."""

@@ -50,7 +50,8 @@ class RecallContextDict(TypedDict, total=False):
 class RecallResultDict(TypedDict, total=False):
     """Return shape of ``trw_recall`` MCP tool."""
 
-    remote_recall: dict[str, object]  # present only when the remote leg was incomplete or failed (P5)
+    remote_recall: dict[str, object]  # remote failure/incompleteness or unevaluated temporal coverage
+    retrieval_warning: str  # semantic initialization was not awaited on the interactive path
 
     query: str
     learnings: list[dict[str, object]]
@@ -97,6 +98,8 @@ class RunStatusDict(TypedDict, total=False):
     # pre-compact state so the post-compaction session resumes exactly.
     directive: str
     context_anchor: str
+    # CORE269 FR04: explicit-read location only; not recovered/accepted work.
+    checkpoint_log_path: str
 
 
 class SessionStartResultDict(TypedDict, total=False):
@@ -327,11 +330,11 @@ class BuildCheckResultDict(TypedDict, total=False):
     PRD-FIX-088 FR03: ``step_durations_ms`` mirrors the
     ``SessionStartResultDict`` precedent set by PRD-FIX-084. Keys
     populated on the success path: persist, run_resolve, log_event,
-    q_learning_dispatch, finalize, total.
+    finalize, total.
 
-    PRD-FIX-088 FR01: ``q_learning_deferred`` is ALWAYS present when
-    Q-learning was scheduled (which is now every successful call,
-    not only under writer pressure).
+    Legacy optional Q-learning fields remain readable for compatibility.
+    The current build tool schedules no temporal-Q attribution and omits
+    ``q_learning_deferred``; absence is not a failed or queued operation.
     """
 
     tests_passed: bool
@@ -367,6 +370,7 @@ class LearnResultDict(TypedDict, total=False):
     Optional on recorded path: ``distribution_warning``, ``ceremony_status``,
     ``impact``, ``tags``.
     Present on skip (dedup): ``duplicate_of``, ``similarity``.
+    Incomplete or skipped retirement: ``consolidation_warning``.
     Present on rejection (noise filter): ``reason``, ``message``.
     """
 
@@ -374,6 +378,7 @@ class LearnResultDict(TypedDict, total=False):
     status: str  # "recorded" | "skipped" | "rejected"
     path: str
     distribution_warning: str
+    consolidation_warning: str
     ceremony_status: str
     # Populated when impact/tags are surface-returned (delivery path)
     impact: NotRequired[float]
@@ -569,6 +574,7 @@ class ToolEventDataDict(TypedDict, total=False):
 
     tool_name: str
     duration_ms: float
+    learn_stage_ms: dict[str, float]
     success: bool
     status: str
     agent_id: str

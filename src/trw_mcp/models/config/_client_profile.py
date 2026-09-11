@@ -201,13 +201,10 @@ class ClientProfile(BaseModel):
     # field only carries the per-profile name/opt-out metadata.
     feedback_skill: str | None = "trw-feedback"
 
-    # -- Phase-aware tool exposure (PRD-INTENT-002 FR04/FR05b) --
-    # Behavior when the active phase transitions and the client did NOT
-    # advertise the `tools.listChanged` capability. `notify` emits anyway
-    # (best-effort); `require_reconnect` signals a reconnect; `silent` leaves
-    # the stale cache until the next connect. Default `require_reconnect` is
-    # the safest (guarantees the client's tool view matches server state after
-    # reconnect) per FR05b.
+    # Legacy profile compatibility (PRD-INTENT-002 FR05b, superseded 2026-09-07).
+    # Accepted and serialized for existing configs, but no longer controls
+    # refresh. Phase changes use standard best-effort list_changed notifications;
+    # none of these values proves client refresh or closes the transport.
     on_transition: Literal["notify", "require_reconnect", "silent"] = "require_reconnect"
 
     # -- Tool namespace rendering (PRD-FIX-078) --

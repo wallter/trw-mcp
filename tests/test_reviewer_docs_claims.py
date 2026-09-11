@@ -91,12 +91,12 @@ def test_the_documented_posture_claims_only_what_was_measured() -> None:
     assert "approval policy" in text and "not a control" in text
 
 
-def test_changelog_entry_sits_under_the_unpublished_2_0_0_header() -> None:
+def test_changelog_entry_remains_in_its_2_0_0_release_section() -> None:
     text = _text(_CHANGELOG)
     assert "PRD-SEC-015" in text
-    unreleased = text.index("## [Unreleased]")
     two_oh = text.index("## [2.0.0]")
     entry = text.index("PRD-SEC-015")
-    assert unreleased < two_oh < entry, "the entry must sit under the UNPUBLISHED [2.0.0] header"
+    # SEC015 FR11 amendment: later releases must not invalidate this history.
+    assert two_oh < entry, "the entry must remain under its [2.0.0] release header"
     next_header = text.index("\n## [", two_oh + 1)
     assert entry < next_header, "the entry drifted into an older release section"

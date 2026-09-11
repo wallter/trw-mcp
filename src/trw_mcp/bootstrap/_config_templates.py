@@ -134,7 +134,7 @@ This file provides guidance to AI coding clients when working with code in this 
 TRW tools help you build effectively and preserve your work across sessions:
 - **Start**: call `trw_session_start()` to load prior learnings and recover any active run
 - **Start**: read `.trw/frameworks/FRAMEWORK-CORE.md` — it defines the methodology your tools implement
-- **Finish**: call `trw_deliver()` to persist your learnings for future sessions
+- Preserve material unfinished work with a checkpoint or durable native handoff and a next-read pointer. Nothing material to preserve: do not manufacture artifacts. Use trw_deliver only for completed-work acceptance under unchanged delivery gates; recorded learnings already persist.
 
 ### Framework Reference
 
@@ -172,16 +172,16 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | Any | `trw_checkpoint` | After milestones — preserves progress across compactions |
 | VALIDATE | `trw_build_check` | Before delivery — records project-native validation results |
 | DELIVER | `trw_instructions_sync` | At delivery — refreshes the client instruction file |
-| DELIVER | `trw_deliver` | At task completion — persists everything in one call |
+| DELIVER | `trw_deliver` | For completed-work acceptance under the delivery gates |
 
 ### Example Flows
 
-**Quick Task** (no run needed):
+**Completed Quick Task** (no run needed):
 ```
 trw_session_start -> work -> trw_learn (if discovery) -> trw_deliver()
 ```
 
-**Full Run**:
+**Completed Full Run**:
 ```
 trw_session_start -> trw_init(task_name, prd_scope)
   -> work + trw_checkpoint (periodic) + trw_learn (discoveries)

@@ -11,7 +11,9 @@ TRW still never auto-selects xhigh/max; recommendation happens upstream in
 task-profile resolution. The catalog only changes the mapping decision, and
 every decision remains advice — never a claim of harness application.
 
-Provenance: Anthropic model docs verified 2026-07-09, re-verified and
+Provenance: see the dated ``trw:intentional`` blocks below and
+ANTHROPIC_MODEL_CATALOG_VERSION -- one place to check, not two. Originally
+verified 2026-07-09, re-verified and
 extended 2026-07-26 (Claude Opus 5 + Sonnet 4.5 entries). Each entry records what
 the vendor's published API accepts, so a change is a re-read of those model docs —
 not a tuning decision.
@@ -26,7 +28,7 @@ from trw_mcp.models.task_profile_types import ExecutionEffort
 # Bump when entries change so adapter decision identities change with it.
 # Date-precise (not month-precise): two entry changes inside one calendar
 # month must still produce two distinct decision identities.
-ANTHROPIC_MODEL_CATALOG_VERSION = "anthropic-models-2026-07-26"
+ANTHROPIC_MODEL_CATALOG_VERSION = "anthropic-models-2026-09-10"
 
 _FULL_EFFORT: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "xhigh", "max"})
 _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max"})
@@ -42,7 +44,19 @@ _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max
 # (fetched 2026-07-09) include Opus 4.6 + Sonnet 4.6 under `max` but exclude
 # both from `xhigh`; Opus 4.5 supports neither. See
 # docs/documentation/prompting/claude-5-sources/RAW-AGENT-REPORTS-2026-07-09.md.
+#
+# trw:intentional `claude-fable-5-1` and `claude-mythos-5-1` are declared
+# EXPLICITLY even though the `-`-boundary match above would resolve them onto
+# `claude-fable-5` / `claude-mythos-5` and happen to give the right answer.
+# Prefix inheritance is silent: a point release that NARROWED its effort set
+# would keep declaring the predecessor's wider one, and this catalog is
+# load-bearing precisely because an unsupported effort value *errors* rather
+# than being ignored. Declare each point release deliberately.
+# Verified 2026-09-10: both support the full low..max ladder, default `high`.
+# Source: platform.claude.com/docs/en/build-with-claude/effort
 _ANTHROPIC_EFFORT_CAPABILITIES: dict[str, frozenset[ExecutionEffort]] = {
+    "claude-fable-5-1": _FULL_EFFORT,
+    "claude-mythos-5-1": _FULL_EFFORT,
     "claude-fable-5": _FULL_EFFORT,
     "claude-mythos-5": _FULL_EFFORT,
     "claude-opus-5": _FULL_EFFORT,

@@ -200,9 +200,9 @@ The first group is classic RE; the second (A1–A5) is the set TRW has learned t
 
 ### Lifecycle
 ```
-create → groom → risk/tier-required review → exec-plan → IMPLEMENT → VALIDATE → REVIEW when required → DELIVER → audit
+create → groom requirements + plan → risk/tier-required review of both → IMPLEMENT → VALIDATE → REVIEW when required → DELIVER → audit
 ```
-In the TRW reference: `trw_prd_create` → grooming → independent review when risk/tier requires it → execution planning → sprint execution → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit for P0/P1. Client adapters MAY provide shorthand for the middle stages; light clients use the MCP tools or the manual lifecycle. Sprint grouping is also an adapter concern. The grooming gate is “ready for review” (the score); the **verified-closure** standard is §6.2, while FRAMEWORK.md owns delivery and override semantics.
+In the TRW reference: `trw_prd_create` → requirements and execution-plan authoring → independent review when risk/tier requires it → implementation (optionally grouped in a sprint) → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit for P0/P1. Client adapters MAY provide shorthand for the middle stages; light clients use the MCP tools or the manual lifecycle. Sprint grouping is also an adapter concern. The grooming gate is “ready for review” (the score); the **verified-closure** standard is §6.2, while FRAMEWORK.md owns delivery and override semantics.
 
 **Implementation-start gate** (the inverse of A3): if a PRD lacks acceptance criteria, declared verification methods, or objective pass conditions (§2.5) when implementation begins, STOP and groom before writing code. A3 catches false completion at the end; this catches unverifiable scope at the start.
 

@@ -9,13 +9,10 @@ Generates and smart-merges repo-scoped Codex artifacts:
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 import sys
-from collections.abc import Coroutine
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Protocol, TypeVar, cast
+from typing import cast
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -71,11 +68,11 @@ _CODEX_AGENTS_DIR = ".codex/agents"
 _CODEX_CONFIG_PATH = ".codex/config.toml"
 _CODEX_HOOKS_PATH = ".codex/hooks.json"
 _CODEX_SKILLS_DIR = ".agents/skills"
+_READINESS_PHASES = frozenset({"trw-prd-groom", "trw-prd-review", "trw-exec-plan"})
 _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
 _TRW_PROJECT_DOC = "AGENTS.md"
 _LEGACY_PROJECT_DOC = "CLAUDE.md"
 _TRW_TOOL_PREFIX = "trw_"
-_AsyncResultT = TypeVar("_AsyncResultT")
 
 __all__ = [
     "BootstrapFileResult",
@@ -133,12 +130,6 @@ def _codex_skills_source_dir() -> Path:
     return _codex_data_dir() / "skills"
 
 
-class _NamedTool(Protocol):
-    """Protocol for FastMCP tool metadata returned by list_tools()."""
-
-    name: str
-
-
 def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry:
     """Return the TRW MCP server entry for Codex config.
 
@@ -174,19 +165,6 @@ def _docs_mcp_server_entry() -> CodexMcpServerEntry:
     return {"url": "https://developers.openai.com/mcp", "enabled": True}
 
 
-def _run_async(coro: Coroutine[object, object, _AsyncResultT]) -> _AsyncResultT:
-    """Run an async coroutine from sync bootstrap code."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None and loop.is_running():
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            return pool.submit(asyncio.run, coro).result()
-    return asyncio.run(coro)
-
-
 def _registered_trw_tool_names() -> list[str]:
     """Return the FULL set of TRW MCP tool names for Codex's enabled_tools.
 
@@ -196,11 +174,11 @@ def _registered_trw_tool_names() -> list[str]:
     ``SurfaceAuthorityMiddleware`` (PRD-CORE-218), so a bounded resolution would
     otherwise truncate the Codex config and silently hide tools from Codex users.
 
-    We therefore UNION the live server's tools with the authoritative full
-    eligible public surface (``eligible_tool_names()``, the CORE-218 manifest
-    SSOT). The union ensures Codex always sees the full curated set regardless of
-    the resolved surface, while still surfacing any registered tool beyond the
-    manifest that appears in the live view.
+    The authoritative eligible public manifest supplies this installation list.
+    Do not dispatch live list_tools middleware during bootstrap. Unmanifested
+    live TRW registrations are intentionally excluded; extensions must declare
+    eligibility at the manifest boundary. Registry imports can still initialize
+    server machinery, so this is not a server-free import guarantee.
 
     Why no REVIEWER variant is generated here (PRD-SEC-015-FR10). The reviewer
     bound is a per-lane containment applied at the two dispatch call sites
@@ -222,13 +200,9 @@ def _registered_trw_tool_names() -> list[str]:
     ``tests/test_bootstrap_codex_split.py::TestCodexNoReviewerProfile`` asserts
     that no ``profiles`` key is ever emitted, so nobody re-adds one.
     """
-    from trw_mcp.server._app import mcp
     from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
-    tools = cast("list[_NamedTool]", _run_async(mcp.list_tools()))
-    names = {tool.name for tool in tools if tool.name.startswith(_TRW_TOOL_PREFIX)}
-    names.update(name for name in eligible_tool_names() if name.startswith(_TRW_TOOL_PREFIX))
-    tool_names = sorted(names)
+    tool_names = sorted(name for name in eligible_tool_names() if name.startswith(_TRW_TOOL_PREFIX))
     if not tool_names:
         logger.warning("codex_trw_tool_discovery_empty")
     return tool_names
@@ -259,7 +233,11 @@ def _trw_mcp_disabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
 def _skill_paths() -> list[str]:
     """Return repo-local skill paths for Codex config."""
     skills_dir = _codex_skills_source_dir()
-    return [f".agents/skills/{skill_dir.name}" for skill_dir in sorted(skills_dir.iterdir()) if skill_dir.is_dir()]
+    return [
+        f".agents/skills/{skill_dir.name}"
+        for skill_dir in sorted(skills_dir.iterdir())
+        if skill_dir.is_dir() and skill_dir.name not in _READINESS_PHASES
+    ]
 
 
 def _normalize_skill_path(path: str) -> str:
@@ -425,13 +403,23 @@ def install_codex_skills(
             logger.warning("codex_skill_validation_failed", skill=skill_dir.name, reason=reason)
             continue
 
-        dest_skill = dest_root / skill_dir.name
+        internal_phase = skill_dir.name in _READINESS_PHASES
+        if internal_phase and (dest_root / skill_dir.name).exists():
+            # No ownership proof for old directories: retain and disclose them.
+            legacy = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/SKILL.md"
+            result["preserved"].append(legacy)
+            logger.warning("codex_legacy_phase_skill_preserved", path=legacy)
+        dest_name = "trw-prd-ready" if internal_phase else skill_dir.name
+        dest_skill = dest_root / dest_name
         dest_skill.mkdir(parents=True, exist_ok=True)
         for skill_file in sorted(skill_dir.iterdir()):
             if not skill_file.is_file():
                 continue
-            dest = dest_skill / skill_file.name
-            rel_path = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
+            if internal_phase and skill_file.name != "SKILL.md":
+                continue
+            filename = f"{skill_dir.name}-contract.md" if internal_phase else skill_file.name
+            dest = dest_skill / filename
+            rel_path = f"{_CODEX_SKILLS_DIR}/{dest_name}/{filename}"
             try:
                 existed = dest.exists()
                 if existed and not force:

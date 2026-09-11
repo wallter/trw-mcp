@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -68,14 +70,17 @@ class TestClaudeMdSyncQValuePromotion:
 
 
 class TestTrwLearnDistributionWarning:
-    """Tests for PRD-CORE-034 impact score distribution advisory in trw_learn."""
+    """CD retires automatic quota warnings; explicit scoring tests remain separate."""
 
     def _write_entry(self, entries_dir: Path, fname: str, impact: float, status: str = "active") -> None:
         entries_dir.mkdir(parents=True, exist_ok=True)
         (entries_dir / fname).write_text(f"id: {fname}\nimpact: {impact}\nstatus: {status}\n")
 
-    def test_learn_distribution_warning_critical_tier(self, tmp_path: Path) -> None:
-        """Warning fires when critical tier exceeds 5% cap."""
+    def test_learn_no_quota_warning_critical_tier(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CD: capture does not enforce historical critical-tier quotas."""
+        # Legacy threshold remains parseable but no longer shapes capture.
+        cfg = _CFG.model_copy(update={"impact_high_threshold_pct": 100.0, "embeddings_enabled": False})
+        monkeypatch.setattr("trw_mcp.tools.learning.get_config", lambda: cfg)
         tools = _get_tools()
         entries_dir = _entries_dir(tmp_path)
         # Create 10 active entries all at critical tier -> 100% critical
@@ -88,11 +93,10 @@ class TestTrwLearnDistributionWarning:
             impact=0.95,
         )
         assert result["status"] == "recorded"
-        assert "critical" in result["distribution_warning"]
-        assert "cap" in result["distribution_warning"]
+        assert not result.get("distribution_warning")
 
-    def test_learn_distribution_warning_high_tier(self, tmp_path: Path) -> None:
-        """Warning fires when high tier exceeds 20% cap."""
+    def test_learn_no_quota_warning_high_tier(self, tmp_path: Path) -> None:
+        """CD: capture does not enforce historical high-tier quotas."""
         tools = _get_tools()
         entries_dir = _entries_dir(tmp_path)
         # Create 10 active entries all at high tier -> 100% high
@@ -105,12 +109,17 @@ class TestTrwLearnDistributionWarning:
             impact=0.75,
         )
         assert result["status"] == "recorded"
-        assert "high" in result["distribution_warning"]
-        assert "cap" in result["distribution_warning"]
+        assert not result.get("distribution_warning")
 
     def test_learn_no_warning_when_disabled(self, tmp_path: Path) -> None:
-        """No warning when impact_forced_distribution_enabled=False."""
-        disabled_cfg = _CFG.model_copy(update={"impact_forced_distribution_enabled": False})
+        """Legacy disabled configuration remains accepted without quota warnings."""
+        disabled_cfg = _CFG.model_copy(
+            update={
+                "impact_forced_distribution_enabled": False,
+                "impact_high_threshold_pct": 100.0,
+                "embeddings_enabled": False,
+            }
+        )
         with patch("trw_mcp.tools.learning.get_config", return_value=disabled_cfg):
             tools = _get_tools()
             entries_dir = _entries_dir(tmp_path)
@@ -123,6 +132,32 @@ class TestTrwLearnDistributionWarning:
                 impact=0.95,
             )
             assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
+
+    @pytest.mark.parametrize("forced_distribution", [True, False])
+    def test_raw_impact_no_longer_obeys_corpus_quota(self, tmp_path: Path, forced_distribution: bool) -> None:
+        """CD now retires the independent quota retained by R10."""
+        cfg = _CFG.model_copy(
+            update={
+                "impact_forced_distribution_enabled": forced_distribution,
+                "embeddings_enabled": False,
+            }
+        )
+        assert cfg.impact_high_threshold_pct == 20.0
+        with patch("trw_mcp.tools.learning.get_config", return_value=cfg):
+            for i in range(10):
+                self._write_entry(_entries_dir(tmp_path), f"entry_{i}.yaml", 0.95)
+            result = _get_tools()["trw_learn"].fn(
+                summary="Independent soft cap remains active after calibration retirement",
+                detail="Raw caller impact is preserved independent of historical quota settings.",
+                impact=0.95,
+            )
+        assert result["status"] == "recorded"
+        assert not result.get("distribution_warning")
+        reader = FileStateReader()
+        stored = [reader.read_yaml(path) for path in _entries_dir(tmp_path).glob("*.yaml")]
+        matching = [data for data in stored if data.get("id") == result["learning_id"]]
+        assert len(matching) == 1
+        assert float(str(matching[0]["impact"])) == 0.95
 
     def test_learn_no_warning_below_threshold(self, tmp_path: Path) -> None:
         """No warning for impact < 0.7 (below distribution check threshold)."""
@@ -157,11 +192,11 @@ class TestTrwLearnDistributionWarning:
         assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
 
 
-class TestBayesianCalibrationWiring:
-    """Verify compute_calibration_accuracy + bayesian_calibrate wiring in trw_learn."""
+class TestUnattributedCalibrationRetirement:
+    """R10: unowned pooled recall statistics do not calibrate a caller."""
 
-    def test_impact_is_calibrated_on_save(self, tmp_path: Path) -> None:
-        """trw_learn stores a Bayesian-calibrated impact, not the raw value."""
+    def test_raw_impact_is_preserved_on_save(self, tmp_path: Path) -> None:
+        """The actual registered learn caller preserves raw impact without use evidence."""
         tools = _get_tools()
         raw_impact = 0.9
         result = tools["trw_learn"].fn(
@@ -171,27 +206,18 @@ class TestBayesianCalibrationWiring:
         )
         assert result["status"] == "recorded"
 
-        # With no recall history (default weight 1.0), calibrated should differ from raw.
-        # bayesian_calibrate(0.9, org_mean=0.5, user_weight=1.0, org_weight=0.5)
-        # = (0.9*1 + 0.5*0.5) / (1+0.5) = 1.15/1.5 ≈ 0.7667
         reader = FileStateReader()
-        entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                stored_impact = float(str(data["impact"]))
-                # Stored impact should be pulled toward org_mean (0.5), not exactly 0.9
-                assert stored_impact < raw_impact
-                # But should still be > org_mean (user weight dominates)
-                assert stored_impact > 0.5
-                break
+        stored = [reader.read_yaml(path) for path in _entries_dir(tmp_path).glob("*.yaml")]
+        matching = [data for data in stored if data.get("id") == result["learning_id"]]
+        assert len(matching) == 1
+        assert float(str(matching[0]["impact"])) == raw_impact
 
-    def test_calibration_failure_falls_back_to_raw_impact(
+    def test_unavailable_pooled_stats_do_not_affect_learning(
         self,
         tmp_path: Path,
         reader: FileStateReader,
     ) -> None:
-        """If Bayesian calibration raises, raw impact is used (fail-open)."""
+        """No pooled-statistics acquisition is required to persist a learning."""
         tools = _get_tools()
         raw_impact = 0.8
 

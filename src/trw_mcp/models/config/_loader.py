@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import structlog
 
@@ -108,6 +109,61 @@ def _read_yaml_overrides(config_path: object) -> dict[str, object]:
     return {str(k): v for k, v in overrides.items() if v is not None}
 
 
+def resolve_config_overrides(project_config_path: Path, *, apply_env_exclusion: bool = True) -> dict[str, object]:
+    """The one config cascade: machine layer, project layer, credential, env exclusion.
+
+    Extracted because it was hand-rolled in three places that had already
+    drifted apart. ``_build_config`` (production) did all four steps;
+    ``_subcommands_doctor._resolve_target_config`` did two, so ``trw-mcp doctor``
+    resolved a ``.trw/config.yaml`` value wherever a ``TRW_*`` variable shadowed
+    it and the live server resolved the env value — the precedence inversion the
+    comment below exists to prevent, in the diagnostic that is supposed to tell
+    an operator what the server sees.
+
+    Order, and every step matters:
+
+    1. ``~/.trw/config.yaml`` is the base; the project file overrides per key.
+    2. ``platform_api_key`` is DROPPED from the merged mapping (PRD-SEC-005-FR03:
+       a git-tracked file is never a credential source) and then re-resolved
+       through ``resolve_platform_api_key``.
+    3. Keys shadowed by ``TRW_<KEY_UPPER>`` are excluded, because Pydantic
+       ``BaseSettings`` gives init kwargs the HIGHEST priority — passing them
+       through would invert the documented ``env > file`` precedence.
+       ``platform_api_key`` is exempt: its env precedence is applied in step 2.
+    4. Meta-tune keys are normalised.
+
+    *apply_env_exclusion* exists for one caller: ``_build_config`` must warn about
+    unrecognised keys against the merged-but-UNFILTERED set, because a key being
+    shadowed by a ``TRW_*`` variable does not make it recognised
+    (PRD-QUAL-131-FR04). It passes ``False``, warns, and applies
+    :func:`exclude_env_shadowed_keys` itself. Every other caller wants the
+    default.
+
+    Raises whatever the underlying readers raise; callers decide their own
+    fallback.
+    """
+    machine_overrides = _read_yaml_overrides(Path.home() / ".trw" / "config.yaml")
+    merged = _deep_merge(machine_overrides, _read_yaml_overrides(project_config_path))
+    merged.pop("platform_api_key", None)
+    resolved_key = resolve_platform_api_key(project_config_path)
+    if resolved_key:
+        merged["platform_api_key"] = resolved_key
+    if not apply_env_exclusion:
+        return merged
+    return _normalize_meta_tune_overrides(exclude_env_shadowed_keys(merged))
+
+
+def exclude_env_shadowed_keys(merged: dict[str, object]) -> dict[str, object]:
+    """Drop keys a ``TRW_<KEY_UPPER>`` variable shadows, keeping ``platform_api_key``.
+
+    Pydantic ``BaseSettings`` gives init kwargs the HIGHEST priority, so passing
+    a shadowed key through inverts the documented ``env > file`` precedence.
+    ``platform_api_key`` is exempt because its env precedence is already applied
+    by the credential cascade.
+    """
+    return {k: v for k, v in merged.items() if k == "platform_api_key" or f"TRW_{k.upper()}" not in os.environ}
+
+
 def _build_config() -> TRWConfig:
     """Build TRWConfig with the machine -> project -> env config cascade merged.
 
@@ -131,29 +187,15 @@ def _build_config() -> TRWConfig:
     - config.yaml is missing or malformed
     - Any import or filesystem error occurs
     """
-    from pathlib import Path
 
     try:
         from trw_mcp.state._paths import resolve_project_root
 
-        machine_overrides = _read_yaml_overrides(Path.home() / ".trw" / "config.yaml")
         project_root = resolve_project_root()
         project_config_path = project_root / ".trw" / "config.yaml"
-        project_overrides = _read_yaml_overrides(project_config_path)
-
-        # Deep merge: machine is the base, project overrides per key.
-        merged = _deep_merge(machine_overrides, project_overrides)
-
-        # PRD-SEC-005-FR03: resolve platform_api_key by precedence
-        # (TRW_PLATFORM_API_KEY/TRW_API_KEY env > .trw/credentials.yaml). The
-        # git-tracked config.yaml is NEVER a source: any key still present in
-        # the merged config.yaml overrides is DROPPED here so a tracked secret
-        # can never resolve. Legacy tracked keys are migrated to
-        # credentials.yaml by `trw-mcp update-project`.
-        merged.pop("platform_api_key", None)
-        resolved_key = resolve_platform_api_key(project_config_path)
-        if resolved_key:
-            merged["platform_api_key"] = resolved_key
+        # ONE cascade, shared with the doctor. Two hand-rolled copies had already
+        # drifted apart once; a third would drift again.
+        merged = resolve_config_overrides(project_config_path, apply_env_exclusion=False)
 
         if merged:
             # PRD-QUAL-131-FR04: TRWConfig is extra="ignore", so any key it does
@@ -166,9 +208,7 @@ def _build_config() -> TRWConfig:
             # platform_api_key is resolved above and intentionally kept even
             # when TRW_PLATFORM_API_KEY is set (its env precedence is already
             # applied), so it is exempt from the generic TRW_* exclusion.
-            filtered = {
-                k: v for k, v in merged.items() if k == "platform_api_key" or f"TRW_{k.upper()}" not in os.environ
-            }
+            filtered = exclude_env_shadowed_keys(merged)
             if filtered:
                 return TRWConfig(**_normalize_meta_tune_overrides(filtered))  # type: ignore[arg-type]
     except Exception as exc:

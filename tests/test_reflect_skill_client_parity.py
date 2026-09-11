@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.bootstrap._cursor_ide import _IDE_CURATED_SKILLS
 from trw_mcp.bootstrap._utils import _DATA_DIR
 from trw_mcp.models.skill_manifest import validate_skill_markdown
@@ -155,6 +156,7 @@ def test_prd_qual_120_fr07(tmp_path: Path) -> None:
     assert all(item.reason for item in open_debt)
 
 
+@requires_monorepo
 def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
     """Audit F5: the --typed CLI mode is exercised end-to-end as a subprocess,
     and every trw-reflect mirror carries the typed-lifecycle doctrine."""
@@ -162,7 +164,7 @@ def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
     import subprocess
     import sys
 
-    script = Path(__file__).resolve().parents[2] / "scripts" / "count-reflection-debt.py"
+    script = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "scripts" / "count-reflection-debt.py"
     prds = tmp_path / "prds"
     prds.mkdir()
     (prds / "PRD-CORE-090.md").write_text(
@@ -183,8 +185,16 @@ def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
     assert "open=1 closed=0" in result.stdout
     assert "reason=target_not_implemented" in result.stdout
 
-    root = Path(__file__).resolve().parents[2]
-    data_root = root / "trw-mcp" / "src" / "trw_mcp" / "data"
+
+@pytest.mark.parametrize(
+    "include_repo_mirrors",
+    [False, pytest.param(True, marks=requires_monorepo)],
+    ids=["bundled", "monorepo-mirrors"],
+)
+def test_qual_120_mirror_lifecycle(include_repo_mirrors: bool) -> None:
+    root = MONOREPO_ROOT or PACKAGE_ROOT.parent
+    data_root = PACKAGE_ROOT / "src" / "trw_mcp" / "data"
+    assert (data_root / "skills/trw-reflect/SKILL.md").is_file(), "required bundled reflect subject missing"
     # The mirror population is DERIVED, not counted (PRD-INFRA-174-FR02). The
     # previous `len(mirrors) >= 7` sat exactly at its own boundary: it could
     # detect a DELETED mirror and nothing else. It could not detect a NEW
@@ -193,10 +203,14 @@ def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
     # SKILLS ROOTS — a source independent of trw-reflect itself — so shipping a
     # new client skill subset without a trw-reflect mirror now fails here.
     expected = sorted(
-        {
-            root / ".agents" / "skills" / "trw-reflect" / "SKILL.md",
-            root / ".claude" / "skills" / "trw-reflect" / "SKILL.md",
-        }
+        (
+            {
+                root / ".agents" / "skills" / "trw-reflect" / "SKILL.md",
+                root / ".claude" / "skills" / "trw-reflect" / "SKILL.md",
+            }
+            if include_repo_mirrors
+            else set()
+        )
         | {
             skills_root / "trw-reflect" / "SKILL.md"
             for skills_root in data_root.rglob("skills")
@@ -204,8 +218,12 @@ def test_qual_120_typed_debt_cli_and_mirror_lifecycle(tmp_path: Path) -> None:
         }
     )
     mirrors = sorted(
-        set(root.glob(".agents/skills/trw-reflect/SKILL.md"))
-        | set(root.glob(".claude/skills/trw-reflect/SKILL.md"))
+        (
+            set(root.glob(".agents/skills/trw-reflect/SKILL.md"))
+            | set(root.glob(".claude/skills/trw-reflect/SKILL.md"))
+            if include_repo_mirrors
+            else set()
+        )
         | set(data_root.rglob("trw-reflect/SKILL.md"))
     )
     assert mirrors == expected, {

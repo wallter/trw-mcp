@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 from trw_mcp.bootstrap import PREDECESSOR_MAP
 
-ROOT = Path(__file__).resolve().parents[2]
-CANONICAL_SKILLS = ROOT / "trw-mcp/src/trw_mcp/data/skills"
+ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+CANONICAL_SKILLS = PACKAGE_ROOT / "src/trw_mcp/data/skills"
 COMMAND_REFERENCE = re.compile(r"(?<![\w./-])/(trw-[a-z0-9-]+)(?=$|[\s`\"',.;:!?()\[\]{}<>])")
 
 
@@ -25,10 +25,10 @@ def test_packaged_command_references_resolve_to_canonical_skills() -> None:
 #: user projects, which is what retirement is meant to prevent.
 PACKAGED_SKILL_ROOTS = (
     CANONICAL_SKILLS,
-    ROOT / "trw-mcp/src/trw_mcp/data/codex/skills",
-    ROOT / "trw-mcp/src/trw_mcp/data/copilot/skills",
-    ROOT / "trw-mcp/src/trw_mcp/data/copilot/plugin/skills",
-    ROOT / "trw-mcp/src/trw_mcp/data/opencode/skills",
+    PACKAGE_ROOT / "src/trw_mcp/data/codex/skills",
+    PACKAGE_ROOT / "src/trw_mcp/data/copilot/skills",
+    PACKAGE_ROOT / "src/trw_mcp/data/copilot/plugin/skills",
+    PACKAGE_ROOT / "src/trw_mcp/data/opencode/skills",
 )
 
 #: This monorepo's OWN client configuration. Bootstrap installs *into* these
@@ -93,7 +93,7 @@ def test_no_shipped_surface_references_a_retired_skill() -> None:
             unresolvable = {name for name in retired & referenced if not (root / name).is_dir()}
             assert not unresolvable, f"{skill_path}: references skills that exist nowhere: {unresolvable}"
 
-    source_roots = (ROOT / "trw-mcp/src/trw_mcp",)
+    source_roots = (PACKAGE_ROOT / "src/trw_mcp",)
     for source_root in source_roots:
         if not source_root.is_dir():
             continue

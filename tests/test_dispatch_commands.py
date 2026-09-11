@@ -88,8 +88,11 @@ def test_codex_no_isolate_drops_ignore_user_config() -> None:
 
 def test_agy_prompt_via_p_flag() -> None:
     # read-only default adds --sandbox; prompt is still the trailing -p token.
+    # --output-format stream-json leads since 2026-09-11: agy 1.2.0 gained the
+    # flag and the registry now declares the tagged-envelope shape it produces.
+    # This argv REQUIRES agy >= 1.2.0; 1.1.26 has no --output-format.
     argv = build_command(_req("agy"))
-    assert argv == ["agy", "--sandbox", "-p", "audit this"]
+    assert argv == ["agy", "--output-format", "stream-json", "--sandbox", "-p", "audit this"]
 
 
 def test_agy_does_not_get_pty_wrapping_in_command_builder() -> None:
@@ -115,7 +118,16 @@ def test_opencode_no_dir_when_cwd_absent() -> None:
 def test_extra_args_appended_before_prompt() -> None:
     argv = build_command(_req("agy", extra_args=["--foo", "bar"]))
     # extra_args land after the read-only --sandbox, before the -p prompt.
-    assert argv == ["agy", "--sandbox", "--foo", "bar", "-p", "audit this"]
+    assert argv == [
+        "agy",
+        "--output-format",
+        "stream-json",
+        "--sandbox",
+        "--foo",
+        "bar",
+        "-p",
+        "audit this",
+    ]
 
 
 def test_prompt_is_a_single_token_never_split() -> None:

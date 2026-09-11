@@ -1,14 +1,13 @@
 """Tests for assertion threading through trw_learn pipeline (PRD-CORE-086 FR05).
 
 Verifies that assertions flow from trw_learn parameters through LearningParams,
-store_learning, and _learning_to_memory_entry into MemoryEntry.assertions.
+store_learning, and the delegated store into MemoryEntry.assertions.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -61,87 +60,69 @@ class TestLearningParamsAssertionsField:
         assert params.assertions is None
 
 
-class TestMemoryEntryHasAssertions:
-    """FR05: _learning_to_memory_entry creates MemoryEntry with assertions."""
+class TestStoredEntryHasAssertions:
+    """FR05: assertions given to a learning land on the stored entry.
 
-    def test_memory_entry_has_assertions(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Assertions are validated and attached to the MemoryEntry."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    PRD-CORE-251 FR03 retargeted these from ``_learning_to_memory_entry`` (the
+    retired hand builder) to the delegated write path. The dict-to-``Assertion``
+    marshalling is covered in tests/test_store_arguments.py; these prove the
+    objects reach SQLite.
+    """
 
-        entry = _learning_to_memory_entry(
-            "L-test3",
-            "test summary",
-            "test detail",
-            assertions=SAMPLE_ASSERTIONS,
-        )
+    def _store(self, tmp_path: Path, entry_id: str, **kwargs: Any) -> Any:
+        from trw_mcp.state.memory_adapter import get_backend, store_learning
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "memory").mkdir(parents=True, exist_ok=True)
+        result = store_learning(trw_dir, entry_id, "test summary", "test detail", **kwargs)
+        assert result["status"] == "recorded", result
+        return get_backend(trw_dir).get(entry_id, namespace="default")
+
+    def test_memory_entry_has_assertions(self, tmp_path: Path) -> None:
+        entry = self._store(tmp_path, "L-test3", assertions=SAMPLE_ASSERTIONS)
+
+        assert entry is not None
         assert len(entry.assertions) == 2
         assert entry.assertions[0].type == "grep_present"
         assert entry.assertions[0].pattern == "def my_func"
         assert entry.assertions[1].type == "glob_exists"
         assert entry.assertions[1].target == "src/main.py"
 
-    def test_memory_entry_no_assertions(self) -> None:
-        """Without assertions, MemoryEntry.assertions is empty list."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    def test_memory_entry_no_assertions(self, tmp_path: Path) -> None:
+        entry = self._store(tmp_path, "L-test4")
 
-        entry = _learning_to_memory_entry(
-            "L-test4",
-            "test summary",
-            "test detail",
-        )
+        assert entry is not None
         assert entry.assertions == []
 
-    def test_memory_entry_assertions_none(self) -> None:
-        """Passing None produces empty assertion list."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    def test_memory_entry_assertions_none(self, tmp_path: Path) -> None:
+        entry = self._store(tmp_path, "L-test5", assertions=None)
 
-        entry = _learning_to_memory_entry(
-            "L-test5",
-            "test summary",
-            "test detail",
-            assertions=None,
-        )
+        assert entry is not None
         assert entry.assertions == []
 
 
 class TestStoreLearningThreadsAssertions:
-    """FR05: store_learning threads assertions to _learning_to_memory_entry."""
+    """FR05: store_learning threads assertions into the delegated store call."""
 
     def test_store_learning_with_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """store_learning passes assertions through to the memory entry."""
+        """The assertions reach ``memory_store_impl`` as validated objects.
+
+        PRD-CORE-251 FR03: the seam this captures moved from the retired
+        ``_learning_to_memory_entry`` to the one write path both servers use.
+        """
         from trw_mcp.state import memory_adapter
 
-        # Track what gets stored
-        stored_entry: dict[str, Any] = {}
-        original_to_memory = memory_adapter._learning_to_memory_entry
+        seen: dict[str, Any] = {}
 
-        def tracking_to_memory(*args: Any, **kwargs: Any) -> Any:
-            stored_entry["kwargs"] = kwargs
-            return original_to_memory(*args, **kwargs)
+        def tracking_store(*args: Any, **kwargs: Any) -> dict[str, object]:
+            seen["kwargs"] = kwargs
+            return {"memory_id": kwargs["entry_id"], "status": "stored", "namespace": kwargs.get("namespace", "")}
 
-        monkeypatch.setattr(
-            "trw_mcp.state.memory_adapter._learning_to_memory_entry",
-            tracking_to_memory,
-        )
-
-        # Mock the backend and embedding
-        mock_backend = MagicMock()
-        monkeypatch.setattr(
-            "trw_mcp.state.memory_adapter.get_backend",
-            lambda _: mock_backend,
-        )
-        monkeypatch.setattr(
-            "trw_mcp.state.memory_adapter._embed_and_store",
-            lambda *a, **kw: None,
-        )
-        # Mock infer_topic_tags (local import in store_learning)
-        monkeypatch.setattr(
-            "trw_mcp.state.analytics.infer_topic_tags",
-            lambda *a, **kw: [],
-        )
+        monkeypatch.setattr(memory_adapter, "memory_store_impl", tracking_store)
+        monkeypatch.setattr("trw_mcp.state.analytics.infer_topic_tags", lambda *a, **kw: [])
 
         trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir(parents=True)
+        (trw_dir / "memory").mkdir(parents=True)
 
         result = memory_adapter.store_learning(
             trw_dir,
@@ -150,8 +131,10 @@ class TestStoreLearningThreadsAssertions:
             "test detail",
             assertions=SAMPLE_ASSERTIONS,
         )
+
         assert result["status"] == "recorded"
-        assert stored_entry["kwargs"]["assertions"] == SAMPLE_ASSERTIONS
+        threaded = seen["kwargs"]["assertions"]
+        assert [(a.type, a.target) for a in threaded] == [(raw["type"], raw["target"]) for raw in SAMPLE_ASSERTIONS]
 
 
 class TestTrwLearnStoresAssertions:

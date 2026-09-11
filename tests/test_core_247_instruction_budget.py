@@ -50,14 +50,17 @@ _BASELINE_BLOCK_CHARS = {
 #: block; light-mode profiles gained one extra join separator from the
 #: gate's now-empty-string return (codex's flag is also True, so it gained
 #: the full block on top of that separator).
+#: CORE269: truthful unfinished/no-work/acceptance routing replaces loss claims.
+#: Full blocks grow 145 chars; light blocks grow 159 chars. This records
+#: descriptive snapshots, not a byte-saving claim or relaxation of hard budgets.
 _MEASURED_BLOCK_CHARS = {
-    "claude-code": 6137,
-    "cursor-ide": 6137,
-    "copilot": 6137,
-    "antigravity-cli": 6137,
-    "codex": 8472,
-    "cursor-cli": 7385,
-    "opencode": 7385,
+    "claude-code": 6282,
+    "cursor-ide": 6282,
+    "copilot": 6282,
+    "antigravity-cli": 6282,
+    "codex": 8631,
+    "cursor-cli": 7544,
+    "opencode": 7544,
 }
 _FULL_MODE = ("claude-code", "cursor-ide", "copilot", "antigravity-cli")
 _LIGHT_MODE = ("codex", "cursor-cli", "opencode")
@@ -324,3 +327,16 @@ def test_the_offline_substitute_table_reaches_an_instruction_surface() -> None:
     assert "reports/" in content and "exit code" in content, "the build-check substitute must name its artifact"
     assert "gate_evaluated: false" in content
     assert "trw-reconcile-pending" in content
+
+
+@pytest.mark.parametrize("client_id", sorted(_BASELINE_BLOCK_CHARS))
+def test_session_boundary_preservation_is_not_completed_delivery(client_id: str) -> None:
+    """CORE269: full/light renderers retain the distinction alongside the gate."""
+    text = ProtocolRenderer(client_profile=resolve_client_profile(client_id)).render_behavioral_protocol()
+    assert "unfinished" in text
+    assert "handoff" in text
+    assert "next-read" in text
+    assert "nothing material to preserve" in text.lower()
+    assert "completed-work acceptance" in text
+    assert "instead of being lost" not in text
+    assert DELIVER_GATE_PHRASE in text

@@ -14,6 +14,11 @@ PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 UV_LOCK = Path(__file__).resolve().parents[1] / "uv.lock"
 REQUIREMENTS_LOCK = Path(__file__).resolve().parents[1] / "requirements.lock"
 PATCHED_FASTMCP_FLOOR = (3, 2, 0)
+# Optional, ignored developer freeze: neither shipped nor consumed by public CI.
+# uv.lock checks below remain unconditional and fail if the shipped lock is absent.
+requires_developer_freeze = pytest.mark.skipif(
+    not REQUIREMENTS_LOCK.is_file(), reason="optional unshipped developer requirements.lock is absent"
+)
 
 try:
     import tomllib
@@ -170,15 +175,20 @@ def test_pyproject_deptry_config_keeps_static_audit_signal_focused() -> None:
 
 
 def test_fastmcp_pins_are_on_patched_floor() -> None:
-    """Both lock surfaces must avoid vulnerable FastMCP releases."""
+    """The shipped registry lock must avoid vulnerable FastMCP releases."""
     fastmcp_package = _lock_package("fastmcp")
     version = fastmcp_package["version"]
     assert isinstance(version, str)
 
     assert _version_tuple(version) >= PATCHED_FASTMCP_FLOOR
+
+
+@requires_developer_freeze
+def test_developer_freeze_fastmcp_pin_is_on_patched_floor() -> None:
     assert _version_tuple(_requirements_lock_package_version("fastmcp")) >= PATCHED_FASTMCP_FLOOR
 
 
+@requires_developer_freeze
 def test_requirements_lock_security_pin_floors_are_patched() -> None:
     """Known-audited requirements.lock pins stay above patched floors."""
     floors = {
@@ -203,6 +213,7 @@ def test_requirements_lock_security_pin_floors_are_patched() -> None:
         assert _version_tuple(_requirements_lock_package_version(package)) >= floor
 
 
+@requires_developer_freeze
 def test_requirements_lock_omits_stale_no_fix_vulnerable_pins() -> None:
     """requirements.lock must not carry unused no-fix vulnerable transitive pins."""
     text = REQUIREMENTS_LOCK.read_text(encoding="utf-8").lower()
@@ -213,6 +224,7 @@ def test_requirements_lock_omits_stale_no_fix_vulnerable_pins() -> None:
     assert "transformers==" not in text
 
 
+@requires_developer_freeze
 def test_requirements_lock_has_no_stale_git_self_pins() -> None:
     """requirements.lock must not pin local packages to a frozen git SHA."""
     text = REQUIREMENTS_LOCK.read_text(encoding="utf-8")

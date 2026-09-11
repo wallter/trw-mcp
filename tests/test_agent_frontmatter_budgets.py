@@ -24,10 +24,12 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-MIRROR_DIRS: tuple[Path, ...] = (
-    REPO_ROOT / ".claude" / "agents",
-    REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents",
-)
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+MIRROR_DIRS: tuple[Path, ...] = (PACKAGE_ROOT / "src/trw_mcp/data/agents",)
+if (REPO_ROOT / "release-packages.yaml").is_file():
+    MIRROR_DIRS = (*MIRROR_DIRS, REPO_ROOT / ".claude/agents")
+for directory in MIRROR_DIRS:
+    assert list(directory.glob("*.md")), f"no agents found in required surface {directory}"
 
 
 def _parse_frontmatter(path: Path) -> dict[str, Any] | None:

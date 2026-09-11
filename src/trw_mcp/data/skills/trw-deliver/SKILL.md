@@ -5,7 +5,7 @@ description: "Persist the session's work with validation evidence, durable learn
 
 # TRW Deliver
 
-**Use when:** ending a work session. Run the delivery ceremony so validation evidence, durable learnings, and client instruction sync persist beyond this context.
+**Use when:** accepting completed work under the existing delivery gates. For material unfinished work, preserve progress, observed checks, residual risks and the next action in a checkpoint or durable native handoff with a next-read pointer. Stopping is not acceptance. If nothing material needs preservation, do not manufacture an artifact or learning. Already captured learnings remain persisted.
 
 ## Steps
 

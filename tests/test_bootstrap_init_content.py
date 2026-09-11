@@ -354,11 +354,17 @@ class TestHooks:
 
     @_EXACT_SET_MONOREPO_ONLY
     def test_all_hooks_copied(self, fake_git_repo: Path) -> None:
-        init_project(fake_git_repo)
+        # Pin the client: ambient Cursor detection omits Claude-only CC03 files.
+        init_project(fake_git_repo, ide="claude-code")
         hooks_dir = fake_git_repo / ".claude" / "hooks"
 
         copied = sorted(f.name for f in hooks_dir.iterdir() if f.suffix == ".sh")
-        assert copied == self.EXPECTED_HOOKS
+        # CC03 resources always ship for Claude; installation is not activation.
+        cc03_hooks = {"lib-distill-hint.sh", "pre-tool-distill-hint.sh"}
+        assert copied == sorted(set(self.EXPECTED_HOOKS) | cc03_hooks)
+        settings = json.loads((fake_git_repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        registered_hooks = json.dumps(settings.get("hooks", {}))
+        assert all(name not in registered_hooks for name in cc03_hooks)
 
     def test_hooks_no_phase_check(self, fake_git_repo: Path) -> None:
         """post-phase-check.sh should NOT be deployed (tool removed)."""

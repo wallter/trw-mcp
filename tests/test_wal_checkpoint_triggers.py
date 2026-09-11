@@ -21,6 +21,7 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import cast
+from unittest import mock
 
 import pytest
 
@@ -344,7 +345,7 @@ def test_busy_checkpoint_still_advances_the_clock(tmp_path: Path, monkeypatch: p
         monkeypatch.setattr(
             backend,
             "checkpoint_wal",
-            lambda *a, **k: {"busy": 1, "checkpointed": 0, "mode": "PASSIVE"},
+            lambda *a, **k: {"busy": 1, "checkpointed": 0, "log_frames": 96, "mode": "PASSIVE"},
         )
         monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
         result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
@@ -412,7 +413,9 @@ def test_a_checkpoint_that_reclaims_nothing_advances_only_the_attempt_clock(
     mc._backend = backend
     try:
         monkeypatch.setattr(
-            backend, "checkpoint_wal", lambda *a, **k: {"busy": 1, "checkpointed": 0, "mode": "PASSIVE"}
+            backend,
+            "checkpoint_wal",
+            lambda *a, **k: {"busy": 1, "checkpointed": 0, "log_frames": 96, "mode": "PASSIVE"},
         )
         monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
 
@@ -425,36 +428,6 @@ def test_a_checkpoint_that_reclaims_nothing_advances_only_the_attempt_clock(
             "a checkpoint that reclaimed nothing must not advance the effective clock"
         )
         assert last_effective_checkpoint_age_seconds(db_path) is None
-    finally:
-        mc.reset_backend()
-        holder.close()
-
-
-def test_a_checkpoint_that_writes_frames_back_advances_both_clocks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Non-vacuity: the effective clock DOES move when the checkpoint does work."""
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
-    import trw_mcp.state._memory_connection as mc
-    from trw_mcp.models.config import get_config
-    from trw_mcp.state._wal_triggers import (
-        last_checkpoint_age_seconds,
-        last_effective_checkpoint_age_seconds,
-    )
-    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-
-    trw_dir = _trw_dir(tmp_path)
-    db_path = trw_dir / "memory" / "memory.db"
-    holder = _seed_wal(db_path)
-    backend = SQLiteBackend(db_path)
-    mc._backend = backend
-    try:
-        monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
-        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
-        assert cast("int", result["pages_checkpointed"]) > 0
-        assert last_checkpoint_age_seconds(db_path) is not None
-        assert last_effective_checkpoint_age_seconds(db_path) is not None
     finally:
         mc.reset_backend()
         holder.close()
@@ -512,6 +485,183 @@ def test_no_resetting_mode_survives_on_an_unsafe_engine_end_to_end(
         result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
         assert requested == ["TRUNCATE"], "the sole writer still asks"
         assert result.get("mode") == "passive", "and the unsafe engine still refuses"
+    finally:
+        mc.reset_backend()
+        holder.close()
+
+
+def test_truncate_state_separates_never_attempted_from_attempted_and_declined() -> None:
+    """The four states the old ``truncate_busy`` bool collapsed into one.
+
+    The bool read ``False`` on every multi-writer and bare-connection call --
+    where TRUNCATE was never REQUESTED -- which a consumer reads as "attempted
+    and not blocked". And when it did fire it could not say whether readers held
+    pages or the engine refused outright, which are different problems with
+    different remedies.
+    """
+    from trw_mcp.state._memory_lookups import _truncate_state
+
+    # Never requested: peers hold the store, or no backend owns the db here.
+    assert _truncate_state(False, "passive") == "not_attempted"
+    # Requested and it ran.
+    assert _truncate_state(True, "truncate") == "reset"
+    # Requested, came back PASSIVE: engine refusal vs reader contention.
+    with mock.patch("trw_memory.storage._dbapi.is_wal_reset_safe", return_value=False):
+        assert _truncate_state(True, "passive") == "refused_unsafe_engine"
+    with mock.patch("trw_memory.storage._dbapi.is_wal_reset_safe", return_value=True):
+        assert _truncate_state(True, "passive") == "busy"
+
+
+def test_the_backlog_advisory_carries_the_engine_remedy_only_when_it_applies() -> None:
+    """The remedy string had two delivery paths and both were dead in the field.
+
+    The doctor WARN branch was gated behind a staleness a running checkpoint
+    prevented, and the ``wal_reset_refused_unsafe_engine`` log fires only when a
+    reset was actually requested -- i.e. never while peers hold the store. The
+    payload advisory is the third path, and the one a caller always sees.
+    """
+    from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
+
+    from trw_mcp.state._memory_lookups import _backlog_advisory
+
+    refused = _backlog_advisory("refused_unsafe_engine", 40, 3379, busy=0)
+    assert WAL_RESET_UNSAFE_REMEDY in refused
+    assert "3339 of 3379" in refused, "say how far behind it fell, in frames"
+
+    assert "not the sole live writer" in _backlog_advisory("not_attempted", 40, 3379, busy=0)
+
+    # Reader contention on a capable engine is transient: no remedy to name,
+    # and it must not be blamed on the engine.
+    busy_text = _backlog_advisory("busy", 0, 96, busy=1)
+    assert "readers held pages" in busy_text
+    assert WAL_RESET_UNSAFE_REMEDY not in busy_text
+
+
+def test_a_backend_error_sentinel_advances_neither_clock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The backend reports a failed PRAGMA by RETURNING mode="error", not raising.
+
+    Both reviewers of this change set found the same defect independently: the
+    sentinel never reached the outer ``except``, so it was classified
+    ``truncate_state="reset"`` (it is simply not "passive"), returned
+    ``checkpointed: True``, and advanced the ATTEMPT clock -- which then
+    silenced the age trigger for a full interval after a checkpoint that did
+    nothing. A change set whose whole purpose is "code that reported success it
+    had not earned" had shipped exactly that, in the same function.
+
+    The pre-existing failure test drives ``sqlite3.connect`` to RAISE, which
+    exercises the bare-connection path with no backend registered. This is the
+    other path, and it was untested.
+    """
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    import trw_mcp.state._memory_connection as mc
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._wal_triggers import checkpoint_marker_path, effective_checkpoint_marker_path
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
+    trw_dir = _trw_dir(tmp_path)
+    db_path = trw_dir / "memory" / "memory.db"
+    holder = _seed_wal(db_path)
+    backend = SQLiteBackend(db_path)
+    mc._backend = backend
+    try:
+        monkeypatch.setattr(
+            backend,
+            "checkpoint_wal",
+            lambda *a, **k: {"busy": 1, "checkpointed": 0, "log_frames": 0, "mode": "error"},
+        )
+        monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
+
+        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
+
+        assert result.get("error") is True, "a failed checkpoint is an error outcome, not a success"
+        assert result.get("checkpointed") is not True
+        assert "truncate_state" not in result, "a checkpoint that never ran has no reset state"
+        assert not checkpoint_marker_path(db_path).exists(), (
+            "advancing the attempt clock here silences the retry the failure should trigger"
+        )
+        assert not effective_checkpoint_marker_path(db_path).exists()
+    finally:
+        mc.reset_backend()
+        holder.close()
+
+
+def test_a_healthy_passive_checkpoint_that_clears_the_backlog_is_effective(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Effectiveness is the FRAME BACKLOG, never the file size.
+
+    The first repair of the disarmed doctor row used a size decrease, and that
+    was wrong in the opposite direction: SQLite REUSES a fully checkpointed
+    WAL's allocation instead of shrinking it, so a store that cleared its entire
+    backlog looked stalled and the row WARNed forever. Reproduced by review with
+    a 13.3 MiB WAL and 3,379 frames checkpointed.
+
+    Here: every frame written back, file size untouched. That is a healthy
+    store and the effective clock must advance.
+    """
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    import trw_mcp.state._memory_connection as mc
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._wal_triggers import last_effective_checkpoint_age_seconds
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
+    trw_dir = _trw_dir(tmp_path)
+    db_path = trw_dir / "memory" / "memory.db"
+    holder = _seed_wal(db_path)
+    backend = SQLiteBackend(db_path)
+    mc._backend = backend
+    try:
+        monkeypatch.setattr(
+            backend,
+            "checkpoint_wal",
+            lambda *a, **k: {"busy": 0, "checkpointed": 3379, "log_frames": 3379, "mode": "PASSIVE"},
+        )
+        monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
+
+        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
+
+        assert result["backlog_cleared"] is True
+        assert result["reclaimed"] is False, "the allocation was reused -- a disk fact, not a fault"
+        assert "advisory" not in result, "a healthy checkpoint must not carry a fault advisory"
+        assert last_effective_checkpoint_age_seconds(db_path) is not None, (
+            "clearing the whole backlog IS an effective checkpoint, whatever the file size did"
+        )
+    finally:
+        mc.reset_backend()
+        holder.close()
+
+
+def test_a_checkpoint_that_falls_behind_the_backlog_is_not_effective(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Non-vacuity for the pair above: frames left behind must NOT advance the clock."""
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    import trw_mcp.state._memory_connection as mc
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._wal_triggers import effective_checkpoint_marker_path
+    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
+
+    trw_dir = _trw_dir(tmp_path)
+    db_path = trw_dir / "memory" / "memory.db"
+    holder = _seed_wal(db_path)
+    backend = SQLiteBackend(db_path)
+    mc._backend = backend
+    try:
+        monkeypatch.setattr(
+            backend,
+            "checkpoint_wal",
+            lambda *a, **k: {"busy": 0, "checkpointed": 40, "log_frames": 3379, "mode": "PASSIVE"},
+        )
+        monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
+
+        result = cast("dict[str, object]", maybe_checkpoint_wal(trw_dir))
+
+        assert result["backlog_cleared"] is False
+        assert "3339 of 3379" in cast("str", result["advisory"]), "say how far behind, in frames"
+        assert not effective_checkpoint_marker_path(db_path).exists()
     finally:
         mc.reset_backend()
         holder.close()

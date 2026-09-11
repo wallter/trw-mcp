@@ -281,3 +281,38 @@ class TestOpenCodeJsonReadHardening:
         assert result["errors"] == ["Failed to read opencode.json: unreadable"]
         assert result["updated"] == []
         assert result["created"] == []
+
+
+def test_ready_installs_resolvable_shared_contracts(tmp_path: Path) -> None:
+    """ND3: installed adapter reaches exact shared owners, not monorepo paths."""
+    data = Path(__file__).resolve().parents[1] / "src/trw_mcp/data"
+    result = install_opencode_skills(tmp_path)
+    assert not result["errors"]
+    install_opencode_commands(tmp_path)
+    ready = tmp_path / ".opencode/skills/trw-prd-ready"
+    adapter = (ready / "SKILL.md").read_text()
+    command = (tmp_path / ".opencode/commands/trw-prd-ready.md").read_text()
+    assert ".opencode/skills/trw-prd-ready/SKILL.md" in command
+    assert "original `$ARGUMENTS`" in command
+    for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+        name = f"{phase}-contract.md"
+        assert name in adapter
+        assert (ready / name).read_bytes() == (data / "skills" / phase / "SKILL.md").read_bytes()
+    for phase in ("trw-prd-ready", "trw-prd-groom", "trw-exec-plan"):
+        installed = (ready / f"{phase}-contract.md").read_text()
+        assert "up to two NEEDS WORK repair cycles" in installed
+        assert "within the original user scope" in installed
+        assert "fresh author-independent review" in installed
+    assert "If a required contract is missing, stop" in adapter
+    assert "trw_prd_create()" not in adapter
+    assert "EXECUTION-PLAN-{PRD-ID}.md" not in command
+
+
+def test_ready_contract_install_preserves_user_edits(tmp_path: Path) -> None:
+    install_opencode_skills(tmp_path)
+    path = tmp_path / ".opencode/skills/trw-prd-ready/trw-exec-plan-contract.md"
+    assert path.is_file()
+    path.write_text("Operator-owned local contract\n")
+    result = install_opencode_skills(tmp_path)
+    assert path.read_text() == "Operator-owned local contract\n"
+    assert str(path.relative_to(tmp_path)) in result["preserved"]

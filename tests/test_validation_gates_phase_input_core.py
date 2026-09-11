@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests._validation_gates_support import _make_run_dir
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import Phase
@@ -88,21 +90,40 @@ class TestCheckPhaseInputPlan:
 
 
 class TestCheckPhaseInputImplement:
-    """Implement phase requires plan.md and manifest.yaml."""
+    """Implement phase retains manifest and governing PRD status prerequisites."""
 
-    def test_implement_fails_without_plan(
+    @pytest.mark.parametrize("plan_content", [None, "", "See governing PRD."])
+    @pytest.mark.parametrize("status", ["draft", "approved"])
+    def test_implement_checks_prd_status_independently_of_plan_file(
         self,
         tmp_path: Path,
         writer: FileStateWriter,
+        monkeypatch,
+        plan_content: str | None,
+        status: str,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
-        config = TRWConfig(
-            strict_input_criteria=True,
-            phase_gate_enforcement="off",
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "scoped-input",
+                "phase": "plan",
+                "prd_scope": ["PRD-CORE-999"],
+            },
         )
+        writer.write_yaml(run_dir / "shards" / "manifest.yaml", {"waves": []})
+        if plan_content is not None:
+            (run_dir / "reports" / "plan.md").write_text(plan_content)
+        config = TRWConfig(strict_input_criteria=True, phase_gate_enforcement="strict")
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
+        prd = tmp_path / config.prds_relative_path / "PRD-CORE-999.md"
+        prd.parent.mkdir(parents=True)
+        prd.write_text(f"---\nstatus: {status}\n---\n# Governing requirement\n")
         result = check_phase_input(Phase.IMPLEMENT, run_dir, config)
-        rules = [f.rule for f in result.failures]
-        assert "plan_exists" in rules
+        # This proves the configured status boundary, not substantive plan quality.
+        expected = [("prd_status", "error")] if status == "draft" else []
+        assert [(f.rule, f.severity) for f in result.failures] == expected
+        assert result.valid is (status == "approved")
 
     def test_implement_fails_without_manifest(
         self,

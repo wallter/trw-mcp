@@ -225,7 +225,8 @@ async def test_client_catalogue_contains_review_at_connect(project: Path) -> Non
     # The 2026-09-04 wiring-defect fix added a third bootstrap tool
     # (``trw_prd_validate``), 13 -> 14, so a coding-task session (and any
     # sub-agent it dispatches) can reach the requirement-quality validator.
-    assert len(client.first_catalogue) == 14
+    # CORE218 CA1 moves existing memory correction into kernel v2: 14 -> 15.
+    assert len(client.first_catalogue) == 15
     assert "trw_submit_feedback" in client.first_catalogue
 
 

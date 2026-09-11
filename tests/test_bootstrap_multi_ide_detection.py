@@ -75,7 +75,10 @@ class TestUpdateProjectMultiIDE:
             result = update_project(tmp_path)
 
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["hooks"] is False
+        # Absent means inherit the installed Codex default. TRW must not write a
+        # flag that would switch off the hooks.json it installs (inert on 0.154.0,
+        # live on older Codex). See _normalize_feature_flags.
+        assert "hooks" not in config.get("features", {})
         assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
         # Legacy shell-hook opt-in stays disabled (features.hooks=False), so no

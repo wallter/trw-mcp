@@ -31,6 +31,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.telemetry.event_base import HPOTelemetryEvent
 
@@ -132,7 +133,7 @@ class UnifiedEventWriter:
 
         try:
             self._writer.append_jsonl(path, record)
-        except OSError:  # justified: fail-open, fs errors degrade to WARN
+        except (OSError, StateError):  # justified: fail-open, includes wrapped persistence errors
             logger.warning(
                 "unified_event_write_failed",
                 event_type=event.event_type,
@@ -190,7 +191,7 @@ def emit(
         try:
             record = json.loads(event.model_dump_json())
             FileStateWriter().append_jsonl(projection_path, record)
-        except OSError:
+        except (OSError, StateError):
             logger.warning(
                 "unified_projection_write_failed",
                 event_type=event.event_type,

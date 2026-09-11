@@ -30,9 +30,9 @@ CeremonyMode = Literal["FULL", "MINIMAL", "COMPACT"]
 
 # Canonical session-boundary text — import from here, not _static_sections.
 SESSION_BOUNDARY_TEXT = (
-    "Every session that loads learnings via `trw_session_start()` should persist "
-    "them at session end \u2014 this is how your work compounds across sessions "
-    "instead of being lost.\n"
+    "Preserve material unfinished work via checkpoint or durable native handoff + next-read pointer. "
+    "Nothing material to preserve: no artifacts. trw_deliver is completed-work acceptance under unchanged gates; "
+    "recorded learnings already persist.\n"
 )
 
 # Quick-ref subset: the 4 highest-signal tools shown in the compact CLAUDE.md table
@@ -172,7 +172,7 @@ class ProtocolRenderer:
     def render_ceremony_flows(self) -> str:
         """Render quick task and full run example flows."""
         return (
-            "### Example Flows\n"
+            "### Completed-work Flows (delivery gates apply)\n"
             "\n"
             "**Quick Task** (no run needed):\n"
             "```\n"
@@ -282,7 +282,7 @@ class ProtocolRenderer:
         return (
             "TRW tools persist your work across sessions:\n"
             "- **Start**: call `trw_session_start()` to load prior learnings\n"
-            "- **Finish**: call `trw_deliver()` to persist discoveries (not status reports)\n"
+            "- **Accept completed work**: `trw_deliver()` under the delivery gates\n"
             "- **Verify**: Run project-native checks after meaningful changes \u2014 fix failures before moving on.\n"
             "\n" + render_deliver_gate_statement() + "\n" + SESSION_BOUNDARY_TEXT + "\n\n" + appendix
         )

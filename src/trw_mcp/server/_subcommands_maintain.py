@@ -37,9 +37,9 @@ def _run_clear_shared_anchors(args: argparse.Namespace) -> None:
 def _run_maintain_verify(args: argparse.Namespace) -> None:
     """Handle ``maintain-verify`` — batch assertion/anchor verification sweep.
 
-    Bounds stale-claim latency: recall only verifies entries a query happened to
-    return, so entries nobody recalls need this scheduled pass to have their
-    ``verification_status`` written through.
+    Refreshes stored claim evidence explicitly. Recall reports last-known evidence;
+    this command does not establish an automatic schedule or bounded stale-claim
+    latency. Batches bound acquisition, not runtime or a concurrent snapshot.
 
     ``--clear-shared-anchors`` selects the PRD-CORE-267 FR03 migration instead:
     it operates on the same memory rows this sweep already re-verifies, which

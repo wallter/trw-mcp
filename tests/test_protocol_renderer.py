@@ -166,7 +166,10 @@ def test_render_behavioral_protocol_full() -> None:
     assert "TRW Behavioral Protocol" in output
     assert "Execution Phases" in output
     assert "Tool Lifecycle" in output
-    assert "Example Flows" in output
+    # CORE269: examples describe completed work, not mandatory session closure.
+    assert "Completed-work Flows (delivery gates apply)" in output
+    assert "Quick Task" in output and "Full Run" in output
+    assert "trw_build_check(tests_passed=" in output
     assert "Framework Reference" in output
     assert "Session Boundaries" in output
 

@@ -68,7 +68,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "RESEARCH",
         "trw_init",
         "New structured tasks \u2014 creates run directory for tracking",
-        "Enables checkpoints and progress tracking \u2014 without a run, your progress can't be saved",
+        "Enables run checkpoints; a durable native handoff can preserve work without creating a run",
         "trw_init(task_name='...')",
     ),
     CeremonyTool(
@@ -82,7 +82,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "Any",
         "trw_checkpoint",
         "After milestones \u2014 preserves progress across context compactions",
-        "Your resume point if context compacts \u2014 uncheckpointed work is permanently lost",
+        "Preserves material unfinished work; a durable native handoff with a next-read pointer is also valid",
         "trw_checkpoint(message='...')",
     ),
     CeremonyTool(
@@ -123,8 +123,8 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
     CeremonyTool(
         "DELIVER",
         "trw_deliver",
-        "Last action \u2014 persists everything in one call",
-        "Without this, your session's learnings are invisible to future agents \u2014 they start from scratch",
+        "For completed-work acceptance under the delivery gates",
+        "Recorded learnings already persist; unfinished work does not require delivery",
         "trw_deliver()",
     ),
 ]

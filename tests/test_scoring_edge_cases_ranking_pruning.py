@@ -50,16 +50,16 @@ class TestRankByUtilityEdgeCases:
         )
         assert result[0]["id"] == entry_in_detail["id"]
 
-    def test_lambda_weight_one_pure_utility(self) -> None:
-        """lambda_weight=1.0 means pure utility, ignores relevance."""
+    def test_lambda_weight_one_cannot_ignore_targeted_query(self) -> None:
+        """CORE-116 RA2 retires pure-utility targeted recall, including lambda=1."""
         low_impact = self._make_entry("pytest testing", impact=0.1)
         high_impact = self._make_entry("unrelated", impact=0.9)
         result = rank_by_utility(
-            [low_impact, high_impact],
+            [high_impact, low_impact],
             query_tokens=["pytest"],
             lambda_weight=1.0,
         )
-        assert result[0]["id"] == high_impact["id"]
+        assert result[0]["id"] == low_impact["id"]
 
     def test_lambda_weight_zero_pure_relevance(self) -> None:
         """lambda_weight=0.0 means pure relevance, ignores utility."""

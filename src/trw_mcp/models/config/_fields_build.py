@@ -47,7 +47,7 @@ class _BuildFields:
     #   block_all    — same predicate as block_coding
     # Default flipped advisory -> block_coding (2026-06-10, framework-canon
     # refinement): deliver-without-build-evidence is the dominant measured
-    # false-completion mode (iter-28: universal miss-verification). CORE-246
+    # false-completion mode observed in evaluation. CORE-246
     # then removed the never-block-on-unknown branch: the gate's strength no
     # longer depends on the task-type heuristic being right, because a run that
     # modified files blocks whatever it was classified as. Ceremony-only runs
@@ -181,7 +181,8 @@ class _BuildFields:
     mutation_experimental_paths: tuple[str, ...] = ("scratch/",)
     mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
     cross_model_review_enabled: bool = False
-    cross_model_provider: str = "gemini-2.5-pro"
+    # PRD-CORE-270-FR02: dispatch CLIENT id, not a model. "" = no reviewer.
+    cross_model_provider: str = ""
     cross_model_review_timeout_secs: int = 30
     review_confidence_threshold: int = 80
     # PRD-QUAL-110-FR03: the dependency-audit config flags were removed — they

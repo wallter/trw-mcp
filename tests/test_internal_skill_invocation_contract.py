@@ -7,16 +7,18 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 #: Every live copy of the internal PRD-review skill (two formerly-vendored
 #: mirrors were deleted wholesale in `a77650f238`; only these remain).
 #: Deliberately NOT filtered with `.exists()`: a deleted surface must fail
 #: loudly here, not silently drop out of the contract.
 PRD_REVIEW_SURFACES = (
-    ROOT / "trw-mcp/src/trw_mcp/data/skills/trw-prd-review/SKILL.md",
-    ROOT / "trw-mcp/src/trw_mcp/data/codex/skills/trw-prd-review/SKILL.md",
-    ROOT / ".claude/skills/trw-prd-review/SKILL.md",
-    ROOT / ".agents/skills/trw-prd-review/SKILL.md",
+    PACKAGE_ROOT / "src/trw_mcp/data/skills/trw-prd-review/SKILL.md",
+    PACKAGE_ROOT / "src/trw_mcp/data/codex/skills/trw-prd-review/SKILL.md",
+    pytest.param(ROOT / ".claude/skills/trw-prd-review/SKILL.md", marks=requires_monorepo),
+    pytest.param(ROOT / ".agents/skills/trw-prd-review/SKILL.md", marks=requires_monorepo),
 )
 PUBLIC_GUIDANCE_SURFACES = (
     ROOT
@@ -37,25 +39,23 @@ INTERNAL_COMMAND = re.compile(
 )
 
 
-def test_internal_prd_review_does_not_advertise_direct_invocation() -> None:
-    for path in PRD_REVIEW_SURFACES:
-        text = path.read_text(encoding="utf-8")
-        assert INTERNAL_COMMAND.search(text) is None, path
-        assert "invoked standalone" not in text, path
+@pytest.mark.parametrize("path", PRD_REVIEW_SURFACES)
+def test_internal_prd_review_does_not_advertise_direct_invocation(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert INTERNAL_COMMAND.search(text) is None, path
+    assert "invoked standalone" not in text, path
 
 
 def test_prd_review_remains_internal_and_pipeline_owned() -> None:
     source = PRD_REVIEW_SURFACES[0].read_text(encoding="utf-8")
-    ready = (ROOT / "trw-mcp/src/trw_mcp/data/skills/trw-prd-ready/SKILL.md").read_text(encoding="utf-8")
+    ready = (PACKAGE_ROOT / "src/trw_mcp/data/skills/trw-prd-ready/SKILL.md").read_text(encoding="utf-8")
 
     assert "user-invocable: false" in source
     assert "Invoke the packaged internal `trw-prd-review` contract" in ready
 
 
+@requires_monorepo
 def test_public_guidance_does_not_advertise_internal_phase_commands() -> None:
-    missing = [str(p) for p in PUBLIC_GUIDANCE_SURFACES if not p.exists()]
-    if missing:
-        pytest.skip(f"monorepo-only surfaces absent in this checkout: {missing}")
     for path in PUBLIC_GUIDANCE_SURFACES:
         assert INTERNAL_COMMAND.search(path.read_text(encoding="utf-8")) is None, path
 

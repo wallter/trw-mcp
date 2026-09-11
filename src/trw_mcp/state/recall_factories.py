@@ -70,16 +70,18 @@ def recall_focused(
     means this factory never triggers a model load, so it reaches BM25 + vector
     hybrid search ONLY when some earlier operation in the same process already
     initialized the embedder. When the embedder is uninitialized the search
-    degrades to all-token keyword matching, which a multi-word natural-language
-    query cannot satisfy — see :func:`focused_recall_zero_match_advisory`, which
-    explains a zero-row result to the caller. Compact mode by default.
+    degrades to IDF-weighted keyword union: unmatched tokens do not force an
+    empty result, but semantic paraphrases may still be missed. See
+    :func:`focused_recall_zero_match_advisory` for zero-row guidance.
+    Full acquisition retains body; startup projects compact scoring inputs and
+    bounded selected content without a second lookup.
     """
     return _default_recall()(
         trw_dir,
         query=query,
         min_impact=min_impact,
         max_results=max_results,
-        compact=True,
+        compact=False,
         allow_cold_embedding_init=allow_cold_embedding_init,
         status="active",  # focused recall must not surface obsolete/archived learnings
     )
@@ -121,10 +123,9 @@ def recall_recent_bypass(
 # it were query hits.
 _UNINITIALIZED_INDEX_ADVISORY = (
     "Focused recall matched 0 entries: the vector index was not initialized in this "
-    "process (session_start never triggers a model load), so only all-token keyword "
-    "matching ran -- a multi-word natural-language query cannot match that way. The "
+    "process (session_start never waits for a model load), so keyword fallback ran. The "
     "learnings returned are the impact-ranked baseline, NOT query matches. Call "
-    "trw_recall(query=...) for full hybrid BM25+vector search."
+    "trw_recall(query=...) for explicit retrieval; inspect retrieval_warning if the semantic model is not ready."
 )
 
 _HYBRID_INDEX_ADVISORY = (

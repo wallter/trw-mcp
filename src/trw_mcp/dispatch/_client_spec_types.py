@@ -68,8 +68,20 @@ SubAgentSupport = Literal["yes", "no", "unknown"]
 #: ``single_json_object`` — one JSON document carrying the answer in a field.
 #: ``json_lines``         — one JSON object per line; the last textual one wins.
 #: ``ndjson_events``      — an NDJSON event stream to be reassembled in order.
-#: ``trailing_text``      — no machine format; the trailing non-empty lines.
-OutputShape = Literal["single_json_object", "json_lines", "ndjson_events", "trailing_text"]
+#: ``enveloped_ndjson_events`` — NDJSON where each line is a TAGGED envelope,
+#:                          ``{"event": <name>, <name>: {...}}``, and one
+#:                          terminal envelope carries the whole answer. Distinct
+#:                          from ``ndjson_events`` because the payload is nested
+#:                          under a per-event key rather than flat, so a parser
+#:                          for one cannot read the other.
+#: ``trailing_text``      — legacy name for ANSI-cleaned full plain text.
+OutputShape = Literal[
+    "single_json_object",
+    "json_lines",
+    "ndjson_events",
+    "enveloped_ndjson_events",
+    "trailing_text",
+]
 
 
 class UnknownClientError(KeyError):

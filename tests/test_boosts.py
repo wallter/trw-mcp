@@ -1,8 +1,10 @@
-"""Tests for contextual boost dimensions in rank_by_utility() (PRD-CORE-102, Task 3)."""
+"""Tests for contextual boost dimensions in rank_by_utility() (PRD-CORE-116, RA2)."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 # Compute the fixture's created timestamp relative to "now" so the recency-decay
 # factor stays non-degenerate over time. A hardcoded 2026-01-01 timestamp decays
@@ -28,7 +30,7 @@ def _base_entry(
 
 
 def test_domain_match_1_4() -> None:
-    """Entry with domain=['auth'], context active_domains=['auth'] gets ~1.4x boost."""
+    """Entry with domain=['auth'], context active_domains=['auth'] gets ~1.4x preference, not manufactured relevance."""
     from trw_mcp.scoring._recall import RecallContext, rank_by_utility
 
     entry = _base_entry(domain=["auth"])
@@ -38,17 +40,18 @@ def test_domain_match_1_4() -> None:
     result_ctx = rank_by_utility([entry], ["auth"], 0.3, context=ctx)
     result_no = rank_by_utility([entry], ["auth"], 0.3, context=no_ctx)
 
-    score_ctx = result_ctx[0]["combined_score"]
-    score_no = result_no[0]["combined_score"]
+    assert result_ctx[0]["combined_score"] == result_no[0]["combined_score"] == 0.0
+    score_ctx = result_ctx[0]["preference_score"]
+    score_no = result_no[0]["preference_score"]
     assert isinstance(score_ctx, float)
     assert isinstance(score_no, float)
     assert score_ctx > score_no, f"Expected boost: {score_ctx} > {score_no}"
-    # Approximately 1.4x boost on combined score
-    assert abs(score_ctx / max(score_no, 1e-9) - 1.4) < 0.15
+    # Approximately 1.4x boost on secondary preference
+    assert score_ctx / score_no == pytest.approx(1.4, abs=0.002)
 
 
 def test_phase_match_1_3() -> None:
-    """Entry with phase_affinity=['IMPLEMENT'], context current_phase='IMPLEMENT' gets ~1.3x boost."""
+    """Entry with phase_affinity=['IMPLEMENT'], context current_phase='IMPLEMENT' gets ~1.3x preference, not manufactured relevance."""
     from trw_mcp.scoring._recall import RecallContext, rank_by_utility
 
     entry = _base_entry(phase_affinity=["IMPLEMENT"])
@@ -58,9 +61,10 @@ def test_phase_match_1_3() -> None:
     result_ctx = rank_by_utility([entry], ["implement"], 0.3, context=ctx)
     result_no = rank_by_utility([entry], ["implement"], 0.3, context=no_ctx)
 
-    score_ctx = float(str(result_ctx[0]["combined_score"]))
-    score_no = float(str(result_no[0]["combined_score"]))
-    assert score_ctx > score_no
+    assert result_ctx[0]["combined_score"] == result_no[0]["combined_score"] == 0.0
+    score_ctx = float(str(result_ctx[0]["preference_score"]))
+    score_no = float(str(result_no[0]["preference_score"]))
+    assert score_ctx / score_no == pytest.approx(1.3, abs=0.002)
 
 
 def test_team_match_1_2() -> None:
@@ -110,10 +114,11 @@ def test_all_combined() -> None:
     result_ctx = rank_by_utility([entry], ["auth"], 0.3, context=ctx)
     result_no = rank_by_utility([entry], ["auth"], 0.3, context=no_ctx)
 
-    score_ctx = float(str(result_ctx[0]["combined_score"]))
-    score_no = float(str(result_no[0]["combined_score"]))
-    # All boosts: 1.4 * 1.3 * 1.2 * 1.5 = 3.276x
-    assert score_ctx > score_no * 2.0  # conservatively > 2x
+    assert result_ctx[0]["combined_score"] == result_no[0]["combined_score"] == 0.0
+    score_ctx = float(str(result_ctx[0]["preference_score"]))
+    score_no = float(str(result_no[0]["preference_score"]))
+    # No PRD knowledge ID is supplied: only domain, phase and team apply.
+    assert score_ctx / score_no == pytest.approx(1.4 * 1.3 * 1.2, abs=0.002)
 
 
 def test_no_context_backward_compat() -> None:
@@ -220,3 +225,20 @@ def test_assertion_penalties_still_work_with_context() -> None:
     score_penalty = float(str(result_penalty[0]["combined_score"]))
     score_no_penalty = float(str(result_no_penalty[0]["combined_score"]))
     assert score_penalty < score_no_penalty
+
+
+def test_context_breaks_relevance_ties_but_cannot_displace_relevant_entry() -> None:
+    """CORE-116 RA2: context orders ties, never outweighs query evidence."""
+    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+
+    ordinary = _base_entry("L-ordinary", summary="unrelated instruction")
+    boosted = _base_entry("L-boosted", summary="unrelated instruction", domain=["auth"])
+    relevant = _base_entry("L-relevant", summary="authentication", impact=0.1)
+    context = RecallContext(active_domains=["auth"])
+    for tied in ([ordinary, boosted], [boosted, ordinary]):
+        ranked = rank_by_utility(tied, ["authentication"], 0.3, context=context)
+        assert [row["id"] for row in ranked] == ["L-boosted", "L-ordinary"]
+        assert ranked[0]["combined_score"] == ranked[1]["combined_score"] == 0.0
+        ranked = rank_by_utility([*tied, relevant], ["authentication"], 1.0, context=context)
+        assert ranked[0]["id"] == "L-relevant"
+        assert ranked[0]["combined_score"] > ranked[1]["combined_score"]

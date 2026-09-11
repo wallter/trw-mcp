@@ -88,7 +88,7 @@ class SurfaceManifestEntry(BaseModel):
 # FR02: exact stable minimal kernel + capability packs
 # =====================================================================
 #
-# ``_KERNEL_TOOLS`` (the exact nine-tool kernel), ``PACK_TOOLS`` (the 12-pack /
+# ``_KERNEL_TOOLS`` (the exact ten-tool kernel), ``PACK_TOOLS`` (the 12-pack /
 # 50-tool membership), and ``STANDARD_TASK_PACKS`` are imported at the top of
 # this module from ``trw_mcp.models.surface_packs`` — the single source of truth
 # both this registry and ``models/config/_defaults`` read. Kernel changes are a
@@ -191,7 +191,7 @@ MANIFEST_BY_NAME: dict[str, SurfaceManifestEntry] = {e.name: e for e in TOOL_MAN
 #: here plus a new pinned digest in ``KERNEL_VERSION_DIGESTS`` — otherwise the
 #: FR02 acceptance test fails, forcing the versioned manifest diff the PRD
 #: mandates (task-corpus regression + security review happen out of band).
-KERNEL_VERSION: int = 1
+KERNEL_VERSION: int = 2
 
 
 def kernel_digest() -> str:
@@ -204,6 +204,7 @@ def kernel_digest() -> str:
 #: the pin and fails the FR02 test until the version is bumped and re-pinned.
 KERNEL_VERSION_DIGESTS: dict[int, str] = {
     1: "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7",
+    2: "769ed2c0b3e39adfd6776781b5ad4d8a850bfa6f090b8d89f955fa0ce08bab23",
 }
 
 # =====================================================================

@@ -26,9 +26,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 from trw_mcp.middleware.surface_authority import _ALWAYS_EXPOSED
 from trw_mcp.models.surface_packs import CAPABILITY_PACKS, PACK_TOOLS, STANDARD_TASK_PACKS
 from trw_mcp.server._surface_manifest_registry import (
+    KERNEL_VERSION,
     KERNEL_VERSION_DIGESTS,
     TOOL_MANIFEST,
     kernel_digest,
@@ -54,14 +56,14 @@ def _effective(task_type: str | None) -> set[str]:
 
 
 def test_unknown_declares_the_verification_pack() -> None:
-    """FR05 AC1-AC3: 11 declared tools for ``unknown``, ``None`` and an unmapped
+    """FR05 AC1-AC3: 12 declared tools for ``unknown``, ``None`` and an unmapped
     sentinel, with both verification tools declared and no duplicated id."""
     for case in ("unknown", None, "audit"):
         resolution = resolve_tool_surface(case, "standard")
         assert "trw_build_check" in resolution.tools, case
         assert "trw_review" in resolution.tools, case
-        assert len(resolution.tools) == 11, (case, resolution.tools)
-        assert len(set(resolution.tools)) == 11, f"{case}: duplicated tool id in {resolution.tools}"
+        assert len(resolution.tools) == 12, (case, resolution.tools)
+        assert len(set(resolution.tools)) == 12, f"{case}: duplicated tool id in {resolution.tools}"
 
     assert STANDARD_TASK_PACKS["unknown"] == ("verification",)
     assert resolve_tool_surface("unknown", "standard").packs == ("kernel", "verification")
@@ -102,10 +104,11 @@ def test_declared_and_effective_no_longer_diverge_on_verification() -> None:
     assert "trw_review" in wired.tools
 
 
-def test_kernel_and_manifest_are_untouched() -> None:
-    """Non-Goal: no tool moved between packs, no tool was registered, the
-    version-pinned kernel digest is unchanged."""
-    assert kernel_digest() == KERNEL_VERSION_DIGESTS[1]
+def test_versioned_kernel_and_manifest_preserve_feedback_contract() -> None:
+    """CORE218 CA1 moves correction into kernel v2; CORE246 feedback ownership
+    and registered public inventory remain unchanged."""
+    assert kernel_digest() == KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
+    assert KERNEL_VERSION_DIGESTS[1] == "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7"
     assert len(TOOL_MANIFEST) == 48
     assert CAPABILITY_PACKS["feedback"] == ("trw_submit_feedback",)
     # ``trw_submit_feedback`` belongs to EXACTLY the feedback pack (FR06 AC3).
@@ -255,13 +258,11 @@ def test_no_source_claims_unknown_is_advisory() -> None:
     """FR09 AC1: zero matches of the advisory-unknown phrase across the
     enumerated surfaces, plus the evidence-rule sentence is PRESENT in the
     authoring source (a grep-absent check alone would pass on a deleted file)."""
-    repo = Path(__file__).resolve().parents[2]
     surfaces = (
         "trw-mcp/src/trw_mcp/data/framework.source.md",
         "trw-mcp/src/trw_mcp/data/framework.md",
         "trw-mcp/src/trw_mcp/data/framework-core.md",
         "trw-mcp/src/trw_mcp/data/surfaces/tool-lifecycle.md",
-        "docs/documentation/tool-lifecycle.md",
         "trw-mcp/src/trw_mcp/state/claude_md/sections/_tool_lifecycle.py",
         "trw-mcp/src/trw_mcp/state/claude_md/renderers/_review_and_opencode.py",
         "trw-mcp/src/trw_mcp/tools/_deliver_gate_dispatch.py",
@@ -287,16 +288,21 @@ def test_no_source_claims_unknown_is_advisory() -> None:
 
     offenders: list[tuple[str, str]] = []
     for rel in surfaces:
-        path = repo / rel
+        path = PACKAGE_ROOT / rel.removeprefix("trw-mcp/")
         assert path.is_file(), f"FR09 surface disappeared: {rel}"
         text = path.read_text(encoding="utf-8")
+        offenders += [(rel, phrase) for phrase in phrases if phrase in text]
+
+    if MONOREPO_ROOT is not None:
+        rel = "docs/documentation/tool-lifecycle.md"
+        text = (MONOREPO_ROOT / rel).read_text(encoding="utf-8")
         offenders += [(rel, phrase) for phrase in phrases if phrase in text]
 
     assert not offenders, f"surfaces still asserting the superseded advisory-unknown rule: {offenders}"
 
     # The positive half: the evidence rule is actually stated in the hand-editable
     # canon source, so FR09 is a rewrite and not a deletion.
-    source = (repo / "trw-mcp/src/trw_mcp/data/framework.source.md").read_text(encoding="utf-8")
+    source = (PACKAGE_ROOT / "src/trw_mcp/data/framework.source.md").read_text(encoding="utf-8")
     assert "an unclassified run that changed code still blocks" in source
 
 
@@ -306,7 +312,6 @@ def test_generated_canon_views_match_their_source() -> None:
     ``framework.md`` / ``framework-core.md`` are compiler output; editing them
     directly is the recurring mistake this asserts against.
     """
-    repo = Path(__file__).resolve().parents[2]
     for rel in ("trw-mcp/src/trw_mcp/data/framework.md", "trw-mcp/src/trw_mcp/data/framework-core.md"):
-        text = (repo / rel).read_text(encoding="utf-8")
+        text = (PACKAGE_ROOT / rel.removeprefix("trw-mcp/")).read_text(encoding="utf-8")
         assert "an unclassified run that changed code still blocks" in text, rel

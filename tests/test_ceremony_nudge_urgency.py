@@ -94,8 +94,8 @@ class TestProgressiveUrgency:
         assert isinstance(result, str)
         assert len(result) > 0
 
-    def test_fr03_high_urgency_mentions_effort(self, tmp_path: Path) -> None:
-        """High urgency deliver nudge includes minimal-effort framing."""
+    def test_core269_high_urgency_keeps_preservation_conditional(self, tmp_path: Path) -> None:
+        """Urgency cannot turn preservation into a timed completion obligation."""
         state = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -105,7 +105,12 @@ class TestProgressiveUrgency:
             nudge_counts={"deliver": 5},
         )
         result = _select_nudge_message("deliver", state, available_learnings=0)
-        assert "second" in result.lower()
+        assert "If you have material unfinished work" in result
+        assert "checkpoint or durable native handoff with a next-read pointer" in result
+        assert "completed work under existing evidence gates" in result
+        assert "second" not in result.lower()
+        state.nudge_counts = {"deliver": 0}
+        assert _select_nudge_message("deliver", state, available_learnings=0) == result
 
     def test_fr03_urgency_reset_on_completion(self, tmp_path: Path) -> None:
         """Completing a step resets its nudge count to 0."""

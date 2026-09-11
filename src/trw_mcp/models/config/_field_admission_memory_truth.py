@@ -17,32 +17,29 @@ from trw_mcp.models.config._field_admission_registry_types import ConfigAdmissio
 MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
     "contradiction_penalty_reward": ConfigAdmission(
         field_name="contradiction_penalty_reward",
-        owner="PRD-CORE-244-FR04 (contradiction as the missing negative signal)",
-        consumer="trw_mcp.scoring._correlation.apply_contradiction_penalty (via tools._recall_assertion_verification._verify_assertions)",
-        default_rationale=(
-            "0.4 sits between the existing tests_failed magnitude of 0.3 and phase_gate_failed at 0.5 in "
-            "scoring/_reward_resolution.py. That is a PLACEMENT argument, not a calibrated one: no prior "
-            "data exists because the signal did not exist — outcome.failing was computed on every recall "
-            "and discarded. OQ-02 records the calibration debt rather than dressing the number as measured."
+        owner="PRD-CORE-268 (explicit historical API compatibility)",
+        consumer=(
+            "trw_mcp.scoring._contradiction_penalty.apply_contradiction_penalty, called from "
+            "trw_mcp.tools._delivery_helpers.check_delivery_gates (PRD-CORE-244-FR04, restored "
+            "2026-09-11) and by explicit callers"
         ),
+        default_rationale="Preserve the historical 0.4 API default; no measured usefulness claim.",
         interaction_analysis=(
-            "Applied through the SAME _update_entry_q_values / _update_entry_history pair process_outcome "
-            "uses, with discount=1.0 (no recency decay: a contradiction found NOW is about the entry, not "
-            "about how recently it was recalled). It therefore composes additively with the session-wide "
-            "reward rather than replacing it, and is bounded by q_learning_rate exactly as every other "
-            "reward is. At 0.0 the penalty is a no-op observation, which still increments q_observations — "
-            "so it cannot be used to disable the signal while pretending it ran."
+            "Explicit invocation still updates historical Q observations. Default recall and "
+            "maintenance do not call it; stored-evidence ranking uses assertion_failure_penalty. "
+            "Historical Q is retained but excluded from default shared utility and tier scoring."
         ),
         deprecation_plan=(
-            "Retain until explicit feedback has a non-zero population. helpful_count was measured at 0 of "
-            "9,366 rows, so removing this leaves the bandit with no per-entry negative channel at all."
+            "Retain the explicit historical API. An automatic caller was restored DELIBERATELY on "
+            "2026-09-11, not silently: PRD-CORE-268 removed FR04's recall call site over a LATENCY "
+            "budget, which does not apply at the delivery gate where the verdict is already durable "
+            "and nothing is on a hot path. The reward is additionally bounded to FRESH evidence "
+            "(verification_cache_ttl_seconds) so a stale observation cannot decay an entry daily. "
+            "Any FURTHER automatic caller still needs the same explicit justification."
         ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-244-memory-truth-invariants.md",
-        test_pointer=(
-            "trw-mcp/tests/test_recall_assertion_verification.py::"
-            "TestContradictionPenalty::test_failing_assertion_applies_contradiction_penalty"
-        ),
-        budget_decision="admitted",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-268.md",
+        test_pointer="trw-mcp/tests/test_memory_attribution_retirement.py",
+        budget_decision="legacy-admitted",
     ),
     "memory_decay_cutoff_days": ConfigAdmission(
         field_name="memory_decay_cutoff_days",
@@ -174,54 +171,29 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
     ),
     "verification_cache_ttl_seconds": ConfigAdmission(
         field_name="verification_cache_ttl_seconds",
-        owner="PRD-CORE-244-FR03 (the durable timestamp that makes the pass cacheable)",
-        consumer="trw_mcp.tools._verification_cache.cached_verdict (via tools._recall_assertion_verification._verify_assertions)",
-        default_rationale=(
-            "3600s bounds how stale a reused verdict can be to one hour, which is shorter than any "
-            "plausible unattended session, while removing the repeated per-recall filesystem scan that "
-            "dominated the pass. 0 disables reuse entirely and every recall re-verifies."
-        ),
+        owner="PRD-CORE-268-FR02 (qualified stored evidence, not inline verification)",
+        consumer="trw_mcp.tools._recall_assertion_verification._verify_assertions -> _stored_claim_evidence.stored_claim_evidence",
+        default_rationale="Retain the existing window as evidence-age qualification, not proof about the current tree.",
         interaction_analysis=(
-            "Consulted only when verification_checked_at is non-empty, so it can never apply to an entry no "
-            "pass has examined. A hit skips run_verification_pass AND its persist, so it also suppresses "
-            "the FR04 contradiction penalty for that entry within the window — the penalty is applied once "
-            "per window rather than once per recall, which is the same once-per-day intent FR04 already "
-            "carries. Independent of assertion_stale_threshold_days, which decides the verdict rather than "
-            "how long one is reused."
+            "UTC age is fresh only for 0 <= age < TTL with TTL > 0. Invalid/future/naive dates are unknown. "
+            "Per-assertion dates own assertion evidence; aggregate verdicts cannot overwrite them. "
+            "Expiry does not trigger a scan or erase a dated observed failure."
         ),
-        deprecation_plan=(
-            "Retain while recall runs verification inline. Removing it restores a full filesystem "
-            "verification on every recall for every candidate entry."
-        ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-244-memory-truth-invariants.md",
-        test_pointer="trw-mcp/tests/test_trw_recall_verification.py::test_warm_verdict_is_reused_within_ttl",
+        deprecation_plan="Retain the existing input name without adding a second freshness switch.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-268.md",
+        test_pointer="trw-mcp/tests/test_core268_recall_evidence.py",
         budget_decision="admitted",
     ),
     "recall_verification_budget_ms": ConfigAdmission(
         field_name="recall_verification_budget_ms",
-        owner="PRD-CORE-267-FR04 (the recall verification pass is wall-clock budgeted)",
-        consumer="trw_mcp.tools._recall_assertion_verification._verify_assertions",
-        default_rationale=(
-            "A measured recall on the development store took 14,518 ms with 12,900 ms of it inside this "
-            "pass, having checked four entries. 1000 ms keeps verification in the same order as the rest "
-            "of the call while still examining the top-ranked entries, which are the ones the caller reads "
-            "first. 0 disables the bound and restores the unbounded pass."
-        ),
-        interaction_analysis=(
-            "Read once per pass and compared against a monotonic clock before each entry, so it can only "
-            "ever REDUCE work; it never causes an entry to be verified that otherwise would not be. A "
-            "deferred entry is marked not_checked_budget on the response only — nothing is persisted for "
-            "it, so verification_cache_ttl_seconds cannot be warmed by a deferral and the FR04 "
-            "contradiction penalty is not applied on its behalf. Deferred entries remain reachable by "
-            "maintain_verify_batch_limit's sweep, which is not budget-bound."
-        ),
-        deprecation_plan=(
-            "Retain while recall verifies inline. It becomes unnecessary only if the pass moves fully to a "
-            "background worker, at which point the bound belongs to that worker instead."
-        ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-267-session-scoped-learning-anchors.md",
-        test_pointer=("trw-mcp/tests/test_recall_verification_budget.py::test_budget_exhaustion_marks_and_defers"),
-        budget_decision="admitted",
+        owner="PRD-CORE-268-FR02 (retires PRD-CORE-267 inline verification)",
+        consumer="None: compatibility parsing only; no runtime verification consumer",
+        default_rationale="Keep old configuration files readable; this value no longer changes execution.",
+        interaction_analysis="Neither recall nor maintain-verify receives a runtime deadline from this input.",
+        deprecation_plan="Remove after explicit client-configuration migration; do not advertise a live budget.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-268.md",
+        test_pointer="trw-mcp/tests/test_recall_verification_budget.py",
+        budget_decision="legacy-admitted",
     ),
     "anchor_shared_set_migration_threshold": ConfigAdmission(
         field_name="anchor_shared_set_migration_threshold",

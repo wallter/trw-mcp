@@ -58,7 +58,7 @@ class TestCheckPhaseInputDispatch:
         run_dir = _make_run_dir(tmp_path, writer)
         result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=True))
         rules = [f.rule for f in result.failures]
-        assert "plan_exists" in rules
+        assert "manifest_exists" in rules
 
     def test_validate_input(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
@@ -79,10 +79,8 @@ class TestCheckPhaseInputDispatch:
         non_strict_result = check_phase_input(Phase.IMPLEMENT, run_dir, TRWConfig(strict_input_criteria=False))
         strict_severities = {f.rule: f.severity for f in strict_result.failures}
         non_strict_severities = {f.rule: f.severity for f in non_strict_result.failures}
-        if "plan_exists" in strict_severities:
-            assert strict_severities["plan_exists"] == "error"
-        if "plan_exists" in non_strict_severities:
-            assert non_strict_severities["plan_exists"] == "warning"
+        assert strict_severities["manifest_exists"] == "error"
+        assert non_strict_severities["manifest_exists"] == "warning"
 
     def test_research_input_passes(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)

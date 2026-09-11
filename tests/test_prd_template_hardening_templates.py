@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
 
 def test_canonical_prd_template_includes_control_points_and_completion_evidence() -> None:
     template_path = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "prd_template.md"
@@ -18,8 +20,9 @@ def test_canonical_prd_template_includes_control_points_and_completion_evidence(
     assert "### Migration / Backward Compatibility" in content
 
 
+@requires_monorepo
 def test_repo_prd_template_matches_hardened_structure() -> None:
-    template_path = Path(__file__).resolve().parents[2] / "docs" / "requirements-aare-f" / "prds" / "TEMPLATE.md"
+    template_path = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "docs" / "requirements-aare-f" / "prds" / "TEMPLATE.md"
     content = template_path.read_text(encoding="utf-8")
 
     assert "### Primary Control Points" in content

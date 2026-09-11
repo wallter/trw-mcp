@@ -9,9 +9,10 @@ Three things live here, and they are separate on purpose:
 A note on the two size numbers, because they look like drift and are not:
 ``wal_checkpoint_threshold_mb`` (10 MB default) is the size at which a
 checkpoint becomes DUE; trw-memory's ``WAL_JOURNAL_SIZE_LIMIT_BYTES``
-(``storage/_connection.py``, 64 MiB) is the hard ceiling SQLite enforces on the
-file. On an engine below 3.51.3 only PASSIVE may run and PASSIVE never
-truncates, so a busy store settles at the 64 MiB ceiling with the 10 MB trigger
+(``storage/_connection.py``, 64 MiB) is the size SQLite trims the file back TO
+when the WAL next resets -- a truncation target, not a ceiling it enforces on an
+active WAL, which can exceed it during a write burst under a long-lived reader. On an engine below 3.51.3 only PASSIVE may run and PASSIVE never
+truncates, so a busy store settles around the 64 MiB truncation target with the 10 MB trigger
 firing on every evaluation and reclaiming nothing. That is the documented
 consequence of the engine gate, not a mis-set knob.
 
@@ -59,8 +60,10 @@ __all__ = [
     "evaluate_wal_trigger",
     "last_checkpoint_age_seconds",
     "last_effective_checkpoint_age_seconds",
+    "last_reset_checkpoint_age_seconds",
     "record_checkpoint_attempt",
     "record_effective_checkpoint",
+    "record_reset_checkpoint",
     "resolve_wal_paths",
     "sole_live_writer",
 ]
@@ -74,15 +77,35 @@ __all__ = [
 #: absent, and a pre-change process simply never writes it.
 CHECKPOINT_ATTEMPT_SUFFIX = ".checkpoint-ts"
 
-#: Sidecar holding the epoch seconds of the last checkpoint that ACCOMPLISHED
-#: something — frames written back, or the WAL file shrank. This is the clock
-#: the ``trw-mcp doctor`` ``memory_wal`` row warns on. The split exists because
-#: the two answer different questions, and conflating them hides the failure
-#: mode that matters: on an engine below SQLite 3.51.3 only PASSIVE may run, so
-#: a store can checkpoint on schedule forever and reclaim nothing, and a doctor
-#: reading the ATTEMPT clock would report a healthy "checkpointed 12s ago" while
-#: the WAL sat pinned at journal_size_limit.
+#: Sidecar holding the epoch seconds of the last checkpoint that CAUGHT UP WITH
+#: THE WAL BACKLOG — ``checkpointed >= log_frames`` and not busy. Answers "is
+#: this store keeping up with its own writes?".
 CHECKPOINT_EFFECTIVE_SUFFIX = ".checkpoint-effective-ts"
+
+#: Sidecar holding the epoch seconds of the last checkpoint that actually RESET
+#: the WAL, i.e. a TRUNCATE that ran. Answers "is this store's WAL ever being
+#: reclaimed?" — which is the ``memory_wal`` doctor row's real question, and is
+#: NOT answerable from either clock above.
+#:
+#: This is a THIRD clock rather than a redefinition of the second, and the
+#: history is the reason. The effective clock has now been defined three ways,
+#: and each redefinition replaced the previous proxy instead of adding the
+#: missing measurement:
+#:   v1 ``checkpointed > 0``      — frames written back, which PASSIVE does on
+#:                                  every run, so the WARN was unreachable.
+#:   v2 a file-size decrease      — but SQLite REUSES a fully checkpointed WAL's
+#:                                  allocation, so a healthy store looked stalled
+#:                                  and the WARN fired forever.
+#:   v3 the frame backlog         — honest, and about a different quantity: below
+#:                                  SQLite 3.51.3 PASSIVE clears the whole
+#:                                  backlog every time, so ``backlog_cleared`` is
+#:                                  permanently true on exactly the store that
+#:                                  can never reclaim, and the WARN went
+#:                                  unreachable again.
+#: Reclamation happens on a RESET. Nothing derivable from frames or bytes
+#: substitutes for observing one, so it gets its own clock and the backlog clock
+#: keeps its own honest meaning.
+CHECKPOINT_RESET_SUFFIX = ".checkpoint-reset-ts"
 
 #: How far ahead of "now" a persisted marker may sit before it is treated as
 #: unknown rather than fresh. The marker is written with millisecond precision,
@@ -127,8 +150,18 @@ def last_checkpoint_age_seconds(db_path: Path, *, now: float | None = None) -> f
     return _marker_age(checkpoint_marker_path(db_path), now=now)
 
 
+def reset_checkpoint_marker_path(db_path: Path) -> Path:
+    """Path of the last-RESET marker beside *db_path*."""
+    return db_path.with_name(db_path.name + CHECKPOINT_RESET_SUFFIX)
+
+
+def last_reset_checkpoint_age_seconds(db_path: Path, *, now: float | None = None) -> float | None:
+    """Seconds since the last checkpoint that RESET the WAL, or ``None`` if unknown."""
+    return _marker_age(reset_checkpoint_marker_path(db_path), now=now)
+
+
 def last_effective_checkpoint_age_seconds(db_path: Path, *, now: float | None = None) -> float | None:
-    """Seconds since the last checkpoint that reclaimed or wrote back anything."""
+    """Seconds since the last checkpoint that CLEARED THE WAL BACKLOG, or None."""
     return _marker_age(effective_checkpoint_marker_path(db_path), now=now)
 
 
@@ -172,12 +205,21 @@ def record_checkpoint_attempt(db_path: Path, *, now: float | None = None) -> boo
 def record_effective_checkpoint(db_path: Path, *, now: float | None = None) -> bool:
     """Persist the last-EFFECTIVE timestamp; fail-open. Returns whether it landed.
 
-    Called only when the checkpoint accomplished something — frames written
-    back, or the WAL file got smaller. A checkpoint that ran and reclaimed
-    nothing must NOT advance this, or the doctor row loses its only signal that
-    the store is checkpointing to no effect.
+    Called only when the checkpoint CAUGHT UP with the WAL backlog. Note what
+    this does and does not mean: clearing the backlog is not reclamation, and on
+    an engine below SQLite 3.51.3 a store clears its backlog on every run while
+    never reclaiming a byte. Reclamation is :func:`record_reset_checkpoint`.
     """
     return _write_marker(effective_checkpoint_marker_path(db_path), now=now)
+
+
+def record_reset_checkpoint(db_path: Path, *, now: float | None = None) -> bool:
+    """Persist the last-RESET timestamp; fail-open. Returns whether it landed.
+
+    Called only when a resetting checkpoint actually ran. This is the only
+    observation of reclamation the system makes, so nothing else may write it.
+    """
+    return _write_marker(reset_checkpoint_marker_path(db_path), now=now)
 
 
 def _write_marker(marker: Path, *, now: float | None = None) -> bool:
@@ -233,9 +275,17 @@ def sole_live_writer(trw_dir: Path, db_path: Path) -> bool:
     and never a resetting one.
     """
     try:
+        from trw_mcp.models.config import get_config
         from trw_mcp.state.memory_pressure import live_memory_writer_pids
 
-        if live_memory_writer_pids(trw_dir) != [os.getpid()]:
+        # Pass the TTL. With pin_ttl_hours=None, _measure_writers returns before
+        # the heartbeat filter runs at all, so a registered-but-wedged process
+        # counts as a live writer forever and this function answers False for
+        # good -- meaning TRUNCATE is never even REQUESTED, on an engine where
+        # it would otherwise be permitted. This is the decision path; the doctor
+        # row is only the observation of it, and a fix that reached the row and
+        # not this function left the two disagreeing about the same fact.
+        if live_memory_writer_pids(trw_dir, pin_ttl_hours=get_config().pin_ttl_hours) != [os.getpid()]:
             return False
         return not _daemon_owns(db_path)
     except Exception:  # justified: fail-closed, an unproven claim must not permit a WAL reset

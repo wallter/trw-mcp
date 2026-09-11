@@ -26,13 +26,15 @@ from trw_mcp.models.config import TRWConfig, reload_config
 from trw_mcp.models.run import Phase
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.state.phase import update_run_phase
+from trw_mcp.state.validation.phase_gates import check_phase_exit, check_phase_input
 
 _GATE_EVENT = "phase_exit_gate_unmet"
 
 
 @pytest.fixture(autouse=True)
-def _restore_config() -> Iterator[None]:
+def _restore_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Each test injects its own enforcement mode; reset the singleton after."""
+    monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
     yield
     reload_config(None)
 
@@ -52,6 +54,7 @@ def _setup_run(
         "task": "gate-test-task",
         "status": "active",
         "phase": phase,
+        "prd_scope": ["PRD-CORE-999"],
     }
     if complexity_class is not None:
         data["complexity_class"] = complexity_class
@@ -70,8 +73,7 @@ class TestLenientWarnsButProceeds:
     """Default lenient posture: unmet gate is non-breaking."""
 
     def test_invalid_plan_exit_writes_and_warns(self, tmp_path: Path) -> None:
-        # PLAN exit requires plan.md (error-severity when missing). No plan.md
-        # exists here, so the gate fails — but lenient must still advance.
+        # Missing scoped PRD remains an advisory under lenient enforcement.
         reload_config(TRWConfig(phase_gate_enforcement="lenient"))
         run_path = _setup_run(tmp_path, "plan")
 
@@ -80,18 +82,16 @@ class TestLenientWarnsButProceeds:
             wrapper_class=structlog.make_filtering_bound_logger(0),
         )
         with capture_logs() as logs:
-            result = update_run_phase(run_path, Phase.DELIVER)
+            result = update_run_phase(run_path, Phase.IMPLEMENT)
 
         # Phase write SUCCEEDED despite the unmet gate (non-breaking).
         assert result is True
-        assert _current_phase(run_path) == "deliver"
+        assert _current_phase(run_path) == "implement"
 
-        # A gate warning was emitted naming the unmet 'plan' phase.
-        warnings = [e for e in logs if e.get("event") == _GATE_EVENT]
-        assert len(warnings) == 1, logs
-        assert warnings[0]["from_phase"] == "plan"
-        assert warnings[0]["failures"] >= 1
-        assert "plan.md" in warnings[0]["detail"]
+        checked = check_phase_exit(Phase.PLAN, run_path, TRWConfig(phase_gate_enforcement="lenient"))
+        assert any(f.rule == "prd_exists" and f.severity == "warning" for f in checked.failures)
+        # Advisory warnings do not trigger the blocking-failure log.
+        assert [e for e in logs if e.get("event") == _GATE_EVENT] == []
 
 
 class TestStrictBlocks:
@@ -102,28 +102,46 @@ class TestStrictBlocks:
         run_path = _setup_run(tmp_path, "plan")
 
         with pytest.raises(StateError) as exc_info:
-            update_run_phase(run_path, Phase.DELIVER)
+            update_run_phase(run_path, Phase.IMPLEMENT)
 
         # The blocking error names the leaving phase and the missing artifact.
-        assert "plan" in str(exc_info.value)
+        assert "PRD-CORE-999" in str(exc_info.value)
         assert exc_info.value.context["from_phase"] == "plan"
 
         # The phase was NOT advanced — still at 'plan'.
         assert _current_phase(run_path) == "plan"
+        inputs = check_phase_input(Phase.IMPLEMENT, run_path, TRWConfig(phase_gate_enforcement="strict"))
+        assert any(f.rule == "prd_exists" and f.severity == "error" for f in inputs.failures)
 
 
 class TestValidTransitionPasses:
     """A satisfied gate proceeds with no warning, in both modes."""
 
     @pytest.mark.parametrize("mode", ["lenient", "strict"])
-    def test_valid_plan_exit_advances_no_warning(self, tmp_path: Path, mode: str) -> None:
+    @pytest.mark.parametrize("plan_content", [None, "", "See the governing requirements."])
+    def test_valid_plan_exit_advances_no_warning(self, tmp_path: Path, mode: str, plan_content: str | None) -> None:
         reload_config(TRWConfig(phase_gate_enforcement=mode))
         run_path = _setup_run(tmp_path, "plan")
-        # Provide the plan.md the PLAN exit gate requires -> gate passes
-        # (no governing PRDs => advisory warning only, valid stays True).
-        reports = run_path / "reports"
-        reports.mkdir(parents=True)
-        (reports / "plan.md").write_text("# Plan\n\nReal plan content.\n", encoding="utf-8")
+        # Status-only enforcement, not substantive plan validation or approval.
+        prd = tmp_path / TRWConfig().prds_relative_path / "PRD-CORE-999.md"
+        prd.parent.mkdir(parents=True)
+        prd.write_text("---\nstatus: approved\n---\n# Governing requirement\n")
+        if plan_content is not None:
+            reports = run_path / "reports"
+            reports.mkdir(parents=True)
+            (reports / "plan.md").write_text(plan_content)
+        (run_path / "shards").mkdir()
+        (run_path / "shards" / "manifest.yaml").write_text("shards: []\n")
+        inputs = check_phase_input(
+            Phase.IMPLEMENT,
+            run_path,
+            TRWConfig(
+                phase_gate_enforcement=mode,
+                strict_input_criteria=True,
+            ),
+        )
+        assert inputs.valid, inputs.failures
+        assert all(f.rule != "plan_exists" for f in inputs.failures)
 
         structlog.configure(
             processors=[structlog.testing.LogCapture()],
@@ -142,13 +160,13 @@ class TestTierSkipNotBlocked:
     """A phase the active tier SKIPS is not enforced, even in strict mode."""
 
     def test_minimal_tier_skipped_phase_not_blocked(self, tmp_path: Path) -> None:
-        # MINIMAL skips RESEARCH/PLAN/REVIEW. A run sitting at 'research'
+        # MINIMAL skips RESEARCH/PLAN/REVIEW. A run sitting at 'plan'
         # (a skipped phase for this tier) advancing forward must NOT be
-        # blocked by the research exit gate, even under strict enforcement.
+        # blocked by the missing scoped PRD, even under strict enforcement.
         reload_config(TRWConfig(phase_gate_enforcement="strict"))
         run_path = _setup_run(
             tmp_path,
-            "research",
+            "plan",
             complexity_class="MINIMAL",
             phase_requirements={
                 "mandatory": ["IMPLEMENT", "VALIDATE", "DELIVER"],

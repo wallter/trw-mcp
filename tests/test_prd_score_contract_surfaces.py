@@ -5,19 +5,26 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
+from tests._layout import requires_monorepo
+
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 
 READINESS_OWNERS = (
     DATA / "skills/trw-prd-ready/SKILL.md",
     DATA / "codex/skills/trw-prd-ready/SKILL.md",
-    DATA / "opencode/skills/trw-prd-ready/SKILL.md",
-    DATA / "opencode/commands/trw-prd-ready.md",
     DATA / "skills/trw-prd-groom/SKILL.md",
     DATA / "codex/skills/trw-prd-groom/SKILL.md",
     DATA / "skills/trw-exec-plan/SKILL.md",
     DATA / "codex/skills/trw-exec-plan/SKILL.md",
     DATA / "agents/trw-prd-groomer.md",
     DATA / "agents/trw-lead.md",
+)
+
+READINESS_ADAPTERS = (
+    DATA / "opencode/skills/trw-prd-ready/SKILL.md",
+    DATA / "opencode/commands/trw-prd-ready.md",
 )
 
 AUDIT_VARIANTS = (
@@ -50,13 +57,13 @@ def _read(path: Path) -> str:
 
 def test_prd_surfaces_do_not_hardcode_deprecated_readiness_gates() -> None:
     """No packaged consumer may substitute a fixed score for the risk-scaled result."""
-    for path in (*READINESS_OWNERS, *AUDIT_VARIANTS, *PRD_NEW_VARIANTS, CURSOR_COMMAND):
+    for path in (*READINESS_OWNERS, *READINESS_ADAPTERS, *AUDIT_VARIANTS, *PRD_NEW_VARIANTS, CURSOR_COMMAND):
         match = FORBIDDEN_NUMERIC_GATE.search(_read(path))
         assert match is None, f"{path} contains deprecated readiness gate: {match.group(0) if match else ''}"
 
 
 def test_readiness_owners_use_the_full_risk_scaled_result() -> None:
-    """Every surface that owns a gate requires full, valid, approved validation."""
+    """Gate owners retain full validation and distinguish diagnostic tier from legacy approval."""
     required = ("validation_partial", "valid", "quality_tier", "approved", "total_score")
     for path in READINESS_OWNERS:
         content = _read(path)
@@ -96,3 +103,48 @@ def test_client_mirrors_preserve_semantics_and_lifecycle_vocabulary() -> None:
     cursor = _read(CURSOR_COMMAND)
     assert "Sets status to READY" not in cursor
     assert "lifecycle status" in cursor
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        pytest.param(PRD_NEW_VARIANTS[:2], id="bundled"),
+        pytest.param(
+            (
+                *PRD_NEW_VARIANTS[:2],
+                DATA.parents[3] / ".claude/skills/trw-prd-new/SKILL.md",
+                DATA.parents[3] / ".agents/skills/trw-prd-new/SKILL.md",
+            ),
+            id="mirrors",
+            marks=requires_monorepo,
+        ),
+    ],
+)
+def test_shared_prd_new_is_an_input_preserving_alias(paths: tuple[Path, ...]) -> None:
+    """Static routing contract, not execution/adherence proof."""
+    bodies = []
+    for path in paths:
+        content = _read(path)
+        bodies.append(content.split("\n# ", 1)[1])
+        assert "original `$ARGUMENTS`" in content
+        assert "any explicit `--embedded-plan` option" in content
+        assert "do not\ncreate a PRD first and substitute its ID" in content
+        assert "contract is unavailable" in content
+        assert "trw_prd_create(" not in content
+        assert "## Phase 1: Create" not in content
+    assert len(set(bodies)) == 1
+
+
+def test_opencode_adapters_forward_to_installed_gate_owner() -> None:
+    """Static delegation guards; installer resolution is tested in bootstrap tests."""
+    skill, command = (_read(path) for path in READINESS_ADAPTERS)
+    assert "trw-prd-ready-contract.md" in skill
+    for phase in ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+        assert f"{phase}-contract.md" in skill
+    assert "not authorize author self-review" in skill
+    assert "stop and report the missing installed path" in skill
+    assert ".opencode/skills/trw-prd-ready/SKILL.md" in command
+    for content in (skill, command):
+        assert "original `$ARGUMENTS`" in content
+        assert "--embedded-plan" in content
+        assert "## Phase" not in content

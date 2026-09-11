@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tests._tools_learning_shared import (
     _CFG,
     _get_tools,
@@ -176,6 +178,90 @@ class TestAutoObsoleteOnCompendium:
             metadata={"consolidated_from": ["L-nonexistent-id-999"]},
         )
         assert result["status"] == "recorded"
+
+        assert "L-nonexistent-id-999" in result["consolidation_warning"]
+
+    def test_dedup_reports_that_retirement_was_not_applied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.memory_adapter import get_backend
+
+        learn = _get_tools()["trw_learn"].fn
+        old = learn(
+            summary="Queue delivery attempts stop at three failures",
+            detail="The original worker policy exhausts a delivery after three attempts.",
+            scope="project",
+        )
+        replacement = {
+            "summary": "Revised queue retry policy allows five attempts before exhaustion",
+            "detail": "The owner changed the delivery bound to five attempts for transient failures.",
+            "scope": "project",
+        }
+        first = learn(**replacement)
+        assert first["status"] == "recorded"
+        # This module's shared fixture disables dedup for lifecycle isolation.
+        monkeypatch.setattr(get_config(), "dedup_enabled", True)
+        retry = learn(**replacement, metadata={"consolidated_from": [old["learning_id"]]})
+        assert retry["status"] in {"skipped", "merged"}
+        assert "not applied" in retry["consolidation_warning"]
+        prior = get_backend(resolve_trw_dir()).get(old["learning_id"], namespace="default")
+        assert prior is not None and prior.status == "active"
+
+    def test_failed_update_warns_and_does_not_stop_later_retirement(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.state import memory_adapter
+        from trw_mcp.state._paths import resolve_trw_dir
+
+        learn = _get_tools()["trw_learn"].fn
+        first = learn(summary="Legacy snapshot policy", detail="Keep snapshots for thirty days.", scope="project")
+        second = learn(summary="Legacy backup policy", detail="Keep backups for thirty days.", scope="project")
+        original_update = memory_adapter.update_learning
+
+        def fail_first(*args: object, **kwargs: object) -> object:
+            if kwargs.get("learning_id") == first["learning_id"]:
+                raise RuntimeError("injected predecessor update failure")
+            return original_update(*args, **kwargs)
+
+        monkeypatch.setattr(memory_adapter, "update_learning", fail_first)
+        result = learn(
+            summary="Revised retention policy",
+            detail="Keep snapshots and backups for sixty days.",
+            scope="project",
+            metadata={"consolidated_from": [first["learning_id"], second["learning_id"]]},
+        )
+        assert result["status"] == "recorded"
+        assert first["learning_id"] in result["consolidation_warning"]
+        assert second["learning_id"] not in result["consolidation_warning"]
+        backend = memory_adapter.get_backend(resolve_trw_dir())
+        failed = backend.get(first["learning_id"], namespace="default")
+        succeeded = backend.get(second["learning_id"], namespace="default")
+        assert failed is not None and failed.status == "active"
+        assert succeeded is not None and succeeded.status == "obsolete"
+
+    def test_partial_consolidation_keeps_success_and_reports_missing(self, tmp_path: Path) -> None:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state.memory_adapter import get_backend
+
+        learn = _get_tools()["trw_learn"].fn
+        old = learn(
+            summary="Database snapshots expire after thirty days",
+            detail="Original retention policy deletes old snapshots after thirty days.",
+            scope="project",
+        )
+        result = learn(
+            summary="Backup retention now keeps snapshots for sixty days",
+            detail="The project owner revised snapshot retention to sixty days.",
+            scope="project",
+            metadata={"consolidated_from": [old["learning_id"], "L-missing-source"]},
+        )
+        assert result["status"] == "recorded"
+        assert "L-missing-source" in result["consolidation_warning"]
+        assert old["learning_id"] not in result["consolidation_warning"]
+        prior = get_backend(resolve_trw_dir()).get(old["learning_id"], namespace="default")
+        assert prior is not None and prior.status == "obsolete"
 
 
 class TestPatternTagAutoSuggestion:

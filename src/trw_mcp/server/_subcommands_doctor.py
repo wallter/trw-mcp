@@ -315,17 +315,22 @@ def _check_memory_backend(target: Path, _config: TRWConfig) -> CheckResult:
 # ── PRD-CORE-248-FR06: WAL size, live writers, last-checkpoint age ───────────
 
 
-def _check_memory_wal(target: Path, _config: TRWConfig) -> CheckResult:
+def _check_memory_wal(target: Path, config: TRWConfig) -> CheckResult:
     """Report WAL size, live writer count, and last-checkpoint age.
 
     Delegates to the ``_doctor_memory_wal`` sibling (kept out of this file for
     the module-size gate). It opens NO SQLite connection — unlike
     ``_check_memory_backend`` above — because a diagnostic that adds a writer to
     a contended store is measuring the thing it just made worse.
+
+    The resolved *config* is forwarded rather than discarded: the row used to
+    build a bare ``TRWConfig()`` of its own, so an operator who raised
+    ``wal_checkpoint_threshold_mb`` in the target project's ``.trw/config.yaml``
+    got a row that silently ignored it (same defect class as PRD-CORE-262-FR05).
     """
     from trw_mcp.server._doctor_memory_wal import memory_wal_row
 
-    status, message = memory_wal_row(target)
+    status, message = memory_wal_row(target, config)
     return CheckResult("memory_wal", cast("DoctorStatus", status), message)
 
 
@@ -390,32 +395,16 @@ def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
 # ── FR-10: optional backend probe + installer-flag advisory ──────────────────
 
 
-def _probe_backend_url(url: str) -> tuple[bool, str]:
-    """Probe an owned/local ``backend_url`` (patchable seam). Never a prod host."""
-    import urllib.error
-    import urllib.request
-
-    try:
-        with urllib.request.urlopen(url, timeout=2) as resp:  # noqa: S310 — owned URL only
-            return True, f"{resp.status} {getattr(resp, 'reason', '')}".strip()
-    except urllib.error.URLError as exc:
-        return False, str(exc)
-    except Exception as exc:
-        return False, str(exc)
-
-
 def _check_backend_connectivity(_target: Path, config: TRWConfig) -> CheckResult:
-    url = str(config.backend_url or "").strip()
-    if not url:
-        return CheckResult(
-            "backend_connectivity",
-            "SKIP",
-            "no backend_url configured — fully offline (no network call made).",
-        )
-    ok, detail = _probe_backend_url(url)
-    if ok:
-        return CheckResult("backend_connectivity", "PASS", f"backend_url reachable: {detail}")
-    return CheckResult("backend_connectivity", "FAIL", f"backend_url unreachable: {detail}")
+    """Report the resolved egress posture and the probe decision separately.
+
+    Delegates to the ``_doctor_backend_connectivity`` sibling; that module's
+    docstring carries the distinction this row must not re-collapse.
+    """
+    from trw_mcp.server._doctor_backend_connectivity import backend_connectivity_row
+
+    status, message = backend_connectivity_row(config)
+    return CheckResult("backend_connectivity", cast("DoctorStatus", status), message)
 
 
 def _check_installer_flag_advisory(target: Path, _config: TRWConfig) -> CheckResult:
@@ -595,9 +584,18 @@ def _resolve_target_config(target: Path) -> TRWConfig:
 
     Detection never enters this: ``target_platforms`` is the durable record the
     init path itself wrote, and directory presence cannot distinguish TRW's own
-    scaffold from the user's. ``platform_api_key`` is dropped exactly as the
-    production cascade drops it (PRD-SEC-005-FR03): a tracked ``config.yaml``
-    is never a credential source, not even for a diagnostic read.
+    scaffold from the user's.
+
+    The cascade is not re-implemented here. It is
+    :func:`~trw_mcp.models.config._loader.resolve_config_overrides`, the same
+    function production builds from, because a hand-rolled copy had already
+    drifted: this one dropped ``platform_api_key`` (correctly) but never
+    re-resolved it from ``credentials.yaml``, and it omitted both the
+    ``~/.trw/config.yaml`` layer and the ``TRW_*`` exclusion that preserves
+    ``env > file`` precedence. So the doctor resolved a ``config.yaml`` value
+    wherever an env var shadowed it and the live server resolved the env value
+    — a row measuring against a setting the operator did not choose, which is
+    the PRD-CORE-262-FR05 defect this docstring cites as its own justification.
 
     CORE262-10: ``_read_yaml_overrides`` documents "never raises" but does not
     honor that contract -- ``FileStateReader.read_yaml`` raises ``StateError``
@@ -611,23 +609,19 @@ def _resolve_target_config(target: Path) -> TRWConfig:
     its own FAIL row.
     """
     from trw_mcp.exceptions import StateError
-    from trw_mcp.models.config._loader import (
-        _normalize_meta_tune_overrides,
-        _read_yaml_overrides,
-    )
+    from trw_mcp.models.config._loader import resolve_config_overrides
 
     try:
-        overrides = _read_yaml_overrides(target / ".trw" / "config.yaml")
+        overrides = resolve_config_overrides(target / ".trw" / "config.yaml")
     except StateError:
         logger.warning("doctor_target_config_unreadable", path=str(target / ".trw" / "config.yaml"), exc_info=True)
         return TRWConfig()
-    overrides.pop("platform_api_key", None)
     if not overrides:
         return TRWConfig()
     try:
-        return TRWConfig(**_normalize_meta_tune_overrides(overrides))  # type: ignore[arg-type]
+        return TRWConfig(**overrides)  # type: ignore[arg-type]
     except Exception:  # justified: an invalid config.yaml is _check_config's verdict, not this row's
-        logger.warning("doctor_target_config_invalid", path=str(target / ".trw" / "config.yaml"), exc_info=True)
+        logger.warning("doctor_target_config_invalid", path=str(target / ".trw" / "config.yaml"))
         return TRWConfig()
 
 

@@ -12,21 +12,22 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import PACKAGE_ROOT, requires_monorepo
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _READMES = {
-    "trw-mcp": _REPO_ROOT / "trw-mcp" / "README.md",
+    "trw-mcp": PACKAGE_ROOT / "README.md",
     "trw-memory": _REPO_ROOT / "trw-memory" / "README.md",
 }
 
 
 def _read(package: str) -> str:
     path = _READMES[package]
-    if not path.is_file():  # pragma: no cover — sdist/wheel layout without siblings
-        pytest.skip(f"{path} not present in this checkout")
+    assert path.is_file(), f"required package README missing: {path}"
     return path.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("package", sorted(_READMES))
+@pytest.mark.parametrize("package", ["trw-mcp", pytest.param("trw-memory", marks=requires_monorepo)])
 def test_readme_documents_warm_cache_and_consent_independence(package: str) -> None:
     """FR05: the warm-cache invariant and the consent-flag independence are stated."""
     text = _read(package)
@@ -46,7 +47,7 @@ def test_readme_documents_warm_cache_and_consent_independence(package: str) -> N
     assert "independent of the consent flags" in lowered
 
 
-@pytest.mark.parametrize("package", sorted(_READMES))
+@pytest.mark.parametrize("package", ["trw-mcp", pytest.param("trw-memory", marks=requires_monorepo)])
 def test_readme_drops_the_falsified_first_operation_claim(package: str) -> None:
     """The measurement that motivated this PRD contradicted these sentences."""
     text = _read(package)
@@ -54,6 +55,7 @@ def test_readme_drops_the_falsified_first_operation_claim(package: str) -> None:
     assert "First embedding operation downloads" not in text
 
 
+@requires_monorepo
 def test_trw_memory_readme_documents_the_remote_code_field() -> None:
     """FR05: the new security default is in the security-defaults table."""
     text = _read("trw-memory")
@@ -68,3 +70,9 @@ def test_trw_mcp_readme_points_at_the_doctor_row() -> None:
     assert "embedding_egress" in text
     assert "cache-first" in text
     assert "network-capable" in text
+
+
+def test_missing_packaged_readme_fails(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setitem(_READMES, "trw-mcp", tmp_path / "missing.md")
+    with pytest.raises(AssertionError, match="required package README missing"):
+        _read("trw-mcp")

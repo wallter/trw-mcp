@@ -21,11 +21,11 @@ from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 class TestDeliverTelemetryIntegration:
     """Tests for deferred steps (outcome correlation, telemetry, batch_send, etc.)."""
 
-    def test_deliver_calls_process_outcome_for_event(
+    def test_deliver_does_not_correlate_exposure_with_success(
         self,
         tmp_path: Path,
     ) -> None:
-        """Step 6.5: process_outcome_for_event is called via deferred path."""
+        """R10: delivery must not trigger temporal learning credit."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
         called_with: list[str] = []
 
@@ -41,9 +41,9 @@ class TestDeliverTelemetryIntegration:
                 _run_deferred_steps(trw_dir, None, {})
 
         log_entry = _read_deferred_log(trw_dir)
-        assert log_entry["results"]["outcome_correlation"]["status"] == "success"
-        assert log_entry["results"]["outcome_correlation"]["updated"] == 1
-        assert "trw_deliver_complete" in called_with
+        assert log_entry["results"]["outcome_correlation"]["status"] == "skipped"
+        assert log_entry["results"]["outcome_correlation"]["updated"] == 0
+        assert called_with == []
 
     def test_deliver_emits_session_end_event(
         self,
@@ -125,11 +125,11 @@ class TestDeliverTelemetryIntegration:
         assert "batch_send" in log_entry["results"]
         mock_sender.send.assert_called_once()
 
-    def test_deliver_calls_record_outcome(
+    def test_deliver_does_not_label_exposures_positive(
         self,
         tmp_path: Path,
     ) -> None:
-        """Step 6.6: record_outcome is called for tracked recalls with positive outcome."""
+        """R10: historical unresolved exposure remains an observation, not success."""
         trw_dir = _make_deferred_trw_dir(tmp_path)
         tracking_path = trw_dir / "logs" / "recall_tracking.jsonl"
         tracking_path.write_text(
@@ -162,9 +162,9 @@ class TestDeliverTelemetryIntegration:
                 _run_deferred_steps(trw_dir, run_dir, {})
 
         log_entry = _read_deferred_log(trw_dir)
-        assert log_entry["results"]["recall_outcome"]["status"] == "success"
-        assert log_entry["results"]["recall_outcome"]["recorded"] >= 1
-        assert ("L-test001", "positive") in recorded
+        assert log_entry["results"]["recall_outcome"]["status"] == "skipped"
+        assert log_entry["results"]["recall_outcome"]["recorded"] == 0
+        assert recorded == []
 
     def test_deliver_outcome_correlation_failopen(
         self,
@@ -183,8 +183,8 @@ class TestDeliverTelemetryIntegration:
                 _run_deferred_steps(trw_dir, None, {})
 
         log_entry = _read_deferred_log(trw_dir)
-        assert log_entry["results"]["outcome_correlation"]["status"] == "failed"
-        assert "correlation boom" in log_entry["results"]["outcome_correlation"]["error"]
+        assert log_entry["results"]["outcome_correlation"]["status"] == "skipped"
+        assert log_entry["results"]["outcome_correlation"]["updated"] == 0
         assert "batch_send" in log_entry["results"]
 
     def test_deliver_telemetry_failopen(

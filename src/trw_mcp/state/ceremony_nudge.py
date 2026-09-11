@@ -247,10 +247,10 @@ def compute_nudge_minimal(state: CeremonyState, available_learnings: int = 0) ->
             else:
                 msg = "\u26a1 Call trw_session_start() to begin."
         else:
-            if state.learnings_this_session > 0:
-                msg = f"\u26a1 {state.learnings_this_session} learning(s) pending. Call trw_deliver() to persist."
-            else:
-                msg = "\u26a1 Call trw_deliver() to persist this session."
+            msg = (
+                "If unfinished, preserve material work + next-read pointer in a checkpoint/native handoff. "
+                "trw_deliver(): completed-work acceptance under existing gates."
+            )
 
         full = f"{_MINIMAL_HEADER}\n{status_line}\n{msg}"
         return full if len(full) <= 200 else full[:197] + "..."

@@ -68,7 +68,8 @@ _YAML_SYNC_KEYS: tuple[str, ...] = (
 logger = structlog.get_logger(__name__)
 
 # core185-ENUM-UNGUARDED-3: enum-valued ``trw_learn`` args must be validated in
-# the tool BEFORE forwarding to ``execute_learn``. ``_learning_to_memory_entry``
+# the tool BEFORE forwarding to ``execute_learn``. ``build_store_arguments``
+# (``state/_store_arguments.py``, formerly ``_learning_to_memory_entry``)
 # constructs ``MemoryType(type)`` / ``Confidence(confidence)`` /
 # ``ProtectionTier(protection_tier)`` unconditionally; an invalid value raises a
 # raw ``ValueError`` that is neither a ``StorageError`` nor caught by the recovery

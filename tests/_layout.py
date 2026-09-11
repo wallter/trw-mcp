@@ -18,14 +18,22 @@ _candidate = PACKAGE_ROOT.parent
 # of the package root DOES contain a ``trw-mcp`` directory there too — that is
 # the checkout itself, not a monorepo (2026-09-07: this false positive ran the
 # canon-mirror tests in the public CI and failed them). The monorepo is the only
-# layout where the SIBLING package and the workspace instructions file exist.
+# layout with the independent release manifest or sibling/workspace identity.
+# The independent marker keeps deletion of a checked canon/instruction surface
+# from turning its regression tests into skips. The legacy identity also keeps
+# deletion of the release manifest itself from disabling monorepo checks.
 MONOREPO_ROOT: Path | None = (
     _candidate
     if (
-        (_candidate / "trw-mcp" / "pyproject.toml").is_file()
-        and (_candidate / "trw-memory" / "pyproject.toml").is_file()
-        and (_candidate / "CLAUDE.md").is_file()
-        and _candidate.name != "site-packages"
+        _candidate.name != "site-packages"
+        and (
+            (_candidate / "release-packages.yaml").is_file()
+            or (
+                (_candidate / "trw-mcp" / "pyproject.toml").is_file()
+                and (_candidate / "trw-memory" / "pyproject.toml").is_file()
+                and (_candidate / "CLAUDE.md").is_file()
+            )
+        )
     )
     else None
 )

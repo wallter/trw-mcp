@@ -250,23 +250,28 @@ def test_assertion_reranking_preserves_context(tmp_path: Path) -> None:
         )
         return matches
 
+    from datetime import datetime, timezone
+
     entry = _make_entry(
         "L-a",
-        assertions=[{"type": "file_exists", "pattern": "/nonexistent/path/file.py"}],
+        assertions=[
+            {
+                "type": "glob_exists",
+                "target": "missing.py",
+                "last_result": False,
+                "last_verified_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
     )
-
     with (
-        patch("trw_mcp.state._paths.resolve_project_root", return_value=tmp_path),
-        patch("trw_memory.lifecycle.verification.verify_assertions") as mock_verify,
-        patch("trw_memory.models.memory.Assertion.model_validate") as mock_validate,
+        patch("trw_memory.lifecycle.verification.verify_assertions", side_effect=AssertionError("unexpected scan")),
+        patch(
+            "trw_mcp.tools._verification_pass.persist_verification_outcome",
+            side_effect=AssertionError("unexpected write"),
+        ),
     ):
-        mock_result = MagicMock()
-        mock_result.passed = False
-        mock_result.model_dump.return_value = {"type": "file_exists", "passed": False}
-        mock_validate.return_value = MagicMock()
-        mock_verify.return_value = [mock_result]
-
         _verify_assertions([entry], ["test"], config, capturing_rank_fn, context=ctx)
 
-    if rank_fn_calls:
-        assert rank_fn_calls[0]["context"] is ctx
+    assert len(rank_fn_calls) == 1
+    assert rank_fn_calls[0]["context"] is ctx
+    assert rank_fn_calls[0]["assertion_penalties"](entry) == config.assertion_failure_penalty

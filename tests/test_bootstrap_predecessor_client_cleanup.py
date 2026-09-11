@@ -32,7 +32,7 @@ def test_retired_skill_removed_from_every_managed_client(tmp_path: Path, relativ
 
 @pytest.mark.parametrize("relative_root", SKILL_ROOTS)
 def test_active_predecessor_waits_for_successor(tmp_path: Path, relative_root: str) -> None:
-    predecessor = tmp_path / relative_root / "commit"
+    predecessor = tmp_path / relative_root / "learn"
     predecessor.mkdir(parents=True)
     (predecessor / "SKILL.md").write_text("legacy", encoding="utf-8")
     result: dict[str, list[str]] = {"updated": [], "errors": []}
@@ -46,8 +46,8 @@ def test_active_predecessor_waits_for_successor(tmp_path: Path, relative_root: s
 @pytest.mark.parametrize("relative_root", SKILL_ROOTS[1:])
 def test_non_claude_custom_skill_survives_matching_successor(tmp_path: Path, relative_root: str) -> None:
     skills_root = tmp_path / relative_root
-    custom = skills_root / "commit"
-    successor = skills_root / "trw-commit"
+    custom = skills_root / "learn"
+    successor = skills_root / "trw-learn"
     custom.mkdir(parents=True)
     successor.mkdir()
     (custom / "SKILL.md").write_text("custom", encoding="utf-8")

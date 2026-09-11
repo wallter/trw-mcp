@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import patch
 
 from tests._learning_helpers_test_support import _CFG, set_project_root  # noqa: F401
@@ -10,54 +9,14 @@ from trw_mcp.tools._learning_helpers import calibrate_impact, check_soft_cap
 
 
 class TestCalibrateImpact:
-    """Tests for Bayesian calibration helper."""
+    """Pooled exposure outcomes are not caller accuracy evidence."""
 
-    def test_returns_calibrated_impact_with_default_stats(self) -> None:
-        """With no recall history, calibration pulls toward org mean."""
-        result = calibrate_impact(0.9, _CFG)
-        # bayesian_calibrate(0.9, org_mean=0.5, user_weight=1.0, org_weight=0.5)
-        # = (0.9*1 + 0.5*0.5) / (1+0.5) = 1.15/1.5 ≈ 0.7667
-        assert result < 0.9
-        assert result > 0.5
-
-    def test_low_impact_still_calibrated(self) -> None:
-        """Low impact is pulled up toward org mean."""
-        result = calibrate_impact(0.1, _CFG)
-        # Should be pulled toward 0.5
-        assert result > 0.1
-
-    def test_mid_impact_stays_near_mid(self) -> None:
-        """Impact at org mean stays near org mean."""
-        result = calibrate_impact(0.5, _CFG)
-        assert abs(result - 0.5) < 0.01
-
-    def test_fail_open_on_exception(self) -> None:
-        """When calibration throws, raw impact is returned."""
-        with patch(
-            "trw_mcp.tools._learning_helpers.calibrate_impact.__module__",
-        ):
-            with patch(
-                "trw_mcp.state.recall_tracking.get_recall_stats",
-                side_effect=RuntimeError("tracking boom"),
-            ):
-                result = calibrate_impact(0.8, _CFG)
-                assert result == 0.8
-
-    def test_calibration_with_high_accuracy_user(self) -> None:
-        """User with high accuracy gets higher weight (closer to raw)."""
-        mock_stats: dict[str, Any] = {
-            "total_recalls": 100,
-            "positive_outcomes": 80,
-        }
-        with patch(
-            "trw_mcp.state.recall_tracking.get_recall_stats",
-            return_value=mock_stats,
-        ):
-            result = calibrate_impact(0.9, _CFG)
-            # user_weight=2.0 (75%+ positive)
-            # = (0.9*2 + 0.5*0.5) / (2+0.5) = 2.05/2.5 = 0.82
-            assert result > 0.75
-            assert result < 0.9
+    def test_preserves_raw_impact_without_reading_pooled_stats(self) -> None:
+        with patch("trw_mcp.state.recall_tracking.get_recall_stats") as stats:
+            stats.return_value = {"total_recalls": 100, "positive_outcomes": 80}
+            for impact in (0.0, 0.1, 0.5, 0.9, 1.0):
+                assert calibrate_impact(impact, _CFG) == impact
+            stats.assert_not_called()
 
 
 class TestCheckSoftCap:

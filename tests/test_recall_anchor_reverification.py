@@ -1,208 +1,112 @@
-"""PRD-CORE-231-FR03: recall re-verifies anchors instead of trusting write time.
-
-``compute_anchor_validity()`` used to have exactly one call site — ``trw_learn``'s
-write path — so ``anchor_validity`` froze at its creation value (usually 1.0) and
-kept boosting recall ranking after the anchored symbol was renamed or deleted.
-These tests exercise the real recall verification pass against a real backend.
-"""
+"""CORE268: real anchor refresh belongs to maintenance; recall reports evidence."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from trw_memory.models.memory import Anchor, Assertion, AssertionType, MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from trw_mcp.models.config import TRWConfig
-
-_ANCHORED_SOURCE = "def anchored_symbol() -> None:\n    return None\n"
-
-
-@pytest.fixture()
-def project(tmp_path: Path) -> Path:
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "mod.py").write_text(_ANCHORED_SOURCE, encoding="utf-8")
-    return tmp_path
+from trw_mcp.tools._maintain_verify import run_maintain_verify
+from trw_mcp.tools._recall_impl import _verify_assertions
 
 
 @pytest.fixture()
-def backend(tmp_path: Path) -> SQLiteBackend:
-    return SQLiteBackend(tmp_path / "store" / "memory.db")
-
-
-def _wire(monkeypatch: pytest.MonkeyPatch, backend: SQLiteBackend, project: Path) -> None:
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: project / ".trw")
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda _trw_dir: backend)
-
-
-def _anchor() -> Anchor:
-    return Anchor(file="src/mod.py", symbol_name="anchored_symbol", symbol_type="function")
-
-
-def _store_anchored(backend: SQLiteBackend, entry_id: str, *, assertions: list[Assertion] | None = None) -> None:
-    now = datetime.now(timezone.utc)
+def fixture(tmp_path: Path):
+    (tmp_path / "mod.py").write_text("def anchored_symbol():\n    return None\n")
+    backend = SQLiteBackend(tmp_path / "memory.db")
     backend.store(
         MemoryEntry(
-            id=entry_id,
-            content="anchored claim",
-            created_at=now,
-            updated_at=now,
-            anchors=[_anchor()],
-            # Write-time score, as trw_learn would have recorded it.
+            id="L-anchor",
+            content="anchor claim",
             anchor_validity=1.0,
-            assertions=assertions or [],
+            anchors=[Anchor(file="mod.py", symbol_name="anchored_symbol")],
         )
+    )
+    yield backend, tmp_path
+    backend.close()
+
+
+def refresh(backend, root):
+    return run_maintain_verify(
+        backend,
+        assertion_failure_penalty=0.15,
+        assertion_stale_threshold_days=7,
+        anchor_validity_verified_floor=0.8,
+        batch_limit=1,
+        project_root=root,
     )
 
 
-def _learning(entry_id: str, *, assertions: list[Assertion] | None = None) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "id": entry_id,
-        "summary": "anchored claim",
-        "anchors": [_anchor().model_dump(mode="json")],
-        "anchor_validity": 1.0,
-    }
-    if assertions:
-        payload["assertions"] = [a.model_dump(mode="json") for a in assertions]
-    return payload
+def recalled(backend, monkeypatch):
+    entry = backend.get("L-anchor", namespace="default").model_dump(mode="json")
+    with monkeypatch.context() as guard:
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("recall must not reverify anchors or write")
+
+        guard.setattr("trw_mcp.tools._verification_pass.run_verification_pass", forbidden)
+        guard.setattr("trw_mcp.tools._verification_pass.persist_verification_outcome", forbidden)
+        result = _verify_assertions([entry], [], TRWConfig(), MagicMock(side_effect=lambda rows, *a, **k: rows))[0]
+    assert backend.get("L-anchor", namespace="default").model_dump(mode="json") == entry
+    return result
 
 
-def _rank(entries: list[dict[str, object]], *_args: Any, **_kwargs: Any) -> list[dict[str, object]]:
-    return entries
+def test_anchor_only_failure_and_correction_are_explicit(fixture, monkeypatch):
+    backend, root = fixture
+    (root / "mod.py").write_text("def renamed_symbol(): pass\n")
+    assert recalled(backend, monkeypatch)["verification_status"] == "unknown"
+    refresh(backend, root)
+    stale = backend.get("L-anchor", namespace="default")
+    assert stale.anchor_validity < 0.8
+    assert stale.verification_status != "verified"
+    assert recalled(backend, monkeypatch)["verification_evidence"]["current_tree_verified"] is False
+    (root / "mod.py").write_text("def anchored_symbol(): pass\n")
+    refresh(backend, root)
+    assert backend.get("L-anchor", namespace="default").verification_status == "verified"
+    assert recalled(backend, monkeypatch)["verification_status"] == "last_known_pass"
 
 
-def test_recall_persists_anchor_validity(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
-    """Deleting the anchored file demotes the PERSISTED score, not just the payload."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
-
-    _wire(monkeypatch, backend, project)
-    _store_anchored(backend, "L-anchor")
-    assert backend.get("L-anchor", namespace="default") is not None
-    assert backend.get("L-anchor", namespace="default").anchor_validity == 1.0  # type: ignore[union-attr]
-
-    # The anchored file goes away — the classic "memory was for the line above".
-    (project / "src" / "mod.py").unlink()
-
-    result = _verify_assertions([_learning("L-anchor")], ["q"], TRWConfig(), _rank)
-
-    assert result[0]["anchor_validity"] == 0.0
-    persisted = backend.get("L-anchor", namespace="default")
-    assert persisted is not None
-    assert persisted.anchor_validity == 0.0
-
-
-def test_recall_reverifies_entries_without_assertions(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
-    """An anchored entry with NO assertions must still be re-verified."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
-
-    _wire(monkeypatch, backend, project)
-    _store_anchored(backend, "L-anchor-only")
-    (project / "src" / "mod.py").write_text("def renamed_symbol() -> None:\n    return None\n", encoding="utf-8")
-
-    _verify_assertions([_learning("L-anchor-only")], ["q"], TRWConfig(), _rank)
-
-    persisted = backend.get("L-anchor-only", namespace="default")
-    assert persisted is not None
-    assert persisted.anchor_validity == 0.0
-
-
-def test_intact_anchor_keeps_full_validity(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
-    """No false demotion: an anchor that still resolves stays at 1.0."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
-
-    _wire(monkeypatch, backend, project)
-    _store_anchored(backend, "L-intact")
-
-    _verify_assertions([_learning("L-intact")], ["q"], TRWConfig(), _rank)
-
-    persisted = backend.get("L-intact", namespace="default")
-    assert persisted is not None
-    assert persisted.anchor_validity == 1.0
-
-
-def test_recall_call_site_matches_a_direct_compute(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
-    """The new call site introduces no scoring drift versus a direct call."""
+def test_intact_anchor_refresh_matches_direct_compute(fixture, monkeypatch):
     from trw_memory.lifecycle.anchor_validation import compute_anchor_validity
 
-    from trw_mcp.tools._recall_impl import _verify_assertions
-
-    _wire(monkeypatch, backend, project)
-    _store_anchored(backend, "L-parity")
-    (project / "src" / "mod.py").write_text("def renamed_symbol() -> None:\n    return None\n", encoding="utf-8")
-
-    direct = compute_anchor_validity([_anchor().model_dump(mode="json")], str(project), learning_id="L-parity")
-    result = _verify_assertions([_learning("L-parity")], ["q"], TRWConfig(), _rank)
-
-    assert result[0]["anchor_validity"] == direct
+    backend, root = fixture
+    refresh(backend, root)
+    entry = backend.get("L-anchor", namespace="default")
+    assert entry.anchor_validity == compute_anchor_validity(entry.anchors, root)
+    assert entry.verification_checked_at
+    assert recalled(backend, monkeypatch)["verification_status"] == "last_known_pass"
 
 
-def test_unanchored_entry_is_untouched(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
-    """Regression guard: entries with no anchors keep the pre-FR03 behavior."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
-
-    _wire(monkeypatch, backend, project)
-    now = datetime.now(timezone.utc)
-    backend.store(MemoryEntry(id="L-plain", content="unanchored", created_at=now, updated_at=now))
-
-    result = _verify_assertions([{"id": "L-plain", "summary": "unanchored"}], ["q"], TRWConfig(), _rank)
-
-    assert "anchor_validity" not in result[0]
-    persisted = backend.get("L-plain", namespace="default")
-    assert persisted is not None
-    # PRD-CORE-244 FR01: "untouched" now means None (never assessed) rather
-    # than the old 1.0 default, which claimed a perfect score for an entry with
-    # no anchors to score.
-    assert persisted.anchor_validity is None
+def test_unavailable_anchor_refresh_preserves_prior_evidence(fixture, monkeypatch):
+    backend, root = fixture
+    refresh(backend, root)
+    before = backend.get("L-anchor", namespace="default").model_dump(mode="json")
+    refresh(backend, None)
+    assert backend.get("L-anchor", namespace="default").model_dump(mode="json") == before
+    assert recalled(backend, monkeypatch)["verification_status"] == "last_known_pass"
 
 
-def test_anchor_and_assertion_share_one_write(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
-) -> None:
-    """FR03: the refreshed score rides the SAME batched update as FR02's verdict."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
+def test_anchor_and_assertion_refresh_share_one_write(fixture, monkeypatch):
+    backend, root = fixture
+    backend.update(
+        "L-anchor",
+        namespace="default",
+        assertions=[Assertion(type=AssertionType.GREP_PRESENT, pattern="anchored_symbol", target="mod.py")],
+    )
+    original = backend.update
+    calls = []
 
-    _wire(monkeypatch, backend, project)
-    assertion = Assertion(type=AssertionType.GREP_PRESENT, pattern="anchored_symbol", target="**/*.py")
-    _store_anchored(backend, "L-both", assertions=[assertion])
-    (project / "src" / "mod.py").unlink()
+    def record(*args, **kwargs):
+        calls.append(kwargs)
+        return original(*args, **kwargs)
 
-    calls: list[dict[str, object]] = []
-
-    class _RecordingBackend:
-        def update(self, entry_id: str, **fields: object) -> MemoryEntry | None:
-            calls.append(fields)
-            return backend.update(entry_id, **fields, namespace="default")
-
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda _trw_dir: _RecordingBackend())
-
-    _verify_assertions([_learning("L-both", assertions=[assertion])], ["q"], TRWConfig(), _rank)
-
+    monkeypatch.setattr(backend, "update", record)
+    refresh(backend, root)
     assert len(calls) == 1
-    assert set(calls[0]) >= {"assertions", "verification_status", "anchor_validity"}
-    assert calls[0]["anchor_validity"] == 0.0
+    assert {"assertions", "anchor_validity", "verification_status", "verification_checked_at"} <= calls[0].keys()
+    recalled(backend, monkeypatch)
+    assert len(calls) == 1

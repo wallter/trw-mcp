@@ -1,13 +1,4 @@
-"""PRD-INTENT-002 FR04/FR05b — phase-transition refresh + capability detection.
-
-The capability-detection matrix (FR05b): the server persists the client's
-advertised ``tools.listChanged`` capability per session at ``initialize``; on a
-phase transition the middleware:
-  - (capability advertised, *) → always emit notifications/tools/list_changed
-  - (no capability, profile=notify) → warn + emit anyway
-  - (no capability, profile=require_reconnect) → X-Phase-Changed header + close
-  - (no capability, profile=silent) → no-op
-"""
+"""Standard best-effort phase refresh and per-session transition deduplication."""
 
 from __future__ import annotations
 
@@ -30,34 +21,6 @@ def test_no_transition_when_phase_unchanged() -> None:
 def test_transition_detected_on_phase_change() -> None:
     pt.detect_transition("sess-1", "RESEARCH")
     assert pt.detect_transition("sess-1", "IMPLEMENT") is True
-
-
-def test_capability_persisted_and_read() -> None:
-    """FR05b: the advertised tools.listChanged flag is stored per session."""
-    pt.set_list_changed_capability("sess-1", advertised=True)
-    assert pt.client_supports_list_changed("sess-1") is True
-    # Unknown session defaults to False (absent == unsupported).
-    assert pt.client_supports_list_changed("sess-unknown") is False
-
-
-@pytest.mark.parametrize(
-    ("advertised", "policy", "expected"),
-    [
-        (True, "silent", "notify"),  # capability wins regardless of policy
-        (True, "require_reconnect", "notify"),
-        (False, "notify", "notify"),  # best-effort emit
-        (False, "require_reconnect", "require_reconnect"),
-        (False, "silent", "silent"),
-    ],
-)
-def test_capability_detection_matrix(advertised: bool, policy: str, expected: str) -> None:
-    """FR05b: (capability, profile) → resolved transition action."""
-    assert pt.resolve_transition_action(advertised=advertised, on_transition=policy) == expected
-
-
-def test_resolve_action_unknown_policy_falls_back_to_require_reconnect() -> None:
-    """FR05b default: an unknown/absent profile policy → require_reconnect (safest)."""
-    assert pt.resolve_transition_action(advertised=False, on_transition="nonsense") == "require_reconnect"
 
 
 @pytest.mark.asyncio
@@ -87,3 +50,46 @@ async def test_emit_list_changed_fails_open_without_session() -> None:
     """FR04/NFR02: a missing/broken session is a no-op, never a crash."""
     assert await pt.emit_list_changed(None) is False
     assert await pt.emit_list_changed(object()) is False
+
+
+@pytest.mark.asyncio
+async def test_emit_list_changed_preserves_dispatch_on_transport_failure() -> None:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    send = AsyncMock(side_effect=RuntimeError("closed session"))
+    ctx = SimpleNamespace(session=SimpleNamespace(send_tool_list_changed=send))
+    assert await pt.emit_list_changed(ctx) is False
+    send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_policy", ["notify", "require_reconnect", "silent"])
+async def test_legacy_transition_metadata_does_not_control_refresh(monkeypatch, legacy_policy):
+    from types import SimpleNamespace
+
+    from structlog.testing import capture_logs
+
+    from trw_mcp.middleware.phase_exposure import PhaseExposureMiddleware
+    from trw_mcp.models.config._client_profile import ClientProfile
+    from trw_mcp.models.phase_policy import DEFAULT_PHASE_POLICY
+
+    profile = ClientProfile(client_id="test", display_name="Test", on_transition=legacy_policy)
+    assert ClientProfile.model_validate(profile.model_dump()).on_transition == legacy_policy
+    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: SimpleNamespace(client_profile=profile))
+    pt.reset_transition_state()
+    emitted = []
+
+    async def emit(ctx):
+        emitted.append(ctx)
+        return True
+
+    monkeypatch.setattr("trw_mcp.middleware.phase_exposure.emit_list_changed", emit)
+    mw = PhaseExposureMiddleware(enabled=True, policy=DEFAULT_PHASE_POLICY)
+    sentinel = object()
+    with capture_logs() as logs:
+        await mw._on_phase_transition(session_id="s", phase="RESEARCH", ctx=sentinel)
+        await mw._on_phase_transition(session_id="s", phase="RESEARCH", ctx=sentinel)
+        await mw._on_phase_transition(session_id="s", phase="IMPLEMENT", ctx=sentinel)
+    assert emitted == [sentinel, sentinel]
+    assert not any(e.get("event") == "phase_transition_require_reconnect" for e in logs)

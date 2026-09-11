@@ -30,7 +30,7 @@ class TestPrefixMigrationExtra:
         target = tmp_path
         skills_dir = target / ".claude" / "skills"
         skills_dir.mkdir(parents=True)
-        for old, new in [("commit", "trw-commit"), ("deliver", "trw-deliver")]:
+        for old, new in [("learn", "trw-learn"), ("deliver", "trw-deliver")]:
             (skills_dir / old).mkdir()
             (skills_dir / old / "SKILL.md").write_text("old", encoding="utf-8")
             (skills_dir / new).mkdir()
@@ -56,29 +56,29 @@ class TestPrefixMigrationExtra:
     def test_dry_run_migration_reports_would_migrate(self, initialized_repo: Path) -> None:
         """dry_run=True appends 'would migrate:' without deleting."""
         skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills_dir / "trw-commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "trw-commit" / "SKILL.md").write_text("new", encoding="utf-8")
+        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "trw-learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "trw-learn" / "SKILL.md").write_text("new", encoding="utf-8")
 
         result = update_project(initialized_repo, dry_run=True)
 
-        assert (skills_dir / "commit").exists()
-        would_migrate = [e for e in result["updated"] if "would migrate:" in e and "commit" in e]
+        assert (skills_dir / "learn").exists()
+        would_migrate = [e for e in result["updated"] if "would migrate:" in e and "learn" in e]
         assert len(would_migrate) >= 1
 
     def test_manifest_excludes_predecessor_names_from_custom(self, initialized_repo: Path) -> None:
         """Predecessor names are excluded from custom_skills in manifest."""
         skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         _write_manifest(initialized_repo, result)
 
         manifest = _read_manifest(initialized_repo)
         assert manifest is not None
-        assert "commit" not in manifest.get("custom_skills", [])
+        assert "learn" not in manifest.get("custom_skills", [])
 
     def test_migrate_prefix_predecessors_direct_call(self, tmp_path: Path) -> None:
         """Direct call removes both skill dirs and agent files."""
@@ -199,7 +199,7 @@ class TestMigratePredecessorSuccessorAbsent:
         skills_dir.mkdir(parents=True)
         agents_dir.mkdir(parents=True)
 
-        skill_pred = skills_dir / "commit"
+        skill_pred = skills_dir / "learn"
         skill_pred.mkdir()
         (skill_pred / "SKILL.md").write_text("old", encoding="utf-8")
 

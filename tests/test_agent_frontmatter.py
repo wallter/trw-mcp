@@ -24,8 +24,15 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
-BUNDLED_AGENTS_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+IS_MONOREPO = (REPO_ROOT / "release-packages.yaml").is_file()
+BUNDLED_AGENTS_DIR = PACKAGE_ROOT / "src/trw_mcp/data/agents"
+AGENTS_DIR = REPO_ROOT / ".claude/agents" if IS_MONOREPO else BUNDLED_AGENTS_DIR
+AUDIT_SKILL = (
+    REPO_ROOT / ".claude/skills/trw-audit/SKILL.md"
+    if IS_MONOREPO
+    else PACKAGE_ROOT / "src/trw_mcp/data/skills/trw-audit/SKILL.md"
+)
 
 _VALID_EFFORTS: frozenset[str] = frozenset({"low", "medium", "high"})
 # Dev-repo-only agents installed by channel bootstrap (e.g. trw-distill channels),
@@ -46,7 +53,9 @@ _NEVER_ALWAYS_LINE_START_RE = re.compile(r"^(NEVER|ALWAYS)\b", re.MULTILINE)
 
 
 def _agent_files() -> list[Path]:
-    return sorted(AGENTS_DIR.glob("*.md"))
+    files = sorted(AGENTS_DIR.glob("*.md"))
+    assert files, f"no agents found in required surface {AGENTS_DIR}"
+    return files
 
 
 def _parse_frontmatter(path: Path) -> dict[str, Any]:
@@ -178,7 +187,7 @@ def test_review_agents_do_not_suppress_findings() -> None:
         AGENTS_DIR / "trw-reviewer.md",
         AGENTS_DIR / "trw-auditor.md",
         AGENTS_DIR / "trw-adversarial-auditor.md",
-        REPO_ROOT / ".claude" / "skills" / "trw-audit" / "SKILL.md",
+        AUDIT_SKILL,
     ]
     missing = [p for p in targets if not p.exists()]
     assert not missing, f"review surfaces missing (non-vacuity guard): {[str(p) for p in missing]}"
@@ -246,6 +255,8 @@ def test_agents_dir_mirrors_the_bundled_set() -> None:
     went stale the moment an agent was retired (``trw-code-simplifier``, commit
     ``0ea46a6e34``) and failed for every later change that touched this tree.
     """
+    if not IS_MONOREPO:
+        pytest.skip("local agent mirror parity requires the monorepo client surface")
     bundled = {p.name for p in sorted(BUNDLED_AGENTS_DIR.glob("*.md"))}
     assert bundled, f"no bundled agents found in {BUNDLED_AGENTS_DIR}"
     mirrored = {p.name for p in _agent_files()} - _DEV_ONLY_AGENTS

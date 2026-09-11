@@ -28,14 +28,6 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
-def _last_nonempty_lines(text: str, *, count: int = 3) -> str:
-    """Return the trailing up-to-*count* non-empty lines, joined by newline."""
-    lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]
-    if not lines:
-        return ""
-    return "\n".join(lines[-count:])
-
-
 def _normalize_claude(raw: str) -> tuple[str, dict[str, object] | None]:
     """claude -p --output-format json → {.result: str}."""
     try:
@@ -50,28 +42,46 @@ def _normalize_claude(raw: str) -> tuple[str, dict[str, object] | None]:
 
 
 def _normalize_codex(raw: str) -> tuple[str, dict[str, object] | None]:
-    """codex exec → trailing text; if --json was used, parse the last JSON line."""
+    """Extract supported legacy envelopes; preserve unknown/new stream schemas."""
     cleaned = _strip_ansi(raw)
-    # Try JSON-lines (experimental --json): scan for the last parseable object
-    # carrying a textual field.
+    # Treat only a complete object-per-line stream as structured output.
+    # A JSON example inside prose must not replace the surrounding findings.
     last_obj: dict[str, object] | None = None
+    parts: list[str] = []
     for line in cleaned.splitlines():
         line = line.strip()
-        if not line.startswith("{"):
+        if not line:
             continue
+        if not line.startswith("{"):
+            return cleaned.strip(), None
         try:
             obj = json.loads(line)
         except ValueError:
+            return cleaned.strip(), None
+        if obj == {"type": "start"}:
             continue
-        if isinstance(obj, dict):
-            last_obj = obj
-    if last_obj is not None:
-        for key in ("message", "text", "content", "result"):
-            val = last_obj.get(key)
-            if isinstance(val, str) and val.strip():
-                return val.strip(), last_obj
-    # Plain-text default: trailing non-empty lines after banner/hook noise.
-    return _last_nonempty_lines(cleaned), None
+        if not isinstance(obj, dict) or obj.get("type") != "final":
+            return cleaned.strip(), None
+        answer_keys = set(obj) - {"type"}
+        if len(answer_keys) != 1 or not answer_keys <= {"message", "text", "content", "result"}:
+            return cleaned.strip(), None
+        value = obj[next(iter(answer_keys))]
+        if not isinstance(value, str):
+            return cleaned.strip(), None
+        parts.append(value)
+        last_obj = obj
+    if parts and any(part.strip() for part in parts):
+        return "\n\n".join(parts).strip(), last_obj
+    # Without a structured answer boundary, line count cannot distinguish
+    # banner noise from findings. Preserve evidence rather than tail-truncating.
+    return cleaned.strip(), None
+
+
+# The envelope names that carry a completed answer, and the payload fields that
+# hold its text. Both are tuples of DATA, not a client id: a second CLI emitting
+# the same tagged-envelope shape reuses this parser by declaring the shape.
+_TERMINAL_ENVELOPE_EVENTS = ("result",)
+_ENVELOPE_ANSWER_FIELDS = ("response", "text", "content")
 
 
 def _normalize_opencode(raw: str) -> tuple[str, dict[str, object] | None]:
@@ -82,30 +92,79 @@ def _normalize_opencode(raw: str) -> tuple[str, dict[str, object] | None]:
     parsed_any = False
     for line in cleaned.splitlines():
         line = line.strip()
-        if not line.startswith("{"):
+        if not line:
             continue
+        if not line.startswith("{"):
+            return cleaned.strip(), None
         try:
             event = json.loads(line)
         except ValueError:
-            continue
-        if not isinstance(event, dict):
-            continue
+            return cleaned.strip(), None
+        # Unknown metadata may itself contain findings. Do not discard it by
+        # treating arbitrary JSON objects as a recognized text-event stream.
+        if not isinstance(event, dict) or set(event) not in ({"text"}, {"role", "text"}):
+            return cleaned.strip(), None
         parsed_any = True
         final = event
         text = event.get("text")
         role = event.get("role")
+        if not isinstance(text, str) or role not in (None, "assistant", "tool"):
+            return cleaned.strip(), None
         if isinstance(text, str) and text and (role in (None, "assistant")):
             parts.append(text)
     if not parsed_any:
         return cleaned.strip(), None
     joined = "".join(parts).strip()
-    return (joined or _last_nonempty_lines(cleaned)), final
+    return (joined or cleaned.strip()), final
+
+
+def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None]:
+    """Tagged-envelope NDJSON -> the terminal envelope's answer + its payload.
+
+    Each line is ``{"event": <name>, <name>: {...}}``. The stream's answer lives
+    in the payload of the LAST envelope naming a terminal event, so intermediate
+    deltas are never concatenated -- re-assembling them would double the text
+    that the terminal payload already carries whole.
+
+    Degrades like every sibling: any non-JSON line, any untagged line, or a
+    stream with no terminal envelope returns the ANSI-cleaned raw text and no
+    structured payload, so a shape chosen wrongly costs nothing.
+    """
+
+    cleaned = _strip_ansi(raw)
+    terminal: dict[str, object] | None = None
+    for line in cleaned.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if not line.startswith("{"):
+            return cleaned.strip(), None
+        try:
+            envelope = json.loads(line)
+        except ValueError:
+            return cleaned.strip(), None
+        if not isinstance(envelope, dict):
+            return cleaned.strip(), None
+        name = envelope.get("event")
+        if not isinstance(name, str):
+            return cleaned.strip(), None
+        if name in _TERMINAL_ENVELOPE_EVENTS:
+            payload = envelope.get(name)
+            if isinstance(payload, dict):
+                terminal = payload
+    if terminal is None:
+        return cleaned.strip(), None
+    for field in _ENVELOPE_ANSWER_FIELDS:
+        answer = terminal.get(field)
+        if isinstance(answer, str) and answer.strip():
+            return answer.strip(), terminal
+    return cleaned.strip(), terminal
 
 
 def _normalize_agy(raw: str) -> tuple[str, dict[str, object] | None]:
-    """agy → strip ANSI, return trailing non-empty text (PTY-friendly)."""
+    """agy → strip ANSI and preserve the complete text (PTY-friendly)."""
     cleaned = _strip_ansi(raw)
-    return _last_nonempty_lines(cleaned, count=5), None
+    return cleaned.strip(), None
 
 
 # Keyed on the OUTPUT SHAPE the registry records for a client, not on the client
@@ -117,6 +176,7 @@ _NORMALIZERS: dict[OutputShape, Callable[[str], tuple[str, dict[str, object] | N
     "single_json_object": _normalize_claude,
     "json_lines": _normalize_codex,
     "ndjson_events": _normalize_opencode,
+    "enveloped_ndjson_events": _normalize_enveloped_events,
     "trailing_text": _normalize_agy,
 }
 
@@ -124,15 +184,16 @@ _NORMALIZERS: dict[OutputShape, Callable[[str], tuple[str, dict[str, object] | N
 def normalize_output(client: DispatchClient, raw_stdout: str) -> tuple[str, dict[str, object] | None]:
     """Normalize *raw_stdout* for *client* into ``(text, structured)``.
 
-    Always returns; never raises. Falls back to ``raw_stdout.strip()`` /
+    Always returns; never raises. Falls back to ANSI-cleaned ``raw_stdout.strip()`` /
     ``None`` if a client-specific parser cannot extract a payload.
     """
+    cleaned = _strip_ansi(raw_stdout)
     try:
         shape = client_spec_for(client).output_shape
     except UnknownClientError:  # pragma: no cover - guarded by the Literal upstream
-        return raw_stdout.strip(), None
+        return cleaned.strip(), None
     normalizer = _NORMALIZERS[shape]
     try:
-        return normalizer(raw_stdout)
+        return normalizer(cleaned)
     except Exception:  # justified: normalization must degrade, never raise
-        return raw_stdout.strip(), None
+        return cleaned.strip(), None

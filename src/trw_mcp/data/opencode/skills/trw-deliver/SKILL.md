@@ -9,6 +9,8 @@ allowed-tools: Read, Bash, mcp__trw__trw_build_check, mcp__trw__trw_deliver, mcp
 
 # OpenCode Delivery Skill
 
+Use for completed-work acceptance under the existing delivery gates. For material unfinished work, preserve progress, observed checks, residual risks and the next action in a checkpoint or durable native handoff with a next-read pointer. Stopping is not acceptance. If nothing material needs preservation, do not manufacture an artifact or learning. Already captured learnings remain persisted.
+
 1. Call `trw_status()` to confirm the current run state.
 2. Run project-native validation, then record its observed result with `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`.
 3. If the build fails, stop unless a structured acceptable-failure record or authorized operator/config override actually satisfies a gate path; never fabricate a passing build check.

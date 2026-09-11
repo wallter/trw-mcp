@@ -10,7 +10,6 @@ Post-fix: get_config() singleton is reused across calls.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -38,16 +37,6 @@ def test_nudge_path_invokes_get_config_at_runtime(
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_project))
 
     fn = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")
-
-    # Patch where _try_learning_nudge_content imports it from.
-    call_count = 0
-
-    def counting_get_config() -> Any:
-        nonlocal call_count
-        call_count += 1
-        from trw_mcp.models.config import _real_get_config_for_test_only  # type: ignore[attr-defined]
-
-        return _real_get_config_for_test_only()
 
     # The nudge function does `from trw_mcp.models.config import get_config`
     # at runtime; patch that module-level binding.

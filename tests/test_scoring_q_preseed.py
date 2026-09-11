@@ -12,6 +12,8 @@ Formula: initial_q = impact * 0.5 + 0.5 * 0.5
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from trw_mcp.scoring._correlation import compute_initial_q_value
@@ -141,18 +143,24 @@ class TestLearningEntryQPreseed:
 
 
 class TestSQLiteIntegrationPath:
-    """Q1-03: Tests for the SQLite integration path via _learning_to_memory_entry."""
+    """Q1-03: Tests for the SQLite integration path (the delegated store)."""
 
-    def test_memory_entry_q_value_matches_formula(self) -> None:
-        """_learning_to_memory_entry with impact=0.95 produces q_value=0.725."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    def test_memory_entry_q_value_matches_formula(self, tmp_path: Path) -> None:
+        """A stored learning with impact=0.95 carries q_value=0.725.
 
-        entry = _learning_to_memory_entry(
-            learning_id="sqlite-001",
-            summary="High impact",
-            detail="Testing SQLite path",
-            impact=0.95,
-        )
+        PRD-CORE-251 FR03: the pre-seed is computed in ``build_store_arguments``
+        and passed to ``memory_store_impl`` as the ``q_value`` argument, so this
+        asserts against the row that actually landed rather than against the
+        retired hand builder.
+        """
+        from trw_mcp.state.memory_adapter import get_backend, store_learning
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "memory").mkdir(parents=True)
+        store_learning(trw_dir, "sqlite-001", "High impact", "Testing SQLite path", impact=0.95)
+
+        entry = get_backend(trw_dir).get("sqlite-001", namespace="default")
+        assert entry is not None
         assert entry.q_value == pytest.approx(0.725)
 
     def test_preseed_suppressed_when_observations_positive(self) -> None:

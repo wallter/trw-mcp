@@ -13,11 +13,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
 # Integration tier: reads real repository markdown files and uses tmp_path
 # for the negative lint check. Per .claude/rules/testing.md, tmp_path and
 # real-file I/O classify as integration — no unit marker applied.
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 
 SENTINELS: dict[str, str] = {
     "tool_lifecycle": "MUST call `trw_session_start()` as your absolute first action",
@@ -35,7 +37,7 @@ CANONICAL_OWNERS: dict[str, Path] = {
 # Hand-authored files that MUST NOT carry these sentinels outside trw markers.
 HAND_AUTHORED_SCAN: list[Path] = [
     _REPO_ROOT / "CLAUDE.md",
-    _REPO_ROOT / "trw-mcp" / "CLAUDE.md",
+    PACKAGE_ROOT / "CLAUDE.md",
     _REPO_ROOT / ".opencode" / "INSTRUCTIONS.md",
 ]
 
@@ -53,6 +55,7 @@ def _strip_auto_gen_regions(text: str) -> str:
     return pattern.sub("", text)
 
 
+@requires_monorepo
 def test_all_sentinels_unique() -> None:
     """Each sentinel appears in at most ONE hand-authored file outside trw markers."""
     for sentinel_name, sentinel in SENTINELS.items():
@@ -70,6 +73,7 @@ def test_all_sentinels_unique() -> None:
         )
 
 
+@requires_monorepo
 def test_canonical_files_contain_sentinels() -> None:
     """Drift detection: each canonical file must still contain its sentinel."""
     for sentinel_name, sentinel in SENTINELS.items():
@@ -98,6 +102,7 @@ def test_duplication_lint_detects_reintroduction(tmp_path: Path) -> None:
     assert len(hits) == 2, "fixture should duplicate the sentinel across both files"
 
 
+@requires_monorepo
 def test_hub_links_extracted_docs() -> None:
     """FR09: the docs hub points at both canonical files."""
     hub = _REPO_ROOT / "docs" / "documentation" / "CLAUDE.md"
@@ -108,7 +113,7 @@ def test_hub_links_extracted_docs() -> None:
 
 def test_trw_mcp_claude_md_pointer() -> None:
     """FR05: trw-mcp/CLAUDE.md points at canonical docs; no duplicated table, no markers."""
-    pkg_claude_md = _REPO_ROOT / "trw-mcp" / "CLAUDE.md"
+    pkg_claude_md = PACKAGE_ROOT / "CLAUDE.md"
     content = pkg_claude_md.read_text(encoding="utf-8")
     assert "tool-lifecycle.md" in content, "trw-mcp/CLAUDE.md must point at canonical tool-lifecycle.md"
     assert "Mandatory Tool Lifecycle" not in content, (

@@ -181,7 +181,7 @@ class TestCeremonyRendering:
         assert "trw_session_start()" in result
         # PRD-CORE-062-FR01: trw_deliver removed from closing reminder (redundant with opener)
         assert "trw_deliver()" not in result
-        assert "compounds" in result
+        assert "recorded learnings already persist" in result
 
     def test_render_memory_harmonization(self) -> None:
         """Memory routing section disambiguates trw_learn vs native auto-memory."""
@@ -191,10 +191,13 @@ class TestCeremonyRendering:
         # Default action (trw_learn as default, not native)
         assert "trw_learn()" in result
         assert "native auto-memory" in result.lower()
-        # Comparison table columns
+        # Preferred storage is not an exclusive host policy (MR1-2).
         assert "trw_recall(query)" in result
-        assert "Visibility" in result
-        assert "Lifecycle" in result
+        assert "one authoritative record" in result
+        assert "storage and privacy rules" in result
+        assert "ordinary project notes are permitted" in result
+        assert "Filename scan only" not in result
+        assert "Primary session only" not in result
         # Concrete routing examples
         assert "native memory" in result.lower()
         # Claude Code-specific — should NOT mention opencode
@@ -289,3 +292,75 @@ class TestCeremonyRendering:
         assert "{{ceremony_flows}}" not in content
         assert "{{closing_reminder}}" not in content
         assert "{{ceremony_quick_ref}}" not in content
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_server_instructions_distinguish_preservation_from_delivery(
+    monkeypatch: pytest.MonkeyPatch, fallback: bool
+) -> None:
+    """CORE269: actual normal loader and exceptional fallback, not just constants."""
+    from trw_mcp.server._app import _load_server_instructions
+
+    if fallback:
+
+        def unavailable(*args: object, **kwargs: object) -> str:
+            raise OSError("synthetic unavailable message registry")
+
+        monkeypatch.setattr("trw_mcp.prompts.messaging.get_message_or_default", unavailable)
+    text = _load_server_instructions()
+    assert "unfinished" in text
+    assert "handoff" in text
+    assert "next-read" in text
+    assert "nothing material to preserve" in text.lower()
+    assert "completed-work acceptance" in text
+    assert "isn't checkpointed" not in text
+
+
+def test_lifecycle_fallback_and_ceremony_catalogue_do_not_invent_loss(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state.claude_md.sections import _tool_lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_read_bundled_surface", lambda *args: "")
+    text = lifecycle.load_tool_lifecycle()
+    assert "unfinished" in text
+    assert "handoff" in text
+    assert lifecycle.DELIVER_GATE_PHRASE in text
+    catalogue = render_ceremony_table()
+    assert "completed-work acceptance" in catalogue
+    assert "permanently lost" not in catalogue
+    assert "learnings are invisible" not in catalogue
+
+
+@pytest.mark.parametrize("mode", ["behavioral", "minimal", "compact"])
+def test_all_protocol_modes_preserve_truthful_boundaries(mode: str) -> None:
+    from trw_mcp.state.claude_md._renderer import ProtocolRenderer
+
+    text = getattr(ProtocolRenderer(), f"render_{mode}_protocol")()
+    assert "unfinished" in text
+    assert "handoff" in text
+    assert "next-read" in text
+    assert "Nothing material to preserve" in text
+    assert "completed-work acceptance" in text
+
+
+def test_bootstrap_and_platform_text_consumers_preserve_boundaries() -> None:
+    from trw_mcp.bootstrap._config_templates import _minimal_claude_md
+    from trw_mcp.state.claude_md.renderers._review_and_opencode import (
+        render_antigravity_instructions,
+        render_opencode_generic,
+    )
+    from trw_mcp.state.claude_md.sections._delegation import render_agents_trw_section, render_codex_trw_section
+
+    for renderer in (
+        _minimal_claude_md,
+        render_antigravity_instructions,
+        render_opencode_generic,
+        render_agents_trw_section,
+        render_codex_trw_section,
+    ):
+        text = renderer()
+        assert "unfinished" in text
+        assert "handoff" in text
+        assert "next-read" in text
+        assert "nothing material to preserve" in text.lower()
+        assert "completed-work acceptance" in text
+        assert "Do NOT call `trw_deliver` unless" in text

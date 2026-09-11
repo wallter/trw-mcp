@@ -249,10 +249,15 @@ class TestCheckPhaseExit:
         # Should warn about missing synthesis
         assert any("synthesis" in f.message.lower() for f in result.failures)
 
-    def test_plan_no_plan_doc(self, sample_run_dir: Path) -> None:
-        config = TRWConfig()
-        result = check_phase_exit(Phase.PLAN, sample_run_dir, config)
-        assert any("plan" in f.message.lower() for f in result.failures)
+    def test_plan_document_shape_does_not_change_gate(self, sample_run_dir: Path) -> None:
+        config = TRWConfig(phase_gate_enforcement="off")
+        plan = sample_run_dir / "reports" / "plan.md"
+        plan.unlink(missing_ok=True)
+        absent = check_phase_exit(Phase.PLAN, sample_run_dir, config)
+        assert absent.valid and absent.failures == []
+        for content in ("", "See the governing requirement for the execution plan."):
+            plan.write_text(content)
+            assert check_phase_exit(Phase.PLAN, sample_run_dir, config) == absent
 
     def test_plan_with_plan_doc(self, sample_run_dir: Path) -> None:
         config = TRWConfig()

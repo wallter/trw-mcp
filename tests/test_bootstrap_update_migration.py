@@ -107,31 +107,31 @@ class TestPrefixMigration:
         """Old non-prefixed skill dir is removed when trw- successor is installed."""
         skills_dir = initialized_repo / ".claude" / "skills"
         # Create predecessor and successor skill dirs
-        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills_dir / "trw-commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "trw-commit" / "SKILL.md").write_text("new", encoding="utf-8")
+        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "trw-learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "trw-learn" / "SKILL.md").write_text("new", encoding="utf-8")
 
         result = update_project(initialized_repo)
 
-        assert not (skills_dir / "commit").exists()
-        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "commit" in e]
+        assert not (skills_dir / "learn").exists()
+        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "learn" in e]
         assert len(migrated_entries) >= 1
 
     def test_migrate_skips_predecessor_when_successor_absent(self, initialized_repo: Path) -> None:
         """Old skill dir remains when trw- successor is NOT installed."""
         skills_dir = initialized_repo / ".claude" / "skills"
         # Create only predecessor — no successor
-        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
 
         result = update_project(initialized_repo)
 
-        # Note: update_project installs trw-commit from bundled data, so the
+        # Note: update_project installs trw-learn from bundled data, so the
         # successor will now exist.  We test with a name NOT in bundled data
-        # to isolate this behavior.  But "commit" IS in PREDECESSOR_MAP and
-        # trw-commit IS bundled, so the predecessor gets removed.  Instead,
-        # let's verify the function logic directly: if we remove trw-commit
+        # to isolate this behavior.  But "learn" IS in PREDECESSOR_MAP and
+        # trw-learn IS bundled, so the predecessor gets removed.  Instead,
+        # let's verify the function logic directly: if we remove trw-learn
         # after install, predecessor stays.
         # This test verifies update_project doesn't crash and produces results.
         assert "errors" in result
@@ -142,16 +142,16 @@ class TestPrefixMigration:
         skills_dir = fake_git_repo / ".claude" / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
         # Create only predecessor, no trw- successor
-        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
 
         from trw_mcp.bootstrap import _migrate_prefix_predecessors
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
         _migrate_prefix_predecessors(fake_git_repo, result)
 
-        assert (skills_dir / "commit").exists()
-        assert not any("commit" in e for e in result["updated"])
+        assert (skills_dir / "learn").exists()
+        assert not any("learn" in e for e in result["updated"])
 
     def test_migrate_removes_agent_predecessor(self, initialized_repo: Path) -> None:
         """Old non-prefixed agent .md file is removed when trw- successor exists."""
@@ -169,19 +169,19 @@ class TestPrefixMigration:
     def test_migrate_idempotent(self, initialized_repo: Path) -> None:
         """Second update_project run is a no-op on already-cleaned dirs."""
         skills_dir = initialized_repo / ".claude" / "skills"
-        (skills_dir / "commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "commit" / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills_dir / "trw-commit").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "trw-commit" / "SKILL.md").write_text("new", encoding="utf-8")
+        (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
+        (skills_dir / "trw-learn").mkdir(parents=True, exist_ok=True)
+        (skills_dir / "trw-learn" / "SKILL.md").write_text("new", encoding="utf-8")
 
         # First run removes predecessor
         result1 = update_project(initialized_repo)
-        assert not (skills_dir / "commit").exists()
+        assert not (skills_dir / "learn").exists()
 
-        # Second run is a no-op — no migrated entries for commit
+        # Second run is a no-op — no migrated entries for learn
         result2 = update_project(initialized_repo)
-        migrated_commit = [e for e in result2["updated"] if "migrated:" in e and "commit" in e]
-        assert migrated_commit == []
+        migrated_learn = [e for e in result2["updated"] if "migrated:" in e and "learn" in e]
+        assert migrated_learn == []
 
     def test_genuine_custom_skill_not_removed(self, initialized_repo: Path) -> None:
         """A custom skill not in PREDECESSOR_MAP survives update_project."""

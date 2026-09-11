@@ -56,15 +56,17 @@ def backend(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> object:
 
 
 def _store(backend: object, entry_id: str, anchors: list[dict[str, object]]) -> None:
-    from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    """Seed one anchored row directly (fixture setup, not the write path)."""
+    from trw_memory.models.memory import Anchor, MemoryEntry
 
-    entry = _learning_to_memory_entry(
-        entry_id,
-        f"summary for {entry_id}",
-        f"detail for {entry_id}",
-        anchors=anchors,
+    entry = MemoryEntry(
+        id=entry_id,
+        content=f"summary for {entry_id}",
+        detail=f"detail for {entry_id}",
+        namespace="default",
+        anchors=[Anchor.model_validate(anchor) for anchor in anchors],
+        anchor_validity=1.0,
     )
-    entry.anchor_validity = 1.0
     backend.store(entry)  # type: ignore[attr-defined]
 
 

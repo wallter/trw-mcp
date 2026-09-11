@@ -4,33 +4,65 @@ from __future__ import annotations
 
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "trw-mcp" / "src" / "trw_mcp" / "data"
+import pytest
+
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+DATA = PACKAGE_ROOT / "src" / "trw_mcp" / "data"
 
 
-def test_ready_delegates_one_exec_plan_contract_without_inline_duplication() -> None:
-    paths = (
-        DATA / "skills" / "trw-prd-ready" / "SKILL.md",
-        DATA / "codex" / "skills" / "trw-prd-ready" / "SKILL.md",
-        ROOT / ".claude" / "skills" / "trw-prd-ready" / "SKILL.md",
-        ROOT / ".agents" / "skills" / "trw-prd-ready" / "SKILL.md",
-        ROOT / ".cursor" / "skills" / "trw-prd-ready" / "SKILL.md",
-    )
-    for path in paths:
-        content = path.read_text(encoding="utf-8")
-        phase = content.split("### Phase 4: EXEC PLAN", 1)[1].split("## Final Report", 1)[0]
+PIPELINE_PATHS = (
+    DATA / "skills" / "trw-prd-ready" / "SKILL.md",
+    DATA / "codex" / "skills" / "trw-prd-ready" / "SKILL.md",
+    ROOT / ".claude" / "skills" / "trw-prd-ready" / "SKILL.md",
+    ROOT / ".agents" / "skills" / "trw-prd-ready" / "SKILL.md",
+    ROOT / ".cursor" / "skills" / "trw-prd-ready" / "SKILL.md",
+)
+
+
+@pytest.mark.parametrize("index", [0, 1, *[pytest.param(i, marks=requires_monorepo) for i in (2, 3, 4)]])
+def test_ready_delegates_one_exec_plan_contract_without_inline_duplication(index: int) -> None:
+    path = PIPELINE_PATHS[index]
+    content = path.read_text(encoding="utf-8")
+    phase = content.split("### Phase 4: EXEC PLAN", 1)[1].split("## Final Report", 1)[0]
+    if index in (1, 3):
+        assert "trw-exec-plan-contract.md" in phase
+    else:
         assert "packaged internal `trw-exec-plan` contract" in phase
-        assert len(phase.split()) < 180
-        assert "0.85" not in content
-        assert "0.70" not in content
+    # Delegation rather than a second task-planning procedure, not a word quota.
+    assert "### Draft tasks" not in phase
+    assert "## Rationalization Watchlist" not in phase
+    assert "0.85" not in content
+    assert "0.70" not in content
 
 
-def test_opencode_ready_delivers_reviewed_execution_plan() -> None:
-    skill = (DATA / "opencode" / "skills" / "trw-prd-ready" / "SKILL.md").read_text(encoding="utf-8")
-    command = (DATA / "opencode" / "commands" / "trw-prd-ready.md").read_text(encoding="utf-8")
-    for content in (skill, command):
-        for phrase in ("review", "exec-plan", "EXECUTION-PLAN-{PRD-ID}.md", "migration/rollback"):
-            assert phrase in content
+def test_opencode_ready_delivers_reviewed_execution_plan(tmp_path: Path) -> None:
+    from trw_mcp.bootstrap._opencode import install_opencode_commands, install_opencode_skills
+
+    assert not install_opencode_commands(tmp_path)["errors"]
+    assert not install_opencode_skills(tmp_path)["errors"]
+    directory = tmp_path / ".opencode/skills/trw-prd-ready"
+    command = (tmp_path / ".opencode/commands/trw-prd-ready.md").read_text()
+    assert ".opencode/skills/trw-prd-ready/SKILL.md" in command
+    skill = (directory / "SKILL.md").read_text()
+    for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+        resource = directory / f"{phase}-contract.md"
+        assert resource.name in skill
+        assert resource.read_bytes() == (DATA / "skills" / phase / "SKILL.md").read_bytes()
+    owner = (directory / "trw-prd-ready-contract.md").read_text()
+    for phrase in (
+        "author-independent helper/human",
+        "no inline author self-review fallback",
+        "Legacy output: configured separate plan",
+        "{prd_path}#execution-plan",
+        "read-only handoff",
+        "full-validation receipt",
+    ):
+        assert phrase in owner
+    assert "migration/rollback" in (directory / "trw-exec-plan-contract.md").read_text()
+    assert "stop and report" in skill and "stop and report" in command
+    assert not (tmp_path / ".git").exists()
 
 
 def test_exec_plan_is_evidence_sized_and_project_native() -> None:

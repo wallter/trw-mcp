@@ -11,4 +11,4 @@ messages:
   review:
     text: "Invoke trw_review() on the current diff to surface logic gaps missed by self-review."
   deliver:
-    text: "Persist session with trw_deliver() — your learnings become available to future sessions."
+    text: "If you have material unfinished work, preserve it in a checkpoint or native handoff with a next-read pointer. Use trw_deliver() for completed work under existing evidence gates."

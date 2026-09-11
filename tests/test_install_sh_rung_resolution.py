@@ -25,6 +25,11 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_monorepo
+
+# Every case exercises scripts absent from the standalone package.
+pytestmark = requires_monorepo
+
 from tests.test_install_sh_flow import (
     _CURL_STUB,
     _PYTHON3_VENV_FRESH_STUB,

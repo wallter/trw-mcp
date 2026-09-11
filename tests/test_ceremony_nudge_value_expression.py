@@ -62,7 +62,7 @@ class TestNudgeValueExpression:
         assert "min ago" not in result
 
     def test_fr02_deliver_nudge_content(self, tmp_path: Path) -> None:
-        """Deliver nudge includes learning count AND future agent impact."""
+        """CORE269: recorded capture remains durable without a delivery claim."""
         state = CeremonyState(
             session_started=True,
             checkpoint_count=1,
@@ -71,9 +71,11 @@ class TestNudgeValueExpression:
             phase="deliver",
         )
         result = _select_nudge_message("deliver", state, available_learnings=0)
-        assert "4" in result
-        assert any(word in result.lower() for word in ("future", "persist", "session"))
-        assert any(word in result.lower() for word in ("lost", "lose", "discard", "skip", "skipping"))
+        assert "recorded learnings remain recorded" in result
+        assert "If you have material unfinished work" in result
+        assert "checkpoint or durable native handoff with a next-read pointer" in result
+        assert "completed work under existing evidence gates" in result
+        assert not any(word in result.lower() for word in ("lost", "lose", "discard", "second"))
 
     def test_fr02_session_start_nudge_content(self, tmp_path: Path) -> None:
         """Session start nudge includes available learnings count."""

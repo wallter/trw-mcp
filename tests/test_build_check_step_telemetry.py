@@ -21,7 +21,6 @@ _REQUIRED_KEYS = {
     "persist",
     "run_resolve",
     "log_event",
-    "q_learning_dispatch",
     "finalize",
     "total",
 }

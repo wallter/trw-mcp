@@ -19,8 +19,8 @@ from pydantic import Field
 NudgeMessengerLiteral = Literal[
     "standard",
     "minimal",
-    # PRD-CORE-241-FR07 retired "learning_injection" (iter-22: 50.0% vs 66.7%,
-    # n=30, p=0.1527, REJECTED). "contextual" supersedes it — do not reinstate.
+    # PRD-CORE-241-FR07 retired "learning_injection": the measured difference did
+    # not reach significance. "contextual" supersedes it — do not reinstate.
     "contextual",
     "contextual_action",
     "contextual_distress",

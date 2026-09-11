@@ -254,8 +254,9 @@ def _bare_passive_checkpoint(db_path: Path) -> CheckpointResult:
     finally:
         conn.close()
     busy = int(row[0]) if row else 1
+    log_frames = int(row[1]) if row and len(row) > 1 and row[1] is not None else 0
     checkpointed = int(row[2]) if row and row[2] is not None else 0
-    return CheckpointResult(busy=busy, checkpointed=checkpointed, mode="PASSIVE")
+    return CheckpointResult(busy=busy, checkpointed=checkpointed, log_frames=log_frames, mode="PASSIVE")
 
 
 def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
@@ -272,9 +273,23 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
     - **Mode**: decided by the live-writer set alone. Two or more live writers
       still checkpoint — in ``PASSIVE``, which never resets the WAL — because
       the concurrency this used to abort on is exactly the condition that makes
-      the checkpoint necessary. ``TRUNCATE`` is requested only when this process
-      is the sole live writer, which trw-memory re-proves with a bounded
-      ``BEGIN EXCLUSIVE`` probe before it resets anything.
+      the checkpoint necessary. ``TRUNCATE`` is *requested* only when this
+      process is the sole live writer, and trw-memory's ``normalize_mode`` then
+      downgrades it to ``PASSIVE`` anyway on any engine below SQLite 3.51.3,
+      with no caller escape. Those two gates are the whole defence.
+
+      There is deliberately NO third one. An earlier revision of this docstring
+      promised that trw-memory "re-proves [sole-writer status] with a bounded
+      ``BEGIN EXCLUSIVE`` probe before it resets anything". That probe was
+      implemented and then deleted by PRD-CORE-248 OQ-1 ("CLOSED BY REFUSAL",
+      ``aad7bb2e26`` reversing ``eeaeb2e8d7``): SQLite refuses
+      ``PRAGMA wal_checkpoint`` inside a transaction, so the probe can prove
+      exclusivity at acquisition but must COMMIT before the PRAGMA runs, and a
+      connection opened in that gap reproduces exactly the two-connection
+      precondition the WAL-reset corruption bug needs. The docstring outlived
+      the code. Naming a safety mechanism that does not exist is worse than
+      naming none, because it is exactly what a future reader consults before
+      deciding a reset is safe here.
 
     PRD-QUAL-050-FR05 + PRD-FIX-081 (retained): the checkpoint runs on the
     backend's single owning connection when one exists. When no backend owns
@@ -290,6 +305,7 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
             evaluate_wal_trigger,
             record_checkpoint_attempt,
             record_effective_checkpoint,
+            record_reset_checkpoint,
             resolve_wal_paths,
             sole_live_writer,
         )
@@ -333,39 +349,78 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
             result = _bare_passive_checkpoint(db_path)
         busy = result["busy"]
         checkpointed = result["checkpointed"]
+        log_frames = result["log_frames"]
         mode = result["mode"].lower()
-        # A resetting checkpoint that came back as PASSIVE was downgraded — the
-        # backend either fell back on busy=1 readers or the engine is unsafe.
-        # The bare PASSIVE path requested PASSIVE deliberately, so it is not a
-        # busy fallback (FR03: truncate_busy means a TRUNCATE attempt yielded
-        # PASSIVE).
-        truncate_busy = requested_truncate and mode == "passive"
-        if truncate_busy:
-            logger.info(
-                "wal_checkpoint_truncate_busy",
-                detail="readers held pages; fell back to PASSIVE",
-            )
+        # The backend reports a failed PRAGMA as mode="error" rather than
+        # raising. That sentinel has to be handled BEFORE anything downstream,
+        # or a failure is laundered into a success: the old code classified
+        # "error" as truncate_state="reset" (it is simply not "passive"),
+        # advanced the attempt clock, and returned checkpointed=True. An
+        # injected SQLite I/O error produced exactly that, and the advanced
+        # clock then postponed the retry the failure was supposed to trigger.
+        # NFR02 wants a failed checkpoint to leave BOTH clocks alone.
+        if mode == "error":
+            _warn("wal_checkpoint_backend_error", db_path=str(db_path))
+            return {"error": True, "reason": "checkpoint_failed"}
+        # Why a reset did not happen, as four distinct states rather than one
+        # bool. The old ``truncate_busy = requested_truncate and mode ==
+        # "passive"`` collapsed three different situations: it read False on
+        # every multi-writer and bare-connection call (where TRUNCATE was never
+        # REQUESTED), which a consumer reads as "attempted and not blocked";
+        # and when it did fire it could not say whether readers held pages or
+        # the engine refused outright. Absence of an attempt is not a clear
+        # attempt — see FRAMEWORK-CORE, "absence of a measurement is not a
+        # measurement of absence".
+        truncate_state = _truncate_state(requested_truncate, mode)
+        if truncate_state != "not_attempted" and truncate_state != "reset":
+            logger.info("wal_checkpoint_truncate_declined", truncate_state=truncate_state)
         wal_size_after = wal_path.stat().st_size if wal_path.exists() else 0
         wal_size_after_mb = round(wal_size_after / (1024 * 1024), 1)
-        # Two clocks, because they answer different questions (review finding 4).
+        # Two clocks, because they answer different questions.
         # ATTEMPT drives the age trigger: a busy=1 checkpoint still RAN, so it
-        # counts (US-001 AC3), and advancing it stops the trigger hot-looping on
-        # a store whose readers never release. EFFECTIVE drives the doctor's
-        # WARN: it advances only when the checkpoint actually accomplished
-        # something — frames written back, or the file shrank. Without the
-        # split, a store where PASSIVE runs hourly and reclaims nothing (the
-        # unsafe-engine steady state) would report a fresh checkpoint age
-        # forever and the row could never warn. The error path below advances
-        # NEITHER, so the age trigger retries next sweep (NFR02).
+        # counts, and advancing it stops the trigger hot-looping on a store
+        # whose readers never release. EFFECTIVE drives the doctor's WARN: it
+        # advances only when the checkpoint accomplished something. The error
+        # path above advances NEITHER, so the age trigger retries next sweep.
         # The marker writes are fail-open, but NOT invisible: a checkpoint whose
         # attempt clock never landed leaves the age unknown, so the age trigger
         # is due again immediately and the hot-loop protection this pair exists
-        # for is not in force. Reporting an unqualified success there asserted a
-        # protection that had not been established.
+        # for is not in force.
         attempt_recorded = record_checkpoint_attempt(db_path)
-        effective_due = checkpointed > 0 or wal_size_after < trigger.wal_size_bytes
-        effective_recorded = record_effective_checkpoint(db_path) if effective_due else True
-        markers_persisted = attempt_recorded and effective_recorded
+        # EFFECTIVE means THE BACKLOG WAS CLEARED, measured in frames.
+        #
+        # This has now been wrong twice, in opposite directions, and both
+        # mistakes were the same mistake: measuring a proxy and reporting the
+        # conclusion.
+        #   v1: ``checkpointed > 0`` -- frames written back, which PASSIVE does
+        #       on every run of a busy store while freeing nothing. The clock
+        #       never went stale and the doctor WARN was unreachable.
+        #   v2: a file-size decrease. But SQLite normally REUSES a fully
+        #       checkpointed WAL's allocation instead of shrinking it
+        #       (sqlite.org/wal.html#avoiding_excessively_large_wal_files), so a
+        #       perfectly healthy store cleared its whole backlog and still
+        #       looked stalled. Reproduced by an independent review: 13.3 MiB
+        #       WAL, 3,379 frames checkpointed, allocation reused, WARN on every
+        #       evaluation. That traded an unreachable alarm for a nuisance one,
+        #       which the doctor's own docstring says trains an operator to
+        #       ignore the row.
+        # The honest signal was in the PRAGMA row all along and was being
+        # discarded: column 1 is the WAL backlog. ``checkpointed >= log_frames``
+        # means this checkpoint caught up; a persistent shortfall means it did
+        # not. File size is reported separately below, as a disk fact, because
+        # that is all it is.
+        backlog_cleared = busy == 0 and checkpointed >= log_frames
+        reclaimed_bytes = trigger.wal_size_bytes - wal_size_after
+        reclaimed = reclaimed_bytes > 0
+        effective_recorded = record_effective_checkpoint(db_path) if backlog_cleared else True
+        # The RESET clock, and the only observation of reclamation this system
+        # makes. Written solely when a resetting checkpoint actually ran, because
+        # nothing derivable from frames or bytes substitutes for observing one:
+        # the effective clock has been redefined three times and each definition
+        # replaced the previous proxy rather than adding this measurement. See
+        # CHECKPOINT_RESET_SUFFIX for that history.
+        reset_recorded = record_reset_checkpoint(db_path) if truncate_state == "reset" else True
+        markers_persisted = attempt_recorded and effective_recorded and reset_recorded
         logger.info(
             "wal_checkpoint_complete",
             mode=mode,
@@ -373,28 +428,113 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
             wal_size_before_mb=wal_size_mb,
             wal_size_after_mb=wal_size_after_mb,
             pages_checkpointed=checkpointed,
+            wal_frames=log_frames,
+            backlog_cleared=backlog_cleared,
+            reclaimed_mb=round(reclaimed_bytes / (1024 * 1024), 1),
             busy=busy,
-            truncate_busy=truncate_busy,
+            truncate_state=truncate_state,
             markers_persisted=markers_persisted,
         )
+        # RESPONSE vs LOG. Every field here is paid on every trw_session_start by
+        # every calling agent; the structlog event above is free and already
+        # carries the full picture. So the response keeps only what a CALLER
+        # acts on -- did this reclaim (reclaimed), is the store keeping up
+        # (backlog_cleared), and what should be said about it (advisory) --
+        # while the frame counts, the reclaimed byte delta and the four-state
+        # truncate classification stay in the log for a maintainer.
+        #
+        # Measured: carrying all of them cost 76 tokens against this repo's
+        # 60-token hot-path budget (test_session_start_step_latency). The
+        # project's own rule is to cut the bloat rather than raise the ceiling,
+        # and the cut fields are exactly the ones it classifies as diagnostics.
         result_dict: WalCheckpointResultDict = {
             "checkpointed": True,
             "mode": mode,
             "wal_size_before_mb": wal_size_mb,
             "wal_size_after_mb": wal_size_after_mb,
             "pages_checkpointed": checkpointed,
+            "backlog_cleared": backlog_cleared,
+            "reclaimed": reclaimed,
             "busy": busy,
-            "truncate_busy": truncate_busy,
             "markers_persisted": markers_persisted,
         }
+        # Both advisories can be true at once, so they concatenate rather than
+        # overwrite: a checkpoint can reclaim nothing AND fail to persist its
+        # clock, and dropping either half hides a real condition.
+        advisories: list[str] = []
+        if not backlog_cleared:
+            advisories.append(_backlog_advisory(truncate_state, checkpointed, log_frames, busy=busy))
         if not markers_persisted:
             result_dict["reason"] = "checkpoint_marker_write_failed"
-            result_dict["advisory"] = (
+            advisories.append(
                 "the WAL was checkpointed but its timestamp marker could not be written, "
                 "so checkpoint age is unknown and the age trigger will fire again next evaluation"
             )
             _warn("wal_checkpoint_marker_not_persisted", db_path=str(db_path))
+        if advisories:
+            result_dict["advisory"] = "; ".join(advisories)
         return result_dict
     except Exception:  # justified: fail-open, WAL checkpoint must not block session start
         _warn("wal_checkpoint_failed", exc_info=True)
         return {"error": True, "reason": "checkpoint_failed"}
+
+
+def _truncate_state(requested_truncate: bool, mode: str) -> str:
+    """Classify why a resetting checkpoint did or did not happen.
+
+    Four states, because the operator question "why is the WAL not shrinking?"
+    has four different answers with four different remedies:
+
+    - ``not_attempted`` — TRUNCATE was never requested. Either peers hold the
+      store (so this process is not the sole live writer) or no backend owns
+      the db here and the bare PASSIVE path ran. Remedy: none needed; this is
+      the designed steady state under concurrency.
+    - ``refused_unsafe_engine`` — requested, and ``normalize_mode`` downgraded
+      it because the driver predates the SQLite 3.51.3 WAL-reset fix. Remedy:
+      upgrade the engine (:data:`WAL_RESET_UNSAFE_REMEDY`).
+    - ``busy`` — requested on a safe engine, and readers held pages, so the
+      backend fell back to PASSIVE. Remedy: none; it will succeed later.
+    - ``reset`` — TRUNCATE actually ran.
+    """
+    if not requested_truncate:
+        return "not_attempted"
+    if mode != "passive":
+        return "reset"
+    from trw_memory.storage._dbapi import is_wal_reset_safe
+
+    return "busy" if is_wal_reset_safe() else "refused_unsafe_engine"
+
+
+def _backlog_advisory(truncate_state: str, checkpointed: int, log_frames: int, *, busy: int) -> str:
+    """Say why a checkpoint that ran did not clear the WAL backlog.
+
+    ``checkpointed: True`` and a non-zero ``pages_checkpointed`` both describe
+    the OPERATION; a reader takes them as a claim about the OUTCOME. This fires
+    only when frames were genuinely left behind — NOT merely when the file did
+    not shrink, because SQLite reuses a fully checkpointed WAL's allocation and
+    an advisory on that would fire forever on a healthy store.
+    """
+    from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
+
+    behind = max(log_frames - checkpointed, 0)
+    base = (
+        f"this checkpoint left {behind} of {log_frames} WAL frame(s) uncheckpointed"
+        if behind
+        else "this checkpoint could not run to completion"
+    )
+    if busy or truncate_state == "busy":
+        # BOTH conditions, because they do not coincide. On the sole-writer path
+        # a busy TRUNCATE is retried as PASSIVE on the same connection and the
+        # retry's busy=0 overwrites the flag, so truncate_state is "busy" while
+        # the int reads 0. Guarding on the int alone dropped that case through to
+        # a bare "left N frames behind" with no cause at all.
+        return f"{base}; readers held pages, so it will be retried"
+    if truncate_state == "refused_unsafe_engine":
+        return f"{base} -- {WAL_RESET_UNSAFE_REMEDY}"
+    if truncate_state == "not_attempted":
+        return (
+            f"{base}, and a resetting checkpoint was not attempted because this "
+            "process is not the sole live writer; a clean shutdown of every "
+            "server holding the store also lets SQLite remove the WAL"
+        )
+    return base

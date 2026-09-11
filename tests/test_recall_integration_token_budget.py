@@ -318,7 +318,7 @@ def test_recall_default_token_budget_caps_serialized_size(tmp_path: Path) -> Non
 
 
 def test_recall_compact_mode_strips_detail_field(tmp_path: Path) -> None:
-    """F-003: compact mode is requested at fetch and detail is not in the output."""
+    """F-003: retain internal ranking fields, compact only the final response."""
     captured: dict[str, object] = {}
 
     from trw_mcp.tools._recall_impl import execute_recall
@@ -357,8 +357,9 @@ def test_recall_compact_mode_strips_detail_field(tmp_path: Path) -> None:
             _collect_context=lambda *a, **kw: {},
         )
 
-    # compact requested at the fetch boundary (so detail is never deserialized)
-    assert captured["compact"] is True
+    # MemoryEntry is already decoded: early compact dropped ranking evidence,
+    # rather than avoiding SQL deserialization. Keep the internal row complete.
+    assert captured["compact"] is False
     # and detail does not appear in any returned entry
     assert all("detail" not in entry for entry in result["learnings"])
 

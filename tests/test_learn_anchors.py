@@ -235,14 +235,20 @@ class TestLearnCreatesAnchors:
         assert stored[0]["anchors"] == []
 
 
-class TestAnchorYamlRoundTrip:
-    """Verify anchors survive through store_learning / _memory_transforms."""
+class TestAnchorsSurviveTheStorePath:
+    """Anchors given to ``trw_learn`` must land on the stored row.
 
-    def test_learning_to_memory_entry_with_anchors(self, tmp_path: Path) -> None:
-        """Anchors in dict form are converted to Anchor objects in MemoryEntry."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    PRD-CORE-251 FR03 retargeted these from ``_learning_to_memory_entry`` (the
+    retired hand builder) to the real delegated write. The dict-to-``Anchor``
+    marshalling itself is covered in tests/test_store_arguments.py; what this
+    class proves is that the marshalled anchors survive all the way into SQLite.
+    """
 
-        # Use relative path (Anchor model requires it)
+    def test_anchors_reach_the_stored_entry(self, tmp_path: Path) -> None:
+        from trw_mcp.state.memory_adapter import get_backend, store_learning
+
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "memory").mkdir(parents=True)
         anchor_dict: dict[str, object] = {
             "file": "src/mod.py",
             "symbol_name": "my_func",
@@ -251,72 +257,34 @@ class TestAnchorYamlRoundTrip:
             "line_range": (1, 1),
         }
 
-        entry = _learning_to_memory_entry(
-            "L-test",
-            "test summary",
-            "test detail",
-            anchors=[anchor_dict],
-        )
+        result = store_learning(trw_dir, "L-test", "test summary", "test detail", anchors=[anchor_dict])
 
+        assert result["status"] == "recorded"
+        entry = get_backend(trw_dir).get("L-test", namespace="default")
+        assert entry is not None
         assert len(entry.anchors) == 1
         assert entry.anchors[0].symbol_name == "my_func"
         assert entry.anchors[0].symbol_type == "function"
         assert entry.anchors[0].file == "src/mod.py"
 
-    def test_learning_to_memory_entry_absolute_path_converted(self, tmp_path: Path) -> None:
-        """Absolute file paths in anchor dicts are converted to relative paths."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
+    def test_a_malformed_anchor_does_not_fail_the_store(self, tmp_path: Path) -> None:
+        """Fail-open: the learning is worth more than the anchor."""
+        from trw_mcp.state.memory_adapter import get_backend, store_learning
 
-        # Create a real file so we can get a meaningful relative path
-        anchor_dict: dict[str, object] = {
-            "file": "/home/user/project/src/mod.py",
-            "symbol_name": "abs_func",
-            "symbol_type": "function",
-            "signature": "def abs_func(): pass",
-            "line_range": (1, 1),
-        }
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "memory").mkdir(parents=True)
 
-        entry = _learning_to_memory_entry(
-            "L-abs",
-            "absolute path test",
-            "test detail",
-            anchors=[anchor_dict],
-        )
-
-        # Entry should have an anchor with a relative path
-        assert len(entry.anchors) == 1
-        assert not entry.anchors[0].file.startswith("/")
-
-    def test_learning_to_memory_entry_no_anchors(self) -> None:
-        """When no anchors provided, entry.anchors is empty."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
-
-        entry = _learning_to_memory_entry(
-            "L-noanchor",
-            "no anchor summary",
-            "detail",
-        )
-        assert entry.anchors == []
-
-    def test_learning_to_memory_entry_malformed_anchor_skipped(self) -> None:
-        """Malformed anchor dicts are silently skipped."""
-        from trw_mcp.state._memory_transforms import _learning_to_memory_entry
-
-        anchor_dict: dict[str, object] = {
-            # Missing required 'symbol_name' key — Anchor model will reject
-            "file": "src/mod.py",
-            "symbol_name": "",  # empty — fails Anchor's min_length=1
-            "symbol_type": "function",
-            "signature": "",
-        }
-
-        entry = _learning_to_memory_entry(
+        result = store_learning(
+            trw_dir,
             "L-bad",
             "malformed anchor",
             "detail",
-            anchors=[anchor_dict],
+            anchors=[{"file": "src/mod.py", "symbol_name": "", "symbol_type": "function"}],
         )
-        # Malformed anchor is skipped — no crash
+
+        assert result["status"] == "recorded"
+        entry = get_backend(trw_dir).get("L-bad", namespace="default")
+        assert entry is not None
         assert entry.anchors == []
 
 

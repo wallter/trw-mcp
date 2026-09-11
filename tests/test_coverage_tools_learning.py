@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests._coverage_tools_support import _extract_tool, _make_server
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.learning import register_learning_tools
 
@@ -19,7 +18,7 @@ class TestLearningExceptionPaths:
         register_learning_tools(server)
         return _extract_tool(server, name)
 
-    def test_trw_learn_yaml_read_exception_skips_file(self, tmp_path: Path) -> None:
+    def test_trw_learn_does_not_request_quota_active_listing(self, tmp_path: Path) -> None:
         cfg = TRWConfig(impact_forced_distribution_enabled=True)
         tool = self._register_and_get("trw_learn")
 
@@ -37,14 +36,17 @@ class TestLearningExceptionPaths:
                 },
             ),
             patch("trw_mcp.tools.learning.update_analytics"),
-            patch("trw_mcp.tools.learning.list_active_learnings", side_effect=StateError("adapter read failure")),
+            patch(
+                "trw_mcp.tools.learning.list_active_learnings", side_effect=AssertionError("unexpected quota listing")
+            ) as listing,
         ):
             result = tool(summary="test summary", detail="test detail", impact=0.8)
 
         assert result["status"] == "recorded"
         assert result["learning_id"] == "L-test0001"
+        listing.assert_not_called()
 
-    def test_trw_learn_distribution_exception_fail_open(self, tmp_path: Path) -> None:
+    def test_trw_learn_does_not_call_distribution_enforcer(self, tmp_path: Path) -> None:
         cfg = TRWConfig(impact_forced_distribution_enabled=True)
         tool = self._register_and_get("trw_learn")
 
@@ -63,11 +65,14 @@ class TestLearningExceptionPaths:
             ),
             patch("trw_mcp.tools.learning.update_analytics"),
             patch("trw_mcp.tools.learning.list_active_learnings", return_value=[{"id": "L-abc", "impact": 0.8}]),
-            patch("trw_mcp.scoring.enforce_tier_distribution", side_effect=RuntimeError("distribution exploded")),
+            patch(
+                "trw_mcp.scoring.enforce_tier_distribution", side_effect=AssertionError("unexpected distribution")
+            ) as quota,
         ):
             result = tool(summary="test summary", detail="test detail", impact=0.9)
 
         assert result["status"] == "recorded"
+        quota.assert_not_called()
 
     def test_trw_learn_update_write_failure(self, tmp_path: Path) -> None:
         tool = self._register_and_get("trw_learn_update")
@@ -92,9 +97,9 @@ class TestLearningExceptionPaths:
 
 
 class TestLearningDistributionSkipsInactiveEntries:
-    """Line 143: inactive entries (status != 'active') are skipped with continue."""
+    """CD: capture no longer traverses old entries for distribution."""
 
-    def test_trw_learn_distribution_skips_inactive_entries(self, tmp_path: Path) -> None:
+    def test_trw_learn_leaves_inactive_entries_outside_capture(self, tmp_path: Path) -> None:
         cfg = TRWConfig(impact_forced_distribution_enabled=True)
         server = _make_server()
         register_learning_tools(server)
@@ -115,11 +120,14 @@ class TestLearningDistributionSkipsInactiveEntries:
             ),
             patch("trw_mcp.tools.learning.update_analytics"),
             patch("trw_mcp.tools.learning.list_active_learnings", return_value=[{"id": "L-active", "impact": 0.5}]),
-            patch("trw_mcp.scoring.enforce_tier_distribution", return_value=[]),
+            patch(
+                "trw_mcp.scoring.enforce_tier_distribution", side_effect=AssertionError("unexpected distribution")
+            ) as quota,
         ):
             result = tool(summary="new summary", detail="detail", impact=0.8)
 
         assert result["status"] == "recorded"
+        quota.assert_not_called()
 
 
 class TestLearningRecallTrackingException:

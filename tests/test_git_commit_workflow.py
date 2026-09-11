@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ import structlog
 
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests._git_commit_workflow_support import create_verified_run, journal_edits_and_build
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 
 
 def _last_json(out: str) -> dict[str, object]:
@@ -294,6 +296,7 @@ def _formation_repo(tmp_path: Path) -> tuple[Path, Path, Path]:
     return repo, orchestrator, member
 
 
+@requires_monorepo
 def test_scoped_commit_refuses_foreign_owned_path(tmp_path: Path) -> None:
     """FR09. A path another member owns is refused, and HEAD does not move.
 
@@ -303,7 +306,7 @@ def test_scoped_commit_refuses_foreign_owned_path(tmp_path: Path) -> None:
     that matters: a check that ran AFTER ``git add``/``git commit`` would print
     the same message while the commit had already landed.
     """
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = MONOREPO_ROOT or PACKAGE_ROOT.parent
     script = repo_root / "scripts" / "git-commit-scoped.sh"
     repo, _orchestrator, member = _formation_repo(tmp_path)
 
@@ -322,7 +325,7 @@ def test_scoped_commit_refuses_foreign_owned_path(tmp_path: Path) -> None:
     # "package not installed" branch pass and the test vacuous.
     (repo / ".venv" / "bin").mkdir(parents=True)
     wrapper = repo / ".venv" / "bin" / "python"
-    wrapper.write_text(f'#!/bin/sh\nexec "{repo_root / ".venv" / "bin" / "python"}" "$@"\n', encoding="utf-8")
+    wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
     wrapper.chmod(0o755)
     (repo / "scripts").mkdir()
     for name in ("git-commit-scoped.sh", "check_formation_ownership.py", "check_commit_imports.py"):
@@ -364,14 +367,18 @@ def test_scoped_commit_refuses_foreign_owned_path(tmp_path: Path) -> None:
     assert head_warned != head_before, "warn mode commits"
 
 
+@requires_monorepo
 def test_formation_ownership_precondition_distinguishes_absent_from_unreadable(
     formation_env: FormationFixture,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """FR09 / NFR02. No formation passes silently; a broken one refuses."""
     import sys as _sys
 
-    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    assert MONOREPO_ROOT is not None
+    assert (MONOREPO_ROOT / "scripts/check_formation_ownership.py").is_file()
+    _sys.path.insert(0, str(MONOREPO_ROOT / "scripts"))
     import check_formation_ownership as gate
 
     from trw_mcp.formation import create, join
@@ -381,7 +388,7 @@ def test_formation_ownership_precondition_distinguishes_absent_from_unreadable(
     create(formation_env.orchestrator_run, formation_env.payload(), prds_dir=None)
     join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
     monkey_run = formation_env.member_runs["impl-1"]
-    gate._resolve_caller_run = lambda: monkey_run  # type: ignore[assignment]
+    monkeypatch.setattr(gate, "_resolve_caller_run", lambda: monkey_run)
 
     assert gate.main(["src/alpha/thing.py"]) == 0, "a member may commit its own owned path"
     assert gate.main(["docs/unclaimed.md"]) == 0, "an unowned path is not a refusal"

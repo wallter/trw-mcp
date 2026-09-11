@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests._layout import requires_monorepo
 from trw_mcp.state.validation.research_provenance import lint_research_markdown
 
 
@@ -70,6 +71,7 @@ The release flow should update install-trw.py directly. [repo-verified]
     ]
 
 
+@requires_monorepo
 def test_opted_in_research_docs_pass_lint() -> None:
     docs_root = Path(__file__).resolve().parents[2] / "docs" / "research"
     markdown_files = sorted(docs_root.rglob("*.md"))

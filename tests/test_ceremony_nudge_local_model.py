@@ -36,11 +36,19 @@ class TestLocalModelScoping:
     def test_fr12_detect_non_local_openai(self) -> None:
         assert is_local_model("openai/gpt-4o") is False
 
-    def test_fr12_minimal_nudge_session_only(self, tmp_path: Path) -> None:
-        """MINIMAL ceremony only nudges session_start and deliver."""
+    def test_core269_minimal_nudge_preserves_conditionally(self, tmp_path: Path) -> None:
+        """CORE269: optional preservation is not a mandatory checkpoint phase."""
         state = CeremonyState(session_started=True, files_modified_since_checkpoint=10)
         nudge = compute_nudge_minimal(state)
-        assert "checkpoint" not in nudge.lower()
+        assert "If unfinished, preserve material work" in nudge
+        assert "next-read pointer" in nudge
+        assert "checkpoint/native handoff" in nudge
+        assert "completed-work acceptance under existing gates" in nudge
+        assert len(nudge) <= 200
+        state.session_started = False
+        start = compute_nudge_minimal(state)
+        assert "trw_session_start()" in start
+        assert "If unfinished" not in start
 
     def test_fr12_minimal_nudge_under_200_chars(self, tmp_path: Path) -> None:
         """Minimal nudge never exceeds 200 chars."""
@@ -65,6 +73,8 @@ class TestLocalModelScoping:
         state = CeremonyState(session_started=True, deliver_called=True)
         nudge = compute_nudge_minimal(state)
         assert len(nudge) < 80
+        assert "If unfinished" not in nudge
+        assert "checkpoint/native handoff" not in nudge
 
     def test_fr12_minimal_nudge_failopen(self) -> None:
         """compute_nudge_minimal never raises."""

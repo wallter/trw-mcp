@@ -16,11 +16,12 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 
 from tests._audit_protocol_support import (
+    REPO_ROOT,
+    SKILL_PATH,
     Protocol,
     config_max_audit_cycles,
     fenced_yaml,
@@ -31,15 +32,7 @@ from tests._audit_protocol_support import (
     strip_fragments,
     table_with_header,
 )
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-if not (REPO_ROOT / "scripts").is_dir():
-    pytest.skip(
-        "monorepo-only invariant (repo-root scripts/ absent in standalone mirror)",
-        allow_module_level=True,
-    )
-
+from tests._layout import MONOREPO_ROOT
 
 # --------------------------------------------------------------------------
 # FR08 — retired-identifier denylist (KEEP: an identifier is a contract)
@@ -536,8 +529,9 @@ def test_renaming_a_base_heading_alone_does_not_break_the_adapter(protocol: Prot
 
 
 def test_retired_identifiers_are_absent_from_every_surface(protocol: Protocol) -> None:
-    """FR08: 6 identifiers over 18 surfaces (11 bundled agents + 7 projections)."""
-    assert len(protocol.surfaces) == 18, f"expected 18 scanned surfaces, got {len(protocol.surfaces)}"
+    """FR08: 11 agents plus all 3 shipped or all 7 workspace projections."""
+    expected = 18 if MONOREPO_ROOT is not None else 14
+    assert len(protocol.surfaces) == expected, f"expected {expected} scanned surfaces, got {len(protocol.surfaces)}"
     assert len(RETIRED_IDENTIFIERS) == 6, "the denylist is the union of the prior agent and skill lists"
     assert_no_retired_identifiers(protocol)
 
@@ -545,7 +539,7 @@ def test_retired_identifiers_are_absent_from_every_surface(protocol: Protocol) -
 @pytest.mark.parametrize("identifier", [e.text for e in RETIRED_IDENTIFIERS], ids=lambda t: t[:32])
 def test_a_planted_retired_identifier_fails_on_any_surface(protocol: Protocol, identifier: str) -> None:
     """A mandating reintroduction fails, naming the surface and the identifier."""
-    target = "skill:.agents/skills/trw-audit/SKILL.md"
+    target = f"skill:{SKILL_PATH.relative_to(REPO_ROOT)}"
     planted = protocol.with_surface(
         target, protocol.surfaces[target] + f"\n\nCheck that {identifier} was logged before auditing.\n"
     )

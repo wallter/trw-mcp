@@ -73,7 +73,7 @@ _DEFAULT_INSTRUCTIONS = (
     "Workflow: plan, implement, verify, deliver. "
     "Read .trw/frameworks/FRAMEWORK-CORE.md after startup or compaction for phase gates. "
     "Use trw_learn() when you discover a root cause or durable pattern. "
-    "Finish with trw_deliver() so progress and maintenance persist for future sessions."
+    "Preserve material unfinished work with a checkpoint or durable native handoff and a next-read pointer. Nothing material to preserve: do not manufacture artifacts. Use trw_deliver only for completed-work acceptance under unchanged delivery gates; recorded learnings already persist."
 )
 
 

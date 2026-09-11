@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.bootstrap import init_project
 from trw_mcp.models.config import get_config
 from trw_mcp.server._doctor_framework_integrity import check_framework_integrity
@@ -39,7 +40,7 @@ _FRAMEWORK_BODIES = (
     "DEPLOYMENT.json",
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 
 
 def _bodies_present_nonempty(target: Path) -> list[str]:
@@ -143,6 +144,7 @@ def test_git_repo_has_no_non_git_warning(tmp_path: Path) -> None:
 # ── Bootstrap-surface guards (grep-level; the Docker e2e lives in FR01) ──────
 
 
+@requires_monorepo
 def test_install_sh_does_not_null_redirect_init_invocation() -> None:
     """FR06: the init/verify invocation in install.sh is not silenced.
 
@@ -158,6 +160,7 @@ def test_install_sh_does_not_null_redirect_init_invocation() -> None:
             assert "/dev/null" not in stripped, f"init invocation still silenced: {stripped}"
 
 
+@requires_monorepo
 def test_install_sh_runs_doctor_at_install_end() -> None:
     """FR06: install.sh runs ``doctor`` at the end and warns loudly on FAIL."""
     script = (_REPO_ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
@@ -173,7 +176,7 @@ def test_template_no_longer_skips_framework_on_non_git(needle: str) -> None:
     ``.git`` was absent. Post-FR06 the non-git branch must fall through to the
     real init so the framework deploys.
     """
-    template = (_REPO_ROOT / "trw-mcp" / "scripts" / "install-trw.template.py").read_text(encoding="utf-8")
+    template = (PACKAGE_ROOT / "scripts" / "install-trw.template.py").read_text(encoding="utf-8")
     # The old skip-and-return message must be gone from the non-git branch.
     assert needle not in template
     # And a doctor run must exist at install end.

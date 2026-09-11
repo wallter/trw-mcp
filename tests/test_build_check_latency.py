@@ -4,9 +4,8 @@ Pre-fix: a single call could take 91 s when 2823 entries fell within the
 correlation window — every entry was correlated inline before the response
 came back. Live measurement 2026-05-04 on the dev shared HTTP MCP server.
 
-Post-fix: Q-learning is dispatched to a background worker; the response
-returns in <500 ms even when ``correlate_recalls`` would identify >1000
-candidates. ``q_learning_dispatch`` step alone is <10 ms.
+R10 supersedes background scheduling: builds no longer initiate temporal
+Q attribution. Keep the response-latency guard and verify omitted step timing.
 
 These tests are the latency regression guard for FR01 + NFR03 + NFR08.
 """
@@ -46,35 +45,11 @@ def test_trw_build_check_returns_within_500ms(
     )
 
 
-def test_q_learning_dispatch_step_under_10ms(
-    build_check_invoke: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """FR01: dispatch is just thread spawn + queue check; <10 ms regardless of corpus.
-
-    PRD-FIX-088 P1.5 Fix 11: spec is "<5 ms" (FR05). The pre-fix bound
-    was 50 ms which doesn't match the spec. 10 ms keeps the regression
-    teeth (catches inline Q-learning leaks) while tolerating the typical
-    CI thread-spawn jitter of 1-3 ms; if this flakes on slower runners,
-    review what is leaking into the dispatch path before raising the
-    bound.
-    """
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
+def test_retired_q_learning_dispatch_has_no_fabricated_timing(build_check_invoke: Any) -> None:
+    """R10: a removed attribution step must not appear as scheduled or timed."""
     result = build_check_invoke()
-
-    durations = result["step_durations_ms"]
-    assert isinstance(durations, dict)
-    dispatch_ms = float(durations["q_learning_dispatch"])
-
-    assert dispatch_ms < 10.0, (
-        f"FR01/FR05 regression: q_learning_dispatch took {dispatch_ms:.1f}ms (cap 10ms). "
-        f"Dispatch is just thread spawn + queue inspection — should be near-instant. "
-        f"A larger value suggests work has leaked back into the dispatch path "
-        f"(e.g. someone re-added an inline correlate_recalls call)."
-    )
+    assert "q_learning_dispatch" not in result["step_durations_ms"]
+    assert "q_learning_deferred" not in result
 
 
 def test_build_check_does_not_block_on_slow_correlation(

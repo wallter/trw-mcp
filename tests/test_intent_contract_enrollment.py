@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.security.intent_contract.enrollment import (
     EnrollmentError,
     check_enrollment_status,
@@ -570,13 +571,14 @@ def test_the_sidecar_is_never_newer_than_the_marker(tmp_path: Path) -> None:
     assert glob_sidecar_path(root).stat().st_mtime <= enrollment_path(root).stat().st_mtime
 
 
+@requires_monorepo
 def test_the_named_remedy_command_is_wired_into_both_resync_paths() -> None:
     """FR06 wiring: the Makefile target and ``--fix`` both call the same CLI.
 
     A remedy the block message names but no target implements is the shape this
     FR exists to remove, so the wiring is asserted rather than assumed.
     """
-    repo = Path(__file__).resolve().parents[2]
+    repo = MONOREPO_ROOT or PACKAGE_ROOT.parent
     makefile = (repo / "Makefile").read_text(encoding="utf-8")
     sync = (repo / "scripts" / "check-bundle-sync.sh").read_text(encoding="utf-8")
     command = "trw_mcp.security.intent_contract.enrollment refresh-hooks"

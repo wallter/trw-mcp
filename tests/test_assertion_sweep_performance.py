@@ -123,7 +123,7 @@ def test_sweep_logs_summary_event(backend: SQLiteBackend, project: Path) -> None
 
 
 def test_sweep_uses_one_bulk_fetch_not_n_plus_one(backend: SQLiteBackend, project: Path) -> None:
-    """NFR01: entries are pulled in a single query regardless of entry count."""
+    """A corpus smaller than one batch uses one bulk query, not per-entry fetches."""
     config = TRWConfig()
     old = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 10)
     for index in range(25):

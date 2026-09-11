@@ -208,7 +208,10 @@ class TestProgressiveDisclosure:
         assert "trw_deliver" in result
         assert "Deliver Gate" in result
         assert "trw_build_check" in result
-        assert "compounds across sessions" in result
+        # CORE269: persistence does not depend on completed-work delivery.
+        assert "recorded learnings already persist" in result
+        assert "durable native handoff + next-read pointer" in result
+        assert "completed-work acceptance under unchanged gates" in result
 
     def test_render_agents_trw_section_includes_deliver_gate(self, tmp_path: Path) -> None:
         """AGENTS.md TRW section must carry deliver-gate language for light clients.

@@ -61,9 +61,6 @@ from trw_mcp.tools.build._failure_attribution import attribute_failures
 # re-export and ``test_fix027_scoring_build_check.py`` reaches for
 # ``reg_mod.get_q_learning_health()``.
 from trw_mcp.tools.build._q_learning_dispatch import (
-    _dispatch_q_learning_async as _dispatch_q_learning_async,
-)
-from trw_mcp.tools.build._q_learning_dispatch import (
     get_q_learning_health as get_q_learning_health,
 )
 from trw_mcp.tools.telemetry import log_tool_call
@@ -245,14 +242,8 @@ def register_build_tools(server: FastMCP) -> None:
         _log_build_event(resolved_run, scope, status)
         _record_step("log_event", _log_event_started)
 
-        # Step: q_learning_dispatch — always defer to a background worker.
-        # PRD-FIX-088 FR01: pre-fix this ran inline and could take >90 s on
-        # large corpora; the response was held on the SSE stream the whole
-        # time. Now it returns immediately with ``q_learning_deferred`` set.
-        _q_dispatch_started = monotonic()
-        event_type = "build_passed" if status.tests_passed and effective_static_checks_clean else "build_failed"
-        q_learning_deferred = _dispatch_q_learning_async(event_type, scope, tool_call_id)
-        _record_step("q_learning_dispatch", _q_dispatch_started)
+        # R10: a run-level build result is not evidence that recently exposed
+        # learnings were applied or useful. Record the build, not inferred Q credit.
 
         # Step: finalize (result-dict assembly)
         _finalize_started = monotonic()
@@ -274,7 +265,6 @@ def register_build_tools(server: FastMCP) -> None:
             "failures": status.failures,
             "scope": status.scope,
             "cache_path": str(cache_path),
-            "q_learning_deferred": q_learning_deferred,
             "build_receipt_id": receipt_write.receipt_id if receipt_write is not None else "",
             "typed_receipt_state": "written" if receipt_write is not None and receipt_write.ok else "missing",
             "typed_receipt_reason": receipt_write.reason_code if receipt_write is not None else "receipt_not_written",
@@ -313,7 +303,7 @@ def register_build_tools(server: FastMCP) -> None:
         try:
             from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
-            _build_ok = event_type == "build_passed"
+            _build_ok = status.tests_passed and effective_static_checks_clean
             append_ceremony_status_for_tool(
                 result, trw_dir, tool_name="build_check", tool_success=_build_ok, build_passed=_build_ok
             )

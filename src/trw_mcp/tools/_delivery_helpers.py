@@ -473,15 +473,56 @@ def check_delivery_gates(
     if instruction_parity:
         result["instruction_parity_warning"] = instruction_parity
 
-    # PRD-CORE-244-FR06: name any learning this session contradicted and did not
-    # retract. Advisory beside review_nudge; it sets NO blocking condition,
-    # because an assertion can fail for reasons that are not the learning's fault.
+    # PRD-CORE-244 FR06 + FR04, from one traversal of the same durable verdict.
+    #
+    # FR06 names any learning this session contradicted and did not retract.
+    # Advisory beside review_nudge; it sets NO blocking condition, because an
+    # assertion can fail for reasons that are not the learning's fault.
+    #
+    # FR04 applies the negative Q observation to those same entries. It lives
+    # HERE rather than on recall for a specific reason: PRD-CORE-268 retired
+    # implicit verification on recall and removed FR04's only call site, leaving
+    # the requirement marked `implemented` with no production caller for months
+    # (submission sub_MiY9DhQHvY56zEkC). The recall objection was a latency
+    # budget -- recall must not pay for verification. At the delivery gate the
+    # verdict is ALREADY durable (it is read from stored claim evidence, not
+    # computed now) and nothing is on a hot path, so the objection does not
+    # apply. apply_contradiction_penalty is itself rate-limited to one penalty
+    # per entry per UTC day, so repeated trw_deliver calls in one session cannot
+    # turn the contradiction signal back into a retrieval-frequency term.
     if trw_dir is not None:
         from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
 
+        # FR06 first, and independently: the advisory names ANY unsettled
+        # contradiction regardless of age, and must not be coupled to whether the
+        # reward path found fresh evidence.
         retraction_nudge = unretracted_contradiction_nudge(trw_dir)
         if retraction_nudge:
             result["retraction_nudge"] = retraction_nudge
+
+        # FR04. Wrapped, because this gate must not be able to raise. The marker on
+        # `unsettled_contradiction_ids` asserts the contract for BOTH halves --
+        # "neither an advisory nor a reward signal may raise inside the delivery
+        # gate" -- and only the advisory half was implemented; pre-release review
+        # traced a live path (`_default_lookup_entry` -> `backend.get`, unguarded,
+        # so a `sqlite3.OperationalError` from a locked or damaged store escapes).
+        # `_ceremony_deliver_tool` calls this gate with no try of its own AFTER
+        # opening the PRD-CORE-208 delivery journal, so a raise here would both fail
+        # trw_deliver and strand that journal in a non-terminal state.
+        try:
+            from trw_mcp.scoring import apply_contradiction_penalty
+            from trw_mcp.tools._retraction_nudge import fresh_contradiction_ids
+
+            contradicted = fresh_contradiction_ids(trw_dir)
+            if contradicted:
+                penalised = apply_contradiction_penalty(contradicted, trw_dir)
+                logger.info(
+                    "contradiction_penalty_applied",
+                    candidates=len(contradicted),
+                    penalised=len(penalised),
+                )
+        except Exception:  # trw-fail-silent-allow: a reward signal may never fail a delivery; the warning below is the durable record, and skipping one penalty costs nothing a retry cannot recover
+            logger.warning("contradiction_penalty_skipped", exc_info=True)
 
     return result
 

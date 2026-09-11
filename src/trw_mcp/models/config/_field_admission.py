@@ -235,7 +235,6 @@ framework_version
 frameworks_dir
 hooks_enabled
 hybrid_bm25_candidates
-hybrid_rrf_importance_alpha
 hybrid_rrf_k
 hybrid_search_candidate_pool_size
 hybrid_vector_candidates

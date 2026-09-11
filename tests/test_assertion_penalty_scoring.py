@@ -82,18 +82,29 @@ class TestPenaltyApplied:
         assert len(ranked_yes) == 1
 
 
-class TestPenaltyClampedAtZero:
-    """Large penalties don't produce negative scores."""
+class TestPenaltyBelowZero:
+    """CORE116 RA4/5: the displayed targeted score preserves adverse evidence."""
 
-    def test_penalty_clamped_at_zero(self) -> None:
-        """A penalty larger than the combined score clamps to zero, not negative."""
+    def test_targeted_penalty_remains_visible_below_zero(self) -> None:
         entries = [_make_entry("L-1", summary="test", impact=0.1)]
         # Massive penalty that would make score negative
         penalties = {"L-1": 10.0}
 
         ranked = rank_by_utility(entries, ["test"], 0.3, assertion_penalties=penalties)
-        # Entry should still be returned (just with 0 score)
         assert len(ranked) == 1
+        assert ranked[0]["combined_score"] == -9.0
+
+    def test_zero_relevance_failure_cannot_tie_clean_sibling(self) -> None:
+        entries = [_make_entry("L-failed"), _make_entry("L-clean")]
+        ranked = rank_by_utility(entries, ["absent"], 0.3, assertion_penalties={"L-failed": 0.3})
+        assert [(row["id"], row["combined_score"]) for row in ranked] == [
+            ("L-clean", 0.0),
+            ("L-failed", -0.3),
+        ]
+
+    def test_wildcard_retains_zero_floor(self) -> None:
+        ranked = rank_by_utility([_make_entry("L-1")], [], 0.3, assertion_penalties={"L-1": 10.0})
+        assert ranked[0]["combined_score"] == 0.0
 
 
 class TestPenaltyDictEmpty:

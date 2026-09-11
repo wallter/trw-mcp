@@ -96,12 +96,14 @@ class TestAutoRecallWithActiveRun:
         assert "implement" in auto_recall_call["query"]
         assert auto_recall_call.get("tags") == ["gotcha", "testing", "pattern"]
 
-    def test_uses_wildcard_when_no_task_context(
+    @pytest.mark.parametrize("query", ["", "   ", "*"])
+    def test_preserves_primary_without_redundant_contextless_recall(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        query: str,
     ) -> None:
-        """When no active run, query tokens default to empty (wildcard)."""
+        """Primary startup memory survives; no secondary wildcard pass is useful."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = _setup_trw_dir(tmp_path)
 
@@ -128,14 +130,12 @@ class TestAutoRecallWithActiveRun:
                 side_effect=_fake_recall,
             ),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query=query)
 
-        assert "auto_recalled" in result
-        auto_recall_call = None
-        for call in captured_calls:
-            if call.get("min_impact") == 0.5:
-                auto_recall_call = call
-                break
-        assert auto_recall_call is not None
-        assert auto_recall_call["query"] == "*"
-        assert auto_recall_call.get("tags") is None
+        assert "auto_recalled" not in result
+        assert result.get("auto_recall_count") is None
+        assert [row["id"] for row in result["learnings"]] == ["L-y1"]
+        assert captured_calls, "primary recall must still run"
+        # Threshold alone does not identify an acquisition's caller. The helper's
+        # no-context tests tripwire the adapter directly; this public-path test
+        # verifies preserved primary output and absence of supplemental output.

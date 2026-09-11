@@ -1,68 +1,20 @@
-"""Concurrency and evidence-binding contracts for commit skill variants."""
+"""Commit-candidate runtime contracts and the optional native-commit skill."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+import pytest
+
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 PATHS = (
-    ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "skills" / "trw-commit" / "SKILL.md",
-    ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "codex" / "skills" / "trw-commit" / "SKILL.md",
-    ROOT / ".claude" / "skills" / "trw-commit" / "SKILL.md",
-    ROOT / ".agents" / "skills" / "trw-commit" / "SKILL.md",
+    PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "skills" / "trw-commit" / "SKILL.md",
+    PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "codex" / "skills" / "trw-commit" / "SKILL.md",
+    pytest.param(ROOT / ".claude" / "skills" / "trw-commit" / "SKILL.md", marks=requires_monorepo),
+    pytest.param(ROOT / ".agents" / "skills" / "trw-commit" / "SKILL.md", marks=requires_monorepo),
 )
-
-
-def test_commit_variants_are_pin_aware_and_exactly_staged() -> None:
-    for path in PATHS:
-        content = path.read_text(encoding="utf-8")
-        for phrase in (
-            "active run returned for this MCP session",
-            "{RUN_ROOT}/meta/run.yaml",
-            # PRD-CORE-219 P09: candidate-first is the numbered procedure —
-            # claim exact paths, review the owned diff, publish via the CLI.
-            "Claim exact paths only",
-            "Do NOT `git add`",
-            "git diff HEAD -- <owned-paths>",
-            "Abort on any unexpected content",
-            "bound to this pinned run/change set",
-            "trw-mcp prepare-candidate",
-            "trw-mcp commit-candidate",
-            "--transaction-id <prepared-transaction-id>",
-            "Every current",
-            "mixed-ownership file",
-            "native-integration step under verified repository quiescence",
-        ):
-            assert phrase in content, f"{path}: missing {phrase!r}"
-        for forbidden in (
-            ".trw/context/run.yaml",
-            "trw-{prd-id}-{role}",
-            "find the active run directory",
-            ".trw/context/build-status.yaml` dependency",
-            "commit-candidate --path",
-            "--run-id <run-id>",
-        ):
-            assert forbidden not in content, f"{path}: retains {forbidden!r}"
-
-
-def test_prd_qual_119_fr07() -> None:
-    """FR07 acceptance: Given another worker changes files, When completion and
-    commit guidance run, Then criteria remain unchanged and the operation
-    isolates or fails with ownership conflict — asserted across every mirror."""
-    for path in PATHS:
-        content = path.read_text(encoding="utf-8")
-        # Concurrency contract: acceptance is never weakened by concurrency.
-        for phrase in (
-            "Concurrency contract (PRD-QUAL-119-FR07)",
-            "never changes what done means",
-            "acceptance criteria, test scope, review depth, and evidence",
-            "isolate the owned change set or fail with an ownership conflict",
-            "never shrink verification, drop assertions, or downgrade evidence",
-        ):
-            assert phrase in content, f"{path}: missing {phrase!r}"
-        # Isolation mechanics remain intact (ownership conflict is a real outcome).
-        assert "stop rather than absorbing another" in content
-        assert "mixed-ownership file" in content
 
 
 # ---------------------------------------------------------------------------
@@ -326,24 +278,6 @@ def test_prd_core_219_fr04_hooks_cannot_mutate_shared_refs(tmp_path: Path) -> No
     assert journal is not None and str(journal.state) == TransactionState.PREPARED.value
 
 
-def test_prd_core_219_fr07() -> None:
-    """FR07 acceptance (doctrine surface): every trw-commit mirror instructs the
-    candidate-first workflow — publish a candidate ref, return typed handoff,
-    never integrate the shared branch automatically."""
-    for path in PATHS:
-        content = path.read_text(encoding="utf-8")
-        for phrase in (
-            "candidate-first",
-            "prepare-candidate",
-            "post-claim build receipt",
-            "refs/trw/commit-candidates",
-            "integrated=false",
-            "native-integration",
-            "never integrates the checked-out branch or shared index",
-        ):
-            assert phrase in content, f"{path}: missing {phrase!r}"
-
-
 def test_prd_core_219_nfr04(tmp_path: Path) -> None:
     """NFR04 acceptance: journals and claims persist with restrictive 0600
     modes and the hook message tempfile never survives the transaction."""
@@ -433,31 +367,6 @@ def test_fr03_unexpected_path_and_isolated_parent_change_block(tmp_path: Path) -
         publish_reviewed_candidate(repo, moved_parent, "msg")
 
 
-def test_fr07_doctrine_routes_through_candidate_first() -> None:
-    """Audit F3: the numbered workflow itself must route through the
-    candidate-first entrypoint — phrase presence is not enough. Step 6 must
-    not instruct shared-index staging, and step 9 must name the CLI."""
-    root = Path(__file__).resolve().parents[2]
-    mirrors = [
-        root / ".agents" / "skills" / "trw-commit" / "SKILL.md",
-        root / ".claude" / "skills" / "trw-commit" / "SKILL.md",
-        root / "trw-mcp" / "src" / "trw_mcp" / "data" / "skills" / "trw-commit" / "SKILL.md",
-        root / "trw-mcp" / "src" / "trw_mcp" / "data" / "codex" / "skills" / "trw-commit" / "SKILL.md",
-    ]
-    for mirror in mirrors:
-        content = mirror.read_text(encoding="utf-8")
-        workflow = content.split("## Concurrency contract")[0]
-        # The numbered procedure must publish via the production entrypoint...
-        assert "trw-mcp commit-candidate" in workflow, mirror
-        assert "trw-mcp prepare-candidate" in workflow, mirror
-        assert "--transaction-id <prepared-transaction-id>" in workflow, mirror
-        # ...and must NOT instruct shared-index staging as the default step.
-        assert "git add -- <path" not in workflow, mirror
-        assert "Do NOT `git add`" in workflow, mirror
-        # Direct path-limited commit survives ONLY as the quiesced later step.
-        assert "native-integration step under verified repository quiescence" in workflow, mirror
-
-
 def test_fr04_valid_signature_publishes(tmp_path: Path) -> None:
     """Audit F5: require_signature=True must be SATISFIABLE — the candidate is
     signed at creation and verify-commit passes with a valid key."""
@@ -518,3 +427,9 @@ def test_fr04_valid_signature_publishes(tmp_path: Path) -> None:
         env=env,
     )
     assert verify.returncode == 0, verify.stderr
+
+
+@pytest.mark.parametrize("path", PATHS)
+def test_commit_skill_is_discoverable(path: Path) -> None:
+    assert path.is_file()
+    assert "# Commit requested work" in path.read_text(encoding="utf-8")

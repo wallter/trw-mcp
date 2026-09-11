@@ -7,7 +7,7 @@
     "rationale": 1,
     "reference": 22
   },
-  "core_digest": "4a64720dd24073052fc3efb4d515539b424d84daf08e1615b23cc19b4118b07a",
+  "core_digest": "7cb558da218443a9d80233f9306847d751ee26219198868edefb39786bcea099",
   "obligations": [
     {
       "body_lines": 13,
@@ -355,7 +355,7 @@
       "body_lines": 8,
       "class": "normative",
       "dest": "core",
-      "digest": "9da06527949046ac0a17cfebfe423c22ba24b9d6a735058fc8d717770f1cf91e",
+      "digest": "24991a038cfa10cfe14eb2a0d58f397709cb5368056bc06956ea118f0733ff32",
       "id": "af-lifecycle",
       "nonblank_lines": 6,
       "start_line": 414
@@ -442,17 +442,17 @@
       "start_line": 535
     },
     {
-      "body_lines": 13,
+      "body_lines": 14,
       "class": "reference",
       "dest": "reference",
-      "digest": "8e7e47c4456c8a91504c5d8e4e3eedb8795c1ede5c1d590983a8fcdba426d6e5",
+      "digest": "de72a5d92dd7f38334bb54e7e641f35fa7207bff8cd9dcfffaf779b890abf8a3",
       "id": "af-appendix-d-execution-plan-artifact",
-      "nonblank_lines": 8,
+      "nonblank_lines": 9,
       "start_line": 550
     }
   ],
-  "reference_digest": "384eee5eb1234bba1a5d754aebbf96865d4c73eb26e3958fea8f0eecf336b09a",
+  "reference_digest": "b935cc1780d76f595f92a03d24ef12f55413789881999e75038e055de8f7dc08",
   "schema": 1,
-  "source_digest_combined": "b81ce4cc86cc604008eaf845a9dccc6e84862a5d21f1a77709e3338f827c8cf7",
+  "source_digest_combined": "069c35e7b1798a80f90476c0030044c52cc916df57f2af5fa459750bbea25585",
   "span_count": 49
 }

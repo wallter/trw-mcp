@@ -100,12 +100,13 @@ class TestFR03ContextReactiveMessages:
         assert "FRAMEWORK" in msg
 
     def test_fr03_deliver_message(self) -> None:
-        """deliver tool returns session complete message."""
+        """Successful delivery reports the observed operation, not session completion."""
         ctx = NudgeContext(tool_name="deliver")
         state = CeremonyState()
         msg = _context_reactive_message(ctx, state)
         assert msg is not None
-        assert "Session complete" in msg
+        assert "Delivery recorded" in msg
+        assert "Session complete" not in msg
 
     def test_fr03_init_message(self) -> None:
         """init tool returns run bootstrapped message."""

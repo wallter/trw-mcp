@@ -230,12 +230,20 @@ async def test_grant_unmasks_for_exactly_one_call(
         calls["n"] += 1
         return _SENTINEL
 
-    call_ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_code_search"), fastmcp_context=_FakeContext())
+    # A FRESH context per call: FastMCP builds one MiddlewareContext per
+    # tools/call and hands that same object down the chain. Reusing one object
+    # across two calls does not model two calls -- and since the grant is now
+    # single-use per CALL (stamped on the request so both masking gates can
+    # honour one grant), reusing it would have the second call legitimately
+    # re-read the first call's own authorization.
+    def _call_ctx() -> _FakeMiddlewareContext:
+        return _FakeMiddlewareContext(message=_FakeMessage("trw_code_search"), fastmcp_context=_FakeContext())
+
     # First call: grant consumed → reaches the tool.
-    assert await middleware.on_call_tool(call_ctx, call_next_call) is _SENTINEL  # type: ignore[arg-type]
+    assert await middleware.on_call_tool(_call_ctx(), call_next_call) is _SENTINEL  # type: ignore[arg-type]
     assert calls["n"] == 1
     # Second call: grant already consumed → denied (masked again).
-    denied = await middleware.on_call_tool(call_ctx, call_next_call)  # type: ignore[arg-type]
+    denied = await middleware.on_call_tool(_call_ctx(), call_next_call)  # type: ignore[arg-type]
     assert calls["n"] == 1
     assert denied.structured_content is not None
     assert denied.structured_content["error_type"] == "tool_not_in_surface"

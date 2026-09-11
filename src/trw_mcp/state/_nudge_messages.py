@@ -102,7 +102,7 @@ _STEP_RATIONALE: dict[str, str] = {
     "checkpoint": "saves progress against context compaction",
     "build_check": "verifies tests pass and types check",
     "review": "independent verification catches spec drift",
-    "deliver": "persists learnings for future sessions",
+    "deliver": "records completed delivery under existing evidence gates",
 }
 
 
@@ -195,7 +195,7 @@ def _review_message(context: NudgeContext) -> str:
             "— the reviewer SHALL NOT fix its own findings. "
             "THEN: re-validate with trw_build_check()."
         )
-    return "NEXT: trw_deliver() — persist learnings and artifacts for future sessions."
+    return "If the work is complete, use trw_deliver() under existing evidence gates; otherwise preserve material progress with a next-read pointer."
 
 
 def _checkpoint_message() -> str:
@@ -226,8 +226,8 @@ def _deliver_message(state: CeremonyState) -> str:
     """Return the delivery completion message."""
     n = state.learnings_this_session
     if n > 0:
-        return f"Session complete. {n} discovery/discoveries persisted for future sessions."
-    return "Session complete. 0 learnings recorded \u2014 future agents start without your insights."
+        return f"Delivery recorded. {n} learning(s) recorded this session."
+    return "Delivery recorded. No new learnings recorded this session."
 
 
 # ---------------------------------------------------------------------------

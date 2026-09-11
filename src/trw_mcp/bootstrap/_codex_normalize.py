@@ -198,11 +198,29 @@ def _normalize_hook_config(existing: object) -> CodexHooksConfig:
 
 
 def _normalize_feature_flags(raw_features: object) -> CodexFeaturesConfig:
-    """Extract boolean feature flags while defaulting Codex hooks off.
+    """Extract boolean feature flags, preserving any explicit operator value.
 
     Codex CLI 0.130 reports ``features.codex_hooks`` as deprecated in favor of
     the canonical ``features.hooks`` flag. Accept legacy config on input, but
     normalize TRW-managed output to the non-deprecated key.
+
+    TRW no longer forces ``hooks`` off when the key is absent. It used to
+    ``setdefault("hooks", False)``, which contradicted TRW's own installer:
+    ``_codex_distill_channels`` writes ``.codex/hooks.json`` carrying a
+    PostToolUse telemetry hook, and the same run then wrote the flag that would
+    turn the hook system off. On a Codex old enough for that flag to be live,
+    TRW disabled its own telemetry channel.
+
+    On current Codex the write is merely misleading rather than harmful.
+    Measured on codex-cli 0.154.0 (2026-09-11): with ``hooks = false`` in
+    ``.codex/config.toml``, ``codex features list`` still reports
+    ``hooks  stable  true`` -- identical to ``hooks = true``. The feature is
+    ``stable`` and does not consult the opt-in flag. So the key TRW wrote could
+    not disable anything, while still reading to a human (and to a code audit)
+    as a deliberate disable.
+
+    Absent means absent: inherit whatever the installed Codex does. An explicit
+    operator value, in either direction, is preserved untouched.
     """
     features_map: dict[str, bool] = {}
     if isinstance(raw_features, dict):
@@ -214,7 +232,6 @@ def _normalize_feature_flags(raw_features: object) -> CodexFeaturesConfig:
         legacy_hooks = raw_features.get("codex_hooks")
         if "hooks" not in features_map and isinstance(legacy_hooks, bool):
             features_map["hooks"] = legacy_hooks
-    features_map.setdefault("hooks", False)
     return cast("CodexFeaturesConfig", features_map)
 
 

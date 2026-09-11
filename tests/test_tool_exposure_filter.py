@@ -46,7 +46,7 @@ def test_legacy_config_field_ignored_and_surface_unchanged() -> None:
     # the legacy value did not downgrade or otherwise change resolution.
     assert cfg.tool_resolution_mode == "standard"
     assert cfg.resolve_tool_surface_for_task("coding").mode == "standard"
-    assert len(cfg.resolve_tool_surface_for_task("coding").tools) == 15
+    assert len(cfg.resolve_tool_surface_for_task("coding").tools) == 16
 
 
 def test_effective_tool_exposure_mode_property_gone() -> None:

@@ -1,12 +1,13 @@
-"""Tests for auto-stale detection after persistent assertion failure (PRD-CORE-086 FR08).
+"""CORE268: legacy failure ages do not authorize implicit recall verification.
 
-Verifies that _verify_assertions() marks learnings as stale when ALL assertions
-have been failing for longer than the configured threshold, and does NOT mark
-them stale for recent failures, mixed pass/fail, or missing first_failed_at.
+These five historical CORE086 scenarios deliberately lack stored result/date
+observations. Explicit maintenance owns threshold evaluation; recall must leave
+this input untouched and report unknown, regardless of a mocked verifier result.
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -83,14 +84,14 @@ def mock_rank_fn() -> MagicMock:
     return MagicMock(side_effect=_rank)
 
 
-class TestAllAssertionsFailingOverThresholdMarksStale:
-    """When ALL assertions fail for > threshold days, learning is marked stale."""
+class TestOldFailureAgeRemainsUnknown:
+    """An old failure-age field is not a dated verification observation."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
     @patch("trw_mcp.state.memory_adapter.get_backend")
     @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
-    def test_all_assertions_failing_over_threshold_marks_stale(
+    def test_old_failure_age_remains_unknown(
         self,
         mock_resolve_root: MagicMock,
         mock_verify: MagicMock,
@@ -100,7 +101,7 @@ class TestAllAssertionsFailingOverThresholdMarksStale:
         mock_rank_fn: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Learning gets verification_status='stale' when all assertions persistently fail."""
+        """Recall cannot infer stale from unverified failure-age metadata."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = tmp_path
@@ -131,12 +132,24 @@ class TestAllAssertionsFailingOverThresholdMarksStale:
             ),
         ]
 
+        original = deepcopy(learnings)
+        mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
+        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
-        assert result[0].get("verification_status") == "stale"
+        assert learnings == original
+        mock_verify.assert_not_called()
+        mock_get_backend.assert_not_called()
+        assert mock_backend.mock_calls == []
+        mock_resolve_root.assert_not_called()
+        mock_resolve_trw.assert_not_called()
+        mock_rank_fn.assert_not_called()
+        assert result[0]["verification_evidence"]["current_tree_verified"] is False
+
+        assert result[0].get("verification_status") == "unknown"
 
 
-class TestRecentFailureNotStale:
+class TestRecentFailureAgeRemainsUnknown:
     """When first_failed_at is recent (< 30 days), learning is NOT marked stale."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
@@ -176,12 +189,24 @@ class TestRecentFailureNotStale:
             ),
         ]
 
+        original = deepcopy(learnings)
+        mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
+        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
-        assert result[0].get("verification_status") is None
+        assert learnings == original
+        mock_verify.assert_not_called()
+        mock_get_backend.assert_not_called()
+        assert mock_backend.mock_calls == []
+        mock_resolve_root.assert_not_called()
+        mock_resolve_trw.assert_not_called()
+        mock_rank_fn.assert_not_called()
+        assert result[0]["verification_evidence"]["current_tree_verified"] is False
+
+        assert result[0].get("verification_status") == "unknown"
 
 
-class TestMixedPassFailNotStale:
+class TestUnobservedMixedResultsRemainUnknown:
     """When some assertions pass and some fail, NOT marked stale."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
@@ -228,13 +253,25 @@ class TestMixedPassFailNotStale:
             ),
         ]
 
+        original = deepcopy(learnings)
+        mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
+        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
-        # The passing assertion gets first_failed_at=None, so not all are failing
-        assert result[0].get("verification_status") is None
+        assert learnings == original
+        mock_verify.assert_not_called()
+        mock_get_backend.assert_not_called()
+        assert mock_backend.mock_calls == []
+        mock_resolve_root.assert_not_called()
+        mock_resolve_trw.assert_not_called()
+        mock_rank_fn.assert_not_called()
+        assert result[0]["verification_evidence"]["current_tree_verified"] is False
+
+        # Mocked results are not observations until explicit maintenance runs.
+        assert result[0].get("verification_status") == "unknown"
 
 
-class TestNoFirstFailedAtNotStale:
+class TestMissingFailureAgeRemainsUnknown:
     """When first_failed_at is None (new failure), NOT marked stale."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
@@ -273,14 +310,26 @@ class TestNoFirstFailedAtNotStale:
             ),
         ]
 
+        original = deepcopy(learnings)
+        mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
+        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
-        # first_failed_at just got set to now, which is < 30 days, so not stale
-        assert result[0].get("verification_status") is None
+        assert learnings == original
+        mock_verify.assert_not_called()
+        mock_get_backend.assert_not_called()
+        assert mock_backend.mock_calls == []
+        mock_resolve_root.assert_not_called()
+        mock_resolve_trw.assert_not_called()
+        mock_rank_fn.assert_not_called()
+        assert result[0]["verification_evidence"]["current_tree_verified"] is False
+
+        # Recall must not set first_failed_at or infer a result from its absence.
+        assert result[0].get("verification_status") == "unknown"
 
 
-class TestCustomThresholdRespected:
-    """When config.assertion_stale_threshold_days is changed, threshold changes."""
+class TestCustomThresholdDoesNotAuthorizeRecallVerification:
+    """The maintenance threshold cannot make absent recall evidence known."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
     @patch("trw_mcp.state.memory_adapter.get_backend")
@@ -295,7 +344,7 @@ class TestCustomThresholdRespected:
         mock_rank_fn: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """A shorter threshold (e.g., 7 days) triggers stale sooner."""
+        """Even a short maintenance threshold leaves this recall evidence unknown."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         # Use a very short threshold of 3 days
@@ -321,6 +370,18 @@ class TestCustomThresholdRespected:
             ),
         ]
 
+        original = deepcopy(learnings)
+        mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
+        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
-        assert result[0].get("verification_status") == "stale"
+        assert learnings == original
+        mock_verify.assert_not_called()
+        mock_get_backend.assert_not_called()
+        assert mock_backend.mock_calls == []
+        mock_resolve_root.assert_not_called()
+        mock_resolve_trw.assert_not_called()
+        mock_rank_fn.assert_not_called()
+        assert result[0]["verification_evidence"]["current_tree_verified"] is False
+
+        assert result[0].get("verification_status") == "unknown"

@@ -32,13 +32,10 @@ FlushFn = Callable[[], bool]
 class SweepContext:
     """One drain sweep's shared per-sweep work, plus its degradation truth.
 
-    ``replay`` is the per-record entry point; ``flush`` writes the batched index
-    rows exactly once and returns False when that write failed. ``degraded``
-    reports that the shared active set could not be materialized, so the sweep's
-    soft-cap and distribution decisions ran against an empty set rather than the
-    real one — a condition the caller must surface rather than memoize silently
-    (FIX130-09). ``index_failed`` reports the same for the index write, whose
-    rows are RETAINED in the sink so nothing is discarded (FIX130-10).
+    ``replay`` handles each record; ``flush`` batches index rows. ``degraded``
+    remains a compatibility callback returning False: capture no longer loads
+    a shared active set for quota decisions. ``index_failed`` still reports
+    failed index writes, whose pending rows remain retained for retry.
     """
 
     replay: ReplayFn
@@ -85,8 +82,8 @@ def capture_journal_payload(call_locals: dict[str, object]) -> dict[str, object]
     """Snapshot the replayable original args from ``execute_learn``'s locals.
 
     Called at function entry (before any local mutation), so the captured
-    ``impact``/``tags``/typed fields are the RAW caller inputs — replay must not
-    persist post-calibration values (``calibrate_impact`` is not idempotent).
+    ``impact``/``tags``/typed fields retain raw caller inputs before validation,
+    clamping, and metadata normalization.
     """
     return {k: call_locals[k] for k in JOURNAL_ARG_KEYS if k in call_locals}
 
@@ -122,77 +119,15 @@ def consume_journal(trw_dir: Path, config: TRWConfig, learning_id: str) -> None:
 
 
 def make_sweep_replay(trw_dir: Path, config: TRWConfig) -> SweepContext:
-    """Build one drain sweep's replay function plus the flush that closes it.
+    """Batch index persistence without distribution-only active-set loading.
 
-    PRD-FIX-130-FR03. Two costs were being paid PER RECORD that are really per
-    SWEEP, and together they dominated a journal drain:
-
-    * the whole-file read-modify-write of ``learnings/index.yaml`` under a lock
-      (measured 623-757 ms idle, 2.27 s under concurrent boot load, 53-69% of a
-      stored record's replay). The sweep now collects entries in an index sink
-      and :func:`flush` writes them in ONE locked round-trip;
-    * materializing every active row into validated models for the soft cap and
-      the distribution enforcer (211-521 ms against 4,824 rows). The sweep
-      resolves that list at most once and hands the SAME value to every record.
-
-    Both ride the injection parameters ``execute_learn`` already exposes, so the
-    interactive ``trw_learn`` path is untouched: no sink, no shared set, exactly
-    the pre-change per-record behaviour.
-
-    **Semantic dedup is deliberately NOT hoisted.** The duplicate probe reads the
-    backend on every record so a record stored earlier in this sweep is visible
-    to a later duplicate. Caching it would let one sweep store N copies of one
-    learning — the exact failure the journal's exactly-once contract exists to
-    prevent.
-
-    **Known, bounded staleness**: a record stored earlier in the sweep is not in
-    the shared active set, so the soft cap and the distribution enforcer see the
-    sweep's STARTING set. The undercount is at most the per-sweep replay limit
-    (default 50) against a measured 4,824-row active set — under 1.04% — and it
-    moves an advisory threshold, never a stored value.
-
-    **One context spans BOTH phases of a split sweep** (FIX130-04). When the FR01
-    wall-clock budget stops the inline phase, the same context is handed to the
-    FR02 background continuation, which flushes it once at the end. A sweep that
-    is split therefore still pays exactly one index read-modify-write and one
-    active-set materialization, which is what FR03 promises; building a second
-    context in the continuation quietly doubled both.
-
-    Returns:
-        A :class:`SweepContext`. Call ``flush`` exactly once when the sweep ends,
-        in a ``finally``, or the sweep's entries never reach the index.
+    Semantic dedup remains per record, so earlier successful writes in this
+    sweep are visible to later records. One context spans inline/background
+    phases; flush in finally when the sweep ends. Failed index writes retain
+    their rows for retry. No shared corpus cache or score reshaping is needed.
     """
     index_sink: list[Any] = []
-    active_memo: list[list[dict[str, object]]] = []
-    state = {"active_degraded": False, "index_failed": False}
-
-    def _shared_active(_td: Path) -> list[dict[str, object]]:
-        if active_memo:
-            return active_memo[0]
-        from trw_mcp.state.memory_adapter import list_active_learnings
-
-        # FIX130-09: one listing failure used to be memoized as a valid EMPTY
-        # set for the whole sweep, silently moving every record's soft-cap and
-        # distribution decision, at DEBUG. Retry once, then say so loudly and
-        # mark the sweep degraded so the caller can report it.
-        for attempt in (1, 2):
-            try:
-                resolved = list_active_learnings(trw_dir)
-            except Exception:  # justified: fail-open, matches execute_learn's own suppression
-                if attempt == 1:
-                    logger.debug("drain_shared_active_set_retry", exc_info=True)
-                    continue
-                logger.warning(
-                    "drain_shared_active_set_unavailable",
-                    outcome="soft_cap_and_distribution_decisions_degraded",
-                    exc_info=True,
-                )
-                state["active_degraded"] = True
-                active_memo.append([])
-                return active_memo[0]
-            active_memo.append(resolved)
-            return active_memo[0]
-        return []
+    state = {"index_failed": False}
 
     def _sink_save(td: Path, entry: Any) -> Path:
         from trw_mcp.state.analytics.entries import save_learning_entry
@@ -205,7 +140,6 @@ def make_sweep_replay(trw_dir: Path, config: TRWConfig) -> SweepContext:
             config,
             learning_id,
             payload,
-            list_active=_shared_active,
             save_entry=_sink_save,
         )
 
@@ -245,7 +179,7 @@ def make_sweep_replay(trw_dir: Path, config: TRWConfig) -> SweepContext:
     return SweepContext(
         replay=_replay,
         flush=_flush,
-        degraded=lambda: bool(state["active_degraded"]),
+        degraded=lambda: False,
         index_failed=lambda: bool(state["index_failed"]),
     )
 
@@ -266,6 +200,8 @@ def replay_journaled_learn(
     (exactly-once). ``execute_learn`` owns consuming the journal file on a
     durable/handled outcome and retaining it on a store error. Returns the
     terminal status string so the drain driver can count outcomes.
+    ``list_active`` is retained as an unused compatibility keyword; quota-only
+    corpus materialization was retired from capture and replay.
     """
     from trw_mcp.tools._learn_impl import execute_learn
     from trw_mcp.tools._learning_module_helpers import _coerce_learn_type
@@ -290,7 +226,6 @@ def replay_journaled_learn(
         config=config,
         _replay_learning_id=learning_id,
         _from_journal=True,
-        _list_active_learnings=list_active,
         _save_learning_entry=save_entry,
         **kwargs,
     )

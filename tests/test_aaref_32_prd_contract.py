@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from tests._test_tools_requirements_support import _get_tools, set_project_root  # noqa: F401
 
 
@@ -509,7 +510,7 @@ def test_lifecycle_and_quality_namespaces_are_explicit(tmp_path: Path) -> None:
     assert result["quality_tier"] in {tier.value for tier in PRDQualityTier}
 
 
-def test_completeness_warning_uses_zero_to_one_completeness_scale(tmp_path: Path) -> None:
+def test_complete_sparse_template_has_no_deprecated_completeness_warning(tmp_path: Path) -> None:
     created = _get_tools()["trw_prd_create"].fn(
         input_text="Create a complete but intentionally sparse template",
         category="CORE",
@@ -523,17 +524,8 @@ def test_completeness_warning_uses_zero_to_one_completeness_scale(tmp_path: Path
     assert not any(call.args and call.args[0] == "prd_validate_below_threshold" for call in warning.call_args_list)
 
 
-def test_deployed_prd_templates_are_byte_identical() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    authoring = repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "prd_template.md"
-    # Every live mirror of the authoring template (a formerly-vendored second
-    # mirror was deleted wholesale in `a77650f238`; only this one remains).
-    # Deliberately NOT filtered with `.exists()`: a deleted mirror must fail
-    # loudly, not silently pass.
-    mirrors = [
-        repo_root / "docs" / "requirements-aare-f" / "prds" / "TEMPLATE.md",
-    ]
-    assert mirrors, "byte-identity guard needs at least one mirror to compare"
+def test_packaged_prd_template_preserves_typed_contract() -> None:
+    authoring = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "prd_template.md"
     expected = authoring.read_bytes()
     # The research-basis stamp is a template VARIABLE, not a literal. It used to be a
     # hardcoded v3.2.0, so every PRD generated after AARE-F moved stamped a version that
@@ -545,12 +537,18 @@ def test_deployed_prd_templates_are_byte_identical() -> None:
     assert b"verification:" in expected
     assert b"aaref_components:" not in expected
     assert b"conflicts_with:" not in expected
-    assert all(mirror.read_bytes() == expected for mirror in mirrors)
+
+
+@requires_monorepo
+def test_deployed_prd_templates_are_byte_identical() -> None:
+    assert MONOREPO_ROOT is not None
+    expected = (PACKAGE_ROOT / "src/trw_mcp/data/prd_template.md").read_bytes()
+    mirror = MONOREPO_ROOT / "docs/requirements-aare-f/prds/TEMPLATE.md"
+    assert mirror.read_bytes() == expected
 
 
 def test_template_checklist_defers_dynamic_counts_and_gates_to_runtime() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    template = (repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "prd_template.md").read_text()
+    template = (PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "prd_template.md").read_text()
     assert "All runtime category-required sections present" in template
     assert "configured tier required for the next lifecycle phase" in template
     assert "Feature: 12" not in template
@@ -561,8 +559,7 @@ def test_raw_template_is_machine_opted_into_blocking_high_risk_contract() -> Non
     from trw_mcp.state.prd_utils import parse_frontmatter
     from trw_mcp.state.validation._prd_validation import validate_verification_mappings
 
-    repo_root = Path(__file__).resolve().parents[2]
-    template = (repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "prd_template.md").read_text()
+    template = (PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "prd_template.md").read_text()
     derived = (
         template.replace("{CATEGORY}", "CORE")
         .replace("{SEQUENCE}", "999")
@@ -755,3 +752,21 @@ def test_prd_core_218_fr08(tmp_path: Path) -> None:
     untouched = _contract_prd()
     r7 = _validate(tmp_path, untouched, name="untouched.md")
     assert _surface_rules(r7) == set()
+
+
+def test_low_completeness_retains_structural_failures_without_duplicate_warning(tmp_path: Path) -> None:
+    """Retire a duplicate log event, not V1 structural validity or its score."""
+    from trw_mcp.state.validation._prd_validation import validate_prd_quality
+
+    baseline = validate_prd_quality(frontmatter={}, sections=[])
+    assert baseline.valid is False
+    assert baseline.completeness_score < 0.85
+    with patch("trw_mcp.tools.requirements.logger.warning") as warning:
+        result = _validate(tmp_path, "# Incomplete requirement\n", verbose=True)
+    assert result["valid"] is False
+    assert result["validation_partial"] is False
+    assert result["completeness_score"] == baseline.completeness_score
+    # Every original V1 structural failure survives, including the numeric gate.
+    for failure in baseline.failures:
+        assert failure.model_dump() in result["failures"]
+    assert not any(call.args and call.args[0] == "prd_validate_below_threshold" for call in warning.call_args_list)

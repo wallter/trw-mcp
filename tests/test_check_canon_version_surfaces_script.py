@@ -9,9 +9,14 @@ from types import ModuleType
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+# Every case exercises scripts absent from the standalone package.
+pytestmark = requires_monorepo
+
 
 def _load_checker() -> ModuleType:
-    path = Path(__file__).parents[2] / "scripts/check-canon-version-surfaces.py"
+    path = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "scripts/check-canon-version-surfaces.py"
     spec = importlib.util.spec_from_file_location("check_canon_version_surfaces", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

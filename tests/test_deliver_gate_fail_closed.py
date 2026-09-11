@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
+from tests._layout import MONOREPO_ROOT, requires_monorepo
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._deliver_gate_mode import (
@@ -353,9 +354,16 @@ def test_gate_and_detection_cost_bounds() -> None:
 # --- PRD-CORE-265-NFR02: all four adapters, both conditions ------------------
 
 
+@pytest.mark.parametrize(
+    "include_commit_gate",
+    [False, pytest.param(True, marks=requires_monorepo)],
+    ids=["shipped-adapters", "monorepo-commit-adapter"],
+)
 def test_formation_adapters_fail_closed_and_distinguish_absent_from_broken(
     formation_env: FormationFixture,
+    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    include_commit_gate: bool,
 ) -> None:
     """NFR02. A broken manifest refuses in all four; an absent one refuses in none.
 
@@ -373,8 +381,11 @@ def test_formation_adapters_fail_closed_and_distinguish_absent_from_broken(
     """
     import sys as _sys
 
-    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-    import check_formation_ownership as commit_gate
+    if include_commit_gate:
+        assert MONOREPO_ROOT is not None
+        assert (MONOREPO_ROOT / "scripts/check_formation_ownership.py").is_file()
+        _sys.path.insert(0, str(MONOREPO_ROOT / "scripts"))
+        import check_formation_ownership as commit_gate
 
     from trw_mcp.formation import create, join
     from trw_mcp.state.persistence import FileStateReader
@@ -398,8 +409,9 @@ def test_formation_adapters_fail_closed_and_distinguish_absent_from_broken(
         )
 
     # --- ABSENT: every adapter behaves exactly as it does with no formation ---
-    commit_gate._resolve_caller_run = lambda: member  # type: ignore[assignment]
-    assert commit_gate.main(["src/beta/x.py"]) == 0
+    if include_commit_gate:
+        monkeypatch.setattr(commit_gate, "_resolve_caller_run", lambda: member)
+        assert commit_gate.main(["src/beta/x.py"]) == 0
     absent_status = status_block(orchestrator)
     assert "formation" not in absent_status and "formation_error" not in absent_status
     assert evaluate_formation_gate(orchestrator).should_block is False
@@ -410,8 +422,9 @@ def test_formation_adapters_fail_closed_and_distinguish_absent_from_broken(
     join("release-train", "impl-1", member, pin_key="pin-1")
     formation_env.manifest_path().write_text("members: [unterminated\n", encoding="utf-8")
 
-    assert commit_gate.main(["src/beta/x.py"]) == 1
-    assert "formation.yaml" in capsys.readouterr().err
+    if include_commit_gate:
+        assert commit_gate.main(["src/beta/x.py"]) == 1
+        assert "formation.yaml" in capsys.readouterr().err
 
     broken_status = status_block(orchestrator)
     assert "formation" not in broken_status

@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_monorepo
+
 _TESTS_ROOT = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _TESTS_ROOT.parent.parent
 
@@ -69,7 +71,7 @@ _PATH_TOOLS = (
 
 _HOOKS = pytest.mark.parametrize(
     "hook",
-    [pytest.param(_BUNDLED_HOOK, id="bundled"), pytest.param(_MIRROR_HOOK, id="mirror")],
+    [pytest.param(_BUNDLED_HOOK, id="bundled"), pytest.param(_MIRROR_HOOK, id="mirror", marks=requires_monorepo)],
 )
 
 
@@ -189,8 +191,8 @@ def _run_hook(
 def _unpinned_project_with(tmp_path: Path, rows: list[str]) -> Path:
     """Identity-unknown session + a FOREIGN run with events and no deliver marker.
 
-    This is the state that drives a block. Whether the hook exits 0 or 2 is then
-    decided solely by whether it can read a delivery out of the session log.
+    This drives conditional advice, not a blocking exit (CORE269). A valid
+    recent delivery still suppresses that advice.
     """
     root = _make_project(tmp_path)
     _add_run(
@@ -207,12 +209,14 @@ def _unpinned_project_with(tmp_path: Path, rows: list[str]) -> Path:
 # --------------------------------------------------------------------------- #
 # FR04 — the two copies must not drift
 # --------------------------------------------------------------------------- #
+@requires_monorepo
 def test_bundled_and_repo_hook_identical() -> None:
     assert _BUNDLED_HOOK.read_bytes() == _MIRROR_HOOK.read_bytes(), (
         "stop-ceremony.sh drifted between the bundled copy and the .claude mirror"
     )
 
 
+@requires_monorepo
 def test_bundled_and_repo_lib_identical() -> None:
     assert _BUNDLED_LIB.read_bytes() == _MIRROR_LIB.read_bytes(), (
         "lib-trw.sh drifted between the bundled copy and the .claude mirror"
@@ -252,7 +256,7 @@ def test_no_foreign_run_attribution(hook: Path, tmp_path: Path) -> None:
     enforce rather than borrow the stranger's run.
 
     Non-vacuity: the same fixture WITHOUT an identity (the legacy branch) still
-    reaches the foreign run, so this asserts the ownership path specifically and
+    reaches the advisory path, so this asserts the ownership path specifically and
     not merely that the fixture is quiet.
     """
     if not shutil.which("jq"):
@@ -272,15 +276,14 @@ def test_foreign_run_is_reachable_without_identity(hook: Path, tmp_path: Path) -
 
     Without a session identity the legacy branch still resolves the foreign run,
     so the fixture genuinely presents a run that COULD be adopted. If this ever
-    stops blocking, `test_no_foreign_run_attribution` has become vacuous.
+    stops emitting advice, `test_no_foreign_run_attribution` loses this control.
     """
     root = _unpinned_project_with(tmp_path, [])
 
     result = _run_hook(hook, root)
 
-    assert result.returncode == 2, (
-        f"fixture no longer presents an adoptable foreign run, so the FR02 test above is vacuous: {result.stderr}"
-    )
+    assert result.returncode == 0
+    assert "If you have material unfinished work" in result.stderr
 
 
 # --------------------------------------------------------------------------- #
@@ -294,7 +297,7 @@ def test_unpinned_deliver_satisfies_gate(hook: Path, tmp_path: Path) -> None:
     result = _run_hook(hook, root)
 
     assert result.returncode == 0, f"unpinned delivery was still nagged: {result.stderr}"
-    assert "has not been called yet" not in result.stderr
+    assert "If you have material unfinished work" not in result.stderr
 
 
 @_HOOKS
@@ -315,6 +318,7 @@ def test_pinned_session_cleared_by_recent_unpinned_deliver(hook: Path, tmp_path:
     result = _run_hook(hook, root, session_id="sess-p")
 
     assert result.returncode == 0, result.stderr
+    assert "If you have material unfinished work" not in result.stderr
 
 
 @_HOOKS
@@ -337,10 +341,11 @@ def test_pinned_deliver_still_satisfies_gate(hook: Path, tmp_path: Path) -> None
     result = _run_hook(hook, root, session_id="sess-d")
 
     assert result.returncode == 0, result.stderr
+    assert "If you have material unfinished work" not in result.stderr
 
 
 # --------------------------------------------------------------------------- #
-# FR03 — the true-positive path must survive the fix
+# CORE269 supersedes FIX117 FR03 blocking; true detection remains advisory
 # --------------------------------------------------------------------------- #
 @_HOOKS
 def test_true_negative_still_nudges(hook: Path, tmp_path: Path) -> None:
@@ -350,25 +355,20 @@ def test_true_negative_still_nudges(hook: Path, tmp_path: Path) -> None:
 
     result = _run_hook(hook, root)
 
-    assert result.returncode == 2, f"an undelivered session was NOT nudged: {result.stderr}"
-    assert "trw_deliver() has not been called yet" in result.stderr
+    assert result.returncode == 0, f"an undelivered session was NOT nudged: {result.stderr}"
+    assert "If you have material unfinished work" in result.stderr
 
 
 @_HOOKS
-def test_reminder_cap_still_two(hook: Path, tmp_path: Path) -> None:
-    rows = [row for row in _rows() if '"trw_deliver"' not in row]
-    root = _unpinned_project_with(tmp_path, rows)
-
-    first = _run_hook(hook, root)
-    second = _run_hook(hook, root)
-    third = _run_hook(hook, root)
-
-    assert first.returncode == 2
-    assert "(Reminder 1/2)" in first.stderr
-    assert second.returncode == 2
-    assert "(Reminder 2/2)" in second.stderr
-    assert third.returncode == 0
-    assert "Allowing exit after 2 reminders" in third.stderr
+def test_missing_delivery_never_creates_counter_or_lock(hook: Path, tmp_path: Path) -> None:
+    """CORE269 supersedes FIX117 FR03's coercive two-reminder state."""
+    root = _unpinned_project_with(tmp_path, [])
+    for _ in range(3):
+        result = _run_hook(hook, root)
+        assert result.returncode == 0
+        assert "If you have material unfinished work" in result.stderr
+        assert not (root / ".trw/context/stop_block_count").exists()
+        assert not (root / ".trw/context/stop_hook.lock").exists()
 
 
 @_HOOKS
@@ -385,8 +385,8 @@ def test_failed_deliver_does_not_satisfy(hook: Path, tmp_path: Path) -> None:
 
     result = _run_hook(hook, root)
 
-    assert result.returncode == 2, "a FAILED deliver must not satisfy the gate"
-    assert "trw_deliver() has not been called yet" in result.stderr
+    assert result.returncode == 0, "missing delivery alone is advisory"
+    assert "If you have material unfinished work" in result.stderr
 
 
 @_HOOKS
@@ -396,7 +396,8 @@ def test_stale_deliver_outside_window(hook: Path, tmp_path: Path) -> None:
 
     result = _run_hook(hook, root)
 
-    assert result.returncode == 2, "a delivery older than the window must not clear the gate"
+    assert result.returncode == 0
+    assert "If you have material unfinished work" in result.stderr
 
 
 # --------------------------------------------------------------------------- #
@@ -409,8 +410,8 @@ def test_missing_session_events_fails_open(hook: Path, tmp_path: Path) -> None:
 
     result = _run_hook(hook, root)
 
-    assert result.returncode == 2
-    assert "trw_deliver() has not been called yet" in result.stderr
+    assert result.returncode == 0
+    assert "If you have material unfinished work" in result.stderr
     assert "Traceback" not in result.stderr
     assert "not found" not in result.stderr
 
@@ -424,8 +425,8 @@ def test_malformed_jsonl_fails_open(hook: Path, tmp_path: Path) -> None:
 
     result = _run_hook(hook, root)
 
-    assert result.returncode == 2
-    assert "trw_deliver() has not been called yet" in result.stderr
+    assert result.returncode == 0
+    assert "If you have material unfinished work" in result.stderr
 
 
 @_HOOKS
@@ -440,6 +441,7 @@ def test_malformed_tail_does_not_hide_a_real_delivery(hook: Path, tmp_path: Path
     result = _run_hook(hook, root)
 
     assert result.returncode == 0, result.stderr
+    assert "If you have material unfinished work" not in result.stderr
 
 
 # --------------------------------------------------------------------------- #
@@ -448,7 +450,7 @@ def test_malformed_tail_does_not_hide_a_real_delivery(hook: Path, tmp_path: Path
 @_HOOKS
 @pytest.mark.parametrize(
     ("minutes_ago", "expected"),
-    [(30, 0), (_DEFAULT_WINDOW_MIN + 60, 2)],
+    [(30, 0), (_DEFAULT_WINDOW_MIN + 60, 0)],
     ids=["recent", "stale"],
 )
 def test_no_jq_grep_fallback(hook: Path, tmp_path: Path, minutes_ago: int, expected: int) -> None:
@@ -465,6 +467,8 @@ def test_no_jq_grep_fallback(hook: Path, tmp_path: Path, minutes_ago: int, expec
     assert jq_result.returncode == expected, jq_result.stderr
     assert nojq_result.returncode == expected, nojq_result.stderr
     assert nojq_result.returncode == jq_result.returncode
+    assert ("If you have material unfinished work" in jq_result.stderr) == (minutes_ago > _DEFAULT_WINDOW_MIN)
+    assert ("If you have material unfinished work" in nojq_result.stderr) == (minutes_ago > _DEFAULT_WINDOW_MIN)
 
 
 # --------------------------------------------------------------------------- #
@@ -480,8 +484,9 @@ def test_window_zero_disables_the_predicate(hook: Path, tmp_path: Path) -> None:
     disabled = _run_hook(hook, root, env_extra={"TRW_STOP_DELIVER_WINDOW_MIN": "0"})
 
     assert enabled.returncode == 0
-    assert disabled.returncode == 2
-    assert "trw_deliver() has not been called yet" in disabled.stderr
+    assert "If you have material unfinished work" not in enabled.stderr
+    assert disabled.returncode == 0
+    assert "If you have material unfinished work" in disabled.stderr
 
 
 @_HOOKS
@@ -495,4 +500,56 @@ def test_window_config_yaml_override_is_wired(hook: Path, tmp_path: Path) -> Non
     tightened = _run_hook(hook, root)
 
     assert default_window.returncode == 0, "a 45-minute-old delivery is inside the 240m default"
-    assert tightened.returncode == 2, "a 5-minute window must exclude a 45-minute-old delivery"
+    assert "If you have material unfinished work" not in default_window.stderr
+    assert "If you have material unfinished work" in tightened.stderr
+    assert tightened.returncode == 0, "a 5-minute window must exclude a 45-minute-old delivery"
+
+
+@pytest.mark.parametrize("identity", ["pinned", "unpinned", "unknown", "no-work"])
+@pytest.mark.parametrize("hook_name", ["stop-ceremony.sh", "session-end.sh"])
+def test_missing_deliver_is_not_stop_failure(tmp_path: Path, identity: str, hook_name: str) -> None:
+    """CORE269 FR02: execute installed hooks, preserving work without a delivery claim."""
+    root = _make_project(tmp_path)
+    installed = root / "hooks"
+    shutil.copytree(_BUNDLED_HOOK.parent, installed)
+    before_runs = []
+    before_state: dict[Path, bytes] = {}
+    session_id = None if identity == "unknown" else "caller"
+    if identity != "no-work":
+        run = _add_run(root, "work", "20260101T000000Z-abc", ['{"event":"file_modified"}'])
+        if identity == "pinned":
+            _pin(root, "caller", run)
+        before_runs = list((root / ".trw" / "runs").rglob("run.yaml"))
+        before_state = {path: path.read_bytes() for path in run.rglob("*") if path.is_file()}
+    for _ in range(3):
+        result = _run_hook(installed / hook_name, root, session_id=session_id)
+        assert result.returncode == 0, result.stderr
+        assert not (root / ".trw/context/stop_block_count").exists()
+        assert not (root / ".trw/context/stop_hook.lock").exists()
+        assert "captures your learnings" not in result.stderr
+        assert "Session complete" not in result.stderr
+        if identity in {"pinned", "unknown"}:
+            assert "If you have material unfinished work" in result.stderr
+            assert "next-read pointer" in result.stderr
+    assert list((root / ".trw" / "runs").rglob("run.yaml")) == before_runs
+    for path, content in before_state.items():
+        assert path.read_bytes() == content
+    assert not list((root / ".trw").rglob("checkpoints.jsonl"))
+
+
+@_HOOKS
+@pytest.mark.parametrize("delivered", [False, True])
+def test_stop_does_not_mutate_historical_counter_or_lock(hook: Path, tmp_path: Path, delivered: bool) -> None:
+    """Existing stop bookkeeping is not a new coercive or destructive action."""
+    root = _unpinned_project_with(tmp_path, _rows_with_delivers_aged(1) if delivered else [])
+    counter = root / ".trw/context/stop_block_count"
+    counter.write_text("2\n", encoding="utf-8")
+    lock = root / ".trw/context/stop_hook.lock"
+    lock.mkdir()
+    marker = lock / "historical-owner"
+    marker.write_text("retain", encoding="utf-8")
+    result = _run_hook(hook, root)
+    assert result.returncode == 0
+    assert counter.read_text(encoding="utf-8") == "2\n"
+    assert marker.read_text(encoding="utf-8") == "retain"
+    assert ("If you have material unfinished work" in result.stderr) is not delivered

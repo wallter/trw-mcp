@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 from mcp.types import TextContent
 
+from tests._layout import PACKAGE_ROOT, requires_monorepo
 from trw_mcp.middleware.version_drift import (
     VersionDriftChecker,
     VersionDriftMiddleware,
@@ -285,7 +286,6 @@ def test_config_knob_default_is_typed_and_documented() -> None:
 # PRD-CORE-215-FR07: retire stale proxy authority without erasing history
 # --------------------------------------------------------------------------- #
 
-from pathlib import Path
 
 from trw_mcp.middleware.version_drift import (
     CURRENT_TRANSPORT_AUTHORITY,
@@ -354,6 +354,7 @@ def test_prd_core_215_fr07() -> None:
     assert "retry_gap" in rep_no_gap.missing_invariants
 
 
+@requires_monorepo
 def test_prd_core_215_fr07_real_repo_surfaces_pass_today() -> None:
     """The real validator passes against the seven named current-authority files."""
     report = validate_transport_authority(load_current_transport_authority())
@@ -381,8 +382,7 @@ def test_prd_core_215_fr07_real_repo_surfaces_pass_today() -> None:
 
 def test_prd_core_215_fr07_transport_is_stdio_only() -> None:
     """stdio is the executable transport and server/_transport.py claims no proxy."""
-    root = Path(__file__).resolve().parents[2]
-    src = (root / "trw-mcp/src/trw_mcp/server/_transport.py").read_text(encoding="utf-8")
+    src = (PACKAGE_ROOT / "src/trw_mcp/server/_transport.py").read_text(encoding="utf-8")
     # stdio is what actually runs.
     assert "mcp.run()" in src
     assert 'transport="stdio"' in src

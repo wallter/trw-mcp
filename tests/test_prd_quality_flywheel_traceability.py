@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.state.validation import validate_prd_quality_v2
 from trw_mcp.state.validation._prd_scoring import (
     _extract_fr_sections,
@@ -170,8 +169,9 @@ def test_assertion_coverage_scoring_recognizes_markdown_json_bullets() -> None:
     assert "suggestions" not in traceability.details
 
 
+@requires_monorepo
 def test_validate_prd_quality_v2_scores_repo_prd_assertions_non_zero() -> None:
-    content = (Path(__file__).resolve().parents[2] / "docs/requirements-aare-f/prds/PRD-QUAL-056.md").read_text(
+    content = ((MONOREPO_ROOT or PACKAGE_ROOT.parent) / "docs/requirements-aare-f/prds/PRD-QUAL-056.md").read_text(
         encoding="utf-8"
     )
 

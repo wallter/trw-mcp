@@ -74,7 +74,7 @@ class TestPhaseInputStrictSeverity:
         assert synthesis_f[0].severity == "warning"
         assert result.valid is True
 
-    def test_implement_input_strict_plan_missing_is_error(
+    def test_implement_input_strict_manifest_missing_is_error(
         self,
         tmp_path: Path,
         writer: FileStateWriter,
@@ -85,9 +85,10 @@ class TestPhaseInputStrictSeverity:
             phase_gate_enforcement="off",
         )
         result = check_phase_input(Phase.IMPLEMENT, run_dir, config)
-        plan_f = [f for f in result.failures if f.rule == "plan_exists"]
-        assert len(plan_f) == 1
-        assert plan_f[0].severity == "error"
+        manifest_f = [f for f in result.failures if f.rule == "manifest_exists"]
+        assert len(manifest_f) == 1
+        assert manifest_f[0].severity == "error"
+        assert result.valid is False
 
     def test_deliver_input_strict_no_events_is_error(
         self,
@@ -143,7 +144,7 @@ class TestPhaseInputCompletenessScore:
         result = check_phase_input(Phase.RESEARCH, run_dir, config)
         assert result.completeness_score == 1.0
 
-    def test_implement_input_all_missing_has_low_completeness(
+    def test_implement_input_missing_manifest_reduces_diagnostic_score(
         self,
         tmp_path: Path,
         writer: FileStateWriter,
@@ -155,7 +156,8 @@ class TestPhaseInputCompletenessScore:
         )
         result = check_phase_input(Phase.IMPLEMENT, run_dir, config)
         assert result.completeness_score < 1.0
-        assert len(result.failures) >= 2
+        assert [(f.rule, f.severity) for f in result.failures] == [("manifest_exists", "warning")]
+        assert result.valid is True  # Diagnostic score is not planning approval.
 
 
 class TestPhaseCriteriaDictCoverage:

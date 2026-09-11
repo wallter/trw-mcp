@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TRW Cursor hook — stop
 #
-# Emits a deliver reminder, gated by the shared nudge gate:
+# Emits conditional preservation advice, gated by the shared nudge gate:
 #   * anti-fatigue cooldown: once per conversation_id, per hour
 #   * adaptive skip: suppress if trw_deliver has already been invoked recently
 #   * message rotation: stable per-conversation selection from a curated set
@@ -35,8 +35,8 @@ python3 "${_SCRIPT_DIR}/_nudge_gate.py" \
   trw_deliver \
   followup_message \
   '[
-    "TRW: Before ending, call trw_deliver() — it persists this session'"'"'s learnings so future agents build on them instead of rediscovering.",
-    "TRW: Wrap up with trw_deliver() to compound this session'"'"'s discoveries into the team'"'"'s memory.",
-    "TRW: Session closing. Run trw_deliver() to checkpoint progress and export learnings."
+    "TRW: If you have material unfinished work, use trw_checkpoint or a durable native handoff with a next-read pointer. With nothing material, do not invent an artifact. Use trw_deliver for completed work under existing gates.",
+    "TRW: If you have material unfinished work, preserve progress, checks, risks and next action via trw_checkpoint or a durable native handoff with a next-read pointer. With nothing material, do not invent an artifact. Acceptance of completed work uses trw_deliver under existing gates.",
+    "TRW: If you have material unfinished work, preserve it via trw_checkpoint or a durable native handoff and leave a next-read pointer; preservation is not completion. With nothing material, do not invent an artifact. For completed work, trw_deliver remains subject to existing gates."
   ]' \
   < "${_INPUT_TMP}"

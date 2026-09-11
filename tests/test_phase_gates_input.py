@@ -23,13 +23,13 @@ from ._phase_gates_support import _make_run_dir, _write_events
 class TestCheckImplementInput:
     """Tests for implement phase input checker."""
 
-    def test_missing_plan_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
+    def test_missing_plan_is_not_an_input_gate(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
         failures: list[ValidationFailure] = []
         config = TRWConfig()
         _check_implement_input(run_dir, config, "error", failures)
         rules = [f.rule for f in failures]
-        assert "plan_exists" in rules
+        assert "plan_exists" not in rules
 
     def test_missing_manifest_adds_failure(self, tmp_path: Path, writer: FileStateWriter) -> None:
         run_dir = _make_run_dir(tmp_path, writer)

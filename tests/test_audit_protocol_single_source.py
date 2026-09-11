@@ -28,14 +28,15 @@ from tests._audit_protocol_support import (
     strip_fragments,
     table_with_header,
 )
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _SCRIPT = REPO_ROOT / "scripts" / "check_audit_protocol_single_source.py"
 
 # Monorepo-only invariant: repo-root scripts/ is absent from the standalone
 # trw-mcp mirror. Skip at COLLECTION time there, matching
 # test_agent_contract_lint.py and test_agent_loc.py (NFR02).
-if not _SCRIPT.is_file():
+if MONOREPO_ROOT is None:
     pytest.skip("monorepo-only invariant (repo-root scripts/ absent in mirror)", allow_module_level=True)
 
 _spec = importlib.util.spec_from_file_location("check_audit_protocol_single_source", _SCRIPT)
@@ -48,7 +49,7 @@ _spec.loader.exec_module(_gate)
 
 _CONTRACT_LINT = REPO_ROOT / "scripts" / "check_agent_contracts.py"
 AGENT_DIRS = (
-    REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents",
+    PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents",
     REPO_ROOT / ".claude" / "agents",
 )
 
@@ -192,7 +193,7 @@ def test_linter_runtime_is_bounded() -> None:
 
 
 def test_module_skips_cleanly_without_repo_root_scripts(tmp_path: Path) -> None:
-    """NFR02: in the standalone mirror these modules SKIP, they do not error."""
+    """NFR02: the unshipped script gate skips cleanly in a standalone mirror."""
     mirror = tmp_path / "trw-mcp"
     tests = mirror / "tests"
     tests.mkdir(parents=True)
@@ -204,7 +205,7 @@ def test_module_skips_cleanly_without_repo_root_scripts(tmp_path: Path) -> None:
     for name in (
         "_audit_protocol_support.py",
         "test_audit_protocol_single_source.py",
-        "test_audit_protocol_contracts.py",
+        "_layout.py",
     ):
         (tests / name).write_text((here / name).read_text(encoding="utf-8"), encoding="utf-8")
     assert not (tmp_path / "scripts").exists(), "the fixture must reproduce a scripts-less tree"
@@ -219,8 +220,8 @@ def test_module_skips_cleanly_without_repo_root_scripts(tmp_path: Path) -> None:
     combined = result.stdout + result.stderr
     assert "ImportError" not in combined, combined
     assert "error" not in result.stdout.lower(), result.stdout
-    assert "2 skipped" in result.stdout, f"expected two clean module-level skips, got:\n{result.stdout}"
-    # 0 = ok, 5 = nothing left to run once both modules skipped. Anything else
+    assert "1 skipped" in result.stdout, f"expected one clean module-level skip, got:\n{result.stdout}"
+    # 0 = ok, 5 = nothing left to run once the script-dependent module skipped. Anything else
     # (2 interrupted, 3 internal, 4 usage) means collection broke, which is the
     # failure NFR02 forbids.
     assert result.returncode in {0, 5}, f"collection in the mirror broke: exit {result.returncode}\n{combined}"

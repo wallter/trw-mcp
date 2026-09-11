@@ -69,6 +69,8 @@ from _ownership_harness import (
     write_pins as _write_pins,
 )
 
+from tests._layout import requires_monorepo
+
 _OWNED_HOOKS = (
     "lib-trw.sh",
     "session-start.sh",
@@ -86,7 +88,7 @@ _OWNED_HOOKS = (
 def _sh(root: Path, script: str, **extra: str) -> subprocess.CompletedProcess[str]:
     """Run *script* in a POSIX shell with lib-trw.sh sourced, as a hook would."""
     return subprocess.run(
-        ["sh", "-c", f'. "{_MIRROR_HOOKS / "lib-trw.sh"}"\n{script}'],
+        ["sh", "-c", f'. "{_BUNDLED_HOOKS / "lib-trw.sh"}"\n{script}'],
         capture_output=True,
         text=True,
         env=_shell_env(root, **extra),
@@ -111,7 +113,7 @@ def _session_start(
 
 _HOOK_COPIES = pytest.mark.parametrize(
     "hook_dir",
-    [pytest.param(_BUNDLED_HOOKS, id="bundled"), pytest.param(_MIRROR_HOOKS, id="mirror")],
+    [pytest.param(_BUNDLED_HOOKS, id="bundled"), pytest.param(_MIRROR_HOOKS, id="mirror", marks=requires_monorepo)],
 )
 
 
@@ -595,6 +597,7 @@ def test_no_hook_resolves_ownership_with_an_empty_argument_list(hook_dir: Path) 
 # The two copies must not drift
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("name", _OWNED_HOOKS)
+@requires_monorepo
 def test_bundled_and_mirror_hooks_identical(name: str) -> None:
     assert (_BUNDLED_HOOKS / name).read_bytes() == (_MIRROR_HOOKS / name).read_bytes(), (
         f"{name} drifted between the bundled copy and the .claude mirror"

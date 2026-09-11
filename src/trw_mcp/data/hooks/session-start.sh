@@ -295,7 +295,7 @@ case "$_source" in
       echo ""
     fi
     echo "YOUR ROLE: Verify evidence, preserve knowledge, and coordinate only when the harness and task justify it."
-    echo "Delegate only for genuinely independent, parallelizable work with disjoint file ownership — not for what you could finish in a few tool calls, and not to verify your own work."
+    echo "Delegate independent work with clear ownership when warranted; keep routine self-checks local. Required independent review is separate from routine self-checks — follow the framework review rules."
     echo ""
     # PRD-CORE-247-FR02: RIGID names an OBLIGATION, not a tool call. Saying so
     # here is what makes the offline substitute table legible as a transfer of
@@ -369,7 +369,7 @@ case "$_source" in
       echo ""
     fi
     echo "YOUR ROLE: Verify evidence, preserve knowledge, and coordinate only when the harness and task justify it."
-    echo "Delegate only for genuinely independent, parallelizable work with disjoint file ownership — not for what you could finish in a few tool calls, and not to verify your own work."
+    echo "Delegate independent work with clear ownership when warranted; keep routine self-checks local. Required independent review is separate from routine self-checks — follow the framework review rules."
     echo ""
     echo "Call trw_session_start(query='your task domain') to load focused learnings and any active run state."
     ;;

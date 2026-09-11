@@ -36,7 +36,7 @@ from trw_mcp.models.run import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-_TRW_MCP_SRC = _REPO_ROOT / "trw-mcp" / "src"
+_TRW_MCP_SRC = Path(__file__).resolve().parents[1] / "src"
 _GATE = _REPO_ROOT / "scripts" / "check-run-status-vocabulary.py"
 _FIXTURES = Path(__file__).resolve().parent / "fixtures" / "run_status"
 
@@ -83,6 +83,9 @@ def _seed_tree(root: Path, statuses: dict[str, str]) -> Path:
 
 def _invoke_gate(project_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """Run the real gate script against *project_root*."""
+    if not (_REPO_ROOT / "release-packages.yaml").is_file():
+        pytest.skip("run-status gate script is a monorepo-only subject")
+    assert _GATE.is_file(), "run-status gate script is missing from the monorepo"
     env = dict(os.environ)
     env["TRW_PROJECT_ROOT"] = str(project_root)
     env.pop("TRW_RUNS_ROOT", None)

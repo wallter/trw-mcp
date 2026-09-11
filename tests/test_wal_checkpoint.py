@@ -121,7 +121,9 @@ def test_passive_fallback_when_truncate_busy(
     # busy=1 is expected. Some platforms may still allow TRUNCATE; both
     # are acceptable. The contract is: function does not raise, and if
     # TRUNCATE was busy then PASSIVE ran.
-    if result.get("truncate_busy"):
+    from trw_mcp.state._memory_lookups import _truncate_state as _ts
+
+    if _ts(requested_truncate=True, mode=str(result.get("mode", ""))) in {"busy", "refused_unsafe_engine"}:
         assert result.get("mode") == "passive"
     else:
         # TRUNCATE succeeded — fine.
@@ -316,6 +318,14 @@ def test_bare_path_uses_passive_only_when_no_backend_owns_db(tmp_path: Path, mon
     # Exactly one checkpoint pragma, and it is PASSIVE — never a resetting mode.
     assert pragmas == ["PRAGMA wal_checkpoint(PASSIVE)"]
     assert result.get("mode") == "passive"
-    # The bare path requested PASSIVE deliberately, so it is NOT a busy
-    # fallback from a TRUNCATE attempt (FR03 truncate_busy semantics).
-    assert result.get("truncate_busy") is False
+    # The bare path requested PASSIVE deliberately. The old ``truncate_busy``
+    # bool reported that as False, indistinguishable from "TRUNCATE was tried
+    # and was not blocked". ``truncate_state`` names it for what it is, and it
+    # now lives in the wal_checkpoint_complete LOG rather than the response --
+    # the response is paid by every caller on every session start, and the
+    # four-state classification is maintainer diagnostics. Assert the classifier
+    # directly so the meaning is still pinned.
+    from trw_mcp.state._memory_lookups import _truncate_state
+
+    assert "truncate_state" not in result, "diagnostics belong in the log, not the hot-path payload"
+    assert _truncate_state(requested_truncate=False, mode=str(result["mode"])) == "not_attempted"

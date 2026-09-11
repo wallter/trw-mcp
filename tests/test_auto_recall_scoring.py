@@ -22,6 +22,16 @@ from tests._auto_recall_hook_harness import (
     _copy_hook_to_temp,
     _run_hook,
 )
+from tests._layout import PACKAGE_ROOT, requires_monorepo
+
+_HOOK_CASES = tuple(
+    pytest.param(
+        path,
+        id="bundled" if path.is_relative_to(PACKAGE_ROOT) else "mirror",
+        marks=() if path.is_relative_to(PACKAGE_ROOT) else requires_monorepo,
+    )
+    for path in _HOOK_PATHS
+)
 from tests._auto_recall_hook_harness import diagnostic as _diagnostic
 
 _BUNDLED_HOOK = next(p for p in _HOOK_PATHS if "/src/trw_mcp/data/hooks/" in p.as_posix())
@@ -150,7 +160,8 @@ def test_matching_is_token_exact_not_substring(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_default_threshold_is_recalibrated() -> None:
+@pytest.mark.parametrize("hook_path", _HOOK_CASES)
+def test_default_threshold_is_recalibrated(hook_path: Path) -> None:
     """FR06: all three declaration sites report 0.35.
 
     The hook cannot import Pydantic, so its inline fallback is a third
@@ -161,10 +172,9 @@ def test_default_threshold_is_recalibrated() -> None:
 
     assert TRWConfig().auto_recall_min_score == 0.35
     assert OrchestrationConfig().auto_recall_min_score == 0.35
-    for hook_path in _HOOK_PATHS:
-        content = hook_path.read_text(encoding="utf-8")
-        assert '_auto_recall_min_score="0.35"' in content
-        assert "DEFAULT_MIN_SCORE = 0.35" in content
+    content = hook_path.read_text(encoding="utf-8")
+    assert '_auto_recall_min_score="0.35"' in content
+    assert "DEFAULT_MIN_SCORE = 0.35" in content
 
 
 def test_threshold_is_bounded_to_the_unit_interval() -> None:
@@ -404,6 +414,7 @@ def test_obsolete_status_in_mirror_excludes_entry(tmp_path: Path) -> None:
     assert _diagnostic(result.project_root)["top_id"] != "L-retired"
 
 
+@requires_monorepo
 def test_read_model_contract_document_exists() -> None:
     """FR12: the contract is written down, not implicit in the code."""
     doc = Path(__file__).resolve().parents[2] / "docs/documentation/operational-knowledge/auto-recall-calibration.md"
@@ -562,14 +573,14 @@ def test_no_keywords_still_records_a_decision(tmp_path: Path) -> None:
     assert "TRW RECALL:" not in result.stdout
 
 
-def test_hook_opens_no_sqlite_handle() -> None:
+@pytest.mark.parametrize("hook_path", _HOOK_CASES)
+def test_hook_opens_no_sqlite_handle(hook_path: Path) -> None:
     """NFR05: the hook never touches the memory database, so it cannot contend
     for a SQLite lock with a live MCP process."""
-    for hook_path in _HOOK_PATHS:
-        content = hook_path.read_text(encoding="utf-8")
-        assert "sqlite3" not in content
-        assert "memory.db" not in content
-        assert "import trw_mcp" not in content
+    content = hook_path.read_text(encoding="utf-8")
+    assert "sqlite3" not in content
+    assert "memory.db" not in content
+    assert "import trw_mcp" not in content
 
 
 def test_token_budget_is_enforced(tmp_path: Path) -> None:

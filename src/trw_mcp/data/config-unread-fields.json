@@ -15,35 +15,39 @@
     },
     "degenerate_result_cooldown_calls": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1072"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1465"
     },
     "degenerate_result_deadline_ms": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1078"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1471"
     },
     "degenerate_result_freshness_commands": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1084"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1477"
     },
     "degenerate_result_max_read_bytes": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1075"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1468"
     },
     "degenerate_result_truncation_markers": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1081"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:1474"
     },
     "degraded_detect_grace_seconds": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:780"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:818"
     },
     "degraded_detect_min_prompts": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:784"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:822"
+    },
+    "degraded_event_tail_lines": {
+      "class": "E",
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:836"
     },
     "degraded_marker_retention_hours": {
       "class": "E",
-      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:795"
+      "evidence": "trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh:829"
     },
     "framework_read_scope": {
       "class": "E",
@@ -99,6 +103,7 @@
     "phase_transition_withhold_rate",
     "provenance_enabled",
     "proximal_reward_weight",
+    "recall_verification_budget_ms",
     "reflect_max_positive_learnings",
     "reflect_q_value_threshold",
     "reflect_sequence_lookback",

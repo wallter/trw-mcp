@@ -20,7 +20,23 @@ from __future__ import annotations
 
 import structlog
 
+from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+
 logger = structlog.get_logger(__name__)
+
+
+def compact_response_fields(entries: list[dict[str, object]], fields: frozenset[str]) -> list[dict[str, object]]:
+    """Shape compact copies after ranking, before serialized token budgeting.
+
+    Keep the existing compact tag ceiling without truncating evidence consumed
+    by ranking, verification or deduplication. Stored/input rows are untouched.
+    """
+    projected = [{key: value for key, value in entry.items() if key in fields} for entry in entries]
+    for entry in projected:
+        tags = entry.get("tags")
+        if isinstance(tags, list):
+            entry["tags"] = tags[:COMPACT_TAGS_CAP]
+    return projected
 
 
 def strip_internal_response_fields(

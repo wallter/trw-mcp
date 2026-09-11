@@ -489,12 +489,11 @@ def is_migration_needed(trw_dir: Path) -> bool:
 def _skipped(reason: str) -> BatchDedupResult:
     """Report a batch-dedup early return — PRD-FIX-130-FR05.
 
-    These three paths decline to write the completion marker, which is correct
-    (the work genuinely did not happen) but leaves the migration PERMANENTLY
-    pending, so the full unbounded scan fires on the first learn after the
-    condition clears. That is a queued cost an operator must be able to see, so
-    it is reported at INFO rather than returned silently. Writing the marker here
-    is explicitly refused: it would be a false completion.
+    These paths decline to write the completion marker because the work did not
+    happen. Ordinary capture and journal recovery no longer schedule this
+    whole-corpus operation; an explicit maintenance caller can inspect the
+    outcome and decide whether to retry. Writing a marker for skipped work
+    would falsely claim completion, so skipped outcomes remain visible at INFO.
     """
     logger.info("batch_dedup_skipped", reason=reason)
     return BatchDedupResult(status="skipped", reason=reason)

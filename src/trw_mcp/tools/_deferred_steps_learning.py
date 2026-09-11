@@ -43,38 +43,14 @@ def _step_publish_learnings() -> PublishLearningsResult:
 
 
 def _step_outcome_correlation() -> OutcomeCorrelationStepResult:
-    """Step 6.5: Outcome correlation (G1)."""
-    from trw_mcp.scoring import process_outcome_for_event
-
-    outcome_ids = process_outcome_for_event("trw_deliver_complete")
-    return {"status": "success", "updated": len(outcome_ids)}
+    """Compatibility roster entry: delivery is not per-learning usefulness evidence."""
+    # R10: preserve outcome observations, not temporal exposure-to-credit inference.
+    return {"status": "skipped", "updated": 0}
 
 
 def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
-    """Step 6.6: Recall outcome tracking (G6)."""
-    from trw_mcp.state._paths import resolve_trw_dir
-    from trw_mcp.state.recall_tracking import get_recall_stats, record_outcome
-
-    recall_stats = get_recall_stats()
-    unique_ids = recall_stats.get("unique_learnings", 0)
-    recalled_count = 0
-    if unique_ids and resolved_run is not None:
-        trw_dir_rt = resolve_trw_dir()
-        tracking_path = trw_dir_rt / "logs" / "recall_tracking.jsonl"
-        if tracking_path.exists():
-            from trw_mcp.state._helpers import read_jsonl_resilient
-
-            # Append-only log; tolerate a torn concurrent append rather than
-            # losing the whole recall-outcome recording step on one bad line.
-            records_rt = read_jsonl_resilient(tracking_path)
-            seen: set[str] = set()
-            for rec in records_rt:
-                lid = str(rec.get("learning_id", ""))
-                if lid and rec.get("outcome") is None and lid not in seen:
-                    record_outcome(lid, "positive")
-                    seen.add(lid)
-                    recalled_count += 1
-    return {"status": "success", "recorded": recalled_count}
+    """Compatibility roster entry; never label historical exposures successful."""
+    return {"status": "skipped", "recorded": 0}
 
 
 def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | None:
@@ -393,14 +369,8 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         # streams merged by timestamp — scanning the run alone found zero nudges.
         signals = detect_proximal_signals(read_proximal_event_window(trw_dir, resolved_run))
         result["proximal_signals"] = [dict(s) for s in signals]
-        # Ledger UF-026: the signals used to stop here, in a reporting field.
-        # Feed them into the Q-learning update so a nudge the agent visibly
-        # acted on can actually move the surfaced learning's value.
-        from trw_mcp.scoring import apply_proximal_rewards
-
-        proximal_updates = apply_proximal_rewards(trw_dir, signals)
-        if proximal_updates:
-            result["proximal_q_updates"] = proximal_updates
+        # R10: temporal adjacency is an observation, not evidence that a learning
+        # caused passing tests. Keep the signals without persistent Q attribution.
     except Exception:  # justified: fail-open
         logger.debug("delivery_metric_proximal_signals_failed", exc_info=True)
         result["proximal_signals"] = []

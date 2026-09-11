@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.client_profiles.markdown import render_matrix_page, render_quick_reference_table
 
-DOC_ROOT = Path(__file__).resolve().parents[2] / "docs"
+DOC_ROOT = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "docs"
 OVERVIEW_DOC = DOC_ROOT / "CLIENT-PROFILES.md"
 MATRIX_DOC = DOC_ROOT / "client-profiles" / "matrix.md"
 
@@ -23,15 +22,18 @@ def _extract_table(doc_text: str, heading: str) -> str:
     return "\n".join(table_lines)
 
 
+@requires_monorepo
 def test_generated_matrix_doc_matches_renderer() -> None:
     assert MATRIX_DOC.read_text(encoding="utf-8") == render_matrix_page()
 
 
+@requires_monorepo
 def test_overview_quick_reference_matches_renderer() -> None:
     overview = OVERVIEW_DOC.read_text(encoding="utf-8")
     assert _extract_table(overview, "## Quick Reference") == render_quick_reference_table()
 
 
+@requires_monorepo
 def test_overview_doc_stays_within_350_loc() -> None:
     assert len(OVERVIEW_DOC.read_text(encoding="utf-8").splitlines()) <= 350
 
@@ -297,6 +299,7 @@ def test_dispatch_targets_table_matches_the_registry() -> None:
     assert _table_row_ids(table) == list(CLIENT_SPECS)
 
 
+@requires_monorepo
 def test_generated_matrix_page_carries_the_dispatch_targets_section() -> None:
     doc = MATRIX_DOC.read_text(encoding="utf-8")
     assert "## Dispatch Targets" in doc
@@ -352,6 +355,7 @@ def test_adding_a_registry_entry_grows_the_table_by_exactly_one_row(monkeypatch)
     assert rows[-1] == "synthetic-cli"
 
 
+@requires_monorepo
 def test_overview_doc_points_at_the_generated_dispatch_table_and_restates_no_value() -> None:
     overview = OVERVIEW_DOC.read_text(encoding="utf-8")
     assert "Dispatch Targets" in overview

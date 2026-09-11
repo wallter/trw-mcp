@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import PACKAGE_ROOT
 from trw_mcp.bootstrap import _DATA_FILE_MAP
 from trw_mcp.bootstrap._template_updater import _ALWAYS_UPDATE
 from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime
@@ -202,14 +203,13 @@ def _deploy_generation(target: Path):
         load_registry,
     )
 
-    repo_root = Path(__file__).resolve().parents[2]
     clear_cache()
     registry = load_registry(bundled_manifest_bytes())
     frameworks = target / ".trw" / "frameworks"
     frameworks.mkdir(parents=True)
     expectations = []
     for compiled in registry.compiled_canons:
-        source = (repo_root / compiled.authoring_source).read_text(encoding="utf-8")
+        source = (PACKAGE_ROOT / compiled.authoring_source.removeprefix("trw-mcp/")).read_text(encoding="utf-8")
         result = compile_canon(compiled.id, source, source_basename="x.md")
         bodies = {"compact_core": result.core, "reference": result.reference, "combined": result.combined}
         role_paths = {role: f".trw/frameworks/{compiled.id}-{role}.md" for role in bodies}

@@ -1055,7 +1055,7 @@ class TestBackgroundTruthfulness:
         assert done[0]["migration_outcome"] == "skipped", done[0]
         assert done[0]["migration_run"] is False, "a skipped migration was reported as run"
 
-    def test_an_unscheduled_migration_is_still_reported_as_owed(self, tmp_path: Path) -> None:
+    def test_missing_marker_is_not_reported_as_pending_capture_work(self, tmp_path: Path) -> None:
         import threading
 
         from trw_mcp.tools import _ceremony_maintenance_steps as steps
@@ -1081,8 +1081,8 @@ class TestBackgroundTruthfulness:
 
         payload = maintenance["pending_learns_replayed"]
         assert isinstance(payload, dict)
-        assert payload["migration_pending"] is True, payload
-        assert payload["migration_scheduled"] is False, payload
+        assert "migration_pending" not in payload, payload
+        assert "migration_scheduled" not in payload, payload
 
     def test_a_failed_index_flush_retains_its_rows_and_says_so(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1112,10 +1112,10 @@ class TestBackgroundTruthfulness:
         assert sweep.flush() is True
         assert written and len(written[0]) == 3, written
 
-    def test_a_failed_active_listing_is_warned_and_marked_degraded(
+    def test_retired_quota_active_listing_is_not_called_or_marked_degraded(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """FIX130-09: a listing failure must not be memoized as a valid empty set."""
+        """CD: retired quota listing cannot fail or degrade replay."""
         from trw_mcp.state import memory_adapter
 
         trw_dir = _trw_dir(tmp_path)
@@ -1132,25 +1132,19 @@ class TestBackgroundTruthfulness:
             maintenance = _drain_step(trw_dir, config)
             _join_drain_thread()
 
-        assert len(attempts) >= 2, "the listing must be retried once before being called degraded"
+        assert attempts == [], "capture no longer needs the quota active set"
         warned = [e for e in logs if e.get("event") == "drain_shared_active_set_unavailable"]
-        assert warned, logs
-        assert warned[0]["log_level"] == "warning", warned[0]
+        assert not warned, logs
         payload = maintenance["pending_learns_replayed"]
         assert isinstance(payload, dict)
-        assert payload["active_set_degraded"] is True, payload
+        assert not payload.get("active_set_degraded", False), payload
 
 
 class TestOperatorDrainIsBatchedToo:
-    """FIX130-05: the CHANGELOG's per-sweep claim covers the operator CLI too.
+    """Operator drain retains batched index writes without quota corpus loading.
 
-    ``learn-drain`` passed a per-record replay lambda straight to
-    ``drain_pending``, so a multi-record operator flush still paid one whole-file
-    learnings-index rewrite and one active-set materialization PER RECORD — the
-    exact costs FR03 removed from session_start.
-
-    NON-VACUITY: put the per-record ``replay_journaled_learn`` lambda back and
-    both counters go to 5.
+    Returning to per-record index writes fails the one-write assertion;
+    restoring retired quota work fails the zero-listing assertion.
     """
 
     def test_a_five_record_operator_drain_writes_the_index_once(
@@ -1188,6 +1182,6 @@ class TestOperatorDrainIsBatchedToo:
         assert payload["pending_after"] == 0, payload
         assert payload["recovered"] == 5, payload
         assert len(index_writes) == 1, f"the operator drain did {len(index_writes)} index writes for 5 records"
-        assert len(active_listings) == 1, f"the operator drain did {len(active_listings)} active listings"
+        assert len(active_listings) == 0, f"the operator drain did {len(active_listings)} active listings"
         # NFR: the operator drain stays UNBOUNDED in time (FR01) — all five ran.
         assert payload["replayed"] == 5, payload

@@ -38,7 +38,10 @@ class TestCodexBootstrap:
         result = generate_codex_config(tmp_path)
         assert ".codex/config.toml" in result["created"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["hooks"] is False
+        # Absent means inherit the installed Codex default. TRW must not write a
+        # flag that would switch off the hooks.json it installs (inert on 0.154.0,
+        # live on older Codex). See _normalize_feature_flags.
+        assert "hooks" not in config.get("features", {})
         assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert "url" not in config["mcp_servers"]["trw"]
@@ -200,7 +203,7 @@ class TestCodexBootstrap:
         install_codex_skills(tmp_path)
         installed_root = tmp_path / ".agents" / "skills"
         installed = sorted(installed_root.glob("*/SKILL.md"))
-        assert len(installed) == len(packaged)
+        assert len(installed) == len(packaged) - 3
 
         for path in (*packaged, *installed):
             unsupported = set(_skill_frontmatter(path)) - _CODEX_SKILL_KEYS
@@ -244,7 +247,7 @@ class TestCodexBootstrap:
         assert merged["model_reasoning_effort"] == "high"
         assert merged["sandbox_mode"] == "read-only"
         assert merged["approval_policy"] == "never"
-        assert merged["features"]["hooks"] is False
+        assert "hooks" not in merged.get("features", {})
         assert "codex_hooks" not in merged["features"]
         assert merged["features"]["some_feature"] is False
         assert "custom" in merged["mcp_servers"]
@@ -352,7 +355,7 @@ config = [
         config = tomllib.loads((codex_dir / "config.toml").read_text(encoding="utf-8"))
         assert config["model"] == "gpt-5.4-mini"
         assert config["features"]["legacy_toggle"] is False
-        assert config["features"]["hooks"] is False
+        assert "hooks" not in config["features"]
         assert "codex_hooks" not in config["features"]
         assert config["mcp_servers"]["custom"]["enabled"] is False
         assert config["mcp_servers"]["trw"]["enabled"] is True

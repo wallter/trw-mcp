@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from trw_memory.retrieval.temporal_selection import TemporalSelection
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -296,6 +297,7 @@ def federate_external_stores(
     allow_cold_embedding_init: bool = True,
     as_of: datetime | None = None,
     include_superseded: bool = False,
+    temporal_selection: TemporalSelection | None = None,
 ) -> list[MemoryEntry]:
     """Append capped, de-duped external-corpus hits to the project hits (FR02/FR05).
 
@@ -331,6 +333,7 @@ def federate_external_stores(
                 allow_cold_embedding_init=allow_cold_embedding_init,
                 as_of=as_of,
                 include_superseded=include_superseded,
+                temporal_selection=temporal_selection,
             )
             added = 0
             for entry in hits:
@@ -367,13 +370,22 @@ def _query_external_backend(
     allow_cold_embedding_init: bool,
     as_of: datetime | None = None,
     include_superseded: bool = False,
+    temporal_selection: TemporalSelection | None = None,
 ) -> list[MemoryEntry]:
     """Query an external store across ALL namespaces (a corpus may use any ns)."""
     from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
 
     top_k = max_results if max_results > 0 else DEFAULT_LIST_LIMIT
     if is_wildcard:
-        return backend.list_entries(status=mem_status, namespace=None, limit=top_k)
+        return backend.list_entries(
+            status=mem_status,
+            namespace=None,
+            limit=top_k,
+            tags=tags,
+            min_importance=min_impact,
+            temporal_selection=temporal_selection
+            or TemporalSelection(as_of=as_of, include_superseded=include_superseded, exclude_system_canaries=True),
+        )
     from trw_mcp.state._memory_queries import _search_entries
 
     return _search_entries(
@@ -387,4 +399,5 @@ def _query_external_backend(
         namespace=None,
         as_of=as_of,
         include_superseded=include_superseded,
+        temporal_selection=temporal_selection,
     )

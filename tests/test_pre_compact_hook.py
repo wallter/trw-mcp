@@ -7,6 +7,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from tests._layout import PACKAGE_ROOT, requires_monorepo
+
 _ROOT = Path(__file__).resolve().parent.parent
 
 #: Every live copy of the hook (a formerly-vendored third mirror was deleted
@@ -18,6 +22,15 @@ _ROOT = Path(__file__).resolve().parent.parent
 _HOOK_PATHS = (
     _ROOT.parent / ".claude" / "hooks" / "pre-compact.sh",
     _ROOT / "src" / "trw_mcp" / "data" / "hooks" / "pre-compact.sh",
+)
+
+_HOOK_CASES = tuple(
+    pytest.param(
+        path,
+        id="bundled" if path.is_relative_to(PACKAGE_ROOT) else "mirror",
+        marks=() if path.is_relative_to(PACKAGE_ROOT) else requires_monorepo,
+    )
+    for path in _HOOK_PATHS
 )
 
 
@@ -48,30 +61,31 @@ log_hook_execution() { printf '%s|%s|%s\\n' "$1" "$2" "$3" >> "$TRW_HOOK_LOG"; }
     return project_root, hook_path
 
 
+@requires_monorepo
 def test_pre_compact_hook_copies_stay_in_sync() -> None:
     contents = [hook_path.read_text(encoding="utf-8") for hook_path in _HOOK_PATHS]
     assert len(set(contents)) == 1, "every shipped copy of pre-compact.sh must be byte-identical"
 
 
-def test_pre_compact_hook_clears_injected_learning_ids(tmp_path: Path) -> None:
-    for hook_path in _HOOK_PATHS:
-        project_root, temp_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name, hook_path)
-        injected_file = project_root / ".trw" / "context" / "injected_learning_ids.txt"
-        injected_file.write_text("L-one\nL-two\n", encoding="utf-8")
+@pytest.mark.parametrize("hook_path", _HOOK_CASES)
+def test_pre_compact_hook_clears_injected_learning_ids(tmp_path: Path, hook_path: Path) -> None:
+    project_root, temp_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name, hook_path)
+    injected_file = project_root / ".trw" / "context" / "injected_learning_ids.txt"
+    injected_file.write_text("L-one\nL-two\n", encoding="utf-8")
 
-        result = subprocess.run(
-            ["sh", str(temp_hook)],
-            input=json.dumps({"source": "context.compact"}),
-            text=True,
-            capture_output=True,
-            cwd=project_root,
-            env={
-                **os.environ,
-                "TRW_PROJECT_ROOT": str(project_root),
-                "TRW_HOOK_LOG": str(project_root / "hook.log"),
-            },
-            check=False,
-        )
+    result = subprocess.run(
+        ["sh", str(temp_hook)],
+        input=json.dumps({"source": "context.compact"}),
+        text=True,
+        capture_output=True,
+        cwd=project_root,
+        env={
+            **os.environ,
+            "TRW_PROJECT_ROOT": str(project_root),
+            "TRW_HOOK_LOG": str(project_root / "hook.log"),
+        },
+        check=False,
+    )
 
-        assert result.returncode == 0
-        assert injected_file.read_text(encoding="utf-8") == ""
+    assert result.returncode == 0
+    assert injected_file.read_text(encoding="utf-8") == ""

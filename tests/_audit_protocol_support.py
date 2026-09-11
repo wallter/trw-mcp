@@ -18,8 +18,10 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-_DATA = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data"
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
+
+REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+_DATA = PACKAGE_ROOT / "src" / "trw_mcp" / "data"
 
 FRAMEWORK_PATH = _DATA / "skills" / "trw-audit" / "audit-framework.md"
 AUDITOR_PATH = _DATA / "agents" / "trw-auditor.md"
@@ -189,7 +191,13 @@ def load_protocol() -> Protocol:
         f"agent:{p.name}": expand_markers(p.read_text(encoding="utf-8"))
         for p in sorted(BUNDLED_AGENTS_DIR.glob("*.md"))
     }
-    surfaces.update({f"skill:{p.relative_to(REPO_ROOT)}": p.read_text(encoding="utf-8") for p in SKILL_PROJECTIONS})
+    surfaces.update(
+        {
+            f"skill:{p.relative_to(REPO_ROOT)}": p.read_text(encoding="utf-8")
+            for p in SKILL_PROJECTIONS
+            if MONOREPO_ROOT is not None or p.is_relative_to(PACKAGE_ROOT)
+        }
+    )
     return Protocol(
         framework=FRAMEWORK_PATH.read_text(encoding="utf-8"),
         auditor=expand_markers(AUDITOR_PATH.read_text(encoding="utf-8")),

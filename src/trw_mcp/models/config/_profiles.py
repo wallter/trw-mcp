@@ -70,9 +70,8 @@ def _light_profile(
 ) -> ClientProfile:
     """Construct a light-mode profile with eval-calibrated defaults.
 
-    ``on_transition`` (PRD-INTENT-002 FR04/FR05b): opencode keeps the safe
-    ``require_reconnect`` default (its cache is not invalidated automatically);
-    codex uses ``silent`` (phase set at session start, no intra-session change).
+    ``on_transition`` is retained only for legacy profile serialization.
+    It no longer selects refresh behavior (PRD-INTENT-002 FR05b amendment).
 
     ``include_delegation`` (PRD-CORE-252 OQ-3, resolved 2026-09-04): both light
     profiles default to ``False``; kept as a parameter rather than flipped for

@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "2.0.2"
+version = "2.1.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -67,7 +67,7 @@ dependencies = [
     # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
-    "trw-memory>=0.16.0,<1.0.0",
+    "trw-memory>=0.17.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -116,7 +116,15 @@ Changelog = "https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md"
 trw-mcp = "trw_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
+# The wheel needs the SAME exclusions as the sdist below. Hatchling applies
+# excludes PER TARGET, so listing them only under `sdist` left every internal
+# sub-CLAUDE.md in the artifact `pip install` actually delivers — confirmed
+# against the published 2.0.0 wheel's RECORD. That is not merely untidy: these
+# docs state which security controls are unwired (`security/CLAUDE.md`: verify
+# fn is an observe-mode stub, capability_scope not wired, kill switches default
+# off) and cite internal PRD paths. Found in pre-release review, 2026-09-11.
 packages = ["src/trw_mcp"]
+exclude = ["**/CLAUDE.md", "**/AGENTS.md"]
 
 [tool.hatch.build.targets.sdist]
 # Defense in depth alongside .gitignore: hatchling honors the package-local

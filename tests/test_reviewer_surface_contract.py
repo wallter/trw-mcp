@@ -18,6 +18,7 @@ from pathlib import Path
 
 import tomllib
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.models.surface_packs import (
     CAPABILITY_PACKS,
     REVIEWER_TOOLS,
@@ -25,7 +26,7 @@ from trw_mcp.models.surface_packs import (
 )
 from trw_mcp.server._surface_manifest_registry import eligible_tool_names
 
-_REPO = Path(__file__).resolve().parents[2]
+_REPO = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _AUDIT_SCRIPT = _REPO / "scripts/audit-external.sh"
 
 
@@ -117,9 +118,11 @@ def test_no_hand_typed_reviewer_list_exists_outside_the_ssot() -> None:
     tool manifest) name every write tool too, so they are not copies of this set
     — the shape, not the hit count, is what identifies a drifting duplicate.
     """
-    ssot = _REPO / "trw-mcp/src/trw_mcp/models/surface_packs.py"
+    ssot = PACKAGE_ROOT / "src/trw_mcp/models/surface_packs.py"
     excluded = _WRITE_CLASS | _ESCALATION_CLASS | _DISPATCH_CLASS | _SYNC_CLASS
-    roots = [_REPO / "trw-mcp/src/trw_mcp", _REPO / "scripts"]
+    roots = [PACKAGE_ROOT / "src/trw_mcp"]
+    if MONOREPO_ROOT is not None:
+        roots.append(MONOREPO_ROOT / "scripts")
     offenders: list[tuple[str, int, int]] = []
     for root in roots:
         for path in root.rglob("*"):
@@ -143,6 +146,7 @@ def test_no_hand_typed_reviewer_list_exists_outside_the_ssot() -> None:
 # ── FR09: the shell audit lane reads the SSOT through one generator ────
 
 
+@requires_monorepo
 def test_generator_output_matches_ssot_and_script_uses_it() -> None:
     """FR09: generator stdout is the TOML array, and the codex lane invokes it."""
     proc = subprocess.run(
@@ -167,6 +171,7 @@ def test_generator_output_matches_ssot_and_script_uses_it() -> None:
     assert "--ignore-user-config" not in script
 
 
+@requires_monorepo
 def test_generator_does_not_depend_on_an_installed_trw_mcp_on_PATH() -> None:
     """FR09: the generator renders THIS repository's set, not an installed one.
 
@@ -187,6 +192,7 @@ def test_generator_does_not_depend_on_an_installed_trw_mcp_on_PATH() -> None:
     assert tomllib.loads(f"enabled_tools = {proc.stdout.strip()}")["enabled_tools"] == sorted(REVIEWER_TOOLS)
 
 
+@requires_monorepo
 def test_generator_exits_nonzero_when_the_ssot_is_unreachable(tmp_path: Path) -> None:
     """FR09 negative: a broken SSOT read must NOT emit an empty array.
 
@@ -204,6 +210,7 @@ def test_generator_exits_nonzero_when_the_ssot_is_unreachable(tmp_path: Path) ->
     assert "surface_packs" in proc.stderr
 
 
+@requires_monorepo
 def test_audit_external_codex_lane_fails_closed_on_a_generator_failure() -> None:
     """FR09: the generated array is bound to a variable BEFORE the codex call.
 
@@ -223,6 +230,7 @@ def test_audit_external_codex_lane_fails_closed_on_a_generator_failure() -> None
 # ── FR15: the agy branch ships exactly one measured posture ────────────
 
 
+@requires_monorepo
 def test_audit_external_agy_branch_is_read_only() -> None:
     """FR15: exactly ONE of the two branches holds, with its required evidence.
 

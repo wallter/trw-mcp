@@ -28,6 +28,7 @@ import structlog
 from trw_memory.exceptions import CorruptDatabaseUnsalvageableError, StorageError
 from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryStatus
+from trw_memory.retrieval.temporal_selection import TemporalSelection
 from trw_memory.security.recall_filter import filter_recall_window
 
 from trw_mcp.models.typed_dicts import LearningEntryDict
@@ -79,6 +80,7 @@ def _federate_user_tier(
     allow_cold_embedding_init: bool,
     as_of: datetime | None = None,
     include_superseded: bool = False,
+    temporal_selection: TemporalSelection | None = None,
 ) -> list[MemoryEntry]:
     """Append capped, de-duped user-tier hits to the project hits.
 
@@ -120,6 +122,7 @@ def _federate_user_tier(
             allow_cold_embedding_init=allow_cold_embedding_init,
             as_of=as_of,
             include_superseded=include_superseded,
+            temporal_selection=temporal_selection,
         )
         merged = list(project_entries)
         added = 0
@@ -151,12 +154,17 @@ def _query_user_backend(
     allow_cold_embedding_init: bool,
     as_of: datetime | None = None,
     include_superseded: bool = False,
+    temporal_selection: TemporalSelection | None = None,
 ) -> list[MemoryEntry]:
     """Query the user store for ``user:`` entries (namespace=None = all tiers there)."""
     if is_wildcard:
         return user_backend.list_entries(
             status=mem_status,
             namespace=None,
+            temporal_selection=temporal_selection
+            or TemporalSelection(as_of=as_of, include_superseded=include_superseded, exclude_system_canaries=True),
+            tags=tags,
+            min_importance=min_impact,
             limit=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
         )
     top_k = max_results if max_results > 0 else DEFAULT_LIST_LIMIT
@@ -173,6 +181,7 @@ def _query_user_backend(
         namespace=None,
         as_of=as_of,
         include_superseded=include_superseded,
+        temporal_selection=temporal_selection,
     )
 
 
@@ -281,6 +290,7 @@ def recall_learnings(
     ``include_superseded=False``) are byte-identical to the pre-194 path.
     """
     as_of_dt = _parse_as_of(as_of)
+    selection = TemporalSelection(as_of=as_of_dt, include_superseded=include_superseded, exclude_system_canaries=True)
     federate_user = include_tiers is None or "user" in include_tiers
     is_wildcard = query.strip() in ("*", "")
     namespace = _project_namespace()
@@ -321,6 +331,9 @@ def recall_learnings(
                 entries = backend.list_entries(
                     status=mem_status,
                     namespace=namespace,
+                    temporal_selection=selection,
+                    tags=tags,
+                    min_importance=min_impact,
                     limit=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
                 )
             else:
@@ -335,6 +348,7 @@ def recall_learnings(
                     allow_cold_embedding_init=allow_cold_embedding_init,
                     as_of=as_of_dt,
                     include_superseded=include_superseded,
+                    temporal_selection=selection,
                 )
             break
         except Exception as exc:  # justified: boundary, corruption recovery retries recall before surfacing failure
@@ -409,6 +423,7 @@ def recall_learnings(
             allow_cold_embedding_init=allow_cold_embedding_init,
             as_of=as_of_dt,
             include_superseded=include_superseded,
+            temporal_selection=selection,
         )
 
     # PRD-CORE-202 FR02/FR05: federate operator-named EXTERNAL read-stores
@@ -432,6 +447,7 @@ def recall_learnings(
         allow_cold_embedding_init=allow_cold_embedding_init,
         as_of=as_of_dt,
         include_superseded=include_superseded,
+        temporal_selection=selection,
     )
 
     # PRD-CORE-194 FR03: apply the validity prior on the MCP recall path so a
@@ -443,7 +459,9 @@ def recall_learnings(
     # parity with ``MemoryClient.recall``'s time-travel surface.
     from trw_memory.retrieval.validity_prior import apply_validity_prior
 
-    entries = apply_validity_prior(entries, as_of=as_of_dt, include_superseded=include_superseded)
+    entries = apply_validity_prior(
+        entries, as_of=as_of_dt, include_superseded=include_superseded, reference_time=selection.reference_time
+    )
 
     public_entries = [entry for entry in entries if entry.metadata.get("system_canary") != "true"]
     filter_result = (
@@ -456,7 +474,12 @@ def recall_learnings(
             continue
         if not is_wildcard and entry.importance < min_impact:
             continue
-        results.append(_memory_to_learning_dict(entry, compact=compact))
+        projected = _memory_to_learning_dict(entry, compact=compact)
+        if include_superseded:
+            from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD
+
+            cast("dict[str, object]", projected)[TEMPORAL_ELIGIBILITY_FIELD] = selection.eligible(entry)
+        results.append(projected)
 
     # R-RANK-002/004: wildcard list_entries orders by updated_at DESC only; route
     # through rank_by_utility so impact/utility drives order (recency is a decay
@@ -464,6 +487,8 @@ def recall_learnings(
     ranked_results: list[dict[str, object]] = cast("list[dict[str, object]]", results)
     if is_wildcard and ranked_results:
         ranked_results = _rank_wildcard_by_utility(ranked_results)
+        eligible_ids = {entry.id for entry in filtered_entries if selection.eligible(entry)}
+        ranked_results.sort(key=lambda row: str(row.get("id", "")) not in eligible_ids)
 
     logger.info(
         "memory_search_ok",

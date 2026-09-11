@@ -1,7 +1,15 @@
-"""Result transformation between trw-memory MemoryEntry and learning dicts.
+"""Projection from a trw-memory :class:`MemoryEntry` to a learning dict.
 
-Converts between the internal :class:`MemoryEntry` model (SQLite-backed) and
-the external dict shapes expected by tool callers (FRAMEWORK.md, hooks, etc.).
+The external dict shapes tool callers see (FRAMEWORK.md, hooks, etc.) are built
+here from the internal SQLite-backed model.
+
+PRD-CORE-251 FR03 removed this module's other half. ``_learning_to_memory_entry``
+built a :class:`MemoryEntry` by hand for a ``backend.store`` call that skipped
+namespace validation, the namespace permission check and input validation
+entirely; entries are now constructed inside
+``trw_memory.tools.store.memory_store_impl`` through the PRD-CORE-245 FR08
+chokepoint, and the trw-mcp-side argument marshalling that used to be tangled up
+with construction lives in ``_store_arguments.py``.
 
 This module is an internal implementation detail of ``memory_adapter.py``.
 External code should import from ``memory_adapter`` (the public facade).
@@ -9,30 +17,16 @@ External code should import from ``memory_adapter`` (the public facade).
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from datetime import datetime
+from typing import cast
 
 import structlog
-from trw_memory.models.config import MemoryConfig
-from trw_memory.models.memory import (
-    Anchor,
-    Assertion,
-    Confidence,
-    MemoryEntry,
-    MemoryStatus,
-    MemoryType,
-    ProtectionTier,
-)
+from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
 from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
 from trw_mcp.models.typed_dicts import LearningEntryDict
-from trw_mcp.state._constants import DEFAULT_NAMESPACE
+from trw_mcp.state._recall_signals import current_recall_signals
 
-_NAMESPACE = DEFAULT_NAMESPACE
-
-# Re-export from canonical source for backward compatibility
-from trw_mcp.state._constants import VALID_SOURCES as _VALID_SOURCES  # noqa: E402
-
-_SourceType = Literal["human", "agent", "tool", "consolidated", "team_sync"]
 logger = structlog.get_logger(__name__)
 
 
@@ -62,7 +56,20 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
         "impact": entry.importance,
         "status": entry.status.value if isinstance(entry.status, MemoryStatus) else str(entry.status),
     }
+    # CORE-268: evidence must survive acquisition, including compact candidates.
+    # Qualification belongs to consumers; no verifier or per-result lookup here.
+    if entry.assertions:
+        base["assertions"] = [a.model_dump(mode="json") for a in entry.assertions]
+    if entry.anchors:
+        base["anchors"] = [a.model_dump(mode="json") for a in entry.anchors]
+    base["verification_status"] = getattr(entry, "verification_status", None)
+    checked_at = getattr(entry, "verification_checked_at", None)
+    base["verification_checked_at"] = checked_at.isoformat() if isinstance(checked_at, datetime) else checked_at
+    base["anchor_validity"] = entry.anchor_validity
     if compact:
+        signals = current_recall_signals()
+        if signals is not None:
+            signals.transfer(entry, base)
         return cast("LearningEntryDict", base)
 
     base.update(
@@ -136,156 +143,7 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
         base["superseded"] = True
         base["invalidated_by"] = entry.invalidated_by
 
+    signals = current_recall_signals()
+    if signals is not None:
+        signals.transfer(entry, base)
     return cast("LearningEntryDict", base)
-
-
-def _learning_to_memory_entry(
-    learning_id: str,
-    summary: str,
-    detail: str,
-    *,
-    tags: list[str] | None = None,
-    evidence: list[str] | None = None,
-    impact: float = 0.5,
-    shard_id: str | None = None,
-    source_type: str = "agent",
-    source_identity: str = "",
-    client_profile: str = "",
-    model_id: str = "",
-    assertions: list[dict[str, str]] | None = None,
-    # PRD-CORE-110: Typed learning fields
-    type: str = "pattern",
-    nudge_line: str = "",
-    expires: str = "",
-    confidence: str = "unverified",
-    task_type: str = "",
-    domain: list[str] | None = None,
-    phase_origin: str = "",
-    phase_affinity: list[str] | None = None,
-    team_origin: str = "",
-    protection_tier: str = "normal",
-    # PRD-CORE-111: Code-grounded anchors
-    anchors: list[dict[str, object]] | None = None,
-    anchor_validity: float | None = None,
-    # PRD-DIST-254 §FR02 (cycle 112): caller-supplied metadata for
-    # promotion-policy keys (utility_grade, current_status, etc.).
-    metadata: dict[str, str] | None = None,
-    # PRD-CORE-185 FR05: write-tier override. ``"auto"`` => heuristic routing
-    # (portable -> user tier when a user-scope store is present, else project).
-    scope: Literal["auto", "project", "user"] = "auto",
-) -> MemoryEntry:
-    """Build a :class:`MemoryEntry` from trw_learn parameters.
-
-    Pre-seeds q_value from impact score so high-impact learnings start
-    with an elevated Q-value before any observations accumulate.
-
-    Caller-supplied ``metadata`` (PRD-DIST-254 §FR02) is merged with
-    internal keys (``shard_id``, etc.); caller keys win on collision.
-    Used by a downstream policy filter to plumb grader output
-    into stored records.
-
-    PRD-CORE-185 FR05: the destination ``namespace`` is no longer hard-coded.
-    It is resolved via :func:`route_tier` from the portability signals (source,
-    tags, domain, phase_affinity, content) and the optional ``scope`` override:
-    a portable learning lands in ``user:<id>`` (machine-local tier) when a
-    user-scope store is present; project-specific learnings (and everything when
-    no user-scope store exists) keep the project ``default`` namespace.
-    """
-    from trw_mcp.scoring._correlation import compute_initial_q_value
-    from trw_mcp.state._tier_routing import USER_NAMESPACE, route_tier
-
-    tier = route_tier(
-        scope=scope,
-        source_type=source_type,
-        tags=tags,
-        domain=domain,
-        phase_affinity=phase_affinity,
-        summary=summary,
-        detail=detail,
-    )
-    target_namespace = USER_NAMESPACE if tier == "user" else _NAMESPACE
-
-    merged_metadata: dict[str, str] = {}
-    if shard_id:
-        merged_metadata["shard_id"] = shard_id
-    if metadata:
-        merged_metadata.update(metadata)
-    # core185-11: stamp ``metadata["tier"]="user"`` on user-tier entries so the
-    # native store path matches the backfill-promotion path (``_promote_entry``),
-    # which already stamps it. ``tier_of_entry()`` reads this first, then falls
-    # back to the namespace. Project-tier entries are LEFT UNSTAMPED to preserve
-    # the back-compat metadata contract (callers asserting exact project-tier
-    # metadata stay green); the project tier is the default and its absence is
-    # itself the signal. NFR06: the store path also logs the chosen tier.
-    #
-    # core185-METADATA-TIER-INJECT-5: the routing decision is AUTHORITATIVE over
-    # any caller-supplied ``metadata["tier"]``. On user routing we stamp "user";
-    # on project routing we STRIP a caller-injected tier key so it cannot make
-    # ``tier_of_entry()`` mis-report "user" and divert a project entry into the
-    # user backend. This keeps the back-compat "project entries carry no tier
-    # key" contract while neutralizing the injection.
-    if tier == "user":
-        merged_metadata["tier"] = "user"
-    else:
-        merged_metadata.pop("tier", None)
-
-    # Validate and attach assertions (PRD-CORE-086)
-    assertion_objects: list[Assertion] = []
-    if assertions:
-        assertion_objects.extend(Assertion.model_validate(a, strict=False) for a in assertions)
-
-    # Validate anchors (PRD-CORE-111)
-    anchor_objects: list[Anchor] = []
-    if anchors:
-        for a in anchors:
-            try:
-                # Convert absolute paths to relative (Anchor rejects absolute)
-                anchor_data = dict(a)
-                file_val = str(anchor_data.get("file", ""))
-                if file_val.startswith("/"):
-                    anchor_data["file"] = file_val.lstrip("/")
-                anchor_objects.append(Anchor.model_validate(anchor_data))
-            except Exception:  # justified: fail-open, skip invalid anchors
-                logger.debug("invalid_anchor_skipped", anchor=a, exc_info=True)
-
-    # PRD-CORE-245 FR08: the flagship consumer's real write path goes through the
-    # shared construction helper, not a bare constructor. It used to leave
-    # ``vector_clock`` at its ``{}`` default, which is what makes an org-shared
-    # pull return the REMOTE entry outright even when the local row is newer.
-    from trw_memory.models.entry_factory import local_node_id_for, new_entry
-
-    return new_entry(
-        entry_id=learning_id,
-        content=summary,
-        namespace=target_namespace,
-        local_node_id=local_node_id_for(MemoryConfig().storage_path),
-        fields={
-            "detail": detail,
-            "tags": tags or [],
-            "evidence": evidence or [],
-            "importance": impact,
-            "source": cast("_SourceType", source_type if source_type in _VALID_SOURCES else "agent"),
-            "source_identity": source_identity,
-            "client_profile": client_profile,
-            "model_id": model_id,
-            "metadata": merged_metadata,
-            "q_value": compute_initial_q_value(impact),
-            "assertions": assertion_objects,
-            # PRD-CORE-110: Typed learning fields - convert strings to enums
-            "type": MemoryType(type) if isinstance(type, str) else type,
-            "nudge_line": nudge_line,
-            "expires": expires,
-            "confidence": Confidence(confidence) if isinstance(confidence, str) else confidence,
-            "task_type": task_type,
-            "domain": domain or [],
-            "phase_origin": phase_origin,
-            "phase_affinity": phase_affinity or [],
-            "team_origin": team_origin,
-            "protection_tier": (
-                ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier
-            ),
-            # PRD-CORE-111: Code-grounded anchors
-            "anchors": anchor_objects,
-            "anchor_validity": anchor_validity,
-        },
-    )

@@ -31,6 +31,7 @@ from trw_mcp.models.config._field_admission_registry_types import (
 )
 from trw_mcp.models.config._field_admission_review_verdict import REVIEW_VERDICT_ADMISSIONS
 from trw_mcp.models.config._field_admission_surface_role import SURFACE_ROLE_ADMISSIONS
+from trw_mcp.models.config._field_admission_tool_access_grant import TOOL_ACCESS_GRANT_ADMISSIONS
 from trw_mcp.models.config._field_admission_wal_checkpoint import WAL_CHECKPOINT_ADMISSIONS
 from trw_mcp.models.config._field_admission_writer_pressure import WRITER_PRESSURE_ADMISSIONS
 
@@ -373,4 +374,5 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **SURFACE_ROLE_ADMISSIONS,
     # PRD-FIX-131 follow-up: doctor thread-hotspot WARN threshold (own table).
     **DOCTOR_THREAD_HOTSPOT_ADMISSIONS,
+    **TOOL_ACCESS_GRANT_ADMISSIONS,
 }

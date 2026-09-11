@@ -66,7 +66,7 @@ PHASE_INPUT_CRITERIA: dict[str, list[str]] = {
         "Run initialized (run.yaml exists)",
     ],
     "implement": [
-        "Plan document exists (plan.md)",
+        "Planning remains an obligation; no plan-file presence or content check",
         "Wave manifest defined (manifest.yaml)",
         "PRDs at required status",
     ],
@@ -92,7 +92,7 @@ PHASE_EXIT_CRITERIA: dict[str, list[str]] = {
         "Open questions documented",
     ],
     "plan": [
-        "Plan document drafted (plan.md)",
+        "Planning remains an obligation; no plan-file presence or content check",
         "Wave manifest defined",
         "Shard cards specified with output contracts",
     ],

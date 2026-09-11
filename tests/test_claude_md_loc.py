@@ -15,14 +15,16 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
 # Integration tier: this module reads real repository files (CLAUDE.md,
 # trw-mcp/CLAUDE.md, docs/CLIENT-PROFILES.md) and uses tmp_path for the
 # negative lint check. Per .claude/rules/testing.md, tmp_path and real-file
 # I/O mark tests as integration — no unit marker applied.
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _ROOT_CLAUDE_MD = _REPO_ROOT / "CLAUDE.md"
-_TRW_MCP_CLAUDE_MD = _REPO_ROOT / "trw-mcp" / "CLAUDE.md"
+_TRW_MCP_CLAUDE_MD = PACKAGE_ROOT / "CLAUDE.md"
 _OPENCODE_INSTRUCTIONS = _REPO_ROOT / ".opencode" / "INSTRUCTIONS.md"
 _CLIENT_PROFILES_DOC = _REPO_ROOT / "docs" / "CLIENT-PROFILES.md"
 
@@ -31,6 +33,7 @@ def _line_count(path: Path) -> int:
     return len(path.read_text(encoding="utf-8").splitlines())
 
 
+@requires_monorepo
 def test_root_claude_md_loc_budget() -> None:
     """FR07: the project-root CLAUDE.md must stay at or below 200 effective LOC."""
     assert _ROOT_CLAUDE_MD.exists(), f"missing {_ROOT_CLAUDE_MD}"
@@ -48,6 +51,7 @@ def test_trw_mcp_claude_md_loc_budget() -> None:
     )
 
 
+@requires_monorepo
 def test_opencode_instructions_loc_budget() -> None:
     """FR07: .opencode/INSTRUCTIONS.md stays <=100 LOC (skip if absent)."""
     if not _OPENCODE_INSTRUCTIONS.exists():
@@ -56,6 +60,7 @@ def test_opencode_instructions_loc_budget() -> None:
     assert loc <= 100, f".opencode/INSTRUCTIONS.md is {loc} LOC; budget is 100."
 
 
+@requires_monorepo
 def test_profile_count_current() -> None:
     """FR12: stale 'Five built-in profiles' phrase must not appear in CLAUDE.md."""
     content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
@@ -64,6 +69,7 @@ def test_profile_count_current() -> None:
     )
 
 
+@requires_monorepo
 def test_client_profiles_doc_no_stale_count() -> None:
     """FR12: docs/CLIENT-PROFILES.md must not carry the stale 'Five built-in profiles' phrase.
 
@@ -93,6 +99,7 @@ _SPELLED_COUNTS: dict[int, str] = {
 }
 
 
+@requires_monorepo
 def test_profile_count_matches_registry() -> None:
     """FR12: every built-in-profile count in CLAUDE.md matches the live registry.
 

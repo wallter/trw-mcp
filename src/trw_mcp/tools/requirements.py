@@ -454,14 +454,6 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
             quality_tier=v2_result.quality_tier,
             failures=len(v2_result.failures),
         )
-        _min_threshold = config.completeness_min
-        if v2_result.completeness_score < _min_threshold:
-            logger.warning(
-                "prd_validate_below_threshold",
-                prd_id=_prd_id_str,
-                score=v2_result.completeness_score,
-                threshold=_min_threshold,
-            )
 
         validate_result: ValidateResultDict = build_validate_payload(
             v2_result,

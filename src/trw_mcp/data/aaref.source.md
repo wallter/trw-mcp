@@ -414,9 +414,9 @@ Higher risk raises the bar **and** shifts weight toward implementation-readiness
 <!-- trw:span id=af-lifecycle dest=core class=normative -->
 ### Lifecycle
 ```
-create → groom → risk/tier-required review → exec-plan → IMPLEMENT → VALIDATE → REVIEW when required → DELIVER → audit
+create → groom requirements + plan → risk/tier-required review of both → IMPLEMENT → VALIDATE → REVIEW when required → DELIVER → audit
 ```
-In the TRW reference: `trw_prd_create` → grooming → independent review when risk/tier requires it → execution planning → sprint execution → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit for P0/P1. Client adapters MAY provide shorthand for the middle stages; light clients use the MCP tools or the manual lifecycle. Sprint grouping is also an adapter concern. The grooming gate is “ready for review” (the score); the **verified-closure** standard is §6.2, while FRAMEWORK.md owns delivery and override semantics.
+In the TRW reference: `trw_prd_create` → requirements and execution-plan authoring → independent review when risk/tier requires it → implementation (optionally grouped in a sprint) → `trw_build_check` → `trw_deliver` → post-delivery adversarial audit for P0/P1. Client adapters MAY provide shorthand for the middle stages; light clients use the MCP tools or the manual lifecycle. Sprint grouping is also an adapter concern. The grooming gate is “ready for review” (the score); the **verified-closure** standard is §6.2, while FRAMEWORK.md owns delivery and override semantics.
 
 **Implementation-start gate** (the inverse of A3): if a PRD lacks acceptance criteria, declared verification methods, or objective pass conditions (§2.5) when implementation begins, STOP and groom before writing code. A3 catches false completion at the end; this catches unverifiable scope at the start.
 
@@ -550,10 +550,11 @@ Paths below are TRW-monorepo locations; new projects create their own per §9 (t
 <!-- trw:span id=af-appendix-d-execution-plan-artifact dest=reference class=reference -->
 ## Appendix D: Execution Plan Artifact
 
-An execution plan bridges a reviewed PRD to implementation by decomposing FRs into micro-tasks with file paths, test names, verification commands, and a dependency graph.
+An execution plan bridges requirements to implementation through behavior-sized tasks with verified paths/interfaces, acceptance evidence, verification methods, ownership, and dependencies. It is part of the work contract, not necessarily a separate document.
 
-- **When**: after review returns READY, before implementation; recommended for P0/P1.
-- **Storage**: `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`.
+- **When**: for new PRDs, author requirements and the plan together before the applicable independent readiness review; before implementation in all cases. Plan depth scales to risk; detailed planning is recommended for P0/P1, not a mandate to create PRDs for trivial work.
+- **Storage**: new PRDs default to an `## Execution Plan` section in the same PRD. Explicit project/operator artifact requirements take precedence. Existing reviewed PRDs and separate plans retain their authority; adoption does not authorize automatic migration or review invalidation. The legacy separate location remains `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`.
+- **Review boundary**: review the governing requirements and proposed execution together when required. One authoring artifact does not combine author and independent reviewer roles or authorize implementation from an unreviewed draft. Later changes obey the applicable scoped change/review contract. Sprints may aggregate work, but need not duplicate its requirement/task/evidence state.
 - **Principles**: short waves (small, verifiable units of work); function-level granularity (file-level planning misses secondary paths); a declared verification procedure and expected evidence per micro-task (use a command when automatable, a documented analysis/inspection/demonstration protocol otherwise); explicit dependencies.
 
 ---

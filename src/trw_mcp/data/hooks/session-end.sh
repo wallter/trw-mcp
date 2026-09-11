@@ -1,5 +1,5 @@
 #!/bin/sh
-# PRD-INFRA-002-FR06: SessionEnd hook — delivery check.
+# PRD-CORE-269-FR02: SessionEnd hook — advisory preservation reminder.
 # Warns (to stderr) if events were logged but trw_deliver was not called.
 # Advisory only — never blocks. Fail-open pattern.
 set -e
@@ -31,9 +31,8 @@ fi
 # were logged into your run") is unverifiable without an owned run, and there is
 # no session-scoped event count to substitute — .trw/context/session-events.jsonl
 # is a shared append-only log, so a run-less variant would fire on EVERY session
-# end whether or not this session did anything. The delivery reminder that
-# actually gates is stop-ceremony.sh, which handles the unpinned case explicitly;
-# this hook is the advisory echo of it. Housekeeping above still runs.
+# end whether or not this session did anything. Both this hook and
+# stop-ceremony.sh provide conditional advice only. Housekeeping above still runs.
 _session_id="${TRW_SESSION_ID:-}"
 if [ -z "$_session_id" ] && ! [ -t 0 ]; then
   _stdin_payload=$(cat 2>/dev/null) || _stdin_payload=""
@@ -82,7 +81,7 @@ if has_event "$_events_path" "reflection_complete" || has_event "$_events_path" 
 fi
 
 # Events exist but no reflection — warn
-echo "TRW: $_event_count events logged but trw_deliver was not called. Running it captures your learnings so the next session benefits from your work." >&2
+echo "TRW: If you have material unfinished work, preserve it in a checkpoint or durable native handoff with a next-read pointer. Completed-work delivery still requires its existing evidence gates." >&2
 
 log_hook_execution "SessionEnd" "" "0"
 

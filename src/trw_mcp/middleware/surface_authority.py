@@ -208,12 +208,19 @@ def _active_override_tools(session_id: str) -> frozenset[str]:
         return frozenset()
 
 
-def _consume_override(session_id: str, tool_name: str) -> bool:
-    """Consume (single-use) an active override for the pair (phase_overrides store)."""
+def _consume_override(session_id: str, tool_name: str, request: object | None = None) -> bool:
+    """Consume an active override for the pair (phase_overrides store).
+
+    *request* is the per-call ``MiddlewareContext``. It is what makes the grant
+    single-use per CALL rather than per GATE: this middleware runs before
+    ``phase_exposure``, and without it the pop here left nothing for that gate
+    to find, so a tool masked at both layers was denied on a grant that had
+    just been spent.
+    """
     try:
         from trw_mcp.tools.phase_overrides import consume_override
 
-        return consume_override(session_id, tool_name)
+        return consume_override(session_id, tool_name, request)
     except Exception:  # justified: fail-open — no override consumed on error
         logger.warning("surface_authority_override_consume_failed", exc_info=True)
         return False
@@ -384,7 +391,7 @@ class SurfaceAuthorityMiddleware(Middleware):
             # grant either.
             return self._deny(tool_name=tool_name, mode=resolved.mode, task_type=None, reviewer=True)
         # Outside the surface: an active single-use grant permits exactly one call.
-        if _consume_override(session_id, tool_name):
+        if _consume_override(session_id, tool_name, context):
             logger.info(
                 "surface_authority_override_call_allowed",
                 component="surface_authority",

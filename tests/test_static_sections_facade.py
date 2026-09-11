@@ -19,7 +19,6 @@ _REQUIRED_PUBLIC_SYMBOLS = frozenset(
         "_analytics_cache",
         "_format_learning_session_claim",
         "_load_analytics_counts",
-        "_load_prompting_guide",
         "generate_behavioral_protocol_md",
         "render_agents_trw_section",
         "render_behavioral_protocol",

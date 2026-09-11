@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
 
@@ -19,7 +21,7 @@ class TestPhaseContextualRecall:
         config: TRWConfig,
     ) -> None:
         with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]):
-            result = _phase_contextual_recall(trw_dir, "", config, None, None)
+            result = _phase_contextual_recall(trw_dir, "Entry", config, None, None)
         assert result == []
 
     def test_includes_phase_tags_from_run_status(
@@ -66,9 +68,9 @@ class TestPhaseContextualRecall:
             "trw_mcp.state.memory_adapter.recall_learnings",
             return_value=mock_entries,
         ):
-            result = _phase_contextual_recall(trw_dir, "", config, None, None)
+            result = _phase_contextual_recall(trw_dir, "Entry", config, None, None)
 
-        assert len(result) <= config.auto_recall_max_results
+        assert len(result) == config.auto_recall_max_results
         for entry in result:
             assert "id" in entry
             assert "summary" in entry
@@ -90,22 +92,28 @@ class TestPhaseContextualRecall:
         assert "testing" in str(query_arg)
         assert "gotchas" in str(query_arg)
 
-    def test_uses_compact_mode(
+    def test_projects_compact_output_after_full_evidence_selection(
         self,
         trw_dir: Path,
         config: TRWConfig,
     ) -> None:
-        """Phase-contextual recall must use compact=True to limit response size."""
-        with patch(
-            "trw_mcp.state.memory_adapter.recall_learnings",
-            return_value=[],
-        ) as mock_recall:
-            _phase_contextual_recall(trw_dir, "", config, None, None)
-
-        call_kwargs = mock_recall.call_args
-        assert call_kwargs is not None
-        compact_arg = call_kwargs.kwargs.get("compact")
-        assert compact_arg is True
+        """Detail affects selection, but only bounded projected fields escape."""
+        config.auto_recall_max_results = 1
+        entries = [
+            {"id": "L-ordinary", "summary": "routine instruction", "impact": 0.9},
+            {"id": "L-detail", "summary": "routine instruction", "impact": 0.5, "detail": "authentication"},
+        ]
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=entries) as mock_recall:
+            result = _phase_contextual_recall(trw_dir, "authentication", config, None, None)
+        assert mock_recall.call_args.kwargs["compact"] is False
+        assert mock_recall.call_args.kwargs["allow_cold_embedding_init"] is False
+        assert mock_recall.call_args.kwargs["max_results"] == 3
+        assert [row["id"] for row in result] == ["L-detail"]
+        assert set(result[0]) == {"id", "summary", "impact", "verification_evidence"}
+        entries[1].pop("detail")
+        with patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=entries):
+            without_detail = _phase_contextual_recall(trw_dir, "authentication", config, None, None)
+        assert without_detail[0]["id"] == "L-ordinary"
 
     def test_max_results_is_bounded(
         self,
@@ -117,7 +125,7 @@ class TestPhaseContextualRecall:
             "trw_mcp.state.memory_adapter.recall_learnings",
             return_value=[],
         ) as mock_recall:
-            _phase_contextual_recall(trw_dir, "", config, None, None)
+            _phase_contextual_recall(trw_dir, "Entry", config, None, None)
 
         call_kwargs = mock_recall.call_args
         assert call_kwargs is not None
@@ -156,3 +164,21 @@ class TestPhaseContextualRecall:
         assert lines[0]["context_phase"] == "IMPLEMENT"
         assert lines[0]["context_task_type"] == "phase_auto_recall"
         assert lines[0]["candidate_set"] == ["L-001", "L-002"]
+
+
+@pytest.mark.parametrize("query", ["", "   ", "*"])
+@pytest.mark.parametrize("run_status", [None, {"status": "no_active_run"}, {"task_name": "  ", "phase": " "}])
+def test_no_context_skips_secondary_work(trw_dir, config, query, run_status):
+    with (
+        patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=AssertionError("secondary lookup")),
+        patch("trw_mcp.state._recall_signals.recall_signal_scope", side_effect=AssertionError("signal scope")),
+        patch("trw_mcp.sync.cache.IntelligenceCache", side_effect=AssertionError("cache")),
+        patch("trw_mcp.tools._session_recall_phase.rank_by_utility", side_effect=AssertionError("ranking")),
+    ):
+        assert _phase_contextual_recall(trw_dir, query, config, None, run_status) == []
+
+
+def test_contextual_adapter_failure_is_not_misreported_as_empty(trw_dir, config):
+    with patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=RuntimeError("storage failed")):
+        with pytest.raises(RuntimeError, match="storage failed"):
+            _phase_contextual_recall(trw_dir, "authentication", config, None, None)

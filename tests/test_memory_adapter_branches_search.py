@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from trw_memory.embeddings.provenance import EmbeddingSpace, StoredVector, VectorProvenance
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
+from trw_memory.retrieval.pipeline import hybrid_search
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.memory_adapter import _keyword_search, _search_entries, get_backend
@@ -18,6 +20,9 @@ class _HybridEmbedder:
     """Embedder returning a fixed query vector; combined with patched stored
     embeddings this drives the real cosine ``dense_search`` ranker
     deterministically through ``hybrid_search``."""
+
+    def embedding_space(self) -> EmbeddingSpace:
+        return EmbeddingSpace("a" * 64, "hybrid-fixture-v1", 3)
 
     def embed(self, _text: str) -> list[float]:
         return [1.0, 0.0, 0.0]
@@ -38,15 +43,27 @@ def _run_hybrid(
     """Drive ``_search_entries`` through the REAL hybrid pipeline (BM25 + dense
     + RRF), injecting the dense ranking via patched stored embeddings."""
     cfg = TRWConfig()
+    # Bind the vectors to the actual stored text and deterministic test encoder.
+    records = {}
+    for entry_id, vector in stored.items():
+        entry = backend.get(entry_id, namespace="default")
+        assert entry is not None
+        records[entry_id] = StoredVector(
+            tuple(vector),
+            VectorProvenance.for_vector(_HybridEmbedder().embedding_space(), f"{entry.content} {entry.detail}", vector),
+        )
     with (
         patch(
             "trw_mcp.state._memory_connection.get_embedder",
             return_value=_HybridEmbedder(),
         ),
-        patch.object(backend, "get_stored_embeddings", return_value=stored),
+        patch.object(backend, "get_vector_records", return_value=records) as record_reader,
+        patch("trw_memory.retrieval.pipeline.hybrid_search", wraps=hybrid_search) as hybrid,
         patch("trw_mcp.models.config.get_config", return_value=cfg),
     ):
         results = _search_entries(backend, query, min_impact=min_impact, mem_status=mem_status, tags=tags)
+        hybrid.assert_called_once()
+        assert record_reader.call_args.kwargs["namespace"] == "default"
     return [e.id for e in results]
 
 
@@ -85,29 +102,33 @@ class TestSearchEntriesHybrid:
         backend = get_backend(trw_dir)
         backend.store(MemoryEntry(id="L-en1", content="embed none", detail="d"))
         mock_embedder = MagicMock()
+        mock_embedder.embedding_space.return_value = _HybridEmbedder().embedding_space()
         mock_embedder.embed.return_value = None
         with patch(
             "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             results = _search_entries(backend, "embed")
-            assert isinstance(results, list)
+            assert [entry.id for entry in results] == ["L-en1"]
+            mock_embedder.embed.assert_called_once_with("embed")
 
     def test_empty_vector_hits(self, trw_dir: Path) -> None:
-        """When search_vectors returns empty, falls back (line 416)."""
+        """No qualified generation records means lexical fallback, even with a ready encoder."""
         backend = get_backend(trw_dir)
         backend.store(MemoryEntry(id="L-ev1", content="vector empty", detail="d"))
         mock_embedder = MagicMock()
+        mock_embedder.embedding_space.return_value = _HybridEmbedder().embedding_space()
         mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
         with (
             patch(
                 "trw_mcp.state._memory_connection.get_embedder",
                 return_value=mock_embedder,
             ),
-            patch.object(backend, "search_vectors", return_value=[]),
+            patch.object(backend, "get_vector_records", return_value={}) as records,
         ):
             results = _search_entries(backend, "vector")
-            assert isinstance(results, list)
+            assert [entry.id for entry in results] == ["L-ev1"]
+            records.assert_called_once_with(["L-ev1"], namespace="default")
 
     def test_hybrid_rrf_fusion_success(self, trw_dir: Path) -> None:
         """Full hybrid path through the real BM25 + dense + RRF pipeline.
@@ -196,6 +217,7 @@ class TestSearchEntriesHybrid:
         backend.store(MemoryEntry(id="L-ex1", content="exception fallback", detail="d"))
 
         mock_embedder = MagicMock()
+        mock_embedder.embedding_space.return_value = _HybridEmbedder().embedding_space()
         mock_embedder.embed.side_effect = RuntimeError("vector crash")
 
         with patch(
@@ -203,4 +225,5 @@ class TestSearchEntriesHybrid:
             return_value=mock_embedder,
         ):
             results = _search_entries(backend, "exception")
-            assert isinstance(results, list)
+            assert [entry.id for entry in results] == ["L-ex1"]
+            mock_embedder.embed.assert_called_once_with("exception")

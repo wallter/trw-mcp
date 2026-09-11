@@ -14,9 +14,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _SCRIPT = _REPO_ROOT / "scripts" / "check-negative-claims.py"
-_AGENTS_DIR = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
+_AGENTS_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents"
 _AGENT_FILES = ("trw-auditor.md", "trw-adversarial-auditor.md", "trw-researcher.md", "trw-reviewer.md")
 
 
@@ -66,6 +68,7 @@ def _write_audit(tmp_path: Path, name: str, body: str) -> None:
     (audit / name).write_text(body, encoding="utf-8")
 
 
+@requires_monorepo
 def test_flags_unsupported_claim(tmp_path: Path) -> None:
     lint = _load_lint()
     _write_audit(tmp_path, "audit-1.md", "The function foo has no callers exist in the tree.\n")
@@ -74,6 +77,7 @@ def test_flags_unsupported_claim(tmp_path: Path) -> None:
     assert rc == 1
 
 
+@requires_monorepo
 def test_supported_claim_with_command_and_root_proof_not_flagged(tmp_path: Path) -> None:
     lint = _load_lint()
     body = (
@@ -85,6 +89,7 @@ def test_supported_claim_with_command_and_root_proof_not_flagged(tmp_path: Path)
     assert rc == 0
 
 
+@requires_monorepo
 def test_adjacent_line_evidence_suppresses(tmp_path: Path) -> None:
     lint = _load_lint()
     body = "no callers found for symbol bar.\n`trw_code_search(pattern='bar', root='trw-mcp/src')`\n"
@@ -93,6 +98,7 @@ def test_adjacent_line_evidence_suppresses(tmp_path: Path) -> None:
     assert lint.main(["--scope", str(scope), "--root", str(tmp_path), "--strict"]) == 0
 
 
+@requires_monorepo
 def test_default_mode_exit_zero_regardless(tmp_path: Path) -> None:
     lint = _load_lint()
     _write_audit(tmp_path, "audit-4.md", "no callers exist and nothing references it.\n")
@@ -101,6 +107,7 @@ def test_default_mode_exit_zero_regardless(tmp_path: Path) -> None:
     assert lint.main(["--scope", str(scope), "--root", str(tmp_path)]) == 0
 
 
+@requires_monorepo
 def test_ratchet_exit_one_above_baseline(tmp_path: Path) -> None:
     lint = _load_lint()
     _write_audit(tmp_path, "audit-5.md", "no callers exist.\ndoes not exist anywhere.\n")
@@ -111,11 +118,13 @@ def test_ratchet_exit_one_above_baseline(tmp_path: Path) -> None:
     assert lint.main(["--scope", str(scope), "--root", str(tmp_path), "--ratchet", "5"]) == 0
 
 
+@requires_monorepo
 def test_missing_scope_config_exit_two(tmp_path: Path) -> None:
     lint = _load_lint()
     assert lint.main(["--scope", str(tmp_path / "nope.yaml"), "--root", str(tmp_path), "--strict"]) == 2
 
 
+@requires_monorepo
 def test_negative_claim_outside_scope_not_scanned(tmp_path: Path) -> None:
     lint = _load_lint()
     # A README (not an audit doc) with a negative claim is out of scope.

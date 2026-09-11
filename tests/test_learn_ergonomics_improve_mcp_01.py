@@ -102,3 +102,52 @@ def test_other_injection_patterns_still_blocked(detail: str) -> None:
 def test_length_caps_preserved() -> None:
     assert _content_policy_reject(summary="x" * 2001, detail="")["reason"] == "summary_too_long"  # type: ignore[index]
     assert _content_policy_reject(summary="s", detail="y" * 4001)["reason"] == "detail_too_long"  # type: ignore[index]
+
+
+# --- FR1 rollout parity: trw_learn_update and trw_recall accept the same shapes ---
+# The coercion shipped on trw_learn only. The asymmetry was a live trap: a caller
+# that recorded a learning with tags="a,b" then hit a pydantic list_type rejection
+# on the update path for the identical value (observed 2026-09-10).
+
+
+def _tool_params(name: str) -> dict[str, object]:
+    """Resolve a registered trw tool's signature by name."""
+    import inspect
+
+    from trw_mcp.tools.learning import register_learning_tools as register_learning
+
+    captured: dict[str, object] = {}
+
+    class _Server:
+        def tool(self, *_a: object, **_k: object):
+            def _decorate(fn):
+                captured[fn.__name__] = fn
+                return fn
+
+            return _decorate
+
+    register_learning(_Server())  # type: ignore[arg-type]
+    return dict(inspect.signature(captured[name]).parameters)
+
+
+@pytest.mark.parametrize("tool", ["trw_learn", "trw_learn_update", "trw_recall"])
+def test_tags_annotation_accepts_bare_str_on_every_learning_tool(tool: str) -> None:
+    """All three tools advertise ``list[str] | str | None``, not just trw_learn.
+
+    The module uses ``from __future__ import annotations``, so the signature
+    carries the annotation as a STRING — hence union members are parsed by
+    splitting on ``|`` rather than via ``typing.get_args`` (which returns ()
+    for a string). Membership, not substring: ``list[str] | None`` also contains
+    the text "str", so a substring check would pass without the fix.
+    """
+    annotation = _tool_params(tool)["tags"].annotation  # type: ignore[union-attr]
+    members = {part.strip() for part in str(annotation).split("|")}
+    assert "str" in members, (
+        f"{tool} tags annotation {annotation!r} must include bare `str` as a union member; got {sorted(members)!r}"
+    )
+    assert "list[str]" in members, f"{tool} must still accept a real list"
+
+
+def test_coerce_tags_empty_list_is_preserved_not_nulled() -> None:
+    """trw_learn_update documents ``[] clears it`` — coercion must not turn [] into None."""
+    assert _coerce_tags([]) == []

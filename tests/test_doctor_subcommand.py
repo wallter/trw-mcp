@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.server import _doctor_backend_connectivity as backend_conn
 from trw_mcp.server import _subcommands_doctor as doctor
 from trw_mcp.server._subcommands_doctor import (
     CheckResult,
@@ -422,7 +423,7 @@ def test_backend_skip_and_installer_advisory(tmp_path: Path, monkeypatch: pytest
         called["http"] = True
         raise AssertionError("doctor made a network call on an empty backend_url")
 
-    monkeypatch.setattr(doctor, "_probe_backend_url", _tripwire)
+    monkeypatch.setattr(backend_conn, "probe_backend_url", _tripwire)
     results = _doctor_core(tmp_path, _make_config(tmp_path, backend_url=""))
 
     conn = _status_of(results, "backend_connectivity")
@@ -437,6 +438,88 @@ def test_backend_skip_and_installer_advisory(tmp_path: Path, monkeypatch: pytest
     assert _overall_status(results) != "fail"
 
 
+def test_empty_backend_url_with_a_resolved_platform_target_does_not_claim_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shipped configuration, which this row used to describe as fully offline.
+
+    ``backend_url`` is empty but ``platform_urls`` + ``platform_api_key`` resolve
+    to a real host that ``submit_feedback`` and sync will POST to. The row used
+    to answer "no backend_url configured — fully offline (no network call
+    made)": true about the check, false about the process, and read by an
+    operator auditing egress (``sub_alqafW7Pst40zAIK``). It must now name the
+    resolved target and say only that it did not probe it.
+
+    The no-network guarantee is unchanged and still asserted here — the probe
+    scope was never the defect.
+    """
+
+    def _tripwire(*_a: object, **_k: object) -> None:
+        raise AssertionError("doctor probed a host it only meant to describe")
+
+    monkeypatch.setattr(backend_conn, "probe_backend_url", _tripwire)
+    config = TRWConfig(
+        target_platforms=["claude-code"],
+        backend_url="",
+        platform_urls=["https://api.example.test"],
+        platform_api_key="k" * 40,
+    )
+
+    conn = _status_of(_doctor_core(tmp_path, config), "backend_connectivity")
+
+    assert conn.status == "SKIP", "not probing is not a failure"
+    assert "api.example.test" in conn.message, "the row must name what the process will talk to"
+    assert "fully offline" not in conn.message
+    assert "NOT probed" in conn.message
+
+
+def _key_text(config: TRWConfig) -> str:
+    """The platform key as text. It is a SecretStr, so str() would give a mask."""
+    raw = config.platform_api_key
+    return raw.get_secret_value() if hasattr(raw, "get_secret_value") else str(raw)
+
+
+def test_the_doctor_config_resolves_the_credential_the_way_production_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Dropping config.yaml's key is right; stopping there made the row lie.
+
+    PRD-SEC-005-FR03 says a tracked config.yaml is never a credential source,
+    and _resolve_target_config correctly pops it. But the live cascade continues
+    on to the env vars and .trw/credentials.yaml, and the doctor did not — so it
+    built a config with no key, therefore no resolved sync target, and reported
+    "no egress path configured" on a machine whose every real consumer was
+    posting to the platform. Measured on this repo 2026-09-10: get_config()
+    resolved api.trwframework.com while _resolve_target_config resolved "".
+
+    That made the backend_connectivity fix inert on the CLI path, which is the
+    path an operator actually runs.
+    """
+    from trw_mcp.server._subcommands_doctor import _resolve_target_config
+
+    trw = tmp_path / ".trw"
+    trw.mkdir()
+    (trw / "config.yaml").write_text(
+        "platform_urls:\n  - https://api.example.test\nplatform_api_key: 'leaked-into-tracked-config'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("TRW_PLATFORM_API_KEY", raising=False)
+    monkeypatch.delenv("TRW_API_KEY", raising=False)
+
+    # No credentials.yaml: the tracked config.yaml key must NOT be honoured.
+    without = _resolve_target_config(tmp_path)
+    assert _key_text(without) != "leaked-into-tracked-config"
+    assert without.resolved_backend_url == "", "a tracked config.yaml is never a credential source"
+
+    # With credentials.yaml: the same cascade production uses must apply.
+    (trw / "credentials.yaml").write_text("platform_api_key: k" + "e" * 40 + "\n", encoding="utf-8")
+    with_creds = _resolve_target_config(tmp_path)
+    assert _key_text(with_creds).startswith("k"), "credentials.yaml is the credential source"
+    assert with_creds.resolved_backend_url == "https://api.example.test", (
+        "the doctor must see the same egress posture the process will"
+    )
+
+
 def test_installer_advisory_skips_and_overall_pass_on_clean_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -448,22 +531,11 @@ def test_installer_advisory_skips_and_overall_pass_on_clean_tree(
     """
     # Force every non-advisory check to PASS so the advisory row is the only thing
     # that could degrade the overall verdict.
-    for fn_name in (
-        "_check_python_version",
-        "_check_config",
-        "_check_mcp_import",
-        "_check_profile",
-        "_check_instruction_gate",
-        "_check_trw_dir",
-        "_check_memory_backend",
-        "_check_backend_connectivity",
-        # PRD-CORE-252-FR05: an empty tmp_path has no installed agents, so the
-        # parity check legitimately WARNs there. It is forced like the rest so
-        # the advisory row stays the only thing that could move the verdict.
-        "_check_agent_parity",
-    ):
-        name = fn_name.removeprefix("_check_")
-        monkeypatch.setattr(doctor, fn_name, lambda _t, _c, _n=name: CheckResult(_n, "PASS", "forced pass"))
+    subject = "_check_installer_flag_advisory"
+    assert any(fn_name == subject for _, fn_name in doctor._CHECKS)
+    for name, fn_name in doctor._CHECKS:
+        if fn_name != subject:
+            monkeypatch.setattr(doctor, fn_name, lambda _t, _c, _n=name: CheckResult(_n, "PASS", "forced pass"))
 
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     advisory = _status_of(results, "installer_flag")
@@ -489,7 +561,7 @@ def test_backend_probe_runs_when_configured(tmp_path: Path, monkeypatch: pytest.
         seen.append(url)
         return True, "200 OK"
 
-    monkeypatch.setattr(doctor, "_probe_backend_url", _probe)
+    monkeypatch.setattr(backend_conn, "probe_backend_url", _probe)
     results = _doctor_core(tmp_path, _make_config(tmp_path, backend_url="http://127.0.0.1:9999"))
     conn = _status_of(results, "backend_connectivity")
     assert conn.status == "PASS"

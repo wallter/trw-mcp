@@ -258,7 +258,22 @@ class TestLearningTools:
             # Compact projection drops the heavy fields; a regression that stops
             # trimming would silently multiply every caller's token cost.
             assert "detail" not in entry, f"compact projection leaked detail: {entry}"
-            assert set(entry) == {"id", "summary", "tags", "impact", "status"}, entry
+            assert set(entry) == {
+                "id",
+                "summary",
+                "tags",
+                "impact",
+                "status",
+                "verification_status",
+                "verification_evidence",
+            }, entry
+            # Newly captured entries have no stored verification observation.
+            assert entry["verification_status"] == "unknown"
+            evidence = entry["verification_evidence"]
+            assert evidence["observation"] == "unknown"
+            assert evidence["assertions"] == []
+            assert evidence["aggregate"]["freshness"] == "unknown"
+            assert evidence["current_tree_verified"] is False
 
     def test_learn_update_status(self, tmp_project: Path) -> None:
         """3.7: Update learning status."""

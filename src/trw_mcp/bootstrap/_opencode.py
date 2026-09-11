@@ -230,6 +230,19 @@ def install_opencode_skills(
                 force=force,
                 manifest_hashes=manifest_hashes,
             )
+        if skill_name == "trw-prd-ready":
+            # ND3: ship the shared owners as local supporting files, not another
+            # hand-maintained OpenCode pipeline or a monorepo-only pointer.
+            for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
+                filename = f"{phase}-contract.md"
+                _copy_file(
+                    base_dir.parent / "skills" / phase / "SKILL.md",
+                    dest_skill / filename,
+                    f".opencode/skills/{skill_name}/{filename}",
+                    result,
+                    force=force,
+                    manifest_hashes=manifest_hashes,
+                )
     return result
 
 

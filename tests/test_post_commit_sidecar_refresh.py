@@ -9,6 +9,7 @@ and the bundled hook's fail-open contract.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -198,8 +199,9 @@ def test_targets_file_is_removed_after_use() -> None:
 #: a batch sidecar covering a chosen subset of the targets it was handed. Both
 #: halves are independent ON PURPOSE: the defect this file guards is precisely
 #: an exit code of 0 alongside artifacts that do not cover the target set.
-_STUB_CLI = """#!/usr/bin/env python3
-import json, os, subprocess, sys
+_STUB_CLI = (
+    f"#!{sys.executable}\n"
+    + """import json, os, subprocess, sys
 covers = os.environ.get("STUB_COVERS", "")
 if covers:
     argv = sys.argv[1:]
@@ -229,6 +231,7 @@ if covers:
 sys.stderr.write("stub\\n")
 sys.exit(int(os.environ.get("STUB_EXIT", "0")))
 """
+)
 
 
 def _run_refresh_with_stub_cli(

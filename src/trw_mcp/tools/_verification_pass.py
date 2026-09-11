@@ -153,7 +153,7 @@ def _apply_verdict(outcome: VerificationOutcome, *, moment: datetime, anchor_flo
     if outcome.verification_status == "stale":
         return
     anchors_clean = outcome.anchor_validity is None or outcome.anchor_validity >= anchor_floor
-    if outcome.failing == 0 and anchors_clean:
+    if outcome.failing == 0 and outcome.stale == 0 and anchors_clean:
         outcome.verification_status = "verified"
 
 
@@ -198,7 +198,9 @@ def run_verification_pass(
     outcome.anchor_validity = _reverify_anchors(raw_anchors, project_root, entry_id)
 
     if not raw_assertions:
-        # Anchors-only entry: the anchor recomputation IS the examination.
+        # Anchors-only entry: unavailable anchors must not erase prior evidence.
+        outcome.verifiable = outcome.anchor_validity is not None
+        # The anchor recomputation IS the examination.
         _apply_verdict(outcome, moment=moment, anchor_floor=anchor_validity_verified_floor)
         return outcome
 
@@ -228,9 +230,10 @@ def run_verification_pass(
         # swallowed by the best-effort handler for any assertion that already
         # carried a first_failed_at — i.e. exactly the stale candidates.
         a_dict = assertion.model_dump(mode="json")
-        a_dict["last_result"] = result.passed
-        a_dict["last_verified_at"] = moment.isoformat()
-        a_dict["last_evidence"] = result.evidence
+        if result.passed is not None:
+            a_dict["last_result"] = result.passed
+            a_dict["last_verified_at"] = moment.isoformat()
+            a_dict["last_evidence"] = result.evidence
         # FR08: track first_failed_at transitions.
         if result.passed is False:
             if assertion.first_failed_at is None:

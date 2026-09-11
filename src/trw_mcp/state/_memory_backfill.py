@@ -6,6 +6,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from trw_memory.embeddings.provenance import generation_provenance_kwargs
+
 
 def run_backfill_embeddings(
     trw_dir: Path,
@@ -80,7 +82,9 @@ def run_backfill_embeddings(
                 failed += 1
                 continue
 
-            backend.upsert_vector(entry.id, vector, namespace=entry.namespace)
+            backend.upsert_vector(
+                entry.id, vector, namespace=entry.namespace, **generation_provenance_kwargs(embedder, text, vector)
+            )
             embedded += 1
         except (OSError, ValueError, RuntimeError):
             failed += 1

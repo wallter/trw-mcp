@@ -452,3 +452,13 @@ def test_a_pre_change_config_still_loads_with_unchanged_defaults() -> None:
     assert cfg.run_stale_ttl_hours == 48
     assert cfg.run_auto_close_enabled is True
     assert cfg.assertion_stale_threshold_days == 30
+
+
+def test_checkpoint_log_location_survives_both_projection_modes() -> None:
+    """CORE269 NFR02: preserve a location, without constructing recovered content."""
+    for verbose in (False, True):
+        results = _make_results(20)
+        results["run"]["checkpoint_log_path"] = "/path/run/meta/checkpoints.jsonl"
+        result = trim_session_start_payload(results, verbose=verbose)
+        assert result["run"] == results["run"]
+        assert result["run"]["checkpoint_log_path"] == "/path/run/meta/checkpoints.jsonl"

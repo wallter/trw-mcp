@@ -11,8 +11,31 @@ argument-hint: "[PRD-ID or file path]"
 
 # PRD Grooming Skill
 
-Groom a PRD until full validation is non-partial, valid, and in the risk-scaled `approved` tier. Use `total_score`
-(0-100) only to report progress; never gate on deprecated `completeness_score`.
+Groom a PRD using one selected readiness predicate throughout baseline, early exit,
+iteration and completion. The **default target** requires full nonpartial validation,
+`valid: true`, and risk-scaled `quality_tier: approved`. `total_score` is diagnostic;
+never gate on deprecated `completeness_score`.
+
+The **initial-authoring target** applies only when the embedded ready caller supplies
+this invocation's successful creation result bound to the exact output path and
+retained initial-authoring provenance. It requires full nonpartial validation and
+`valid: true`, with no unresolved substantive blockers; tier is diagnostic, not an
+approved-tier prerequisite. Research and author genuine grounded requirements before
+review, not filler for scores. Draft status, missing plan, existing ID/path, and
+failed/uncertain creation do not select this target or grant editing authority.
+
+Initial-authoring scope also permits the exec-plan owner to draft the plan before review.
+A deficient plan may return requirements here within that original scope; new user-scope
+uncertainty stops rather than inventing intent.
+For successfully created new input, the readiness caller permits up to two NEEDS WORK repair cycles
+within the original user scope, directed by independent reviewer findings. Retain creation
+provenance; it is not a one-use edit permission. Every revision invalidates old review
+and requires full validation plus fresh author-independent review. New scope, BLOCK,
+missing evidence, tool/review failure, or exhausted cycles stops. After READY, stop read-only.
+Existing-input repair still requires separately authorized scope; without it, stop read-only.
+This internal target is not a new public option, tool argument, code execution permission,
+or review bypass.
+Initial authoring preserves lifecycle/status and version unless separately authorized.
 
 ## Workflow
 
@@ -25,7 +48,11 @@ Groom a PRD until full validation is non-partial, valid, and in the risk-scaled 
 2. **Read and baseline**: Read the PRD completely. Call full `trw_prd_validate(prd_path)` and retain
    `validation_partial`, `valid`, `quality_tier`, `total_score`, `sections_expected`, failures, and suggestions.
 
-3. **Early exit**: Exit only when `validation_partial: false`, `valid: true`, and `quality_tier: approved`.
+3. **Early exit**: Exit only when the selected readiness predicate passes.
+   For invocation-created input, first substantively assess original intent coverage,
+   acceptance criteria, non-goals, unresolved questions and verified implementation/proof
+   seams even if the skeleton is already valid. No unresolved substantive blockers may
+   remain; do not require pointless rewriting of adequate content.
 
 4. **Research phase**:
    - Call `trw_recall` with keywords from the PRD Background section
@@ -44,11 +71,13 @@ Groom a PRD until full validation is non-partial, valid, and in the risk-scaled 
 6. **Validation loop** (max 3 iterations):
    a. Write updated PRD
    b. Call `trw_prd_validate(prd_path)` to check quality
-   c. If the readiness predicate passes, exit with success
-   d. If improvement is less than 5 `total_score` points, stop for convergence
-   e. Parse validation failures and draft fixes
+   c. If the selected readiness predicate passes, exit with success
+   d. For the default target, improvement below 5 `total_score` points stops for convergence.
+      For initial authoring or authorized embedded repair, stop on unresolved substantive
+      blockers or no evidence-backed progress toward validity, not five-point score movement.
+   e. Parse validation failures and draft fixes within the authorized scope
 
-7. **Completion**: Report the result fields and remaining gaps. Use `trw_learn` only for a durable
+7. **Completion**: Success requires the same selected readiness predicate; otherwise report blocked or exhausted, not ready. Report the selected target, result fields and remaining gaps. Record the outcome in the run artifact. Use `trw_learn` only for a durable
    requirements-pattern discovery, not for routine "PRD groomed" status.
 
 ## Style Guidance

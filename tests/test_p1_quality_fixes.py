@@ -132,45 +132,39 @@ class TestAnchorGenerationAll:
 # ---------------------------------------------------------------------------
 
 
-class TestMemoryTransformsTypeSafety:
-    """Anchor and Assertion are imported directly, not via try/except."""
+class TestStoreArgumentsTypeSafety:
+    """Anchor and Assertion are imported directly, not via try/except.
+
+    PRD-CORE-251 FR03 moved the marshalling these guard from
+    ``_memory_transforms`` (whose construction half is gone) to
+    ``_store_arguments``; the fix they pin -- typed containers instead of
+    ``list[Any]`` behind an optional import -- travelled with it.
+    """
+
+    def _source(self) -> str:
+        import inspect
+
+        from trw_mcp.state import _store_arguments
+
+        return inspect.getsource(_store_arguments)
 
     def test_anchor_import_is_unconditional(self) -> None:
         """The Anchor import should not be behind a try/except."""
-        import inspect
-
-        from trw_mcp.state import _memory_transforms
-
-        source = inspect.getsource(_memory_transforms)
-        # The old pattern had "Anchor = cast" as a fallback — should be gone
-        assert "Anchor = cast" not in source
+        assert "Anchor = cast" not in self._source()
 
     def test_assertion_import_is_unconditional(self) -> None:
         """The Assertion import should not be behind a try/except."""
-        import inspect
-
-        from trw_mcp.state import _memory_transforms
-
-        source = inspect.getsource(_memory_transforms)
-        assert "Assertion = cast" not in source
+        assert "Assertion = cast" not in self._source()
 
     def test_anchor_objects_typed_as_anchor(self) -> None:
         """anchor_objects should be typed as list[Anchor], not list[Any]."""
-        import inspect
-
-        from trw_mcp.state import _memory_transforms
-
-        source = inspect.getsource(_memory_transforms)
-        assert "list[Anchor]" in source
+        assert "list[Anchor]" in self._source()
 
     def test_assertion_objects_typed_as_assertion(self) -> None:
-        """assertion_objects should be typed as list[Assertion], not list[Any]."""
-        import inspect
+        """The marshalled assertions must be Assertion objects, not raw dicts."""
+        from trw_mcp.state._store_arguments import StoreArguments
 
-        from trw_mcp.state import _memory_transforms
-
-        source = inspect.getsource(_memory_transforms)
-        assert "list[Assertion]" in source
+        assert StoreArguments.__annotations__["assertions"] == "list[Assertion]"
 
 
 # ---------------------------------------------------------------------------

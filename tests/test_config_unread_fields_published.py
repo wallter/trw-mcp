@@ -16,7 +16,9 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _BASELINE = _REPO_ROOT / ".trw" / "compliance" / "config-field-consumers-baseline.json"
 
 
@@ -46,6 +48,7 @@ def test_published_set_names_only_real_config_fields() -> None:
     assert unknown == [], f"published unread set names fields TRWConfig does not declare: {unknown}"
 
 
+@requires_monorepo
 def test_published_set_matches_the_ratchet_baseline() -> None:
     """The shipped copy and the ratchet ledger are one measurement, minus class E.
 
@@ -65,8 +68,6 @@ def test_published_set_matches_the_ratchet_baseline() -> None:
     """
     from trw_mcp.models.config import unread_config_fields
 
-    if not _BASELINE.is_file():  # pragma: no cover - baseline ships with the repo
-        pytest.skip("compliance baseline not present in this checkout")
     baseline_doc = json.loads(_BASELINE.read_text(encoding="utf-8"))
     baseline = set(baseline_doc["fields"])
     classifications = baseline_doc.get("classifications", {})
@@ -84,7 +85,7 @@ def test_a_published_name_is_genuinely_unread_in_production() -> None:
     """
     from trw_mcp.models.config import unread_config_fields
 
-    src = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp"
+    src = PACKAGE_ROOT / "src" / "trw_mcp"
     blob = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")
         for path in src.rglob("*.py")

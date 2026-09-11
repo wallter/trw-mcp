@@ -401,9 +401,10 @@ def register_ceremony_tools(server: FastMCP) -> None:
     ) -> DeliverResultDict:
         """Persist learnings and progress so future sessions inherit this session's work.
 
-        Use when ending a session or closing a validated milestone. Record any
-        non-obvious discovery with trw_learn first; do not manufacture a learning
-        for trivial work.
+        Use when accepting completed work, not merely ending a session. Preserve
+        material unfinished work with a checkpoint or durable native handoff
+        and a next-read pointer instead. Already captured learnings persist;
+        do not duplicate them or manufacture a learning for trivial work.
 
         allow_unverified overrides a hard delivery gate and then needs
         unverified_reason as a structured acceptable-failure record (JSON or

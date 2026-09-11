@@ -67,13 +67,14 @@ _SYSTEM_TASK_KEYWORDS: tuple[str, ...] = (
 )
 
 _WRITER_PRESSURE_RECALL_CAP = 8
-_SESSION_START_COMPACT_FIELDS = ("id", "summary", "impact", "status")
+_SESSION_START_COMPACT_FIELDS = ("id", "summary", "impact", "status", "verification_evidence", "verification_status")
 
 
-def _compact_session_start_learning(entry: dict[str, object]) -> dict[str, object]:
+def _compact_session_start_learning(entry: dict[str, object], *, include_detail: bool = False) -> dict[str, object]:
     """Return the minimal learning payload needed for session-start context."""
 
-    return {field: entry[field] for field in _SESSION_START_COMPACT_FIELDS if field in entry}
+    fields = _SESSION_START_COMPACT_FIELDS + (("detail", "detail_truncated") if include_detail else ())
+    return {field: entry[field] for field in fields if field in entry}
 
 
 def _phase_to_tags(phase: str) -> list[str]:
@@ -156,7 +157,9 @@ def perform_session_recalls(
     )
 
     if is_focused:
-        focused = recall_focused(trw_dir, query, max_results=effective_max)
+        from trw_mcp.tools._session_recall_content import carry_focused_content
+
+        focused = carry_focused_content(recall_focused(trw_dir, query, max_results=effective_max))
         baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
         extra["query"] = query
         extra["query_matched"] = len(focused)
@@ -173,7 +176,6 @@ def perform_session_recalls(
             if learning_id and learning_id not in seen_ids:
                 seen_ids.add(learning_id)
                 learnings.append(entry)
-        learnings = learnings[:effective_max]
     else:
         baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
         # L-fovv fix: union the baseline (high-impact, for cross-session tribal
@@ -209,7 +211,19 @@ def perform_session_recalls(
                 # Fresh entries are highest-priority context for the current
                 # session; surface them before the high-impact baseline.
                 learnings = fresh_additions + learnings
-                learnings = learnings[:effective_max]
+
+    from trw_mcp.scoring import rank_by_utility
+    from trw_mcp.tools._recall_assertion_verification import _verify_assertions
+
+    # Qualify every acquired candidate before the final startup result cap.
+    learnings = _verify_assertions(learnings, query.lower().split() if is_focused else [], config, rank_by_utility)
+    if effective_max > 0:
+        learnings = learnings[:effective_max]
+
+    if is_focused:
+        from trw_mcp.tools._session_recall_content import project_focused_content
+
+        learnings = project_focused_content(learnings, _SESSION_START_COMPACT_FIELDS)
 
     # PRD-CORE-257-FR03: the recall side effects are a bounded ledger step, so a
     # streak that reaches the bound runs them despite pressure.
@@ -286,7 +300,10 @@ def perform_session_recalls(
 
     if compact_for_pressure:
         pre_compact_count = len(learnings)
-        learnings = [_compact_session_start_learning(entry) for entry in learnings[:_WRITER_PRESSURE_RECALL_CAP]]
+        learnings = [
+            _compact_session_start_learning(entry, include_detail=is_focused)
+            for entry in learnings[:_WRITER_PRESSURE_RECALL_CAP]
+        ]
         extra["response_compacted"] = True
         logger.warning(
             "session_start_response_compacted",

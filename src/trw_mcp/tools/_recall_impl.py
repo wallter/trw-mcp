@@ -164,8 +164,9 @@ def execute_recall(
     # truncates BEFORE deserializing the whole active corpus. max_results == 0
     # means unlimited, so keep the fetch unbounded in that case.
     fetch_limit = max_results * PREFETCH_MULTIPLIER if max_results > 0 else 0
-    # F-003: pass compact through so the backend skips loading the (up to
-    # 2000-char) detail field at deserialization rather than stripping it later.
+    # Compact is a response format, not an acquisition/ranking policy. The
+    # storage adapter hydrates MemoryEntry before projection; early compact
+    # projection discarded detail and utility evidence, changing the winner.
     # PRD-CORE-185 FR07: forward include_tiers only when the caller scoped it, so
     # injected recall doubles without the kwarg stay back-compatible.
     recall_kwargs: dict[str, Any] = {
@@ -174,7 +175,7 @@ def execute_recall(
         "min_impact": min_impact,
         "status": status,
         "max_results": fetch_limit,
-        "compact": use_compact,
+        "compact": False,
     }
     if include_tiers is not None:
         recall_kwargs["include_tiers"] = include_tiers
@@ -185,63 +186,56 @@ def execute_recall(
         recall_kwargs["as_of"] = as_of
     if include_superseded:
         recall_kwargs["include_superseded"] = include_superseded
-    matching_learnings = recall_fn(trw_dir, **recall_kwargs)
+    from trw_mcp.state._recall_signals import recall_signal_scope
 
-    # Topic-scoped pre-filter (PRD-CORE-021-FR07)
-    topic_filter_warning = ""
-    if topic is not None:
-        topic_filter_warning = _apply_topic_filter(trw_dir, config, topic, matching_learnings)
-    topic_filter_ignored = bool(topic_filter_warning)
+    with recall_signal_scope(query):
+        matching_learnings = recall_fn(trw_dir, **recall_kwargs)
 
-    # Update access tracking for recalled IDs. Skipped entirely under the
-    # reviewer role (Row 3): access_count/recall_count are fields IN the
-    # shared learnings store, so incrementing them is a write to it.
-    matched_ids = [str(e.get("id", "")) for e in matching_learnings if e.get("id")]
-    if not _reviewer:
-        # The default adapter understands federated ownership; injected legacy
-        # doubles retain the historical two-argument contract.
-        if access_fn is _default_access:
-            access_fn(trw_dir, matched_ids, federated=True)
-        else:
-            access_fn(trw_dir, matched_ids)
+        # Topic-scoped pre-filter (PRD-CORE-021-FR07)
+        topic_filter_warning = ""
+        if topic is not None:
+            topic_filter_warning = _apply_topic_filter(trw_dir, config, topic, matching_learnings)
+        topic_filter_ignored = bool(topic_filter_warning)
 
-        # Track each recalled learning for outcome-based calibration (PRD-CORE-034)
-        _track_recall(matched_ids, query)
+        # Augment local results with remote shared learnings (PRD-CORE-033)
+        remote_recall_status: dict[str, object] | None = None
+        if not is_wildcard:
+            matching_learnings, remote_recall_status = _augment_with_remote(query, matching_learnings)
 
-    # Augment local results with remote shared learnings (PRD-CORE-033)
-    remote_recall_status: dict[str, object] | None = None
-    if not is_wildcard:
-        matching_learnings, remote_recall_status = _augment_with_remote(query, matching_learnings)
+        # Search patterns and rank all results by utility
+        matching_patterns = search_fn(
+            trw_dir / config.patterns_dir,
+            query_tokens,
+            reader,
+        )
+        # Qualify stored evidence before the one authoritative final ranking.
+        ranked_learnings = _verify_assertions(
+            matching_learnings, query_tokens, config, rank_fn, context=recall_context, rank_always=True
+        )
 
-    # Search patterns and rank all results by utility
-    matching_patterns = search_fn(
-        trw_dir / config.patterns_dir,
-        query_tokens,
-        reader,
-    )
-    ranked_learnings: list[dict[str, object]] = rank_fn(
-        matching_learnings,
-        query_tokens,
-        config.recall_utility_lambda,
-        context=recall_context,
-    )
-
-    # Capture pre-cap counts for the total_available response field.
-    #
-    # KNOWN LIMITATION (do not read this as a corpus size): F-001 caps the DB
-    # fetch at ``max_results * PREFETCH_MULTIPLIER``, so when the store holds
-    # more matches than that ceiling this is a FLOOR, not a total — a default
-    # recall over a 1.9k-entry active corpus reports ~125. PRD-CORE-236 FR05
-    # proposes collapsing this and ``total_matches`` (which are numerically
-    # identical whenever nothing was capped) into one field plus ``capped``;
-    # that FR is not approved, so the wire shape is left alone here.
-    total_available = len(ranked_learnings) + len(matching_patterns)
+        # Capture pre-cap counts for the total_available response field.
+        #
+        # KNOWN LIMITATION (do not read this as a corpus size): F-001 caps the DB
+        # fetch at ``max_results * PREFETCH_MULTIPLIER``, so when the store holds
+        # more matches than that ceiling this is a FLOOR, not a total — a default
+        # recall over a 1.9k-entry active corpus reports ~125. PRD-CORE-236 FR05
+        # proposes collapsing this and ``total_matches`` (which are numerically
+        # identical whenever nothing was capped) into one field plus ``capped``;
+        # that FR is not approved, so the wire shape is left alone here.
+        total_available = len(ranked_learnings) + len(matching_patterns)
 
     # Move already-in-context learnings behind fresh results before truncation.
     if deprioritized_ids:
         prioritized = [entry for entry in ranked_learnings if str(entry.get("id", "")) not in deprioritized_ids]
         deferred = [entry for entry in ranked_learnings if str(entry.get("id", "")) in deprioritized_ids]
         ranked_learnings = prioritized + deferred
+
+    # Query-relative eligibility outranks utility and context deprioritization.
+    # Partition before dedup too, so an ineligible near-duplicate cannot evict
+    # its eligible replacement before the output budget is applied.
+    from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD, prioritize_temporal_eligibility
+
+    ranked_learnings = prioritize_temporal_eligibility(ranked_learnings)
 
     # F-DEDUP-001: collapse near-duplicate entries on the ranked candidate set
     # BEFORE token budgeting and the max_results cap, so N near-identical copies
@@ -250,9 +244,15 @@ def execute_recall(
 
     # Strip internal ranking/telemetry state at the MCP response boundary,
     # BEFORE token budgeting so tokens_used reflects what the caller receives.
-    from trw_mcp.tools._recall_projection import strip_internal_response_fields
+    from trw_mcp.tools._recall_projection import compact_response_fields, strip_internal_response_fields
 
-    ranked_learnings = strip_internal_response_fields(ranked_learnings, config.recall_internal_fields)
+    ranked_learnings = strip_internal_response_fields(
+        ranked_learnings, config.recall_internal_fields | frozenset({TEMPORAL_ELIGIBILITY_FIELD})
+    )
+    if use_compact:
+        ranked_learnings = compact_response_fields(
+            ranked_learnings, config.recall_compact_fields | {"verification_evidence", "verification_status"}
+        )
 
     from trw_memory.retrieval.token_budget import (
         apply_token_budget,
@@ -280,6 +280,11 @@ def execute_recall(
         # if the budget already trimmed the list (that state is unchanged).
         tokens_used = sum(estimate_serialized_entry_tokens(entry) for entry in ranked_learnings)
 
+    # Skip context collection for compact wildcard queries (saves I/O)
+    context_data: RecallContextDict = {}
+    if not (is_wildcard and use_compact):
+        context_data = cast("RecallContextDict", collect_fn(trw_dir, config.context_dir, reader))
+
     # --- Surface event logging (PRD-CORE-103-FR01) ---
     # Log each surfaced learning for telemetry/fatigue detection.
     # Skip compact/wildcard queries (bulk operations, not intentional
@@ -288,19 +293,18 @@ def execute_recall(
     if not use_compact and not _reviewer:
         _log_recall_surface_events(trw_dir, ranked_learnings, recall_context)
 
-    # --- Assertion verification (PRD-CORE-086 FR06) ---
-    if not use_compact:
-        ranked_learnings = _verify_assertions(ranked_learnings, query_tokens, config, rank_fn, context=recall_context)
-
-    # Strip to compact fields when requested
-    if use_compact:
-        allowed = config.recall_compact_fields
-        ranked_learnings = [{k: v for k, v in entry.items() if k in allowed} for entry in ranked_learnings]
-
-    # Skip context collection for compact wildcard queries (saves I/O)
-    context_data: RecallContextDict = {}
-    if not (is_wildcard and use_compact):
-        context_data = cast("RecallContextDict", collect_fn(trw_dir, config.context_dir, reader))
+    # Exposure means selected for this response, not merely prefetched. Record
+    # AFTER federation, deduplication, budgeting, clipping and verification so
+    # unseen candidates cannot affect access scores or outcome calibration.
+    # This measures exposure, not whether the agent used a learning helpfully.
+    surfaced_ids = [str(entry["id"]) for entry in ranked_learnings if entry.get("id")]
+    if surfaced_ids and not _reviewer:
+        # Preserve owning-store routing and the injected legacy call contract.
+        if access_fn is _default_access:
+            access_fn(trw_dir, surfaced_ids, federated=True)
+        else:
+            access_fn(trw_dir, surfaced_ids)
+        _track_recall(surfaced_ids, query)
 
     _top_impact = float(str(ranked_learnings[0].get("impact", 0.0))) if ranked_learnings else 0.0
     logger.info("recall_ok", query=query[:50], result_count=len(ranked_learnings), top_impact=_top_impact)
@@ -314,7 +318,10 @@ def execute_recall(
     )
 
     if ultra_compact:
-        return build_ultra_compact_recall_result(ranked_learnings)
+        minimal = build_ultra_compact_recall_result(ranked_learnings)
+        if remote_recall_status is not None:
+            minimal["remote_recall"] = remote_recall_status
+        return minimal
 
     recall_result: RecallResultDict = {
         "query": query,
@@ -504,8 +511,8 @@ def _augment_with_remote(
     """Augment local results with remote shared learnings (PRD-CORE-033).
 
     Returns the (possibly augmented) learnings plus a ``remote_recall`` status
-    payload when the remote leg was incomplete or failed, ``None`` when it
-    succeeded or is disabled. The caller puts that payload on the response so
+    payload when the remote leg was incomplete, failed, or returned records
+    without temporal validation. ``None`` means no advisory is needed. The caller puts that payload on the response so
     a fetch that raised is not indistinguishable from an empty remote corpus
     (wiring-defect pattern P5: the warning log never reached the agent).
 
@@ -539,7 +546,14 @@ def _augment_with_remote(
                 refused=remote.refused,
             )
         if remote.results:
-            return list(matching_learnings) + [dict(r) for r in remote.results], status
+            from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD
+
+            # Admission verifies content safety, not a peer's claimed temporal
+            # eligibility. Only the local producer may supply this marker.
+            sanitized = [{k: v for k, v in row.items() if k != TEMPORAL_ELIGIBILITY_FIELD} for row in remote.results]
+            status = dict(status or {"status": remote.status, "fetched": remote.fetched, "refused": remote.refused})
+            status["temporal_coverage"] = "not_evaluated"
+            return list(matching_learnings) + sanitized, status
         return list(matching_learnings), status
     except Exception as exc:  # justified: boundary, remote recall hits network/auth
         logger.warning(
@@ -553,15 +567,11 @@ def _augment_with_remote(
         return list(matching_learnings), {"status": "failed", "reason": type(exc).__name__}
 
 
-# Assertion verification helpers extracted to _recall_assertion_verification
-# (PRD-DIST-243 batch 8). Re-exported here so existing test imports
-# (``from trw_mcp.tools._recall_impl import _verify_assertions``) continue to
-# work. Patches against ``trw_mcp.state._paths.*`` /
-# ``trw_memory.lifecycle.verification.*`` still apply because internal imports
-# happen lazily inside _verify_assertions.
-from trw_mcp.tools._recall_assertion_verification import (
-    _assertion_result_detail as _assertion_result_detail,
-)
+# Historical facade imports remain compatible; recall now interprets stored
+# evidence only. Explicit maintenance owns the actual verifier and detail helper.
 from trw_mcp.tools._recall_assertion_verification import (
     _verify_assertions as _verify_assertions,
+)
+from trw_mcp.tools._verification_pass import (
+    _assertion_result_detail as _assertion_result_detail,
 )

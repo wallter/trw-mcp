@@ -9,26 +9,10 @@ artifacts the NEXT session reads first, immediately after a context compaction.
 That is the moment an agent has the least context with which to check a claim,
 so it is the worst possible place to assert a gate that will not fire.
 
-The list previously carried three FLAT consequence strings, none of which the
-code consulted:
-
-- ``trw_build_check() — required before delivery``. False for most runs. Under
-  the shipped ``deliver_gate_mode=block_coding`` a missing build check blocks
-  only coding/rca/eval; a docs, research, planning, or unknown-task-type run
-  delivers successfully without one. This is the same over-claim
-  ``_orchestration_gate_scan._build_gate_would_block`` was written to correct in
-  the ``trw_status`` summary — restated flat here, where nothing had caught it.
-- ``trw_review() — recommended before delivery``. Wrong in the other direction:
-  under ``review_gate_mode=block`` a STANDARD/COMPREHENSIVE run with no review
-  is HARD-BLOCKED, and "recommended" invites the agent to skip it and hit a wall.
-- ``trw_deliver() — required at session end``. No code enforces this one at all.
-
-CONSTITUTION HB-1 forbids asserting a consequence the system does not enforce,
-and the value hierarchy puts Truthfulness above the convenience of a fixed
-string. So each consequence is now resolved through THE SAME predicate the
-deliver path uses — imported, never re-derived — and the deliver obligation is
-restated on the ground that actually holds it up (VISION Principle 5: nothing
-else persists the session's learnings), not a gate that does not exist.
+Build and review consequences use the same predicates as delivery, never a
+parallel gate. PRD-CORE-269 separates material unfinished-work preservation from
+completed-work delivery. Recorded learnings already persist independently;
+checkpoint progress is not a new learning entry.
 
 Reusing ``_orchestration_gate_scan`` rather than re-reading config here is
 deliberate: ``trw_status``'s ``deliver_gate_summary``, ``trw_deliver``'s
@@ -51,12 +35,12 @@ logger = structlog.get_logger(__name__)
 #: statement of fact about ceremony state, so there is nothing to derive.
 _SESSION_STARTED = ("session_started", "trw_session_start()", "not yet called")
 
-#: VISION Principle 5, not a gate: no tool blocks on a missing ``trw_deliver``.
-#: The obligation is real (a session that ends without persisting material
-#: discoveries is a failure) so it is stated as the consequence that actually
-#: follows — the learnings are lost — rather than as an enforcement that is not
-#: there. Keeping the row is required: nudges are removed only by the operator.
-_DELIVER_DESC = "required at session end — nothing else persists this session's learnings"
+#: Missing delivery is not proof of lost capture or unfinished material work.
+_DELIVER_DESC = (
+    "for completed work under existing evidence gates; if you have material unfinished work, "
+    "preserve it in a checkpoint or durable native handoff with a next-read pointer. "
+    "Recorded learnings remain recorded; no material state requires no new artifact"
+)
 
 #: Wording used when a gate is proven to hard-block, and when it is not. Both
 #: keep the obligation visible; only the CONSEQUENCE differs, so nothing is

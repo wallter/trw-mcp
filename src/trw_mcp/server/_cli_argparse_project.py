@@ -54,6 +54,16 @@ def _ide_choice(value: str) -> str:
     return value
 
 
+def _positive_entry_bound(value: str) -> int:
+    try:
+        bound = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("entry bound must be a positive integer") from exc
+    if bound < 1:
+        raise argparse.ArgumentTypeError("entry bound must be a positive integer")
+    return bound
+
+
 def add_project_subcommands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
@@ -121,6 +131,18 @@ def add_project_subcommands(
         type=_ide_choice,
         default=None,
         help="Target IDE (auto-detect if not specified)",
+    )
+
+    update_parser.add_argument(
+        "--repair-embeddings",
+        type=_positive_entry_bound,
+        metavar="N",
+        help="Repair at most N existing project entries; run from target project. Maintenance only, no framework updates",
+    )
+    update_parser.add_argument(
+        "--embedding-after",
+        metavar="JSON",
+        help="Resume cursor with updated_at and entry_id; requires --repair-embeddings",
     )
 
     # audit

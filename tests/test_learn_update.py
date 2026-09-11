@@ -180,11 +180,16 @@ class TestLearnUpdateNewFields:
         result = self._run_update(tmp_project, tags=[])
         assert result.get("status") != "invalid", f"Got error: {result}"
 
-    def test_update_tags_non_list_rejected(self, tmp_project: Path) -> None:
-        """tags must be a list — a plain string is rejected."""
-        result = self._run_update(tmp_project, tags="not-a-list")
-        assert result.get("status") == "invalid"
-        assert "tags" in result.get("error", "").lower()
+    def test_update_tags_comma_string_is_coerced_not_rejected(self, tmp_project: Path) -> None:
+        """A comma/space string is accepted and split, matching trw_learn.
+
+        Superseded the old "a plain string is rejected" assertion on 2026-09-10:
+        trw_learn has accepted this shape since PRD-IMPROVE-MCP-01 FR1, and the
+        asymmetry meant a caller could record a learning with tags="a,b" and then
+        be rejected passing the identical value to the update path.
+        """
+        result = self._run_update(tmp_project, tags="alpha, beta gamma")
+        assert result.get("status") != "invalid", f"Got error: {result}"
 
     def test_update_tags_non_string_element_rejected(self, tmp_project: Path) -> None:
         """tags entries must all be strings — mixed types are rejected."""

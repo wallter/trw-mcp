@@ -6,13 +6,12 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 import pytest
 from trw_memory.models.memory import MemoryEntry, MemoryStatus
 
 from trw_mcp.models.config import _reset_config
-from trw_mcp.state.memory_adapter import _learning_to_memory_entry, _memory_to_learning_dict
+from trw_mcp.state.memory_adapter import _memory_to_learning_dict
 
 
 @pytest.fixture(autouse=True)
@@ -61,10 +60,22 @@ class TestMemoryToLearningDict:
         return MemoryEntry(**defaults)
 
     def test_compact_mode_returns_minimal_keys(self) -> None:
-        """Compact mode returns only id, summary, tags, impact, status."""
+        """Compact acquisition retains stored evidence without qualifying it."""
         entry = self._make_entry()
         result = _memory_to_learning_dict(entry, compact=True)
-        assert set(result.keys()) == {"id", "summary", "tags", "impact", "status"}
+        assert set(result.keys()) == {
+            "id",
+            "summary",
+            "tags",
+            "impact",
+            "status",
+            "verification_status",
+            "verification_checked_at",
+            "anchor_validity",
+        }
+        assert result["verification_status"] is None
+        assert result["verification_checked_at"] == ""
+        assert result["anchor_validity"] == entry.anchor_validity
         assert result["id"] == "L-test001"
         assert result["summary"] == "Test summary"
         assert result["tags"] == ["python", "testing"]
@@ -73,7 +84,7 @@ class TestMemoryToLearningDict:
 
     def test_full_mode_returns_all_fields(self) -> None:
         """Full mode returns all learning dict fields including metadata."""
-        entry = self._make_entry()
+        entry = self._make_entry(verification_status="stale", verification_checked_at="2026-01-15T12:00:00+00:00")
         result = _memory_to_learning_dict(entry, compact=False)
         expected_keys = {
             "id",
@@ -119,7 +130,11 @@ class TestMemoryToLearningDict:
             # LearningEntryDict -- no producer ever wrote them.
             "session_count",
         }
+        expected_keys |= {"verification_status", "verification_checked_at"}
         assert expected_keys == set(result.keys())
+        # Stored evidence is projected verbatim, not reverified against today's tree.
+        assert result["verification_status"] == "stale"
+        assert result["verification_checked_at"] == "2026-01-15T12:00:00+00:00"
 
     def test_full_keys_are_declared_in_learning_entry_dict(self) -> None:
         """Every emitted key is a declared field of the LearningEntryDict contract.
@@ -296,123 +311,7 @@ class TestMemoryToLearningDict:
         assert compact_size < full_size / 10
 
 
-class TestLearningToMemoryEntry:
-    def test_basic_mapping(self) -> None:
-        """All parameters map to the correct MemoryEntry fields."""
-        entry = _learning_to_memory_entry(
-            "L-map001",
-            "Summary text",
-            "Detail text",
-            tags=["python"],
-            evidence=["proof.py"],
-            impact=0.9,
-            shard_id="shard-C",
-            source_type="human",
-            source_identity="Tyler",
-            scope="project",
-        )
-        assert entry.id == "L-map001"
-        assert entry.content == "Summary text"
-        assert entry.detail == "Detail text"
-        assert entry.tags == ["python"]
-        assert entry.evidence == ["proof.py"]
-        assert entry.importance == 0.9
-        assert entry.source == "human"
-        assert entry.source_identity == "Tyler"
-        assert entry.namespace == "default"
-        assert entry.metadata == {"shard_id": "shard-C"}
-
-    def test_default_tags_and_evidence(self) -> None:
-        """None tags/evidence default to empty lists."""
-        entry = _learning_to_memory_entry(
-            "L-def001",
-            "s",
-            "d",
-            tags=None,
-            evidence=None,
-        )
-        assert entry.tags == []
-        assert entry.evidence == []
-
-    def test_default_impact(self) -> None:
-        """Default impact is 0.5."""
-        entry = _learning_to_memory_entry("L-imp001", "s", "d")
-        assert entry.importance == 0.5
-
-    def test_default_source_fields(self) -> None:
-        """Default source_type is 'agent', source_identity is empty string."""
-        entry = _learning_to_memory_entry("L-src001", "s", "d")
-        assert entry.source == "agent"
-        assert entry.source_identity == ""
-
-    def test_no_shard_id_produces_empty_metadata(self) -> None:
-        """When shard_id is None, metadata is an empty dict."""
-        entry = _learning_to_memory_entry("L-ns001", "s", "d", shard_id=None)
-        assert entry.metadata == {}
-
-    def test_empty_shard_id_string_produces_empty_metadata(self) -> None:
-        """When shard_id is empty string (falsy), metadata is empty."""
-        entry = _learning_to_memory_entry("L-es001", "s", "d", shard_id="")
-        assert entry.metadata == {}
-
-    def test_invalid_anchor_is_skipped_with_debug_log(self) -> None:
-        """Invalid anchors are skipped fail-open and emit a debug log."""
-        anchors = [
-            {"file": "src/good.py", "symbol_name": "good_symbol"},
-            {"file": "../bad.py", "symbol_name": "bad_symbol"},
-        ]
-
-        with patch("trw_mcp.state._memory_transforms.logger.debug") as mock_debug:
-            entry = _learning_to_memory_entry("L-anc001", "s", "d", anchors=anchors)
-
-        assert [anchor.file for anchor in entry.anchors] == ["src/good.py"]
-        mock_debug.assert_called_once()
-        assert mock_debug.call_args.kwargs["anchor"] == anchors[1]
-
-    def test_caller_metadata_merges_with_shard_id(self) -> None:
-        """PRD-DIST-254 §FR02 (cycle 112): caller-supplied metadata + shard_id co-exist."""
-        entry = _learning_to_memory_entry(
-            "L-meta001",
-            "s",
-            "d",
-            shard_id="shard-X",
-            metadata={"utility_grade": "R3", "current_status": "current"},
-        )
-        # Both internal (shard_id) and caller keys present.
-        assert entry.metadata.get("shard_id") == "shard-X"
-        assert entry.metadata.get("utility_grade") == "R3"
-        assert entry.metadata.get("current_status") == "current"
-
-    def test_caller_metadata_wins_on_collision_with_shard_id(self) -> None:
-        """Caller-supplied metadata overrides internal keys on collision (cycle 112)."""
-        entry = _learning_to_memory_entry(
-            "L-coll001",
-            "s",
-            "d",
-            shard_id="internal-shard",
-            metadata={"shard_id": "caller-shard"},
-        )
-        # Caller's value wins.
-        assert entry.metadata.get("shard_id") == "caller-shard"
-
-    def test_metadata_default_none_preserves_back_compat(self) -> None:
-        """metadata=None (default) leaves existing shard-only behavior intact."""
-        entry = _learning_to_memory_entry(
-            "L-bc001",
-            "s",
-            "d",
-            shard_id="only-shard",
-            metadata=None,
-        )
-        assert entry.metadata == {"shard_id": "only-shard"}
-
-    def test_metadata_without_shard_id_round_trips_keys(self) -> None:
-        """Without shard_id, caller metadata is the entire metadata dict."""
-        entry = _learning_to_memory_entry(
-            "L-ms001",
-            "s",
-            "d",
-            shard_id=None,
-            metadata={"utility_grade": "R5", "evidence_count": "2"},
-        )
-        assert entry.metadata == {"utility_grade": "R5", "evidence_count": "2"}
+# ``TestLearningToMemoryEntry`` moved to tests/test_store_arguments.py when
+# PRD-CORE-251 FR03 deleted ``_learning_to_memory_entry``: entry construction is
+# ``memory_store_impl``'s job now, and the routing/metadata/anchor/assertion
+# assertions it carried are asserted there against ``build_store_arguments``.

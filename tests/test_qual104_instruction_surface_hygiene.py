@@ -21,7 +21,9 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _DELIVER_GATE_PHRASE = "Do NOT call `trw_deliver` unless"
 _SESSION_START_PHRASE = "trw_session_start"
 
@@ -443,6 +445,7 @@ def _bundled_lifecycle_hash_prefix() -> str:
     return bundled_lifecycle_hash_prefix()
 
 
+@requires_monorepo
 class TestLintInstructionSurfaces:
     """scripts/lint-instruction-surfaces.py size / gate / stale-sync checks."""
 
@@ -628,6 +631,7 @@ def _kinds_in(stdout: str) -> set[str]:
     return kinds
 
 
+@requires_monorepo
 class TestDuplicateBlock:
     """duplicate_block: >=2 whole-line TRW start markers (any variant) in one file."""
 
@@ -680,6 +684,7 @@ class TestDuplicateBlock:
         assert "glued_marker" not in proc.stdout, proc.stdout
 
 
+@requires_monorepo
 class TestGluedMarker:
     """glued_marker: marker text present but NOT on its own line (glued to prose)."""
 
@@ -703,6 +708,7 @@ class TestGluedMarker:
         assert "glued_marker" not in proc.stdout, proc.stdout
 
 
+@requires_monorepo
 class TestVersionDrift:
     """version_drift: a vN[.M]_TRW / TRW vN[.M] token disagreeing with canon."""
 
@@ -741,6 +747,7 @@ class TestVersionDrift:
         assert "version_drift" in proc.stdout, proc.stdout
 
 
+@requires_monorepo
 class TestHardcodedCount:
     """hardcoded_count: baked-in learning/session counts that drift on write."""
 
@@ -770,6 +777,7 @@ class TestHardcodedCount:
         assert "hardcoded_count" not in proc.stdout, proc.stdout
 
 
+@requires_monorepo
 class TestMachinePath:
     """machine_path: committed machine-specific absolute home paths."""
 
@@ -789,6 +797,7 @@ class TestMachinePath:
         assert "machine_path" not in proc.stdout, proc.stdout
 
 
+@requires_monorepo
 class TestNFR02LineAnchoring:
     """NFR02: a marker merely MENTIONED inline must not trigger block findings."""
 
@@ -815,6 +824,7 @@ class TestNFR02LineAnchoring:
         assert proc.returncode == 0, proc.stdout
 
 
+@requires_monorepo
 class TestSuppressionGenerality:
     """NFR02: per-kind suppression suppresses only the named kind(s)."""
 
@@ -844,6 +854,7 @@ class TestSuppressionGenerality:
         assert "version_drift" not in kinds, proc.stdout
 
 
+@requires_monorepo
 class TestDriftScanScope:
     """FR02 drift scan discovers nested files; size checks stay root-scoped."""
 
@@ -860,7 +871,7 @@ class TestDriftScanScope:
     def test_excluded_dirs_not_scanned(self, tmp_path: Path) -> None:
         """Files under excluded dirs (node_modules, archive) are skipped."""
         # fmt: off
-        for sub in ("node_modules", "docs/requirements-aare-f/archive", "trw-eval/results"):  # trw-leak-allow: proprietary_path real production exclusion literal from lint-instruction-surfaces.py
+        for sub in ("node_modules", "docs/requirements-aare-f/archive", "trw-eval/results", ".trw/runs"):  # trw-leak-allow: proprietary_path real production exclusion literal from lint-instruction-surfaces.py
             # fmt: on
             d = tmp_path / sub
             d.mkdir(parents=True)

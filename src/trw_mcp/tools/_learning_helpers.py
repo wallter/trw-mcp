@@ -5,7 +5,7 @@ Each function encapsulates a single concern previously inlined in the
 reducing the tool body to ~50 lines of orchestration.
 
 PRD lineage:
-- calibrate_impact: PRD-CORE-034 (Bayesian calibration)
+- calibrate_impact: preserve raw caller impact (no attributed calibration evidence)
 - check_soft_cap: PRD-CORE-034-FR01 (distribution soft-cap)
 - check_and_handle_dedup: PRD-CORE-042 (semantic dedup)
 - enforce_distribution: PRD-CORE-034 (forced distribution enforcement)
@@ -89,33 +89,12 @@ from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
 
 
 def calibrate_impact(impact: float, config: TRWConfig) -> float:
-    """Apply Bayesian calibration to the raw impact score.
+    """Preserve caller impact; pooled exposure outcomes do not measure caller accuracy.
 
-    Uses recall tracking stats to weight user accuracy, then blends the
-    user-provided impact toward the organisational mean.
-
-    Fail-open: any exception falls back to the raw *impact* value.
-
-    Args:
-        impact: Raw impact score 0.0-1.0 from the caller.
-        config: Framework configuration (unused directly, but kept
-            for symmetry with sibling helpers and future use).
-
-    Returns:
-        Calibrated impact score 0.0-1.0.
+    Kept at the existing learn-call boundary for compatibility. Shared statistical
+    primitives remain available, but this path has no owned calibration evidence.
     """
-    try:
-        from trw_mcp.scoring import bayesian_calibrate, compute_calibration_accuracy
-        from trw_mcp.state.recall_tracking import get_recall_stats
-
-        recall_stats = get_recall_stats()
-        user_weight = compute_calibration_accuracy(cast("dict[str, object]", recall_stats))
-        return bayesian_calibrate(
-            user_impact=impact,
-            user_weight=user_weight,
-        )
-    except (ImportError, OSError, RuntimeError, ValueError, TypeError, ZeroDivisionError):
-        return impact  # Fail-open: calibration failure falls back to raw impact
+    return impact
 
 
 def check_soft_cap(
@@ -130,7 +109,7 @@ def check_soft_cap(
     iteratively until the ratio falls within bounds (floor 0.5).
 
     Args:
-        impact: Already-calibrated impact score.
+        impact: Incoming impact score before this independent policy.
         active_entries: All active learning dicts (with ``impact`` key).
         config: Framework configuration providing ``impact_high_threshold_pct``.
 

@@ -6,6 +6,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
+from tests._structlog_capture import captured_structlog  # noqa: F401
 from trw_mcp.telemetry.event_base import (
     CeremonyEvent,
     HPOSessionStartEvent,
@@ -145,3 +148,74 @@ class TestDefaultWriter:
         a = get_default_writer()
         b = get_default_writer()
         assert a is b
+
+
+def test_real_writer_wrapped_storage_failure_returns_false(
+    tmp_path: Path, captured_structlog: list[dict[str, object]]
+) -> None:
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state.persistence import FileStateWriter
+
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("preserve")
+    destination = blocked / "events.jsonl"
+    # Prove the actual adapter boundary, not a mock raising raw OSError.
+    with pytest.raises(StateError) as failure:
+        FileStateWriter().append_jsonl(destination, {"event": "synthetic"})
+    assert isinstance(failure.value.__cause__, OSError)
+    event = CeremonyEvent(session_id="synthetic")
+    assert UnifiedEventWriter().write(event, destination) is False
+    assert blocked.read_text() == "preserve"
+    assert not destination.exists()
+    assert any(row.get("event") == "unified_event_write_failed" for row in captured_structlog)
+
+
+def test_projection_failure_preserves_successful_primary(
+    tmp_path: Path, captured_structlog: list[dict[str, object]]
+) -> None:
+    projection = tmp_path / "tool_call_events.jsonl"
+    projection.mkdir()
+    event = MCPSecurityEvent(session_id="synthetic", payload={"decision": "deny"})
+    assert emit(event, run_dir=None, fallback_dir=tmp_path) is True
+    files = list(tmp_path.glob("events-*.jsonl"))
+    assert len(files) == 1
+    rows = [json.loads(line) for line in files[0].read_text().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["event_id"] == event.event_id
+    assert rows[0]["payload"]["decision"] == "deny"
+    assert projection.is_dir()
+    assert list(projection.iterdir()) == []
+    assert any(row.get("event") == "unified_projection_write_failed" for row in captured_structlog)
+
+
+@pytest.mark.asyncio
+async def test_security_listing_keeps_denial_when_real_telemetry_storage_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_structlog: list[dict[str, object]]
+) -> None:
+    from fastmcp import FastMCP
+
+    from tests.test_mcp_security_middleware import _make_middleware
+
+    monkeypatch.setattr("trw_mcp.middleware.mcp_security.resolve_active_phase", lambda **_kwargs: "IMPLEMENT")
+    middleware = _make_middleware(tmp_path)
+    blocked = tmp_path / "blocked-context"
+    blocked.write_text("preserve")
+    middleware._fallback_dir = blocked
+    server = FastMCP("storage-failure-security-test")
+
+    @server.tool()
+    def trw_recall() -> str:
+        return "unused"
+
+    @server.tool()
+    def exec_shell() -> str:
+        return "unused"
+
+    assert {tool.name for tool in await server.list_tools()} == {"trw_recall", "exec_shell"}
+    server.add_middleware(middleware)
+    listed = await server.list_tools()
+    assert {tool.name for tool in listed} == {"trw_recall"}
+    assert blocked.read_text() == "preserve"
+    failures = [row for row in captured_structlog if row.get("event") == "unified_event_write_failed"]
+    assert failures  # Storage failure is witnessed independently of emission cardinality.
+    assert all(Path(str(row["path"])).parent == blocked for row in failures)

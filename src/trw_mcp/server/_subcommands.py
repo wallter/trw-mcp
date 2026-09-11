@@ -184,8 +184,47 @@ def _run_init_project(args: argparse.Namespace) -> None:
     sys.exit(1 if result["errors"] else 0)
 
 
+def _run_embedding_repair(args: argparse.Namespace) -> None:
+    """Explicit local vector maintenance, never a framework-update operation."""
+    from trw_memory.exceptions import MemoryError as TRWMemoryError
+    from trw_memory.storage.interface import EntryCursor
+
+    try:
+        bound = getattr(args, "repair_embeddings", None)
+        if type(bound) is not int or bound < 1:
+            raise ValueError("--embedding-after requires --repair-embeddings with a positive entry bound")
+        if args.pip_install or getattr(args, "ide", None) is not None or args.dry_run:
+            raise ValueError("--repair-embeddings cannot combine with --pip-install, --ide or --dry-run")
+        cursor = None
+        raw = getattr(args, "embedding_after", None)
+        if raw is not None:
+            value = json.loads(raw)
+            if (
+                not isinstance(value, dict)
+                or set(value) != {"updated_at", "entry_id"}
+                or any(not isinstance(item, str) or not item.strip() for item in value.values())
+            ):
+                raise ValueError("--embedding-after requires nonempty updated_at and entry_id strings")
+            cursor = EntryCursor(updated_at=value["updated_at"], entry_id=value["entry_id"])
+        trw_dir = Path(args.target_dir).resolve() / ".trw"
+        if not trw_dir.is_dir():
+            raise ValueError("existing project .trw directory is required")
+        from trw_mcp.state._memory_connection import repair_embeddings
+
+        result = repair_embeddings(trw_dir, max_entries=bound, after=cursor)
+    except (ValueError, OSError, RuntimeError, TRWMemoryError) as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}))
+        raise SystemExit(2) from exc
+    print(json.dumps(result))
+    raise SystemExit(
+        1 if result.get("failed", 0) or result.get("status") in {"failed", "blocked", "unavailable"} else 0
+    )
+
+
 def _run_update_project(args: argparse.Namespace) -> None:
     """Handle the ``update-project`` subcommand."""
+    if getattr(args, "repair_embeddings", None) is not None or getattr(args, "embedding_after", None) is not None:
+        _run_embedding_repair(args)
     from trw_mcp.bootstrap import update_project
 
     target = Path(args.target_dir).resolve()

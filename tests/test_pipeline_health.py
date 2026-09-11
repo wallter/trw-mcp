@@ -323,12 +323,12 @@ def test_probe_embedding_coverage_degraded(tmp_path: Path) -> None:
     # 3.6% coverage: 27 vec out of 750 total (simulating the real-world case)
     _make_memory_db(trw_dir, corpus=750, vec=27)
 
-    result = probe_embedding_coverage(trw_dir)
+    # The fixture uses ordinary SQL tables: exercise real counting, not optional
+    # extension loading. The unavailable-extension boundary has its own test.
+    with patch("trw_mcp.tools._pipeline_health._load_sqlite_vec", return_value=None):
+        result = probe_embedding_coverage(trw_dir)
 
-    # May return sqlite_vec_unavailable if sqlite_vec not installed — that's fail-open
-    if result.get("advisory") == "sqlite_vec_unavailable":
-        pytest.skip("sqlite_vec not available in test environment")
-
+    assert result["measured"] is True
     assert result["degraded"] is True
     assert result.get("coverage_ratio", 1.0) < 0.10
     assert result["advisory"] != ""
@@ -341,11 +341,11 @@ def test_probe_embedding_coverage_healthy(tmp_path: Path) -> None:
     trw_dir = _make_trw_dir(tmp_path)
     _make_memory_db(trw_dir, corpus=100, vec=95)
 
-    result = probe_embedding_coverage(trw_dir)
+    with patch("trw_mcp.tools._pipeline_health._load_sqlite_vec", return_value=None):
+        result = probe_embedding_coverage(trw_dir)
 
-    if result.get("advisory") == "sqlite_vec_unavailable":
-        pytest.skip("sqlite_vec not available in test environment")
-
+    assert result["measured"] is True
+    assert result["coverage_ratio"] == 0.95
     assert result["degraded"] is False
 
 
@@ -373,6 +373,8 @@ def test_probe_embedding_coverage_sqlite_vec_unavailable(tmp_path: Path) -> None
 
     assert result["degraded"] is False
     assert "sqlite_vec" in result.get("advisory", "")
+    assert result["measured"] is False
+    assert result["coverage_ratio"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -950,7 +952,7 @@ def _inject_inside_probe(ph: Any, probe_name: str, trw_dir: Path) -> AbstractCon
 
 
 @pytest.mark.parametrize("probe_name", _ALL_PROBES)
-def test_a_probes_own_handler_reports_not_measured(tmp_path: Path, probe_name: str) -> None:
+def test_a_probes_own_handler_reports_not_measured(tmp_path: Path, probe_name: str, monkeypatch) -> None:
     """PRD-CORE-263-FR03 — the injection lands below the probe boundary.
 
     Attribution: restoring any one probe's ``return safe_default`` crash branch
@@ -961,6 +963,10 @@ def test_a_probes_own_handler_reports_not_measured(tmp_path: Path, probe_name: s
     """
     from trw_mcp.tools import _pipeline_health as ph
 
+    if probe_name == "embedding_coverage":
+        # Reach the connection failure below this probe, independent of whether
+        # the optional extension happens to be installed on the test host.
+        monkeypatch.setattr(ph, "_load_sqlite_vec", lambda _conn: None)
     trw_dir = _healthy_trw_dir(tmp_path)
     # A real store, so the three connection-opening probes actually REACH their
     # connection instead of short-circuiting on a missing file.

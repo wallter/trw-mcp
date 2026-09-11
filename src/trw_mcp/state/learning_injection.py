@@ -14,12 +14,17 @@ from pathlib import Path
 # Stems are matched case-insensitively against each path component.
 #
 # Two coverage groups:
-# - Common service-layout directory names (backend, routers, auth, ...) — original set.
-# - External eval-corpus roots (sphinx/pylint/astropy/etc.) — added 2026-04-27
-#   after the iter-22 root-cause investigation found that empty tag sets on
-#   external repos collapsed the relevance ranker to pure-impact, surfacing
-#   off-domain framework learnings against SWE-bench tasks. Keep the external
-#   roots: dropping them re-collapses the ranker on any repo this table misses.
+# - Common service-layout directory names (backend, routers, auth, ...).
+# - Well-known open-source Python project names (sphinx, django, astropy, ...),
+#   whose name alone implies a subject domain.
+#
+# Why the second group exists: this table supplies domain tags for a repository
+# that carries none of its own. With an empty tag set the relevance ranker has
+# nothing to rank ON and collapses to pure impact, which surfaces whatever the
+# highest-impact learning happens to be regardless of subject. Naming a handful
+# of projects whose domain is obvious from the directory name restores a signal
+# there. Dropping them re-collapses the ranker on any repo this table misses, so
+# extend it rather than trimming it.
 _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "backend": {"backend", "fastapi", "api"},
     "routers": {"api", "endpoints"},
@@ -48,7 +53,7 @@ _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "services": {"services"},
     "security": {"security", "auth"},
     "ui": {"ui", "components", "frontend"},
-    # SWE-bench Verified repo roots (12 repos).
+    # Well-known open-source Python projects, whose name implies a domain.
     "sphinx": {"docs", "sphinx", "documentation"},
     "django": {"django", "web", "orm"},
     "astropy": {"astropy", "astronomy", "scientific"},
@@ -62,7 +67,7 @@ _PATH_DOMAIN_MAP: dict[str, set[str]] = {
     "xarray": {"xarray", "scientific", "arrays"},
     "scikit-learn": {"scikit-learn", "ml", "scientific"},
     "sklearn": {"scikit-learn", "ml", "scientific"},
-    # Additional common benchmark-corpus repo roots (frequent ones).
+    # Further common open-source project names.
     "pandas": {"pandas", "dataframes", "scientific"},
     "transformers": {"transformers", "ml", "huggingface"},
     "mlflow": {"mlflow", "ml", "tracking"},

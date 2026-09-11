@@ -35,9 +35,9 @@ def test_measures_the_live_predicate_not_a_copy() -> None:
     assert "from trw_mcp.state.validation._prd_scoring_wiring import _classify_fr_surface" in text
 
 
-def test_detector_never_writes_to_the_measured_subject() -> None:
+def test_detector_never_writes_to_the_measured_subject(repo_root: Path) -> None:
     """NFR07 + PRD-CORE-231 ownership: FR06 measures CORE-190 and must not modify it."""
-    repo = Path(__file__).resolve().parents[3]
+    repo = repo_root
     diff = subprocess.run(
         ["git", "status", "--porcelain", "--", MEASURED_SUBJECT],
         cwd=repo,
@@ -45,6 +45,7 @@ def test_detector_never_writes_to_the_measured_subject() -> None:
         text=True,
         check=False,
     )
+    assert diff.returncode == 0, diff.stderr
     assert diff.stdout.strip() == "", f"the detector's working tree modifies {MEASURED_SUBJECT}: {diff.stdout!r}"
 
 

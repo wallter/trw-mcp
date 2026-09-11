@@ -35,6 +35,18 @@ _UNKNOWN_CLIENT = "unknown"
 # Default tier per client (PRD-DIST-2402 §3.2 / PRD-DIST-2403 §2 OC-05).
 # Codex gets T2 (token-budget-aware), Copilot gets T0 (compressed segment
 # with <50 chars per bullet), Antigravity gets T1.  All others default to T1.
+#
+# NOTE on the key namespace (audited 2026-09-10): these keys are RAW client
+# identity strings -- an explicit argument, a lowercased MCP
+# ``clientInfo.name``, or ``TRW_CLIENT_PROFILE`` -- and are deliberately NOT
+# the canonical profile ids that ``models.config._profiles.resolve_client_profile``
+# validates.  Two consequences that look like drift but are not:
+#   * ``antigravity`` sits beside ``antigravity-cli`` because the binary may
+#     report either name; both resolve to the same tier.
+#   * ``aider`` is a retired profile, retained here (and in source detection)
+#     only for the uninstall/migration cleanup path.
+# Both entries carry the same value as ``default_tier``, so removing them would
+# be behaviour-preserving; they stay for explicitness about the raw-name space.
 _CLIENT_DEFAULT_TIER: dict[str, str] = {
     "codex": "T2",
     "opencode": "T2",

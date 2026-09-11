@@ -23,8 +23,10 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-BUNDLED_LIB = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "hooks" / "lib-trw.sh"
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
+
+REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+BUNDLED_LIB = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks" / "lib-trw.sh"
 
 
 # ---------------------------------------------------------------------------

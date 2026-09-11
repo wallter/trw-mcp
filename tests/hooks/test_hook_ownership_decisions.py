@@ -21,7 +21,7 @@ hook                  what unowned means, and why
 pre-compact.sh        STILL writes the snapshot, with run fields empty. Recovery
                       after compaction must be armed, just not with foreign state.
 session-end.sh        STILL does housekeeping; skips only the run-scoped warning,
-                      whose event count is unverifiable without an owned run.
+                      whose trigger is unverifiable without an owned run.
 subagent-start.sh     STILL injects the protocol reminders; omits only the
                       run/phase lines and the phase-selected checklist.
 ===================== ============================================================
@@ -50,9 +50,11 @@ from _ownership_harness import (
     write_hook_env,
 )
 
+from tests._layout import requires_monorepo
+
 _HOOK_COPIES = pytest.mark.parametrize(
     "hook_dir",
-    [pytest.param(BUNDLED_HOOKS, id="bundled"), pytest.param(MIRROR_HOOKS, id="mirror")],
+    [pytest.param(BUNDLED_HOOKS, id="bundled"), pytest.param(MIRROR_HOOKS, id="mirror", marks=requires_monorepo)],
 )
 
 
@@ -142,28 +144,26 @@ def test_pre_compact_keeps_legacy_behaviour_with_no_identity(hook_dir: Path, tmp
 #   unowned == housekeeping still runs; only the run-scoped warning is skipped.
 # =========================================================================== #
 @_HOOK_COPIES
-def test_session_end_warns_with_the_owned_runs_event_count(hook_dir: Path, tmp_path: Path) -> None:
+def test_session_end_advises_for_owned_pending_work_despite_foreign_delivery(hook_dir: Path, tmp_path: Path) -> None:
     root, _own, _foreign = build_project(
         tmp_path,
         own_event_lines=(FILE_MODIFIED,) * 3,
-        foreign_event_lines=(FILE_MODIFIED,) * 18,
+        foreign_event_lines=(FILE_MODIFIED,) * 18 + (DELIVER_COMPLETE,),
     )
     write_hook_env(root)
 
     res = run_hook(hook_dir / "session-end.sh", root)
 
-    assert "3 events logged" in res.stderr, res.stderr
-    assert "18 events" not in res.stderr
+    assert res.returncode == 0
+    assert "If you have material unfinished work" in res.stderr, res.stderr
+    assert "checkpoint or durable native handoff with a next-read pointer" in res.stderr
+    assert "Completed-work delivery still requires its existing evidence gates" in res.stderr
+    assert FOREIGN_RUN_ID not in res.stderr
 
 
 @_HOOK_COPIES
 def test_session_end_is_silent_but_still_tidies_when_unowned(hook_dir: Path, tmp_path: Path) -> None:
-    """UNOWNED direction: no foreign event count is quoted, housekeeping still runs.
-
-    The warning's premise ("N events were logged into your run") is unverifiable
-    without an owned run, and stop-ceremony.sh -- not this advisory echo -- is the
-    hook that actually gates delivery for an unpinned session.
-    """
+    """Unowned sessions tidy but must not advise based on a foreign pending run."""
     root, _own, _foreign = build_project(
         tmp_path,
         own_pin=False,
@@ -176,8 +176,8 @@ def test_session_end_is_silent_but_still_tidies_when_unowned(hook_dir: Path, tmp
     res = run_hook(hook_dir / "session-end.sh", root)
 
     assert res.returncode == 0
-    assert "18 events" not in res.stderr, "quoted a foreign run's event count"
-    assert "events logged" not in res.stderr
+    assert "If you have material unfinished work" not in res.stderr
+    assert FOREIGN_RUN_ID not in res.stderr
     assert not stale.exists(), "housekeeping was lost along with the run-scoped warning"
 
 
@@ -185,13 +185,13 @@ def test_session_end_is_silent_but_still_tidies_when_unowned(hook_dir: Path, tmp
 def test_session_end_tidies_even_when_the_owned_run_already_delivered(hook_dir: Path, tmp_path: Path) -> None:
     """Housekeeping is session-scoped, so it must not sit behind a run-scoped exit.
 
-    Both runs are delivered, so the pre-migration hook returns early on either one
-    and never tidies -- the assertion below is not satisfiable by the old code.
+    A newer foreign pending run must not override the owned delivery suppression.
+    Housekeeping must still run before the owned run's early exit.
     """
     root, _own, _foreign = build_project(
         tmp_path,
         own_event_lines=(FILE_MODIFIED, DELIVER_COMPLETE),
-        foreign_event_lines=(FILE_MODIFIED, DELIVER_COMPLETE),
+        foreign_event_lines=(FILE_MODIFIED,) * 18,
     )
     write_hook_env(root)
     stale = root / ".trw" / "context" / "tc_block_impl-1_T1"
@@ -200,6 +200,7 @@ def test_session_end_tidies_even_when_the_owned_run_already_delivered(hook_dir: 
     res = run_hook(hook_dir / "session-end.sh", root)
 
     assert res.returncode == 0
+    assert "If you have material unfinished work" not in res.stderr
     assert not stale.exists(), "delivered sessions skipped housekeeping"
 
 
@@ -214,7 +215,10 @@ def test_session_end_still_warns_a_client_with_no_identity(hook_dir: Path, tmp_p
 
     res = run_hook(hook_dir / "session-end.sh", root, identified=False)
 
-    assert "18 events logged" in res.stderr, "single-instance clients lost the delivery reminder"
+    assert res.returncode == 0
+    assert "If you have material unfinished work" in res.stderr, res.stderr
+    assert "checkpoint or durable native handoff with a next-read pointer" in res.stderr
+    assert "Completed-work delivery still requires its existing evidence gates" in res.stderr
 
 
 # =========================================================================== #
@@ -379,7 +383,8 @@ def test_intent_guard_advisory_is_inert_without_a_formation(tmp_path: Path) -> N
     assert "TRW formation advisory" not in result.stderr
 
 
-def test_formation_hook_mode_vocabulary_excludes_block() -> None:
+@_HOOK_COPIES
+def test_formation_hook_mode_vocabulary_excludes_block(hook_dir: Path) -> None:
     """FR10. ``block`` is not spellable, in the knob or in the shell.
 
     A configuration that could turn this hook into a gate is the failure mode
@@ -395,8 +400,7 @@ def test_formation_hook_mode_vocabulary_excludes_block() -> None:
     # would make this assertion pass against any vocabulary at all.
     annotation = typing.get_type_hints(_FormationFields)["formation_hook_ownership_mode"]
     assert set(typing.get_args(annotation)) == {"warn", "off"}
-    for path in (BUNDLED_HOOKS / "lib-intent-guard.sh", MIRROR_HOOKS / "lib-intent-guard.sh"):
-        body = path.read_text(encoding="utf-8")
-        assert "formation_hook_ownership_mode: block" not in body
-        advisory = body[body.index("_trw_formation_advisory() {") : body.index("# _trw_guard_main")]
-        assert "exit 2" not in advisory, "the advisory body must contain no blocking exit"
+    body = (hook_dir / "lib-intent-guard.sh").read_text(encoding="utf-8")
+    assert "formation_hook_ownership_mode: block" not in body
+    advisory = body[body.index("_trw_formation_advisory() {") : body.index("# _trw_guard_main")]
+    assert "exit 2" not in advisory, "the advisory body must contain no blocking exit"

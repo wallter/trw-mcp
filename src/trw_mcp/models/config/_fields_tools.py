@@ -68,6 +68,20 @@ class _ToolsFields:
         return value
 
     code_index_enabled: bool = False
+    tool_access_grant_max_ttl_seconds: int = Field(  # PRD-FIX-119: was a hardcoded 300
+        default=300,
+        ge=30,
+        le=3600,
+        description=(
+            "Ceiling, in seconds, on a trw_request_tool_access grant's lifetime. A larger ttl_seconds"
+            " argument is clamped to this value. The grant is single-use and process-local, so the TTL"
+            " bounds how long a masked tool stays reachable for one call, not how many calls it allows."
+            " The default of 300 is the historical hardcoded cap; it was made configurable because the"
+            " grant may need to outlive a client that cannot refresh its tool list in-session, and the"
+            " right ceiling depends on that client rather than on TRW. The floor of 30 keeps the grant"
+            " short-lived; the ceiling of 3600 keeps an unusable grant from lingering for a whole day."
+        ),
+    )
     code_index_max_file_bytes: int = Field(default=1_000_000, ge=1)
     code_index_exclude_dirs: list[str] = Field(
         default_factory=lambda: [

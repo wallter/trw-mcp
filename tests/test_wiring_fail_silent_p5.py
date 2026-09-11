@@ -161,7 +161,7 @@ def test_w07_checkpoint_result_flags_a_lost_marker(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(
         _memory_lookups,
         "_bare_passive_checkpoint",
-        lambda _path: {"busy": 0, "checkpointed": 4, "mode": "PASSIVE"},
+        lambda _path: {"busy": 0, "checkpointed": 4, "log_frames": 4, "mode": "PASSIVE"},
     )
     monkeypatch.setattr(
         "trw_mcp.state._wal_triggers.evaluate_wal_trigger",

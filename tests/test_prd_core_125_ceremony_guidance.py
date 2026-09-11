@@ -73,10 +73,16 @@ class TestFR01ToolDescriptionCues:
         deliver_tool = tools.get("trw_deliver")
         assert deliver_tool is not None
         desc = deliver_tool.description or ""
-        # AC02: Self-reflection prompt about trw_learn
-        assert "trw_learn" in desc.lower() or "discovery" in desc.lower()
+        # AC02 as reconciled: acceptance is not session termination or a capture quota.
         normalized = " ".join(desc.lower().split())
-        assert "do not manufacture a learning" in normalized
+        assert "accepting completed work, not merely ending a session" in normalized
+        assert "unfinished work" in normalized
+        assert "checkpoint or durable native handoff" in normalized
+        assert "next-read pointer" in normalized
+        assert "already captured learnings persist" in normalized
+        assert "do not duplicate them or manufacture a learning" in normalized
+        for field in ("failed_command", "residual_risk", "owner", "expiry_iso"):
+            assert field in normalized
 
     def test_fr01_trw_prd_create_docstring_has_when_to_call(self) -> None:
         """trw_prd_create docstring includes temporal anchoring cue."""

@@ -1,5 +1,5 @@
 {
-  "_comment": "PRD-CORE-266-FR02. Argv recorded from the PRE-REGISTRY builder (trw_mcp.dispatch._commands.build_command) at commit 6773493a83 on 2026-09-04, BEFORE the ClientSpec migration. The migration is behaviour-preserving iff every row below still compares equal token for token. Regenerate ONLY to add a client: a diff on an existing row is a regression, not a fixture update.",
+  "_comment": "PRD-CORE-266-FR02. Argv recorded from the PRE-REGISTRY builder (trw_mcp.dispatch._commands.build_command) at commit 6773493a83 on 2026-09-04, BEFORE the ClientSpec migration. The migration is behaviour-preserving iff every row below still compares equal token for token. Regenerate ONLY to add a client: a diff on an existing row is a regression, not a fixture update. | 2026-09-11: the 16 agy rows were regenerated after agy 1.2.0 gained --output-format stream-json; the ONLY delta permitted was the two-token prefix insertion, asserted row-by-row during regeneration. The claude / codex / opencode rows are untouched PRD-CORE-266-FR07 migration pins.",
   "prompt": "audit this",
   "model": "baseline-model-1",
   "cwd": "/tmp/dispatch-baseline",
@@ -572,6 +572,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "-p",
         "audit this"
@@ -585,6 +587,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "-p",
         "audit this"
@@ -598,6 +602,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "--model",
         "baseline-model-1",
@@ -613,6 +619,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "--model",
         "baseline-model-1",
@@ -628,6 +636,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "-p",
         "audit this"
@@ -641,6 +651,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "-p",
         "audit this"
@@ -654,6 +666,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "--model",
         "baseline-model-1",
@@ -669,6 +683,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "--model",
         "baseline-model-1",
@@ -684,6 +700,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "-p",
         "audit this"
@@ -697,6 +715,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "-p",
         "audit this"
@@ -710,6 +730,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "--model",
         "baseline-model-1",
@@ -725,6 +747,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "--model",
         "baseline-model-1",
@@ -740,6 +764,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "-p",
         "audit this"
@@ -753,6 +779,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "-p",
         "audit this"
@@ -766,6 +794,8 @@
       "cwd": null,
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "--model",
         "baseline-model-1",
@@ -781,6 +811,8 @@
       "cwd": "/tmp/dispatch-baseline",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--dangerously-skip-permissions",
         "--model",
         "baseline-model-1",
@@ -1089,6 +1121,8 @@
       "client": "agy",
       "argv": [
         "agy",
+        "--output-format",
+        "stream-json",
         "--sandbox",
         "--verbose",
         "--foo=bar",

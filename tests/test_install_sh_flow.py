@@ -28,8 +28,13 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+# Every case exercises scripts absent from the standalone package.
+pytestmark = requires_monorepo
+
 _TESTS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _TESTS_DIR.parent.parent
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _SERVED_BOOTSTRAP = _REPO_ROOT / "platform" / "public" / "install.sh"
 _REPO_BOOTSTRAP = _REPO_ROOT / "scripts" / "install.sh"
 

@@ -170,12 +170,17 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         client_id="agy",
         binary="agy",
         base_argv=("agy",),
+        # agy 1.2.0 gained `--output-format text|json|stream-json` and a matching
+        # `--input-format`. The 1.1.26 entry recorded trailing_text because that
+        # was all 1.1.26 had; re-verified live on this box 2026-09-11, the stream
+        # is tagged-envelope NDJSON terminating in an `result` envelope.
+        structured_output_argv=("--output-format", "stream-json"),
         read_only_argv=("--sandbox",),
         allow_writes_argv=("--dangerously-skip-permissions",),
         model_flag="--model",
         prompt_flag="-p",
         version_argv=("--version",),
-        output_shape="trailing_text",
+        output_shape="enveloped_ndjson_events",
         # GEMINI_API_KEY is Antigravity's OWN documented credential variable — it
         # is NOT a remnant of the removed `gemini` client profile. Do not delete
         # it in a gemini sweep.
@@ -186,8 +191,15 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         sandbox="enforced",
         verification=ClientVerification(
             method="executable",
-            evidence=f"agy 1.1.26 --version; {_LIVE_2026_06_21}",
-            verified_at=date(2026, 6, 21),
+            evidence=(
+                f"agy 1.1.26 --version; {_LIVE_2026_06_21}. RE-VERIFIED against agy 1.2.0 "
+                "on 2026-09-11: `agy --help` lists --output-format text|json|stream-json, "
+                "--input-format text|stream-json, --print/-p, --model, --sandbox, "
+                "--dangerously-skip-permissions, --add-dir, --agent, --effort, --mode; and "
+                "`agy -p '...' --output-format stream-json` was RUN, emitting tagged-envelope "
+                "NDJSON (init -> step_update{text_delta} -> result{status,response,usage})"
+            ),
+            verified_at=date(2026, 9, 11),
         ),
     ),
     # opencode run "<prompt>" --format json --dir <cwd> -> NDJSON events.

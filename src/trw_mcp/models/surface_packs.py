@@ -23,7 +23,7 @@ registered tool.
 
 from __future__ import annotations
 
-#: The EXACT nine-tool universal kernel (FR02). Every profile resolution
+#: The EXACT ten-tool universal kernel (FR02, version 2). Every profile resolution
 #: includes exactly these and no other tool is kernel; a membership change is a
 #: versioned event (registry digest pin enforces the version bump).
 KERNEL_TOOLS: tuple[str, ...] = (
@@ -31,6 +31,7 @@ KERNEL_TOOLS: tuple[str, ...] = (
     "trw_status",
     "trw_recall",
     "trw_learn",
+    "trw_learn_update",
     "trw_checkpoint",
     "trw_deliver",
     "trw_skill_discovery",
@@ -89,7 +90,7 @@ CAPABILITY_PACKS: dict[str, tuple[str, ...]] = {
         "trw_pipeline_health",
         "trw_channel_stats",
     ),
-    "memory_management": ("trw_learn_update", "trw_graph_related"),
+    "memory_management": ("trw_graph_related",),
     "feedback": ("trw_submit_feedback",),
 }
 
@@ -176,14 +177,14 @@ def reviewer_tools_toml_array() -> str:
 #: the prior ``audit`` key was UNREACHABLE (not a TaskType; an explicit
 #: task_type="audit" falls to ``unknown``) and research/eval/rca/planning
 #: silently resolved kernel-only. Pack names are derived only from
-#: :data:`PACK_TOOLS` — no packs are invented. Resolved counts (kernel=9):
-#:   coding   = kernel + verification(2) + code_navigation(4)        = 15
-#:   research = kernel + code_navigation(4) + memory_management(2)   = 15
-#:   docs     = kernel + requirements(3) + verification(2)           = 14
-#:   eval     = kernel + verification(2)                             = 11
-#:   rca      = kernel + code_navigation(4) + verification(2)        = 15
-#:   planning = kernel + requirements(3)                             = 12
-#:   unknown  = kernel + verification(2)                             = 11
+#: :data:`PACK_TOOLS` — no packs are invented. Resolved counts (kernel=10):
+#:   coding   = kernel + verification(2) + code_navigation(4)        = 16
+#:   research = kernel + code_navigation(4) + memory_management(1)   = 15
+#:   docs     = kernel + requirements(3) + verification(2)           = 15
+#:   eval     = kernel + verification(2)                             = 12
+#:   rca      = kernel + code_navigation(4) + verification(2)        = 16
+#:   planning = kernel + requirements(3)                             = 13
+#:   unknown  = kernel + verification(2)                             = 12
 #: PRD-CORE-246-FR05: ``unknown`` declares the ``verification`` pack and is the
 #: FALLBACK for an unresolvable (``None``/empty) or unmapped task type, replacing
 #: the previous ``()`` / kernel-only resolution. The runtime already exposed both

@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Final, Literal, NamedTuple
 
 import structlog
-from trw_memory.exceptions import PIIBlockError, PoisoningError, SchemaValidationError
+from trw_memory.exceptions import AuthorizationError, PIIBlockError, PoisoningError, SchemaValidationError
 
 from trw_mcp.state._learn_journal_io import fsync_dir, read_record, write_record_atomic
 
@@ -69,12 +69,19 @@ DETERMINISTIC_STATUSES: Final[frozenset[str]] = frozenset({"rejected", "invalid"
 # and MemoryQuarantinedError (holds the entry for human review rather than
 # refusing it — a later approval makes replay meaningless, not
 # deterministic-fail) deliberately stay off this list.
+# ``AuthorizationError`` joins them for the same reason (PRD-CORE-251 Phase 2):
+# ``memory_store_impl`` raises it unconditionally on a namespace-permission
+# refusal, and the permission config does not change between replays of the same
+# record, so retrying is guaranteed to fail identically. Without it the record
+# was RETAINED and replayed every sweep until the retry budget was exhausted,
+# reaching the same dead letter by the slowest possible route.
 DETERMINISTIC_EXCEPTIONS: Final[tuple[type[BaseException], ...]] = (
     ValueError,
     TypeError,
     SchemaValidationError,
     PIIBlockError,
     PoisoningError,
+    AuthorizationError,
 )
 
 ReplayOutcome = Literal["recovered", "dead_lettered", "retained"]

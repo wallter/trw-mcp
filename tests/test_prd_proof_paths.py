@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_monorepo
 from trw_mcp.tools._prd_proof_paths import (
     DEFAULT_PATH_PROOF_CHECK_FAILED,
     DEFAULT_PATH_PROOF_FILE_MISSING,
@@ -295,6 +296,7 @@ class TestAdvisoryReachesTheProductionGate:
         assert DEFAULT_PATH_PROOF_FILE_MISSING not in report.blocking
 
 
+@requires_monorepo
 class TestShippedPrdsDoNotRegress:
     def test_every_shipped_default_path_proof_resolves(self) -> None:
         """Non-vacuous guard: the real PRD corpus must stay at zero flags.

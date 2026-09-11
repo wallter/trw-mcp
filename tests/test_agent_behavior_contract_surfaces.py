@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
 
-ROOT = Path(__file__).resolve().parents[2]
-AGENTS = ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
+ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+AGENTS = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents"
 
 
 def test_requirement_review_uses_canonical_category_aware_readiness() -> None:

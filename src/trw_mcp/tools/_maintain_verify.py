@@ -1,15 +1,8 @@
-"""Batch assertion/anchor verification sweep (PRD-CORE-231-FR02).
+"""Explicit assertion/anchor evidence refresh (CORE268; existing maintain-verify).
 
-Recall-time verification only ever touches the handful of entries a query
-happened to return, so an entry that nobody recalls can sit past its staleness
-threshold indefinitely. This sweep closes that latency gap: it bulk-fetches
-every active entry that carries assertions, runs the SAME verification pass and
-the SAME single persisted write the recall path uses
-(:mod:`trw_mcp.tools._verification_pass`), and reports the transitions.
-
-Invoked by the ``trw-mcp maintain-verify`` CLI subcommand (post-commit hook +
-the documented nightly cadence), which bounds worst-case stale-claim latency to
-the sweep interval.
+Traverse a stable finite eligible corpus in bounded namespace/id pages, preserving
+progress even when verification or persistence fails. This is not an automatic
+schedule, global snapshot, hard timeout or bounded-staleness guarantee.
 """
 
 from __future__ import annotations
@@ -64,9 +57,9 @@ def run_maintain_verify(
     project_root: Path | None,
     namespace: str | None = None,
 ) -> MaintainVerifySummary:
-    """Verify every active entry carrying assertions and persist the verdicts.
+    """Verify every active assertion/anchor entry and persist observed verdicts.
 
-    Uses ONE bulk ``entries_with_assertions`` query (NFR01: no N+1 per-entry
+    Uses bounded keyset ``entries_with_assertions`` pages (no N+1 acquisition
     fetch). A per-entry failure is logged and skipped so one bad row cannot
     abort the sweep.
 
@@ -91,40 +84,54 @@ def run_maintain_verify(
     started = time.monotonic()
     summary = MaintainVerifySummary()
 
-    entries = backend.entries_with_assertions(namespace=namespace, limit=batch_limit)
-    for entry in entries:
-        entry_id = str(getattr(entry, "id", ""))
-        prior = getattr(entry, "verification_status", None)
-        try:
-            outcome = run_verification_pass(
-                entry_id,
-                _serialized(list(getattr(entry, "assertions", []) or [])),
-                _serialized(list(getattr(entry, "anchors", []) or [])),
-                namespace=str(getattr(entry, "namespace", namespace)),
-                assertion_failure_penalty=assertion_failure_penalty,
-                assertion_stale_threshold_days=assertion_stale_threshold_days,
-                anchor_validity_verified_floor=anchor_validity_verified_floor,
-                project_root=project_root,
-            )
-        except Exception:  # justified: sweep-resilience, one bad row must not abort the run
-            logger.debug("maintain_verify_entry_failed", entry_id=entry_id, exc_info=True)
-            continue
+    cursor: tuple[str, str] | None = None
+    while batch_limit > 0:
+        entries = backend.entries_with_assertions(
+            namespace=namespace, limit=batch_limit, include_anchors=True, after=cursor
+        )
+        if not entries:
+            break
+        next_cursor = (str(entries[-1].namespace), str(entries[-1].id))
+        if cursor is not None and next_cursor <= cursor:
+            raise ValueError("Maintenance backend did not advance its keyset cursor")
+        # Advance independently of verification/persistence success.
+        cursor = next_cursor
+        for entry in entries:
+            entry_id = str(getattr(entry, "id", ""))
+            prior = getattr(entry, "verification_status", None)
+            try:
+                outcome = run_verification_pass(
+                    entry_id,
+                    _serialized(list(getattr(entry, "assertions", []) or [])),
+                    _serialized(list(getattr(entry, "anchors", []) or [])),
+                    namespace=str(getattr(entry, "namespace", namespace)),
+                    assertion_failure_penalty=assertion_failure_penalty,
+                    assertion_stale_threshold_days=assertion_stale_threshold_days,
+                    anchor_validity_verified_floor=anchor_validity_verified_floor,
+                    project_root=project_root,
+                )
+            except Exception:  # justified: sweep-resilience, one bad row must not abort the run
+                logger.debug("maintain_verify_entry_failed", entry_id=entry_id, exc_info=True)
+                continue
 
-        summary.entries_processed += 1
-        if not outcome.verifiable:
-            # Nothing could be checked (unresolvable root) — skip, do not
-            # convict the entry on historical timestamps alone.
-            continue
-        if not persist_verification_outcome(backend, outcome):
-            summary.persist_failures += 1
-            continue
-        if outcome.verification_status == "stale" and prior != "stale":
-            summary.stale_transitions += 1
-        elif prior == "stale" and outcome.verification_status != "stale":
-            # PRD-CORE-244 FR03: clearing a stale verdict now usually lands on
-            # "verified" rather than None, so keying this on ``is None`` stopped
-            # counting the very transition it exists to report.
-            summary.cleared_transitions += 1
+            summary.entries_processed += 1
+            if not outcome.verifiable:
+                # Nothing could be checked (unresolvable root) — skip, do not
+                # convict the entry on historical timestamps alone.
+                continue
+            if not persist_verification_outcome(backend, outcome):
+                summary.persist_failures += 1
+                continue
+            if outcome.verification_status == "stale" and prior != "stale":
+                summary.stale_transitions += 1
+            elif prior == "stale" and outcome.verification_status != "stale":
+                # PRD-CORE-244 FR03: clearing a stale verdict now usually lands on
+                # "verified" rather than None, so keying this on ``is None`` stopped
+                # counting the very transition it exists to report.
+                summary.cleared_transitions += 1
+
+        if len(entries) < batch_limit:
+            break
 
     summary.duration_ms = int((time.monotonic() - started) * 1000)
     logger.info(

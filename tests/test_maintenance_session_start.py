@@ -136,14 +136,13 @@ class TestSessionStartAutoClose:
 
 
 class TestSweepLevelCosts:
-    """The per-record costs must actually become per-sweep on the real path.
+    """CD preserves one index flush per sweep and retires quota active listing.
 
-    NON-VACUITY: this counts invocations through the production drain step, not
-    through a helper. Stop passing the index sink and the shared active set in
-    ``_learn_journal_wiring.make_sweep_replay`` and both counters go to 5.
+    Restoring per-record index writes must fail the one-write assertion;
+    restoring quota-only corpus loading must fail the zero-listing assertion.
     """
 
-    def test_sweep_does_one_index_write_and_one_active_listing(self, tmp_path: Path, monkeypatch: object) -> None:
+    def test_sweep_does_one_index_write_without_quota_active_listing(self, tmp_path: Path, monkeypatch: object) -> None:
         from trw_mcp.state import learn_journal, memory_adapter
         from trw_mcp.state.analytics import entries as entries_mod
         from trw_mcp.state.memory_pressure import take_writer_census
@@ -196,24 +195,17 @@ class TestSweepLevelCosts:
 
         assert learn_journal.pending_count(trw_dir) == 0
         assert len(index_writes) == 1, f"expected 1 index write for a 5-record sweep, got {len(index_writes)}"
-        assert len(active_listings) == 1, (
-            f"expected 1 active-set materialization for a 5-record sweep, got {len(active_listings)}"
+        assert len(active_listings) == 0, (
+            f"expected no quota active-set materialization for a 5-record sweep, got {len(active_listings)}"
         )
 
-    def test_a_budget_split_sweep_still_does_one_index_write_and_one_listing(
+    def test_a_budget_split_sweep_still_batches_index_without_active_listing(
         self, tmp_path: Path, monkeypatch: object
     ) -> None:
-        """FIX130-04: the inline phase and the continuation share ONE sweep context.
+        """A split sweep shares the index sink and performs no quota listing.
 
-        FR03 promises one index read-modify-write and one active-set
-        materialization PER SWEEP. The first implementation built a second
-        ``make_sweep_replay`` inside the background continuation, so exactly the
-        runs FR02 exists for — a sweep the wall-clock budget SPLIT — paid both
-        costs twice. The original FR03 test used a 120-second budget, which
-        guaranteed no split and so could never see it.
-
-        NON-VACUITY: give the continuation its own context again and both
-        counters go to 2.
+        Creating a second continuation context breaks the one-index-write
+        expectation; active-list count remains zero after CD retirement.
         """
         from trw_mcp.state import learn_journal, memory_adapter
         from trw_mcp.state.analytics import entries as entries_mod
@@ -285,4 +277,4 @@ class TestSweepLevelCosts:
 
         assert learn_journal.pending_count(trw_dir) == 0
         assert len(index_writes) == 1, f"a SPLIT sweep did {len(index_writes)} index writes, not 1"
-        assert len(active_listings) == 1, f"a SPLIT sweep did {len(active_listings)} active listings, not 1"
+        assert len(active_listings) == 0, f"a SPLIT sweep did {len(active_listings)} active listings, expected none"

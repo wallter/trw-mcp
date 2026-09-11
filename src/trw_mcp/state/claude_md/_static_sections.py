@@ -33,9 +33,6 @@ from trw_mcp.state.claude_md.sections import (
     _load_analytics_counts as _load_analytics_counts,
 )
 from trw_mcp.state.claude_md.sections import (
-    _load_prompting_guide as _load_prompting_guide,
-)
-from trw_mcp.state.claude_md.sections import (
     generate_behavioral_protocol_md as generate_behavioral_protocol_md,
 )
 from trw_mcp.state.claude_md.sections import (
@@ -96,7 +93,6 @@ __all__ = [
     "_analytics_cache",
     "_format_learning_session_claim",
     "_load_analytics_counts",
-    "_load_prompting_guide",
     "generate_behavioral_protocol_md",
     "render_agents_trw_section",
     "render_behavioral_protocol",

@@ -33,7 +33,9 @@ rule 2026-07-07, recorded in ``CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md``
   deliberate: the strongest *subagent* tier is Opus, not the mythos-class
   Fable tier.
 - ``fable`` is INTENTIONALLY ABSENT from :data:`_CLAUDE_CODE_MAP`. The
-  operator rule "no Fable-5 subagents" means TRW-generated subagents run
+  operator rule "no Fable-class subagents" (worded per-generation as
+  "no Fable-5 subagents" on 2026-07-07; Fable 5.1 shipped 2026-09-01 and is
+  covered by the same rule) means TRW-generated subagents run
   opus/sonnet/haiku only — Fable is a main-loop/orchestrator model, never a
   subagent target (the sole exception, initial PRD drafts, happens at the
   main-loop level, not through this resolver). The missing ``fable`` key is
@@ -86,11 +88,17 @@ KNOWN_CLIENTS: frozenset[str] = frozenset(
 
 # --- Per-client mapping tables -----------------------------------------------
 
-# Authoritative source: Claude Code subagent docs (code.claude.com/docs/en/sub-agents)
-# enumerate accepted ``model:`` values as ``sonnet | opus | haiku |
-# <full-model-id> | inherit``. The aliases below are the harness-accepted
-# shortnames; we deliberately use them rather than full model IDs so the
-# resolver remains stable across Anthropic minor-version bumps.
+# Authoritative source: Claude Code subagent docs (code.claude.com/docs/en/sub-agents).
+# Corrected 2026-09-10: that page now enumerates accepted ``model:`` values as
+# ``fable | sonnet | opus | haiku | <full-model-id> | inherit`` -- ``fable`` IS
+# accepted by the harness. The earlier comment here omitted it, which made the
+# absence of a ``fable`` key above look like an oversight against the cited
+# source. It is not: the harness accepting a value and TRW choosing to emit it
+# are different questions, and the operator rule answers the second. Keeping the
+# enumeration accurate matters precisely so the policy reads as policy.
+# The aliases below are the harness-accepted shortnames; we deliberately use them
+# rather than full model IDs so the resolver remains stable across Anthropic
+# minor-version bumps.
 _CLAUDE_CODE_MAP: dict[str, str] = {
     "frontier": "opus",
     "balanced": "sonnet",

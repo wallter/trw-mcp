@@ -30,7 +30,12 @@ LIFECYCLE_SYNC_MARKER_PREFIX = "<!-- trw:lifecycle-sync:sha256-"
 
 # PRD-QUAL-104 FR02 NFR02: last-known-good in-module fallback. Verbatim snapshot
 # of the canonical tool-lifecycle body — MUST contain the deliver-gate phrase.
-_FALLBACK_TOOL_LIFECYCLE = """# TRW Tool Lifecycle
+_FALLBACK_TOOL_LIFECYCLE = """<!-- Canonical human-reference source for the TRW tool lifecycle.
+     Run scripts/sync-instruction-surfaces.py after edits; renderers load the
+     bundled mirror and trw_instructions_sync propagates its hash-stamped gate
+     section into supported client instruction files. -->
+
+# TRW Tool Lifecycle
 
 ## Core Mandates
 
@@ -43,11 +48,25 @@ _FALLBACK_TOOL_LIFECYCLE = """# TRW Tool Lifecycle
 | `trw_session_start()` | **First Action** | **MANDATORY.** Loads prior learnings and active run state. |
 | `trw_learn(summary, detail)` | On discoveries | **REQUIRED** for non-obvious technical insights or gotchas. |
 | `trw_checkpoint(message)` | After milestones | **REQUIRED.** Saves resume point for context compaction. |
-| `trw_deliver()` | **Last Action** | **MANDATORY.** Persists your discoveries for future agents. |
+| `trw_deliver()` | Completed-work acceptance | **REQUIRED for delivery**, under the existing gate below; not required merely to stop. |
+
+## Session boundaries
+
+For material unfinished work, preserve progress, observed checks, residual risks and the next action in a checkpoint or durable native handoff with a next-read pointer. Stopping is not acceptance. If nothing material needs preservation, do not manufacture an artifact or learning. Already captured learnings remain persisted.
+
+## Tool surface (PRD-CORE-218)
+
+`tool_resolution_mode` (default `standard`) is the sole tool-exposure authority. Under `standard` each session exposes:
+
+- **Kernel — always, 9 tools**: `trw_session_start`, `trw_status`, `trw_recall`, `trw_learn`, `trw_checkpoint`, `trw_deliver`, `trw_skill_discovery`, `trw_request_tool_access`, `trw_profile_explain`.
+- **Task packs — selected by the active run's `task_type`**: `coding` → verification + code_navigation; `research` → code_navigation + memory_management; `docs` → requirements + verification; `eval` → verification; `rca` → code_navigation + verification; `planning` → requirements; `unknown` / no run → kernel only.
+- **Always exposed regardless of task or mode**: the RIGID lifecycle gates `trw_session_start`, `trw_build_check`, `trw_deliver` plus bootstrap `trw_init`. The deliver-gate tools (`trw_build_check` and `trw_deliver`) are therefore always callable, and a bounded surface can never brick a session.
+
+Tools outside the resolved surface are masked, not deregistered. A denial names the pack(s) that contain the tool and the remedy: call `trw_request_tool_access(tool_name=..., reason=...)` for a single-use grant, or set `tool_resolution_mode='all'` to expose the full registered surface (the operator escape).
 
 ## Delegation
 
-Delegate to focused helpers when the harness supports it and file ownership is clear. When it does not, run the same shards sequentially. Delegation is an optimization — the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
+Delegate only for work that is genuinely independent and parallelizable — a wide multi-file investigation, or shards with disjoint file ownership. Keep routine self-checks in your own loop. Required independent review is separate from routine self-checks; preserve the framework's risk/tier-appropriate review and fallback rules. If one helper suffices, use one. When the harness cannot delegate, run the same shards sequentially — delegation is an optimization, and the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
 
 ## Deliver Gate (v26.2)
 
@@ -164,7 +183,7 @@ tool call. Use the offline substitute:
 | `trw_learn` | `trw-mcp local learn --summary S --detail D --tag T` |
 | `trw_recall` | `trw-mcp local recall --query Q` |
 | `trw_build_check` | run the project-native check yourself, then write the exact command string and its integer exit code into the active run's `reports/` directory |
-| `trw_deliver` | `trw-mcp local deliver --message MSG` — records `gate_evaluated: false`, which is an UNGATED delivery; the gate above still binds until evidence exists |
+| `trw_deliver` (completed-work acceptance only) | `trw-mcp local deliver --message MSG` — records `gate_evaluated: false`, which is an UNGATED delivery; the gate above still binds until evidence exists |
 | Feedback | `trw-mcp local feedback --category C --subject S --message M` |
 
 Writes made offline are marked (`source_identity=local_cli` plus a transient
@@ -260,28 +279,14 @@ def render_codex_instructions() -> str:
         "- **Hooks and nudges are optional**: treat them as additive hints, not correctness gates\n"
         "- **Instruction discovery**: `AGENTS.md` layering and `.codex/INSTRUCTIONS.md` serve different roles\n"
         "- **File navigation**: be explicit about file paths and the repo root you are changing\n"
-        "\n" + render_deliver_gate_statement() + "\n" + render_codex_trw_section() + "\n" + render_delegation_protocol()
+        # render_codex_trw_section() already opens with render_deliver_gate_statement()
+        # -- its own docstring states the gate is "stated in full exactly once here,
+        # which is this carrier's single statement (FR09)". Prepending a second copy
+        # here emitted the sync marker, the governance heading and the whole gate twice
+        # into .codex/INSTRUCTIONS.md, breaking that invariant and spending the
+        # duplicate against Codex's project_doc_max_bytes budget.
+        "\n" + render_codex_trw_section() + "\n" + render_delegation_protocol()
     )
-
-
-def _load_prompting_guide(model_family: str) -> str:
-    """Load a bundled prompting guide, falling back to portable guidance.
-
-    ``model_family`` is retained for compatibility with existing OpenCode
-    config detection, but v25 core guidance is capability-based and portable.
-    """
-    from importlib.resources import files as pkg_files
-
-    filename = f"{model_family}.md" if model_family else "generic.md"
-    try:
-        data_path = pkg_files("trw_mcp.data") / "prompting" / filename
-        return data_path.read_text(encoding="utf-8")
-    except (OSError, FileNotFoundError, TypeError):
-        try:
-            data_path = pkg_files("trw_mcp.data") / "prompting" / "generic.md"
-            return data_path.read_text(encoding="utf-8")
-        except (OSError, FileNotFoundError, TypeError):
-            return ""
 
 
 def render_opencode_instructions(model_family: str) -> str:

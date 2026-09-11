@@ -24,6 +24,7 @@ import structlog.contextvars
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import TelemetryRecordDict, ToolEventDataDict
+from trw_mcp.state import _learn_stage_timing
 from trw_mcp.state._paths import TRWCallContext, find_active_run, resolve_trw_dir
 from trw_mcp.state.otel_wrapper import emit_tool_span
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
@@ -180,6 +181,7 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
         error_type_name: str | None = None
         result_val: object = None
 
+        stage_token = _learn_stage_timing.begin(func.__name__)
         try:
             result_val = func(*args, **kwargs)
             return result_val
@@ -189,64 +191,71 @@ def log_tool_call(func: Callable[P, T]) -> Callable[P, T]:
             error_type_name = type(exc).__name__
             raise
         finally:
-            duration_ms = round((time.monotonic() - start) * 1000, 2)
-            if not _reviewer:
-                try:
-                    current_ctx = structlog.contextvars.get_contextvars()
-                    current_tool_call_id = current_ctx.get("tool_call_id")
-                    output_data: object = result_val if success else {"error": error_msg, "error_type": error_type_name}
-                    trace_fields = build_tool_trace_fields(
-                        tool_name=func.__name__,
-                        event_id=trace_event_id,
-                        parent_event_id=parent_event_id,
-                        tool_call_id=current_tool_call_id if isinstance(current_tool_call_id, str) else None,
-                        input_data={"args": args, "kwargs": kwargs},
-                        output_data=output_data,
-                    )
-                    _write_tool_event(
-                        func.__name__,
-                        duration_ms,
-                        success,
-                        error_msg,
-                        error_type_name,
-                        call_ctx=call_ctx,
-                        trace_fields=trace_fields,
-                    )
-                except Exception:  # justified: fail-open telemetry, never blocks tool execution
-                    logger.debug("telemetry_write_failed", tool=func.__name__)
+            learn_stage_ms = _learn_stage_timing.finish()
+            try:
+                duration_ms = round((time.monotonic() - start) * 1000, 2)
+                if not _reviewer:
+                    try:
+                        current_ctx = structlog.contextvars.get_contextvars()
+                        current_tool_call_id = current_ctx.get("tool_call_id")
+                        output_data: object = (
+                            result_val if success else {"error": error_msg, "error_type": error_type_name}
+                        )
+                        trace_fields = build_tool_trace_fields(
+                            tool_name=func.__name__,
+                            event_id=trace_event_id,
+                            parent_event_id=parent_event_id,
+                            tool_call_id=current_tool_call_id if isinstance(current_tool_call_id, str) else None,
+                            input_data={"args": args, "kwargs": kwargs},
+                            output_data=output_data,
+                        )
+                        _write_tool_event(
+                            func.__name__,
+                            duration_ms,
+                            success,
+                            error_msg,
+                            error_type_name,
+                            call_ctx=call_ctx,
+                            trace_fields=trace_fields,
+                            **({"learn_stage_ms": learn_stage_ms} if learn_stage_ms is not None else {}),
+                        )
+                    except Exception:  # justified: fail-open telemetry, never blocks tool execution
+                        logger.debug("telemetry_write_failed", tool=func.__name__)
 
-            # FR04 + PRD-SEC-004-FR01: detailed tool-telemetry records are richer
-            # than basic events and follow the platform consent gate. The single
-            # choke point is config.platform_telemetry_enabled (the authoritative
-            # root flag) — NOT the legacy 'telemetry' bool, which must not enable
-            # richer collection by itself. The TelemetryConfig-object fallback
-            # preserves tests that override config.telemetry with a model carrying
-            # its own platform_telemetry_enabled field.
-            _tel = config.telemetry
-            if isinstance(_tel, bool):
-                _detailed = bool(getattr(config, "platform_telemetry_enabled", False))
-            else:
-                _detailed = bool(getattr(_tel, "platform_telemetry_enabled", False))
-            if _detailed and not _reviewer:
-                try:
-                    _write_telemetry_record(
-                        func.__name__,
-                        args,
-                        kwargs,
-                        duration_ms,
-                        result_val if success else None,
-                        success,
-                    )
-                except Exception as exc:  # justified: fail-open telemetry, never blocks tool execution
-                    logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
+                # FR04 + PRD-SEC-004-FR01: detailed tool-telemetry records are richer
+                # than basic events and follow the platform consent gate. The single
+                # choke point is config.platform_telemetry_enabled (the authoritative
+                # root flag) — NOT the legacy 'telemetry' bool, which must not enable
+                # richer collection by itself. The TelemetryConfig-object fallback
+                # preserves tests that override config.telemetry with a model carrying
+                # its own platform_telemetry_enabled field.
+                _tel = config.telemetry
+                if isinstance(_tel, bool):
+                    _detailed = bool(getattr(config, "platform_telemetry_enabled", False))
+                else:
+                    _detailed = bool(getattr(_tel, "platform_telemetry_enabled", False))
+                if _detailed and not _reviewer:
+                    try:
+                        _write_telemetry_record(
+                            func.__name__,
+                            args,
+                            kwargs,
+                            duration_ms,
+                            result_val if success else None,
+                            success,
+                        )
+                    except Exception as exc:  # justified: fail-open telemetry, never blocks tool execution
+                        logger.debug("telemetry_write_failed", exc_type=type(exc).__name__)
 
-            # FR01: Clean up correlation ID (only if we bound it).
-            if parent_event_id is not None:
-                structlog.contextvars.bind_contextvars(tool_trace_event_id=parent_event_id)
-            else:
-                structlog.contextvars.unbind_contextvars("tool_trace_event_id")
-            if not is_nested:
-                structlog.contextvars.unbind_contextvars("tool_call_id")
+                # FR01: Clean up correlation ID (only if we bound it).
+                if parent_event_id is not None:
+                    structlog.contextvars.bind_contextvars(tool_trace_event_id=parent_event_id)
+                else:
+                    structlog.contextvars.unbind_contextvars("tool_trace_event_id")
+                if not is_nested:
+                    structlog.contextvars.unbind_contextvars("tool_call_id")
+            finally:
+                _learn_stage_timing.restore(stage_token)
 
     return wrapper
 
@@ -260,6 +269,7 @@ def _write_tool_event(
     *,
     call_ctx: TRWCallContext | None = None,
     trace_fields: ToolTraceFields | None = None,
+    learn_stage_ms: dict[str, float] | None = None,
 ) -> None:
     """Write a tool_invocation event to events.jsonl or fallback."""
     import os
@@ -276,6 +286,9 @@ def _write_tool_event(
         "agent_id": agent_id,
         "agent_role": agent_role,
     }
+
+    if learn_stage_ms is not None:
+        event_data["learn_stage_ms"] = learn_stage_ms
 
     # Include phase from active run state if available
     try:

@@ -57,11 +57,13 @@ When a run directory exists, paths below are relative to `{RUN_ROOT}` — the ru
 
 | File | Update When | Failure |
 |------|-------------|---------|
-| `{RUN_ROOT}/reports/plan.md` | Plan changes or scope decisions | Block IMPLEMENT for STANDARD+ run-backed work |
+| Governing PRD (including embedded plan), issue/request, or project-native plan; `reports/plan.md` when used | Plan changes or scope decisions | Preserve material planning evidence for STANDARD+ work; no fixed-filename gate |
 | `{RUN_ROOT}/reports/final.md` | Run completes | Block DELIVER for STANDARD+ run-backed work |
 | `{RUN_ROOT}/meta/run.yaml` | Phase/status changes | Invalid run state |
 | `{RUN_ROOT}/meta/events.jsonl` | Significant event | Lost run audit trail |
 | `{RUN_ROOT}/scratch/**/findings.yaml` | Delegate or wave findings | Lost resume point |
+
+Preserve scope, acceptance methods and applicable ownership in the governing artifact; run reports may link to it. Neither file presence nor phase advancement proves planning approval. Explicit user/project artifact requirements still apply.
 
 Write important state to disk before relying on it. Treat failure of a required persistence surface as a P0 blocker; choose the surface from actual task continuity needs rather than ceremony for its own sake.
 
@@ -105,11 +107,11 @@ Per the READING CONTRACT, phase-gate enforcement defaults to lenient (warn-and-p
 
 ## RIGID / FLEXIBLE TOOL CLASSIFICATION
 
-Rigid tools have zero discretion. Flexible tools MUST happen when their trigger is real.
+Rigid obligations apply within scope; flexible tools MUST run when triggered. Neither requires finishing work to end a session.
 
-**Rigid (unconditional):**
+**Rigid (within the stated scope):**
 - `trw_session_start(query?)` — first TRW action of every session; load memory and active state
-- `trw_deliver()` — last TRW action of every session; preserve progress and maintenance state. Gate: see **Deliver gate (no fourth path)** in EXECUTION MODEL SUMMARY, stated in full only there
+- `trw_deliver()` — completed-work acceptance, not a session-stop prerequisite. Gate: see **Deliver gate (no fourth path)** in EXECUTION MODEL SUMMARY, stated in full only there
 - `trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)` — record observed project-native validation at VALIDATE and before DELIVER after code/test changes; it does not run checks
 - `trw_review()` — before DELIVER for STANDARD+ complexity. The tool records an artifact; limited auto scans and empty manual/no-argument passes are stamped `substantive: false` and do not satisfy REVIEW readiness. Evidence comes from supplied reviewer findings, an independent reviewer, or—when independence is unavailable—an explicitly identified cold-context self-pass
 - Completion artifacts — before claiming done
@@ -123,7 +125,7 @@ Rigid tools have zero discretion. Flexible tools MUST happen when their trigger 
 - `trw_recall(query)` — at start or before unfamiliar/high-risk areas; prefer narrow queries over wildcard dumps
 - Phase reversion — when evidence invalidates the current phase
 
-Do NOT debate rigid tools. Execute, or apply WHEN THE TRANSPORT IS DOWN below.
+Apply these obligations or WHEN THE TRANSPORT IS DOWN substitutes. For unfinished material work, checkpoint or durably hand off progress, observed checks, risks, next action and next-read pointer. Captured learnings persist. Without material state, invent no run, artifact or learning. Preservation is not delivery, verification or completion.
 
 ---
 
@@ -367,7 +369,7 @@ Memory discipline:
 - Engineering knowledge (gotchas, root causes, validated patterns, architecture constraints) → `trw_learn`. Personal/communication preferences → the client's native memory. Episodic "what happened this run" → checkpoints and run artifacts, not learnings.
 - Delivery reflection is mandatory output even when it yields no learning; `skip_reflect` is only for a reflection already completed. A clean session is a valid result: do not record routine status or invent improvements to look productive, and keep edits minimal.
 - Learnings route to the project tier by default; an opt-in user tier holds machine-local cross-repo knowledge; `trw_recall` federates both.
-- Background consolidation (dedup, decay, tier sweeps) runs at delivery — one more reason `trw_deliver` is rigid.
+- Delivery may run configured maintenance; deferring it does not erase already captured learnings or checkpoints and does not require accepting unfinished work.
 
 Instruction files should stay short and adapter-specific. Durable knowledge belongs in TRW memory first.
 
@@ -387,15 +389,17 @@ Instruction files should stay short and adapter-specific. Durable knowledge belo
 
 On compact: `trw_pre_compact_checkpoint` (or `trw_checkpoint` with resume notes) → commit green work when safe → reload the execution summary + relevant phase/gate sections + active client instructions → `trw_session_start(query=...)` (it replays the recovery directive) → resume from persisted state. Reload the full framework when explicitly required; do not pull 40KB of unrelated detail into a narrow continuation by reflex.
 
-## QOL CHANGES
+## SIMPLIFICATION AND SCOPE
 
-QOL changes are allowed only when they directly support the current requirement, remain behavior-preserving, and do not expand the validation boundary. Trace them to the task and keep them in a separate diff or commit when practical. Otherwise defer them with evidence; arbitrary line-count or effort percentages are not authorization for extra scope.
+Question the need before optimizing the mechanism: consider deletion, consolidation or an existing path before adding code, tools or ceremony. Keep complexity for a current requirement, credible risk, demonstrated benefit, or a bounded experiment answering a current uncertainty—not speculative future use. Verify consumers and what removal breaks; preserve required safety, knowledge and acceptance evidence. Record material tradeoffs in the existing plan/PRD, not a new ceremony.
+
+Incidental QOL edits still require task relevance, behavior preservation and no expanded validation boundary; otherwise defer. Authorized redesign may change behavior explicitly. Neither arbitrary line-count targets nor “simplification” authorize unrelated scope or weaker evidence.
 
 ---
 
 ## END-OF-SESSION REMINDER (terminal constraints decay — this restatement is deliberate)
 
-Before you stop: record applicable project-native validation with `trw_build_check` after the last change → `trw_learn` for non-obvious reusable discoveries → `trw_deliver` under the three-path gate in the EXECUTION MODEL SUMMARY. Unpersisted material progress is invisible to every future session.
+Before accepting completed work: record applicable project-native validation with `trw_build_check` after the last change → capture any still-unrecorded non-obvious reusable discoveries → `trw_deliver` under the three-path gate in the EXECUTION MODEL SUMMARY. Before an unfinished pause, preserve material state and a next-read pointer instead. Stopping is not acceptance; do not manufacture artifacts when nothing material needs preservation.
 
 </trw-framework>
 

@@ -23,6 +23,7 @@ under the 350-LOC gate.
 
 from __future__ import annotations
 
+import stat
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -108,6 +109,19 @@ def step_run_resolve(
         if run_dir is not None:
             pin_active_run(run_dir, context=call_ctx)
             results["run"] = _get_run_status(run_dir)
+            # CORE269 FR04: metadata-only location hint, never recovered content.
+            # Reuse the resolved run; this is not a second authority lookup.
+            checkpoint = run_dir / "meta" / "checkpoints.jsonl"
+            try:
+                if stat.S_ISREG(checkpoint.lstat().st_mode):
+                    resolved = checkpoint.resolve(strict=True)
+                    if resolved.is_relative_to(run_dir.resolve(strict=True)):
+                        results["run"]["checkpoint_log_path"] = str(resolved)
+            except (OSError, RuntimeError):
+                # Missing/inaccessible paths (including symlink loops) omit the
+                # advisory pointer without changing the existing startup outcome.
+                # trw-fail-silent-allow: the key is simply absent, so a caller cannot mistake it for a checked-and-valid path
+                pass
         else:
             logger.info("session_start_no_active_run", pin_key=call_ctx.session_id)
             candidate_runs = _candidate_run_hints()

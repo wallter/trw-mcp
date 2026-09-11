@@ -89,7 +89,7 @@ If you catch yourself thinking any of these, stop and follow the process — the
 
 | Thought | Why it is wrong | Consequence |
 |---------|-----------------|-------------|
-| "This is too simple for fundamentals" | MINIMAL still requires session start, validation, and delivery; checkpoint only when continuity risk makes it useful | Skipped evidence or lost state → rework |
+| "This is too simple for fundamentals" | MINIMAL retains session start and completed-work validation/delivery; an unfinished pause preserves material state, and no material state means no manufactured artifact | Skipped evidence or lost state → rework |
 | "I will checkpoint/deliver after this part" | Unpersisted progress is invisible to future sessions | Learning transfer is lost |
 | "I already know the codebase" | Prior learnings often contain exact repo gotchas | You rediscover old failures |
 | "I can implement directly; delegation is overhead" | Focused review/delegation catches defects when scope is non-trivial | Integration gaps reach VALIDATE |
@@ -139,7 +139,7 @@ The method is canonical; MCP is its preferred TRW realization. If MCP is unavail
 | Tool | Phase | Required | What It Does |
 |------|-------|----------|--------------|
 | `trw_session_start(query?)` | Start | MUST | Recall learnings + check active run state; surfaces any pre-compaction recovery directive |
-| `trw_deliver(run_path?)` | End | MUST | Reflect, checkpoint, sync instructions/index state; launches background memory maintenance |
+| `trw_deliver(run_path?)` | Completed-work delivery | MUST for acceptance, not stopping | Reflect, checkpoint, sync instructions/index state; launches background memory maintenance |
 | `trw_recall(query, min_impact?)` | Any | SHOULD | Focused memory search (federates project + user tiers) |
 | `trw_learn(summary, detail, impact?)` | Any | SHOULD | Persist reusable discoveries |
 | `trw_learn_update(id, ...)` | Any | SHOULD | Correct or refresh a stale learning instead of duplicating it |
@@ -159,7 +159,7 @@ The method is canonical; MCP is its preferred TRW realization. If MCP is unavail
 
 Lifecycle: `trw_session_start → research/plan as needed → implement + checkpoint/learn → validate with project-native checks + trw_build_check → review when needed → trw_deliver`.
 
-Quick tasks: `trw_session_start → work → targeted project-native validation → trw_learn if discovery → trw_build_check if code changed → trw_deliver`.
+Completed quick tasks: `trw_session_start → work → targeted project-native validation → trw_learn if discovery → trw_build_check if code changed → trw_deliver`. An unfinished pause preserves material state instead; it does not cross the delivery boundary.
 
 Minimum manual equivalents when a tool is unavailable:
 

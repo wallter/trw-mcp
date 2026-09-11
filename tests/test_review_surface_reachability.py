@@ -157,16 +157,10 @@ def test_kernel_is_untouched_and_prd_validate_stays_non_rigid() -> None:
 
 @pytest.mark.asyncio
 async def test_review_visible_on_kernel_only_surface(monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR01: a session with NO pinned run (i.e. every session at MCP connect)
-    resolves a 14-tool surface that contains ``trw_review``.
+    """FR01: review is reachable on the exact bounded no-run surface.
 
-    14 = the 9 KERNEL_TOOLS + trw_build_check + trw_review (both now DECLARED by
-    the PRD-CORE-246-FR05 ``unknown`` fallback, not only never-hidden) +
-    trw_init, trw_submit_feedback, and trw_prd_validate (the three bootstrap
-    tools; trw_prd_validate added 2026-09-04 to fix a wiring defect where a
-    coding-task session, and any trw-prd-groomer/trw-requirement-reviewer
-    sub-agent it dispatches, could never reach the requirement-quality
-    validator).
+    CORE218 owns versioned kernel membership; this test owns the additional
+    review/bootstrap members and must not duplicate a historical kernel count.
     """
     monkeypatch.setattr(f"{_SURFACE_MOD}._resolve_mode", lambda: "standard")
     monkeypatch.setattr(f"{_SURFACE_MOD}.resolve_task_type", lambda **_: None)
@@ -182,26 +176,29 @@ async def test_review_visible_on_kernel_only_surface(monkeypatch: pytest.MonkeyP
         "trw_submit_feedback",
         "trw_prd_validate",
     }
-    assert len(names) == 14
     # Non-regression: the bounded surface is still bounded — a pack tool that is
     # NOT never-hidden stays masked, so this is not "everything is visible".
     assert "trw_code_search" not in names
 
 
 def test_coding_surface_size_is_unchanged_by_fr01() -> None:
-    """FR01 boundary: ``trw_review`` was ALREADY in the ``verification`` pack, so
-    the ``coding`` surface must not grow on its account — union membership is
-    idempotent. PRD-CORE-246-FR06 added exactly ONE tool (``trw_submit_feedback``)
-    to the never-hide set (16 -> 17); the 2026-09-04 wiring-defect fix added a
-    second (``trw_prd_validate``, 17 -> 18) so a coding-task session (and any
-    sub-agent it dispatches) can reach the requirement-quality validator."""
+    """FR01: adding review does not expose unrelated packs.
+
+    Assert exact membership, not a historical size invalidated by CORE218's
+    separately versioned kernel. This also rejects a wrong same-sized surface.
+    """
     coding = (set(resolve_tool_surface("coding", "standard").tools) | _ALWAYS_EXPOSED) & set(eligible_tool_names())
-    assert "trw_review" in coding
-    assert "trw_prd_validate" in coding
-    assert len(coding) == 18
-    assert len(coding - {"trw_submit_feedback", "trw_prd_validate"}) == 16, (
-        "FR06 + the 2026-09-04 fix added exactly two tools, not a class of them"
-    )
+    assert coding == set(KERNEL_TOOLS) | {
+        "trw_build_check",
+        "trw_review",
+        "trw_code_search",
+        "trw_code_symbol",
+        "trw_before_edit_hint",
+        "trw_before_edit_hint_batch",
+        "trw_init",
+        "trw_submit_feedback",
+        "trw_prd_validate",
+    }
 
 
 @pytest.mark.asyncio

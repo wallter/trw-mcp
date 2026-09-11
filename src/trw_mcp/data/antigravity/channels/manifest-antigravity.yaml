@@ -6,7 +6,14 @@ channels:
   client: antigravity-cli
   surface: subagent_file
   telemetry_tag: ag02_distill_explorer_subagent
-  file: .antigravitycli/agents/trw-distill-explorer.md
+  # Corrected 2026-09-10: PRD-CORE-252 moved the destination to the tree
+  # Antigravity's own subagent docs name. The installer resolves the real
+  # path from agent_formats' registry and never reads this field, so the
+  # stale value was not breaking writes -- but this manifest is the record
+  # of where a channel lives, and it pointed at a directory TRW no longer
+  # writes. `.antigravitycli/agents` survives only in RELOCATED_CLIENT_AGENTS
+  # for stale-copy cleanup.
+  file: .agents/agents/trw-distill-explorer.md
   lock_file: .trw/channels/ag-02-distill-explorer-subagent.lock
   status: active
   write_strategy: FULL_REWRITE

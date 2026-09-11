@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.models.requirements import SeamEntry, ValidationFailure
 from trw_mcp.state.prd_utils import parse_frontmatter
 from trw_mcp.state.validation._prd_scoring_fr import _extract_fr_sections
@@ -462,7 +463,7 @@ def test_capitalized_consumer_clears_wiring_warning() -> None:
 
 def _load_check_seam_expiry() -> object:
     """Import scripts/check-seam-expiry.py via importlib (scripts/ isn't a package)."""
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = MONOREPO_ROOT or PACKAGE_ROOT.parent
     script_path = repo_root / "scripts" / "check-seam-expiry.py"
     spec = importlib.util.spec_from_file_location("check_seam_expiry", script_path)
     assert spec is not None and spec.loader is not None
@@ -471,6 +472,7 @@ def _load_check_seam_expiry() -> object:
     return module
 
 
+@requires_monorepo
 def test_check_corpus_expired_seam_exits_one(tmp_path: Path) -> None:
     """check_corpus over a dir holding the expired-seam fixture exits 1 (P1-2)."""
     mod = _load_check_seam_expiry()
@@ -479,6 +481,7 @@ def test_check_corpus_expired_seam_exits_one(tmp_path: Path) -> None:
     assert exit_code == 1
 
 
+@requires_monorepo
 def test_check_corpus_valid_seam_exits_zero(tmp_path: Path) -> None:
     """check_corpus over a dir holding the current-seam fixture exits 0 (P1-2)."""
     mod = _load_check_seam_expiry()
@@ -487,6 +490,7 @@ def test_check_corpus_valid_seam_exits_zero(tmp_path: Path) -> None:
     assert exit_code == 0
 
 
+@requires_monorepo
 def test_check_corpus_today_boundary_exits_zero(tmp_path: Path) -> None:
     """A seam expiring exactly today is NOT overdue -> exit 0 (boundary parity)."""
     mod = _load_check_seam_expiry()
@@ -499,6 +503,7 @@ def test_check_corpus_today_boundary_exits_zero(tmp_path: Path) -> None:
     assert mod.check_corpus(tmp_path, today=_TODAY) == 0  # type: ignore[attr-defined]
 
 
+@requires_monorepo
 def test_check_corpus_invalid_kind_is_advisory_not_failing(tmp_path: Path) -> None:
     """An invalid kind (but current expiry) does NOT change the exit code (P2-1)."""
     mod = _load_check_seam_expiry()
@@ -512,6 +517,7 @@ def test_check_corpus_invalid_kind_is_advisory_not_failing(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
+@requires_monorepo
 def test_kind_parity_invalid_rejected_by_both_parsers() -> None:
     """The invalid-kind fixture is rejected by BOTH the Pydantic and CI parsers.
 
@@ -534,6 +540,7 @@ def test_kind_parity_invalid_rejected_by_both_parsers() -> None:
     assert "not-a-real-kind" not in mod._ALLOWED_KINDS  # type: ignore[attr-defined]
 
 
+@requires_monorepo
 def test_kind_parity_valid_accepted_by_both_parsers() -> None:
     """The valid-seam fixture's kind is accepted by both parsers (parity)."""
     mod = _load_check_seam_expiry()

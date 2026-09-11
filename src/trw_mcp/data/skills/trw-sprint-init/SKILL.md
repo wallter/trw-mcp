@@ -1,7 +1,7 @@
 ---
 name: trw-sprint-init
 description: >
-  Initialize a new sprint. Lists draft PRDs, creates sprint doc,
+  Initialize an explicitly requested sprint. Lists draft PRDs, creates sprint doc,
   bootstraps run directory, sets up tracking.
   Use: /trw-sprint-init "Sprint 16: Skills Architecture"
 user-invocable: true
@@ -11,9 +11,9 @@ argument-hint: "[sprint name]"
 
 # Sprint Initialization
 
-Use when: starting a sprint from approved, scoped PRDs and an explicit sprint goal.
+Use when: the user explicitly requests a sprint from scoped PRDs and an explicit sprint goal.
 
-Create a sprint contract from selected PRDs, establish ownership, and bootstrap a resumable run. Do not start implementation inside this skill.
+Create a sprint coordination contract from selected PRDs and bootstrap a resumable run only when a sprint is explicitly requested. Ordinary work does not require a sprint. Do not start implementation inside this skill.
 
 ## 1. Resolve project state
 
@@ -28,20 +28,23 @@ Read the catalogue and candidate PRD frontmatter/body. Present ID, title, lifecy
 
 Ask the user to confirm the sprint scope unless the invocation already names exact PRDs. Do not silently include every draft.
 
-## 3. Plan ownership and execution mode
+## 3. Reuse governing plans; coordinate only the sprint
 
-Group work by actual dependencies and file ownership:
+Read each selected PRD's accepted execution plan, embedded or project-required separate artifact. Reference its path and task IDs or section anchors; do not recreate per-PRD tasks, status, ownership, dependencies, or verification commands in the sprint document.
 
-- shared files or ordered interfaces stay in one sequential track;
-- disjoint tracks may run concurrently only when the active harness and project policy allow delegation;
-- a single-session sequential plan is always valid;
-- every track must name owned paths, inputs/outputs, validation, and handoff evidence.
+If a plan is missing or unaccepted, identify the gap and use the existing governing artifact and readiness workflow before scheduling that work as ready. Sprint selection does not grant approval. Surface conflicting plans or ownership for resolution rather than silently choosing or overwriting an authority.
 
-Do not launch helpers automatically. Sprint initialization prepares the contract; execution begins after scope/ownership approval.
+Add only cross-PRD ordering, shared-file coordination, integration ownership, and aggregate/manual acceptance not already governed by those plans. Use their references to resolve the next task and its verification after resume:
+
+- shared files or ordered interfaces stay sequential;
+- disjoint work may run concurrently only when the active harness and project policy allow delegation;
+- a single-session sequential plan is always valid.
+
+Do not launch helpers automatically. Execution begins after scope/ownership approval.
 
 ## 4. Write the sprint document
 
-Write one active sprint document using the project's convention. Keep the schema compact:
+Write one active sprint document using the project's convention. Preserve project-required separate formats and existing sprint artifacts; do not auto-migrate them. Keep the lifecycle metadata and aggregate closure obligations below, then link governing plans and add only the sprint-specific coordination from step 3:
 
 ```yaml
 sprint: <number>
@@ -51,11 +54,6 @@ status: active
 prd_ids: [<PRD-ID>]
 run_path: <filled after trw_init>
 coverage_threshold: null  # Populate only from project config or an accepted requirement.
-tracks:
-  - id: A
-    prd_ids: [<PRD-ID>]
-    owned_paths: [<path>]
-    depends_on: []
 exit_criteria:
   - id: prd-lifecycle
     description: Assigned PRDs reached their evidence-backed terminal sprint state
@@ -80,7 +78,7 @@ If no coverage threshold is configured or explicitly accepted, keep it null and 
 
 1. Call `trw_init(task_name=<run_task_name>, objective=<display sprint name>, prd_scope=[...])`; never pass the display title directly as `task_name`.
 2. Insert the returned run path into the sprint document.
-3. Checkpoint the selected PRDs, track ownership, dependencies, execution mode, and open risks.
+3. Checkpoint the selected PRDs, governing-plan references, sprint-specific coordination, execution mode, and open risks; keep per-PRD progress in its governing artifact.
 4. Report the sprint path, run path, scope, ownership conflicts, and next approval/action.
 
 Initialization is complete when the sprint contract and run are resumable—not when implementation has been launched.

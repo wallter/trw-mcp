@@ -20,12 +20,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
+from trw_memory.embeddings.provenance import generation_provenance_kwargs
+
+from trw_mcp.state._memory_repair import repair_embeddings as _repair_embeddings
 
 if TYPE_CHECKING:
     from trw_memory.embeddings.local import LocalEmbeddingProvider
 
+
 from trw_memory.exceptions import CorruptDatabaseUnsalvageableError
-from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+# `as SQLiteBackend` is an EXPLICIT re-export, required by no_implicit_reexport and
+# load-bearing: test_embedding_repair.py monkeypatches `connection.SQLiteBackend` to
+# assert a writer backend is never opened, and `_memory_repair` resolves it through
+# this module so that patch is honoured.
+from trw_memory.storage.sqlite_backend import SQLiteBackend as SQLiteBackend
 
 from trw_mcp.state import _memory_offline as _offline
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
@@ -557,7 +566,9 @@ def _embed_and_store_returning(backend: SQLiteBackend, entry_id: str, text: str)
     try:
         vector = embedder.embed(text)
         if vector is not None:
-            backend.upsert_vector(entry_id, vector, namespace=_NAMESPACE)
+            backend.upsert_vector(
+                entry_id, vector, namespace=_NAMESPACE, **generation_provenance_kwargs(embedder, text, vector)
+            )
         return vector
     except (OSError, ValueError, RuntimeError):
         # justified: embedding is optional enrichment -- store succeeds without it.
@@ -595,3 +606,10 @@ def backfill_embeddings(trw_dir: Path) -> dict[str, int]:
         namespace=_NAMESPACE,
         max_entries=_MAX_ENTRIES,
     )
+
+
+# ``repair_embeddings`` lives in the ``_memory_repair`` sibling (extracted for the
+# 350-eLOC gate, same as ``ensure_migrated`` above). Re-exported here because the CLI
+# subcommand and test_embedding_repair.py both reach it as
+# ``_memory_connection.repair_embeddings``.
+repair_embeddings = _repair_embeddings

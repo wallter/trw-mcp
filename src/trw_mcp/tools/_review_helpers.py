@@ -19,15 +19,19 @@ Mode handler functions are extracted to sub-modules for module-size compliance:
 
 from __future__ import annotations
 
+import json
+import re
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import structlog
 
+from trw_mcp.dispatch import SUPPORTED_CLIENTS, DispatchRequest, apply_role, dispatch
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
 
 if TYPE_CHECKING:
+    from trw_mcp.dispatch import DispatchResult
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.tools._review_provenance import RunIdentity
     from trw_mcp.tools._review_receipt_writer import ReviewReceiptWriteResult
@@ -94,26 +98,158 @@ def _normalize_severity(severity: str) -> str:
     return SEVERITY_ALIASES.get(severity.lower().strip(), "info")
 
 
+class CrossModelUnavailable(RuntimeError):
+    """The configured reviewer could not be reached or refused to run.
+
+    Outcome (c) in PRD-CORE-270-FR03: a missing binary, an unauthenticated CLI,
+    an unsupported client id, or a non-zero exit. Distinct from "ran and found
+    nothing" -- reporting this as an empty review would turn an absent check
+    into an apparently passing one.
+    """
+
+
+class CrossModelIncomplete(RuntimeError):
+    """The reviewer ran but did not produce a usable result.
+
+    Outcome (d) in PRD-CORE-270-FR03: a timeout, or output no parser could turn
+    into findings. Also must never render as "no findings".
+    """
+
+
+def _coerce_findings(raw: object) -> list[dict[str, str]] | None:
+    """Stringify a reviewer's ``findings`` list, or reject it outright.
+
+    Returns ``None`` -- which the caller escalates to
+    :class:`CrossModelIncomplete` -- when the payload is not a list, or when any
+    element is not an object. Dropping unreadable elements and returning the
+    survivors would report ``{"findings": ["P0: arbitrary code execution"]}`` as
+    "ran, found nothing", which is the exact inversion this module exists to
+    prevent (PRD-CORE-270-FR05).
+    """
+    if not isinstance(raw, list):
+        return None
+    coerced: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return None
+        coerced.append({str(key): str(value) for key, value in item.items()})
+    return coerced
+
+
+def _findings_document(payload: object) -> list[dict[str, str]] | None:
+    """Read a findings document, honoring an explicit error flag."""
+    if not isinstance(payload, dict) or payload.get("is_error"):
+        return None
+    if "findings" not in payload:
+        return None
+    return _coerce_findings(payload["findings"])
+
+
+def _decode_json_answer(text: str) -> object | None:
+    """Decode a reviewer's answer, tolerating a Markdown code fence.
+
+    Claude's dispatch normalizer puts the model's ANSWER in ``result.text`` and
+    keeps the CLI envelope in ``result.structured`` (``dispatch/_normalize.py``),
+    so a findings document produced by the ``code-review`` role arrives as text.
+    """
+    body = text.strip()
+    if body.startswith("```"):
+        body = re.sub(r"^```[A-Za-z0-9_-]*\n", "", body)
+        body = re.sub(r"\n?```\s*$", "", body)
+    try:
+        decoded: object = json.loads(body)
+    except (ValueError, RecursionError):
+        return None
+    return decoded
+
+
+def _parse_cross_model_findings(result: DispatchResult) -> list[dict[str, str]] | None:
+    """Extract findings from a dispatched reviewer's answer, or reject it.
+
+    Returns ``None`` when the answer is not a findings document, which the
+    caller raises as :class:`CrossModelIncomplete` (PRD-CORE-270-FR05) -- never
+    as an empty list. Only an explicit, well-formed ``findings: []`` counts as
+    "ran, found nothing".
+
+    Prose is deliberately NOT accepted. Wrapping arbitrary text in one
+    ``severity="info"`` finding made every non-empty answer a substantive
+    passing cross-family review -- including
+    ``"Overall verdict: BLOCK"``, ``"{not valid json"``, and
+    ``"I could not review this diff because authentication is required."``
+    (all three verified to yield ``verdict=pass, critical_count=0``). The
+    reviewer's own words survive in the raised exception message instead, as
+    diagnostics rather than as a verdict input.
+    """
+    findings = _findings_document(result.structured)
+    if findings is not None:
+        return findings
+    text = result.text.strip()
+    if not text:
+        return None
+    return _findings_document(_decode_json_answer(text))
+
+
 def _invoke_cross_model_review(
     diff: str,
     config: TRWConfig,
 ) -> list[dict[str, str]] | None:
-    """Invoke cross-model review via an external provider — the ONE integration seam.
+    """Invoke cross-model review by dispatching another coding-agent CLI.
 
-    Returns ``None`` when NO provider transport was attempted, and a (possibly
-    empty) list when one was. The distinction is load-bearing for honesty: no
-    transport is wired to this seam yet, so every call returns ``None`` and the
-    caller degrades with ``provider_integration_absent``. Collapsing both cases
-    to ``[]`` made a configured-but-never-contacted provider report
-    ``provider_returned_empty`` — blaming the operator's provider for TRW's own
-    missing integration. Wiring a transport here is the only change needed; the
-    ``[]`` branch is what a real provider returning nothing produces.
+    Returns ``None`` when NO transport was attempted, and a (possibly empty)
+    list when one was. That distinction is load-bearing for honesty: collapsing
+    both to ``[]`` made a configured-but-never-contacted provider report
+    ``provider_returned_empty``, blaming the operator's provider for TRW's own
+    gap. It is preserved here -- ``None`` now means "no reviewer configured"
+    rather than "no transport exists" (PRD-CORE-270-FR01).
 
-    Args:
-        diff: The git diff text to review.
-        config: TRWConfig instance with cross_model_* fields.
+    ``config.cross_model_provider`` names a DISPATCH CLIENT (``codex``, ``agy``,
+    ``claude``, ...), not a model. The model, when overridden at all, comes from
+    the existing ``dispatch_default_models`` map, so there is one place an
+    operator says "which model on which client" (PRD-CORE-270-FR02).
+
+    The child runs read-only by two independent mechanisms: ``read_only=True``
+    omits every write/permission-bypass flag and applies the client's own
+    sandbox, and the ``code-review`` role preamble states the constraint in the
+    prompt (NFR02).
+
+    Raises:
+        CrossModelUnavailable: outcome (c) -- unsupported client, missing or
+            unauthenticated CLI, non-zero exit.
+        CrossModelIncomplete: outcome (d) -- timed out, or output that yielded
+            no parseable findings.
     """
-    return None
+    client = (config.cross_model_provider or "").strip()
+    if not client:
+        return None
+
+    if client not in SUPPORTED_CLIENTS:
+        raise CrossModelUnavailable(
+            f"cross_model_provider={client!r} is not a dispatch client; "
+            f"expected one of {', '.join(sorted(SUPPORTED_CLIENTS))}"
+        )
+
+    model = (config.dispatch_default_models or {}).get(client) or None
+    request = DispatchRequest(
+        client=client,
+        prompt=apply_role("code-review", diff),
+        model=model,
+        read_only=True,
+        timeout_s=max(1, int(config.cross_model_review_timeout_secs)),
+    )
+    result = dispatch(request)
+
+    if result.timed_out:
+        raise CrossModelIncomplete(f"{client} exceeded {request.timeout_s}s")
+    if result.exit_code != 0:
+        raise CrossModelUnavailable(f"{client} exited {result.exit_code}")
+
+    findings = _parse_cross_model_findings(result)
+    if findings is None:
+        excerpt = " ".join(result.text.split())[:400]
+        raise CrossModelIncomplete(
+            f"{client} did not return a findings document" + (f"; answer began: {excerpt}" if excerpt else "")
+        )
+    return findings
 
 
 def _cross_family_available(config: TRWConfig) -> bool:

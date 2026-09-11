@@ -38,6 +38,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tests._layout import requires_monorepo
+
+pytestmark = requires_monorepo
+
 import pytest
 
 from tests._workflow_schema_scan import (
@@ -142,7 +146,10 @@ def test_workflow_schemas_honor_agent_mandatory_fields() -> None:
     [
         "refine-canon-doc.js",
         "feedback-triage.mjs",
-        "provider-docs-refresh.mjs",
+        # The provider refresh's trw-researcher pairing moved here on 2026-09-10
+        # when provider-docs-refresh.mjs was generalized to a two-axis engine and
+        # reduced to a thin wrapper. This test caught the move, which is its job.
+        "research-refresh.mjs",
     ],
 )
 def test_scanner_finds_known_researcher_pairings(rel_path: str) -> None:

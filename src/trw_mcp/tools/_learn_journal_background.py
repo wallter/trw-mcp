@@ -4,6 +4,9 @@ Belongs to ``tools/_ceremony_maintenance_steps.py``, which owns the single-fligh
 ``_DRAIN_THREAD`` handle and starts this body on it. Split out so the maintenance
 module stays under the 350 effective-LOC gate.
 
+Journal maintenance requests replay only; the migration callable and explicit
+``run_migration`` argument remain available for intentional maintenance.
+
 Two behaviours here are corrections the first implementation got wrong:
 
 * **The worker RE-LISTS** (FIX130-02). ``drain_pending`` takes a finite snapshot
@@ -141,8 +144,8 @@ def run_batch_dedup_migration(trw_dir: Path, config: TRWConfig) -> dict[str, obj
     where a peer finishes the work.
 
     The marker is written by ``batch_dedup`` itself and ONLY on completion, so a
-    migration that was skipped, contended, or failed stays owed and the next
-    sweep retries. A skipped run releases its claim in a ``finally``, so it
+    migration that was skipped, contended, or failed remains incomplete. A later
+    explicit maintenance request may retry; ordinary sweeps do not schedule it. A skipped run releases its claim in a ``finally``, so it
     leaves nothing behind for the next process to trip over.
     """
     from trw_mcp.state._learn_journal_claims import acquire_claim, release_claim

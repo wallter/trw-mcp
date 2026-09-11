@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from tests._test_bundle_asset_support import _MONOREPO_CLAUDE, _PKG_DATA, _resolve_data_path
+from tests._layout import MONOREPO_ROOT, requires_monorepo
+from tests._test_bundle_asset_support import _PKG_DATA
 from trw_mcp.models.skill_manifest import validate_skill_markdown
 
 
@@ -16,14 +17,17 @@ class TestSkillDefinitions:
     @pytest.fixture()
     def skills_dir(self) -> Path:
         """Return path to bundled skill definitions."""
-        return _resolve_data_path("skills", "skills")
+        skills = _PKG_DATA / "skills"
+        assert skills.is_dir(), f"required bundled skill tree missing: {skills}"
+        return skills
 
     @pytest.fixture()
     def root_skills_dir(self) -> Path:
         """Return path to monorepo root skill definitions when available."""
-        skills_dir = _MONOREPO_CLAUDE / "skills"
-        if not skills_dir.exists():
-            pytest.skip("root .claude/skills not available in this environment")
+        if MONOREPO_ROOT is None:
+            pytest.skip("root skill parity requires the monorepo checkout")
+        skills_dir = MONOREPO_ROOT / ".claude" / "skills"
+        assert skills_dir.is_dir(), f"required monorepo skill tree missing: {skills_dir}"
         return skills_dir
 
     def test_exec_plan_skill_matches_root_source(self, skills_dir: Path, root_skills_dir: Path) -> None:
@@ -56,7 +60,13 @@ class TestSkillDefinitions:
             root_skills_dir / "trw-reflect" / "SKILL.md"
         ).read_text(encoding="utf-8")
 
-    def test_skill_variants_carry_their_evidence_contract(self, skills_dir: Path, root_skills_dir: Path) -> None:
+    @pytest.mark.parametrize(
+        "include_root",
+        [pytest.param(False, id="bundled"), pytest.param(True, id="mirrors", marks=requires_monorepo)],
+    )
+    def test_skill_variants_carry_their_evidence_contract(
+        self, skills_dir: Path, include_root: bool, request: pytest.FixtureRequest
+    ) -> None:
         """Every skill variant states the evidence contract its phase owns.
 
         Note: ``trw_preflight_log`` was removed from the MCP tool surface, so the
@@ -64,19 +74,25 @@ class TestSkillDefinitions:
         audit self-reports — not the retired preflight events, which nothing writes.
         """
         variant_paths = {
-            "root_exec_plan": root_skills_dir / "trw-exec-plan" / "SKILL.md",
             "bundled_exec_plan": skills_dir / "trw-exec-plan" / "SKILL.md",
             "codex_exec_plan": _PKG_DATA / "codex" / "skills" / "trw-exec-plan" / "SKILL.md",
-            "root_self_review": root_skills_dir / "trw-self-review" / "SKILL.md",
             "bundled_self_review": skills_dir / "trw-self-review" / "SKILL.md",
-            "root_audit": root_skills_dir / "trw-audit" / "SKILL.md",
             "bundled_audit": skills_dir / "trw-audit" / "SKILL.md",
             "codex_audit": _PKG_DATA / "codex" / "skills" / "trw-audit" / "SKILL.md",
             "copilot_audit": _PKG_DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md",
-            "root_sprint_finish": root_skills_dir / "trw-sprint-finish" / "SKILL.md",
             "bundled_sprint_finish": skills_dir / "trw-sprint-finish" / "SKILL.md",
             "codex_sprint_finish": _PKG_DATA / "codex" / "skills" / "trw-sprint-finish" / "SKILL.md",
         }
+        if include_root:
+            root_skills_dir = request.getfixturevalue("root_skills_dir")
+            variant_paths.update(
+                {
+                    "root_exec_plan": root_skills_dir / "trw-exec-plan/SKILL.md",
+                    "root_self_review": root_skills_dir / "trw-self-review/SKILL.md",
+                    "root_audit": root_skills_dir / "trw-audit/SKILL.md",
+                    "root_sprint_finish": root_skills_dir / "trw-sprint-finish/SKILL.md",
+                }
+            )
         required_snippets = {
             "exec_plan": ["Pre-Implementation Checklist (PRD-QUAL-056-FR03)"],
             "self_review": ["never substitutes for the required independent/substantive review"],

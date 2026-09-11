@@ -1,4 +1,4 @@
-"""PRD-CORE-231-FR02: the recall verification pass PERSISTS verification_status.
+"""PRD-CORE-231-FR02: explicit verification PERSISTS verification_status; recall reads it.
 
 These tests run against a real ``SQLiteBackend`` and the real
 ``verify_assertions`` implementation — the whole point of FR02 is that the
@@ -77,22 +77,40 @@ def _rank(entries: list[dict[str, object]], *_args: Any, **_kwargs: Any) -> list
     return entries
 
 
+def _refresh_evidence(entries: list[dict[str, object]], _tokens: list[str], config: TRWConfig, _ranker: Any) -> None:
+    """Explicit maintenance-owner exercise; recall no longer refreshes evidence."""
+    from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
+    from trw_mcp.state.memory_adapter import get_backend
+    from trw_mcp.tools._verification_pass import persist_verification_outcome, run_verification_pass
+
+    for entry in entries:
+        outcome = run_verification_pass(
+            str(entry["id"]),
+            entry.get("assertions", []),
+            entry.get("anchors", []),
+            assertion_failure_penalty=config.assertion_failure_penalty,
+            assertion_stale_threshold_days=config.assertion_stale_threshold_days,
+            anchor_validity_verified_floor=config.anchor_validity_verified_floor,
+            project_root=resolve_project_root(),
+        )
+        persist_verification_outcome(get_backend(resolve_trw_dir()), outcome)
+
+
 def test_stale_write_back_and_clear(
     monkeypatch: pytest.MonkeyPatch,
     backend: SQLiteBackend,
     project: Path,
 ) -> None:
     """A persistently-failing claim is written 'stale', then cleared when it re-passes."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
+    from tests.test_recall_assertion_verification import _refresh_evidence as _verify_assertions
 
     _wire(monkeypatch, backend, project)
     config = TRWConfig()
     old_failure = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 15)
 
     _store(backend, "L-stale", [_failing_assertion(old_failure)])
-    result = _verify_assertions([_learning("L-stale", [_failing_assertion(old_failure)])], ["q"], config, _rank)
+    _verify_assertions([_learning("L-stale", [_failing_assertion(old_failure)])], ["q"], config, _rank)
 
-    assert result[0]["verification_status"] == "stale"
     persisted = backend.get("L-stale", namespace="default")
     assert persisted is not None
     assert persisted.verification_status == "stale"
@@ -101,9 +119,8 @@ def test_stale_write_back_and_clear(
     # PRD-CORE-244 FR03: clearing now lands on the positive value rather than on
     # None. This assertion previously required the absence of any verdict, which
     # is what made "healthy" and "never examined" the same stored state.
-    cleared = _verify_assertions([_learning("L-stale", [_passing_assertion(old_failure)])], ["q"], config, _rank)
+    _verify_assertions([_learning("L-stale", [_passing_assertion(old_failure)])], ["q"], config, _rank)
 
-    assert cleared[0]["verification_status"] == "verified"
     recleared = backend.get("L-stale", namespace="default")
     assert recleared is not None
     assert recleared.verification_status == "verified"
@@ -116,7 +133,7 @@ def test_recent_failure_is_not_persisted_stale(
     project: Path,
 ) -> None:
     """A failure younger than the threshold records no adverse verdict."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
+    from tests.test_recall_assertion_verification import _refresh_evidence as _verify_assertions
 
     _wire(monkeypatch, backend, project)
     config = TRWConfig()
@@ -136,7 +153,7 @@ def test_stale_verdict_survives_a_fresh_connection(
     project: Path,
 ) -> None:
     """US-002: the verdict is visible from a brand-new backend (process restart)."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
+    from tests.test_recall_assertion_verification import _refresh_evidence as _verify_assertions
 
     db_path = tmp_path / "store" / "memory.db"
     backend = SQLiteBackend(db_path)
@@ -160,7 +177,7 @@ def test_no_persist_drift_warning_on_the_happy_path(
     project: Path,
 ) -> None:
     """NFR02: the self-check stays silent when the write actually landed."""
-    from trw_mcp.tools._recall_impl import _verify_assertions
+    from tests.test_recall_assertion_verification import _refresh_evidence as _verify_assertions
 
     _wire(monkeypatch, backend, project)
     config = TRWConfig()
@@ -265,165 +282,22 @@ def _read_q(trw_dir: Path, entry_id: str) -> dict[str, object]:
     return data
 
 
-class TestContradictionPenalty:
-    """``outcome.failing`` was computed on every recall and discarded.
+@pytest.mark.parametrize("result", [True, False, None])
+def test_recall_does_not_mutate_claims_or_q(
+    monkeypatch: pytest.MonkeyPatch, backend: SQLiteBackend, project: Path, result: bool | None
+) -> None:
+    from trw_mcp.tools._recall_impl import _verify_assertions
 
-    The bandit's only reward was a uniform, session-wide signal, so it optimised
-    retrieval FREQUENCY — which happily promotes a confidently-wrong memory that
-    keeps matching the query.
-    """
-
-    def test_failing_assertion_applies_contradiction_penalty(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        backend: SQLiteBackend,
-        project: Path,
-    ) -> None:
-        from trw_mcp.tools._recall_impl import _verify_assertions
-
-        _wire(monkeypatch, backend, project)
-        trw_dir = project / ".trw"
-        for entry_id, assertion in (("L-bad", _failing_assertion(None)), ("L-good", _passing_assertion(None))):
-            _store(backend, entry_id, [assertion])
-            _store_learning_for_q(trw_dir, entry_id)
-
-        before_bad = _read_q(trw_dir, "L-bad")
-        before_good = _read_q(trw_dir, "L-good")
-
-        _verify_assertions(
-            [_learning("L-bad", [_failing_assertion(None)]), _learning("L-good", [_passing_assertion(None)])],
-            [],
-            TRWConfig(),
-            _rank,
-        )
-
-        after_bad = _read_q(trw_dir, "L-bad")
-        after_good = _read_q(trw_dir, "L-good")
-
-        # The contradicted entry alone is penalised.
-        assert float(str(after_bad["q_value"])) < float(str(before_bad["q_value"]))
-        assert int(str(after_bad["q_observations"])) == int(str(before_bad["q_observations"])) + 1
-        # Exactly one capped outcome_history entry, labelled for the cause.
-        history = after_bad["outcome_history"]
-        assert isinstance(history, list)
-        assert len(history) == 1
-        assert str(history[0]).endswith(":assertion_contradicted")
-
-        # Its sibling in the SAME recall is untouched — the penalty is per-entry.
-        assert after_good["q_value"] == before_good["q_value"]
-        assert after_good["q_observations"] == before_good["q_observations"]
-        assert after_good["outcome_history"] == before_good["outcome_history"]
-
-    def test_all_passing_applies_no_penalty(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        backend: SQLiteBackend,
-        project: Path,
-    ) -> None:
-        from trw_mcp.tools._recall_impl import _verify_assertions
-
-        _wire(monkeypatch, backend, project)
-        trw_dir = project / ".trw"
-        _store(backend, "L-clean", [_passing_assertion(None)])
-        _store_learning_for_q(trw_dir, "L-clean")
-        before = _read_q(trw_dir, "L-clean")
-
-        _verify_assertions([_learning("L-clean", [_passing_assertion(None)])], [], TRWConfig(), _rank)
-        after = _read_q(trw_dir, "L-clean")
-
-        # Scoped to the REWARD fields: the pass legitimately refreshes
-        # ``assertions`` (last_evidence/last_verified_at) under PRD-CORE-231, and
-        # asserting whole-dict equality would make this test fail on that
-        # unrelated, correct write.
-        for reward_field in ("q_value", "q_observations", "outcome_history"):
-            assert after[reward_field] == before[reward_field], reward_field
-
-    def test_contradiction_does_not_write_invalidated_by(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        backend: SQLiteBackend,
-        project: Path,
-    ) -> None:
-        """A contradiction with no replacement has no superseding record to name."""
-        from trw_mcp.tools._recall_impl import _verify_assertions
-
-        _wire(monkeypatch, backend, project)
-        _store(backend, "L-bad2", [_failing_assertion(None)])
-        _store_learning_for_q(project / ".trw", "L-bad2")
-
-        _verify_assertions([_learning("L-bad2", [_failing_assertion(None)])], [], TRWConfig(), _rank)
-
-        stored = backend.get("L-bad2", namespace="default")
-        assert stored is not None
-        assert stored.invalidated_by is None
-        assert stored.invalid_from is None
-
-    def test_repeated_recall_of_the_same_break_penalises_once_per_day(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        backend: SQLiteBackend,
-        project: Path,
-    ) -> None:
-        """FR04 cooldown: one broken claim recalled five times is ONE fact.
-
-        Without it the contradiction signal degenerates into another
-        retrieval-frequency term -- the defect FR11's decay floor bounds from the
-        other direction.
-        """
-        from trw_mcp.tools._recall_impl import _verify_assertions
-
-        _wire(monkeypatch, backend, project)
-        trw_dir = project / ".trw"
-        _store(backend, "L-repeat", [_failing_assertion(None)])
-        _store_learning_for_q(trw_dir, "L-repeat")
-
-        for _ in range(5):
-            _verify_assertions([_learning("L-repeat", [_failing_assertion(None)])], [], TRWConfig(), _rank)
-
-        after = _read_q(trw_dir, "L-repeat")
-        history = after["outcome_history"]
-        assert isinstance(history, list)
-        contradictions = [h for h in history if str(h).endswith(":assertion_contradicted")]
-        assert len(contradictions) == 1, f"penalised {len(contradictions)} times for one break"
-        assert int(str(after["q_observations"])) == 1
-
-    def test_verification_counters_emitted(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        backend: SQLiteBackend,
-        project: Path,
-    ) -> None:
-        """NFR05: one record per pass carrying checked/verified/stale/contradicted."""
-        from trw_mcp.tools._recall_impl import _verify_assertions
-
-        _wire(monkeypatch, backend, project)
-        trw_dir = project / ".trw"
-        for entry_id, assertion in (("L-c1", _failing_assertion(None)), ("L-c2", _passing_assertion(None))):
-            _store(backend, entry_id, [assertion])
-            _store_learning_for_q(trw_dir, entry_id)
-
-        cap = structlog.testing.LogCapture()
-        structlog.configure(processors=[cap])
-        try:
-            _verify_assertions(
-                [_learning("L-c1", [_failing_assertion(None)]), _learning("L-c2", [_passing_assertion(None)])],
-                [],
-                TRWConfig(),
-                _rank,
-            )
-        finally:
-            structlog.reset_defaults()
-
-        counters = [e for e in cap.entries if e.get("event") == "verification_pass_counters"]
-        assert len(counters) == 1
-        assert counters[0]["checked"] == 2
-        assert counters[0]["contradicted"] == 1
-        assert counters[0]["verified"] == 1
-        assert counters[0]["stale"] == 0
-
-        penalties = [e for e in cap.entries if e.get("event") == "assertion_contradiction_penalty"]
-        assert [e["entry_id"] for e in penalties] == ["L-c1"]
-        assert penalties[0]["q_delta"] < 0
+    _wire(monkeypatch, backend, project)
+    assertion = _failing_assertion(None)
+    assertion.last_result = result
+    assertion.last_verified_at = datetime.now(timezone.utc)
+    _store(backend, "L-observed", [assertion])
+    before = backend.get("L-observed", namespace="default").model_dump(mode="json")
+    for _ in range(5):
+        _verify_assertions([_learning("L-observed", [assertion])], [], TRWConfig(), _rank)
+    after = backend.get("L-observed", namespace="default").model_dump(mode="json")
+    assert after == before
 
 
 def test_the_verdict_actually_lands_through_the_real_backend(

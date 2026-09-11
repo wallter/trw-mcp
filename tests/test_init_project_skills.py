@@ -264,3 +264,48 @@ class TestInstallAgentsClientPassthrough:
         assert not list((empty_target / ".claude" / "agents").iterdir()), (
             "an opencode install must not write into Claude Code's agent directory"
         )
+
+
+@pytest.mark.parametrize(
+    ("client", "relative_path"),
+    [
+        ("claude-code", ".claude/skills/trw-deliver/SKILL.md"),
+        ("codex", ".agents/skills/trw-deliver/SKILL.md"),
+        ("opencode", ".opencode/skills/trw-deliver/SKILL.md"),
+    ],
+)
+def test_delivery_skill_preserves_unfinished_work_without_acceptance(
+    tmp_path: Path, client: str, relative_path: str
+) -> None:
+    """CORE269 FR06: installed consumer distinguishes pause from acceptance."""
+    from trw_mcp.bootstrap._codex import install_codex_skills
+    from trw_mcp.bootstrap._init_project_skills import _install_skills
+    from trw_mcp.bootstrap._opencode import install_opencode_skills
+
+    def install() -> dict[str, list[str]]:
+        if client == "codex":
+            return dict(install_codex_skills(tmp_path))
+        if client == "opencode":
+            return install_opencode_skills(tmp_path)
+        result = _empty_result()
+        _install_skills(tmp_path, force=False, result=result)
+        return result
+
+    result = install()
+    assert not result["errors"]
+    target = tmp_path / relative_path
+    content = target.read_text()
+    assert "completed-work acceptance" in content or "accepting completed work" in content
+    assert "checkpoint or durable native handoff with a next-read pointer" in content
+    assert "Stopping is not acceptance" in content
+    assert "do not manufacture an artifact or learning" in content
+    assert "Already captured learnings remain persisted" in content
+    assert "Deliver gate — no fourth path" in content
+    assert "failed_command" in content and "expiry_iso" in content
+    assert "authorized operator/config" in content
+
+    # A later ordinary install must not overwrite user-authored instructions.
+    edited = content + "\nUser-owned project handoff convention.\n"
+    target.write_text(edited)
+    assert not install()["errors"]
+    assert target.read_text() == edited

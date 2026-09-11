@@ -17,6 +17,7 @@ import pytest
 import yaml
 
 from tests._formation_test_support import FormationFixture, formation_env, make_run_dir  # noqa: F401
+from tests._layout import MONOREPO_ROOT, requires_monorepo
 from trw_mcp.agents.agent_formats import agent_format_for
 from trw_mcp.agents.tier_resolver import (
     KNOWN_CLIENTS,
@@ -276,7 +277,14 @@ def test_materialization_latency_budget() -> None:
 # --- PRD-CORE-265-NFR05: the formation surface is client-neutral -------------
 
 
-def test_formation_surface_is_client_neutral(formation_env: FormationFixture, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "include_commit_gate",
+    [False, pytest.param(True, marks=requires_monorepo)],
+    ids=["shipped-adapters", "monorepo-commit-adapter"],
+)
+def test_formation_surface_is_client_neutral(
+    formation_env: FormationFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, include_commit_gate: bool
+) -> None:
     """NFR05. All four capabilities are reachable from files plus the CLI alone.
 
     ATTRIBUTION. The profile list is DERIVED from ``_PROFILES``, not typed here,
@@ -295,8 +303,11 @@ def test_formation_surface_is_client_neutral(formation_env: FormationFixture, tm
     from trw_mcp.models.config._profiles import _PROFILES
     from trw_mcp.tools._formation_cli import run_formation
 
-    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
-    import check_formation_ownership as commit_gate
+    if include_commit_gate:
+        assert MONOREPO_ROOT is not None
+        assert (MONOREPO_ROOT / "scripts/check_formation_ownership.py").is_file()
+        _sys.path.insert(0, str(MONOREPO_ROOT / "scripts"))
+        import check_formation_ownership as commit_gate
 
     profiles = sorted(_PROFILES)
     assert len(profiles) >= 7, f"expected the seven supported profiles, got {profiles}"
@@ -323,10 +334,11 @@ def test_formation_surface_is_client_neutral(formation_env: FormationFixture, tm
             board = status(run_path=run)
             assert board is not None and any(row.member_id == member_id for row in board.rows)
             # (4) COMMIT-BOUNDARY REFUSAL — a subprocess-level exit code.
-            commit_gate._resolve_caller_run = lambda run=run: run  # type: ignore[misc]
-            foreign = next(other for other in profiles if other != client)
-            assert commit_gate.main([f"src/{foreign}/x.py"]) == 1
-            assert commit_gate.main([f"src/{client}/x.py"]) == 0
+            if include_commit_gate:
+                monkeypatch.setattr(commit_gate, "_resolve_caller_run", lambda run=run: run)
+                foreign = next(other for other in profiles if other != client)
+                assert commit_gate.main([f"src/{foreign}/x.py"]) == 1
+                assert commit_gate.main([f"src/{client}/x.py"]) == 0
             assert owner_of(f"src/{client}/x.py", run_path=run) is not None
         except AssertionError as exc:
             unreachable[client] = str(exc)

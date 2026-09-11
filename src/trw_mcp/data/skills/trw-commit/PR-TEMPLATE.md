@@ -1,27 +1,12 @@
-## Agent Metadata
-- **Agent Type**: {agent_type}
-- **Run ID**: {run_id}
-- **Sprint**: {sprint_name}
-- **Contributor**: {contributor_name}
+## Why
+Explain the problem and intended outcome.
 
-## PRD Scope
-| FR | Status |
-|----|--------|
-{fr_status_rows}
+## Changes
+Summarize the owned change set and compatibility impact.
 
-## Automated Checks
-- **Build**: {build_status}
-- **Type/lint checks**: {type_lint_status}
-- **Coverage**: {coverage_pct}% ({coverage_delta})
-- **Tests Run**: {test_count}
+## Verification
+List commands actually run and their results. Separate planned tests from results.
 
-## Change Summary
-- **Files Changed**: {files_changed}
-- **Lines Added**: +{lines_added}
-- **Lines Removed**: -{lines_removed}
-
-## WHY
-{why_lines}
-
-## Known Gaps
-{known_gaps}
+## Remaining risks
+State unresolved issues, rollout/rollback considerations and follow-up work.
+Include PRD/run references only when applicable and verified.

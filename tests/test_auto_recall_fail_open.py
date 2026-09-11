@@ -22,9 +22,11 @@ class TestAutoRecallFailOpen:
     ) -> None:
         """When search_entries raises in the phase-recall step, the payload degrades.
 
-        PRD-CORE-263-FR01: the second (and later) ``recall_learnings`` call lands
-        inside ``phase_recall``, one of the five steps the session-start table
-        declares ``critical``. Before this PRD the step swallowed its own
+        PRD-CORE-263-FR01: a focused query makes ``phase_recall`` applicable.
+        This fixture fails its min_impact=0.5 acquisition while letting the
+        primary focused and baseline recalls succeed; call order is irrelevant.
+        The session-start table declares ``phase_recall`` critical. Before this
+        PRD the step swallowed its own
         exception and returned a plausible default, so the failure was invisible
         and ``success`` stayed true. The step now raises a typed
         ``SessionStartStepError`` and the runner's critical branch degrades the
@@ -36,14 +38,11 @@ class TestAutoRecallFailOpen:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = _setup_trw_dir(tmp_path)
 
-        call_count = {"n": 0}
-
         def _failing_recall(
             trw_dir_arg: Any,
             **kwargs: Any,
         ) -> list[dict[str, object]]:
-            call_count["n"] += 1
-            if call_count["n"] > 1:
+            if kwargs.get("min_impact") == 0.5:
                 raise RuntimeError("search engine down")
             return []
 
@@ -55,7 +54,7 @@ class TestAutoRecallFailOpen:
                 side_effect=_failing_recall,
             ),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query="Learning")
 
         assert "auto_recalled" not in result
         assert result["success"] is False
@@ -146,7 +145,7 @@ class TestAutoRecallMaxResults:
                 side_effect=_fake_recall,
             ),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query="Learning")
 
         assert "auto_recalled" in result
         assert result["auto_recall_count"] == 2

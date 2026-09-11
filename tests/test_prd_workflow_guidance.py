@@ -141,7 +141,16 @@ _GUIDANCE_EXPECTATIONS = {
 def test_prd_workflow_guidance_mentions_hardened_readiness_semantics(
     path: Path,
     required_snippets: list[str],
+    tmp_path: Path,
 ) -> None:
+    if path == _PKG_DATA / "opencode/skills/trw-prd-ready/SKILL.md":
+        from trw_mcp.bootstrap._opencode import install_opencode_skills
+
+        assert not install_opencode_skills(tmp_path)["errors"]
+        installed = tmp_path / ".opencode/skills/trw-prd-ready"
+        assert "trw-prd-ready-contract.md" in (installed / "SKILL.md").read_text()
+        path = installed / "trw-prd-ready-contract.md"
+        assert path.read_bytes() == (_PKG_DATA / "skills/trw-prd-ready/SKILL.md").read_bytes()
     content = path.read_text(encoding="utf-8").lower()
     for snippet in required_snippets:
         assert snippet in content, f"{path} is missing '{snippet}'"

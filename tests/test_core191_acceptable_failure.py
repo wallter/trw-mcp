@@ -87,13 +87,12 @@ class TestSchemaSurfaces:
             for field in ("failed_command", "residual_risk", "owner", "expiry_iso"):
                 assert field in content, (relative, field)
 
-    @pytest.mark.parametrize("profile", ["claude", "gpt", "qwen", "generic"])
-    def test_prompt_profile_uses_structured_schema(self, profile: str) -> None:
-        path = Path(__file__).parents[1] / "src" / "trw_mcp" / "data" / "prompting" / f"{profile}.md"
-        content = path.read_text(encoding="utf-8")
-
-        assert "structured acceptable-failure record" in content
-        assert "explicitly label an acceptable failure" not in content
+    # The per-family prompting profiles this used to check (data/prompting/{claude,
+    # gpt,qwen,generic}.md) were deleted: all four were byte-identical and their
+    # loader had no caller, so the acceptable-failure wording was being asserted in
+    # a file nothing ever rendered. The same two assertions still run against the
+    # surfaces that ARE rendered -- see the bundled skill bodies checked directly
+    # above -- so the coverage that mattered is retained, not dropped.
 
 
 # ── FR01: schema parse ─────────────────────────────────────────────────────

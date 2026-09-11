@@ -170,40 +170,11 @@ def _select_nudge_template(step: str, state: CeremonyState, available_learnings:
         )
 
     if step == "deliver":
-        n = state.learnings_this_session
-        if n > 0:
-            return _select_message_by_urgency(
-                urgency,
-                low=(
-                    f"\u26a1 {n} learning(s) recorded this session — "
-                    "trw_deliver() persists them for all future sessions. "
-                    "Lost if skipped."
-                ),
-                medium=(
-                    f"\u26a1 {n} learning(s) recorded this session — "
-                    f"skipping trw_deliver() discards all {n}; future agents lose this context. "
-                    "trw_deliver() persists them for all future sessions."
-                ),
-                high=(
-                    f"\u26a1 {n} learning(s) recorded this session — "
-                    f"all {n} are lost permanently if the session ends without trw_deliver(). "
-                    "Future agents re-learn them from scratch. Takes 2 seconds."
-                ),
-            )
-        return _select_message_by_urgency(
-            urgency,
-            low=(
-                "\u26a1 Session complete for {client_display_name} — trw_deliver() persists the run and any learnings for future sessions."
-            ),
-            medium=(
-                "\u26a1 Session complete but not delivered — "
-                "run record won't persist for future sessions without trw_deliver()."
-            ),
-            high=(
-                "\u26a1 Session complete but not delivered — "
-                "the run record and any learnings are unattached until trw_deliver() is called. "
-                "Takes 2 seconds."
-            ),
+        # Absence of delivery proves neither unfinished work nor lost capture.
+        return (
+            "If you have material unfinished work, preserve it in a checkpoint or durable "
+            "native handoff with a next-read pointer. Use trw_deliver() for completed work "
+            "under existing evidence gates; recorded learnings remain recorded."
         )
 
     return ""

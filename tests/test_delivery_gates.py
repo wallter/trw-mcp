@@ -665,52 +665,49 @@ def test_qual_120_happy_path_complete_manifest(tmp_path: Path, monkeypatch: pyte
 
 @pytest.mark.integration
 class TestUnretractedContradictionNudge:
-    """PRD-CORE-244 FR06 — DELIVER names the learning this session disproved.
-
-    ``invalidated_by`` was measured non-null on 0 of 9,366 rows after roughly
-    four months of daily use: the write path exists and nothing ever asks anyone
-    to use it, so invalidation depended entirely on authoring discipline.
-
-    The contradicted set is DERIVED, never stored separately, so these fixtures
-    create it the way production does — by running FR04's real
-    ``apply_contradiction_penalty`` — rather than hand-writing an
-    ``outcome_history`` a real penalty might not produce.
-    """
+    """CORE268: delivery names unresolved dated observations, never historical Q."""
 
     @staticmethod
     def _session(tmp_path: Path, *, entry_ids: list[str], penalise: list[str]) -> Path:
-        """A .trw dir with a recall receipt per entry and a real FR04 penalty applied."""
-        import yaml
+        """A recall receipt and real explicitly refreshed failing assertion evidence."""
+        from trw_memory.models.memory import Assertion, AssertionType, MemoryEntry
 
         from trw_mcp.models.config import get_config
-        from trw_mcp.scoring import apply_contradiction_penalty
+        from trw_mcp.state.memory_adapter import get_backend
+        from trw_mcp.tools._maintain_verify import run_maintain_verify
 
         cfg = get_config()
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True, exist_ok=True)
-        entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-        entries_dir.mkdir(parents=True, exist_ok=True)
-
+        backend = get_backend(trw_dir)
+        now = datetime.now(timezone.utc)
         for entry_id in entry_ids:
-            (entries_dir / f"{entry_id}.yaml").write_text(
-                yaml.safe_dump(
-                    {
-                        "id": entry_id,
-                        "summary": "a claim under test",
-                        "detail": "",
-                        "status": "active",
-                        "impact": 0.6,
-                        "q_value": 0.6,
-                        "q_observations": 4,
-                        "recurrence": 1,
-                        "outcome_history": [],
-                    }
-                ),
-                encoding="utf-8",
+            backend.store(
+                MemoryEntry(
+                    id=entry_id,
+                    content="a claim under test",
+                    importance=0.6,
+                    created_at=now,
+                    updated_at=now,
+                    q_value=0.6,
+                    q_observations=4,
+                    assertions=[Assertion(type=AssertionType.GREP_PRESENT, pattern="missing_claim", target="claim.py")]
+                    if entry_id in penalise
+                    else [],
+                )
             )
-
+        (tmp_path / "claim.py").write_text("present = True\n")
         if penalise:
-            assert apply_contradiction_penalty(penalise, trw_dir) == penalise
+            result = run_maintain_verify(
+                backend,
+                project_root=tmp_path,
+                namespace="default",
+                batch_limit=10,
+                assertion_failure_penalty=cfg.assertion_failure_penalty,
+                assertion_stale_threshold_days=cfg.assertion_stale_threshold_days,
+                anchor_validity_verified_floor=cfg.anchor_validity_verified_floor,
+            )
+            assert result.entries_processed == len(penalise)
 
         now = datetime.now(timezone.utc)
         (trw_dir / "logs" / "recall_tracking.jsonl").write_text(
@@ -738,6 +735,8 @@ class TestUnretractedContradictionNudge:
         nudge = unretracted_contradiction_nudge(trw_dir)
 
         assert "L-broken" in nudge
+        assert "Last-known dated assertion failures" in nudge
+        assert "This session disproved" not in nudge
         assert "trw_learn_update(learning_id='L-broken'" in nudge
 
     def test_superseded_entry_produces_no_nudge(self, tmp_path: Path) -> None:
@@ -798,3 +797,51 @@ class TestUnretractedContradictionNudge:
         assert "L-broken" in str(result["retraction_nudge"])
         # Advisory: it sets no blocking key.
         assert not any(key.endswith("_block") for key in result)
+
+
+@pytest.mark.parametrize("preservation", ["checkpoint", "native-note"])
+def test_unfinished_preservation_does_not_satisfy_missing_build_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, preservation: str
+) -> None:
+    """CORE269 FR05: actual preservation leaves missing evidence blocking."""
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from trw_mcp.tools import orchestration
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    run = tmp_path / ".trw/runs/preservation/test-run"
+    _write_run_yaml(run)
+    metadata = run / "meta/run.yaml"
+    metadata.write_text(metadata.read_text() + "task_type: coding\n")
+    events = run / "meta/events.jsonl"
+    events.write_text(json.dumps({"event": "file_modified", "data": {"path": "src/change.py"}}) + "\n")
+    original_metadata = metadata.read_bytes()
+    original_events = events.read_bytes()
+    before = check_delivery_gates(run, reader, tmp_path / ".trw")
+    assert before.get("delivery_blocked")
+    assert before.get("missing_gate") == "build_check"
+    payload = "Unfinished change; check failed; next: repair and rerun validation."
+    if preservation == "checkpoint":
+        # Only unrelated nudge decoration is excluded, not persistence or gates.
+        monkeypatch.setattr(orchestration, "_apply_ceremony_status", lambda *args, **kwargs: None)
+        server = FastMCP("preservation-gate-test")
+        orchestration.register_orchestration_tools(server)
+        registered = {tool.name: tool for tool in asyncio.run(server.list_tools())}
+        result = registered["trw_checkpoint"].fn(run_path=str(run), message=payload)
+        assert result["recorded"] is True
+        assert payload in (run / "meta/checkpoints.jsonl").read_text()
+    else:
+        (tmp_path / "HANDOFF.md").write_text(payload)
+    after = check_delivery_gates(run, reader, tmp_path / ".trw")
+    assert after == before
+    assert metadata.read_bytes() == original_metadata
+    # Checkpoint logging may add its own event, but no acceptance evidence.
+    current_events = events.read_bytes()
+    assert current_events.startswith(original_events)
+    added = current_events[len(original_events) :].decode()
+    added_event_names = {json.loads(line).get("event") for line in added.splitlines() if line.strip()}
+    assert not added_event_names.intersection(
+        {"build_check_complete", "review_complete", "trw_deliver_complete", "reflection_complete"}
+    )

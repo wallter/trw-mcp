@@ -10,6 +10,7 @@ warning-only rejection is a verdict the reader cannot act on.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -70,7 +71,13 @@ def test_malformed_first_token_is_rejected() -> None:
     assert result.valid is False
 
 
-def test_well_formed_pytest_command_passes() -> None:
+def test_well_formed_pytest_command_passes(tmp_path: Path) -> None:
+    # The validator checks leading executable paths. Supply a real executable
+    # in a private project, not an ambient monorepo editable-install assumption.
+    executable = tmp_path / ".venv/bin/python"
+    executable.parent.mkdir(parents=True)
+    executable.symlink_to(sys.executable)
+    (tmp_path / "trw-mcp").mkdir()
     for good in (
         "pytest trw-mcp/tests/test_x.py -q",
         "cd trw-mcp && ../.venv/bin/python -m pytest tests/test_x.py -q",
@@ -79,9 +86,9 @@ def test_well_formed_pytest_command_passes() -> None:
         "grep -rn 'symbol' trw-mcp/src",
         "TRW_DEBUG=1 python3 scripts/prd_verify_check.py",
     ):
-        assert malformed_verification_command_reason(good, repo_root=REPO_ROOT) is None, good
+        assert malformed_verification_command_reason(good, repo_root=tmp_path) is None, good
 
-    result = validate_prd_quality_v2(_prd(["pytest trw-mcp/tests/test_x.py -q"]), project_root=str(REPO_ROOT))
+    result = validate_prd_quality_v2(_prd(["pytest trw-mcp/tests/test_x.py -q"]), project_root=str(tmp_path))
     assert [f for f in result.failures if f.rule == VERIFICATION_COMMAND_RULE] == []
 
 
@@ -198,6 +205,8 @@ def test_missing_traceability_names_the_quality_gate_it_failed() -> None:
 
 def test_shipped_prd_infra_179_validates_clean() -> None:
     """The PRD this work implements must not be rejected by warnings alone."""
+    if not (REPO_ROOT / "release-packages.yaml").is_file():
+        pytest.skip("shipped PRD assertion requires the monorepo requirements corpus")
     path = (
         REPO_ROOT
         / "docs/requirements-aare-f/prds/PRD-INFRA-179-agent-dx-six-frictions-from-the-2026-09-03-release-run.md"

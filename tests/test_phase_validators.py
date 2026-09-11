@@ -66,7 +66,7 @@ class TestPhaseExitDispatch:
         run_dir = _make_run_dir(tmp_path, writer)
         result = check_phase_exit(Phase.PLAN, run_dir, TRWConfig(phase_gate_enforcement="off"))
         rules = [f.rule for f in result.failures]
-        assert "plan_exists" in rules
+        assert "plan_exists" not in rules
 
     def test_validate_exit(
         self,

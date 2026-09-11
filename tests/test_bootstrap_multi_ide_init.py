@@ -113,12 +113,17 @@ class TestUpdateProjectMultiIDE:
 
         assert not result["errors"], result["errors"]
         config = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8"))
-        assert config["features"]["hooks"] is False
-        assert "codex_hooks" not in config["features"]
+        # TRW writes no `hooks` key when the operator set none: absent means inherit
+        # whatever the installed Codex does. Forcing it False contradicted the
+        # hooks.json this same init writes, and on codex-cli 0.154.0 the flag is inert
+        # anyway (`hooks` is a `stable` feature; `codex features list` reports it true
+        # with the flag set either way -- measured 2026-09-11).
+        assert "hooks" not in config.get("features", {})
+        assert "codex_hooks" not in config.get("features", {})
         assert config["mcp_servers"]["trw"]["enabled"] is True
         assert config["mcp_servers"]["openaiDeveloperDocs"]["enabled"] is True
-        # Legacy shell-hook opt-in stays disabled (features.hooks=False above), but
-        # the distill telemetry channel still installs its own PostToolUse hooks.json.
+        # The distill telemetry channel installs its own PostToolUse hooks.json, which
+        # is exactly why TRW must not also write a flag that would switch it off.
         codex_hooks = tmp_path / ".codex" / "hooks.json"
         assert codex_hooks.exists()
         hooks_doc = json.loads(codex_hooks.read_text(encoding="utf-8"))

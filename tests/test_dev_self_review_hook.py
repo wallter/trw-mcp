@@ -6,6 +6,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from tests._layout import requires_monorepo
+
+pytestmark = requires_monorepo
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOKS = REPO_ROOT / ".claude" / "hooks"
 

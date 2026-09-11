@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "check-bundle-sync.sh"
+# Every case exercises scripts absent from the standalone package.
+pytestmark = requires_monorepo
+
+SCRIPT = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "scripts" / "check-bundle-sync.sh"
 
 
 def test_bundle_sync_fix_never_overwrites_shipped_source_from_client_projection() -> None:

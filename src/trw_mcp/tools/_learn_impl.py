@@ -7,16 +7,15 @@ remain effective without needing to know about this module.
 
 from __future__ import annotations
 
-import contextlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import structlog
 
-from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import LearnResultDict
+from trw_mcp.state._learn_stage_timing import advance
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 # Side-effect helpers extracted to _learn_side_effects (PRD-DIST-243 batch 9).
@@ -44,6 +43,11 @@ from trw_mcp.tools._learn_side_effects import (
     _auxiliary_content_reject as _auxiliary_content_reject,
 )
 from trw_mcp.tools._learn_side_effects import (
+    _build_learn_result,
+    _consolidation_dedup_result,
+    _increment_learning_capture,
+)
+from trw_mcp.tools._learn_side_effects import (
     _content_policy_reject as _content_policy_reject,
 )
 from trw_mcp.tools._learn_side_effects import (
@@ -61,8 +65,6 @@ from trw_mcp.tools._learn_side_effects import (
 from trw_mcp.tools._learning_helpers import (
     LearningParams,
     calibrate_impact,
-    check_soft_cap,
-    enforce_distribution,
 )
 from trw_mcp.tools._state_assertion_hint import (
     propose_validity_window,
@@ -107,19 +109,15 @@ def execute_learn(
     # functions (store_learning, generate_learning_id, save_learning_entry,
     # update_analytics, list_active_learnings, check_and_handle_dedup) whose
     # return values feed directly into typed downstream calls (LearningParams,
-    # _append_provenance_signed, enforce_distribution, ...). Narrowing to
+    # _append_provenance_signed, ...). Narrowing to
     # ``Callable[..., object] | None`` does not type the *results*, so it forces
     # ~10 explicit ``cast`` calls at every use site for zero added safety; the
     # real type contract is enforced by the concrete default each ``or``-falls
     # back to below. Keep ``Any`` here deliberately.
     #
-    # PRD-FIX-130-FR03: two of these are ALSO production seams, not test-only.
-    # The journal drain injects ``_list_active_learnings`` (the sweep's shared
-    # active set, resolved once instead of once per record) and
-    # ``_save_learning_entry`` (bound to the sweep's index sink, so the learnings
-    # index is rewritten once per sweep instead of once per stored record). Both
-    # are per-sweep costs that were being paid per record; see
-    # ``tools/_learn_journal_wiring.replay_journaled_learn``.
+    # The journal drain's save-entry seam batches index writes. The legacy
+    # active-list override remains accepted but is unused after capture quota
+    # retirement; no active corpus is loaded merely to reshape scores.
     _adapter_store: Any = None,
     _generate_learning_id: Any = None,
     _save_learning_entry: Any = None,
@@ -152,12 +150,13 @@ def execute_learn(
         _generate_learning_id: Injected ID generator.
         _save_learning_entry: Injected YAML backup writer.
         _update_analytics: Injected analytics updater.
-        _list_active_learnings: Injected active learnings lister.
+        _list_active_learnings: Compatibility-only unused active-list override.
         _check_and_handle_dedup: Injected dedup checker.
     """
     # Snapshot the replayable original args BEFORE any local mutation so the
     # write-ahead journal persists raw caller inputs (calibrate_impact etc. are
     # not idempotent). Captured now; written only once the entry is ACCEPTED.
+    advance("preflight")
     _journal_payload = capture_journal_payload(dict(locals()))
 
     # Resolve injected deps with fallbacks (see _learn_preflight.LearnDeps).
@@ -203,6 +202,7 @@ def execute_learn(
     # sweep replays the journaled record so the accepted learning is never
     # silently lost. Consumed on every terminal-handled path below (and retained
     # only on a store error, which the replay retries).
+    advance("journal")
     learning_id = _replay_learning_id or deps.generate_id()
     journal_accepted(trw_dir, config, learning_id, _journal_payload, from_journal=_from_journal)
 
@@ -211,27 +211,7 @@ def execute_learn(
     entries_dir = trw_dir / config.learnings_dir / config.entries_dir
     writer.ensure_dir(entries_dir)
 
-    # One-time batch dedup migration (PRD-CORE-042 FR05).
-    #
-    # PRD-FIX-130-FR05: NEVER on the journal-replay path. This branch runs the
-    # full O(N^2) embed-and-compare scan of every active entry synchronously
-    # inside whichever learn happens to be first — and during a drain that is the
-    # FIRST REPLAY. Measured 2026-09-04: 307.7 s of a 321,050 ms session_start,
-    # against a 33,552 ms control on the same corpus with the marker present.
-    # FR01's guarantee ("the sweep overruns by at most one record's replay") is
-    # vacuous if one replay can take 307 s, so the skip is a correctness
-    # dependency of the budget, not a nicety. The migration is not LOST by being
-    # skipped: the marker is still unwritten, the drain reschedules it onto the
-    # FR02 background thread, and the interactive path below is unchanged.
-    if config.dedup_enabled and not _from_journal:
-        try:
-            from trw_mcp.state.dedup import batch_dedup, is_migration_needed
-
-            if is_migration_needed(trw_dir):
-                batch_dedup(trw_dir, reader, writer, config=config)
-        except (ImportError, OSError, ValueError, TypeError):
-            logger.debug("learning_migration_failed", exc_info=True)
-
+    advance("metadata")
     # PRD-CORE-110 / PRD-FIX-052-FR05: typed metadata defaults.
     from trw_mcp.tools._learn_metadata import prepare_nudge_line, prepare_tags, resolve_phase_origin
 
@@ -274,18 +254,11 @@ def execute_learn(
             module_path=getattr(_analytics_core, "__file__", "<unknown>"),
         )
 
-    # Bayesian calibration of impact score (PRD-CORE-034)
+    # Preserve clamped caller impact; historical scoring APIs remain explicit.
     calibrated_impact = calibrate_impact(impact, config)
 
-    # Fetch active learnings once -- reused by soft-cap and distribution
-    all_active: list[dict[str, object]] = []
-    with contextlib.suppress(OSError, StateError, ValueError, TypeError):
-        all_active = deps.list_active(trw_dir)
-    calibrated_impact, distribution_soft_cap_warning = check_soft_cap(
-        calibrated_impact,
-        all_active,
-        config,
-    )
+    # Capture preserves clamped caller impact; no corpus-wide quota work.
+    advance("active_set_dedup")  # historical stage name; now dedup only
 
     # Semantic dedup check (PRD-CORE-042) -- must run BEFORE storing
     safe_evidence = evidence or []
@@ -323,12 +296,13 @@ def execute_learn(
         # Deduped (skip/merge) is a terminal-handled outcome — the content is
         # accounted for in the survivor, so retire the pending record.
         consume_journal(trw_dir, config, learning_id)
-        return cast("LearnResultDict", dedup_result)
+        return _consolidation_dedup_result(cast("LearnResultDict", dedup_result), consolidated_from)
 
     # PRD-CORE-111 FR04 + PRD-CORE-267 FR01/FR02: code-grounded anchors drawn
     # from THIS session's own pinned run, gated on demonstrated overlap with
     # the learning's own text. Delegated to _learn_anchors so this module stays
     # under the size gate.
+    advance("anchors")
     project_root = trw_dir.parent if trw_dir.name == ".trw" else trw_dir
     anchors, anchor_validity = resolve_learn_anchors(
         project_root,
@@ -342,6 +316,7 @@ def execute_learn(
     # Store via SQLite adapter (primary path).  Preserve compatibility with
     # older injected test doubles that either take ``trw_dir`` positionally or
     # accept only ``**kwargs``.
+    advance("store")
     store_kwargs: dict[str, object] = {
         "learning_id": learning_id,
         "summary": summary,
@@ -374,6 +349,7 @@ def execute_learn(
         store_result = deps.store(trw_dir, **store_kwargs)
     else:
         store_result = deps.store(trw_dir=trw_dir, **store_kwargs)
+    advance("poststore")
     store_result_dict = store_result if isinstance(store_result, dict) else {}
     if store_result_dict.get("status") == "quarantined":
         # Quarantine is a deliberate anomaly-detector decision, not a loss — the
@@ -421,7 +397,7 @@ def execute_learn(
     )
 
     # PRD-FIX-052-FR04: Auto-obsolete superseded entries
-    _handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
+    incomplete = _handle_consolidation(learning_id, consolidated_from, entries_dir, reader, writer, trw_dir)
 
     # Save YAML backup via analytics (dual-write for rollback safety)
     params = LearningParams(
@@ -459,16 +435,6 @@ def execute_learn(
         update_analytics_fn=deps.update_analytics,
     )
 
-    # Forced distribution enforcement (PRD-CORE-034)
-    distribution_warning, _demoted_ids = enforce_distribution(
-        impact,
-        calibrated_impact,
-        learning_id,
-        all_active,
-        trw_dir,
-        config,
-    )
-
     logger.info(
         "learn_ok",
         summary_len=len(summary),
@@ -476,17 +442,14 @@ def execute_learn(
         impact=calibrated_impact,
         id=learning_id,
     )
-    result_dict: LearnResultDict = {
-        "learning_id": learning_id,
-        "path": str(entry_path),
-        "status": str(store_result_dict.get("status", "recorded")),
-    }
-    # Advisory only when there is something to advise — an empty
-    # distribution_warning on every call is response noise.
-    if distribution_warning:
-        result_dict["distribution_warning"] = distribution_warning
-    if distribution_soft_cap_warning:
-        result_dict["distribution_warning"] = distribution_soft_cap_warning
+    result_dict = _build_learn_result(
+        learning_id,
+        str(entry_path),
+        str(store_result_dict.get("status", "recorded")),
+        "",
+        None,
+        incomplete,
+    )
 
     # PRD-CORE-244-FR05: offer a validity window for a state-asserting learning.
     # This runs AFTER a successful store and does NOT touch the ``expires`` value
@@ -501,12 +464,7 @@ def execute_learn(
         logger.debug("validity_window_nudge_skipped", exc_info=True)
 
     # Increment ceremony progress state (PRD-CORE-074 FR04)
-    try:
-        from trw_mcp.state.ceremony_progress import increment_learnings
-
-        increment_learnings(trw_dir)
-    except Exception:  # justified: fail-open
-        logger.debug("learn_ceremony_state_update_skipped", exc_info=True)
+    _increment_learning_capture(trw_dir)
 
     # Inject ceremony progress summary into response.
     try:

@@ -34,10 +34,11 @@ class _BootMaintenanceFields:
         description=(
             "WAL size (MiB) at or above which a checkpoint is due. One of the two independent "
             "triggers; see wal_checkpoint_max_age_seconds for the other. This is a TRIGGER, not a "
-            "cap: the hard ceiling is trw-memory's journal_size_limit "
+            "cap -- and neither is trw-memory's journal_size_limit, which is a truncation target "
+            "applied when the WAL resets rather than a ceiling enforced on an active WAL "
             "(storage/_connection.py::WAL_JOURNAL_SIZE_LIMIT_BYTES, 64 MiB, 6.4x this default). On "
             "a SQLite engine below 3.51.3 only PASSIVE may run, and PASSIVE never truncates, so the "
-            "file climbs to that ceiling and stays there while this trigger keeps firing to no "
+            "file climbs toward that target and stays there while this trigger keeps firing to no "
             "visible effect -- which is why the doctor's memory_wal row tracks an EFFECTIVE "
             "checkpoint clock separately and names the engine upgrade as the remedy."
         ),

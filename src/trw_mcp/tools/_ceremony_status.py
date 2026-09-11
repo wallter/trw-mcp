@@ -101,8 +101,9 @@ def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
 
 
 def build_ceremony_status_line(state: CeremonyState) -> str:
-    """Render a compact, deterministic summary of current ceremony progress."""
+    """Render project-wide progress, explicitly separate from run evidence."""
     parts = [
+        "scope=project_aggregate (not current-run evidence)",
         "session_started" if state.session_started else "session_start_pending",
         f"phase={state.phase}",
         f"checkpoints={state.checkpoint_count}",

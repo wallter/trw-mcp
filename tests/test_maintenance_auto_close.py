@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
+from tests._layout import requires_monorepo
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics.report import auto_close_stale_runs
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -355,6 +356,7 @@ def test_stale_run_sweep_precedence_is_unchanged_by_the_retirement() -> None:
     assert ttl_at < age_at, "hour-level TTL must be checked before the day-level value"
 
 
+@requires_monorepo
 def test_run_auto_close_age_days_is_absent_from_the_ratchet_baseline() -> None:
     """PRD-CORE-263-FR09 — the entry is REMOVED, not re-annotated."""
     import json

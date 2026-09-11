@@ -273,3 +273,84 @@ def test_all_builtin_profiles_have_non_empty_display_name() -> None:
     ):
         profile = resolve_client_profile(client_id)
         assert profile.display_name, f"profile '{client_id}' has empty display_name"
+
+
+@pytest.mark.parametrize("count", [0, 3, 5])
+@pytest.mark.parametrize("learnings", [0, 2])
+def test_delivery_advice_never_infers_loss_or_completion(count: int, learnings: int) -> None:
+    from trw_mcp.state._nudge_messages import _select_nudge_message
+    from trw_mcp.state._nudge_state import CeremonyState
+
+    state = CeremonyState(session_started=True, learnings_this_session=learnings, nudge_counts={"deliver": count})
+    text = _select_nudge_message("deliver", state, available_learnings=0, profile=resolve_client_profile("codex"))
+    assert "If" in text and "unfinished" in text
+    assert "pointer" in text and "handoff" in text
+    assert "trw_deliver()" in text
+    for false_claim in ("lost", "discards", "Session complete", "2 seconds", "won't persist", "unattached"):
+        assert false_claim not in text
+    assert not state.deliver_called
+
+
+@pytest.mark.parametrize("learnings", [0, 2])
+def test_minimal_delivery_advice_preserves_without_completion(learnings: int) -> None:
+    from trw_mcp.state.ceremony_nudge import CeremonyState, compute_nudge_minimal
+
+    state = CeremonyState(session_started=True, learnings_this_session=learnings)
+    text = compute_nudge_minimal(state)
+    assert "If unfinished" in text
+    assert "pointer" in text and "handoff" in text
+    assert "completed-work acceptance under existing gates" in text
+    assert len(text) <= 200
+    assert not state.deliver_called
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_ceremony_pool_delivery_text_and_fallback_are_truthful(monkeypatch: pytest.MonkeyPatch, fallback: bool) -> None:
+    from types import SimpleNamespace
+
+    from trw_mcp.models.config import _loader
+    from trw_mcp.state import _nudge_content, ceremony_nudge
+
+    profile = resolve_client_profile("codex")
+    monkeypatch.setattr(
+        _loader,
+        "get_config",
+        lambda: SimpleNamespace(
+            effective_nudge_enabled=True,
+            client_profile=profile,
+            nudge_budget_chars=500,
+            nudge_pool_cooldown_after=3,
+            nudge_pool_cooldown_calls=5,
+        ),
+    )
+    monkeypatch.setattr(ceremony_nudge, "_select_nudge_pool", lambda *_args: "ceremony")
+    _nudge_content._load_pool_yaml.cache_clear()
+    if fallback:
+        monkeypatch.setattr(_nudge_content, "load_pool_message", lambda *_args, **_kwargs: "")
+    state = ceremony_nudge.CeremonyState(
+        session_started=True,
+        checkpoint_count=1,
+        build_check_result="passed",
+        review_called=True,
+        phase="deliver",
+        learnings_this_session=2,
+    )
+    text = ceremony_nudge.compute_nudge(state, profile=profile)
+    assert "If you have material unfinished work" in text
+    assert "handoff with a next-read pointer" in text
+    assert "existing evidence gates" in text
+    assert "Session complete" not in text and "lost" not in text
+    assert not state.deliver_called
+    _nudge_content._load_pool_yaml.cache_clear()
+
+
+@pytest.mark.parametrize("learnings", [0, 2])
+def test_reactive_delivery_reports_only_observed_delivery(learnings: int) -> None:
+    from trw_mcp.state._nudge_messages import _context_reactive_message
+    from trw_mcp.state._nudge_state import CeremonyState, NudgeContext, ToolName
+
+    state = CeremonyState(learnings_this_session=learnings)
+    text = _context_reactive_message(NudgeContext(tool_name=ToolName.DELIVER, tool_success=True), state)
+    assert text is not None and text.startswith("Delivery recorded.")
+    assert "Session complete" not in text and "without your insights" not in text
+    assert _context_reactive_message(NudgeContext(tool_name=ToolName.DELIVER, tool_success=False), state) is None

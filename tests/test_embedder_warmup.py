@@ -44,7 +44,7 @@ class TestScheduleEmbedderWarmup:
             t.join(timeout=5)
         _memory_connection._WARMUP_THREAD = None
 
-    def test_warmup_runs_get_embedder_off_thread(self) -> None:
+    def test_warmup_runs_get_embedder_off_thread(self, monkeypatch) -> None:
         """The warm-up thread calls get_embedder() (the cold-load path)."""
         from trw_mcp.state import _memory_connection
 
@@ -58,6 +58,8 @@ class TestScheduleEmbedderWarmup:
             called.set()
             return object()
 
+        # Isolate scheduling from egress policy; the accessor below is a fake.
+        monkeypatch.setattr(_memory_connection, "warmup_suppressed_by_offline", lambda _logger: False)
         orig = _memory_connection.get_embedder
         _memory_connection.get_embedder = fake_get_embedder  # type: ignore[assignment]
         try:
@@ -72,7 +74,7 @@ class TestScheduleEmbedderWarmup:
 
         assert ran_off_main == [True], "warm-up must run on a background thread, not the caller"
 
-    def test_warmup_is_single_flight(self) -> None:
+    def test_warmup_is_single_flight(self, monkeypatch) -> None:
         """A second call while one warm-up is alive is a no-op (returns False)."""
         from trw_mcp.state import _memory_connection
 
@@ -83,6 +85,8 @@ class TestScheduleEmbedderWarmup:
             release.wait(timeout=5)
             return object()
 
+        # Isolate scheduling from egress policy; the accessor below is a fake.
+        monkeypatch.setattr(_memory_connection, "warmup_suppressed_by_offline", lambda _logger: False)
         orig = _memory_connection.get_embedder
         _memory_connection.get_embedder = slow_get_embedder  # type: ignore[assignment]
         try:
@@ -96,6 +100,21 @@ class TestScheduleEmbedderWarmup:
             t = _memory_connection._WARMUP_THREAD
             if t is not None:
                 t.join(timeout=5)
+
+    def test_offline_policy_prevents_even_fake_embedder_access(self, monkeypatch) -> None:
+        from unittest.mock import Mock
+
+        from trw_mcp.state import _memory_connection
+
+        monkeypatch.setenv("TRW_OFFLINE", "1")
+        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: TRWConfig(embeddings_enabled=True))
+        monkeypatch.setattr(_memory_connection, "_embedder_checked", False)
+        monkeypatch.setattr(_memory_connection, "_WARMUP_THREAD", None)
+        accessor = Mock(side_effect=AssertionError("offline warmup must not access embedder"))
+        monkeypatch.setattr(_memory_connection, "get_embedder", accessor)
+        assert _memory_connection._schedule_embedder_warmup() is False
+        accessor.assert_not_called()
+        assert _memory_connection._WARMUP_THREAD is None
 
     def test_warmup_skipped_when_embeddings_disabled(self) -> None:
         """No warm-up thread is started when embeddings are off."""

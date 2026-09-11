@@ -400,7 +400,7 @@ def test_perform_session_recalls_compacts_response_under_writer_pressure(
             "impact": 0.9,
             "status": "active",
             "tags": ["tag", "mcp", "timeout"],
-            "detail": "verbose detail that should not be returned under writer pressure",
+            "detail": "short useful detail retained within the focused body allowance",
         }
         for idx in range(20)
     ]
@@ -420,7 +420,25 @@ def test_perform_session_recalls_compacts_response_under_writer_pressure(
     assert {call.kwargs["max_results"] for call in recall.call_args_list} == {8}
     assert len(learnings) == 8
     assert extra["response_compacted"] is True
-    assert all(set(entry) <= {"id", "summary", "impact", "status"} for entry in learnings)
+    assert all(
+        set(entry)
+        <= {
+            "id",
+            "summary",
+            "impact",
+            "status",
+            "verification_evidence",
+            "verification_status",
+            "detail",
+            "detail_truncated",
+        }
+        for entry in learnings
+    )
+    assert all(
+        entry["detail"] == "short useful detail retained within the focused body allowance" for entry in learnings
+    )
+    assert all(entry["detail_truncated"] is False for entry in learnings)
+    assert sum(len(entry["detail"]) for entry in learnings) <= 2048
 
 
 def test_perform_session_recalls_compacts_when_the_census_reports_pressure(
@@ -582,19 +600,11 @@ def test_append_ceremony_status_defers_nudges_under_writer_pressure(
     assert "nudge_content" not in response
 
 
-def test_build_check_always_defers_q_learning(
+def test_build_check_does_not_attribute_exposure_under_writer_pressure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """PRD-FIX-088 FR01: Q-learning is ALWAYS deferred (not only under writer pressure).
-
-    Pre-FIX-088 this test asserted ``reason == 'writer_present'``; that
-    deferral path was conditional on detected peer writers and inline
-    otherwise. The 91-second hang on 2026-05-04 (call dc084e2b)
-    proved the inline path was unsafe at any corpus size, so FIX-088
-    made deferral unconditional. The reason now is the literal
-    ``"deferred_always"``.
-    """
+    """R10: peer-writer pressure does not enable temporal usefulness inference."""
     from fastmcp import FastMCP
 
     import trw_mcp.tools.build as build_mod
@@ -626,10 +636,7 @@ def test_build_check_always_defers_q_learning(
     result = tool_fn(tests_passed=True, test_count=1, static_checks_clean=True, scope="focused")
 
     assert result["tests_passed"] is True
-    q_learning_deferred = result["q_learning_deferred"]
-    assert isinstance(q_learning_deferred, dict)
-    assert q_learning_deferred["reason"] == "deferred_always"
-    assert q_learning_deferred["thread_state"] in {"launched", "queued"}
+    assert "q_learning_deferred" not in result
 
 
 # ---------------------------------------------------------------------------

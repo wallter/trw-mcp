@@ -21,6 +21,7 @@ from trw_mcp.models.learning import (
     LearningProtectionTier,
     LearningType,
 )
+from trw_mcp.models.typed_dicts import LearnResultDict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._learning_helpers import LearningParams, _validate_source_type
 
@@ -196,16 +197,17 @@ def _handle_consolidation(
     reader: FileStateReader,
     writer: FileStateWriter,
     trw_dir: Path,
-) -> None:
-    """Handle auto-obsolete of superseded entries (PRD-FIX-052-FR04)."""
+) -> list[str]:
+    """Obsolete predecessors and return IDs whose retirement was not confirmed."""
     if not consolidated_from:
-        return
+        return []
 
     from datetime import datetime, timezone
 
     from trw_mcp.state.analytics import find_entry_by_id
     from trw_mcp.state.memory_adapter import update_learning as adapter_update
 
+    incomplete: list[str] = []
     for ref_id in consolidated_from:
         try:
             update_result = adapter_update(
@@ -235,18 +237,62 @@ def _handle_consolidation(
                     compendium_id=learning_id,
                 )
             else:
+                incomplete.append(ref_id)
                 logger.warning(
                     "auto_obsolete_not_found",
                     ref_id=ref_id,
                     compendium_id=learning_id,
                 )
         except Exception:  # per-item error handling
+            incomplete.append(ref_id)
             logger.warning(
                 "auto_obsolete_failed",
                 ref_id=ref_id,
                 compendium_id=learning_id,
                 exc_info=True,
             )
+    return incomplete
+
+
+def _consolidation_dedup_result(result: LearnResultDict, predecessors: list[str] | None) -> LearnResultDict:
+    """Do not imply a skipped capture also applied its requested retirements."""
+    if predecessors:
+        result["consolidation_warning"] = (
+            "Consolidation was not applied after capture deduplication; verify predecessor status "
+            "before treating the correction as complete."
+        )
+    return result
+
+
+def _build_learn_result(
+    learning_id: str,
+    path: str,
+    status: str,
+    distribution_warning: str,
+    soft_cap_warning: str | None,
+    incomplete: list[str] | None,
+) -> LearnResultDict:
+    """Build a capture receipt without conflating storage and retirement."""
+    result: LearnResultDict = {"learning_id": learning_id, "path": path, "status": status}
+    if distribution_warning or soft_cap_warning:
+        result["distribution_warning"] = soft_cap_warning or distribution_warning
+    if incomplete:
+        result["consolidation_warning"] = (
+            "Replacement stored, but predecessor retirement was not confirmed for: "
+            + ", ".join(incomplete)
+            + ". Verify these records before treating the correction as complete."
+        )
+    return result
+
+
+def _increment_learning_capture(trw_dir: Path) -> None:
+    """Best-effort ceremony bookkeeping after a successful capture."""
+    try:
+        from trw_mcp.state.ceremony_progress import increment_learnings
+
+        increment_learnings(trw_dir)
+    except Exception:  # justified: fail-open; bookkeeping must not fail capture
+        logger.debug("learn_ceremony_state_update_skipped", exc_info=True)
 
 
 def _default_is_solution(summary: str) -> bool:

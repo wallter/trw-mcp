@@ -26,6 +26,7 @@ import structlog
 
 from trw_mcp.models.typed_dicts import CrossModelReviewResult
 from trw_mcp.tools import _review_helpers as _helpers
+from trw_mcp.tools._client_detection import resolve_client_profile
 from trw_mcp.tools._review_validation import normalize_review_findings
 
 if TYPE_CHECKING:
@@ -48,10 +49,50 @@ REASON_PROVIDER_RETURNED_EMPTY = "provider_returned_empty"
 # seam, so nothing was ever contacted. Distinct from PROVIDER_RETURNED_EMPTY,
 # which blamed a provider that was never called.
 REASON_PROVIDER_INTEGRATION_ABSENT = "provider_integration_absent"
+# The reviewer RAN but did not finish usably -- it timed out, or produced output
+# no parser could turn into findings. Distinct from PROVIDER_RETURNED_EMPTY:
+# rendering an incomplete run as "found nothing" turns an absent check into an
+# apparently passing one (PRD-CORE-270-FR03).
+REASON_PROVIDER_INCOMPLETE = "provider_incomplete"
 REASON_NO_DIFF = "no_diff"
+# The reviewer is PROVABLY the same model family as the host agent -- e.g. a
+# codex-hosted session configuring ``cross_model_provider: codex``. An
+# independent invocation is still an independent invocation, but it is not
+# cross-family, and stamping it ``cross_family`` would launder a self-review
+# into the coverage claim the stamp exists to make (PRD-CORE-270-FR04).
+REASON_REVIEWER_SAME_FAMILY = "reviewer_same_family"
 EMPTY_SAME_FAMILY_FALLBACK_LIMITED_REASON = (
     "same-family fallback contained no schema-valid findings and no typed independent-review receipt"
 )
+
+
+# Model family per client id, for the clients whose family is fixed by the
+# vendor. Front-ends that let the operator pick any model (``cursor-cli``,
+# ``opencode``, ``copilot``) are deliberately ABSENT: their family is unknown,
+# and an unknown family cannot prove sameness. Keys cover both the canonical
+# profile ids and the raw identity strings ``resolve_client_profile`` returns.
+_CLIENT_MODEL_FAMILY: dict[str, str] = {
+    "claude": "anthropic",
+    "claude-code": "anthropic",
+    "codex": "openai",
+    "agy": "google",
+    "antigravity": "google",
+    "antigravity-cli": "google",
+}
+
+
+def _reviewer_is_same_family(reviewer_client: str) -> bool:
+    """True iff the reviewer's family is KNOWN and equals the host's.
+
+    Asymmetric on purpose: only a proven match suppresses the cross-family
+    stamp. An unknown family on either side leaves the existing behaviour
+    untouched rather than silently downgrading every model-agnostic front-end.
+    """
+    reviewer = _CLIENT_MODEL_FAMILY.get(reviewer_client.strip().lower())
+    if reviewer is None:
+        return False
+    host = _CLIENT_MODEL_FAMILY.get(resolve_client_profile().strip().lower())
+    return host is not None and host == reviewer
 
 
 def _build_single_family_caveat(reason_token: str, provider: str) -> str:
@@ -141,9 +182,19 @@ def handle_cross_model_mode(
         reason_token = REASON_NO_DIFF
         cross_model_skipped = True
         logger.info("cross_model_review_no_diff")
+    elif _reviewer_is_same_family(config.cross_model_provider):
+        reason_token = REASON_REVIEWER_SAME_FAMILY
+        cross_model_skipped = True
+        logger.info("cross_model_review_same_family", provider=config.cross_model_provider)
     else:
         try:
             raw_findings = _helpers._invoke_cross_model_review(diff, config)
+        except _helpers.CrossModelIncomplete:  # trw:intentional fail-toward-single-family-coverage
+            # Ran, did not finish usably. NOT "returned empty" -- see FR03.
+            logger.info("cross_model_review_provider_incomplete", exc_info=True)
+            raw_findings = []
+            reason_token = REASON_PROVIDER_INCOMPLETE
+            cross_model_skipped = True
         except Exception:  # trw:intentional fail-toward-single-family-coverage
             # FR03/NFR02: ANY provider error degrades to single-family rather than
             # raising or emitting an ``error`` verdict. The raw exception text is

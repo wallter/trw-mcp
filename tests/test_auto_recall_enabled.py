@@ -39,7 +39,7 @@ class TestAutoRecallEnabled:
                 return_value=mock_entries,
             ),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query="Learning")
 
         assert "auto_recalled" in result
         assert result["auto_recall_count"] == 3
@@ -78,7 +78,7 @@ class TestAutoRecallEnabled:
             patch("trw_mcp.state.memory_adapter.update_access_tracking"),
             patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query="Learning")
 
         assert "auto_recalled" in result
         assert increment_calls == [["L-auto-1", "L-auto-2"]]
@@ -171,7 +171,7 @@ class TestAutoRecallEnabled:
                 ),
             ),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query="Learning")
 
         assert result["auto_recall_count"] == 2
         assert surface_calls == [["L-auto-new"]]
@@ -193,7 +193,7 @@ class TestAutoRecallEnabled:
                 return_value=[],
             ),
         ):
-            result = tools["trw_session_start"].fn()
+            result = tools["trw_session_start"].fn(query="Learning")
 
         assert "auto_recalled" not in result
         assert result.get("auto_recall_count") is None

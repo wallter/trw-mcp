@@ -40,7 +40,7 @@ def _atomic_write_text_file(path: Path, suffix: str, write: Callable[[TextIO], o
     fd, tmp_path_str = tempfile.mkstemp(dir=str(path.parent), suffix=suffix)
     tmp_path = Path(tmp_path_str)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fd = -1  # ownership transferred to ``fh``
             write(fh)
             fh.flush()

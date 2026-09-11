@@ -3,9 +3,11 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
 
 def _load_checker() -> object:
-    script = Path(__file__).resolve().parents[2] / "scripts" / "check_trw_runtime_state.py"
+    script = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "scripts" / "check_trw_runtime_state.py"
     spec = importlib.util.spec_from_file_location("check_trw_runtime_state", script)
     assert spec is not None
     assert spec.loader is not None
@@ -14,6 +16,7 @@ def _load_checker() -> object:
     return module
 
 
+@requires_monorepo
 def test_trw_runtime_classifier_documents_path_tiers() -> None:
     checker = _load_checker()
 
@@ -26,6 +29,7 @@ def test_trw_runtime_classifier_documents_path_tiers() -> None:
     assert checker.classify_trw_path("trw-mcp/src/trw_mcp/state/_paths.py") == "outside_trw"
 
 
+@requires_monorepo
 def test_precommit_check_rejects_ephemeral_trw_paths(capsys: object) -> None:
     checker = _load_checker()
 
@@ -37,6 +41,7 @@ def test_precommit_check_rejects_ephemeral_trw_paths(capsys: object) -> None:
     assert ".trw/frameworks/VERSION.yaml" not in captured.err
 
 
+@requires_monorepo
 def test_precommit_check_accepts_canonical_and_audit_paths() -> None:
     checker = _load_checker()
 

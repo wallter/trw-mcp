@@ -25,7 +25,6 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
     "skills": {
         # PRD-FIX-032: Non-prefixed → trw- prefixed migration
         "audit": "trw-audit",
-        "commit": "trw-commit",
         "deliver": "trw-deliver",
         "exec-plan": "trw-exec-plan",
         "framework-check": "trw-framework-check",

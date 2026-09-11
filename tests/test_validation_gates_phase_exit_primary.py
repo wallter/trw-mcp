@@ -60,19 +60,27 @@ class TestCheckPhaseExitResearch:
 
 
 class TestCheckPhaseExitPlan:
-    """Plan exit criteria: plan.md must exist, PRD enforcement checked."""
+    """Plan exit criteria retain governing PRD enforcement, not filename presence."""
 
-    def test_plan_exit_fails_without_plan_md(
+    def test_plan_exit_blocks_missing_scoped_prd(
         self,
         tmp_path: Path,
         writer: FileStateWriter,
+        monkeypatch,
     ) -> None:
         run_dir = _make_run_dir(tmp_path, writer)
-        config = TRWConfig(phase_gate_enforcement="off")
+        writer.write_yaml(
+            run_dir / "meta" / "run.yaml",
+            {
+                "run_id": "scoped-plan",
+                "phase": "plan",
+                "prd_scope": ["PRD-CORE-999"],
+            },
+        )
+        monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: tmp_path)
+        config = TRWConfig(phase_gate_enforcement="strict")
         result = check_phase_exit(Phase.PLAN, run_dir, config)
-        plan_failures = [f for f in result.failures if f.rule == "plan_exists"]
-        assert len(plan_failures) == 1
-        assert plan_failures[0].severity == "error"
+        assert [(f.rule, f.severity) for f in result.failures] == [("prd_exists", "error")]
         assert result.valid is False
 
     def test_plan_exit_passes_with_plan_md(

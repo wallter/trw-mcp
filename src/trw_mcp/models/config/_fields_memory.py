@@ -73,16 +73,6 @@ class _MemoryFields:
     # Default 1000 mirrors `MemoryConfig.hybrid_search_candidate_pool_size`.
     hybrid_search_candidate_pool_size: int = Field(default=1000, ge=1)
     hybrid_rrf_k: int = 60
-    # R-FUSION-001 / F15: blend learning importance into the in-process recall's
-    # positional RRF fusion (`_memory_queries._search_entries`), matching the
-    # MemoryClient path (`trw_memory.retrieval.pipeline.hybrid_search` →
-    # `rrf_fuse(..., alpha=...)`). The bare RRF score is position-only, so two
-    # results at the same fused rank tie even when one is impact-0.95 tribal
-    # knowledge and the other is impact-0.2 noise. `final = alpha * rrf_norm +
-    # (1 - alpha) * importance`. 1.0 = pure position (legacy back-compat, no
-    # importances passed), 0.0 = pure importance. Default 0.7 mirrors the
-    # MemoryClient default (`MemoryConfig.rrf_importance_alpha`).
-    hybrid_rrf_importance_alpha: float = Field(default=0.7, ge=0.0, le=1.0)
     # -- LLM utility filter (QUAL-062) --
     # When enabled, trw_learn routes each candidate learning through a live
     # Claude Haiku call (is_high_utility) that can reject low-utility entries.

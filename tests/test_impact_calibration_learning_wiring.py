@@ -1,109 +1,85 @@
-"""Learning-tool wiring tests for impact calibration."""
+"""CD1–4: actual registered capture is independent of corpus score quotas."""
 
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock
 
 import pytest
+from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync
+from trw_mcp.models.config import TRWConfig
 
 
-class TestTrwLearnForcedDistributionWiring:
-    """Verify enforce_tier_distribution is called and demotions persist."""
+@pytest.mark.parametrize("replay", [False, True])
+@pytest.mark.parametrize("forced", [False, True])
+@pytest.mark.parametrize("corpus_impact", [0.2, 0.95])
+@pytest.mark.parametrize("impact", [0.95, -0.1, 1.1])
+def test_registered_capture_preserves_clamped_impact_and_existing_rows(
+    tmp_path, monkeypatch, forced, corpus_impact, impact, replay
+):
+    from trw_memory.models.memory import MemoryEntry
 
-    @pytest.fixture(autouse=True)
-    def _isolate_project_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    from trw_mcp import scoring
+    from trw_mcp.state import memory_adapter
+    from trw_mcp.tools import _learning_helpers, learning, telemetry
 
-    def _write_entry(self, entries_dir: Path, fname: str, impact: float, status: str = "active") -> None:
-        entries_dir.mkdir(parents=True, exist_ok=True)
-        (entries_dir / fname).write_text(f"id: {fname}\nimpact: {impact}\nstatus: {status}\n")
-
-    def _get_tools(self) -> dict[str, Any]:
-        from fastmcp import FastMCP
-
-        from trw_mcp.tools.learning import register_learning_tools
-
-        srv = FastMCP("test")
-        register_learning_tools(srv)
-        return get_tools_sync(srv)
-
-    def _entries_dir(self, root: Path) -> Path:
-        from trw_mcp.models.config import TRWConfig
-
-        cfg = TRWConfig()
-        return root / cfg.trw_dir / cfg.learnings_dir / cfg.entries_dir
-
-    def test_demotion_persisted_to_disk(self, tmp_path: Path) -> None:
-        """Demoted entries have their impact scores updated on disk."""
-        tools = self._get_tools()
-        entries_dir = self._entries_dir(tmp_path)
-        for i in range(10):
-            self._write_entry(entries_dir, f"entry_{i}.yaml", 0.95)
-
-        result = tools["trw_learn"].fn(
-            summary="New critical learning",
-            detail="Detail",
-            impact=0.95,
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+    monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+    config = TRWConfig(
+        dedup_enabled=False,
+        embeddings_enabled=False,
+        telemetry_enabled=False,
+        impact_forced_distribution_enabled=forced,
+    )
+    monkeypatch.setattr(learning, "get_config", lambda: config)
+    monkeypatch.setattr(telemetry, "get_config", lambda: config)
+    trw_dir = tmp_path / ".trw"
+    backend = memory_adapter.get_backend(trw_dir)
+    ids = [f"L-existing-{i}" for i in range(10)]
+    for key in ids:
+        backend.store(
+            MemoryEntry(id=key, namespace="default", content=f"Existing unrelated fact {key}", importance=corpus_impact)
         )
-        assert result["status"] == "recorded"
+    before = {key: backend.get(key, namespace="default").model_dump(mode="json") for key in ids}
+    forbidden = Mock(side_effect=AssertionError("capture invoked distribution-only work"))
+    for module, name in [
+        (learning, "list_active_learnings"),
+        (memory_adapter, "list_active_learnings"),
+        (scoring, "enforce_tier_distribution"),
+        (_learning_helpers, "check_soft_cap"),
+        (_learning_helpers, "enforce_distribution"),
+    ]:
+        monkeypatch.setattr(module, name, forbidden)
+    if replay:
+        from trw_mcp.state import learn_journal
+        from trw_mcp.tools._learn_journal_wiring import make_sweep_replay
 
-        from trw_mcp.state.persistence import FileStateReader
-
-        reader = FileStateReader()
-        impacts = []
-        for yaml_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(yaml_file)
-            impacts.append(float(str(data.get("impact", 0.5))))
-        assert min(impacts) < 0.9
-
-    def test_no_demotion_when_disabled(self, tmp_path: Path) -> None:
-        """When impact_forced_distribution_enabled=False, no demotions occur."""
-        from trw_mcp.models.config import TRWConfig
-
-        disabled_cfg = TRWConfig().model_copy(update={"impact_forced_distribution_enabled": False})
-        with patch("trw_mcp.tools.learning.get_config", return_value=disabled_cfg):
-            tools = self._get_tools()
-            entries_dir = self._entries_dir(tmp_path)
-            for i in range(10):
-                self._write_entry(entries_dir, f"entry_{i}.yaml", 0.95)
-
-            result = tools["trw_learn"].fn(
-                summary="Critical",
-                detail="Detail",
-                impact=0.95,
-            )
-        assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
-
-    def test_demotion_warning_contains_tier_name(self, tmp_path: Path) -> None:
-        """Distribution warning message names the affected tier."""
-        tools = self._get_tools()
-        entries_dir = self._entries_dir(tmp_path)
-        for i in range(10):
-            self._write_entry(entries_dir, f"entry_{i}.yaml", 0.95)
-
-        result = tools["trw_learn"].fn(
-            summary="Critical learning",
-            detail="Very important",
-            impact=0.95,
+        payload = {
+            "summary": "New isolated engineering discovery",
+            "detail": "A concrete independent fact.",
+            "impact": impact,
+            "scope": "project",
+        }
+        learn_journal.journal_pending(trw_dir, "L-replayed", payload)
+        sweep = make_sweep_replay(trw_dir, config)
+        status = sweep.replay("L-replayed", payload)
+        assert sweep.flush()
+        assert not sweep.degraded()
+        assert list(learn_journal.iter_pending(trw_dir)) == []
+        result = {"status": status, "learning_id": "L-replayed"}
+    else:
+        server = FastMCP("capture-quota-test")
+        learning.register_learning_tools(server)
+        result = get_tools_sync(server)["trw_learn"].fn(
+            summary="New isolated engineering discovery",
+            detail="A concrete independent fact.",
+            impact=impact,
+            scope="project",
+            metadata={"client_profile": "", "model_id": ""},
         )
-        warning = result["distribution_warning"]
-        assert warning != ""
-        assert "critical" in warning or "high" in warning
-
-    def test_no_demotion_below_impact_threshold(self, tmp_path: Path) -> None:
-        """Low-impact learnings (< 0.7) don't trigger distribution enforcement."""
-        tools = self._get_tools()
-        entries_dir = self._entries_dir(tmp_path)
-        for i in range(10):
-            self._write_entry(entries_dir, f"entry_{i}.yaml", 0.95)
-
-        result = tools["trw_learn"].fn(
-            summary="Low impact",
-            detail="Not important",
-            impact=0.5,
-        )
-        assert result.get("distribution_warning", "") == ""  # omitted when empty (2026-07-12)
+    assert result["status"] == "recorded"
+    entry = backend.get(result["learning_id"], namespace="default")
+    assert entry.importance == max(0, min(1, impact))
+    assert {key: backend.get(key, namespace="default").model_dump(mode="json") for key in ids} == before
+    forbidden.assert_not_called()
+    assert not result.get("distribution_warning")

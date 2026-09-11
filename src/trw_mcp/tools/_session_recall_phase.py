@@ -4,7 +4,7 @@ Belongs to the ``_session_recall_helpers.py`` facade. Re-exported there
 for back-compat.
 
 Single helper:
-- ``_phase_contextual_recall`` — PRD-CORE-049 phase-contextual auto-recall
+- ``_phase_contextual_recall`` — PRD-CORE-263 phase-contextual auto-recall
   with bandit-aware ranking via ``IntelligenceCache``.
 
 Extracted as DIST-243 batch 39 to keep the parent
@@ -14,6 +14,7 @@ Extracted as DIST-243 batch 39 to keep the parent
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -33,7 +34,7 @@ def _phase_contextual_recall(
     run_dir: Path | None,
     run_status: RunStatusDict | None,
 ) -> list[AutoRecalledItemDict]:
-    """Execute phase-contextual auto-recall (PRD-CORE-049)."""
+    """Execute phase-contextual auto-recall (PRD-CORE-263)."""
     del run_dir  # accepted for API parity; not currently used
     from trw_mcp.state.memory_adapter import recall_learnings as adapter_recall_ar
     from trw_mcp.tools._session_recall_helpers import _phase_to_tags
@@ -46,8 +47,8 @@ def _phase_contextual_recall(
     phase_tags: list[str] | None = None
     phase = ""
     if run_status is not None:
-        task_name = str(run_status.get("task_name", ""))
-        phase = str(run_status.get("phase", ""))
+        task_name = str(run_status.get("task_name", "")).strip()
+        phase = str(run_status.get("phase", "")).strip()
         if task_name:
             query_tokens.append(task_name)
         if phase:
@@ -56,42 +57,48 @@ def _phase_contextual_recall(
             if phase_tag_list:
                 phase_tags = phase_tag_list
 
-    ar_query = " ".join(query_tokens) if query_tokens else "*"
-    ar_entries = adapter_recall_ar(
-        trw_dir,
-        query=ar_query,
-        tags=phase_tags,
-        min_impact=0.5,
-        max_results=config.auto_recall_max_results * 3,
-        compact=True,
-        allow_cold_embedding_init=False,
-    )
-    if not ar_entries:
+    # Primary startup recall already supplies baseline/recent memory. Without
+    # supplied query or run context, a second wildcard pass adds no focus.
+    if not query_tokens:
         return []
+    ar_query = " ".join(query_tokens)
+    from trw_mcp.state._recall_signals import recall_signal_scope
 
-    intel_cache = None
-    try:
-        from trw_mcp.sync.cache import IntelligenceCache
-
-        cache = IntelligenceCache(
+    with recall_signal_scope(ar_query):
+        ar_entries = adapter_recall_ar(
             trw_dir,
-            ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
+            query=ar_query,
+            tags=phase_tags,
+            min_impact=0.5,
+            max_results=config.auto_recall_max_results * 3,
+            compact=False,
+            allow_cold_embedding_init=False,
         )
-        if cache.get_bandit_params() is not None:
-            intel_cache = cache
-    except Exception:  # justified: fail-open, auto-recall must work without cache access
-        intel_cache = None
+        if not ar_entries:
+            return []
 
-    context = RecallContext(
-        current_phase=phase.upper() if phase else None,
-        intel_cache=intel_cache,
-    )
-    ranked = rank_by_utility(
-        ar_entries,
-        query_tokens,
-        lambda_weight=config.recall_utility_lambda,
-        context=context,
-    )
+        intel_cache = None
+        try:
+            from trw_mcp.sync.cache import IntelligenceCache
+
+            cache = IntelligenceCache(
+                trw_dir,
+                ttl_seconds=getattr(config, "intel_cache_ttl_seconds", 3600),
+            )
+            if cache.get_bandit_params() is not None:
+                intel_cache = cache
+        except Exception:  # justified: fail-open, auto-recall must work without cache access
+            intel_cache = None
+
+        context = RecallContext(
+            current_phase=phase.upper() if phase else None,
+            intel_cache=intel_cache,
+        )
+        from trw_mcp.tools._recall_assertion_verification import _verify_assertions
+
+        ranked = _verify_assertions(
+            ar_entries, query_tokens, config, rank_by_utility, context=context, rank_always=True
+        )
     capped = ranked[: config.auto_recall_max_results]
     try:
         log_ranked_selections(
@@ -113,6 +120,7 @@ def _phase_contextual_recall(
             "id": str(entry.get("id", "")),
             "summary": str(entry.get("summary", "")),
             "impact": float(str(entry.get("impact", 0.0))),
+            "verification_evidence": cast("dict[str, object]", entry["verification_evidence"]),
         }
         for entry in capped
     ]

@@ -2,7 +2,7 @@
 
 Tests assert the actual exposed-tool set per phase (resolved from a profile
 fixture), the fail-open branch, the rigid-tool invariant, masked-call denial,
-the capability-detection matrix, and telemetry emission.
+standard best-effort refresh, and telemetry emission.
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 from mcp.types import TextContent
-from structlog.testing import capture_logs
 
 from trw_mcp.middleware.phase_exposure import (
     PhaseExposureMiddleware,
@@ -310,15 +309,22 @@ async def test_override_allows_single_masked_call(
         calls += 1
         return _FakeToolResult(content=[TextContent(type="text", text="executed")])
 
-    ctx = _FakeMiddlewareContext(
-        message=_FakeMessage(name="trw_prd_create"),
-        fastmcp_context=_FakeContext(),
-    )
-    first = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+    # A FRESH context per call: FastMCP builds one MiddlewareContext per
+    # tools/call. The grant is single-use per CALL (stamped on the request so
+    # surface-authority and this gate can both honour one grant), so reusing a
+    # single object across two calls would have the second legitimately re-read
+    # the first call's own authorization.
+    def _ctx() -> _FakeMiddlewareContext:
+        return _FakeMiddlewareContext(
+            message=_FakeMessage(name="trw_prd_create"),
+            fastmcp_context=_FakeContext(),
+        )
+
+    first = await middleware.on_call_tool(_ctx(), call_next)  # type: ignore[arg-type]
     assert first.content[0].text == "executed"
     assert calls == 1
     # Second call re-masked
-    second = await middleware.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
+    second = await middleware.on_call_tool(_ctx(), call_next)  # type: ignore[arg-type]
     assert second.structured_content is not None
     assert second.structured_content["error_type"] == "tool_not_in_phase"
     assert calls == 1
@@ -451,75 +457,40 @@ def test_phase_resolution_unreadable_run_yaml_defaults_research(
     assert resolve_active_phase(session_id="s", fastmcp_context=None) == "RESEARCH"
 
 
-# ── FR04/FR05b: phase-transition notification matrix (round-2 audit I2-F01) ──
-
-
 @pytest.mark.asyncio
-async def test_phase_transition_notify_emits_list_changed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """I2-F01 notify: capability advertised → emit_list_changed is called once."""
-    from trw_mcp.middleware import _phase_transitions
+@pytest.mark.parametrize("handler_error", [False, True])
+async def test_allowed_call_observes_changed_phase_without_redispatch(monkeypatch, handler_error):
+    from trw_mcp.middleware import _phase_transitions as pt
 
-    _phase_transitions.reset_transition_state()
-    # Client advertised tools.listChanged → action resolves to "notify".
-    _phase_transitions.set_list_changed_capability("sess-notify", advertised=True)
+    pt.reset_transition_state()
+    pt.detect_transition("sess-1", "RESEARCH")
+    phase = "RESEARCH"
+    emitted = []
+    calls = 0
+    failure = RuntimeError("handler failed after changing phase")
+    result = _FakeToolResult()
 
-    emitted: list[object | None] = []
-
-    async def _fake_emit(ctx: object | None) -> bool:
-        emitted.append(ctx)
+    async def emit(ctx):
+        emitted.append(phase)
         return True
 
-    monkeypatch.setattr("trw_mcp.middleware.phase_exposure.emit_list_changed", _fake_emit)
+    async def call_next(ctx):
+        nonlocal phase, calls
+        calls += 1
+        phase = "IMPLEMENT"
+        if handler_error:
+            raise failure
+        return result
 
+    monkeypatch.setattr("trw_mcp.middleware.phase_exposure.resolve_active_phase", lambda **_: phase)
+    monkeypatch.setattr("trw_mcp.middleware.phase_exposure.emit_list_changed", emit)
     mw = PhaseExposureMiddleware(enabled=True, policy=DEFAULT_PHASE_POLICY)
-    sentinel = object()
-    await mw._on_phase_transition(session_id="sess-notify", phase="IMPLEMENT", ctx=sentinel)
-
-    assert emitted == [sentinel], "notify path must call emit_list_changed exactly once"
-
-
-@pytest.mark.asyncio
-async def test_phase_transition_require_reconnect_does_not_emit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """I2-F01 require_reconnect: no capability + policy=require_reconnect → no emit, signal logged."""
-    from trw_mcp.middleware import _phase_transitions
-
-    _phase_transitions.reset_transition_state()
-    _phase_transitions.set_list_changed_capability("sess-reconnect", advertised=False)
-
-    async def _fake_emit(_ctx: object | None) -> bool:
-        raise AssertionError("emit_list_changed must NOT be called on the reconnect path")
-
-    monkeypatch.setattr("trw_mcp.middleware.phase_exposure.emit_list_changed", _fake_emit)
-    monkeypatch.setattr(PhaseExposureMiddleware, "_on_transition_policy", staticmethod(lambda: "require_reconnect"))
-
-    mw = PhaseExposureMiddleware(enabled=True, policy=DEFAULT_PHASE_POLICY)
-    with capture_logs() as logs:
-        await mw._on_phase_transition(session_id="sess-reconnect", phase="VALIDATE", ctx=object())
-
-    events = {e.get("event") for e in logs}
-    assert "phase_transition_require_reconnect" in events
-    # The reconnect signal carries the X-Phase-Changed header marker.
-    reconnect = next(e for e in logs if e.get("event") == "phase_transition_require_reconnect")
-    assert reconnect.get("header") == "X-Phase-Changed"
-
-
-@pytest.mark.asyncio
-async def test_phase_transition_silent_does_not_emit_or_signal(monkeypatch: pytest.MonkeyPatch) -> None:
-    """I2-F01 silent: no capability + policy=silent → neither emit nor reconnect signal."""
-    from trw_mcp.middleware import _phase_transitions
-
-    _phase_transitions.reset_transition_state()
-    _phase_transitions.set_list_changed_capability("sess-silent", advertised=False)
-
-    async def _fake_emit(_ctx: object | None) -> bool:
-        raise AssertionError("emit_list_changed must NOT be called on the silent path")
-
-    monkeypatch.setattr("trw_mcp.middleware.phase_exposure.emit_list_changed", _fake_emit)
-    monkeypatch.setattr(PhaseExposureMiddleware, "_on_transition_policy", staticmethod(lambda: "silent"))
-
-    mw = PhaseExposureMiddleware(enabled=True, policy=DEFAULT_PHASE_POLICY)
-    with capture_logs() as logs:
-        await mw._on_phase_transition(session_id="sess-silent", phase="REVIEW", ctx=object())
-
-    events = {e.get("event") for e in logs}
-    assert "phase_transition_require_reconnect" not in events
+    ctx = _FakeMiddlewareContext(message=_FakeMessage("trw_recall"), fastmcp_context=_FakeContext())
+    if handler_error:
+        with pytest.raises(RuntimeError) as caught:
+            await mw.on_call_tool(ctx, call_next)
+        assert caught.value is failure
+    else:
+        assert await mw.on_call_tool(ctx, call_next) is result
+    assert calls == 1
+    assert emitted == ["IMPLEMENT"]

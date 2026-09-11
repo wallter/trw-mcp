@@ -16,7 +16,11 @@
 | `trw_session_start()` | **First Action** | **MANDATORY.** Loads prior learnings and active run state. |
 | `trw_learn(summary, detail)` | On discoveries | **REQUIRED** for non-obvious technical insights or gotchas. |
 | `trw_checkpoint(message)` | After milestones | **REQUIRED.** Saves resume point for context compaction. |
-| `trw_deliver()` | **Last Action** | **MANDATORY.** Persists your discoveries for future agents. |
+| `trw_deliver()` | Completed-work acceptance | **REQUIRED for delivery**, under the existing gate below; not required merely to stop. |
+
+## Session boundaries
+
+For material unfinished work, preserve progress, observed checks, residual risks and the next action in a checkpoint or durable native handoff with a next-read pointer. Stopping is not acceptance. If nothing material needs preservation, do not manufacture an artifact or learning. Already captured learnings remain persisted.
 
 ## Tool surface (PRD-CORE-218)
 
@@ -30,7 +34,7 @@ Tools outside the resolved surface are masked, not deregistered. A denial names 
 
 ## Delegation
 
-Delegate only for work that is genuinely independent and parallelizable — a wide multi-file investigation, or shards with disjoint file ownership. Not for work you could finish in a handful of tool calls, and not to verify your own work; verification belongs in your own loop. If one helper suffices, use one. When the harness cannot delegate, run the same shards sequentially — delegation is an optimization, and the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
+Delegate only for work that is genuinely independent and parallelizable — a wide multi-file investigation, or shards with disjoint file ownership. Keep routine self-checks in your own loop. Required independent review is separate from routine self-checks; preserve the framework's risk/tier-appropriate review and fallback rules. If one helper suffices, use one. When the harness cannot delegate, run the same shards sequentially — delegation is an optimization, and the invariant is focused context, explicit ownership, persisted findings, and final integration by the orchestrator.
 
 ## Deliver Gate (v26.2)
 

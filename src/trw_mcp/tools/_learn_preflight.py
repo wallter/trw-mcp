@@ -82,11 +82,20 @@ def run_accept_gates(
 ) -> LearnResultDict | None:
     """Run every write-time acceptance gate; return a rejection or ``None``.
 
-    Gate order is load-bearing: the cheap deterministic noise filter, then the
+    Gate order is load-bearing: empty-content check, deterministic noise filter, then the
     content policy, then the opt-in LLM utility filter. A non-``None`` result is
     terminal — the caller must return it WITHOUT journaling, because a rejected
     learning must never be durably recorded or replayed.
     """
+    # Empty capture is not durable knowledge. Either field alone remains valid;
+    # do not impose a minimum length or a new utility heuristic.
+    if not summary.strip() and not detail.strip():
+        return {
+            "status": "rejected",
+            "reason": "empty_content",
+            "message": "Provide a nonempty summary or detail; empty learning was not persisted.",
+        }
+
     # PRD-QUAL-032-FR09: Reject auto-generated noise entries early
     if is_noise_summary(summary):
         return {

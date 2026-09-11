@@ -82,9 +82,6 @@ from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     LIFECYCLE_SYNC_MARKER_PREFIX as LIFECYCLE_SYNC_MARKER_PREFIX,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
-    _load_prompting_guide as _load_prompting_guide,
-)
-from trw_mcp.state.claude_md.sections._tool_lifecycle import (
     bundled_lifecycle_hash_prefix as bundled_lifecycle_hash_prefix,
 )
 from trw_mcp.state.claude_md.sections._tool_lifecycle import (
@@ -115,7 +112,6 @@ __all__ = [
     "_analytics_cache",
     "_format_learning_session_claim",
     "_load_analytics_counts",
-    "_load_prompting_guide",
     "bundled_lifecycle_hash_prefix",
     "bundled_memory_routing_hash_prefix",
     "generate_behavioral_protocol_md",

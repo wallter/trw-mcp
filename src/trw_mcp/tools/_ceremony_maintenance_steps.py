@@ -231,10 +231,9 @@ def _finish_drain_sweep(
     * a remainder the running worker will pick up is reported as
       ``deferred_to_background``; a remainder nobody is coming for is reported as
       ``deferred_to_next_sweep``. It is NEVER silently zeroed, which is what the
-      previous ``to_background = 0`` on a refused schedule did;
-    * an owed migration is reported through ``migration_pending`` /
-      ``migration_scheduled`` even when it could not be scheduled, because an
-      unscheduled need the operator cannot see is a need nobody retries.
+      previous ``to_background = 0`` on a refused schedule did.
+
+    Batch migration is explicit maintenance, not a pending capture obligation.
     """
     replayed_inline = int(drain_result.get("replayed", 0))
     deferred = int(drain_result.get("deferred", 0))
@@ -243,13 +242,7 @@ def _finish_drain_sweep(
     # deferral keeps its current meaning — those records wait for the next sweep
     # and are still reported via pending_learns_deferred.
     remainder = min(deferred, max(0, limit - replayed_inline)) if budget_exhausted else 0
-    # FR05: the drain is also where the one-time dedup migration gets rescheduled
-    # after being skipped on the replay path. The marker is stat-ed only once a
-    # sweep actually had records, so the zero-pending hot path stays free of it.
-    migration_pending = _batch_dedup_pending(trw_dir, config)
-    scheduled = bool(remainder or migration_pending) and _schedule_background_drain(
-        trw_dir, config, remainder, migration_pending, sweep=sweep
-    )
+    scheduled = bool(remainder) and _schedule_background_drain(trw_dir, config, remainder, False, sweep=sweep)
     if not scheduled:
         sweep.flush()
     payload = dict(drain_result)
@@ -260,9 +253,6 @@ def _finish_drain_sweep(
     payload["deferred_to_background"] = remainder if scheduled else 0
     if remainder and not scheduled:
         payload["deferred_to_next_sweep"] = remainder
-    if migration_pending:
-        payload["migration_pending"] = True
-        payload["migration_scheduled"] = scheduled
     if sweep.index_failed():
         payload["index_update_failed"] = True
     if sweep.degraded():
@@ -283,26 +273,10 @@ def _finish_drain_sweep(
         replayed_inline=replayed_inline,
         deferred_to_background=remainder if scheduled else 0,
         deferred_to_next_sweep=remainder if not scheduled else 0,
-        migration_pending=migration_pending,
-        migration_scheduled=scheduled and migration_pending,
         budget_ms=budget_ms,
         budget_exhausted=budget_exhausted,
     )
     return True
-
-
-def _batch_dedup_pending(trw_dir: Path, config: TRWConfig) -> bool:
-    """Is the one-time PRD-CORE-042 batch dedup migration still owed? (FR05)."""
-    if not config.dedup_enabled:
-        return False
-    try:
-        from trw_mcp.state.dedup import is_migration_needed
-
-        return bool(is_migration_needed(trw_dir))
-    except Exception:
-        _facade_logger().warning("batch_dedup_marker_check_failed", exc_info=True)
-        # trw-fail-silent-allow: an unreadable marker means "do not schedule"; False is that decision, not a guess
-        return False
 
 
 def _schedule_background_drain(
