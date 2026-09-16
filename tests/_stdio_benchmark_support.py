@@ -151,7 +151,7 @@ def build_temp_project(root: Path) -> tuple[Path, Path]:
     for directory in (project / ".git", project / ".trw" / "learnings", project / ".trw" / "memory", user_dir):
         directory.mkdir(parents=True, exist_ok=True)
     (project / ".trw" / "config.yaml").write_text(
-        "framework_version: v26.2_TRW\n"
+        "framework_version: v27.1_TRW\n"
         "meta_tune_enabled: false\n"
         "session_start_writer_pressure_threshold: 64\n"
         "target_platforms:\n- claude-code\n",

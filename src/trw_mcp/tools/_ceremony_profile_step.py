@@ -14,7 +14,8 @@ Result keys written:
   * ``profile_layers_applied`` — layers that contributed, in chain order.
   * ``profile_snapshot_id``  — persistent-surface content hash (FR-13).
   * ``session_override_hash`` — session-layer delta hash (FR-13).
-  * ``profile_explanation``  — per-field attribution (FR-11 input).
+
+Per-field attribution is built only by ``trw_profile_explain`` on demand.
 
 A missing/invalid LAYER (``LayerLoadError``) degrades to a structured
 ``profile_resolution_error`` key and leaves the verdict alone — that is FR-12
@@ -60,7 +61,7 @@ def step_resolve_profile(
     if not getattr(config, "profile_system_enabled", True):
         return
     try:
-        from trw_mcp.profile import build_explanation, resolve_session_profile
+        from trw_mcp.profile import resolve_session_profile
         from trw_mcp.profile.loader import LayerLoadError
         from trw_mcp.state._paths import resolve_trw_dir
 
@@ -90,7 +91,6 @@ def step_resolve_profile(
         results["profile_layers_applied"] = list(resolved.layers_applied)
         results["profile_snapshot_id"] = resolved.surface_snapshot_id
         results["session_override_hash"] = resolved.session_override_hash
-        results["profile_explanation"] = build_explanation(resolved)
         logger.debug(
             "profile_resolved",
             layers_applied=resolved.layers_applied,

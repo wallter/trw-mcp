@@ -17,9 +17,7 @@ The tool:
 
 from __future__ import annotations
 
-import os
 import platform
-import re
 import sys
 from typing import Any
 
@@ -27,6 +25,14 @@ import structlog
 from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
+
+# PII redaction lives in its own module (see ``_feedback_redaction``); the names
+# are re-exported here so ``submit_feedback._redact_pii`` remains the import path
+# and the monkeypatch target it has always been.
+from trw_mcp.tools._feedback_redaction import _redact_metadata, _redact_pii
+
+__all__ = ["_redact_metadata", "_redact_pii", "submit_feedback", "submit_feedback_via_http"]
+
 
 logger = structlog.get_logger(__name__)
 
@@ -57,139 +63,6 @@ _ALLOWED_CATEGORIES: frozenset[str] = frozenset(
         "other",
     }
 )
-
-
-# ---------------------------------------------------------------------------
-# PRD-INFRA-132 FR04a — PII redaction
-# ---------------------------------------------------------------------------
-# Single chokepoint NFR01 mandates for secret hygiene. Pure function (no I/O,
-# idempotent) so it is trivially unit-testable. Patterns compiled at import
-# so redaction stays O(n) over the message body per call.
-_LICENSE_KEY_RE = re.compile(r"trw_lic_\S+")
-# Classic API-key formats: Stripe secret/publishable keys and AWS access-key
-# ids. Deliberately NOT a per-vendor token zoo — provider-specific token
-# prefixes (Slack/Google/GitHub/HuggingFace/JWT/etc.) are over-engineering for a
-# feedback redactor: the env-var pattern below already catches the common
-# `OPENAI_API_KEY=…` / `GITHUB_TOKEN=…` assignment form, and the connection-string
-# / JSON-secret patterns catch config-embedded credentials.
-_API_KEY_RE = re.compile(r"(?:sk_(?:live|test)_\S+|pk_(?:live|test)_\S+|AKIA[0-9A-Z]{16})")
-# Connection-string credentials: scheme://user:password@host. Redact the
-# user:password segment whole (preserve scheme + host for diagnostics). The
-# password may contain URL-encoded chars / symbols, so it matches any non-`@`,
-# non-`/` run. The username group is ``*`` (not ``+``) so an empty-username
-# URL (``postgres://:pw@host``) still collapses (finding 1a). ``host`` is
-# whatever follows the ``@``.
-_CONN_STR_RE = re.compile(
-    r"(?P<scheme>postgres|postgresql|mysql|mongodb|redis"
-    r"|amqp|amqps|ldap|ldaps|ftp|sftp|mssql|sqlserver)://[^/\s:@]*:[^/\s@]+@",
-    re.IGNORECASE,
-)
-# Query-string credentials: ``?password=…`` / ``&token=…`` etc. — credentials
-# smuggled into a URL query rather than the userinfo segment. Preserve the
-# separator + key for diagnostics, redact the value (stops at the next
-# ``&``/``#``/whitespace). Runs alongside _CONN_STR_RE in the connection-string
-# stage so a URL with BOTH userinfo and query creds is fully scrubbed.
-_QUERY_CRED_RE = re.compile(
-    r"(?P<lead>[?&])(?P<key>password|passwd|secret|token|api_key)=(?P<val>[^\s&#]+)",
-    re.IGNORECASE,
-)
-# JSON-embedded secrets: "password": "…" / "api_key": "…" etc. Preserve the key
-# for diagnostics, redact the value. Case-insensitive on the key; the value is
-# any run of non-quote characters (handles empty and multi-word values). The
-# key alternation accepts snake_case, kebab-case, AND camelCase variants
-# (apiKey/apiToken/clientSecret/refreshToken/authToken) so a camelCase JSON
-# secret is not a false-negative (finding 1b). ``client_id`` is deliberately
-# NOT included — an id is an identifier, not a secret.
-_JSON_SECRET_RE = re.compile(
-    r"(?P<key>\"(?:"
-    r"password|secret|token|private_key"
-    r"|api[_-]?key|api[_-]?token|auth[_-]?token|client[_-]?secret|refresh[_-]?token"
-    r"|access_key|access_token"
-    r")\")"
-    r"(?P<sep>\s*:\s*)"
-    r"\"[^\"]*\"",
-    re.IGNORECASE,
-)
-# Sensitive env-var KEY=value tokens. The key may carry a prefix
-# (``DB_PASSWORD``, ``OPENAI_API_KEY``, ``GITHUB_TOKEN``): a leading ``\b``
-# would never match between two word characters (``_`` is a word char), so a
-# prefixed key would silently leak its value. We instead anchor on a non-key
-# boundary (start-of-string or a non-``[A-Za-z0-9_]`` char) and allow an
-# optional ``WORD_`` prefix segment before the sensitive keyword. The value
-# captures an optionally-quoted token so ``PASSWORD="multi word secret"`` is
-# redacted whole rather than leaking everything after the first space.
-#
-# A ``key=value`` shape also describes a URL query credential (``?password=…``)
-# and an already-substituted placeholder (``password=<REDACTED:credentials>``).
-# Those are handled by the connection-string stage which runs FIRST, so the
-# value is a ``<REDACTED:…>`` marker by the time this pass runs. A negative
-# lookahead on the value skips an already-redacted token: that (a) preserves
-# the query-credential placeholder + its key for diagnostics instead of
-# re-collapsing it into ``<REDACTED:env>``, and (b) keeps the whole pass
-# idempotent (re-running never re-consumes a placeholder).
-_ENV_RE = re.compile(
-    r"(?:^|(?<=[^A-Za-z0-9_]))"  # boundary: start, or a non-identifier char
-    r"(?:[A-Za-z0-9]*_)*"  # optional prefix segments (DB_, OPENAI_, AWS_SECRET_, ...)
-    r"(?:PASSWORD|SECRET|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY)"
-    r"(?:[_-]?(?:KEY|TOKEN))?"  # optional KEY/TOKEN suffix (SECRET_KEY, ACCESS_TOKEN)
-    r"\s*=\s*"
-    r"(?!<REDACTED:)"  # already-redacted value (query cred / 2nd pass): skip
-    r"(?:\"[^\"]*\"|'[^']*'|\S+)",  # quoted value (any chars) or bare token
-    re.IGNORECASE,
-)
-
-
-def _redact_pii(text: str) -> str:
-    """Strip license keys, API keys, env-var values, and $HOME paths.
-
-    PRD-INFRA-132 FR04a — applied to the submission ``message`` before the
-    network call so secrets never leave the box in clear form. ``HOME`` is
-    resolved at call time (not import time) so tests can override it via
-    ``monkeypatch.setenv``.
-    """
-    if not text:
-        return text
-    redacted = _LICENSE_KEY_RE.sub("<REDACTED:license_key>", text)
-    # Connection-string credentials BEFORE generic API-key matching so the
-    # user:password segment is collapsed whole and a token-shaped password
-    # cannot leak via a partial match.
-    redacted = _CONN_STR_RE.sub(r"\g<scheme>://<REDACTED:credentials>@", redacted)
-    # Query-string credentials (?password=…) — same connection-string stage so
-    # creds smuggled into the query rather than userinfo are collapsed before
-    # the generic API-key pass can partial-match a token-shaped value.
-    redacted = _QUERY_CRED_RE.sub(r"\g<lead>\g<key>=<REDACTED:credentials>", redacted)
-    # JSON-embedded secrets: preserve the key, redact the value.
-    redacted = _JSON_SECRET_RE.sub(r'\g<key>\g<sep>"<REDACTED:json_secret>"', redacted)
-    redacted = _API_KEY_RE.sub("<REDACTED:api_key>", redacted)
-    redacted = _ENV_RE.sub("<REDACTED:env>", redacted)
-    home = os.path.expanduser("~")
-    if home and home != "~":
-        home_norm = home.rstrip("/")
-        if home_norm:
-            redacted = redacted.replace(home_norm, "$HOME")
-    return redacted
-
-
-def _redact_metadata(metadata: dict[str, str] | None) -> dict[str, str] | None:
-    """Redact every user-supplied metadata VALUE through :func:`_redact_pii`.
-
-    PRD-INFRA-132 NFR01: user-controlled metadata values are an exfil path
-    just like the message body, so they get the same chokepoint. BOTH the key
-    AND the value are scrubbed (finding 3b): a secret embedded in a metadata
-    KEY name (``{"sk_live_abc...": "x"}``) would otherwise leak in clear text.
-    Auto-attached metadata (``python_version`` / ``os_platform`` /
-    ``trw_mcp_version``) is NOT routed through here — it is generated locally
-    and known-safe, and redacting it would risk mangling a benign platform
-    string.
-
-    Collision note: if two distinct keys redact to the same placeholder they
-    collapse into a single dict entry (last write wins). This is acceptable —
-    both values are themselves already redacted, so the only loss is a
-    low-harm duplicate diagnostic key, never a leaked secret.
-    """
-    if not metadata:
-        return metadata
-    return {_redact_pii(k): _redact_pii(v) for k, v in metadata.items()}
 
 
 # Validation caps mirrored from PRD-CORE-182 FR01/FR06. If the server tightens

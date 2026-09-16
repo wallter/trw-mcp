@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from ruamel.yaml import YAML
 
+from tests._client_registry import ACTIVE_CLIENT_IDS
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.prompts.messaging import (
@@ -29,15 +30,7 @@ _AGENTS_DIR = Path(__file__).parent.parent / "src/trw_mcp/data/agents"
 _MESSAGES_YAML = Path(__file__).parent.parent / "src/trw_mcp/data/messages/messages.yaml"
 _BP_YAML = Path(__file__).parent.parent / "src/trw_mcp/data/behavioral_protocol.yaml"
 
-_ALL_PROFILES = [
-    "claude-code",
-    "opencode",
-    "cursor-ide",
-    "cursor-cli",
-    "codex",
-    "copilot",
-    "antigravity-cli",
-]
+_ALL_PROFILES = list(ACTIVE_CLIENT_IDS)
 
 
 # --- FR01: ClientProfile field ------------------------------------------------
@@ -53,10 +46,13 @@ def test_claude_code_profile_has_mcp_trw_prefix() -> None:
     assert p.tool_namespace_prefix == "mcp__trw__"
 
 
-@pytest.mark.parametrize(
-    "client_id",
-    ["opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
-)
+# Derived from the profile registry rather than restated: claude-code is the one
+# client with a tool namespace (``mcp__trw__``), so "every OTHER profile" is the
+# complement, and a hardcoded complement stops covering new profiles silently.
+_NON_NAMESPACED_CLIENTS = tuple(c for c in ACTIVE_CLIENT_IDS if c != "claude-code")
+
+
+@pytest.mark.parametrize("client_id", _NON_NAMESPACED_CLIENTS)
 def test_non_claude_code_profiles_have_empty_prefix(client_id: str) -> None:
     p = resolve_client_profile(client_id)
     assert p.tool_namespace_prefix == ""

@@ -53,8 +53,21 @@ REVIEWER_ROLES: tuple[str, ...] = (
 )
 
 
-def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> str:
-    """Get a git diff, returning empty string on any error.
+class ReviewDiffUnavailableError(RuntimeError):
+    """git could not be run, so the diff under review is UNKNOWN.
+
+    Raised by the review entry points rather than scoring an empty diff.
+    A review that cannot read what it is reviewing has no verdict to give,
+    and "" would make that indistinguishable from a genuinely clean tree.
+    """
+
+
+def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> str | None:
+    """Get a git diff, or ``None`` when git could not be run at all.
+
+    ``None`` and ``""`` are deliberately different: ``""`` means the diff is
+    genuinely empty, ``None`` means it is UNKNOWN. A caller that cannot tell
+    them apart reports a clean review of a tree it never read.
 
     Default (no args) diffs the working tree against ``HEAD`` — the original
     contract. PRD-CORE-213-FR04 extends this with:
@@ -78,10 +91,37 @@ def _get_git_diff(paths: list[str] | None = None, base: str | None = None) -> st
             text=True,
             timeout=30,
         )
+        if result.returncode != 0:
+            # The SAME collapse this function exists to prevent, reached through a
+            # different door. `git diff bad..HEAD` exits 128 with an EMPTY stdout,
+            # so returning stdout unconditionally hands the caller "" — a
+            # genuinely clean tree — for a diff that was never produced. Found by
+            # a cross-family audit 2026-09-12; the None-vs-"" distinction below
+            # only ever covered git failing to LAUNCH, not git failing to RUN.
+            # `check=True` would not help: CalledProcessError is a SubprocessError,
+            # not an OSError, so the handler below would not catch it either.
+            logger.warning(
+                "review_git_diff_failed",
+                returncode=result.returncode,
+                stderr=result.stderr.strip()[:200],
+                cmd=" ".join(cmd),
+            )
+            return None
         logger.debug("review_git_diff", length=len(result.stdout))
         return result.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return ""
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as exc:
+        # NOT "" — that is a real, common, and completely different answer. An
+        # empty diff legitimately means "nothing changed"; both consumers read it
+        # that way (`_extract_fr_mismatches` finds no mismatches, and
+        # `_run_multi_reviewer_analysis` hands reviewers nothing to find), so
+        # returning "" when git never ran produced a PASSING review of nothing.
+        # That is the collapse this module's own sibling comment describes one
+        # layer down ("two missing PRDs came back verdict='clean' ... for files
+        # never read"), reached here through the diff instead of through the PRDs.
+        # None is the typed unavailable signal; callers must refuse to score.
+        logger.warning("review_git_diff_unavailable", error=str(exc), cmd=" ".join(cmd))
+        # trw-fail-silent-allow: None is the typed UNAVAILABLE signal, distinct from "" (a genuinely empty diff); all three review entry points (auto, reconcile, cross_model) raise ReviewDiffUnavailableError on it rather than scoring, and the failure is logged at warning
+        return None
 
 
 def _normalize_severity(severity: str) -> str:
@@ -159,6 +199,10 @@ def _decode_json_answer(text: str) -> object | None:
     try:
         decoded: object = json.loads(body)
     except (ValueError, RecursionError):
+        # _parse_cross_model_findings turns this None into a raised CrossModelIncomplete
+        # (PRD-CORE-270-FR05), never an empty finding list. Only an explicit,
+        # well-formed `findings: []` counts as "ran, found nothing".
+        # trw-fail-silent-allow: None means "not a findings document" and is raised as CrossModelIncomplete, never scored as zero findings
         return None
     return decoded
 

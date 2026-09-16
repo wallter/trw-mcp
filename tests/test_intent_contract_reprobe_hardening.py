@@ -909,3 +909,48 @@ def test_a_freshly_installed_project_can_see_its_own_override_evidence(tmp_path:
     assert (
         subprocess.run(["git", "check-ignore", "-q", ".trw/events.jsonl"], cwd=project, check=False).returncode == 0
     ), "the fix must not un-ignore unrelated runtime jsonl"
+
+
+def test_an_unstattable_target_does_not_silently_skip_alias_detection(tmp_path: Path) -> None:
+    """A path we cannot stat must take the CHECKING path, not the allowing one.
+
+    ``_may_be_aliased`` caught every ``OSError`` and returned False. False makes
+    ``enforceable_claims`` skip inode matching and return no claims, and
+    ``check_write.run`` ALLOWS a write with no matching claims — so a protected
+    file reached through a path the hook could not stat bypassed alias detection
+    entirely. A security gate opening because it could not read.
+
+    Reported by a cross-family audit 2026-09-12.
+    """
+    from unittest.mock import patch
+
+    root = make_project(tmp_path, enroll=False)
+    alias = root / "hard-alias.py"
+    os.link(root / PROTECTED, alias)
+    contract = _claims("protected")
+
+    real_lstat = Path.lstat
+
+    def _deny(self: Path) -> object:
+        if self == alias:
+            raise PermissionError("cannot stat")
+        return real_lstat(self)
+
+    with patch.object(Path, "lstat", _deny):
+        matched = enforceable_claims(contract, "hard-alias.py", root, alias)  # type: ignore[arg-type]
+    assert matched, "an unstattable alias bypassed inode matching and would have been allowed"
+
+
+def test_a_file_that_does_not_exist_yet_is_not_treated_as_indeterminate(tmp_path: Path) -> None:
+    """The distinction the obvious fix would have got wrong.
+
+    ``lstat`` raises ``FileNotFoundError`` for every file being CREATED, which is
+    the ordinary case for a write hook. Failing closed on every ``OSError`` would
+    have sent each of those down the alias-checking path — so ENOENT is kept as a
+    definitive "not aliased", and only other errors mean "could not tell".
+    """
+    root = make_project(tmp_path, enroll=False)
+    contract = _claims("protected")
+    brand_new = root / "does-not-exist-yet.py"
+
+    assert enforceable_claims(contract, "does-not-exist-yet.py", root, brand_new) == ()  # type: ignore[arg-type]

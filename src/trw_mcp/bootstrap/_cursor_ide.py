@@ -37,6 +37,13 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _IDE_CURATED_SKILLS: list[str] = [
+    # trw-feedback is the reporting channel itself. It was missing here while the
+    # injected instruction (state/claude_md/sections/_feedback.py) told cursor-ide
+    # agents to "surface the /trw-feedback skill" -- naming a skill the install had
+    # never placed. The same omission was fixed for codex/copilot/opencode under
+    # PRD-INFRA-132 FR05; cursor-ide was the surface that pass did not reach,
+    # because the parity test enumerated a hardcoded list instead of deriving one.
+    "trw-feedback",
     "trw-deliver",
     "trw-prd-ready",
     "trw-framework-check",

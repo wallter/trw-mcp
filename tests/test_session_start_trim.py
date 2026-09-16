@@ -3,9 +3,8 @@
 Covers ``_session_start_trim``:
 
 - FR1: ``trim_session_start_payload`` compact-by-default (top-K cap, health
-  summary, token estimate, load-bearing-field preservation) and verbose
+  summary, load-bearing-field preservation) and verbose
   pass-through.
-- FR1: ``estimate_payload_tokens`` produces a positive monotonic estimate.
 - FR2: ``find_intentional_marker`` detects the marker on/above a line and
   extracts the reason; absence returns ``None``.
 """
@@ -14,11 +13,11 @@ from __future__ import annotations
 
 from typing import cast
 
+from tests._ceremony_helpers import payload_size_units
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.tools._session_start_trim import (
     _COMPACT_DROP_KEYS,
     DEFAULT_TOP_K,
-    estimate_payload_tokens,
     find_intentional_marker,
     trim_session_start_payload,
 )
@@ -91,18 +90,17 @@ class TestCompactTrimming:
         # Degraded advisory must survive compaction.
         assert trimmed["pipeline_health_advisory"].startswith("graph empty")
 
-    def test_compact_records_token_estimate(self) -> None:
+    def test_compact_omits_runtime_size_estimate(self) -> None:
         results = _make_results(20)
         trimmed = trim_session_start_payload(results, verbose=False)
-        assert isinstance(trimmed["payload_token_estimate"], int)
-        assert trimmed["payload_token_estimate"] > 0
+        assert "payload_token_estimate" not in trimmed
 
-    def test_compact_reduces_token_cost_vs_verbose(self) -> None:
+    def test_compact_reduces_payload_size_vs_verbose(self) -> None:
         full = _make_results(20)
         compact = _make_results(20)
         verbose_out = trim_session_start_payload(full, verbose=True)
         compact_out = trim_session_start_payload(compact, verbose=False)
-        assert compact_out["payload_token_estimate"] < verbose_out["payload_token_estimate"]
+        assert payload_size_units(compact_out) < payload_size_units(verbose_out)
 
     def test_compact_small_corpus_not_capped(self) -> None:
         results = _make_results(3)
@@ -128,10 +126,10 @@ class TestVerbosePassthrough:
         assert "step_durations_ms" in trimmed
         assert "health_summary" not in trimmed
 
-    def test_verbose_records_token_estimate(self) -> None:
+    def test_verbose_omits_runtime_size_estimate(self) -> None:
         results = _make_results(20)
         trimmed = trim_session_start_payload(results, verbose=True)
-        assert trimmed["payload_token_estimate"] > 0
+        assert "payload_token_estimate" not in trimmed
 
 
 class TestFailOpen:
@@ -146,16 +144,6 @@ class TestFailOpen:
         assert trimmed["run"] == {"active_run": "/r"}
         assert trimmed["errors"] == ["boom"]
         assert trimmed["compact"] is True
-
-
-class TestEstimatePayloadTokens:
-    def test_monotonic_with_size(self) -> None:
-        small = estimate_payload_tokens({"a": 1})
-        large = estimate_payload_tokens({"a": "x" * 1000})
-        assert large > small >= 1
-
-    def test_non_serializable_fails_open(self) -> None:
-        assert estimate_payload_tokens({"f": object()}) >= 1
 
 
 class TestFindIntentionalMarker:
@@ -354,8 +342,8 @@ class TestCompactDropKeys:
 
     def test_drop_is_measurable(self) -> None:
         payload = self._stamped_payload()
-        before = estimate_payload_tokens(payload)
-        after = trim_session_start_payload(payload, verbose=False)["payload_token_estimate"]
+        before = payload_size_units(payload)
+        after = payload_size_units(trim_session_start_payload(payload, verbose=False))
 
         assert after < before, "dropping five stamps did not shrink the payload"
 
@@ -432,8 +420,6 @@ def test_pre_change_payload_keys_are_a_subset_of_the_post_change_ones() -> None:
 
     assert set(cast("dict[str, object]", before)) <= set(cast("dict[str, object]", after))
     for key, value in cast("dict[str, object]", before).items():
-        if key == "payload_token_estimate":
-            continue
         assert cast("dict[str, object]", after)[key] == value, key
 
 

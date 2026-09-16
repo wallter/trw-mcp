@@ -3,7 +3,7 @@
 # history. Normalised to RunStatus.COMPLETE on READ ONLY — nothing rewrites it.
 run_id: 20260903T000000Z-fixture
 task: run-status-fixture
-framework: v26.2_TRW
+framework: v27.1_TRW
 status: completed
 phase: deliver
 confidence: medium

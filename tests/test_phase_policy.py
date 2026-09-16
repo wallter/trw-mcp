@@ -144,7 +144,15 @@ def test_all_tool_names_are_registered(catalogue: str) -> None:
     for tools in DEFAULT_PHASE_POLICY.allowed_tools_by_phase.values():
         covered.update(tools)
     assert covered.isdisjoint(OPERATOR_ONLY_TOOLS)
-    missing = registered - covered
+    # CORE274 is deliberately opt-in at BOTH the surface and phase layers.
+    # Do not widen default phase permissions merely to cover its registration.
+    from trw_mcp.models.surface_packs import PACK_TOOLS
+
+    explicit_phase_opt_in = set(PACK_TOOLS["peer_comms"])
+    assert explicit_phase_opt_in == {"trw_peers", "trw_send", "trw_inbox"}
+    assert covered.isdisjoint(explicit_phase_opt_in)
+    assert explicit_phase_opt_in <= registered
+    missing = registered - covered - explicit_phase_opt_in
     assert not missing, f"tools not in any phase set or Safe Set: {sorted(missing)}"
     # No dangling policy names that aren't real tools.
     dangling = covered - registered

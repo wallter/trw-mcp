@@ -167,6 +167,9 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_validate_agent_work_evidence": "Validate an AgentWorkEvidence v1 record",
     "trw_prd_diff": "Structural diff between two PRD versions (read-only)",
     "trw_submit_feedback": "Submit feedback to the TRW backend portal (thin client)",
+    "trw_peers": "Enroll, list or heartbeat this agent among its formation peers (pull-only)",
+    "trw_send": "Send a bounded message to a formation peer or reconcile an exact retry (pull-only)",
+    "trw_inbox": "Fetch pending messages, ACK receipt, or inspect body-free message facts (pull-only)",
 }
 
 # Validate at import time: every eligible (public) manifest tool has a

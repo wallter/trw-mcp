@@ -213,7 +213,6 @@ class SessionStartResultDict(TypedDict, total=False):
     profile_layers_applied: list[str]
     profile_snapshot_id: str
     session_override_hash: str
-    profile_explanation: dict[str, object]
     # PRD-HPO-PROF-001 FR-12 (audit F-02): when a persistent profile layer
     # (org/domain/task-type) is malformed/schema-invalid, the resolver fails
     # CLOSED rather than silently degrading to defaults — but session start
@@ -240,12 +239,9 @@ class SessionStartResultDict(TypedDict, total=False):
     # sync health + total latency) present ONLY in compact mode.
     # ``learnings_omitted`` is the "N more" indicator — how many top-K-capped
     # learnings were dropped from the returned list (0 when nothing was capped).
-    # ``payload_token_estimate`` is an approximate (~4 chars/token) size estimate
-    # so the token-cost reduction is measurable from the response itself.
     compact: bool
     health_summary: str
     learnings_omitted: int
-    payload_token_estimate: int
     # Non-fatal degradations that do NOT flip ``success``. A recall failure is
     # fail-open by contract (recall must never block session start), so it is
     # surfaced here for visibility rather than appended to ``errors`` — where it

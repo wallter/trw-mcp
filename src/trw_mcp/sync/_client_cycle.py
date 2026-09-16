@@ -261,16 +261,62 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
         # cycle record so the shortfall is countable at the surface an operator
         # actually reads, and raise the level when anything was rejected.
         merged = merge_result.applied
-        next_pull_seq = max(
-            [
-                pull_seq,
-                *(
-                    int(item.get("sync_seq", 0))
-                    for item in (pull_result.team_learnings or [])
-                    if isinstance(item, dict) and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
-                ),
-            ]
+        # THE CURSOR MAY ONLY PASS ITEMS THAT WERE JUDGED. Pulls are since_seq
+        # bounded, so anything this cursor steps over is never offered again —
+        # advancing past an item the merge never saw discards it permanently, and
+        # nothing anywhere reports a number.
+        #
+        # The arms are NOT alike and are deliberately not treated alike:
+        #   invalid / skipped_no_id / quarantined — a DECISION about the item. It
+        #     would be judged the same way next time, so holding the cursor makes
+        #     a poison-pill loop. Advancing is correct.
+        #   failed / unavailable — the item was NEVER JUDGED. `failed` raised
+        #     while storing; `unavailable` means the merge could not run at all,
+        #     which skips a whole batch at once.
+        #   team sync disabled — not a merge outcome. The items were never even
+        #     offered, so with team sync off every team learning that arrived used
+        #     to advance the cursor past itself and vanish. A user who later
+        #     enabled team sync had permanently lost everything that arrived while
+        #     it was off.
+        #
+        # Held at pull_seq the whole batch is re-offered next cycle. That costs a
+        # duplicate MERGE, not a duplicate row: `pull.py::find_existing` keys on
+        # source_learning_id and updates the existing entry.
+        #
+        # Counts, not ids: TeamMergeResult carries no per-item sequence numbers,
+        # so a precise "advance past the applied ones only" needs a shape change
+        # in the merge. This is the conservative version — it can re-offer a few
+        # already-applied items, and it can never drop one.
+        cursor_may_advance = (
+            client._config.team_sync_enabled and not merge_result.unavailable and merge_result.failed == 0
         )
+        if cursor_may_advance:
+            next_pull_seq = max(
+                [
+                    pull_seq,
+                    *(
+                        int(item.get("sync_seq", 0))
+                        for item in (pull_result.team_learnings or [])
+                        if isinstance(item, dict) and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
+                    ),
+                ]
+            )
+        else:
+            next_pull_seq = pull_seq
+            if pulled:
+                facade_logger.warning(
+                    "sync_pull_cursor_held",
+                    client_id=client._client_id,
+                    pulled=pulled,
+                    reason=(
+                        "team_sync_disabled"
+                        if not client._config.team_sync_enabled
+                        else "merge_unavailable"
+                        if merge_result.unavailable
+                        else "merge_failed"
+                    ),
+                    detail="the cursor did not advance; these items will be re-offered rather than skipped",
+                )
         client._coordinator.record_company_pull_seq(max(company_pull_seq, pull_result.next_company_seq))
         client._apply_sync_hints(pull_result.sync_hints)
         cycle_emit = facade_logger.warning if merge_result.rejected else facade_logger.info

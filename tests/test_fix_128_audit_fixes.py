@@ -114,8 +114,7 @@ def test_row1_marker_path_rejects_dot_and_leading_dash(tmp_path: Path, hook_dir:
     old_lib.write_text(_old_lib_text(), encoding="utf-8")
     old_probe = _source_and_run(root, old_lib, "trw_degraded_marker_path epoch", env)
     assert old_probe.returncode == 0, (
-        f"key {bad_key!r} was ALREADY rejected before the fix — this case does not "
-        "exercise the row 1 regression"
+        f"key {bad_key!r} was ALREADY rejected before the fix — this case does not exercise the row 1 regression"
     )
 
 

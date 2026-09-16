@@ -108,7 +108,10 @@ def _validate_sandbox(image_tag: str) -> BootValidationFailure | None:
             return BootValidationFailure(
                 key="sandbox",
                 actual="pyseccomp unavailable",
-                remediation="Install pyseccomp before enabling SAFE-001.",
+                remediation=(
+                    "Install the meta-tune extra (pip install 'trw-mcp[meta-tune]') "
+                    "before enabling SAFE-001, or keep meta_tune.enabled=false."
+                ),
             )
         if shutil.which("unshare") is None:
             return BootValidationFailure(

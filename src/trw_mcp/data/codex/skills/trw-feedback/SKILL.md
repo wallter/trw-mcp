@@ -16,8 +16,11 @@ flow that captures context and submits it through the official channel.
 
 This skill wraps the `trw_submit_feedback` MCP tool. The tool POSTs to
 `<backend_url>/v1/submissions` (PRD-CORE-182) using the operator's
-`platform_api_key` from `.trw/config.yaml`. PII redaction (license keys, API
-key prefixes, `$HOME` paths, sensitive env vars) runs before the network call.
+`platform_api_key` from `.trw/config.yaml`. PII redaction runs before the
+network call, over the subject, the body, AND every metadata key and value.
+It is deliberately NOT enumerated here: this line used to carry a hand-copied
+list across nine files, and the list went stale the moment the redactor learned
+a new shape. The canonical set is `_redact_pii` in `trw_mcp/tools/submit_feedback.py`.
 
 ## Workflow
 

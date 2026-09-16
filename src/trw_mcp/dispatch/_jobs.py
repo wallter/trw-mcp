@@ -26,6 +26,7 @@ prompt because the child needs it; it is gitignored runtime state, not a log.)
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import signal
@@ -42,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trw_mcp.dispatch._env import build_runner_env
 from trw_mcp.dispatch._private_io import write_private_atomic
+from trw_mcp.dispatch._process_identity import capture_identity, signal_group
 from trw_mcp.dispatch._runner import _redact_argv
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
@@ -86,6 +88,7 @@ class DispatchJob(BaseModel):
         description="The request's wall-clock timeout; used to declare a stuck job failed.",
     )
     pid: int | None = Field(default=None, description="OS pid of the detached child, if spawned.")
+    process_identity: dict[str, str | int] | None = None
     argv_redacted: list[str] = Field(
         default_factory=list,
         description="The launched command with the prompt body redacted.",
@@ -235,6 +238,7 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
         created_at=datetime.now(timezone.utc).isoformat(),
         timeout_s=req.timeout_s,
         pid=proc.pid,
+        process_identity=capture_identity(proc.pid),
         argv_redacted=argv_redacted,
         result_path=str(result_path),
         job_path=str(job_path),
@@ -352,23 +356,16 @@ def get_status(job_id: str, *, trw_dir: Path | None = None) -> DispatchJob:
 
 
 def _kill_child_tree(jobs_dir: Path, job_id: str) -> None:
-    """Best-effort kill the foreign agent's process group via its pid sidecar.
-
-    The foreign agent is spawned by :func:`dispatch` with ``start_new_session``,
-    so it is its OWN session leader: ``killpg(getpgid(child_pid), SIGKILL)``
-    targets its entire tree. The sidecar may be absent (child never wrote it /
-    already swept), the pid may be gone or reused — all benign, so every failure
-    mode is swallowed. POSIX only.
-    """
+    """Signal a foreign group only with a matching persisted process identity."""
     if not _POSIX:
         return
-    pid_path = _child_pid_path(jobs_dir, job_id)
     try:
-        child_pid = int(pid_path.read_text(encoding="utf-8").strip())
-        os.killpg(os.getpgid(child_pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError, ValueError):
-        # absent/unreadable sidecar, malformed pid, or already-gone process.
-        pass
+        identity = json.loads(_child_pid_path(jobs_dir, job_id).read_text(encoding="utf-8"))
+        if not isinstance(identity, dict):
+            identity = None  # legacy PID-only sidecars cannot establish ownership
+        signal_group(identity, signal.SIGKILL)
+    except (OSError, ValueError):
+        logger.warning("dispatch_signal_refused", job_id=job_id, reason="missing_or_invalid_sidecar")
 
 
 def _kill_job_tree(job: DispatchJob, jobs_dir: Path) -> None:
@@ -384,14 +381,18 @@ def _kill_job_tree(job: DispatchJob, jobs_dir: Path) -> None:
        ``start_new_session`` so it lives in its OWN session/group and would
        otherwise survive a kill that only reaps the intermediate's group.
 
-    Every failure mode (already-gone pid, absent/unreadable sidecar, non-POSIX)
-    is swallowed — this is a reaping best-effort, not a guarantee. Shared by
+    Missing/legacy or mismatched identities refuse signaling and log a warning.
+    This is best-effort cleanup, not proof that a cancelled job has exited. Shared by
     :func:`cancel_job` and the stuck-running TTL branch of :func:`_reconcile_job`
     so both reap the child tree identically instead of orphaning it.
     """
     if job.pid is not None and _POSIX:
         try:
-            os.killpg(os.getpgid(job.pid), signal.SIGKILL)
+            identity = job.process_identity
+            if identity is None or identity.get("pid") != job.pid:
+                logger.warning("dispatch_signal_refused", job_id=job.job_id, reason="job_identity_mismatch")
+            else:
+                signal_group(identity, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):  # benign: already gone
             pass
 
@@ -400,7 +401,7 @@ def _kill_job_tree(job: DispatchJob, jobs_dir: Path) -> None:
 
 
 def cancel_job(job_id: str, *, trw_dir: Path | None = None) -> DispatchJob:
-    """Kill the job's process tree (intermediate + foreign agent) and mark cancelled.
+    """Request verified process-tree cleanup and mark the job cancelled.
 
     The two best-effort kills are delegated to :func:`_kill_job_tree`. The
     verified runner timeout-tree-kill is untouched — cancel reach is added purely

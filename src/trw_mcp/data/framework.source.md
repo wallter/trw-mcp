@@ -1,10 +1,10 @@
 <!-- trw:span id=fw-title dest=both class=normative -->
-v26.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+v27.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
 Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
 Version date: 2026-07-27 | Model policy: capability-based, never provider-bound
 
 <!-- trw:span id=fw-mandate-trw-is-a-method-not-a-model-prompt dest=core class=normative -->
-> **v26.2 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 is a generation-integrity release: the compact core now defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. No obligation changed. The version was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`; the compact views are NOT yet the default reading path.
+> **v27.1 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 was a generation-integrity release: the compact core defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. It was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`. v27.1 moves the version stamp forward on that same generation; no obligation changed and the compact views are NOT yet the default reading path.
 
 <!-- trw:span id=fw-blk2 dest=both class=normative -->
 <trw-framework>
@@ -14,7 +14,7 @@ Version date: 2026-07-27 | Model policy: capability-based, never provider-bound
 <!-- trw:span id=fw-execution-model-summary dest=core class=normative -->
 ## EXECUTION MODEL SUMMARY
 
-**v26.2_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
+**v27.1_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
 
 Core loop: load memory → understand evidence → plan only as needed → implement → verify with project-native checks → review → deliver.
 **Deliver gate (no fourth path)**: call `trw_deliver` only with (1) a recorded passing `trw_build_check`; (2) a durable acceptable-failure record naming the failed check, residual risk, owner, and expiry, passed through `allow_unverified=true` + `unverified_reason`; or (3) an authorized operator/config override recorded with technical rationale. An override permits delivery; it never turns unverified work into verified work.

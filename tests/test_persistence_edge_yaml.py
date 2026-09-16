@@ -22,15 +22,18 @@ class TestReadYamlMalformedSyntax:
             reader.read_yaml(bad_yaml)
 
     def test_invalid_indentation_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
-        """YAML with bad indentation that causes a parse error is wrapped."""
+        """YAML with bad indentation that causes a parse error is wrapped.
+
+        The try/except this replaces accepted BOTH outcomes: a raised StateError
+        was discarded by ``pass``, and a silently-tolerated parse satisfied
+        ``isinstance(result, dict)``. The test name asserts one of those two, so
+        it has to pick one.
+        """
         bad_yaml = tmp_path / "indent.yaml"
         bad_yaml.write_text("key:\n  sub: 1\n sub2: 2\n", encoding="utf-8")
 
-        try:
-            result = reader.read_yaml(bad_yaml)
-            assert isinstance(result, dict)
-        except StateError:
-            pass
+        with pytest.raises(StateError):
+            reader.read_yaml(bad_yaml)
 
     def test_tab_characters_in_yaml_raises_state_error(self, tmp_path: Path, reader: FileStateReader) -> None:
         """YAML with tab indentation (forbidden by spec) raises StateError."""

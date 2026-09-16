@@ -17,7 +17,7 @@ import pytest
 
 from tests._install_trw_pip_target_contract_support import _INSTALLER_PATHS, _load_installer_module
 
-_FRAMEWORK_BODY = "v26.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n"
+_FRAMEWORK_BODY = "v27.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n"
 _AAREF_BODY = "# AARE-F\n\n**Version**: 3.2.1\n"
 _REGISTRY_DIGEST = "fc7ff6da2b8c2a3d8bbc023f14ffd0dcfbfe6c1a26114b155a25acb265b75617"
 
@@ -38,7 +38,7 @@ def test_version_stamp_refresh_preserves_generation_binding_fields(installer_pat
     module = _load_installer_module(installer_path)
     version_path = _seed_deployment(
         tmp_path,
-        "framework_version: v26.2_TRW\n"
+        "framework_version: v27.1_TRW\n"
         "aaref_version: v3.2.1\n"
         "trw_mcp_version: 1.0.0\n"
         f"registry_digest: {_REGISTRY_DIGEST}\n"
@@ -70,7 +70,7 @@ def test_version_stamp_refresh_creates_stamp_when_absent(installer_path: Path, t
     module._write_version_yaml_metadata(tmp_path)
 
     stamp = version_path.read_text(encoding="utf-8")
-    assert "framework_version: v26.2_TRW" in stamp
+    assert "framework_version: v27.1_TRW" in stamp
     assert "aaref_version: v3.2.1" in stamp
     assert f"trw_mcp_version: {module.TRW_VERSION}" in stamp
 
@@ -81,8 +81,8 @@ def test_version_stamp_refresh_is_skipped_when_bodies_are_undeployed(installer_p
     module = _load_installer_module(installer_path)
     (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
     version_path = tmp_path / ".trw" / "frameworks" / "VERSION.yaml"
-    version_path.write_text("framework_version: v26.2_TRW\nregistry_digest: keep-me\n", encoding="utf-8")
+    version_path.write_text("framework_version: v27.1_TRW\nregistry_digest: keep-me\n", encoding="utf-8")
 
     module._write_version_yaml_metadata(tmp_path)
 
-    assert version_path.read_text(encoding="utf-8") == "framework_version: v26.2_TRW\nregistry_digest: keep-me\n"
+    assert version_path.read_text(encoding="utf-8") == "framework_version: v27.1_TRW\nregistry_digest: keep-me\n"

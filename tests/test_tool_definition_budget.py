@@ -89,7 +89,35 @@ pytestmark = pytest.mark.unit
 # review found load-bearing content the trim had cut — a delivery-gate
 # consequence, a parameter-semantics clause, three missing output contracts —
 # and it was restored. Correctness over the number.
-FULL_SURFACE_CEILING_CHARS: Final[int] = 38_500
+#
+# 2026-09-15 (PRD-CORE-274 slice 1): 38,500 -> 38,650. ``trw_peers`` added one
+# tool, measured at 549 chars (394 description + 155 schema), taking the full
+# surface to 38,599 across 49 tools. The first draft measured 678; the 129-char
+# cut removed mechanism prose that now lives in a body comment. What remains is
+# the three actions a caller chooses between, the fact that identity cannot be
+# passed in (which is why the signature has no member_id to reach for), and the
+# output contract. The residual 51 chars of headroom are deliberate: the next
+# tool should have to justify itself here rather than inherit room.
+#
+# 2026-09-15 (PRD-CORE-276 scoped notify): 38,650 -> 39,950, and the raise is
+# mostly NOT this change. Measured on this branch before touching anything:
+# 39,680 across 51 tools — two tools landed since the note above was written and
+# the ceiling was never moved with them, so the gate was already red at base.
+# (Main has since raised it to 39,700 for the same reason; on merge, take the
+# larger value and keep one note, not two.)
+#
+# This change's own cost is 215 chars: one optional ``scope`` parameter on
+# ``trw_send`` (~78 of unavoidable schema) plus the clause telling a caller that
+# addressing is exclusive. That clause earns its tokens — without it the two
+# parameters read as combinable, and a caller that passes both gets a refusal it
+# cannot predict from the signature. The mechanism (how a scope resolves through
+# declared ownership, what bounds the fan-out) is deliberately NOT here; it is in
+# the module docstring, where maintainers read it for free.
+#
+# Re-measured after merging main rather than trusting the arithmetic: 39,895
+# across 51 tools, 55 chars under this ceiling. Narrow headroom is the point —
+# the next tool should have to justify itself here rather than inherit room.
+FULL_SURFACE_CEILING_CHARS: Final[int] = 39_950
 CORE_PRESET_CEILING_CHARS: Final[int] = 15_200
 
 # A tool definition has two independently-governed halves, and conflating them

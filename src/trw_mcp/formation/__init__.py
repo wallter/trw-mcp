@@ -55,7 +55,10 @@ from trw_mcp.formation._manifest import (
     FormationMemberStatus as FormationMemberStatus,
 )
 from trw_mcp.formation._ownership import Ownership as Ownership
+from trw_mcp.formation._ownership import declaration_covers as declaration_covers
 from trw_mcp.formation._ownership import owner_of as _owner_of
+from trw_mcp.formation._ownership import owner_of as owner_of_manifest
+from trw_mcp.formation._ownership import relative_to_root as relative_to_root
 from trw_mcp.formation._status import MemberRow as MemberRow
 from trw_mcp.formation._status import member_rows, non_terminal_members
 from trw_mcp.formation._store import (
@@ -66,6 +69,8 @@ from trw_mcp.formation._store import (
 )
 from trw_mcp.formation._store import manifest_path_for_run as manifest_path_for_run
 from trw_mcp.formation._store import resolve_active
+from trw_mcp.formation._store import resolve_manifest_path as resolve_manifest_path
+from trw_mcp.formation._store import stamped_ids as stamped_ids
 
 logger = structlog.get_logger(__name__)
 
@@ -83,13 +88,18 @@ __all__ = [
     "Ownership",
     "brief",
     "create",
+    "declaration_covers",
     "join",
     "load",
     "manifest_path_for_run",
     "mark_member_delivered",
     "owner_of",
+    "owner_of_manifest",
+    "relative_to_root",
+    "resolve_manifest_path",
     "revise",
     "settings",
+    "stamped_ids",
     "status",
     "validate",
 ]

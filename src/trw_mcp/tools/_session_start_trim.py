@@ -10,8 +10,7 @@ PRD-IMPROVE-MCP-04:
   and is returned on *every* session. This caps the learnings list to the
   top-K most impactful, reduces the ``connection_fingerprint`` block to its
   non-constant fields, collapses the low-signal diagnostic sub-blocks into a
-  one-line ``health_summary``, and records an approximate
-  ``payload_token_estimate`` so the reduction is measurable. Load-bearing
+  one-line ``health_summary``. Load-bearing
   fields (run/pin recovery, errors, framework_reminder, advisories) are NEVER
   dropped. ``verbose=True`` is a no-op pass-through (current full behavior).
 
@@ -25,7 +24,6 @@ returned unchanged so resume correctness is preserved.
 
 from __future__ import annotations
 
-import json
 import re
 from typing import TYPE_CHECKING
 
@@ -135,21 +133,6 @@ _INTENTIONAL_RE = re.compile(
     r"(?:#|//)\s*trw:intentional\b[ \t:]*(?P<reason>.*?)\s*$",
     re.IGNORECASE,
 )
-
-
-def estimate_payload_tokens(payload: object) -> int:
-    """Approximate the token cost of a JSON-serializable payload.
-
-    Uses the common ~4-characters-per-token heuristic over the compact JSON
-    serialization. This is an *estimate* for visibility (FR1 "make it
-    measurable"), not an exact tokenizer count. Fail-open: returns 0 on any
-    serialization error.
-    """
-    try:
-        serialized = json.dumps(payload, default=str, ensure_ascii=False)
-    except (TypeError, ValueError):
-        return 0
-    return max(1, len(serialized) // 4)
 
 
 def _summarize_health(results: SessionStartResultDict) -> str:
@@ -297,22 +280,19 @@ def trim_session_start_payload(
       the session override hash, the profile layer chain, the first-session
       flag) are dropped outright — they carry no health signal to summarize and
       no caller action, and are consumed internally before this runs.
-    - A ``payload_token_estimate`` is added so the reduction is measurable.
     - ``compact`` is set to ``True``.
 
     Load-bearing fields (run/pin, errors, framework_reminder, hints,
     advisories) are preserved unchanged.
 
     In verbose mode the payload is returned unchanged except for the added
-    ``compact=False`` flag and ``payload_token_estimate`` (so the size is still
-    measurable). ``verbose=True`` reproduces the legacy full behavior.
+    ``compact=False`` flag. ``verbose=True`` reproduces the legacy full behavior.
 
     Fail-open: any internal error returns the original ``results`` untouched.
     """
     try:
         if verbose:
             results["compact"] = False
-            results["payload_token_estimate"] = estimate_payload_tokens(results)
             return results
 
         learnings = results.get("learnings")
@@ -331,12 +311,6 @@ def trim_session_start_payload(
             results.pop(key, None)  # type: ignore[misc]
         results["health_summary"] = summary
 
-        # The per-field attribution table duplicates resolved_profile and both
-        # snapshot ids (already top-level) and lists every unset field with
-        # null origins. The dedicated trw_profile_explain tool serves the full
-        # audit shape; compact session_start drops the table.
-        results.pop("profile_explanation", None)
-
         for key in _COMPACT_DROP_KEYS:
             results.pop(key, None)  # type: ignore[misc]
 
@@ -345,7 +319,6 @@ def trim_session_start_payload(
         _fold_deferred_blocks(results)
 
         results["compact"] = True
-        results["payload_token_estimate"] = estimate_payload_tokens(results)
         return results
     except Exception:  # justified: fail-open, trimming must never break resume
         logger.debug("session_start_trim_failed", exc_info=True)

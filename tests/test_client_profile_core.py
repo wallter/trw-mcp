@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from tests._client_registry import ACTIVE_CLIENT_IDS
 from trw_mcp.models.config import TRWConfig, resolve_client_profile
 from trw_mcp.models.config._client_profile import (
     CeremonyWeights,
@@ -18,10 +19,7 @@ from trw_mcp.state.analytics.report import compute_ceremony_score
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "client_id",
-    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
-)
+@pytest.mark.parametrize("client_id", ACTIVE_CLIENT_IDS)
 def test_all_profiles_construct(client_id: str) -> None:
     """resolve_client_profile(id) returns a ClientProfile for all built-ins."""
     profile = resolve_client_profile(client_id)
@@ -29,10 +27,7 @@ def test_all_profiles_construct(client_id: str) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "client_id",
-    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
-)
+@pytest.mark.parametrize("client_id", ACTIVE_CLIENT_IDS)
 def test_nudge_density_profile_defaults(client_id: str) -> None:
     """PRD-CORE-146 FR04: no built-in profile opts into a nudge_density today."""
     profile = resolve_client_profile(client_id)
@@ -300,10 +295,7 @@ def test_ceremony_weights_as_dict_returns_correct_keys() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "client_id",
-    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
-)
+@pytest.mark.parametrize("client_id", ACTIVE_CLIENT_IDS)
 def test_all_profiles_have_valid_weights(client_id: str) -> None:
     """Every built-in profile has ceremony weights summing to 100 and scoring weights summing to ~1.0."""
     profile = resolve_client_profile(client_id)

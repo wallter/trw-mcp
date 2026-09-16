@@ -2,7 +2,148 @@
 
 All notable changes to the TRW MCP server package.
 
-## [2.1.0] — Unreleased
+## [Unreleased]
+
+## [3.0.0] — 2026-09-15
+
+### Removed
+
+- **BREAKING — the agent-team planning command surface is gone: `/trw-sprint-team`
+  and `/trw-team-playbook`.** Both shipped as an experimental way to turn a work
+  artifact into a workstream roster with exclusive file ownership. Six months on it
+  was still experimental, and the clients it targeted grew their own native
+  workflow features that cover the same ground better, so the slash-command surface
+  is retired rather than carried indefinitely (operator direction 2026-09-12).
+
+  The **support machinery is retained and unchanged** — this removes the command
+  surface only. Formation manifests, `trw_init` formation/`join_formation`,
+  `trw-mcp formation brief`, `owned_paths`/`test_owned_paths` validation and the
+  bundled `trw-lead` / `trw-implementer` / `trw-tester` / `trw-reviewer` agents all
+  still work. Divide work by file ownership through those directly.
+
+  Both skills, their Codex projections and the `.opencode/commands/trw-sprint-team.md`
+  native command are deleted from the bundle, and the OpenCode curation inventory
+  entry is dropped. `update-project` removes the materialized copies from an existing
+  install: each predecessor name (`sprint-team`, `trw-sprint-team`, `team-playbook`,
+  `trw-team-playbook`) now maps to deletion. The bundled skill count drops from 26 to 24.
+  `/trw-sprint-init`, `/trw-sprint-finish` and `/trw-delegate` are **not** affected —
+  sprint lifecycle and cross-client second-opinion dispatch are separate features.
+
+### Fixed
+
+- **Codex PostToolUse warnings:** ignored telemetry events now exit silently instead
+  of returning unsupported `suppressOutput`. Fixed the generated hook and refreshed
+  the active repository installation; matching-event telemetry is unchanged.
+
+- **Team-learning sync advanced its pull cursor past items a merge never judged.** Pulls
+  are bounded by that cursor, so anything it passed was never offered again. Most important
+  for users: with team sync **disabled**, arriving team learnings were consumed and
+  discarded unseen — enabling the feature later could not recover them, and no count was
+  reported anywhere. The cursor now holds when a merge could not run at all or raised while
+  storing, and when team sync is off. It still advances past items a merge *judged* and
+  declined (invalid, unkeyed, quarantined), because re-offering those forever is a
+  poison-pill loop rather than a repair.
+- **The delivery gate applied its lenient path silently when a run's complexity could not be
+  established.** An unreadable or absent `run.yaml` produced the same empty complexity value
+  as an unclassified run, so a `block` verdict with critical findings degraded to a warning
+  and a missing review degraded to an advisory — on exactly the runs whose own metadata was
+  broken. The gate now warns and names the reason instead of quietly taking the lenient
+  branch.
+- **`prd_verify_check` reported a PASS whose denominator counted only the PRDs it chose to
+  run.** Implemented PRDs carrying no verification command, or none the runner can execute,
+  were excluded from the executed set *and* from the stale and malformed tallies — so the
+  summary could not distinguish "everything verified" from "most of it was never looked at".
+  It now reports how much of the implemented corpus it actually executed, on both the pass
+  and fail paths, with a ratchet at the current count. Deliberately not a hard failure on a
+  missing command: turning roughly two thousand PRDs red would produce token commands, not
+  real ones.
+
+- **A transient read failure on the sync state file erased the backoff and alerting
+  counters.** `_read_state` returned `{}` for a corrupt or unreadable file — the same value
+  an ABSENT file returns — and all eleven callers mutate that dict and hand it to
+  `_write_state`, which atomically replaces the file. So one bad read discarded
+  `consecutive_failures`, `last_push_at` and `push_count`: exponential backoff and outage
+  alerting reset themselves to healthy at exactly the moment something was already wrong.
+  The unknown is now recorded at the read and enforced at the single write chokepoint,
+  which refuses and logs. Refusing is the conservative direction — stale counters are a
+  degraded signal, counters silently zeroed are a WRONG one that disables the alerting meant
+  to fire — and recovery is deliberately manual, because auto-renaming a state file on a
+  transient `OSError` would be the same class of destruction the guard prevents. The
+  absent-file case still writes, or the coordinator could never bootstrap.
+- **A migration safety gate issued a clean bill on a diff it never read.** `_get_changed_files`
+  returned an empty list when git could not be run, and the gate returns no warnings for an
+  empty list — so a git failure passed a model change with no Alembic migration, or a
+  `NOT NULL` column with no `server_default`, through a check that never executed. It now
+  returns `None`, and the gate converts that unknown into a stated finding. The two other
+  callers are advisory scans rather than gates, so `None` collapses to the same no-op there;
+  only the gate converts the unknown into a warning, because only the gate issues a clean
+  bill.
+
+- **Proof paths in two packages started resolving that never had.** A hand-maintained
+  ten-entry roster of monorepo package names built the path prefixes for requirement proof
+  paths, and like every hand-maintained list it had drifted: it omitted two declared
+  packages, so a proof path written relative to either never resolved and was reported
+  missing. Both consumers now derive the roster from one reader that fails open to the two
+  public packages, never to an empty set. The same roster also enumerated proprietary
+  siblings in the published wheel — the second instance of that leak class this release.
+
+- **A failed `git diff` reached reviewers as a clean tree, by a second route.** The
+  helper ignored `subprocess`'s return code, so `git diff bad..HEAD` — exit 128, empty
+  stdout — returned `""`, which means a genuinely clean tree, for a diff that was never
+  produced. Every review entry point then scored an empty diff and returned a passing
+  verdict. The earlier UNKNOWN-vs-empty distinction only ever covered git failing to
+  *launch*, not git failing to *run*. A test named
+  `test_returns_stdout_regardless_of_returncode` had been pinning the defect as the
+  contract.
+- **A third review entry point did not check for an unreadable diff.** The cross-model
+  handler classified UNKNOWN as "no uncommitted changes" and degraded to a same-family
+  fallback over `diff or ""`, returning `verdict="pass"` over a tree nobody had read. The
+  fail-silent marker on the helper claimed "both review entry points raise" — there were
+  three.
+- **The published wheel no longer enumerates a proprietary sibling package.** A version-status
+  module hardcoded one such package by name and by its in-repository path, four lines below
+  its own docstring saying the module "must not enumerate the monorepo's proprietary
+  siblings". That package is not published anywhere, so every installed wheel disclosed
+  something a user cannot obtain. Inside the monorepo the taxonomy now arrives only from the
+  release manifest, which is not shipped, so nothing is lost there. Two tests that asserted
+  the leaked key reported `"unknown"` now assert its ABSENCE — they had pinned the leak as
+  correct behaviour.
+- **A review that cannot read its diff no longer returns a verdict.** `_get_git_diff`
+  returned `""` on a git timeout, a missing binary, or an OS error — and `""` is a real,
+  common, completely different answer meaning "nothing changed". Both consumers read it
+  that way, so a missing, slow, or permission-denied git produced a PASSING review of a
+  tree nobody had read, in the gate that stands between broken work and a delivery. The
+  helper now distinguishes UNKNOWN from empty, and both review entry points refuse to
+  score rather than scoring nothing. The one consumer that deliberately fails open keeps
+  doing so, explicitly and locally, where its docstring makes the claim.
+- The `meta-tune` extra's comment promised the pyseccomp sandbox "degrades gracefully when
+  unavailable". It does not — the server refuses to start, which is the correct behaviour
+  for a hardening control, so the comment was the defect. It now states what actually
+  happens, and the remediation names the supported install (`pip install 'trw-mcp[meta-tune]'`)
+  rather than the bare package.
+
+## [2.1.0] — 2026-09-11
+
+_Published to PyPI 2026-09-11T17:53:33Z from the monorepo tree at `00a4eefbc0`._
+
+### Changed
+
+- **Dispatching to `agy` now requires agy >= 1.2.0.** 1.2.0 gained
+  `--output-format text|json|stream-json`, and the dispatch argv now leads with
+  `--output-format stream-json` so the reply is parsed rather than scraped. An older
+  `agy` binary does not recognise the flag and the invocation fails outright, so this is
+  a compatibility floor, not a preference. Verified by running the flag against 1.2.0,
+  not inferred from a changelog.
+
+### Fixed
+
+- **Sonnet 5 cost estimates were 1.5x too high.** The pricing table held $3/$15 per MTok
+  on the premise that $2/$10 was introductory through 2026-08-31. That premise is false:
+  Anthropic's pricing page states $2/$10 "is now the standard price" and that the
+  scheduled increase "will not occur". Corrected, and the batch table agrees.
+- The Fable/Mythos 5.1 line is now declared explicitly. Its cache reads are 0.025x input,
+  not the 0.1x every other row uses, so a prefix match onto the 5.0 row over-reported
+  cache reads by 4x.
 
 ### Added
 
@@ -12,7 +153,11 @@ All notable changes to the TRW MCP server package.
   client**, not a model; the model override lives in `dispatch_default_models[client]`. Its old
   default named a stale model that was reported as the provider of a review that never ran, and
   is now empty, meaning no reviewer is configured. An unavailable or incomplete reviewer is
-  reported as such and never as "found nothing".
+  reported as such and never as "found nothing". Only a findings **document** counts as a
+  review: an answer that is prose, malformed, or an explicit error envelope is reported as
+  incomplete, because wrapping arbitrary text in one informational finding made every
+  non-empty answer — including one whose text was a blocking verdict, and one saying the
+  reviewer needed authentication — a passing substantive review.
 
 ### Removed
 

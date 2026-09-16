@@ -32,7 +32,7 @@ class TestGetChangedFiles:
         assert "qux.py" in result
         assert len(result) == len(set(result))
 
-    def test_returns_empty_on_subprocess_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_unknown_on_subprocess_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import subprocess
 
         from trw_mcp.state.validation import phase_gates_build as pgb
@@ -43,9 +43,9 @@ class TestGetChangedFiles:
             lambda *args, **kwargs: (_ for _ in ()).throw(subprocess.SubprocessError("fail")),
         )
         result = pgb._get_changed_files(tmp_path)
-        assert result == []
+        assert result is None
 
-    def test_returns_empty_on_file_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_unknown_on_file_not_found(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import subprocess
 
         from trw_mcp.state.validation import phase_gates_build as pgb
@@ -56,4 +56,4 @@ class TestGetChangedFiles:
             lambda *args, **kwargs: (_ for _ in ()).throw(FileNotFoundError("git not found")),
         )
         result = pgb._get_changed_files(tmp_path)
-        assert result == []
+        assert result is None

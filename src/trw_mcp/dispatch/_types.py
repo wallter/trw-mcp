@@ -150,8 +150,9 @@ class DispatchRequest(BaseModel):
             "an explicit sandbox where the client supports one: codex --sandbox read-only "
             "and agy --sandbox; claude/opencode deny writes by default without a bypass. "
             "Set False (--allow-writes) to ACTUALLY enable writes: codex --sandbox "
-            "workspace-write, claude --permission-mode acceptEdits, agy/opencode "
-            "--dangerously-skip-permissions. Enforced uniformly for all four clients."
+            "workspace-write, claude --permission-mode acceptEdits, agy "
+            "--dangerously-skip-permissions. opencode has no working write flag in this "
+            "registry -- see the spec comment -- so a write run to it fails at argv parse."
         ),
     )
     isolate: bool = Field(

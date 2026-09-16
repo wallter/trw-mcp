@@ -195,13 +195,27 @@ def record_session_outcome(
     build_passed: bool,
     coverage_delta: float,
     critical_findings: int,
-    mutation_score_ok: bool,
+    mutation_score_ok: bool | None,
     current_tier: str,
     run_path: str,
     session_id: str,
     task_description: str = "",
 ) -> CeremonyFeedbackEntry:
     """Record a session outcome for ceremony feedback tracking.
+
+    ``mutation_score_ok=None`` means the mutation score was NOT MEASURED, which
+    is distinct from measured-and-failing. The distinction is load-bearing:
+    ``outcome_quality`` is a weighted sum and the caller used to pass a literal
+    ``True`` for a check that never runs, scoring its full 0.2. With the
+    reduction threshold at 0.9 and a measured ceiling of 0.8, that fabricated
+    0.2 is the ONLY reason a ceremony-reduction proposal can ever be generated —
+    so the framework lowers its own rigor on evidence it never gathered.
+
+    The numeric contribution is deliberately UNCHANGED here: zeroing it would
+    silently disable reduction entirely, and that is a product decision rather
+    than a bug fix. What changes is that the entry now records how much of the
+    score was never measured, so the human approval gate can see what the number
+    it is approving actually rests on.
 
     Returns the recorded entry.
     """
@@ -213,9 +227,13 @@ def record_session_outcome(
         (0.4 if build_passed else 0.0)
         + (0.2 if coverage_delta >= 0 else 0.0)
         + (0.2 if critical_findings == 0 else 0.0)
-        + (0.2 if mutation_score_ok else 0.0),
+        # An UNMEASURED mutation score (None) still contributes, preserving the
+        # existing number, but is accounted for below rather than passing as a
+        # measurement. A measured-and-failing score (False) contributes nothing.
+        + (0.2 if mutation_score_ok is not False else 0.0),
         4,
     )
+    unmeasured_weight = round(_MUTATION_QUALITY_WEIGHT if mutation_score_ok is None else 0.0, 4)
 
     entry: CeremonyFeedbackEntry = {
         "session_id": session_id,
@@ -226,6 +244,7 @@ def record_session_outcome(
         "task_name": task_name,
         "task_class": task_class.value,
         "completed_at": datetime.now(timezone.utc).isoformat(),
+        "unmeasured_quality_weight": unmeasured_weight,
     }
 
     data = read_feedback_data(trw_dir)
@@ -275,6 +294,10 @@ def has_sufficient_samples(
 
 # --- FR04: Ceremony Reduction Proposal Generator ---
 
+#: Weight the mutation-score component carries in ``outcome_quality``. Named so
+#: the unmeasured-weight accounting cannot drift from the formula above.
+_MUTATION_QUALITY_WEIGHT = 0.2
+
 _TIER_REDUCTION: dict[str, str] = {
     "COMPREHENSIVE": "STANDARD",
     "STANDARD": "MINIMAL",
@@ -310,6 +333,11 @@ def generate_reduction_proposal(
 
     avg_score = sum(_float_field(s, "ceremony_score") for s in recent) / len(recent)
     avg_quality = sum(_float_field(s, "outcome_quality") for s in recent) / len(recent)
+    # How much of avg_quality came from components nobody measured. This is the
+    # number the human approver most needs and was never shown: with the default
+    # threshold at 0.9 and a measured ceiling of 0.8, an all-unmeasured average
+    # means the proposal below exists ONLY because of the unmeasured part.
+    avg_unmeasured = sum(_float_field(s, "unmeasured_quality_weight") for s in recent) / len(recent)
 
     score_threshold = config.ceremony_feedback_score_threshold
     quality_threshold = config.ceremony_feedback_quality_threshold
@@ -336,6 +364,15 @@ def generate_reduction_proposal(
         "sample_count": len(recent),
         "avg_ceremony_score": round(avg_score, 2),
         "avg_outcome_quality": round(avg_quality, 3),
+        #: Portion of ``avg_outcome_quality`` contributed by UNMEASURED checks.
+        "avg_unmeasured_quality_weight": round(avg_unmeasured, 3),
+        #: What the average would be counting only components that were actually
+        #: measured. When this falls at or below the threshold, the proposal
+        #: stands on evidence that was never gathered — which a human approving a
+        #: REDUCTION in ceremony rigor has to be told, not left to infer from a
+        #: single rounded number.
+        "avg_outcome_quality_measured_only": round(avg_quality - avg_unmeasured, 3),
+        "rests_on_unmeasured_evidence": (avg_quality - avg_unmeasured) <= quality_threshold,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
     }

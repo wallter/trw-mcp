@@ -78,6 +78,7 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     from trw_mcp.tools.review import register_review_tools
     from trw_mcp.tools.skill_discovery import register_skill_discovery_tools
     from trw_mcp.tools.submit_feedback import register_submit_feedback_tools
+    from trw_mcp.tools.swarm_comms import register_swarm_comms_tools
     from trw_mcp.tools.trw_probe import register_probe_tools
     from trw_mcp.tools.trw_profile_explain import register_trw_profile_explain_tools
 
@@ -92,6 +93,9 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         register_meta_tune_tools,
         register_knowledge_tools,
         register_orchestration_tools,
+        # PRD-CORE-274 slice 1: cross-harness peer presence. Registered
+        # unconditionally; execution is gated by comms_enabled=false.
+        register_swarm_comms_tools,
         register_requirements_tools,
         register_replay_tools,
         register_review_tools,

@@ -121,4 +121,10 @@ class _ToolsFields:
         """
         from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
-        return resolve_tool_surface(task_type, self.tool_resolution_mode)
+        # The comms opt-in belongs to the sibling comms mixin, and this method
+        # must pass it through: without it the config resolver silently omits
+        # the peer_comms pack that the manifest resolver includes, so the two
+        # authorities disagree about the surface a session may see.
+        return resolve_tool_surface(
+            task_type, self.tool_resolution_mode, comms_enabled=getattr(self, "comms_enabled", False) is True
+        )

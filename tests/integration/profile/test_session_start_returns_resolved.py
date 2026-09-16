@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
+
+import pytest
 
 from tests.conftest import extract_tool_fn, make_test_server
 
@@ -64,10 +67,7 @@ def test_session_start_org_layer_flows_into_resolved_profile(tmp_path: Path) -> 
     assert resolved["build_check_scope"] == "full"
     assert "org" in result["profile_layers_applied"]
 
-    # The explanation attributes the value to the org layer (FR-11).
-    explanation = result["profile_explanation"]
-    review = next(f for f in explanation["fields"] if f["field"] == "review_threshold")
-    assert review["origin_layer"] == "org"
+    # Field attribution belongs to trw_profile_explain, not startup.
 
 
 def test_session_start_compact_mode_preserves_profile_block(tmp_path: Path) -> None:
@@ -134,3 +134,14 @@ def test_session_start_profile_disabled_omits_block(tmp_path: Path, monkeypatch:
     assert "resolved_profile" not in result
     # Session start still succeeds.
     assert "timestamp" in result
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+def test_startup_does_not_build_profile_explanation(tmp_path: Path, verbose: bool) -> None:
+    """Attribution is demand-driven through trw_profile_explain in both modes."""
+    fn = _session_start_fn()
+    with patch("trw_mcp.profile.build_explanation") as explanation:
+        result = fn(ctx=None, query="*", verbose=verbose)
+    explanation.assert_not_called()
+    assert "profile_explanation" not in result
+    assert "resolved_profile" in result

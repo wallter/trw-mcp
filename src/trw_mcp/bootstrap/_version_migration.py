@@ -50,8 +50,18 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "trw-simplify": None,
         "sprint-finish": "trw-sprint-finish",
         "sprint-init": "trw-sprint-init",
-        "sprint-team": "trw-sprint-team",
-        "team-playbook": "trw-team-playbook",
+        # Retired 2026-09-12 (operator direction). The agent-team planning
+        # COMMAND surface was experimental for six months and is superseded by
+        # native client workflow features; the underlying support (formation
+        # manifests, file ownership, trw_init formations, the trw-lead /
+        # trw-implementer / trw-tester agents) is retained. Every predecessor
+        # name maps DIRECTLY to None so update-project removes the materialized
+        # copy from any existing install regardless of which name it carries
+        # (see test_retirement_chains_collapse_to_direct_deletion).
+        "sprint-team": None,
+        "trw-sprint-team": None,
+        "team-playbook": None,
+        "trw-team-playbook": None,
         "test-strategy": "trw-test-strategy",
         # PRD-CORE-092: Dropped skill post-consolidation
         "trw-review-pr": None,

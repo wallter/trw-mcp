@@ -1,4 +1,4 @@
-"""Tool-response token-budget tripwires (operator mandate 2026-07-12).
+"""Tool-response size-budget tripwires (operator mandate 2026-07-12).
 
 WHY THIS EXISTS — the cost model every response field must answer to:
 
@@ -11,6 +11,7 @@ trw_recall had ballooned to ~22k tokens per default call (38 keys/entry,
 internal scoring state 3x the content) and trw_session_start shipped five
 near-identical deferral blocks. See trw-mcp CHANGELOG 0.57.0.
 
+Sizes use a test-only four-character JSON heuristic, not actual tokenizer counts.
 These are SOFT ceilings with generous slack (~35% above the post-campaign
 measurements), not byte-exact snapshots. If your change trips one:
 
@@ -21,7 +22,7 @@ measurements), not byte-exact snapshots. If your change trips one:
    ``verbose=True`` passthrough, fail-open helpers, fold-by-shape summaries
    (see ``tools/_session_start_trim.py`` and ``tools/_recall_projection.py``).
 3. If the growth is genuinely load-bearing, raise the ceiling IN THE SAME
-   change with a comment recording the new measurement and why the tokens
+   change with a comment recording the new measurement and why the fields
    earn their place. Never raise it to "make the test pass".
 """
 
@@ -29,32 +30,30 @@ from __future__ import annotations
 
 from typing import cast
 
+from tests._ceremony_helpers import payload_size_units
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.tools._ceremony_runtime_helpers import _no_active_run_hint
 from trw_mcp.tools._recall_projection import strip_internal_response_fields
-from trw_mcp.tools._session_start_trim import (
-    estimate_payload_tokens,
-    trim_session_start_payload,
-)
+from trw_mcp.tools._session_start_trim import trim_session_start_payload
 
-# Post-campaign measurements (2026-07-12, real stdio): session_start ~966 tok,
-# recall (25 entries, 8000 budget) ~7.7k tok. Ceilings = measurement + slack.
+# Post-campaign measurements (2026-07-12, real stdio): session_start ~966 size units,
+# recall (25 entries, 8000 budget) ~7.7k size units. Ceilings = measurement + slack.
 #
 # 2026-07-24 correction (UF-052): the session_start fixture below had OMITTED the
 # unconditionally-emitted connection_fingerprint block, so the ~966 figure
 # understated what agents actually receive. With the block present and the
 # zero-match query_advisory populated, the honest compact measurement is
-# ~1038 tok (~1134 if connection_fingerprint were not reduced in compact mode).
+# ~1038 size units (~1134 if connection_fingerprint were not reduced in compact mode).
 # The ceiling is unchanged — the fixture got more truthful, not the payload
 # bigger.
-SESSION_START_CEILING_TOKENS = 1300
-RECALL_ENTRY_CEILING_TOKENS = 450  # per projected entry with rich content
+SESSION_START_CEILING_SIZE_UNITS = 1300
+RECALL_ENTRY_CEILING_SIZE_UNITS = 450  # per projected entry with rich content
 
 _BLOAT_GUIDANCE = (
-    "Response token budget exceeded — every field here is paid on EVERY call "
+    "Response size budget exceeded — every field here is paid on EVERY call "
     "by EVERY calling LLM. Move diagnostics to structlog, put audit detail "
-    "behind verbose=True, drop derivable/constant fields; if the tokens are "
+    "behind verbose=True, drop derivable/constant fields; if the fields are "
     "genuinely load-bearing, raise the ceiling in this same change with the "
     "new measurement and justification. See this file's docstring and "
     ".claude/rules/trw-mcp-python.md §Tool Response Token Budget."
@@ -106,7 +105,7 @@ def _representative_session_start_payload() -> dict[str, object]:
         # Built from the live production builder rather than a copied literal:
         # the previous hard-coded copy had already drifted from the shipped
         # string, so the tripwire was measuring a payload nobody receives.
-        # PRD-CORE-233 FR03 added the run_path= remedy here (~+15 tok).
+        # PRD-CORE-233 FR03 added the run_path= remedy here (~+15 size units).
         "hint": _no_active_run_hint([{"run_path": "/x", "pin_key": "k"}]),
         "candidate_runs": [
             {
@@ -119,7 +118,7 @@ def _representative_session_start_payload() -> dict[str, object]:
         ],
         # PRD-CORE-215 FR01 block, emitted unconditionally by
         # finalize_session_start. Omitting it here let the tripwire certify a
-        # payload ~124 tokens smaller than agents actually receive (UF-052).
+        # payload ~124 size units smaller than agents actually receive (UF-052).
         # Keep it byte-shaped like build_connection_fingerprint() output.
         "connection_fingerprint": {
             "protocol_version": "2",
@@ -145,7 +144,6 @@ def _representative_session_start_payload() -> dict[str, object]:
         "profile_layers_applied": ["defaults"],
         "profile_snapshot_id": "surf_" + "b" * 64,
         "session_override_hash": "sess_" + "c" * 64,
-        "profile_explanation": {"fields": [{"field": "x", "value": None}] * 10},
         "embed_health": {"status": "ok"},
         "assertion_health": {"failing": 0, "total": 5},
         "sync_health": {"status": "ok"},
@@ -153,17 +151,20 @@ def _representative_session_start_payload() -> dict[str, object]:
         "first_session_emitted": False,
         "errors": [],
         "success": True,
-        "framework_reminder": "Call trw_deliver() when done to persist your work.",
+        "framework_reminder": (
+            "Preserve unfinished work with trw_checkpoint() or a durable handoff. "
+            "Use trw_deliver() only to accept completed work under delivery gates."
+        ),
     }
 
 
 def test_session_start_compact_payload_stays_under_ceiling() -> None:
     fixture = cast("SessionStartResultDict", _representative_session_start_payload())
     payload = trim_session_start_payload(fixture, verbose=False)
-    tokens = estimate_payload_tokens(payload)
-    assert tokens <= SESSION_START_CEILING_TOKENS, (
-        f"compact trw_session_start payload is ~{tokens} tokens "
-        f"(ceiling {SESSION_START_CEILING_TOKENS}). {_BLOAT_GUIDANCE}"
+    size_units = payload_size_units(payload)
+    assert size_units <= SESSION_START_CEILING_SIZE_UNITS, (
+        f"compact trw_session_start payload is {size_units} four-character size units "
+        f"(ceiling {SESSION_START_CEILING_SIZE_UNITS}). {_BLOAT_GUIDANCE}"
     )
 
 
@@ -184,16 +185,16 @@ def test_session_start_fixture_includes_connection_fingerprint() -> None:
 
 def test_compact_mode_reduces_connection_fingerprint_to_non_constant_fields() -> None:
     """Compact mode keeps only the two fields that vary and that a caller can
-    act on. The eight constants/derivables/opaque digests cost ~96 tokens on
+    act on. The eight constants/derivables/opaque digests cost ~96 size units on
     every session for zero decision value."""
     fixture = cast("SessionStartResultDict", _representative_session_start_payload())
-    unreduced = estimate_payload_tokens(fixture["connection_fingerprint"])
+    unreduced = payload_size_units(fixture["connection_fingerprint"])
 
     payload = trim_session_start_payload(fixture, verbose=False)
     block = payload["connection_fingerprint"]
     assert isinstance(block, dict)
     assert set(block) == {"build_identity", "connection_nonce"}
-    assert estimate_payload_tokens(block) < unreduced
+    assert payload_size_units(block) < unreduced
 
 
 def test_verbose_mode_preserves_full_connection_fingerprint() -> None:
@@ -236,9 +237,9 @@ def test_recall_projected_entry_stays_under_ceiling() -> None:
         "recurrence": 1,
     }
     projected = strip_internal_response_fields([entry], get_config().recall_internal_fields)
-    tokens = estimate_payload_tokens(projected[0])
-    assert tokens <= RECALL_ENTRY_CEILING_TOKENS, (
-        f"projected recall entry is ~{tokens} tokens (ceiling {RECALL_ENTRY_CEILING_TOKENS}). {_BLOAT_GUIDANCE}"
+    size_units = payload_size_units(projected[0])
+    assert size_units <= RECALL_ENTRY_CEILING_SIZE_UNITS, (
+        f"projected recall entry is {size_units} four-character size units (ceiling {RECALL_ENTRY_CEILING_SIZE_UNITS}). {_BLOAT_GUIDANCE}"
     )
 
 

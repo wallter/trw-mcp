@@ -12,7 +12,7 @@ Key design decisions (audit compliance):
 - P0-02: Script uses __file__-relative path resolution (NOT Jinja {{ repo_root }})
 - P0-03 RESOLVED: Script reads stdin as primary mechanism; CODEX_HOOK_INPUT env var
   kept as forward-compatibility fallback only (Codex never sets this env var).
-- Fail-open: always exits 0 with {"continue": true}
+- Fail-open: exits 0; ignored tools emit no output
 - No {{ }} template tokens in the installed script (FR07 AC)
 - stdlib-only imports (NFR05)
 
@@ -70,7 +70,6 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
     _MATCHING_TOOLS = frozenset({"apply_patch", "Bash"})
     _EVENT_SCHEMA = "channel-event/v1"
     _CONTINUE_RESPONSE = json.dumps({"continue": True})
-    _SUPPRESS_RESPONSE = json.dumps({"continue": True, "suppressOutput": True})
 
 
     def _resolve_telemetry_path() -> Path:
@@ -133,7 +132,9 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
             return
 
         if tool_name not in _MATCHING_TOOLS:
-            print(_SUPPRESS_RESPONSE)
+            # Codex rejects suppressOutput for PostToolUse. Exit 0 with no
+            # output is the supported silent-success contract:
+            # https://learn.chatgpt.com/docs/hooks#common-output-fields
             return
 
         try:

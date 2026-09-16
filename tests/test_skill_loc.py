@@ -23,10 +23,7 @@ _SKILL_DIRS: tuple[Path, ...] = (
 )
 
 DEFAULT_LOC_THRESHOLD = 350
-LOC_OVERRIDES: dict[str, int] = {
-    "trw-team-playbook": 300,
-    "trw-sprint-team": 280,
-}
+LOC_OVERRIDES: dict[str, int] = {}
 
 _HTML_COMMENT_ONLY = re.compile(r"^\s*<!--.*-->\s*$")
 

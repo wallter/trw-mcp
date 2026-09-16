@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -27,3 +28,8 @@ def make_ceremony_server(
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setenv("TRW_OFFLINE", "1")
     return get_tools_sync(make_test_server("ceremony", "checkpoint", "review"))
+
+
+def payload_size_units(payload: object) -> int:
+    """Test-only JSON size heuristic: four characters per unit, not actual tokens."""
+    return max(1, len(json.dumps(payload, default=str, ensure_ascii=False)) // 4)

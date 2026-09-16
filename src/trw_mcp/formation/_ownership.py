@@ -32,7 +32,7 @@ from pathlib import Path, PurePosixPath
 
 from trw_mcp.formation._manifest import FormationError, FormationManifest
 
-__all__ = ["Ownership", "owner_of", "relative_to_root"]
+__all__ = ["Ownership", "declaration_covers", "owner_of", "relative_to_root"]
 
 
 @dataclass(frozen=True)
@@ -68,11 +68,22 @@ def relative_to_root(raw: str, project_root: Path) -> str | None:
     return "/".join(parts) or None
 
 
-def _glob_matches(glob: str, rel_path: str) -> bool:
+def declaration_covers(glob: str, rel_path: str) -> bool:
+    """Does one declared glob cover this repo-relative path?
+
+    Public because it is the SINGLE definition of that question. The commit
+    boundary, the pre-edit hook and scoped comms addressing all ask it, and an
+    addressing rule that disagreed with the enforcement rule would notify the
+    wrong member — or, worse, silently skip the right one over a missing `/**`.
+    """
     if fnmatchcase(rel_path, glob):
         return True
     # Directory-prefix form: `src/formation` owns `src/formation/_x.py`.
     return rel_path.startswith(glob.rstrip("/") + "/")
+
+
+#: Retained private alias; this module's own call sites read better with it.
+_glob_matches = declaration_covers
 
 
 def owner_of(manifest: FormationManifest, raw_path: str, project_root: Path) -> Ownership:

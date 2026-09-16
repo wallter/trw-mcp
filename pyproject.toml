@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "2.1.0"
+version = "3.0.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -67,7 +67,7 @@ dependencies = [
     # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
-    "trw-memory>=0.17.0,<1.0.0",
+    "trw-memory>=0.18.0,<1.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -76,8 +76,18 @@ vectors = [
     "sqlite-vec>=0.1.0",
 ]
 meta-tune = [
-    # PRD-HPO-SAFE-001 sandbox hardening (Linux only). Optional — sandbox
-    # degrades gracefully when unavailable (subprocess + RLIMIT + timeout only).
+    # PRD-HPO-SAFE-001 sandbox hardening (Linux only). This extra is OPTIONAL only in
+    # the sense that meta_tune is off by default (`meta_tune.enabled=false`), so a
+    # normal install neither needs nor loads it.
+    #
+    # It does NOT degrade gracefully once meta_tune IS enabled: `boot_checks`
+    # validate_defaults raises MetaTuneBootValidationError and `_app._build_middleware`
+    # calls it unguarded, so the server refuses to start without pyseccomp. That is
+    # deliberate and correct for a sandbox control -- a hardening feature that quietly
+    # runs unhardened is worse than one that refuses -- but the comment here used to
+    # promise the opposite ("degrades gracefully when unavailable"), which is how the
+    # contradiction survived: nobody hits it in development because the dev venv has
+    # pyseccomp installed. Corrected 2026-09-11.
     "pyseccomp>=0.1.2; sys_platform == 'linux'",
     "psutil>=5.9.0",
 ]

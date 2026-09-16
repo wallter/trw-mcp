@@ -20,6 +20,7 @@ from trw_mcp.models.config._fields_bandit import _BanditFields
 from trw_mcp.models.config._fields_boot_maintenance import _BootMaintenanceFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
+from trw_mcp.models.config._fields_comms import _CommsFields
 from trw_mcp.models.config._fields_degenerate_result import _DegenerateResultFields
 from trw_mcp.models.config._fields_degraded_mode import _DegradedModeFields
 from trw_mcp.models.config._fields_delivery import _DeliveryFields
@@ -58,6 +59,7 @@ class _TRWConfigFields(
     _DegradedModeFields,
     _DeliveryFields,
     _FormationFields,
+    _CommsFields,
     _InstructionSurfaceFields,
     _FeedbackFields,
     _NudgeFields,

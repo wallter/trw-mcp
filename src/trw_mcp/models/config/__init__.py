@@ -29,7 +29,11 @@ from trw_mcp.models.config._model_capabilities import (
     lookup_model_effort_capabilities,
     match_model_family,
 )
-from trw_mcp.models.config._profiles import resolve_client_profile
+from trw_mcp.models.config._profiles import (
+    builtin_client_ids,
+    resolve_client_profile,
+    retired_client_ids,
+)
 from trw_mcp.models.config._sub_models import (
     BuildConfig,
     CeremonyFeedbackConfig,
@@ -73,6 +77,7 @@ __all__ = [
     "TrustConfig",
     "WriteTargets",
     "_reset_config",
+    "builtin_client_ids",
     "get_config",
     "lookup_model_effort_capabilities",
     "match_model_family",
@@ -80,5 +85,6 @@ __all__ = [
     "reload_config",
     "resolve_client_profile",
     "resolve_effort_adapter",
+    "retired_client_ids",
     "unread_config_fields",
 ]

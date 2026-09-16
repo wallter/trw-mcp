@@ -17,10 +17,10 @@ import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state.validation._path_exclusions import PATH_INDEX_EXCLUDE_DIRS
+from trw_mcp.state.validation._prd_path_markers import has_trailing_planned_marker
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _IMPL_REF_RE,
     _TEST_REF_RE,
-    _collect_reference_matches,
     _normalize_reference_token,
 )
 
@@ -31,15 +31,6 @@ logger = structlog.get_logger(__name__)
 # existence probe so a legitimately-existing file cited with a line anchor is
 # not misread as a hallucinated path.
 _LINE_SUFFIX_RE = re.compile(r":\d+(?::\d+)?$")
-
-# Greenfield annotations placed OUTSIDE the backticks — the TRW convention is a
-# backticked path followed by "(new)" rather than putting the marker inside the
-# backticks. A backticked reference immediately followed (within _GREENFIELD_WINDOW_CHARS
-# characters) by one of these markers describes a to-be-created file and is
-# exempt from the grounding penalty.
-_GREENFIELD_MARKERS: tuple[str, ...] = ("(new)", "(planned)", "(future)")
-_GREENFIELD_WINDOW_CHARS: int = 16
-_BACKTICK_TOKEN_RE = re.compile(r"`([^`\n]+)`")
 
 # Module-level alias of the single shared exclude-dir constant. Retained under
 # the historical name as a patch seam; parity with the integrity walk is now
@@ -55,20 +46,22 @@ def _clean_reference_token(ref: str) -> str:
     return _LINE_SUFFIX_RE.sub("", clean_ref)
 
 
-def _greenfield_annotated_tokens(content: str) -> set[str]:
-    """Return cleaned reference tokens annotated as greenfield in *content*.
+def _reference_existence_requirements(content: str) -> dict[str, bool]:
+    """Map each scoring reference to whether any occurrence requires existence.
 
-    Scans a small trailing window after each backticked token for a
-    to-be-created marker (:data:`_GREENFIELD_MARKERS`). These references
-    describe files the PRD will create, so they must not be counted as
-    hallucinated paths.
+    A trailing planned marker applies only to its own occurrence. If the same
+    path appears elsewhere unmarked, that occurrence remains eligible for the
+    grounding penalty.
     """
-    exempt: set[str] = set()
-    for match in _BACKTICK_TOKEN_RE.finditer(content):
-        window = content[match.end() : match.end() + _GREENFIELD_WINDOW_CHARS].lower()
-        if any(marker in window for marker in _GREENFIELD_MARKERS):
-            exempt.add(_clean_reference_token(match.group(0)))
-    return exempt
+    requirements: dict[str, bool] = {}
+    for pattern in (_IMPL_REF_RE, _TEST_REF_RE):
+        for match in pattern.finditer(content):
+            clean_ref = _clean_reference_token(match.group(0).strip("`"))
+            if clean_ref:
+                requirements[clean_ref] = requirements.get(clean_ref, False) or not has_trailing_planned_marker(
+                    content, match.end()
+                )
+    return requirements
 
 
 def _resolve_extra_roots(project_root: Path, extra_roots: list[Path] | None) -> list[Path]:
@@ -149,8 +142,7 @@ def compute_grounding_penalty(
       so ``src/foo.py:42`` resolves to the existing ``src/foo.py``.
     - Greenfield annotations placed OUTSIDE the backticks — the TRW convention
       of a backticked path followed by ``(new)`` — exempt the reference (see
-      :func:`_greenfield_annotated_tokens`). The legacy inside-backtick markers
-      ('new: ', trailing '(new)') remain exempt too for back-compat.
+      :func:`_reference_existence_requirements`).
     - References are considered present when they exist under *project_root*
       OR any sibling-repo root. Roots come from the SAME
       ``additional_repo_roots`` config knob the PRD integrity checker uses
@@ -162,19 +154,12 @@ def compute_grounding_penalty(
     if not project_root:
         return 1.0, []
     roots = [project_root, *_resolve_extra_roots(project_root, extra_roots)]
-    impl_refs = _collect_reference_matches(content, _IMPL_REF_RE)
-    test_refs = _collect_reference_matches(content, _TEST_REF_RE)
-    all_refs = impl_refs | test_refs
-    greenfield = _greenfield_annotated_tokens(content)
+    reference_requirements = _reference_existence_requirements(content)
     hallucinated: list[str] = []
     try:
-        for ref in all_refs:
-            clean_ref = _clean_reference_token(ref)
+        for clean_ref, requires_existence in reference_requirements.items():
             # Greenfield annotation OUTSIDE the backticks — to-be-created file.
-            if clean_ref in greenfield:
-                continue
-            # Legacy inside-backtick markers (kept for back-compat).
-            if "(new)" in ref.lower() or "new:" in ref.lower() or "new " in ref.lower():
+            if not requires_existence:
                 continue
             if not _is_direct_repo_reference(clean_ref):
                 continue

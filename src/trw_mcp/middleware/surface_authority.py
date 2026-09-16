@@ -268,10 +268,15 @@ class SurfaceAuthorityMiddleware(Middleware):
         mode = _resolve_mode()
         if mode == "all":
             return None
+        from trw_mcp.models.config import get_config
         from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
         task_type = resolve_task_type(session_id=session_id, fastmcp_context=fastmcp_context)
-        surface = set(resolve_tool_surface(task_type, "standard").tools)
+        surface = set(
+            resolve_tool_surface(
+                task_type, "standard", comms_enabled=getattr(get_config(), "comms_enabled", False) is True
+            ).tools
+        )
         surface |= _ALWAYS_EXPOSED
         return _Resolved(mode=mode, task_type=task_type, tools=frozenset(surface))
 

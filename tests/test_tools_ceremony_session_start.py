@@ -474,13 +474,12 @@ class TestSessionStartPayloadTrimming:
             result = tools["trw_session_start"].fn()
 
         # Compact mode: flag set, diagnostic blocks folded into a summary,
-        # token estimate present, load-bearing fields intact.
+        # no runtime size estimate, load-bearing fields intact.
         assert result["compact"] is True
         assert "health_summary" in result
         assert "embed_health" not in result
         assert "step_durations_ms" not in result
-        assert isinstance(result["payload_token_estimate"], int)
-        assert result["payload_token_estimate"] > 0
+        assert "payload_token_estimate" not in result
         assert "run" in result
         assert "framework_reminder" in result
         assert "errors" in result
@@ -501,6 +500,7 @@ class TestSessionStartPayloadTrimming:
         ):
             result = tools["trw_session_start"].fn(verbose=True)
 
+        assert "payload_token_estimate" not in result
         # Verbose mode: full diagnostic payload, no summary collapse.
         assert result["compact"] is False
         assert "health_summary" not in result

@@ -1092,6 +1092,147 @@ def verify_embeddings_runtime(python: str, target_dir: str = "") -> bool:
     )
 
 
+# ── Semantic-embeddings readiness ────────────────────────────────────
+#
+# The defect this guards against is SILENT degradation, not a crash. With
+# ``sentence_transformers`` / ``torch`` absent nothing errors: ``trw_recall``
+# falls back to keyword-only retrieval and attaches a ``retrieval_warning``
+# ("The semantic model was not ready when recall started ... This response does
+# not establish semantic coverage") that most users never read. An install that
+# never had semantic search looks exactly like one that does.
+#
+# Consequences for the design here:
+#   * the probe runs on EVERY invocation — fresh install, re-run and --upgrade
+#     alike — and is never gated on a marker file or on ``is_reinstall``, because
+#     an install created before this check existed can never self-heal otherwise;
+#   * it probes the interpreter TRW will actually run under (the ``python``
+#     returned by ``phase_install_packages``, which may be a fallback venv), not
+#     this script's own ``sys.executable``;
+#   * "library missing" and "weights missing" are reported separately because the
+#     remedies differ (pip install vs. a model pre-download).
+#
+# The pinned CPU fixture below is the SAME snapshot the trw-memory CI provisions
+# in its "Provision pinned CPU embedding fixture" step
+# (trw-memory/.github/workflows/ci.yml) — identical repo_id, revision and
+# allow_patterns. Do not diverge: CI's real-model benchmark verifies exactly
+# these bytes.
+SEMANTIC_MODEL_REPO_ID = "sentence-transformers/all-MiniLM-L6-v2"
+SEMANTIC_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+SEMANTIC_MODEL_ALLOW_PATTERNS = ("*.json", "*.txt", "*.safetensors", "1_Pooling/*")
+
+# The extra that carries sentence-transformers + torch (trw-memory/pyproject.toml
+# [project.optional-dependencies].embeddings). Named once; every message and the
+# auto-repair path read it from here.
+SEMANTIC_EXTRA_SPEC = "trw-memory[embeddings]"
+
+# Probe outcomes.
+SEMANTIC_OK = "ok"
+SEMANTIC_MISSING_LIBRARY = "missing_library"
+SEMANTIC_MISSING_WEIGHTS = "missing_weights"
+SEMANTIC_UNKNOWN = "unknown"
+
+# Probe process exit codes -> outcomes. Distinct codes (not stdout parsing) so a
+# torch import banner or a HF progress line can never be mistaken for a verdict.
+_SEMANTIC_EXIT_MISSING_LIBRARY = 10
+_SEMANTIC_EXIT_MISSING_WEIGHTS = 11
+_SEMANTIC_EXIT_UNKNOWN = 12
+
+
+def _semantic_probe_source() -> str:
+    """Python source for the readiness probe, run in the TARGET interpreter.
+
+    ``importlib.util.find_spec`` is used instead of a real import: importing
+    torch costs seconds and emits banners, and presence of the distribution is
+    exactly what "is the extra installed" means. The weights check uses
+    ``snapshot_download(local_files_only=True)``, which resolves the pinned
+    revision purely from the local HF cache and NEVER touches the network — so
+    the probe is safe in an air-gapped or offline install.
+    """
+    return (
+        "import importlib.util, sys\n"
+        "missing = [m for m in ('sentence_transformers', 'torch')"
+        " if importlib.util.find_spec(m) is None]\n"
+        "if missing:\n"
+        "    sys.stdout.write(','.join(missing))\n"
+        f"    raise SystemExit({_SEMANTIC_EXIT_MISSING_LIBRARY})\n"
+        "try:\n"
+        "    from huggingface_hub import snapshot_download\n"
+        "    from huggingface_hub.errors import LocalEntryNotFoundError\n"
+        "except Exception:\n"
+        f"    raise SystemExit({_SEMANTIC_EXIT_UNKNOWN})\n"
+        "try:\n"
+        "    snapshot_download(\n"
+        f"        repo_id={SEMANTIC_MODEL_REPO_ID!r},\n"
+        f"        revision={SEMANTIC_MODEL_REVISION!r},\n"
+        f"        allow_patterns={list(SEMANTIC_MODEL_ALLOW_PATTERNS)!r},\n"
+        "        local_files_only=True,\n"
+        "    )\n"
+        "except LocalEntryNotFoundError:\n"
+        f"    raise SystemExit({_SEMANTIC_EXIT_MISSING_WEIGHTS})\n"
+        "except Exception:\n"
+        f"    raise SystemExit({_SEMANTIC_EXIT_UNKNOWN})\n"
+        "raise SystemExit(0)\n"
+    )
+
+
+def _run_python_probe(cmd: list[str], target_dir: str = "", timeout: int = 60) -> int:
+    """Run a probe command in the target interpreter, returning its exit code.
+
+    Mirrors :func:`_run_python_smoke`'s environment handling (installer
+    ``--target`` dir on ``PYTHONPATH``) but preserves the exit CODE, which is how
+    the semantic probe distinguishes its outcomes. A missing interpreter or a
+    timeout is reported as "unknown", never as "missing".
+    """
+    try:
+        env = _build_pip_runtime_env(target_dir)
+        if target_dir:
+            env["PYTHONPATH"] = target_dir + os.pathsep + env.get("PYTHONPATH", "")
+        proc = subprocess.run(  # noqa: S603 -- installer executes its own probe
+            cmd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return _SEMANTIC_EXIT_UNKNOWN
+    return proc.returncode
+
+
+def probe_semantic_stack(python: str, target_dir: str = "") -> str:
+    """Return the semantic-retrieval readiness of *python*'s environment.
+
+    One of :data:`SEMANTIC_OK`, :data:`SEMANTIC_MISSING_LIBRARY`,
+    :data:`SEMANTIC_MISSING_WEIGHTS` or :data:`SEMANTIC_UNKNOWN`. Read-only and
+    offline: it installs nothing and downloads nothing.
+    """
+    code = _run_python_probe(
+        [python, "-B", "-c", _semantic_probe_source()],
+        target_dir=target_dir,
+        timeout=60,
+    )
+    if code == 0:
+        return SEMANTIC_OK
+    if code == _SEMANTIC_EXIT_MISSING_LIBRARY:
+        return SEMANTIC_MISSING_LIBRARY
+    if code == _SEMANTIC_EXIT_MISSING_WEIGHTS:
+        return SEMANTIC_MISSING_WEIGHTS
+    return SEMANTIC_UNKNOWN
+
+
+def download_semantic_model(python: str, target_dir: str = "", timeout: int = 900) -> bool:
+    """Pre-download the pinned CPU embedding fixture into the HF cache."""
+    source = (
+        "from huggingface_hub import snapshot_download\n"
+        "snapshot_download(\n"
+        f"    repo_id={SEMANTIC_MODEL_REPO_ID!r},\n"
+        f"    revision={SEMANTIC_MODEL_REVISION!r},\n"
+        f"    allow_patterns={list(SEMANTIC_MODEL_ALLOW_PATTERNS)!r},\n"
+        ")\n"
+    )
+    return _run_python_smoke([python, "-B", "-c", source], target_dir=target_dir, timeout=timeout)
+
 def _wheel_runtime_dependencies_satisfied(wheel_path: Path) -> bool:
     """Return True when installed packages already satisfy wheel dependencies."""
     try:
@@ -4186,6 +4327,111 @@ def run_install_doctor(
     return True
 
 
+def phase_semantic_readiness(
+    ui: UI,
+    python: str,
+    *,
+    interactive: bool,
+    pip_target: str = "",
+    offline: bool = False,
+) -> str:
+    """Check — and offer to repair — semantic retrieval, on EVERY invocation.
+
+    This deliberately does not live inside :func:`phase_install_extras`: extras
+    only run when ``install_ai`` was selected, and it is precisely the install
+    that never opted in (or that predates this check) which ends up silently
+    keyword-only. Like :func:`run_install_doctor` this is an unnumbered
+    end-of-install check, so the step count stays stable.
+
+    Non-interactive behaviour (``--script``, CI, ``curl | sh`` with no
+    controlling terminal): print the warning and the exact fix command, then
+    return. It never reads stdin and never changes the installer's exit status —
+    matching how every other optional-capability failure here is handled
+    ("extras failed — base TRW still works fine", i.e. warn, non-fatal). A
+    degraded-but-working retrieval path is not an install failure.
+
+    Returns the FINAL status after any repair attempt.
+    """
+    status = probe_semantic_stack(python, target_dir=validate_pip_target(pip_target))
+    if status == SEMANTIC_OK:
+        # Idempotent: a healthy re-run prints one calm line and changes nothing.
+        ui.step_ok("Semantic retrieval ready (sentence-transformers + pinned model weights present)")
+        return status
+    if status == SEMANTIC_UNKNOWN:
+        ui.step_warn(
+            "Could not determine whether semantic retrieval is available in "
+            f"{python} — check it with: {python} -m pip show sentence-transformers"
+        )
+        return status
+
+    if status == SEMANTIC_MISSING_LIBRARY:
+        ui.step_warn("Semantic retrieval is NOT active: sentence-transformers / torch are missing.")
+        ui.step_warn(f"  Interpreter checked: {python}")
+        ui.step_warn(
+            "  What this costs: recall still works, but it degrades to keyword-only "
+            "matching — vector/semantic matches are silently unavailable."
+        )
+        fix = f"{python} -m pip install '{SEMANTIC_EXTRA_SPEC}'"
+        ui.step_warn(f"  Fix: {fix}")
+        question = f"Install the semantic-embeddings stack now ({SEMANTIC_EXTRA_SPEC}, several hundred MB with torch)?"
+    else:  # SEMANTIC_MISSING_WEIGHTS
+        ui.step_warn(
+            "Semantic retrieval is NOT active: the embedding library is installed "
+            "but the model weights are not in the local cache."
+        )
+        ui.step_warn(f"  Interpreter checked: {python}")
+        ui.step_warn(
+            "  What this costs: recall still works, but it degrades to keyword-only "
+            "matching until the weights are downloaded."
+        )
+        fix = (
+            f"{python} -c \"from huggingface_hub import snapshot_download; "
+            f"snapshot_download(repo_id='{SEMANTIC_MODEL_REPO_ID}', "
+            f"revision='{SEMANTIC_MODEL_REVISION}')\""
+        )
+        ui.step_warn(f"  Fix: {fix}")
+        question = f"Download the pinned embedding model now ({SEMANTIC_MODEL_REPO_ID}, ~90 MB)?"
+
+    if offline:
+        ui.step_warn("  Offline mode: skipping the automatic repair — run the command above when online.")
+        return status
+    if not interactive:
+        # Piped / CI: never block on stdin. The warning above IS the output.
+        return status
+
+    if not prompt_yes_no(question, default="y"):
+        ui.hint("Skipped — retrieval stays keyword-only until you run the command above.")
+        return status
+
+    validated_target = validate_pip_target(pip_target)
+    if status == SEMANTIC_MISSING_LIBRARY:
+        ui.start_spinner(f"Installing {SEMANTIC_EXTRA_SPEC}...")
+        ok = pip_install(python, SEMANTIC_EXTRA_SPEC, SEMANTIC_EXTRA_SPEC, ui, target_dir=validated_target)
+        ui.stop_spinner(ok, "Embeddings package installed", "Embeddings install failed (non-fatal)")
+        if not ok:
+            ui.step_warn(f"Still keyword-only. Run manually: {fix}")
+            return status
+        status = probe_semantic_stack(python, target_dir=validated_target)
+        if status == SEMANTIC_OK:
+            ui.step_ok("Semantic retrieval ready")
+            return status
+
+    if status == SEMANTIC_MISSING_WEIGHTS:
+        ui.start_spinner("Downloading pinned embedding model...")
+        ok = download_semantic_model(python, target_dir=validated_target)
+        ui.stop_spinner(ok, "Embedding model cached", "Model download failed (non-fatal)")
+        if not ok:
+            ui.step_warn(f"Still keyword-only. Run manually: {fix}")
+            return status
+        status = probe_semantic_stack(python, target_dir=validated_target)
+
+    if status == SEMANTIC_OK:
+        ui.step_ok("Semantic retrieval ready")
+    else:
+        ui.step_warn("Semantic retrieval is still unavailable — recall remains keyword-only.")
+    return status
+
+
 def _resolve_interactive_telemetry(
     ui: UI,
     *,
@@ -4948,6 +5194,19 @@ def main() -> None:
         # (_deployed_framework_is_stale), and an upgrade that left the framework
         # broken is exactly the case a green "Upgrade complete" would hide.
         run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
+
+        # Semantic-retrieval readiness. Unconditional and marker-free: it must
+        # re-offer the fix on EVERY run, because an install predating this check
+        # has no other way to learn that its recall has always been keyword-only
+        # (the failure is a `retrieval_warning` inside a tool response, not an
+        # install error).
+        phase_semantic_readiness(
+            ui,
+            python,
+            interactive=interactive,
+            pip_target=args.pip_target,
+            offline=args.offline,
+        )
 
         # Step N+1 (conditional): Configure
         platform_status = "offline"

@@ -18,6 +18,7 @@ from trw_mcp.channels._manifest_models import (
     JOIN_KEY_FIELDS,
 )
 from trw_mcp.channels.meta_tune._correlator import adjusted_rate
+from trw_mcp.models.config import builtin_client_ids
 
 # ---------------------------------------------------------------------------
 # FR22 — join key fields + correlation window
@@ -58,9 +59,24 @@ _EXPECTED_CORRECTION_FACTORS = {
 
 
 def test_correction_factor_clients_present() -> None:
-    """All 7 clients must have a correction factor defined."""
-    for client in _EXPECTED_CORRECTION_FACTORS:
-        assert client in CLIENT_CORRECTION_FACTORS, f"Missing correction factor for {client!r}"
+    """EVERY active client profile must have a correction factor defined.
+
+    Derived from the profile registry, not from ``_EXPECTED_CORRECTION_FACTORS``.
+    Iterating the expected dict made this test tautological for the one case it
+    exists to catch: an eighth profile absent from BOTH dicts passed, and
+    ``adjusted_rate`` then divided its observed rate by the 1.0 default while
+    every other client was scaled — a silently incomparable number.
+    """
+    clients = builtin_client_ids()
+    assert len(clients) >= len(_EXPECTED_CORRECTION_FACTORS), (
+        "client registry derivation shrank below the known profile count; "
+        "a truncated population makes this completeness check vacuous"
+    )
+    for client in clients:
+        assert client in CLIENT_CORRECTION_FACTORS, (
+            f"Missing correction factor for {client!r}. A client with no factor is scaled by 1.0 "
+            "while every other client is corrected, so its reported rate is not comparable."
+        )
 
 
 @pytest.mark.parametrize("client,expected", list(_EXPECTED_CORRECTION_FACTORS.items()))
@@ -106,9 +122,19 @@ _EXPECTED_THROTTLE_THRESHOLDS = {
 
 
 def test_throttle_threshold_clients_present() -> None:
-    """All 7 clients must have a throttle threshold defined."""
-    for client in _EXPECTED_THROTTLE_THRESHOLDS:
-        assert client in CLIENT_THROTTLE_THRESHOLDS, f"Missing threshold for {client!r}"
+    """EVERY active client profile must have a throttle threshold defined.
+
+    Same derivation, same reason as ``test_correction_factor_clients_present``:
+    a profile missing from the table falls to the unnamed ``(0.20, 3)`` default
+    inside ``_throttle.py`` instead of a declared per-client decision.
+    """
+    clients = builtin_client_ids()
+    assert len(clients) >= len(_EXPECTED_THROTTLE_THRESHOLDS), (
+        "client registry derivation shrank below the known profile count; "
+        "a truncated population makes this completeness check vacuous"
+    )
+    for client in clients:
+        assert client in CLIENT_THROTTLE_THRESHOLDS, f"Missing throttle threshold for {client!r}"
 
 
 @pytest.mark.parametrize("client,expected", list(_EXPECTED_THROTTLE_THRESHOLDS.items()))

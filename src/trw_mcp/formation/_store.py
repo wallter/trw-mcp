@@ -228,7 +228,7 @@ def resolve_active(trw_dir: Path, run_path: Path | None) -> FormationContext | N
     own = manifest_path_for_run(run_path)
     if own.is_file():
         return FormationContext(read_manifest(own), own, None, True)
-    stamped = _stamped_ids(run_path)
+    stamped = stamped_ids(run_path)
     if stamped is None:
         return None
     formation_id, member_id = stamped
@@ -240,8 +240,15 @@ def resolve_active(trw_dir: Path, run_path: Path | None) -> FormationContext | N
     return FormationContext(read_manifest(manifest_path), manifest_path, member_id, False)
 
 
-def _stamped_ids(run_path: Path) -> tuple[str, str | None] | None:
-    """Read ``formation_id`` / ``member_id`` off a member run's ``run.yaml``."""
+def stamped_ids(run_path: Path) -> tuple[str, str | None] | None:
+    """Read ``formation_id`` / ``member_id`` off a member run's ``run.yaml``.
+
+    Public because a consumer must be able to compare the STAMP against the
+    manifest that was resolved from it. ``resolve_active`` follows the stamp
+    through the registry index and returns whatever it points at without
+    checking the manifest carries that id, so a consumer that cannot read the
+    stamp cannot detect the disagreement.
+    """
     run_yaml = run_path / "meta" / "run.yaml"
     if not run_yaml.is_file():
         return None

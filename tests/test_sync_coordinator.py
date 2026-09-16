@@ -289,3 +289,70 @@ def test_state_write_is_idempotent(trw_dir: Path) -> None:
     coord.record_target_health(primary_target_label="api.trwframework.com", secondary_targets=secondaries)
 
     assert (trw_dir / "sync-state.json").read_text() == first
+
+
+class TestCorruptStateIsNotOverwritten:
+    """A state file that will not parse must not be replaced with partial state.
+
+    ``_read_state`` returned ``{}`` for a corrupt or unreadable file, which is the
+    same value an ABSENT file returns — and every caller mutates that dict and
+    hands it to ``_write_state``, which atomically replaces the file. So one
+    transient read failure discarded ``consecutive_failures``, ``last_push_at``
+    and ``push_count``: exponential backoff and outage alerting reset themselves
+    to "healthy" at exactly the moment something was already wrong.
+
+    Reported by a cross-family audit 2026-09-12.
+    """
+
+    @staticmethod
+    def _coordinator(trw_dir: Path) -> object:
+        from trw_mcp.sync.coordinator import SyncCoordinator
+
+        return SyncCoordinator(trw_dir)
+
+    def test_a_corrupt_file_is_left_alone(self, trw_dir: Path) -> None:
+        state_path = trw_dir / "sync-state.json"
+        original = '{"consecutive_failures": 7, "last_push_at": "2026-09-01T00:00:00Z", TRUNCATED'
+        state_path.write_text(original, encoding="utf-8")
+
+        coordinator = self._coordinator(trw_dir)
+        coordinator.record_target_health(primary_target_label="prod")  # type: ignore[attr-defined]
+
+        assert state_path.read_text(encoding="utf-8") == original, (
+            "a corrupt state file was overwritten, discarding the backoff counters it held"
+        )
+
+    def test_a_non_object_payload_is_also_left_alone(self, trw_dir: Path) -> None:
+        """Valid JSON of the wrong shape is just as unknown as invalid JSON."""
+        state_path = trw_dir / "sync-state.json"
+        state_path.write_text('["not", "an", "object"]', encoding="utf-8")
+
+        coordinator = self._coordinator(trw_dir)
+        coordinator.record_target_health(primary_target_label="prod")  # type: ignore[attr-defined]
+
+        assert json.loads(state_path.read_text(encoding="utf-8")) == ["not", "an", "object"]
+
+    def test_an_absent_file_still_writes(self, trw_dir: Path) -> None:
+        """Non-vacuity partner, and the distinction that makes the fix correct:
+        ``{}`` from an ABSENT file is a real answer — nothing recorded yet — and
+        must still produce a write, or the coordinator could never bootstrap."""
+        state_path = trw_dir / "sync-state.json"
+        assert not state_path.exists()
+
+        coordinator = self._coordinator(trw_dir)
+        coordinator.record_target_health(primary_target_label="prod")  # type: ignore[attr-defined]
+
+        assert json.loads(state_path.read_text(encoding="utf-8"))["primary_target_label"] == "prod"
+
+    def test_a_healthy_file_is_still_updated(self, trw_dir: Path) -> None:
+        """The other half of the partner: a readable file must keep being written,
+        or the guard would have frozen the coordinator's state permanently."""
+        state_path = trw_dir / "sync-state.json"
+        state_path.write_text(json.dumps({"consecutive_failures": 3}), encoding="utf-8")
+
+        coordinator = self._coordinator(trw_dir)
+        coordinator.record_target_health(primary_target_label="prod")  # type: ignore[attr-defined]
+
+        written = json.loads(state_path.read_text(encoding="utf-8"))
+        assert written["primary_target_label"] == "prod"
+        assert written["consecutive_failures"] == 3, "an unrelated counter was dropped by a health update"

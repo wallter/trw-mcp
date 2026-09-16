@@ -217,3 +217,60 @@ class TestOtherConfidenceSurfacesReachTheGate:
 
 def _assertion(target: str) -> Assertion:
     return Assertion(type=AssertionType.GLOB_EXISTS, target=target)
+
+
+@pytest.mark.parametrize("user_prior", [False, True], ids=["project-prior", "user-prior"])
+def test_rejected_combined_update_preserves_both_records(
+    trw_project: Path, monkeypatch: pytest.MonkeyPatch, user_prior: bool
+) -> None:
+    """PRD-FIX-134: rejection must precede supersession and feedback writes."""
+    from trw_mcp.state import _tier_routing, _user_tier
+
+    backend = _seed(trw_project / ".trw", "L-target")
+    with SQLiteBackend(trw_project / "isolated-user.db") as user_backend:
+        prior_backend = user_backend if user_prior else backend
+        prior_backend.store(MemoryEntry(id="L-prior", content="prior knowledge", namespace="default"))
+        monkeypatch.setattr(_tier_routing, "user_scope_present", lambda: user_prior)
+        monkeypatch.setattr(_user_tier, "get_user_backend", lambda: user_backend)
+        before_prior = prior_backend.get("L-prior", namespace="default").model_dump()
+        before_target = backend.get("L-target", namespace="default").model_dump()
+
+        result = _learn_update_fn()(
+            learning_id="L-target",
+            supersedes="L-prior",
+            summary="must not land",
+            detail="must not land either",
+            feedback="helpful",
+            fields={"confidence": "verified"},
+        )
+
+        assert result["status"] == "invalid"
+        assert result["reason"] == "unsubstantiated_verified"
+        assert prior_backend.get("L-prior", namespace="default").model_dump() == before_prior
+        assert backend.get("L-target", namespace="default").model_dump() == before_target
+
+
+def test_substantiated_combined_update_preserves_supersession(trw_project: Path) -> None:
+    """PRD-FIX-134: a same-call assertion still substantiates promotion."""
+    backend = _seed(trw_project / ".trw", "L-target")
+    backend.store(MemoryEntry(id="L-prior", content="prior knowledge", namespace="default"))
+    assertion = {"type": "glob_exists", "target": "README.md"}
+
+    result = _learn_update_fn()(
+        learning_id="L-target",
+        supersedes="L-prior",
+        summary="corrected knowledge",
+        feedback="helpful",
+        fields={"confidence": "verified", "assertions": [assertion]},
+    )
+
+    assert result["status"] == "updated"
+    target = backend.get("L-target", namespace="default")
+    prior = backend.get("L-prior", namespace="default")
+    assert target.confidence == "verified"
+    assert target.content == "corrected knowledge"
+    assert target.helpful_count == 1
+    assert len(target.assertions) == 1
+    assert target.assertions[0].target == "README.md"
+    assert prior.invalid_from is not None
+    assert prior.invalidated_by == "L-target"

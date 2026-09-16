@@ -55,6 +55,8 @@ import re
 
 import structlog
 
+from trw_mcp.models.config._profiles import builtin_client_ids
+
 logger = structlog.get_logger(__name__)
 
 
@@ -66,24 +68,23 @@ logger = structlog.get_logger(__name__)
 #: a known tier on any adapted client.
 KNOWN_TIERS: frozenset[str] = frozenset({"frontier", "balanced", "local-large", "local-small"})
 
-#: Recognised client-profile identifiers — the seven active profiles from
+#: Recognised client-profile identifiers — the active profiles from
 #: ``docs/CLIENT-PROFILES.md``. Clients in this set but absent from
 #: :data:`_CLIENT_MAPS` are intentional passthrough (the harness accepts the
 #: tier vocabulary directly, or the adapter has not yet been written and we
-#: prefer to surface the tier at the destination). The retired ``aider``
-#: identifier is deliberately absent: it takes the unknown-client path and
-#: degrades to a safe default rather than receiving a raw tier token.
-KNOWN_CLIENTS: frozenset[str] = frozenset(
-    {
-        "antigravity-cli",
-        "claude-code",
-        "codex",
-        "copilot",
-        "cursor-cli",
-        "cursor-ide",
-        "opencode",
-    }
-)
+#: prefer to surface the tier at the destination). Retired ids (``aider``) are
+#: excluded by ``builtin_client_ids()``: they take the unknown-client path and
+#: degrade to a safe default rather than receiving a raw tier token.
+#:
+#: DERIVED, not restated (2026-09-12). This is a membership test, not an
+#: adapter table -- the adapter tables are :data:`_CLIENT_MAPS`, and naming a
+#: client THERE is correct. While this was a hand-written 7-set, a new profile
+#: fell outside it and three separate consumers degraded silently:
+#: ``render_agent_tool_names`` dropped it to ``profile=None`` (bare tool names
+#: instead of its namespace), ``bootstrap/_utils`` skipped it when scanning
+#: installed agent artifacts, and ``_version_migration_predecessors`` skipped
+#: it when cleaning up predecessor agent files -- leaving stale agents behind.
+KNOWN_CLIENTS: frozenset[str] = frozenset(builtin_client_ids())
 
 
 # --- Per-client mapping tables -----------------------------------------------

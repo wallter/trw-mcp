@@ -51,6 +51,11 @@ OWNED_CALL_SITE_MODULES = (
     _SRC / "tools" / "_orchestration_lifecycle.py",
     _SRC / "tools" / "_ceremony_helpers.py",
     _SRC / "tools" / "requirements.py",
+    # trw_prd_validate's registration was extracted from requirements.py for the
+    # 350-eLOC gate (2026-09-11). Its ceremony-status call site moved with it, so
+    # this module must be enumerated too — otherwise the count silently drops and
+    # the call site stops being covered by the very gate that guards it.
+    _SRC / "tools" / "_prd_validate_tool.py",
     _SRC / "tools" / "review.py",
     _SRC / "tools" / "_learn_impl.py",
     _SRC / "tools" / "_recall_impl.py",

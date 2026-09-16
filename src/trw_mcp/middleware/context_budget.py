@@ -28,6 +28,7 @@ from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 
 from trw_mcp.middleware._compression import compress_text_block, hash_content
+from trw_mcp.middleware._lossless_tools import LOSSLESS_COMMS_TOOLS
 
 logger = structlog.get_logger(__name__)
 
@@ -128,6 +129,10 @@ class ContextBudgetMiddleware(Middleware):
         turn: int,
     ) -> ToolResult:
         """Apply redundancy detection and verbosity compression."""
+        if tool_name in LOSSLESS_COMMS_TOOLS:
+            # Producer bounds are authoritative; do not cache bodies or replace
+            # an unacknowledged retry with a presentation-only placeholder.
+            return result
         try:
             from trw_mcp.models.config import get_config
 

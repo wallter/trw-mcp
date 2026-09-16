@@ -26,9 +26,116 @@ def _antigravity_delegation_block() -> str:
     return render_delegation_protocol(resolve_client_profile("antigravity-cli"))
 
 
+#: Client id whose surfaces this module's Antigravity renderer describes. Every
+#: fact about that client below is looked up from its own registry entry, never
+#: restated here.
+_ANTIGRAVITY_CLIENT = "antigravity-cli"
+
+
+def _bundled_agent_stems() -> list[str]:
+    """Stems of the bundled agent corpus — the set every install materializes.
+
+    Derived from ``data/agents/*.md``, which is the same directory
+    ``_install_agents`` iterates, so the rendered list cannot name an agent the
+    install does not place. The Antigravity block used to hardcode four names,
+    one of which (``trw-explorer``) was retired with the pre-PRD-CORE-252
+    templates and shipped to no client at all.
+
+    Entitlement-gated additions (the trw-distill explorer subagent) are
+    deliberately excluded: they are installed by a separate, conditional
+    channel, so promising them unconditionally would reintroduce the same defect
+    from the other direction.
+    """
+    from importlib.resources import files as _pkg_files
+
+    agents_dir = _pkg_files("trw_mcp.data").joinpath("agents")
+    return sorted(p.name.removesuffix(".md") for p in agents_dir.iterdir() if p.name.endswith(".md"))
+
+
+def _antigravity_subagent_block() -> str:
+    """Render the Subagents section from the agent-format registry.
+
+    The destination is read from
+    :func:`trw_mcp.agents.agent_formats.agent_format_for`, which is the single
+    source the installer writes to. The hardcoded ``.antigravitycli/agents/``
+    in this block survived PRD-CORE-252's move to ``.agents/agents`` and pointed
+    every Antigravity agent at a directory the install never creates.
+    """
+    from trw_mcp.agents.agent_formats import agent_format_for
+
+    fmt = agent_format_for(_ANTIGRAVITY_CLIENT)
+    if not fmt.supports_agents or fmt.destination_dir is None:
+        return f"### Subagents\n\nTRW installs no subagents for this client: {fmt.unsupported_reason}\n"
+
+    stems = _bundled_agent_stems()
+    names = ", ".join(f"`@{stem}`" for stem in stems)
+    return (
+        "### Subagents\n"
+        "\n"
+        f"TRW installs the bundled specialists into `{fmt.destination_dir}/` "
+        f"(one `{fmt.filename_suffix}` file per agent). Reference one by name:\n"
+        "\n"
+        f"{names}\n"
+    )
+
+
+def _antigravity_tool_reference() -> str:
+    """Render the MCP-tool naming section from the profile's own namespace.
+
+    ``antigravity-cli``'s ``ClientProfile.tool_namespace_prefix`` is empty, so
+    tools are exposed under their bare names. This block asserted an
+    ``mcp_trw_`` prefix — the identical drift
+    ``agents/agent_formats.py`` was built to remove from the Antigravity agent
+    templates, left in place in the instruction carrier that tells the same
+    agents how to call a tool.
+    """
+    from trw_mcp.models.config._profiles import resolve_client_profile
+    from trw_mcp.prompts.messaging import render_tool_name
+
+    profile = resolve_client_profile(_ANTIGRAVITY_CLIENT)
+    start = render_tool_name("trw_session_start", profile)
+    learn = render_tool_name("trw_learn", profile)
+    naming = (
+        f"All TRW tools are exposed via MCP under the `{profile.tool_namespace_prefix}` prefix."
+        if profile.tool_namespace_prefix
+        else "All TRW tools are exposed via MCP under their own names (no prefix)."
+    )
+    keys = ", ".join(
+        f"`{render_tool_name(name, profile)}`"
+        for name in (
+            "trw_session_start",
+            "trw_learn",
+            "trw_checkpoint",
+            "trw_deliver",
+            "trw_init",
+            "trw_status",
+            "trw_recall",
+            "trw_build_check",
+            "trw_review",
+            "trw_prd_create",
+            "trw_prd_validate",
+        )
+    )
+    return (
+        "### MCP Tools\n"
+        "\n"
+        f"{naming}\n"
+        f"Call `{start}` first in every session.\n"
+        "\n"
+        f"Key tools: {keys}.\n"
+        "\n"
+        "### Memory Routing\n"
+        "\n"
+        f"- Code patterns, gotchas, build tricks → `{learn}()`\n"
+        "- User preferences → antigravity-cli's built-in memory if applicable\n"
+    )
+
+
 def render_antigravity_instructions() -> str:
     """Render ANTIGRAVITY.md TRW ceremony section."""
     delegation = _antigravity_delegation_block()
+    subagents = _antigravity_subagent_block()
+    tool_reference = _antigravity_tool_reference()
     return f"""{_ANTIGRAVITY_TRW_START_MARKER}
 <!-- TRW AUTO-GENERATED — do not edit between markers -->
 
@@ -63,28 +170,8 @@ Under the default `block_coding` mode a missing build check blocks when the task
 expects a build artifact (`coding`, `rca`, `eval`) OR when the session modified files —
 whatever the task type. A run that changed nothing stays advisory.
 
-### MCP Tools
-
-All TRW tools are available via MCP as `mcp_trw_<tool_name>`.
-Call `mcp_trw_trw_session_start` first in every session.
-
-Key tools: `trw_session_start`, `trw_learn`, `trw_checkpoint`, `trw_deliver`,
-`trw_init`, `trw_status`, `trw_recall`, `trw_build_check`, `trw_review`,
-`trw_prd_create`, `trw_prd_validate`.
-
-### Subagents
-
-TRW provides specialized agents in `.antigravitycli/agents/`:
-- `@trw-explorer` — Fast codebase search and analysis (read-only)
-- `@trw-implementer` — TDD implementation with full tool access
-- `@trw-reviewer` — Code review specialist (read-only)
-- `@trw-lead` — Orchestration and delegation
-
-### Memory Routing
-
-- Code patterns, gotchas, build tricks → `mcp_trw_trw_learn()`
-- User preferences → antigravity-cli's built-in memory if applicable
-
+{tool_reference}
+{subagents}
 ### Conventions
 
 - Run the project-native validation command after each meaningful change — fix failures before moving on

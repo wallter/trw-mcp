@@ -24,7 +24,15 @@ def test_yaml_index_helpers_build_cache_and_backfill(monkeypatch: pytest.MonkeyP
     good = entries_dir / "good.yaml"
     bad = entries_dir / "bad.yaml"
     good.write_text("id: L1\n", encoding="utf-8")
-    bad.write_text("id: broken\n", encoding="utf-8")
+    # Genuinely unreadable, not merely unreadable-by-a-fake-reader. The index no
+    # longer composes the document to find an id -- it reads the bytes and scans
+    # for a top-level `id:` -- so simulating failure at the reader alone stopped
+    # exercising anything: a file containing the literal text `id: broken` is
+    # perfectly readable and would be indexed, which is correct behaviour and
+    # made the old assertion fail for the right reason. A directory in a file's
+    # place raises OSError in BOTH the byte read and the fallback parse, which is
+    # what "unreadable entry" actually means.
+    bad.mkdir()
 
     class FakeReader:
         def read_yaml(self, path: Path) -> dict[str, object]:

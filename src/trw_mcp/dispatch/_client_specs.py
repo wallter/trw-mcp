@@ -212,6 +212,20 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         binary="opencode",
         base_argv=("opencode", "run"),
         structured_output_argv=("--format", "json"),
+        # MEASURED DEFECT, 2026-09-12, left in place deliberately rather than
+        # silently "fixed": `opencode run --help` at 1.18.30 has NO
+        # --dangerously-skip-permissions. Its auto-approve flag is `--auto`
+        # ("auto-approve permissions that are not explicitly denied
+        # (dangerous!)"), and opencode REJECTS an unknown option by printing
+        # help and exiting 1 -- verified by running
+        # `opencode run --zzz-not-a-flag --model bogus/bogus "hi"` (help, exit 1)
+        # against the same argv without the bogus flag (reaches the provider).
+        # So a read_only=False dispatch to opencode never starts the run: the
+        # current state is FAIL-CLOSED. Swapping in `--auto` would turn a
+        # non-starting run into a live permission bypass, which is a security
+        # posture change for the dispatch owner to make with the read-only lane
+        # in view, not a typo fix. Documented in docs/CLIENT-PROFILES.md
+        # §What will bite you until then.
         allow_writes_argv=("--dangerously-skip-permissions",),
         model_flag="--model",
         cwd_flag="--dir",

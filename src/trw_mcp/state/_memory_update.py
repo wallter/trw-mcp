@@ -268,6 +268,22 @@ def update_learning(
             new_metadata["provenance_content_hash"] = hashlib.sha256(f"{new_content}{new_detail}".encode()).hexdigest()
             fields["metadata"] = new_metadata
 
+    # PRD-CORE-244-FR02 on the UPDATE surface. ``update_learning`` edits an
+    # existing row through ``backend.update()`` and therefore never re-enters the
+    # store pipeline where ``_stage_validate_payload`` lives — so before this
+    # check, ``trw_learn_update(fields={"confidence": "verified"})`` promoted an
+    # evidence-less entry to verified, reopening on the update path exactly the
+    # hole the store gate closes.
+    #
+    # Placed here, AFTER every field is collected, for two reasons: the entry it
+    # must judge is the POST-update one (a call may be supplying the assertions
+    # that substantiate the claim in the same breath as the promotion), and a
+    # refusal must precede BOTH target writes and supersession of the prior
+    # record (PRD-FIX-134). This is validation ordering, not cross-store atomicity.
+    refusal = _reject_unverifiable_promotion(existing, fields)
+    if refusal is not None:
+        return refusal
+
     # PRD-CORE-194 FR04: explicit supersession. Close the PRIOR record's window
     # (it is replaced BY this learning_id). Resolve the prior through the same
     # owning-backend dispatch so a user-tier prior is also closeable. A missing
@@ -283,22 +299,6 @@ def update_learning(
             prior_backend.update(supersedes, namespace=prior.namespace, invalid_from=now, invalidated_by=learning_id)
             changes.append(f"supersedes→{supersedes}")
             logger.info("supersession_window_closed", prior=supersedes, by=learning_id)
-
-    # PRD-CORE-244-FR02 on the UPDATE surface. ``update_learning`` edits an
-    # existing row through ``backend.update()`` and therefore never re-enters the
-    # store pipeline where ``_stage_validate_payload`` lives — so before this
-    # check, ``trw_learn_update(fields={"confidence": "verified"})`` promoted an
-    # evidence-less entry to verified, reopening on the update path exactly the
-    # hole the store gate closes.
-    #
-    # Placed here, AFTER every field is collected, for two reasons: the entry it
-    # must judge is the POST-update one (a call may be supplying the assertions
-    # that substantiate the claim in the same breath as the promotion), and a
-    # refusal must abort the WHOLE update rather than let the other fields land
-    # from a call that was rejected.
-    refusal = _reject_unverifiable_promotion(existing, fields)
-    if refusal is not None:
-        return refusal
 
     if feedback is not None:
         # Keep the read and increment inside the backend's serialized write

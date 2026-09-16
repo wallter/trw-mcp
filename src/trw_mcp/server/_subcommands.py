@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
+from importlib import import_module
 from pathlib import Path
 from typing import TextIO
 
@@ -453,29 +454,31 @@ SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
 }
 
 
-# PRD-DIST-1996 (c748): tier entitlement provisioning subcommand.
-# Lazy-imported to avoid circular import with _entitlements.
-def _run_tier_lazy(args: argparse.Namespace) -> None:
-    from trw_mcp.server._subcommands_tier import run_tier
+def _lazy_verb(module: str, attribute: str) -> Callable[[argparse.Namespace], None]:
+    """Build a handler that imports its implementation only when the verb runs.
 
-    run_tier(args)
+    Four verbs had an identical three-line shim each. The laziness is
+    load-bearing and stays: importing ``trw_mcp.formation`` or ``trw_mcp.plan``
+    on the CLI's common path costs every invocation that never uses them, and
+    ``tier`` additionally exists to break a circular import with
+    ``_entitlements``. Only the repetition goes -- which is also what takes this
+    module back under the 350 effective-LOC ratchet that landing ``plan``
+    pushed it over, at 351.
+    """
 
+    def _run(args: argparse.Namespace) -> None:
+        getattr(import_module(module), attribute)(args)
 
-def _run_dispatch_lazy(args: argparse.Namespace) -> None:
-    # Lazy import: only load the subprocess path when `trw-mcp dispatch` runs.
-    from trw_mcp.dispatch._cli import run_dispatch
-
-    run_dispatch(args)
-
-
-def _run_formation_lazy(args: argparse.Namespace) -> None:
-    # PRD-CORE-265: lazy so `trw_mcp.formation` is imported only when a
-    # formation verb actually runs, never on the CLI's common path.
-    from trw_mcp.tools._formation_cli import run_formation
-
-    run_formation(args)
+    _run.__name__ = f"_{attribute}_lazy"
+    _run.__qualname__ = _run.__name__
+    return _run
 
 
-SUBCOMMAND_HANDLERS["tier"] = _run_tier_lazy
-SUBCOMMAND_HANDLERS["dispatch"] = _run_dispatch_lazy
-SUBCOMMAND_HANDLERS["formation"] = _run_formation_lazy
+SUBCOMMAND_HANDLERS.update(
+    {
+        "tier": _lazy_verb("trw_mcp.server._subcommands_tier", "run_tier"),
+        "dispatch": _lazy_verb("trw_mcp.dispatch._cli", "run_dispatch"),
+        "formation": _lazy_verb("trw_mcp.tools._formation_cli", "run_formation"),
+        "plan": _lazy_verb("trw_mcp.tools._plan_cli", "run_plan"),
+    }
+)

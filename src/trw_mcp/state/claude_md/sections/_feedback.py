@@ -85,8 +85,11 @@ def render_feedback_reporting(profile: ClientProfile) -> str:
         f"Valid `category` values: {categories_csv}.\n"
         "\n"
         f"The channel is auth-gated via the operator's `platform_api_key` from "
-        "`.trw/config.yaml`. PII redaction (license keys, API key prefixes, "
-        "`$HOME` paths, sensitive env vars) runs before the network call. "
+        "`.trw/config.yaml`. PII redaction runs before the network call, over the "
+        "subject, the body, and every metadata key and value. The covered shapes are "
+        "deliberately not enumerated here -- the same hand-copied list lived in nine "
+        "files and went stale the moment the redactor learned a new one; "
+        "`_redact_pii` in `trw_mcp/tools/submit_feedback.py` is the source of truth. "
         f"Canonical operator-facing description: {_LLMS_TXT_ANCHOR}.\n"
         f"{FEEDBACK_MARKER_END}\n"
     )

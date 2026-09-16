@@ -153,7 +153,13 @@ def _prd_status_diff(base: str | None = None) -> str:
     """Path-limited ``git diff`` over the PRD directory (fail-open to '')."""
     from trw_mcp.tools import _review_helpers as _helpers
 
-    return _helpers._get_git_diff(paths=[PRDS_DIR], base=base)
+    # `or ""` preserves this function's OWN documented fail-open contract, now that
+    # the helper distinguishes "git did not run" (None) from "no changes" (""). The
+    # two are collapsed here deliberately and locally, not by accident in the helper:
+    # a transition gate that cannot read the PRD diff reports no status changes, which
+    # is this module's stated choice. If that should change, change it here, where the
+    # docstring above says so.
+    return _helpers._get_git_diff(paths=[PRDS_DIR], base=base) or ""
 
 
 # ---------------------------------------------------------------------------

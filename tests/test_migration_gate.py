@@ -24,13 +24,21 @@ class TestGetChangedFiles:
             result = _get_changed_files(tmp_path)
             assert "api/models/database.py" in result
 
-    def test_returns_empty_on_git_failure(self, tmp_path: Path) -> None:
+    def test_returns_unknown_on_git_failure(self, tmp_path: Path) -> None:
+        """git could not be ASKED, which is not the same as "nothing changed".
+
+        This asserted ``== []`` until 2026-09-12, pinning the defect as correct:
+        ``check_migration_gate`` returns no warnings for an empty list, so a git
+        failure produced a clean bill from a gate that had read nothing, and a
+        schema change with no migration sailed through it.
+        """
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError("git not found")
             result = _get_changed_files(tmp_path)
-            assert result == []
+            assert result is None
+            assert result != [], "[] is the value check_migration_gate reads as 'nothing changed'"
 
     def test_deduplicates_files(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
@@ -56,21 +64,23 @@ class TestGetChangedFiles:
             result = _get_changed_files(tmp_path)
             assert "api/models/database.py" in result
 
-    def test_returns_empty_on_os_error(self, tmp_path: Path) -> None:
+    def test_returns_unknown_on_os_error(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = OSError("disk error")
             result = _get_changed_files(tmp_path)
-            assert result == []
+            assert result is None
+            assert result != [], "[] is the value check_migration_gate reads as 'nothing changed'"
 
-    def test_returns_empty_on_subprocess_error(self, tmp_path: Path) -> None:
+    def test_returns_unknown_on_subprocess_error(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
 
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.SubprocessError("git timeout")
             result = _get_changed_files(tmp_path)
-            assert result == []
+            assert result is None
+            assert result != [], "[] is the value check_migration_gate reads as 'nothing changed'"
 
     def test_merges_all_three_sources(self, tmp_path: Path) -> None:
         from trw_mcp.state.validation.phase_gates_build import _get_changed_files
@@ -314,3 +324,36 @@ class TestBestEffortMigrationCheck:
 
                 assert len(failures) == 2
                 assert failures[0] is existing
+
+
+class TestTheGateReportsWhenItCouldNotRun:
+    """A safety gate that could not read the diff has no clean bill to give.
+
+    ``check_migration_gate`` returns its warning list, and an empty list means
+    "no issues found". With ``_get_changed_files`` returning ``[]`` on a git
+    failure, that is what a caller got for a check that never ran — so a model
+    change without an Alembic migration, or a NOT NULL column without a
+    server_default, passed a gate that had read nothing.
+
+    Reported by a cross-family audit 2026-09-12.
+    """
+
+    def test_a_git_failure_produces_a_warning_not_silence(self, tmp_path: Path) -> None:
+        from trw_mcp.state.validation.phase_gates_build import check_migration_gate
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("git not found")):
+            warnings = check_migration_gate(tmp_path)
+
+        assert warnings, "a git failure produced an empty warning list, which reads as 'no issues found'"
+        assert any("could not run" in w for w in warnings)
+
+    def test_a_genuinely_clean_tree_is_still_silent(self, tmp_path: Path) -> None:
+        """Non-vacuity partner. An empty CHANGE SET must still mean no warnings,
+        or the gate would cry wolf on every clean build and get ignored."""
+        from trw_mcp.state.validation.phase_gates_build import check_migration_gate
+
+        with patch(
+            "trw_mcp.state.validation.phase_gates_build._get_changed_files",
+            return_value=[],
+        ):
+            assert check_migration_gate(tmp_path) == []

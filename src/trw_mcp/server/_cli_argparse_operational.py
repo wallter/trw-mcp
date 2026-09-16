@@ -6,6 +6,7 @@ import argparse
 
 from trw_mcp.server._cli_argparse_prd import add_prd_subcommands
 from trw_mcp.tools._formation_cli import add_formation_subcommands
+from trw_mcp.tools._plan_cli import add_plan_subcommands
 
 __all__ = ["add_operational_subcommands"]
 
@@ -96,6 +97,7 @@ def add_operational_subcommands(
     # PRD-CORE-265-FR03/FR06/FR07: the formation verbs. Registered here rather
     # than as MCP tools — a tool definition is paid in every session's prompt.
     add_formation_subcommands(subparsers)
+    add_plan_subcommands(subparsers)
 
     # channel-doctor (PRD-DIST-2400 FR18)
     cd_parser = subparsers.add_parser(

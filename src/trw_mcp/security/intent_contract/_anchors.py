@@ -35,7 +35,11 @@ import stat
 from fnmatch import fnmatchcase
 from pathlib import Path
 
+import structlog
+
 from trw_mcp.security.intent_contract._models import Contract, MustNotHappenClaim
+
+logger = structlog.get_logger(__name__)
 
 __all__ = ["anchor_matches", "claims_matching_path", "eligible_claims", "enforceable_claims", "is_glob_anchor"]
 
@@ -108,11 +112,31 @@ def _may_be_aliased(path: Path) -> bool:
     Both aliasing shapes count. Checking ``st_nlink > 1`` alone missed symlinks
     entirely — a symlink has exactly one link of its own — so a symlink alias to a
     protected file never reached identity matching (probe finding N1).
+
+    THE TWO OSErrors ARE NOT THE SAME ANSWER, and treating them alike opened the
+    gate. ``enforceable_claims`` skips inode matching when this is False, and
+    ``check_write.run`` ALLOWS a write with no matching claims — so a blanket
+    ``return False`` meant a path we could not stat silently bypassed alias
+    detection on a protected file.
+
+    ``FileNotFoundError`` genuinely means not aliased: a file that does not exist
+    yet has no second name, and it is the ordinary case for every create. Any
+    OTHER ``OSError`` — a permission denial, a symlink loop — means we could not
+    tell, and "could not tell" must take the checking path, not the allowing one.
+    Inode matching is cheap here and safe: it re-stats and yields no claims when
+    it also fails, so the worst case is the previous behaviour with a record.
+
+    Reported by a cross-family audit 2026-09-12; the ENOENT split is why the
+    obvious fix (fail closed on every OSError) would have broken every new-file
+    write instead.
     """
     try:
         info = path.lstat()
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError as exc:
+        logger.warning("alias_probe_failed", path=str(path), error=str(exc))
+        return True
     return stat.S_ISLNK(info.st_mode) or info.st_nlink > 1
 
 

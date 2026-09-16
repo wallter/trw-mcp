@@ -108,8 +108,8 @@ class TestLearningEntryEnumValidation:
         assert entry.phase_affinity == ["IMPLEMENT", "VALIDATE"]
 
     def test_team_origin_custom(self) -> None:
-        entry = LearningEntry(id="L-1", summary="s", detail="d", team_origin="trw-sprint-team")
-        assert entry.team_origin == "trw-sprint-team"
+        entry = LearningEntry(id="L-1", summary="s", detail="d", team_origin="platform-workstream")
+        assert entry.team_origin == "platform-workstream"
 
     def test_task_type_custom(self) -> None:
         entry = LearningEntry(id="L-1", summary="s", detail="d", task_type="debugging")

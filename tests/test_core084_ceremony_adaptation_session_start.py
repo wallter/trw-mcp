@@ -55,10 +55,15 @@ class TestSessionStartLightMode:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """Light mode framework_reminder says 'Call trw_deliver() when done'."""
+        """Light mode distinguishes preservation from gated acceptance."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "light")
         reminder = str(result.get("framework_reminder", ""))
+        assert "trw_checkpoint()" in reminder
+        assert "handoff" in reminder
         assert "trw_deliver()" in reminder
+        assert "completed" in reminder
+        assert "gate" in reminder
+        assert "to persist your work" not in reminder
         assert "FRAMEWORK-CORE.md" not in reminder
 
     def test_full_mode_framework_reminder_mentions_framework(
@@ -89,3 +94,28 @@ class TestSessionStartLightMode:
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")
         reminder = str(result.get("framework_reminder", ""))
         assert "FRAMEWORK-CORE.md" in reminder
+
+
+@pytest.mark.parametrize("mode,compacted", [("light", False), ("full", True)])
+def test_compact_reminder_preserves_acceptance_boundary(mode: str, compacted: bool) -> None:
+    """Both short-reminder branches preserve the same lifecycle distinction."""
+    from trw_mcp.models.typed_dicts import SessionStartResultDict
+    from trw_mcp.tools._ceremony_session_start_steps import finalize_session_start
+
+    config = TRWConfig(ceremony_mode=mode)
+    results: SessionStartResultDict = {}
+    if compacted:
+        results["response_compacted"] = True
+    with (
+        patch("trw_mcp.tools._ceremony_helpers.step_mark_session_started"),
+        patch("trw_mcp.tools._ceremony_helpers.step_ceremony_status"),
+        patch("trw_mcp.tools._ceremony_session_start_steps.build_connection_fingerprint", return_value={}),
+    ):
+        finalize_session_start(results, config, {}, [])
+    reminder = results["framework_reminder"]
+    assert "trw_checkpoint()" in reminder
+    assert "handoff" in reminder
+    assert "completed" in reminder
+    assert "gate" in reminder
+    assert "to persist your work" not in reminder
+    assert results["success"] is True

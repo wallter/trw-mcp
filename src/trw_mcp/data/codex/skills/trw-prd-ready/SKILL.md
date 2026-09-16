@@ -257,7 +257,7 @@ Report actual gate results and unresolved evidence, not efficacy claims:
 - Execution Plan: `docs/requirements-aare-f/exec-plans/EXECUTION-PLAN-{PRD-ID}.md`
 - Test Skeletons: `{path}` (include only when created)
 
-**Next step**: `/trw-sprint-team` to assign agents, or implement directly.
+**Next step**: implement directly, or divide the work by file ownership before any writer starts.
 ```
 
 Record the outcome in the run artifact; reserve `trw_learn` for non-obvious reusable discoveries.

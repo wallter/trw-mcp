@@ -17,6 +17,8 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.models.config._profiles import builtin_client_ids
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:  # pragma: no cover - Python <3.11 fallback
@@ -370,17 +372,20 @@ def _check_package_version(result: dict[str, list[str]]) -> None:
 # IDE Detection and Adaptive Bootstrap (FR08 -- PRD-CORE-074)
 # ---------------------------------------------------------------------------
 
-# Supported IDEs - DRY constant for all IDE target operations
-# cursor-ide: interactive Cursor IDE; cursor-cli: headless cursor-agent CI surface
-SUPPORTED_IDES = [
-    "claude-code",
-    "cursor-ide",
-    "cursor-cli",
-    "opencode",
-    "codex",
-    "copilot",
-    "antigravity-cli",
-]
+# Supported IDEs - DRY constant for all IDE target operations.
+# cursor-ide: interactive Cursor IDE; cursor-cli: headless cursor-agent CI surface.
+#
+# DERIVED, not restated (2026-09-12). Everything downstream treats this as "the
+# installable client set": ``_IDE_CHOICES`` for ``--ide``, ``--ide all``
+# resolution, the ``_CLIENT_EVIDENCE_MARKERS`` totality guard, and the
+# ``CLIENT_INTEGRATIONS`` drift guard. While it was a hand-written list, a
+# profile added to the registry alone was never installable and every one of
+# those guards passed anyway -- the guards check consistency WITH this list, so
+# the list being short made them agree on the wrong population.
+# ``builtin_client_ids()`` carries its own fail-closed floor, so this can never
+# resolve empty. A list (not a tuple) because ``resolve_ide_targets`` returns
+# ``.copy()`` of it as a mutable target list.
+SUPPORTED_IDES = list(builtin_client_ids())
 
 # Retired client identifiers (2026-07-11). ``aider`` never had a TRW client
 # adapter. Retired IDs are no longer installable (absent from SUPPORTED_IDES)

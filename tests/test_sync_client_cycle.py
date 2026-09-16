@@ -484,3 +484,94 @@ async def test_offload_sync_work_warns_for_pathological_duration(monkeypatch: py
         slow_threshold_ms=10000,
     )
     log.info.assert_not_called()
+
+
+async def _cycle_with(tmp_path: Any, *, merge: TeamMergeResult, team_sync_enabled: bool = True) -> MagicMock:
+    """Run one cycle over a single team learning at sync_seq 7, cursor at 4."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    config = _make_config()
+    config.team_sync_enabled = team_sync_enabled
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(config, tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 4
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            team_learnings=[{"source_learning_id": "remote-1", "sync_seq": 7}],
+            sync_hints={},
+            status_code=200,
+        )
+    )
+    client._puller.merge_team_learnings.return_value = merge
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+    await client._run_one_cycle()
+    return client._coordinator
+
+
+def _recorded_pull_seq(coordinator: MagicMock) -> int:
+    call = coordinator.record_sync_success.call_args or coordinator.record_pull_success.call_args
+    return int(call.kwargs["pull_seq"])
+
+
+class TestThePullCursorNeverPassesAnUnjudgedItem:
+    """Pulls are ``since_seq`` bounded, so the cursor is a one-way door.
+
+    ``next_pull_seq`` was computed from everything PULLED without ever consulting
+    ``merge_result``, so an item the merge never saw was stepped over and never
+    offered again — permanently discarded, with no number reported anywhere.
+
+    Reported by a cross-family sweep 2026-09-12. The tell that this was oversight
+    rather than design: the same block already raises its log level on
+    ``merge_result.rejected`` and carries a comment that "a cycle that pulled 50
+    and applied 1 is not a completed cycle" — someone saw the discrepancy and
+    fixed the REPORTING half while the cursor kept advancing over it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_team_sync_disabled_does_not_consume_team_learnings(self, tmp_path) -> None:
+        """The sharpest arm. ``merge_team_learnings`` is only called when team
+        sync is enabled, but the pull and the cursor ran unconditionally — so
+        every team learning that arrived while the feature was OFF advanced the
+        cursor past itself. Enabling team sync later could not recover them."""
+        coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(), team_sync_enabled=False)
+        assert _recorded_pull_seq(coordinator) == 4, "team learnings were consumed while team sync was disabled"
+
+    @pytest.mark.asyncio
+    async def test_an_unavailable_merge_holds_the_whole_batch(self, tmp_path) -> None:
+        """``unavailable`` means the merge could not run at all — a whole batch
+        skipped at once, with nothing judged."""
+        coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, unavailable=True))
+        assert _recorded_pull_seq(coordinator) == 4
+
+    @pytest.mark.asyncio
+    async def test_a_failed_item_holds_the_cursor(self, tmp_path) -> None:
+        """``failed`` raised while storing: never judged, so never passed over."""
+        coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, failed=1))
+        assert _recorded_pull_seq(coordinator) == 4
+
+    @pytest.mark.asyncio
+    async def test_a_judged_rejection_still_advances(self, tmp_path) -> None:
+        """Non-vacuity partner, and the reason the arms are not treated alike.
+
+        ``invalid`` / ``skipped_no_id`` / ``quarantined`` are DECISIONS about the
+        item — it would be judged identically next time, so holding the cursor
+        would make a poison-pill loop that stalls sync forever on one bad row.
+        """
+        coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, quarantined=1))
+        assert _recorded_pull_seq(coordinator) == 7
+
+    @pytest.mark.asyncio
+    async def test_a_clean_apply_still_advances(self, tmp_path) -> None:
+        """The other half of the partner: the ordinary path must keep moving, or
+        the fix would have frozen every cursor in place."""
+        coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, inserted=1))
+        assert _recorded_pull_seq(coordinator) == 7

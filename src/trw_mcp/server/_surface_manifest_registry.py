@@ -97,6 +97,9 @@ class SurfaceManifestEntry(BaseModel):
 #: Owning module (single-writer authority) per tool, from the live
 #: registrar-to-tool mapping in ``server/_tools.py``.
 _TOOL_OWNER: dict[str, str] = {
+    "trw_peers": "tools.swarm_comms",
+    "trw_send": "tools.swarm_comms",
+    "trw_inbox": "tools.swarm_comms",
     "trw_session_start": "tools.ceremony",
     "trw_deliver": "tools.ceremony",
     "trw_heartbeat": "tools.ceremony",
@@ -233,7 +236,9 @@ def eligible_tool_names() -> tuple[str, ...]:
     return tuple(e.name for e in TOOL_MANIFEST if e.public)
 
 
-def resolve_tool_surface(task_type: str | None, mode: str = "standard") -> ToolResolution:
+def resolve_tool_surface(
+    task_type: str | None, mode: str = "standard", *, comms_enabled: bool = False
+) -> ToolResolution:
     """Resolve the tool surface for a task under a resolution mode (FR04).
 
     ``standard`` is the default and is bounded: a mapped task gets kernel plus
@@ -245,7 +250,8 @@ def resolve_tool_surface(task_type: str | None, mode: str = "standard") -> ToolR
     substitution is visible rather than silent. Only an EXPLICIT ``all`` mode
     returns the full eligible surface, and the decision is recorded so the
     choice is visible. Any other mode value degrades to ``standard`` (never
-    silently widens to full).
+    silently widens to full). Explicit ``comms_enabled`` adds only the peer
+    comms pack to this bounded resolution; default task packs remain unchanged.
     """
     if mode == "all":
         tools = eligible_tool_names()
@@ -269,6 +275,8 @@ def resolve_tool_surface(task_type: str | None, mode: str = "standard") -> ToolR
     fallback = STANDARD_TASK_PACKS["unknown"]
     selected = STANDARD_TASK_PACKS.get(requested)
     packs = ("kernel", *(selected if selected is not None else fallback))
+    if comms_enabled and "peer_comms" not in packs:
+        packs = (*packs, "peer_comms")
     tools_list = [tool for pack in packs for tool in PACK_TOOLS[pack]]
     if selected is None:
         decision = (
@@ -278,6 +286,8 @@ def resolve_tool_surface(task_type: str | None, mode: str = "standard") -> ToolR
         decision = f"standard: task '{requested}' -> kernel + {', '.join(selected)}"
     else:
         decision = f"standard: task '{requested}' -> kernel only"
+    if comms_enabled:
+        decision += "; opt_in: comms_enabled -> peer_comms"
     return ToolResolution(
         mode="standard",
         task_type=task_type,

@@ -40,6 +40,12 @@ _TRW_HEADER_MARKER = "<!-- TRW AUTO-GENERATED — do not edit between markers --
 
 _SUB_RESULT_KEYS = ("created", "updated", "preserved", "errors")
 
+#: Cursor IDE's approximate combined-MCP tool ceiling (PRD-CORE-136 NFR). A
+#: vendor figure, so it is a named constant rather than derivable — unlike the
+#: TRW-side tool count it is compared against, which is read from
+#: ``models.surface_packs`` at the one call site below.
+_CURSOR_TOOL_CEILING = 40
+
 
 def _absorb_sub_result(
     parent: dict[str, list[str]],
@@ -512,14 +518,26 @@ def _update_cursor_artifacts(
     # cursor-ide advisory: tool-ceiling awareness (PRD-CORE-136 NFR)
     # ------------------------------------------------------------------
     if "cursor-ide" in ide_targets:
-        # TRW exposes 24 MCP tools. Cursor IDE has a ~40-tool ceiling when
-        # combining all MCP servers. If the user has additional MCP servers
-        # configured alongside TRW, they may approach or exceed this limit.
+        # Cursor IDE has a ~40-tool ceiling across all MCP servers combined.
+        #
+        # The tool count is DERIVED. It was the literal 24, written when that
+        # was true, and the public surface has since grown past the ceiling the
+        # sentence warns about — so the advisory told a cursor-ide user they
+        # "may approach" a limit TRW alone already exceeded, which is the one
+        # thing this message exists to prevent. ``surface_packs`` is the same
+        # authority ``scripts/generate-inventory.py`` publishes
+        # ``<!-- inv:tools -->`` from, and it is stdlib-only, so reading it here
+        # costs no server boot.
+        from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS, PACK_TOOLS
+
+        registered = {name for tools in PACK_TOOLS.values() for name in tools}
+        visible = len(registered - set(OPERATOR_ONLY_TOOLS))
+        verb = "already exceeds" if visible > _CURSOR_TOOL_CEILING else "may approach"
         result.setdefault("info", []).append(
-            "cursor-ide: TRW exposes 24 MCP tools (tool_resolution_mode=all). "
-            "Cursor has a ~40-tool ceiling across all MCP servers — adding "
-            "other servers alongside TRW may exhaust the per-turn budget. "
-            "See docs/CLIENT-PROFILES.md for mitigation options."
+            f"cursor-ide: TRW exposes {visible} MCP tools (tool_resolution_mode=all). "
+            f"Cursor has a ~{_CURSOR_TOOL_CEILING}-tool ceiling across all MCP servers, which TRW "
+            f"{verb} on its own — adding other servers alongside TRW may exhaust the per-turn "
+            "budget. See docs/CLIENT-PROFILES.md for mitigation options."
         )
 
     # ------------------------------------------------------------------

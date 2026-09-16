@@ -15,6 +15,7 @@ if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
         allow_module_level=True,
     )
 
+from tests._client_registry import ACTIVE_CLIENT_IDS
 from trw_mcp.models.config import TRWConfig, resolve_client_profile
 from trw_mcp.models.config._client_profile import CeremonyWeights, WriteTargets
 
@@ -381,10 +382,7 @@ def _rendered_surface_for(client_id: str) -> str:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "client_id",
-    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
-)
+@pytest.mark.parametrize("client_id", ACTIVE_CLIENT_IDS)
 def test_delegation_block_present_iff_profile_flag_true(client_id: str) -> None:
     """Every client's rendered instruction surface carries the delegation
     block if and only if its own profile's ``include_delegation`` is True.
@@ -406,10 +404,7 @@ def test_delegation_block_present_iff_profile_flag_true(client_id: str) -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    "client_id",
-    ["claude-code", "opencode", "cursor-ide", "cursor-cli", "codex", "copilot", "antigravity-cli"],
-)
+@pytest.mark.parametrize("client_id", ACTIVE_CLIENT_IDS)
 def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: str) -> None:
     """``trw_profile_explain``'s ``delegation_enabled`` must agree with what
     is actually rendered (the P8 attribution check) — a label with no

@@ -367,8 +367,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
             # PRD-IMPROVE-MCP-04 FR1: trim the payload to compact-by-default. Caps
             # the learnings list to top-K, folds the diagnostic sub-blocks into a
-            # one-line health_summary, and records payload_token_estimate so the
-            # token-cost reduction is measurable. verbose=True is a pass-through.
+            # one-line health_summary. verbose=True is a pass-through.
             # Fail-open inside trim_session_start_payload: never drops run/error
             # fields, so resume correctness is preserved.
             logged_learnings_count = int(str(results.get("learnings_count", 0)))

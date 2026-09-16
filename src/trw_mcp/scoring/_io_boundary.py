@@ -54,6 +54,8 @@ from trw_mcp.scoring._io_sqlite_sync import (
 from trw_mcp.scoring._io_sqlite_sync import (
     _sync_to_sqlite as _sync_to_sqlite,
 )
+from trw_mcp.scoring._yaml_id_index import _build_yaml_path_index as _build_yaml_path_index
+from trw_mcp.scoring._yaml_id_index import _read_learning_id as _read_learning_id
 
 logger = structlog.get_logger(__name__)
 
@@ -84,51 +86,62 @@ class _ScoringConfig(Protocol):
     runs_root: str
 
 
-def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
-    """Read a YAML entry id, returning None when the entry is unreadable."""
-    try:
-        data = reader.read_yaml(yaml_file)
-    except Exception:  # justified: fail-open, skip unreadable entries during index build
-        logger.debug("yaml_path_index_entry_skipped", path=str(yaml_file), exc_info=True)
-        return None
+#: How many times its own build cost a cache must survive before expiring.
+#: A TTL shorter than the build is not a cache at all -- every lookup finds an
+#: expired index, rebuilds it, and the rebuild is stale before it returns.
+_YAML_INDEX_MIN_LIFETIME_RATIO = 10.0
 
-    lid = data.get("id")
-    return lid if isinstance(lid, str) and lid else None
+#: Seconds the last build took, used to widen the TTL on a store big enough
+#: that the fixed TTL cannot hold it.
+_yaml_path_index_build_seconds: float = 0.0
 
 
-def _build_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
-    """Scan entries_dir once and build {learning_id -> yaml_path} map.
+def _effective_yaml_index_ttl() -> float:
+    """The TTL actually enforced, never shorter than the build can sustain.
 
-    Reads the ``id`` field from each YAML file. Skips files that fail
-    to parse. This is O(N) but runs once per TTL window instead of
-    once per lookup (which was O(M*N) total).
+    This store reached 6,805 entries, where the build took 32 s against a 30 s
+    TTL: the index expired BEFORE it finished being built, so a caller looping
+    over ids rebuilt the whole store per id and a single trw_deliver blocked the
+    server for tens of minutes. A fixed TTL silently becomes a no-op cache at
+    whatever size crosses it, with no error and no log -- it just gets slower.
+    Scaling the floor with the measured build cost removes the cliff instead of
+    moving it.
     """
-    from trw_mcp.state._helpers import iter_yaml_entry_files
-    from trw_mcp.state.persistence import FileStateReader
-
-    index: dict[str, Path] = {}
-    reader = FileStateReader()
-    for yaml_file in iter_yaml_entry_files(entries_dir):
-        lid = _read_learning_id(reader, yaml_file)
-        if lid is not None:
-            index[lid] = yaml_file
-    return index
+    return max(_YAML_INDEX_TTL, _yaml_path_index_build_seconds * _YAML_INDEX_MIN_LIFETIME_RATIO)
 
 
 def _get_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
     """Return the cached YAML path index, rebuilding if stale."""
     global _yaml_path_index, _yaml_path_index_dir, _yaml_path_index_ts
+    global _yaml_path_index_build_seconds
     now = time.monotonic()
-    if _yaml_path_index_dir == entries_dir and now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
+    ttl = _effective_yaml_index_ttl()
+    if _yaml_path_index_dir == entries_dir and now - _yaml_path_index_ts < ttl and _yaml_path_index:
         return _yaml_path_index
     with _yaml_path_index_lock:
         # Double-check after acquiring lock
-        if _yaml_path_index_dir == entries_dir and now - _yaml_path_index_ts < _YAML_INDEX_TTL and _yaml_path_index:
+        ttl = _effective_yaml_index_ttl()
+        if _yaml_path_index_dir == entries_dir and now - _yaml_path_index_ts < ttl and _yaml_path_index:
             return _yaml_path_index
+        started = time.monotonic()
         _yaml_path_index = _build_yaml_path_index(entries_dir)
+        _yaml_path_index_build_seconds = time.monotonic() - started
         _yaml_path_index_dir = entries_dir
-        _yaml_path_index_ts = now
-        logger.debug("yaml_path_index_built", entries=len(_yaml_path_index))
+        _yaml_path_index_ts = time.monotonic()
+        logger.debug(
+            "yaml_path_index_built",
+            entries=len(_yaml_path_index),
+            build_seconds=round(_yaml_path_index_build_seconds, 3),
+        )
+        if _yaml_path_index_build_seconds > _YAML_INDEX_TTL:
+            logger.warning(
+                "yaml_path_index_build_exceeds_ttl",
+                entries=len(_yaml_path_index),
+                build_seconds=round(_yaml_path_index_build_seconds, 3),
+                fixed_ttl=_YAML_INDEX_TTL,
+                effective_ttl=round(_effective_yaml_index_ttl(), 3),
+                impact="the fixed TTL alone would rebuild on every lookup; the floor was widened",
+            )
         return _yaml_path_index
 
 
@@ -138,6 +151,7 @@ def _reset_yaml_path_index() -> None:
     with _yaml_path_index_lock:
         _yaml_path_index = {}
         _yaml_path_index_dir = None
+        globals()["_yaml_path_index_build_seconds"] = 0.0
         _yaml_path_index_ts = 0.0
 
 

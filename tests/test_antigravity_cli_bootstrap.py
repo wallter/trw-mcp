@@ -145,7 +145,22 @@ class TestAntigravityCliInstructions:
         assert "TRW Framework Integration" in content
         assert "<!-- trw:antigravity:start -->" in content
         assert "<!-- trw:antigravity:end -->" in content
-        assert "@trw-explorer" in content
+
+        # Subagent parity, DERIVED. This used to assert `@trw-explorer`, an
+        # agent name retired with the pre-PRD-CORE-252 templates: the pin kept a
+        # promise alive that no install has ever been able to keep. Assert
+        # against the registry destination and the bundled corpus instead, so a
+        # renamed agent or a moved destination fails here rather than shipping a
+        # dangling reference into ANTIGRAVITY.md.
+        from trw_mcp.agents.agent_formats import agent_format_for
+        from trw_mcp.state.claude_md.renderers._review_and_opencode import _bundled_agent_stems
+
+        stems = _bundled_agent_stems()
+        assert len(stems) >= 11, f"derived only {len(stems)} bundled agent(s) — the check would be near-vacuous"
+        assert f"{agent_format_for('antigravity-cli').destination_dir}/" in content
+        for stem in stems:
+            assert f"@{stem}" in content, f"ANTIGRAVITY.md never names the installed agent {stem}"
+        assert "@trw-explorer" not in content, "the retired trw-explorer name is back in the instruction carrier"
 
     def test_instructions_smart_merge(self, fake_git_repo: Path) -> None:
         generate_antigravity_instructions(fake_git_repo)

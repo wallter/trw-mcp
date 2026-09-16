@@ -166,6 +166,22 @@ def handle_cross_model_mode(
     configuration intent (NFR02).
     """
     diff = _helpers._get_git_diff()
+    if diff is None:
+        # git could not be run, so the diff is UNKNOWN rather than empty. Scoring
+        # here would emit a verdict about a tree that was never read.
+        #
+        # This is the THIRD entry point, and it was the one that did not check.
+        # `elif not diff:` below treats None as REASON_NO_DIFF — "no uncommitted
+        # changes" — and degrades to the same-family fallback over `diff or ""`,
+        # which finds nothing in an empty string and returns verdict="pass". The
+        # degradation path is deliberate and correct for every OTHER reason token;
+        # it is wrong for this one, because "could not read" is not a reason to
+        # fall back to a narrower review, it is a reason to have no verdict.
+        raise _helpers.ReviewDiffUnavailableError(
+            "git diff could not be run, so there is nothing to review against. "
+            "A verdict is withheld rather than reporting a clean review of an unread tree."
+        )
+
     cross_model_skipped = False
     cross_model_findings: list[dict[str, str]] = []
     # Determine the degradation reason (None => cross-family realized).
@@ -248,8 +264,12 @@ def handle_cross_model_mode(
         single_family_caveat = _build_single_family_caveat(
             reason_token or REASON_CROSS_MODEL_DISABLED, config.cross_model_provider
         )
+        # `diff or ""` is safe here and nowhere else: the review entry points raise
+        # ReviewDiffUnavailableError before reaching this path, so a None would mean
+        # a caller bypassed them. Narrowed explicitly so the type checker sees the
+        # invariant rather than having it asserted in a comment alone.
         fallback_findings, honeypots_present, auto_analysis_limited, limited_reason = _same_family_fallback(
-            diff, config
+            diff or "", config
         )
         same_family_findings_count = len(fallback_findings)
         verdict_findings = fallback_findings

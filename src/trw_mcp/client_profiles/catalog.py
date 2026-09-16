@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from trw_mcp.models.config import resolve_client_profile
+from trw_mcp.models.config import builtin_client_ids, resolve_client_profile, retired_client_ids
 from trw_mcp.models.config._client_profile import ClientProfile
 from trw_mcp.models.config._defaults import DEFAULT_NUDGE_BUDGET_CHARS
 
@@ -15,20 +15,16 @@ from trw_mcp.models.config._defaults import DEFAULT_NUDGE_BUDGET_CHARS
 # NOT "supported": the documentation-facing ``build_client_profile_rows``
 # iterates ``_ACTIVE_CLIENT_ORDER`` (retired ids excluded) so retired clients
 # never appear as active/documented profiles.
-_CLIENT_ORDER: tuple[str, ...] = (
-    "claude-code",
-    "opencode",
-    "cursor-ide",
-    "cursor-cli",
-    "codex",
-    "copilot",
-    "antigravity-cli",
-    "aider",
-)
+#
+# DERIVED (2026-09-12): active ids come from the profile registry in registry
+# order, retired ids are appended. It was a hand-written 8-tuple, and an eighth
+# profile added to the registry alone would have been absent from BOTH
+# consumers at once -- missing from the documented profile matrix and, worse,
+# missing from ``uninstall_surfaces()``, so ``trw-mcp uninstall`` would report
+# success while leaving that client's whole config tree on disk.
+_RETIRED_CLIENTS: frozenset[str] = retired_client_ids()
 
-# Retired client identifiers — retained in _CLIENT_ORDER only for uninstall
-# surface cleanup; excluded from every "supported/documented" consumer.
-_RETIRED_CLIENTS: frozenset[str] = frozenset({"aider"})
+_CLIENT_ORDER: tuple[str, ...] = (*builtin_client_ids(), *sorted(_RETIRED_CLIENTS))
 
 # Active (installable, documented) client order — retired ids removed.
 _ACTIVE_CLIENT_ORDER: tuple[str, ...] = tuple(c for c in _CLIENT_ORDER if c not in _RETIRED_CLIENTS)

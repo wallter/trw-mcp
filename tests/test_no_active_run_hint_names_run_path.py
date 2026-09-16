@@ -134,3 +134,13 @@ def test_other_state_errors_are_not_classified_as_no_active_run(tmp_path: Path) 
     from trw_mcp.state._no_active_run import is_no_active_run
 
     assert is_no_active_run(StateError("something else", path=str(tmp_path))) is False
+
+
+def test_shared_hint_does_not_advertise_run_path_on_every_call() -> None:
+    """Startup shares this hint but does not accept a run_path parameter."""
+    from trw_mcp.tools._ceremony_runtime_helpers import _no_active_run_hint
+
+    hint = _no_active_run_hint([])
+    assert "to this call" not in hint
+    assert "trw_checkpoint" in hint
+    assert "accept" in hint

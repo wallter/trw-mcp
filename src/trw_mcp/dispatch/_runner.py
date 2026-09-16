@@ -28,6 +28,7 @@ import structlog
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._env import build_subprocess_env
 from trw_mcp.dispatch._normalize import normalize_output
+from trw_mcp.dispatch._process_identity import capture_identity, signal_group
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
 logger = structlog.get_logger(__name__)
@@ -59,15 +60,16 @@ def _cap_output(text: str) -> str:
     return text[:_MAX_OUTPUT_CHARS] + f"\n…[truncated {dropped} chars]"
 
 
-def _kill_tree(proc: subprocess.Popen[str]) -> None:
-    """Kill *proc* and its entire process group (POSIX) or just the child.
+def _kill_tree(proc: subprocess.Popen[str], identity: dict[str, str | int] | None = None) -> None:
+    """Request a verified group kill (POSIX) or direct child kill elsewhere.
 
+    Missing or mismatched identity refuses group signaling.
     Wrapped so a race where the process already exited (``ProcessLookupError``)
     is benign — there is nothing left to kill.
     """
     try:
         if _POSIX:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            signal_group(identity, signal.SIGKILL)
         else:  # pragma: no cover - exercised only on non-POSIX platforms
             proc.kill()
     except (ProcessLookupError, OSError):  # pragma: no cover - benign race
@@ -177,15 +179,24 @@ def dispatch(
             stderr=f"Failed to launch {req.client!r}: {exc}",
         )
 
+    identity = capture_identity(proc.pid) if _POSIX else None
     if pid_callback is not None:
         pid_callback(proc.pid)
 
     try:
         raw_stdout, raw_stderr = proc.communicate(timeout=req.timeout_s)
     except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        # Drain whatever the (now dead) tree already produced.
-        raw_stdout, raw_stderr = proc.communicate()
+        _kill_tree(proc, identity)
+        # Bounded drain: refusal or escaped descendants can leave writers alive.
+        try:
+            raw_stdout, raw_stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            # A refused kill or escaped descendant must not hang the caller.
+            raw_stdout, raw_stderr = "", "Dispatch cleanup incomplete; process may still be running."
+            logger.warning("dispatch_cleanup_incomplete", pid=proc.pid)
+            for stream in (proc.stdout, proc.stderr):
+                if stream is not None:
+                    stream.close()
         timed_out = True
         exit_code = None
     else:

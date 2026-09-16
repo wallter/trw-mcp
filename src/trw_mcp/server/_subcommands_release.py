@@ -29,7 +29,6 @@ from trw_mcp.server._version_status_layers import (
 )
 from trw_mcp.server._version_status_manifests import (
     PACKAGE_JSON_KEYS,
-    PACKAGE_KEY_MEMORY_TS,
     PACKAGE_KEY_TRW_MCP,
     PACKAGE_KEY_TRW_MEMORY,
     PYPROJECT_PACKAGE_KEYS,
@@ -50,7 +49,6 @@ logger = structlog.get_logger(__name__)
 
 __all__ = [
     "PACKAGE_JSON_KEYS",
-    "PACKAGE_KEY_MEMORY_TS",
     "PACKAGE_KEY_TRW_MCP",
     "PACKAGE_KEY_TRW_MEMORY",
     "PYPROJECT_PACKAGE_KEYS",

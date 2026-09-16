@@ -156,17 +156,22 @@ def test_hook_exits_zero_on_valid_apply_patch_input(tmp_path: Path) -> None:
     assert data.get("continue") is True
 
 
-def test_hook_suppresses_non_matching_tool(tmp_path: Path) -> None:
-    """FR08: non-matching tool name → {"continue": true, "suppressOutput": true}."""
+@pytest.mark.parametrize("delivery", ["stdin", "env"])
+@pytest.mark.parametrize("tool_name", ["ReadFile", "exec_command", "mcp__trw__trw_status", ""])
+def test_hook_suppresses_non_matching_tool(tmp_path: Path, tool_name: str, delivery: str) -> None:
+    """Ignored tools exit silently; Codex rejects PostToolUse suppressOutput."""
     from trw_mcp.channels.codex._post_tool_use_telemetry import install_hook_script
 
     install_hook_script(tmp_path)
     hook_path = tmp_path / ".codex" / "hooks" / "trw_post_edit_telemetry.py"
 
-    hook_input = json.dumps({"tool_name": "ReadFile"})
-    env = {"PATH": "/usr/bin:/bin", "CODEX_HOOK_INPUT": hook_input}
+    hook_input = json.dumps({"tool_name": tool_name})
+    env = {"PATH": "/usr/bin:/bin"}
+    if delivery == "env":
+        env["CODEX_HOOK_INPUT"] = hook_input
     result = subprocess.run(
         [sys.executable, str(hook_path)],
+        input=hook_input if delivery == "stdin" else "",
         capture_output=True,
         text=True,
         timeout=10,
@@ -174,9 +179,9 @@ def test_hook_suppresses_non_matching_tool(tmp_path: Path) -> None:
         cwd=str(tmp_path),
     )
     assert result.returncode == 0
-    data = json.loads(result.stdout.strip())
-    assert data.get("continue") is True
-    assert data.get("suppressOutput") is True
+    assert result.stdout == ""
+    assert result.stderr == ""
+    assert not (tmp_path / ".trw" / "telemetry" / "channel-events.jsonl").exists()
 
 
 # ---------------------------------------------------------------------------

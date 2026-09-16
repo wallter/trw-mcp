@@ -16,29 +16,38 @@ class TestEmbedHealthAdvisory:
     """FR01: check_embeddings_status returns advisory when embeddings unavailable."""
 
     def test_advisory_when_enabled_but_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """embeddings_enabled=True but embedder=None → advisory with install hint."""
-        from trw_mcp.state import _memory_connection, memory_adapter
+        """embeddings_enabled=True but no embedder -> advisory naming the install.
 
-        # Patch the delegated implementation to return the expected result directly,
-        # since the real impl reads config from _memory_connection, not memory_adapter.
-        # ``memory_adapter.check_embeddings_status`` re-exports the
-        # ``_memory_recovery`` wrapper, which calls
-        # ``_memory_connection.check_embeddings_status`` as its impl.
-        monkeypatch.setattr(
-            _memory_connection,
-            "check_embeddings_status",
-            lambda **_kw: {
-                "enabled": True,
-                "available": False,
-                "advisory": "Embeddings enabled but sqlite-vec unavailable. pip install trw-memory[embeddings]",
-            },
+        This used to patch ``_memory_connection.check_embeddings_status`` itself
+        with a lambda returning a hardcoded dict, then assert that its own
+        lambda's strings came back. The advisory logic FR01 exists to pin was
+        therefore never executed: the test passed with the real implementation
+        deleted. It now drives ``build_embeddings_status``, which takes its
+        collaborators as parameters, so the real branch runs against an absent
+        embedder with nothing about the outcome supplied by the test.
+        """
+        from trw_mcp.models.config import get_config
+        from trw_mcp.state._memory_embedding_status import build_embeddings_status
+
+        monkeypatch.setattr(get_config(), "embeddings_enabled", True, raising=False)
+
+        result = build_embeddings_status(
+            allow_initialize=True,
+            coverage_probe=False,
+            embed_failures=0,
+            embedder_checked=True,
+            embedder_unavailable_reason="sentence-transformers is not installed",
+            get_embedder=lambda: None,
+            get_initialized_embedder=lambda: None,
+            peek_backend=lambda: None,
+            append_wal_health=lambda _result: None,
+            logger=MagicMock(),
         )
-
-        result = memory_adapter.check_embeddings_status()
 
         assert result["enabled"] is True
         assert result["available"] is False
         advisory = str(result.get("advisory", ""))
+        assert advisory, "an enabled-but-unavailable embedder must produce an advisory"
         assert "pip install" in advisory or "trw-memory" in advisory, (
             f"Advisory must include install instructions, got: {advisory!r}"
         )

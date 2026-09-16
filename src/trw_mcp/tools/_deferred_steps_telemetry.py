@@ -327,7 +327,12 @@ def _step_ceremony_feedback(
             build_passed=build_passed,
             coverage_delta=coverage_delta,
             critical_findings=critical_findings,
-            mutation_score_ok=True,  # OQ-002: keep True until mutmut integration
+            # OQ-002: mutmut is not integrated, so this is NOT MEASURED. It used to
+            # be passed as a literal True, which scored the component's full 0.2 for
+            # a check that never ran. None preserves that numeric contribution (so
+            # behaviour is unchanged) while recording it as unmeasured, which is what
+            # the reduction proposal now shows to the human approving it.
+            mutation_score_ok=None,
             current_tier=current_tier,
             run_path=run_p,
             session_id=session_id or agent_id,

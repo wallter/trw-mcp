@@ -73,9 +73,7 @@ def _drive(
     run_calls: list[list[str]] = []
     prompt_calls: list[tuple[list[str], list[str], list[str] | None]] = []
 
-    def _fake_prompt(
-        clis: list[str], ides: list[str], prior_targets: list[str] | None = None
-    ) -> list[str] | None:
+    def _fake_prompt(clis: list[str], ides: list[str], prior_targets: list[str] | None = None) -> list[str] | None:
         prompt_calls.append((clis, ides, prior_targets))
         return prompt_choice
 
@@ -83,9 +81,7 @@ def _drive(
     monkeypatch.setattr(installer, "_detect_project_ides", lambda _p: list(detected_ides or []))
     monkeypatch.setattr(installer, "_prompt_ide_selection", _fake_prompt)
     monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
-    monkeypatch.setattr(
-        installer, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True
-    )
+    monkeypatch.setattr(installer, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
     monkeypatch.setattr(installer, "_provision_user_scope", lambda _c: False)
 
     resolved = installer.phase_project_setup(

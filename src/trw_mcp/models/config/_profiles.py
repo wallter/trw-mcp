@@ -375,6 +375,74 @@ _PROFILES: dict[str, ClientProfile] = {
 _RETIRED_PROFILES: frozenset[str] = frozenset({"aider"})
 
 
+# Fail-closed floor for :func:`builtin_client_ids`. Every id TRW has shipped as
+# an active profile and not since removed appears here, so a derivation that
+# silently returns fewer ids than this cannot reach a caller.
+#
+# This is deliberately NOT a second registry: it is never iterated for content
+# and never consulted while the derivation is healthy. It exists because the
+# consumers of ``builtin_client_ids()`` are completeness checks (install
+# dispatch, uninstall surfaces, agent-format parity, doc rows), and a
+# completeness check handed an empty or truncated population is a VACUOUS PASS
+# -- strictly worse than the hand-maintained lists this replaces, which at
+# least failed loudly. Removing a client (as ``gemini`` was on 2026-07-24) is
+# an explicit edit here in the same change.
+_BUILTIN_CLIENT_FLOOR: tuple[str, ...] = (
+    "claude-code",
+    "opencode",
+    "cursor-ide",
+    "cursor-cli",
+    "codex",
+    "copilot",
+    "antigravity-cli",
+)
+
+
+def builtin_client_ids() -> tuple[str, ...]:
+    """Active built-in client-profile ids, in registry order.
+
+    THE authoritative enumeration of the client set. Every consumer that lists
+    clients in order to iterate, validate, or assert completeness must read it
+    from here rather than restate it -- a restated list cannot notice a client
+    it was never told about (three separate defects of that shape shipped in
+    this repo, see ``docs/CLIENT-PROFILES.md``).
+
+    Retired ids (``aider``) are excluded: they are recognised for uninstall and
+    migration only, never installable. Use :func:`retired_client_ids` for those.
+
+    Fail-closed: when the registry yields fewer ids than
+    ``_BUILTIN_CLIENT_FLOOR`` (an import-order accident, a partially
+    initialised module, a bad merge), the missing floor ids are added back and
+    the shortfall is logged at error level. The result is never empty and never
+    a proper subset of the floor.
+    """
+    derived = tuple(_PROFILES)
+    missing = tuple(client_id for client_id in _BUILTIN_CLIENT_FLOOR if client_id not in _PROFILES)
+    if not missing:
+        return derived
+    logger.error(
+        "client_registry_derivation_below_floor",
+        derived=derived,
+        missing=missing,
+        message=(
+            "The built-in client-profile registry resolved below its known floor. "
+            "Falling back to the floor ids so completeness checks do not pass vacuously."
+        ),
+    )
+    return (*derived, *missing)
+
+
+def retired_client_ids() -> frozenset[str]:
+    """Client ids retained for uninstall/migration cleanup only.
+
+    Disjoint from :func:`builtin_client_ids` by construction: these ids resolve
+    to the claude-code fallback with a ``client_profile_retired`` warning and are
+    never installable. ``gemini`` is absent because it was REMOVED outright on
+    2026-07-24 rather than retired.
+    """
+    return _RETIRED_PROFILES
+
+
 def resolve_client_profile(
     client_id: str,
     model_tier: ModelTier | None = None,

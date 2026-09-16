@@ -46,9 +46,7 @@ def test_no_env_var_returns_sys_executable(installer: ModuleType, monkeypatch: p
     assert installer.check_python_version(installer.UI()) == sys.executable
 
 
-def test_valid_target_python_is_honored(
-    installer: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_valid_target_python_is_honored(installer: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A real, executable, sufficiently-new interpreter wins over sys.executable.
 
     Exercises the REAL subprocess probe (no mocking) against a fake python
@@ -57,8 +55,7 @@ def test_valid_target_python_is_honored(
     """
     fake_python = tmp_path / "fake-python"
     fake_python.write_text(
-        "#!/usr/bin/env bash\n"
-        'if [ "$1" = "-c" ]; then echo "3.12"; fi\n',
+        '#!/usr/bin/env bash\nif [ "$1" = "-c" ]; then echo "3.12"; fi\n',
         encoding="utf-8",
     )
     fake_python.chmod(0o755)
@@ -93,8 +90,7 @@ def test_target_below_min_version_falls_back(
     """A TRW_TARGET_PYTHON reporting an unsupported version is rejected, not blindly trusted."""
     old_python = tmp_path / "old-python"
     old_python.write_text(
-        "#!/usr/bin/env bash\n"
-        'if [ "$1" = "-c" ]; then echo "3.8"; fi\n',
+        '#!/usr/bin/env bash\nif [ "$1" = "-c" ]; then echo "3.8"; fi\n',
         encoding="utf-8",
     )
     old_python.chmod(0o755)

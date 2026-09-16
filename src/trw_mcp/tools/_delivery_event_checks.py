@@ -193,10 +193,63 @@ def _read_run_yaml(run_path: Path, reader: FileStateReader) -> dict[str, object]
     return {}
 
 
+def run_yaml_is_readable(run_path: Path, reader: FileStateReader) -> bool:
+    """Could ``meta/run.yaml`` be read at all?
+
+    Deliberately SEPARATE from :func:`_read_complexity_class` rather than folded
+    into one ``(class, readable)`` call. Tests across this package monkeypatch
+    ``_delivery_helpers._read_complexity_class`` to drive the gate, and a combined
+    function would silently bypass every one of those patches — the callers would
+    keep type-checking and quietly stop honouring the fixture. The facade
+    indirection is load-bearing, not style.
+    """
+    run_yaml_path = run_path / "meta" / "run.yaml"
+    if not run_yaml_path.exists():
+        return False
+    try:
+        reader.read_yaml(run_yaml_path)
+    except Exception:  # trw-fail-silent-allow: False IS the answer this predicate exists to give — "run.yaml could not be read" — and the caller escalates on it rather than proceeding; the failure is logged at warning
+        logger.warning("run_yaml_read_failed", run_path=str(run_path), exc_info=True)
+        return False
+    return True
+
+
+def _read_complexity_class_state(run_path: Path, reader: FileStateReader) -> tuple[str, bool]:
+    """``(complexity_class, run_yaml_was_readable)``.
+
+    The second element exists because ``""`` was answering two different
+    questions. ``_read_run_yaml`` fails open to ``{}``, so an absent or malformed
+    run.yaml produced the same empty class as a run that simply carries no
+    ``complexity_class`` key — and every caller tests membership in
+    ``("STANDARD", "COMPREHENSIVE")``, which ``""`` can never satisfy. The
+    unreadable case therefore took the LENIENT branch at every decision point.
+
+    That is a sampling bias, not just a fall-through: a run whose own metadata
+    cannot be read is not a random run, it is a broken one, and broken runs are
+    the population a delivery gate exists to catch. The fail-open comment says
+    the read "must not block delivery"; the effect was to UNBLOCK a delivery that
+    a review had explicitly blocked.
+
+    Reported by a cross-family sweep 2026-09-12 with a measured downgrade table.
+    """
+    run_yaml_path = run_path / "meta" / "run.yaml"
+    if not run_yaml_path.exists():
+        return "", False
+    try:
+        run_data = reader.read_yaml(run_yaml_path)
+    except Exception:  # justified: fail-open — the READABILITY is returned, not swallowed
+        logger.warning("run_yaml_read_failed", run_path=str(run_path), exc_info=True)
+        return "", False
+    return str(run_data.get("complexity_class", "")), True
+
+
 def _read_complexity_class(run_path: Path, reader: FileStateReader) -> str:
-    """Read the complexity_class from run.yaml, or return empty string."""
-    run_data = _read_run_yaml(run_path, reader)
-    return str(run_data.get("complexity_class", ""))
+    """Read the complexity_class from run.yaml, or return empty string.
+
+    Kept as the patchable single source of the CLASS. Readability is a separate
+    question, answered by :func:`run_yaml_is_readable`.
+    """
+    return _read_complexity_class_state(run_path, reader)[0]
 
 
 def _check_complexity_drift(

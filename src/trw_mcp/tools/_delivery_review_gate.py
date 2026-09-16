@@ -157,6 +157,31 @@ def _review_nudge_for_run(run_path: Path, reader: FileStateReader) -> str | None
     return None
 
 
+#: Reason token every unreadable-complexity path carries, so a caller can tell
+#: this case from the several other causes that also produce a warning. The
+#: outcome object has three fields and many causes collapse into each, so a test
+#: that checks only "which field is set" cannot discriminate them.
+COMPLEXITY_UNREADABLE_REASON = "complexity_unreadable"
+
+
+def _unreadable_complexity_warning(label: str) -> str:
+    """Say that the gate could not establish the run's complexity.
+
+    Deliberately a WARNING rather than a block. Blocking on an unreadable
+    run.yaml inverts the risk — delivery becomes impossible when one file is
+    corrupt, and the pressure becomes to delete or forge run metadata to get
+    past it. The defect was never that the lenient path ran; it was that the
+    lenient path ran SILENTLY, so an operator could not see that the gate had
+    been downgraded by a condition correlated with the run being broken.
+    """
+    return (
+        f"{label}, but this run's complexity could not be established: "
+        f"meta/run.yaml is missing or unreadable ({COMPLEXITY_UNREADABLE_REASON}). "
+        "The review gate applied its lenient path because it could not classify the run — "
+        "it did NOT confirm that leniency is correct here. Repair meta/run.yaml and re-check."
+    )
+
+
 def _check_review_gate(
     run_path: Path,
     reader: FileStateReader,
@@ -221,7 +246,12 @@ def evaluate_review_gate(
             critical = sum(1 for finding in typed_receipt.findings if finding.severity == "critical")
             if verdict == "block" and critical > 0:
                 complexity = _dh._read_complexity_class(run_path, reader)
-                if complexity in ("STANDARD", "COMPREHENSIVE"):
+                readable = bool(complexity) or _dh.run_yaml_is_readable(run_path, reader)
+                if not readable:
+                    warning = _unreadable_complexity_warning(
+                        f"Review verdict is 'block' with {critical} critical finding(s)"
+                    )
+                elif complexity in ("STANDARD", "COMPREHENSIVE"):
                     block = (
                         f"Review verdict is 'block' with {critical} critical finding(s) "
                         f"(complexity: {complexity}). Delivery blocked. Fix the critical "
@@ -242,7 +272,12 @@ def evaluate_review_gate(
                 critical = int(str(review_data.get("critical_count", 0)))
                 if verdict == "block" and critical > 0:
                     complexity = _dh._read_complexity_class(run_path, reader)
-                    if complexity in ("STANDARD", "COMPREHENSIVE"):
+                    readable = bool(complexity) or _dh.run_yaml_is_readable(run_path, reader)
+                    if not readable:
+                        warning = _unreadable_complexity_warning(
+                            f"Review verdict is 'block' with {critical} critical finding(s)"
+                        )
+                    elif complexity in ("STANDARD", "COMPREHENSIVE"):
                         block = (
                             f"Review verdict is 'block' with {critical} critical finding(s) "
                             f"(complexity: {complexity}). Delivery blocked. Fix the critical "
@@ -262,6 +297,7 @@ def evaluate_review_gate(
         return ReviewGateOutcome(block=block, warning=warning, advisory=advisory, evidence=evidence)
 
     complexity = _dh._read_complexity_class(run_path, reader)
+    complexity_readable = bool(complexity) or _dh.run_yaml_is_readable(run_path, reader)
     missing_label = (
         _expired_review_label(expired_receipt_id)
         if expired_receipt_id is not None
@@ -280,6 +316,10 @@ def evaluate_review_gate(
                 f"{missing_label} before delivery (complexity: {complexity}). REVIEW is mandatory "
                 "for STANDARD+ work; run a substantive trw_review or /trw-audit."
             )
+    elif not complexity_readable:
+        warning = _unreadable_complexity_warning(missing_label)
     else:
         advisory = f"{missing_label} before delivery. Consider running a real reviewer or supplying reviewer findings."
+    if not complexity_readable:
+        evidence["complexity_unreadable"] = True
     return ReviewGateOutcome(block=block, warning=warning, advisory=advisory, evidence=evidence)

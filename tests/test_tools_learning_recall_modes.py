@@ -66,12 +66,18 @@ class TestRecallUtilityRanking:
         )
 
         entries_dir = _entries_dir(tmp_path)
-        for entry_file in entries_dir.glob("*.yaml"):
-            data = reader.read_yaml(entry_file)
-            if data.get("id") == result["learning_id"]:
-                # New entries should have q_value defaulting to impact
-                assert "q_value" in data or True  # field may not be written until recall
-                break
+        written = [
+            data
+            for data in (reader.read_yaml(f) for f in entries_dir.glob("*.yaml"))
+            if data.get("id") == result["learning_id"]
+        ]
+        # The loop this replaces could match zero files and still pass, and its
+        # one assertion was `assert "q_value" in data or True` -- a tautology.
+        # Pin that the entry was found at all before asserting anything about it.
+        assert len(written) == 1, f"trw_learn reported {result['learning_id']} but wrote no such entry"
+        data = written[0]
+        assert "q_value" in data, "q_value is absent from a newly written entry"
+        assert "q_observations" in data, "q_observations is absent from a newly written entry"
 
 
 class TestRecallCompactMode:

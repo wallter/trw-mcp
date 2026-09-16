@@ -497,7 +497,10 @@ def finalize_session_start(
     cast("MutableMapping[str, object]", results)["connection_fingerprint"] = build_connection_fingerprint()
 
     if bool(results.get("response_compacted")) or config.effective_ceremony_mode == "light":
-        results["framework_reminder"] = "Call trw_deliver() when done to persist your work."
+        results["framework_reminder"] = (
+            "Preserve unfinished work with trw_checkpoint() or a durable handoff. "
+            "Use trw_deliver() only to accept completed work under delivery gates."
+        )
     else:
         results["framework_reminder"] = (
             "Read .trw/frameworks/FRAMEWORK-CORE.md — it defines the methodology "

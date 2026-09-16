@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 class WalCheckpointResultDict(TypedDict, total=False):
@@ -428,6 +428,13 @@ class CeremonyFeedbackEntry(TypedDict):
     task_name: str
     task_class: str
     completed_at: str
+    #: Weight of ``outcome_quality`` contributed by components that were NOT
+    #: measured. ``outcome_quality`` is a weighted sum, and a component nobody
+    #: computed used to be passed in as a literal ``True`` — scoring a full 0.2
+    #: for a check that never ran. NotRequired because entries written before
+    #: this field existed cannot carry it; absent means "not known", which is
+    #: itself accurate for those rows.
+    unmeasured_quality_weight: NotRequired[float]
 
 
 class EscalationResult(TypedDict):

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from tests._tools_learning_shared import (
@@ -198,9 +197,25 @@ class TestTrwRecallAccessTracking:
         assert checked, f"unmatched entry {r2['learning_id']} not found under {entries_dir}"
 
     def test_recall_no_match_no_access_update(self, tmp_path: Path) -> None:
-        """When query has no matches, no access tracking updates occur."""
+        """A query that matches nothing leaves every entry's access tracking alone.
+
+        This used to end in ``if receipt_path.exists():`` guarding its only
+        assertions, on the premise -- stated in its own comment -- that a
+        no-match recall "should still be logged (with empty matched_ids)". It is
+        not: ``state.receipts.log_recall_receipt`` has NO caller on the
+        ``trw_recall`` path at all (see the note in ``tools/learning.py``, which
+        established this while removing a ``shard_id`` argument whose docstring
+        made the same false attribution claim). So the file never existed, the
+        guard was always false, and the test asserted nothing on any run.
+
+        Rather than pin the absent receipt as correct -- it is an unexplained gap,
+        not a documented decision -- this asserts the behaviour the test is NAMED
+        for, against the same SQLite surface its sibling tests read.
+        """
+        from trw_mcp.state.memory_adapter import find_entry_by_id as adapter_find
+
         tools = _get_tools()
-        tools["trw_learn"].fn(
+        stored = tools["trw_learn"].fn(
             summary="No match access test",
             detail="Should not be accessed",
             impact=0.8,
@@ -208,12 +223,11 @@ class TestTrwRecallAccessTracking:
 
         tools["trw_recall"].fn(query="zzz_nonexistent_xyz")
 
-        receipt_path = tmp_path / _CFG.trw_dir / _CFG.learnings_dir / _CFG.receipts_dir / "recall_log.jsonl"
-        # Receipt should still be logged (with empty matched_ids)
-        if receipt_path.exists():
-            lines = receipt_path.read_text(encoding="utf-8").strip().split("\n")
-            record = json.loads(lines[-1])
-            assert len(record["matched_ids"]) == 0
+        trw_dir = tmp_path / _CFG.trw_dir
+        data = adapter_find(trw_dir, stored["learning_id"])
+        assert data is not None, "the stored entry is not in SQLite; nothing was checked"
+        assert int(str(data.get("access_count", 0))) == 0
+        assert data.get("last_accessed_at") is None
 
     def test_new_fields_default_for_existing_entries(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Entries created without new fields get defaults (lazy migration)."""

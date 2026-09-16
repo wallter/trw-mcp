@@ -52,7 +52,7 @@ class TestUpdateProjectMultiIDE:
         assert (tmp_path / ".opencode" / "commands" / "trw-deliver.md").exists()
         assert (tmp_path / ".opencode" / "agents" / "trw-implementer.md").exists()
         assert (tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md").exists()
-        assert not (tmp_path / ".opencode" / "skills" / "trw-sprint-team").exists()
+        assert not (tmp_path / ".opencode" / "skills" / "trw-audit").exists()
 
     def test_fr15_init_creates_both_ide_all(self, tmp_path: Path) -> None:
         """init_project(ide='all') creates Claude, OpenCode, and Codex artifacts."""

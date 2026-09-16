@@ -82,7 +82,7 @@ class TestOpenCodeBootstrap:
         result = install_opencode_commands(tmp_path)
         assert ".opencode/commands/trw-deliver.md" in result["created"]
         assert (tmp_path / ".opencode" / "commands" / "trw-prd-ready.md").exists()
-        assert (tmp_path / ".opencode" / "commands" / "trw-sprint-team.md").exists()
+        assert (tmp_path / ".opencode" / "commands" / "trw-reflect.md").exists()
 
     def test_opencode_agents_installed(self, tmp_path: Path) -> None:
         """PRD-CORE-252-FR04: the source is the shared bundle, not a stub directory.
@@ -112,13 +112,50 @@ class TestOpenCodeBootstrap:
     def test_opencode_skills_inventory_curated(self) -> None:
         inventory = load_opencode_skill_inventory()
         assert inventory["trw-deliver"]["disposition"] == "portable"
-        assert inventory["trw-sprint-team"]["disposition"] == "exclude"
+        # Retired 2026-09-12: the agent-team planning command surface was removed,
+        # so no shipped entry carries the "exclude" disposition any more. The
+        # inventory is still a CURATED subset rather than a mirror of the bundle --
+        # `trw-audit` is bundled but deliberately absent here -- and the exclude
+        # vocabulary itself is kept as a live control, proved by
+        # test_exclude_disposition_is_still_honored below.
+        assert "trw-sprint-team" not in inventory
+        assert "trw-audit" not in inventory
+        assert inventory and all(cfg["disposition"] in {"portable", "exclude"} for cfg in inventory.values())
+
+    def test_exclude_disposition_is_still_honored(self, tmp_path: Path) -> None:
+        """The `exclude` curation control outlives the last shipped entry using it.
+
+        `trw-sprint-team` was the only bundled skill marked `exclude`, and it was
+        retired with the agent-team planning command surface on 2026-09-12. The
+        branch that honors the disposition is a curation control, not dead code:
+        deleting it because its current population is empty would silently turn a
+        future `exclude` entry into an install. This exercises it through the
+        `data_dir` seam the installer already exposes.
+        """
+        data_dir = tmp_path / "data"
+        (data_dir / "skills" / "keep-me").mkdir(parents=True)
+        (data_dir / "skills" / "keep-me" / "SKILL.md").write_text("kept", encoding="utf-8")
+        (data_dir / "skills" / "drop-me").mkdir(parents=True)
+        (data_dir / "skills" / "drop-me" / "SKILL.md").write_text("dropped", encoding="utf-8")
+        (data_dir / "skills_inventory.yaml").write_text(
+            "version: 1\nskills:\n  keep-me:\n    disposition: portable\n  drop-me:\n    disposition: exclude\n",
+            encoding="utf-8",
+        )
+
+        target = tmp_path / "project"
+        target.mkdir()
+        result = install_opencode_skills(target, data_dir=data_dir)
+
+        assert not result["errors"]
+        assert (target / ".opencode" / "skills" / "keep-me" / "SKILL.md").is_file()
+        assert not (target / ".opencode" / "skills" / "drop-me").exists()
 
     def test_opencode_skills_installed_curated_subset(self, tmp_path: Path) -> None:
         result = install_opencode_skills(tmp_path)
         assert ".opencode/skills/trw-deliver/SKILL.md" in result["created"]
         assert (tmp_path / ".opencode" / "skills" / "trw-prd-ready" / "SKILL.md").exists()
         assert not (tmp_path / ".opencode" / "skills" / "trw-sprint-team").exists()
+        assert not (tmp_path / ".opencode" / "skills" / "trw-audit").exists()
         content = (tmp_path / ".opencode" / "skills" / "trw-deliver" / "SKILL.md").read_text(encoding="utf-8")
         assert "trw_claude_md_sync" not in content
         assert "TaskList" not in content

@@ -74,7 +74,10 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import structlog
 from typing_extensions import TypedDict
+
+logger = structlog.get_logger(__name__)
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._main import TRWConfig
@@ -135,7 +138,26 @@ def _coerce_session(raw: object) -> _SessionCounters:
 
 
 def _read_state(trw_dir: Path) -> _State:
-    """Read the on-disk state, returning ``{}`` if absent or unreadable."""
+    """Read the on-disk state, returning ``{}`` if absent or unreadable.
+
+    ABSENT and UNREADABLE both yield ``{}``, and that is deliberate here — these
+    are ephemeral nudge-fatigue counters, so a self-healing replace is the right
+    behaviour and refusing to write would leave a corrupt file suppressing the
+    nudge forever. What was NOT acceptable is that it happened in total silence:
+    this module had no logger at all.
+
+    The stakes are the whole point. Every caller does read -> increment -> write,
+    and ``_write_state`` replaces the file, so ONE torn read discards every other
+    session's counters too. Those counters are the only thing that decides
+    whether a user is ever prompted to report a bug — a streak that was about to
+    trip ``build_check_fail_threshold`` silently restarts at zero and the nudge
+    never fires. A feedback channel that quietly stops asking is indistinguishable
+    from one where nothing went wrong.
+
+    ``deferral_ledger.py`` copied this function's "read-coerce-write" shape and
+    improved on it, returning a typed ``degraded`` verdict and logging the cause;
+    this is the older copy catching up to its own descendant.
+    """
     path = _state_path(trw_dir)
     if not path.exists():
         return {}
@@ -147,6 +169,15 @@ def _read_state(trw_dir: Path) -> _State:
         # bytes from a torn write; "unreadable" in the contract above includes
         # an undecodable file, so degrade to empty rather than crash the
         # nudge-fatigue counters on the tool-call path.
+        logger.warning(
+            "feedback_nudge_state_reset",
+            path=str(path),
+            detail=(
+                "nudge-fatigue counters for ALL sessions were discarded; a streak in progress "
+                "restarts at zero, so a feedback nudge that was about to fire will not"
+            ),
+            exc_info=True,
+        )
         return {}
     if not isinstance(data, dict):
         return {}

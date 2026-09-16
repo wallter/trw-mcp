@@ -25,10 +25,12 @@ is no longer needed, independently of whether the parent ever polls the job.
 from __future__ import annotations
 
 import contextlib
+import json
 import sys
 from pathlib import Path
 
 from trw_mcp.dispatch._private_io import write_private_atomic
+from trw_mcp.dispatch._process_identity import capture_identity
 from trw_mcp.dispatch._runner import dispatch
 from trw_mcp.dispatch._types import DispatchClient, DispatchRequest, DispatchResult
 
@@ -86,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         # Best-effort: a sidecar write failure must NOT crash the job. The job
         # still completes; only a later cancel won't reach the foreign tree.
         try:
-            write_private_atomic(child_pid_path, str(pid))
+            write_private_atomic(child_pid_path, json.dumps(capture_identity(pid)))
         except OSError:
             pass
 

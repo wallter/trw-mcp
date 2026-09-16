@@ -238,7 +238,15 @@ class TestCheckDeliveryGates:
         mock_reader.read_yaml.side_effect = Exception("read error")
 
         result = check_delivery_gates(run_dir, mock_reader)
-        assert "No substantive trw_review" in str(result["review_advisory"])
+        # Everything is unreadable here, INCLUDING meta/run.yaml — which is the
+        # point of the fixture. Since 2026-09-12 the gate says so: a run whose
+        # complexity cannot be established is escalated from a quiet advisory to
+        # a warning, because the lenient path running silently was the defect.
+        # This test argued for exactly that in its own docstring, so it asserts
+        # the message and the escalation rather than a particular field.
+        assert "No substantive trw_review" in str(result["review_warning"])
+        assert "complexity_unreadable" in str(result["review_warning"])
+        assert "review_advisory" not in result
         assert "No valid content-bound BuildReceipt" in str(result["build_gate_warning"])
 
     def test_corrupt_review_yaml_is_treated_as_missing_evidence(
@@ -249,8 +257,18 @@ class TestCheckDeliveryGates:
         review_path = run_dir / "meta" / "review.yaml"
         review_path.write_text("{{invalid yaml: [", encoding="utf-8")
 
+        # Fail ONLY on review.yaml. The previous mock raised for every YAML,
+        # which made meta/run.yaml unreadable too — so the fixture was quietly
+        # testing the broken-run case as well, and the gate's new (correct)
+        # escalation for that case showed up here as a failure of a test about
+        # something else entirely.
+        def _read_yaml(path: Path) -> dict[str, object]:
+            if path.name == "review.yaml":
+                raise Exception("corrupt yaml")
+            return {"complexity_class": "MINIMAL"}
+
         mock_reader = MagicMock(spec=FileStateReader)
-        mock_reader.read_yaml.side_effect = Exception("corrupt yaml")
+        mock_reader.read_yaml.side_effect = _read_yaml
         mock_reader.exists.return_value = True
         mock_reader.read_jsonl.return_value = []
 

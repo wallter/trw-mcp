@@ -29,6 +29,8 @@ from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 from ruamel.yaml import YAML
 
+from trw_mcp.middleware._lossless_tools import LOSSLESS_COMMS_TOOLS
+
 
 def _is_empty(v: object) -> bool:
     """True for None, empty dict, or empty list. NOT for 0, False, empty string."""
@@ -116,6 +118,10 @@ class ResponseOptimizerMiddleware(Middleware):
     ) -> ToolResult:
         """Intercept tool responses to compact and re-serialize content."""
         result: ToolResult = await call_next(context)
+        if getattr(getattr(context, "message", None), "name", None) in LOSSLESS_COMMS_TOOLS:
+            # Preserve both representations, including exact floats, null
+            # cursors and empty pages. Downstream gates have already run.
+            return result
         fmt = _get_response_format()
 
         # Compact structured_content too — clients that prefer it over the

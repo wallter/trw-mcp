@@ -9,6 +9,7 @@ polls ``get_status`` until terminal.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import stat
@@ -26,6 +27,7 @@ from trw_mcp.dispatch._jobs import (
     start_background,
 )
 from trw_mcp.dispatch._private_io import write_private_atomic
+from trw_mcp.dispatch._process_identity import capture_identity
 from trw_mcp.dispatch._types import DispatchRequest, DispatchResult
 
 
@@ -210,7 +212,7 @@ def test_cancel_kills_foreign_tree_via_child_pid_sidecar(tmp_path: Path) -> None
     foreign = _sp.Popen(["sleep", "30"], start_new_session=True)
     try:
         child_pid_path = jobs_dir / "job-foreign.child.pid"
-        child_pid_path.write_text(str(foreign.pid), encoding="utf-8")
+        child_pid_path.write_text(json.dumps(capture_identity(foreign.pid)), encoding="utf-8")
 
         job = cancel_job("job-foreign", trw_dir=tmp_path)
         assert job.status == "cancelled"
@@ -284,8 +286,12 @@ def test_stuck_running_past_ttl_reaps_child_tree(tmp_path: Path) -> None:
     try:
         old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         _write_job(tmp_path, "job-stuck-kill", pid=intermediate.pid, created_at=old, timeout_s=5)
+        job_path = jobs_dir / "job-stuck-kill.json"
+        record = json.loads(job_path.read_text())
+        record["process_identity"] = capture_identity(intermediate.pid)
+        job_path.write_text(json.dumps(record))
         child_pid_path = jobs_dir / "job-stuck-kill.child.pid"
-        child_pid_path.write_text(str(foreign.pid), encoding="utf-8")
+        child_pid_path.write_text(json.dumps(capture_identity(foreign.pid)), encoding="utf-8")
 
         job = get_status("job-stuck-kill", trw_dir=tmp_path)
         assert job.status == "failed"
@@ -477,6 +483,8 @@ def test_run_job_main_writes_child_pid_via_callback(tmp_path: Path, monkeypatch:
     child_pid_path = tmp_path / "r.child.pid"
     req_path.write_text(req.model_dump_json(), encoding="utf-8")
 
+    monkeypatch.setattr(_run_job, "capture_identity", lambda pid: None)
+
     def _fake_dispatch(r: DispatchRequest, *, pid_callback: object = None) -> DispatchResult:
         # Drive the callback the way the real runner does (right after Popen).
         assert callable(pid_callback)
@@ -497,7 +505,7 @@ def test_run_job_main_writes_child_pid_via_callback(tmp_path: Path, monkeypatch:
     monkeypatch.setattr(_run_job, "dispatch", _fake_dispatch)
     rc = _run_job.main([str(req_path), str(result_path), str(child_pid_path)])
     assert rc == 0
-    assert child_pid_path.read_text(encoding="utf-8") == "4242"
+    assert json.loads(child_pid_path.read_text(encoding="utf-8")) is None  # fake PID is not owned
 
 
 def test_run_job_main_bad_args_returns_2() -> None:

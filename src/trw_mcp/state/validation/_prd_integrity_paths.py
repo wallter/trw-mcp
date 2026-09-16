@@ -12,6 +12,7 @@ import structlog
 from trw_mcp.models.config import get_config
 from trw_mcp.models.requirements import ValidationFailure
 from trw_mcp.state.validation._path_exclusions import PATH_INDEX_EXCLUDE_DIRS
+from trw_mcp.state.validation._prd_path_markers import has_trailing_planned_marker
 
 logger = structlog.get_logger(__name__)
 
@@ -100,7 +101,9 @@ def _check_repo_path_references(
     skipped_bare_refs = 0
     # One basename index PER root (lazily built on first bare lookup).
     bare_caches: list[dict[str, tuple[bool, int]]] = [{} for _ in roots]
-    for ref in _extract_repo_path_refs(content):
+    for ref, requires_existence in sorted(_repo_path_ref_existence_requirements(content).items()):
+        if not requires_existence:
+            continue
         if "/" not in ref and Path(ref).suffix in _KNOWN_SOURCE_SUFFIXES:
             resolved, count = _resolve_bare_filename_any_root(roots, ref, caches=bare_caches)
             if resolved:
@@ -172,12 +175,24 @@ def _check_repo_path_references(
 
 
 def _extract_repo_path_refs(content: str) -> list[str]:
-    refs: set[str] = set()
-    for raw in _BACKTICK_RE.findall(content):
-        candidate = _normalize_repo_path(raw)
+    """Return normalized repo-looking references, including planned ones."""
+    return sorted(_repo_path_ref_existence_requirements(content))
+
+
+def _repo_path_ref_existence_requirements(content: str) -> dict[str, bool]:
+    """Map each normalized path to whether any occurrence requires existence.
+
+    A trailing planned marker exempts only its own occurrence. Repeated paths are
+    therefore still checked when another occurrence is unmarked.
+    """
+    requirements: dict[str, bool] = {}
+    for match in _BACKTICK_RE.finditer(content):
+        candidate = _normalize_repo_path(match.group(1))
         if candidate:
-            refs.add(candidate)
-    return sorted(refs)
+            requirements[candidate] = requirements.get(candidate, False) or not has_trailing_planned_marker(
+                content, match.end()
+            )
+    return requirements
 
 
 def _normalize_repo_path(raw: str) -> str | None:

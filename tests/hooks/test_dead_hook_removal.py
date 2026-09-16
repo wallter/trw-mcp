@@ -27,10 +27,22 @@ from pathlib import Path
 
 import pytest
 
+from tests import _hook_carriers as hc
+
 pytestmark = pytest.mark.unit
 
 _SRC = Path(__file__).resolve().parents[2] / "src" / "trw_mcp"
 _HOOK_DIR = _SRC / "data" / "hooks"
+
+#: Shipped registration templates, DERIVED rather than listed. This module
+#: named ``data/settings.json`` and ``data/plugin/hooks/hooks.json`` in three
+#: separate places; a third carrier would have been invisible to all three
+#: until someone edited each copy. ``tests/_hook_carriers`` globs ``data/**``
+#: for templates that register a bundled hook as a runnable command and raises
+#: at import time if the glob collapses below the shipped floor -- without that
+#: floor, an empty carrier tuple would make every loop below iterate zero times
+#: and still report green.
+_CARRIERS = hc.HOOK_CARRIERS
 _BUNDLE_HASHES = _SRC / "data" / "bundle-hashes.json"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -65,11 +77,9 @@ def test_the_deliver_gate_still_blocks_an_unverified_deliver() -> None:
     assert "exit 2" in gate, "the deliver gate no longer blocks anything"
     assert "allow_unverified" in gate, "the documented recourse path is gone"
 
-    for template in (
-        _SRC / "data" / "settings.json",
-        _SRC / "data" / "plugin" / "hooks" / "hooks.json",
-    ):
-        assert "pre-tool-deliver-gate.sh" in template.read_text(encoding="utf-8"), (
+    assert len(_CARRIERS) >= hc.MINIMUM_HOOK_CARRIERS, f"only {len(_CARRIERS)} carrier(s) discovered"
+    for template in _CARRIERS:
+        assert "pre-tool-deliver-gate.sh" in hc.registered_in(template), (
             f"{template.name} no longer registers the gate that carries FR01's coverage"
         )
 
@@ -119,10 +129,8 @@ def test_no_deleted_hook_survives_in_any_shipping_surface(name: str) -> None:
     """The whole set, across every surface that ships or records a hook."""
     assert not (_HOOK_DIR / name).exists()
     assert name not in _bundle_hash_keys()
-    for template in (
-        _SRC / "data" / "settings.json",
-        _SRC / "data" / "plugin" / "hooks" / "hooks.json",
-    ):
+    assert len(_CARRIERS) >= hc.MINIMUM_HOOK_CARRIERS, f"only {len(_CARRIERS)} carrier(s) discovered"
+    for template in _CARRIERS:
         assert name not in template.read_text(encoding="utf-8")
 
 

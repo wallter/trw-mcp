@@ -44,6 +44,9 @@ class SyncCoordinator:
         self._sync_interval = sync_interval
         self._state_path = trw_dir / _STATE_FILE
         self._lock_path = trw_dir / _LOCK_FILE
+        #: Set when the state file EXISTS but could not be parsed. Guards
+        #: :meth:`_write_state` — see its docstring for why this exists.
+        self._state_unreadable = False
 
     def should_sync(self, sync_interval: float | None = None) -> bool:
         """Check sync-state.json: is it time for a sync cycle?"""
@@ -243,18 +246,53 @@ class SyncCoordinator:
         return int(raw) if isinstance(raw, (int, float)) else 0
 
     def _read_state(self) -> dict[str, object]:
+        """Parsed state, or ``{}``.
+
+        ``{}`` from an ABSENT file is a real answer — nothing has been recorded
+        yet. ``{}`` from a file that exists but will not parse is not: it is an
+        unknown, and every caller here mutates what this returns and hands it
+        straight to :meth:`_write_state`. So a transient read failure used to
+        atomically replace the file with a two-key dict, discarding
+        ``consecutive_failures``, ``last_push_at`` and ``push_count`` — which is
+        to say it reset exponential backoff and outage alerting to "healthy"
+        precisely when something was already wrong.
+
+        Rather than change eleven call sites, the unknown is recorded here and
+        enforced at the single write chokepoint.
+        """
         if not self._state_path.exists():
+            self._state_unreadable = False
             return {}
         try:
             raw: object = json.loads(self._state_path.read_text())
-            if isinstance(raw, dict):
-                return raw
+        except (json.JSONDecodeError, OSError) as exc:
+            self._state_unreadable = True
+            logger.warning("sync_state_unreadable", path=str(self._state_path), error=str(exc))
             return {}
-        except (json.JSONDecodeError, OSError):
-            return {}
+        if isinstance(raw, dict):
+            self._state_unreadable = False
+            return raw
+        self._state_unreadable = True
+        logger.warning("sync_state_not_an_object", path=str(self._state_path), found=type(raw).__name__)
+        return {}
 
     def _write_state(self, state: dict[str, object]) -> None:
-        """Atomically write state using write-then-rename."""
+        """Atomically write state, unless the last read could not be trusted.
+
+        Refusing is the conservative direction: stale backoff counters are a
+        degraded signal, whereas counters silently reset to zero are a WRONG one
+        that disables the alerting meant to fire. The existing file is left
+        untouched so an operator can inspect or repair it; recovery is deliberately
+        manual, because auto-renaming a state file on a transient OSError would
+        be the same class of destruction this guard exists to prevent.
+        """
+        if self._state_unreadable:
+            logger.warning(
+                "sync_state_write_refused",
+                path=str(self._state_path),
+                detail="the existing state file could not be parsed; refusing to overwrite it with partial state",
+            )
+            return
         tmp = self._state_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state, indent=2, default=str))
         os.replace(str(tmp), str(self._state_path))

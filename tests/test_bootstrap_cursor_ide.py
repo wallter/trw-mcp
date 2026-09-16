@@ -179,15 +179,49 @@ class TestUpdateCursorArtifactsCursorIde:
 
         assert not (tmp_path / ".cursor").exists(), ".cursor/ should not be created for opencode target"
 
+    @staticmethod
+    def _visible_tool_count() -> int:
+        """The public MCP tool count, from the same authority the advisory reads.
+
+        Pinning the literal (it was ``24``) is what let the advisory go stale:
+        the surface grew past the ceiling the sentence warns about and the test
+        stayed green, because it asserted the number rather than the claim.
+        """
+        from trw_mcp.models.surface_packs import OPERATOR_ONLY_TOOLS, PACK_TOOLS
+
+        registered = {name for tools in PACK_TOOLS.values() for name in tools}
+        return len(registered - set(OPERATOR_ONLY_TOOLS))
+
     def test_bootstrap_emits_tool_ceiling_advisory(self, tmp_path: Path) -> None:
         """cursor-ide bootstrap includes tool-ceiling advisory in result['info']."""
         result = self._call_update(tmp_path, ide_override="cursor-ide")
 
+        visible = self._visible_tool_count()
+        assert visible > 0, "the derived tool count is zero — the assertion below would be vacuous"
+
         info = result.get("info", [])
-        assert any("24 MCP tools" in msg for msg in info), (
-            f"Expected tool-ceiling advisory in result['info'], got: {info}"
+        assert any(f"{visible} MCP tools" in msg for msg in info), (
+            f"Expected tool-ceiling advisory naming the live count ({visible}) in result['info'], got: {info}"
         )
         assert any("cursor-ide" in msg for msg in info), "Tool-ceiling advisory should mention cursor-ide"
+
+    def test_the_advisory_states_the_right_side_of_the_ceiling(self, tmp_path: Path) -> None:
+        """The advisory's VERDICT must track the count, not just quote it.
+
+        With 45 public tools against Cursor's ~40-tool ceiling, "may approach"
+        was false: TRW exceeds it unaided. The wording is therefore derived from
+        the comparison, and this asserts the branch that actually holds today.
+        """
+        from trw_mcp.bootstrap._ide_targets import _CURSOR_TOOL_CEILING
+
+        result = self._call_update(tmp_path, ide_override="cursor-ide")
+        advisory = next(msg for msg in result.get("info", []) if "MCP tools" in msg)
+        visible = self._visible_tool_count()
+
+        expected = "already exceeds" if visible > _CURSOR_TOOL_CEILING else "may approach"
+        unexpected = "may approach" if visible > _CURSOR_TOOL_CEILING else "already exceeds"
+        assert expected in advisory, f"advisory contradicts {visible} vs ~{_CURSOR_TOOL_CEILING}: {advisory}"
+        assert unexpected not in advisory, advisory
 
     def test_no_tool_ceiling_advisory_for_cli_only(self, tmp_path: Path) -> None:
         """cursor-cli-only bootstrap does NOT emit the IDE tool-ceiling advisory."""
@@ -195,6 +229,6 @@ class TestUpdateCursorArtifactsCursorIde:
 
         info = result.get("info", [])
         # Advisory is cursor-ide specific; CLI should not include it
-        assert not any("24 MCP tools" in msg for msg in info), (
+        assert not any("MCP tools" in msg for msg in info), (
             f"Tool-ceiling advisory should not appear for cursor-cli-only: {info}"
         )

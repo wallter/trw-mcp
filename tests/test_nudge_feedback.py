@@ -141,3 +141,69 @@ def test_non_utf8_state_file_recovers_to_empty(trw_dir: Path) -> None:
     record_build_check_outcome("sess-A", passed=False, trw_dir=trw_dir)
     parsed = json.loads(path.read_text(encoding="utf-8"))
     assert parsed["sess-A"]["build_check_fail_count"] == 1
+
+
+class TestACorruptStateFileIsNotSilent:
+    """The counters that decide whether a user is ever asked to report a bug.
+
+    Every caller does read -> increment -> write, and ``_write_state`` REPLACES
+    the file, so one torn read discards every session's counters — a streak about
+    to trip ``build_check_fail_threshold`` restarts at zero and the nudge never
+    fires. A feedback channel that quietly stops asking looks exactly like one
+    where nothing is wrong.
+
+    The reset itself is correct: these are ephemeral, and refusing to write would
+    let a corrupt file suppress the nudge permanently. The defect was that the
+    module had NO LOGGER AT ALL, so it happened in total silence. ``deferral_ledger``
+    copied this shape and improved on it; this is the original catching up.
+
+    Found 2026-09-12 while walking the feedback surface end to end.
+    """
+
+    def test_an_unreadable_state_file_is_reported(self, tmp_path: Path) -> None:
+        import structlog
+
+        from trw_mcp.state import _feedback_nudge as nudge
+
+        state_path = nudge._state_path(tmp_path)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text("{ torn write, not json", encoding="utf-8")
+
+        with structlog.testing.capture_logs() as logs:
+            recovered = nudge._read_state(tmp_path)
+
+        assert recovered == {}, "the self-healing reset is correct and must stay"
+        events = {entry.get("event") for entry in logs}
+        assert "feedback_nudge_state_reset" in events, (
+            "every session's nudge counters were discarded with no record; the nudge "
+            "silently stops asking users to report bugs"
+        )
+
+    def test_a_healthy_state_file_logs_nothing(self, tmp_path: Path) -> None:
+        """Non-vacuity partner: the warning must not fire on the ordinary path,
+        or it becomes noise on every tool call and gets filtered out."""
+        import json as _json
+
+        import structlog
+
+        from trw_mcp.state import _feedback_nudge as nudge
+
+        state_path = nudge._state_path(tmp_path)
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(_json.dumps({"sessions": {}}), encoding="utf-8")
+
+        with structlog.testing.capture_logs() as logs:
+            nudge._read_state(tmp_path)
+
+        assert "feedback_nudge_state_reset" not in {entry.get("event") for entry in logs}
+
+    def test_an_absent_file_logs_nothing(self, tmp_path: Path) -> None:
+        """Cold start is not a degraded read — the distinction ``deferral_ledger``
+        makes explicitly in its own docstring."""
+        import structlog
+
+        from trw_mcp.state import _feedback_nudge as nudge
+
+        with structlog.testing.capture_logs() as logs:
+            assert nudge._read_state(tmp_path) == {}
+        assert "feedback_nudge_state_reset" not in {entry.get("event") for entry in logs}

@@ -92,6 +92,11 @@ CAPABILITY_PACKS: dict[str, tuple[str, ...]] = {
     ),
     "memory_management": ("trw_graph_related",),
     "feedback": ("trw_submit_feedback",),
+    # PRD-CORE-274 slice 1. Deliberately NOT in STANDARD_TASK_PACKS, the
+    # kernel, or the reviewer profile: an opt-in pack whose execution is
+    # additionally gated by default-off comms_enabled. All three registered
+    # tools are listed; this table stays a bijection with the registrar.
+    "peer_comms": ("trw_peers", "trw_send", "trw_inbox"),
 }
 
 #: pack -> tool IDs including the kernel modelled as a pack, so the manifest is

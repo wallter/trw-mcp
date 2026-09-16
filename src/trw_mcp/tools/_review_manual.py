@@ -25,6 +25,7 @@ from trw_mcp.models.typed_dicts import (
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools import _review_helpers as _helpers
+from trw_mcp.tools._review_helpers import ReviewDiffUnavailableError
 from trw_mcp.tools._review_validation import normalize_review_findings
 
 if TYPE_CHECKING:
@@ -349,6 +350,13 @@ def handle_reconcile_mode(
         }
 
     diff = _helpers._get_git_diff()
+    if diff is None:
+        # git could not be run, so the diff is UNKNOWN rather than empty. Scoring
+        # here would emit a verdict about a tree that was never read.
+        raise ReviewDiffUnavailableError(
+            "git diff could not be run, so there is nothing to review against. "
+            "A verdict is withheld rather than reporting a clean review of an unread tree."
+        )
 
     project_root = resolve_project_root()
     prds_dir = project_root / config.prds_relative_path

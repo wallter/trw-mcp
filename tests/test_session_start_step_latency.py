@@ -311,24 +311,37 @@ def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Pat
     _join_background()
 
     # One record's replay on the same fixture, with a budget that cannot bite.
-    # Worst of two samples: the bound's terms are measured on the same box as
-    # the K arms, and under a loaded xdist run a single sample can land in a
-    # quiet moment while the K=50 arm lands in a busy one. Two samples keep the
-    # bound honest (still budget + one record + measured overhead) without a
-    # hand-picked margin.
-    one_record_ms = 0.0
-    for sample in range(2):
-        one_dir = _fixture_trw_dir(tmp_path / f"k1-{sample}")
+    # This is the bound's only free term, and it is RE-MEASURED before each K arm
+    # rather than sampled once up front.
+    #
+    # Why: the bound is budget + one-record + overhead, every term measured on
+    # this box, and the box's contention CHANGES during the run. A single sample
+    # taken in a quiet moment and then spent as the margin for an arm that lands
+    # in a busy one is not a measurement of the same thing. The earlier
+    # worst-of-two-samples version still flaked in a full `make check` survey
+    # (K=5 took 543 ms against a 303 ms bound, with one-record measured at 53 ms
+    # moments earlier) because the whole trw-mcp suite was running 3.3x slower
+    # than in isolation — contention that arrived between the sample and the arm.
+    #
+    # Re-measuring per arm and keeping the running maximum tracks that drift
+    # while keeping every term honest. It cannot rescue the defect this test
+    # exists to catch: remove the elapsed-time break and K=50 replays all fifty
+    # records inline, an order of magnitude over any per-record margin.
+    def _measure_one_record(label: str) -> float:
+        one_dir = _fixture_trw_dir(tmp_path / f"k1-{label}")
         _seed_pending(one_dir, 1)
         sample_ms, _ = _run_drain(one_dir, 120_000)
         _join_background()
         assert learn_journal.pending_count(one_dir) == 0
-        one_record_ms = max(one_record_ms, sample_ms)
+        return sample_ms
 
-    bound_ms = baseline_ms + _BUDGET_MS + one_record_ms
+    one_record_ms = max(_measure_one_record("a"), _measure_one_record("b"))
     measured: dict[int, float] = {0: baseline_ms}
 
     for k in (5, 50):
+        one_record_ms = max(one_record_ms, _measure_one_record(f"pre{k}"))
+        bound_ms = baseline_ms + _BUDGET_MS + one_record_ms
+
         trw_dir = _fixture_trw_dir(tmp_path / f"k{k}")
         ids = _seed_pending(trw_dir, k)
         elapsed_ms, maintenance = _run_drain(trw_dir, _BUDGET_MS)
@@ -450,7 +463,7 @@ def test_zero_pending_drain_adds_no_io(tmp_path: Path) -> None:
 
 
 def test_wiring_fixes_add_no_measurable_hot_path_cost(tmp_path: Path) -> None:
-    """PRD-CORE-263-NFR01 — bounded I/O, no database handle, bounded token growth.
+    """PRD-CORE-263-NFR01 — bounded I/O, no database handle, bounded JSON size growth.
 
     The only work FR01-FR10 add to the HEALTHY path is a handful of boolean
     flags, three previously-dropped maintenance keys, and one previously-
@@ -459,14 +472,14 @@ def test_wiring_fixes_add_no_measurable_hot_path_cost(tmp_path: Path) -> None:
     1. the injected-ids write performs one bounded read and one atomic rewrite,
        and opens no memory-database handle;
     2. the added ``measured`` flags and reasons cost at most 2 percent of the
-       healthy payload's token estimate;
+       healthy payload's four-character JSON size heuristic;
     3. no step gained a database or network call.
     """
     import sqlite3
     from unittest.mock import patch
 
+    from tests._ceremony_helpers import payload_size_units
     from trw_mcp.tools._ceremony_session_start_steps import _MAX_INJECTED_IDS, _write_session_start_ids
-    from trw_mcp.tools._session_start_trim import estimate_payload_tokens
 
     # (1) One bounded read, one atomic rewrite, zero database handles.
     trw_dir = tmp_path / ".trw"
@@ -503,18 +516,18 @@ def test_wiring_fixes_add_no_measurable_hot_path_cost(tmp_path: Path) -> None:
     #
     # Measured against the payload the tool ACTUALLY returns, with one stated
     # adjustment: the fixture store is empty, so the real call returns no
-    # learnings and the denominator is ~1080 tokens — roughly the payload
+    # learnings and the denominator is ~1080 size units — roughly the payload
     # overhead alone. A healthy session on a real store carries the shipped
     # default of eight learnings, which is most of the payload an agent pays
     # for, so the same eight are added to BOTH sides here. Raw numbers on the
     # empty-store payload are asserted separately below as an absolute bound, so
     # neither denominator is doing the work on its own.
     payload = _get_session_start_fn()(ctx=None, query="*", verbose=True)
-    empty_after = estimate_payload_tokens(payload)
-    empty_before = estimate_payload_tokens(_strip_263_additions(payload))
+    empty_after = payload_size_units(payload)
+    empty_before = payload_size_units(_strip_263_additions(payload))
     # Absolute bound, denominator-free: the added keys are flags and one small
     # dict, not a new data block.
-    assert empty_after - empty_before <= 60, f"added {empty_after - empty_before} tokens of payload"
+    assert empty_after - empty_before <= 60, f"added {empty_after - empty_before} four-character size units of payload"
 
     representative_learnings = [
         {
@@ -522,11 +535,11 @@ def test_wiring_fixes_add_no_measurable_hot_path_cost(tmp_path: Path) -> None:
             "summary": "A representative learning summary of the length recall returns",
             # Sized from a live measurement rather than guessed: a wildcard
             # recall of the shipped default (8 entries) against this
-            # repository's own store on 2026-09-04 estimated 11,388 tokens,
-            # i.e. ~876 tokens per surfaced learning. A fixture with 60-token
+            # repository's own store on 2026-09-04 estimated 11,388 four-character size units,
+            # i.e. ~876 size units per surfaced learning. A fixture with 60-unit
             # learnings would understate the denominator by an order of
             # magnitude and turn this bound into a statement about the fixture.
-            "detail": "x " * _MEASURED_TOKENS_PER_LEARNING * 2,
+            "detail": "x " * _MEASURED_SIZE_UNITS_PER_LEARNING * 2,
             "tags": ["trw-mcp", "ceremony", "session-start"],
             "impact": 0.7,
         }
@@ -536,8 +549,8 @@ def test_wiring_fixes_add_no_measurable_hot_path_cost(tmp_path: Path) -> None:
     with_learnings_after["learnings"] = representative_learnings
     with_learnings_before = dict(_strip_263_additions(with_learnings_after))  # type: ignore[arg-type]
 
-    before = estimate_payload_tokens(with_learnings_before)
-    after = estimate_payload_tokens(with_learnings_after)
+    before = payload_size_units(with_learnings_before)
+    after = payload_size_units(with_learnings_after)
     growth = (after - before) / before
     assert growth <= 0.02, f"healthy payload grew {growth:.1%}, above the 2% bound (before={before}, after={after})"
 
@@ -556,10 +569,10 @@ def _strip_263_additions(node: object) -> object:
 #: NFR01 deliberately leaves unbounded — that growth IS the information.
 _FR03_ADDED_KEYS = frozenset({"measured", "unmeasured", "wal_checkpoint", "embeddings_coverage_ratio"})
 
-#: Median token cost of one surfaced learning, measured on 2026-09-04 with a
+#: Historical four-character size heuristic for one surfaced learning, measured on 2026-09-04 with a
 #: wildcard recall of the shipped default against this repository's live store
-#: (8 entries, 11,388 estimated tokens). Used only to size the NFR01 denominator.
-_MEASURED_TOKENS_PER_LEARNING = 876
+#: (8 entries, 11,388 estimated size units). Used only to size the NFR01 denominator.
+_MEASURED_SIZE_UNITS_PER_LEARNING = 876
 
 
 @pytest.mark.timeout(600)

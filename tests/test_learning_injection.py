@@ -89,7 +89,7 @@ class TestInferDomainTags:
     def test_skills_agents_tags(self) -> None:
         from trw_mcp.state.learning_injection import infer_domain_tags
 
-        tags = infer_domain_tags(["trw-mcp/src/trw_mcp/data/skills/trw-sprint-team/"])
+        tags = infer_domain_tags(["trw-mcp/src/trw_mcp/data/skills/trw-prd-ready/"])
         assert "skills" in tags
 
     def test_test_directory_tags(self) -> None:

@@ -444,7 +444,7 @@ async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeyp
     (run_dir / "meta" / "run.yaml").write_text(
         "run_id: 20260101T000000Z-rca00001\n"
         "task: rca-task\n"
-        "framework: v26.2_TRW\n"
+        "framework: v27.1_TRW\n"
         "status: active\n"
         "phase: implement\n"
         "task_type: rca\n",
@@ -530,7 +530,7 @@ def test_resolve_task_type_reads_a_swept_run(tmp_path: Path, monkeypatch: pytest
     (run_dir / "meta" / "run.yaml").write_text(
         f"run_id: {run_id}\n"
         "task: swept-task\n"
-        "framework: v26.2_TRW\n"
+        "framework: v27.1_TRW\n"
         f"status: {RunStatus.ABANDONED.value}\n"
         "phase: review\n"
         "task_type: coding\n"

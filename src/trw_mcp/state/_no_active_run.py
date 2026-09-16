@@ -26,7 +26,7 @@ NO_ACTIVE_RUN_REASON = "no_active_run_for_session"
 #: Remedies, most-executable-first. Rendered verbatim into every no-run
 #: message site; a test asserts both sites contain every entry.
 NO_ACTIVE_RUN_REMEDIES: tuple[str, ...] = (
-    "pass run_path=<run directory> to this call",
+    "pass run_path=<run directory> to a tool that accepts it, such as trw_checkpoint",
     "call trw_init() to create a run",
     "call trw_adopt_run(run_path=...) to resume one",
 )

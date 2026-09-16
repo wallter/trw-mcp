@@ -11,9 +11,9 @@ import pytest
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH, deploy_framework_generation
 from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime, rollback_framework_runtime
 
-FRAMEWORK_VERSION = "v26.2_TRW"
+FRAMEWORK_VERSION = "v27.1_TRW"
 AAREF_VERSION = "v3.2.0"
-FRAMEWORK = "v26.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n"
+FRAMEWORK = "v27.1_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK\n"
 AAREF = "# AARE-F\n\n**Version**: 3.2.0\n"
 
 
@@ -164,7 +164,7 @@ def test_receipt_binds_canon_bodies_and_not_mutable_projections(tmp_path: Path) 
 
     # The unbound projections are still deployed by the same generation.
     assert (tmp_path / ".trw/frameworks/VERSION.yaml").is_file()
-    assert "framework_version: v26.2_TRW" in (tmp_path / ".trw/config.yaml").read_text(encoding="utf-8")
+    assert "framework_version: v27.1_TRW" in (tmp_path / ".trw/config.yaml").read_text(encoding="utf-8")
 
 
 def test_post_receipt_config_and_stamp_writes_keep_integrity_green(tmp_path: Path) -> None:

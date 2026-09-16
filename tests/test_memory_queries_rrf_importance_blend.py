@@ -1,4 +1,5 @@
 """Remove the competing utility decision before final relevance-first ranking."""
+
 from unittest.mock import patch
 
 import pytest

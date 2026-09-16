@@ -401,6 +401,7 @@ class TestSkills:
         "trw-learn",
         "trw-memory-audit",
         "trw-memory-optimize",
+        "trw-plan-review",
         "trw-prd-groom",
         "trw-prd-new",
         "trw-prd-ready",
@@ -411,8 +412,6 @@ class TestSkills:
         "trw-self-review",
         "trw-sprint-finish",
         "trw-sprint-init",
-        "trw-sprint-team",
-        "trw-team-playbook",
         "trw-test-strategy",
     ]
 

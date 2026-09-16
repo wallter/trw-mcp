@@ -237,8 +237,15 @@ def test_redacts_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_skips_home_substitution_when_home_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     # Force expanduser to return literal "~" so the resolver short-circuits
     # the path-substitution branch.
+    #
+    # Patched on _feedback_redaction, not on the submit_feedback facade: the
+    # redactor moved there, so patching the facade's namespace would no longer
+    # reach the `os` this function actually calls. A patch that silently stops
+    # applying leaves the test green while testing nothing, which is why the
+    # assertion below checks the PATH SURVIVES rather than merely that the call
+    # returned something.
     monkeypatch.setattr(
-        "trw_mcp.tools.submit_feedback.os.path.expanduser",
+        "trw_mcp.tools._feedback_redaction.os.path.expanduser",
         lambda _: "~",
     )
     raw = "path is /home/operator/.trw"
@@ -466,9 +473,87 @@ _JSON_SECRET_SHAPES: list[tuple[str, str]] = [
     ('{"access_token": "at_xyz"}', "<REDACTED:json_secret>"),
 ]
 
+# Shapes with NO ``key=value`` anywhere — the form a bug report actually carries.
+# The env-var rule cannot anchor on any of these, which is precisely why they
+# leaked in clear text until the structural patterns were added: a pasted curl,
+# an HTTP trace, or plain narrative prose quoting the token that was rejected.
+_HEADERLESS_SHAPES: list[tuple[str, str]] = [
+    # Structural: an Authorization header value, scheme preserved for diagnostics.
+    ("Authorization: Bearer abcdef0123456789tok", "<REDACTED:authorization>"),
+    ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "<REDACTED:authorization>"),
+    ("Authorization: rawtokenvalue0123456789", "<REDACTED:authorization>"),
+    # Structural: a bare JWT in narrative prose, which no header rule sees.
+    ("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG1pbiJ9.s3cr3tS1gn4tur3", "<REDACTED:jwt>"),
+    # Unambiguous-by-construction vendor prefixes (published for secret scanning).
+    #
+    # ASSEMBLED AT RUNTIME, NOT WRITTEN AS LITERALS. These are fabricated inputs
+    # that exist to prove the redactor catches each vendor shape -- none is a
+    # real credential. But a scanner cannot tell a fixture from a leak, and on
+    # 2026-09-16 GitHub push protection rejected the trw-mcp 3.0.0 release over
+    # the Slack one ("Slack API Token", this file). A fixture that blocks every
+    # future push to the public mirror is a broken fixture.
+    #
+    # Splitting prefix from body means the contiguous pattern never appears in
+    # the source, while the string the redactor actually sees is byte-identical
+    # to what it was. The coverage is unchanged; only the file on disk differs.
+    *(
+        (f"{prefix}{body}", "<REDACTED:api_key>")
+        for prefix, body in (
+            ("sk-proj-", "AbCdEf1234567890AbCdEf1234567890"),
+            ("sk-ant-api03-", "AbCdEf1234567890AbCdEf123456"),
+            ("ghp_", "abcdefghijklmnopqrstuvwxyz0123456789"),
+            ("gho_", "abcdefghijklmnopqrstuvwxyz0123456789"),
+            ("github_pat_", "11ABCDEFG0abcdefghijklmnop_qrstuvwxyz012345"),
+            ("xoxb-", "123456789012-1234567890123-AbCdEfGhIjKlMnOpQrStUvWx"),
+        )
+    ),
+]
+
 _ALL_SECRET_SHAPES: list[tuple[str, str]] = (
-    _API_KEY_SHAPES + _CONN_STR_SHAPES + _QUERY_CRED_SHAPES + _JSON_SECRET_SHAPES
+    _API_KEY_SHAPES + _CONN_STR_SHAPES + _QUERY_CRED_SHAPES + _JSON_SECRET_SHAPES + _HEADERLESS_SHAPES
 )
+
+
+def test_a_pem_private_key_block_collapses_whole() -> None:
+    """The highest-severity paste, and the one multi-line shape.
+
+    Asserted separately from the census because the census wraps each token in a
+    single-line "context before/after" frame. The whole block must go — header,
+    base64 body, and footer — so no base64 line survives for a later pass to
+    partial-match.
+    """
+    block = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        "MIIEowIBAAKCAQEA1234567890abcdef\n"
+        "ZZZZsecretkeymaterialZZZZ\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+    redacted = _redact_pii(f"here is the key:\n{block}\nthat failed")
+    assert "MIIEowIBAAKCAQEA1234567890abcdef" not in redacted
+    assert "ZZZZsecretkeymaterialZZZZ" not in redacted
+    assert "BEGIN RSA PRIVATE KEY" not in redacted
+    assert "<REDACTED:private_key>" in redacted
+    # Surrounding diagnostic prose survives.
+    assert "here is the key:" in redacted and "that failed" in redacted
+    assert _redact_pii(redacted) == redacted, "PEM redaction must be idempotent"
+
+
+def test_an_authorization_header_survives_repeated_redaction() -> None:
+    """Regression: the optional scheme group used to backtrack on a second pass.
+
+    With the "already redacted" guard on the VALUE alone, a re-run of
+    ``Authorization: Bearer <REDACTED:authorization>`` let the optional scheme
+    give up ``Bearer`` to satisfy the value slot, appending a second placeholder
+    on every pass. `_redact_pii` is contractually idempotent, so this is a
+    correctness bug, not a cosmetic one.
+    """
+    once = _redact_pii("curl -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig12345'")
+    assert once.count("<REDACTED:") == 1, once
+    assert "Bearer" in once, "the scheme is diagnostic, not secret — keep it"
+    for _ in range(3):
+        once_again = _redact_pii(once)
+        assert once_again == once, f"not idempotent: {once!r} -> {once_again!r}"
+        once = once_again
 
 
 @pytest.mark.parametrize("token,placeholder", _ALL_SECRET_SHAPES)
@@ -507,6 +592,15 @@ def test_every_claimed_secret_shape_is_idempotent(token: str, placeholder: str) 
         '{"clientId": "public-id"}',  # id is not a secret
         "ski lift opens at nine",  # 'sk' substring only
         "https://h/v1?page=2&limit=50",  # benign query params
+        # Mirrors for the structural patterns: each shares a prefix or a word
+        # with one of them and must survive untouched. Without these the new
+        # rules could be arbitrarily broad and still pass the probe above.
+        "Authorization is required to proceed",  # the word, not a header
+        "disk-usage-is-very-high-today-on-this-box",  # contains 'sk-'
+        "run make check then task-manager-cli-v2 finishes",  # contains 'sk-'
+        "the ghost_writer module was renamed",  # 'gho' prefix, not a token
+        "see docs/documentation/wiring-defect-patterns.md",  # plain path
+        "a private key is stored in the vault",  # PEM words, no block
     ],
 )
 def test_no_over_redaction_on_benign_inputs(benign: str) -> None:

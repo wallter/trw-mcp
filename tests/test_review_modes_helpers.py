@@ -10,6 +10,9 @@ from unittest.mock import patch
 import pytest
 
 from tests._review_modes_support import _make_config
+from trw_mcp.models.config import get_config
+from trw_mcp.tools._review_auto import handle_auto_mode
+from trw_mcp.tools._review_cross_model import _reviewer_is_same_family
 from trw_mcp.tools._review_helpers import (
     REVIEWER_ROLES,
     CrossModelIncomplete,
@@ -20,7 +23,6 @@ from trw_mcp.tools._review_helpers import (
     _normalize_severity,
     _run_multi_reviewer_analysis,
 )
-from trw_mcp.tools._review_cross_model import _reviewer_is_same_family
 
 
 @dataclass
@@ -319,7 +321,17 @@ class TestComputeVerdict:
 
 
 class TestGetGitDiff:
-    """_get_git_diff returns diff text or empty string on any error."""
+    """_get_git_diff returns diff text, "" for a genuinely empty diff, or None
+    when git could not be run at all.
+
+    The three error cases below asserted `== ""` until 2026-09-11. That made "git
+    never ran" indistinguishable from "nothing changed", and both consumers read
+    the latter: `_extract_fr_mismatches` finds no mismatches in an empty diff and
+    `_run_multi_reviewer_analysis` hands reviewers nothing to find — so a broken
+    git produced a PASSING review of a tree that was never read. The tests now pin
+    the distinction, and `test_returns_empty_string_on_empty_diff` below is the
+    partner that keeps "" meaning what it should.
+    """
 
     @patch("trw_mcp.tools._review_helpers.subprocess.run")
     def test_returns_stdout_on_success(self, mock_run: Any) -> None:
@@ -337,25 +349,28 @@ class TestGetGitDiff:
         "trw_mcp.tools._review_helpers.subprocess.run",
         side_effect=FileNotFoundError("git: command not found"),
     )
-    def test_returns_empty_string_on_file_not_found(self, mock_run: Any) -> None:
+    def test_returns_none_on_file_not_found(self, mock_run: Any) -> None:
         result = _get_git_diff()
-        assert result == ""
+        assert result is None, "git failing must not be reported as an empty diff"
+        assert result != "", "the failure sentinel must be distinguishable from a clean tree's empty diff"
 
     @patch(
         "trw_mcp.tools._review_helpers.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30),
     )
-    def test_returns_empty_string_on_timeout(self, mock_run: Any) -> None:
+    def test_returns_none_on_timeout(self, mock_run: Any) -> None:
         result = _get_git_diff()
-        assert result == ""
+        assert result is None, "git failing must not be reported as an empty diff"
+        assert result != "", "the failure sentinel must be distinguishable from a clean tree's empty diff"
 
     @patch(
         "trw_mcp.tools._review_helpers.subprocess.run",
         side_effect=OSError("permission denied"),
     )
-    def test_returns_empty_string_on_oserror(self, mock_run: Any) -> None:
+    def test_returns_none_on_oserror(self, mock_run: Any) -> None:
         result = _get_git_diff()
-        assert result == ""
+        assert result is None, "git failing must not be reported as an empty diff"
+        assert result != "", "the failure sentinel must be distinguishable from a clean tree's empty diff"
 
     @patch("trw_mcp.tools._review_helpers.subprocess.run")
     def test_returns_empty_string_on_empty_diff(self, mock_run: Any) -> None:
@@ -364,15 +379,44 @@ class TestGetGitDiff:
         assert result == ""
 
     @patch("trw_mcp.tools._review_helpers.subprocess.run")
-    def test_returns_stdout_regardless_of_returncode(self, mock_run: Any) -> None:
+    def test_a_nonzero_git_exit_is_unavailable_not_an_empty_diff(self, mock_run: Any) -> None:
+        """The defect this test used to assert as correct.
+
+        It was ``test_returns_stdout_regardless_of_returncode`` and it pinned
+        exactly the collapse the None-vs-"" distinction exists to prevent: git
+        exits 128 on a bad revision or a broken index and writes NOTHING to
+        stdout, so returning stdout unconditionally hands the caller "" — a
+        genuinely clean tree — for a diff that was never produced. Every review
+        entry point then scores an empty diff and returns a passing verdict.
+
+        The old name was accurate about the behaviour and silent about the
+        consequence. Found by a cross-family audit 2026-09-12.
+        """
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[],
-            returncode=1,
-            stdout="some diff output\n",
-            stderr="",
+            args=[], returncode=128, stdout="", stderr="fatal: bad revision 'nope..HEAD'\n"
+        )
+        result = _get_git_diff(base="nope")
+        assert result is None
+        assert result != "", (
+            '"" is the value every review entry point scores as a clean tree; '
+            "an unread diff must never be spelled that way"
+        )
+
+    @patch("trw_mcp.tools._review_helpers.subprocess.run")
+    def test_a_nonzero_exit_is_unavailable_even_when_stdout_is_not_empty(self, mock_run: Any) -> None:
+        """Partial output from a failed git run is not a diff either.
+
+        Non-vacuity partner for the test above: with stdout empty, returning ""
+        and returning None are hard to tell apart from the outside, so a fix that
+        only special-cased empty stdout would pass it. A failed git command's
+        partial stdout is still not a diff anyone may score.
+        """
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="some diff output\n", stderr="error\n"
         )
         result = _get_git_diff()
-        assert result == "some diff output\n"
+        assert result is None
+        assert result != "some diff output\n", "partial output from a failed git run was returned as a diff"
 
 
 class TestNormalizeSeverityEdgeCases:
@@ -486,3 +530,50 @@ class TestReviewerSameFamily:
     def test_unknown_host_cannot_prove_sameness(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_CLIENT_PROFILE", "unknown")
         assert _reviewer_is_same_family("codex") is False
+
+
+class TestReviewRefusesToScoreAnUnreadTree:
+    """A review that cannot read its diff must withhold a verdict (2026-09-11).
+
+    `_get_git_diff` used to return "" when git could not run, and "" is a real and
+    common answer meaning "nothing changed". Both review entry points consumed it
+    that way, so a broken or missing git yielded a clean review of a tree nobody
+    had looked at — the same collapse `_review_manual` already documents one layer
+    down for unreadable PRDs ("two missing PRDs came back verdict='clean' ... for
+    files never read").
+    """
+
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=None)
+    def test_auto_mode_raises_rather_than_scoring(self, _mock: Any) -> None:
+        from trw_mcp.tools._review_helpers import ReviewDiffUnavailableError
+
+        with pytest.raises(ReviewDiffUnavailableError):
+            handle_auto_mode(
+                config=get_config(),
+                resolved_run=None,
+                review_id="r-test",
+                ts="2026-09-11T00:00:00Z",
+                reviewer_findings=[],
+            )
+
+    @patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="")
+    def test_an_empty_diff_is_still_scored_normally(self, _mock: Any) -> None:
+        """Non-vacuity partner, and the whole point of the distinction: a genuinely
+        empty diff is a legitimate input and must NOT raise. If this test ever fails,
+        the fix above has over-corrected into refusing real clean trees."""
+        from trw_mcp.tools._review_helpers import ReviewDiffUnavailableError
+
+        refused: list[str] = []
+        try:
+            handle_auto_mode(
+                config=get_config(),
+                resolved_run=None,
+                review_id="r-test",
+                ts="2026-09-11T00:00:00Z",
+                reviewer_findings=[],
+            )
+        except ReviewDiffUnavailableError as exc:  # pragma: no cover - the failure this guards
+            refused.append(str(exc))
+        except Exception:
+            pass  # any other error is out of scope for this assertion
+        assert refused == [], f"an empty diff is 'nothing changed', not 'diff unavailable': {refused}"

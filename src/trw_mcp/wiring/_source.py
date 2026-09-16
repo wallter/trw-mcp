@@ -53,13 +53,28 @@ def is_test_path(path: Path) -> bool:
 
 
 def iter_python_files(root: Path, *, max_bytes: int, include_tests: bool = False) -> Iterator[Path]:
-    """Yield ``*.py`` files under ``root`` in sorted (deterministic) order."""
+    """Yield ``*.py`` files under ``root`` in sorted (deterministic) order.
+
+    Exclusions are matched against the path RELATIVE to ``root``, never the
+    absolute one. Matching absolute parts meant a component of the checkout's
+    own location could exclude the entire tree: this repo's convention puts
+    worktrees at ``.claude/worktrees/<name>/``, and ``worktrees`` is in
+    EXCLUDE_DIRS, so every scan from inside one yielded ZERO files. Measured on
+    two identical exports differing only in directory name: 896 files vs 0.
+
+    Yielding nothing is not a quiet failure here. The schema check reports a
+    divergence when no function emits a name, so an empty walk made it invent
+    ``no function anywhere under trw-mcp/src/trw_mcp emits trw_deliver_complete``
+    while the emitter sat in ``tools/_delivery_build_gates.py`` -- a gate
+    manufacturing the exact class of finding it exists to detect.
+    """
     if not root.is_dir():
         return
     for path in sorted(root.rglob("*.py")):
-        if any(part in EXCLUDE_DIRS for part in path.parts):
+        relative = path.relative_to(root)
+        if any(part in EXCLUDE_DIRS for part in relative.parts):
             continue
-        if not include_tests and is_test_path(path):
+        if not include_tests and is_test_path(relative):
             continue
         try:
             if path.stat().st_size > max_bytes:

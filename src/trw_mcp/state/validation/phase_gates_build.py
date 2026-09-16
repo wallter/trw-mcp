@@ -288,10 +288,11 @@ def _best_effort_orphan_check(
 # ---------------------------------------------------------------------------
 
 
-def _get_changed_files(project_root: Path) -> list[str]:
-    """Get list of changed files from git diff (staged + unstaged + untracked).
+def _get_changed_files(project_root: Path) -> list[str] | None:
+    """Changed files (staged + unstaged + untracked), or ``None`` when git failed.
 
-    Returns empty list if git is unavailable.
+    ``[]`` means "nothing changed". ``None`` means "we could not find out", and a
+    gate must not spend the second as the first.
 
     Args:
         project_root: Project root directory.
@@ -334,8 +335,14 @@ def _get_changed_files(project_root: Path) -> list[str]:
 
         all_files = list(set(files + staged + untracked))
         return all_files
-    except (subprocess.SubprocessError, FileNotFoundError, OSError):
-        return []
+    except (subprocess.SubprocessError, FileNotFoundError, OSError) as exc:
+        # None, not []. `check_migration_gate` returns no warnings for an empty
+        # list — correct when nothing changed, and a bypass when git simply could
+        # not be asked. A schema change with no migration, or a NOT NULL column
+        # with no server_default, sailed through a safety gate that had read
+        # nothing. The caller now reports the unknown instead of a clean bill.
+        logger.warning("migration_gate_git_unavailable", error=str(exc), cwd=str(project_root))
+        return None
 
 
 def _check_nullable_defaults(
@@ -397,6 +404,12 @@ def check_migration_gate(project_root: Path) -> list[str]:
     warnings: list[str] = []
 
     changed = _get_changed_files(project_root)
+    if changed is None:
+        # A safety gate that could not read the diff has no clean bill to give.
+        return [
+            "migration safety gate could not run: git did not report changed files, "
+            "so model-without-migration and NOT NULL-without-default checks were NOT performed"
+        ]
     if not changed:
         return warnings
 
@@ -473,7 +486,11 @@ def _best_effort_dry_check(
         project_root = resolve_project_root()
 
         # Reuse shared helper instead of duplicating subprocess call
-        changed = _get_changed_files(project_root)
+        # These two are ADVISORY scans, not gates: with no file list there is
+        # simply nothing to scan, and `None` collapses to the same no-op as `[]`
+        # without misreporting anything. Only `check_migration_gate` turns the
+        # unknown into a finding, because only it issues a clean bill.
+        changed = _get_changed_files(project_root) or []
         py_files = [str(project_root / f) for f in changed if f.endswith(".py") and "/tests/" not in f]
 
         if not py_files:
@@ -522,7 +539,7 @@ def _best_effort_semantic_check(
         project_root = resolve_project_root()
 
         # Reuse shared helper instead of duplicating subprocess call
-        changed = _get_changed_files(project_root)
+        changed = _get_changed_files(project_root) or []  # advisory scan; see the note above
         scannable = [str(project_root / f) for f in changed if f.endswith((".py", ".ts", ".tsx", ".js"))]
 
         if not scannable:

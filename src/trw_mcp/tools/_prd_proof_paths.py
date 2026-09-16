@@ -49,9 +49,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 import structlog
+
+from trw_mcp.state._release_topology import package_dirs
 
 logger = structlog.get_logger(__name__)
 
@@ -151,28 +154,33 @@ _PROOF_PATH_TOKEN = re.compile(rf"(?<![\w/.-])((?:[\w.-]+/)*[\w.-]+\.(?:{_EXT_AL
 #: ``https://host/a/b.html`` is not matched, since the host follows a ``/``.
 _PATH_SHAPED_TOKEN = re.compile(r"(?<![\w/.-])(/?(?:[\w.-]+/)+[\w.-]+\.[A-Za-z][\w]{0,7})(?:::[\w\[\]-]+)?")
 
-#: Monorepo packages a proof path may be written relative to.
-_PACKAGES: tuple[str, ...] = (
-    "trw-mcp",
-    "trw-memory",
-    "trw-eval",
-    "trw-distill",
-    "trw-loop",
-    "trw-swarm",
-    "trw-autoresearch",
-    "trw-metaharness",
-    "backend",
-    "platform",
-)
 
-#: Roots a token is tried against, in order: the project root, each package, and
-#: each package's import root (receipts routinely write ``server/_tools.py``
-#: meaning ``trw-mcp/src/trw_mcp/server/_tools.py``).
-_PREFIXES: tuple[str, ...] = (
-    "",
-    *(f"{pkg}/" for pkg in _PACKAGES),
-    *(f"{pkg}/src/{pkg.replace('-', '_')}/" for pkg in _PACKAGES),
-)
+@lru_cache(maxsize=8)
+def _prefixes_for(project_root: Path) -> tuple[str, ...]:
+    """Roots a token is tried against, in order: the project root, each package,
+    and each package's import root (receipts routinely write ``server/_tools.py``
+    meaning ``trw-mcp/src/trw_mcp/server/_tools.py``).
+
+    DERIVED from ``release-packages.yaml``, not restated. This was a hardcoded
+    tuple of ten package names shipped inside the public wheel, which was three
+    things at once: an enumeration of TRW's proprietary siblings in a published
+    artifact, a third hand-maintained copy of a taxonomy one file already owns,
+    and — because hand-maintained lists drift — WRONG. It omitted two declared
+    packages, so a proof path written relative to either of them never resolved
+    and was reported missing.
+
+    In a public install the manifest is absent and this collapses to the two
+    public packages, which is both correct (no other directory exists there) and
+    safe. Cached per root: the manifest does not change within a process, and
+    ``_resolves`` is called once per proof token.
+    """
+    packages = package_dirs(project_root)
+    return (
+        "",
+        *(f"{pkg}/" for pkg in packages),
+        *(f"{pkg}/src/{pkg.rsplit('/', 1)[-1].replace('-', '_')}/" for pkg in packages),
+    )
+
 
 #: Prefixes that are never durable repo files, so their ABSENCE proves nothing —
 #: they are demoted to the advisory tier rather than hard-blocking. They are
@@ -196,7 +204,7 @@ def _resolves(token: str, project_root: Path) -> bool:
     """True when *token* names a file that exists, under any accepted root."""
     if token.startswith("/"):
         return Path(token).exists()
-    return any((project_root / f"{prefix}{token}").exists() for prefix in _PREFIXES)
+    return any((project_root / f"{prefix}{token}").exists() for prefix in _prefixes_for(project_root))
 
 
 def classify_proof_paths(blob: str, project_root: Path | None = None) -> tuple[list[str], list[str]]:

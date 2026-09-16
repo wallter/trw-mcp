@@ -217,6 +217,32 @@ def _contextualize_candidates(
     return [candidate_map[arm_id] for arm_id in ranked_ids if arm_id in candidate_map]
 
 
+#: Character budget for a nudge rendered from a learning summary, when the
+#: learning carries no purpose-written ``nudge_line``.
+_NUDGE_FALLBACK_CHARS = 80
+
+
+def _elide(text: str, limit: int) -> str:
+    """Trim ``text`` to ``limit`` characters at a word boundary, marking the cut.
+
+    A bare ``text[:limit]`` severs mid-token, and a nudge that ends inside a date
+    -- observed 2026-09-15 as "...surveyed 2026-09-1" -- reads as corrupted data
+    rather than as an excerpt, which costs more trust than the truncation saves.
+    Cutting at the last space and appending an ellipsis says "there is more"
+    instead of "something went wrong".
+
+    A single token longer than the budget has no boundary to cut at, so it is
+    severed and still marked; that is rare and honest either way.
+    """
+    if len(text) <= limit:
+        return text
+    head = text[: limit - 1]
+    boundary = head.rfind(" ")
+    if boundary > 0:
+        head = head[:boundary]
+    return head.rstrip(" ,;:-") + "\u2026"
+
+
 def _deterministic_fallback_text(learning: dict[str, object]) -> str:
     """Render the legacy deterministic learning text for backward compatibility."""
     nudge_line = learning.get("nudge_line")
@@ -224,7 +250,7 @@ def _deterministic_fallback_text(learning: dict[str, object]) -> str:
         return nudge_line.strip()
     summary = learning.get("summary")
     if isinstance(summary, str) and summary.strip():
-        return summary.strip()[:80]
+        return _elide(summary.strip(), _NUDGE_FALLBACK_CHARS)
     return ""
 
 

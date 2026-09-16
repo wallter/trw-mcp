@@ -361,3 +361,44 @@ class TestSameFamilyFindingsCount:
         assert result["review_family_coverage"] == "cross_family"
         assert result["same_family_findings_count"] == 0
         assert result["total_findings"] == 1
+
+
+class TestCrossModelRefusesAnUnreadableDiff:
+    """The third entry point, and the one that did not check.
+
+    ``handle_auto_mode`` and ``handle_reconcile_mode`` both raise
+    ``ReviewDiffUnavailableError`` when ``_get_git_diff`` returns ``None``.
+    ``handle_cross_model_mode`` did not: ``elif not diff:`` treated ``None`` as
+    ``REASON_NO_DIFF`` — "no uncommitted changes" — and degraded to the
+    same-family fallback over ``diff or ""``, which finds nothing in an empty
+    string and returns ``verdict="pass"`` for a tree that was never read.
+
+    The degradation path is deliberate and correct for every OTHER reason token.
+    It is wrong for this one: "could not read the diff" is not a reason to fall
+    back to a narrower review, it is a reason to have no verdict. Found by a
+    cross-family audit 2026-09-12.
+    """
+
+    def test_an_unavailable_diff_raises_instead_of_passing(self, run_dir: Path) -> None:
+        from trw_mcp.tools._review_helpers import ReviewDiffUnavailableError
+
+        config = _make_config(cross_model_enabled=True, cross_model_provider="gpt-4o")
+        with (
+            patch(f"{_HELPERS}._get_git_diff", return_value=None),
+            pytest.raises(ReviewDiffUnavailableError),
+        ):
+            handle_cross_model_mode(config, run_dir, "rev-unavail", "2026-03-01T00:00:00Z")
+
+    def test_a_genuinely_empty_diff_still_degrades_and_scores(self, run_dir: Path) -> None:
+        """Non-vacuity partner, and the whole point of the distinction.
+
+        "" is a legitimate answer — nothing changed — and must keep taking the
+        documented single-family degradation rather than raising. A fix that
+        over-corrected into refusing empty diffs would break the PRD-QUAL-108
+        contract that cross-family is never hard-required; this fails if it does.
+        """
+        config = _make_config(cross_model_enabled=True, cross_model_provider="gpt-4o")
+        with patch(f"{_HELPERS}._get_git_diff", return_value=""):
+            result = handle_cross_model_mode(config, run_dir, "rev-empty", "2026-03-01T00:00:00Z")
+        assert result["review_family_coverage"] == "single_family"
+        assert "verdict" in result

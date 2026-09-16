@@ -65,6 +65,10 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.agents.agent_formats import agent_format_for
+from trw_mcp.exceptions import AgentFormatError
+from trw_mcp.models.config._profiles import builtin_client_ids
+
 logger = structlog.get_logger(__name__)
 
 
@@ -228,7 +232,58 @@ def _cursor_skills() -> dict[str, bytes]:
 #: framework renderings (raw bundled tier form and resolved form) so a
 #: mis-materialized agent can heal; every other client only ever received the
 #: materialized form, so the single-hash guard is exactly right for them.
-_AGENT_CLIENTS: tuple[str, ...] = ("antigravity-cli", "codex", "copilot", "cursor-ide", "opencode")
+#:
+#: An entry here is a DECLARED exclusion, not an omission — the membership below
+#: is derived, so the only way out of the recorder is to be named here with a
+#: reason.
+_AGENT_RECORDER_EXCLUSIONS: dict[str, str] = {
+    "claude-code": ".claude/agents has its own recorder in _manifest_recorders.py",
+}
+
+
+#: DERIVED (2026-09-12) from the profile registry intersected with "has a
+#: documented agent surface" (``agent_format_for(...).supports_agents``, which
+#: is what excludes ``cursor-cli``), minus the declared exclusions above.
+#:
+#: It was a hand-written 5-tuple. A new profile with an agent surface would have
+#: been absent from it, and absence is silent here: the client gets no
+#: per-file hash record, so ``artifact_user_edited`` cannot tell TRW's own last
+#: write from the user's hand edit and ``update-project`` overwrites the user's
+#: agent files (CONSTITUTION HB-2 — the exact class this module exists to
+#: prevent, re-entering through the enumeration rather than the predicate).
+#: ``sorted`` preserves the previous ordering of
+#: ``MANAGED_CLIENT_ARTIFACT_SOURCES`` exactly.
+def _derive_agent_clients() -> tuple[str, ...]:
+    """Profiles with an agent surface this recorder owns. Fails closed, loudly.
+
+    An ``AgentFormatError`` here means a profile exists in the client registry
+    with no entry in ``agents/agent_formats._REGISTRY``. It is re-raised rather
+    than skipped: skipping would drop the client out of the recorder silently,
+    which is the data-losing direction (its agent files become overwritable).
+    """
+    derived: list[str] = []
+    for client in builtin_client_ids():
+        if client in _AGENT_RECORDER_EXCLUSIONS:
+            continue
+        try:
+            if agent_format_for(client).supports_agents:
+                derived.append(client)
+        except AgentFormatError as exc:  # pragma: no cover - registry inconsistency
+            raise RuntimeError(
+                f"client profile {client!r} has no agents/agent_formats._REGISTRY entry, so its "
+                "agent surface cannot be classified. Add the entry (an unsupported surface is "
+                "declared with unsupported_reason) — leaving it out disables the user-edit guard "
+                "for that client."
+            ) from exc
+    if not derived:  # pragma: no cover - floor, see builtin_client_ids()
+        raise RuntimeError(
+            "_AGENT_CLIENTS derived empty: every client-profile agent surface resolved unsupported. "
+            "An empty recorder set silently disables the user-edit guard for every client."
+        )
+    return tuple(sorted(derived))
+
+
+_AGENT_CLIENTS: tuple[str, ...] = _derive_agent_clients()
 
 MANAGED_CLIENT_ARTIFACT_SOURCES: tuple[ManagedArtifactSource, ...] = (
     *(ManagedArtifactSource(client, _agent_surface(client), _agent_source(client)) for client in _AGENT_CLIENTS),

@@ -32,7 +32,7 @@ def _canonical_text() -> str:
 
 def test_framework_version() -> None:
     text = _canonical_text()
-    assert "v26.2_TRW" in text
+    assert "v27.1_TRW" in text
     # Assert the stamp is present and well-formed, not that it equals one past date.
     # A literal date here breaks on every legitimate version bump and teaches the next
     # editor to "fix" the test by pasting whatever the file now says -- which makes the
@@ -59,7 +59,7 @@ def test_provider_specific_cutover_removed() -> None:
 
 def test_callout_within_execution_summary() -> None:
     head = "\n".join(_canonical_text().splitlines()[:20])
-    assert "v26.2 mandate" in head
+    assert "v27.1 mandate" in head
     assert "model prompt" in head
 
 

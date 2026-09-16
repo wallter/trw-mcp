@@ -14,6 +14,7 @@ module nor its parent can create an import cycle with ``TRWConfig``.
 from __future__ import annotations
 
 from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
+from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
 from trw_mcp.models.config._field_admission_doctor_thread_hotspots import DOCTOR_THREAD_HOTSPOT_ADMISSIONS
@@ -366,6 +367,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **WRITER_PRESSURE_ADMISSIONS,
     # PRD-CORE-265: formation manifest + enforcement tunables (own table).
     **FORMATION_ADMISSIONS,
+    **COMMS_ADMISSIONS,
     # PRD-FIX-130: learn-journal wall-clock drain budget (own table).
     **DRAIN_BUDGET_ADMISSIONS,
     # PRD-CORE-266: doctor formation-readiness probe bound (own table).

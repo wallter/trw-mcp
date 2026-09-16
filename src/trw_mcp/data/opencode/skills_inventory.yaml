@@ -28,7 +28,3 @@ skills:
     disposition: portable
     source: variant
     reason: MCP-first read-only second-opinion dispatch is client-neutral and supports shell-less harnesses
-  trw-sprint-team:
-    disposition: exclude
-    source: shared
-    reason: Depends on explicit team spawning and approval loops that OpenCode does not guarantee

@@ -84,7 +84,6 @@ class InstalledAssetResult:
 
 PACKAGE_KEY_TRW_MCP = "trw-mcp"
 PACKAGE_KEY_TRW_MEMORY = "trw-memory"
-PACKAGE_KEY_MEMORY_TS = "memory-ts"
 
 # Publicly-shipped packages only. This module ships inside the public ``trw-mcp``
 # wheel, so it must not enumerate the monorepo's proprietary siblings. The full
@@ -96,7 +95,22 @@ PYPROJECT_PACKAGE_KEYS: tuple[tuple[str, str], ...] = (
     (PACKAGE_KEY_TRW_MCP, "trw-mcp"),
     (PACKAGE_KEY_TRW_MEMORY, "trw-memory"),
 )
-PACKAGE_JSON_KEYS: tuple[tuple[str, str], ...] = ((PACKAGE_KEY_MEMORY_TS, "packages/memory-ts"),)
+
+#: Deliberately EMPTY: TRW publishes no ``package.json`` package.
+#:
+#: Until 2026-09-12 this hardcoded one proprietary sibling by name AND by monorepo
+#: path — the exact thing the comment above forbids, in the same file that forbids
+#: it, and it rode into every published wheel. That entry is ``tier: proprietary``
+#: in ``release-packages.yaml``, so it belongs to the config-driven taxonomy like
+#: every other non-public package, and :func:`_extended_package_manifests` yields
+#: it inside the monorepo with no behaviour lost.
+#:
+#: This tuple is not an oversight and must stay empty. Adding an entry re-opens the
+#: leak; a genuinely public ``package.json`` package would need its IP-boundary
+#: decision recorded first. Pinned by
+#: ``test_collects_installed_project_status_without_monorepo_manifests``, which
+#: asserts a public install cannot enumerate a proprietary sibling.
+PACKAGE_JSON_KEYS: tuple[tuple[str, str], ...] = ()
 
 #: Canonical monorepo release-topology manifest (NOT shipped in the trw-mcp
 #: subtree). Lives at the monorepo root and is the single source of truth for
@@ -105,7 +119,7 @@ _RELEASE_TOPOLOGY_FILENAME = "release-packages.yaml"
 
 #: Package keys already covered by the hardcoded public lists above — skipped
 #: when merging the external topology so they are never double-counted.
-_PUBLIC_PACKAGE_KEYS: frozenset[str] = frozenset({PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY, PACKAGE_KEY_MEMORY_TS})
+_PUBLIC_PACKAGE_KEYS: frozenset[str] = frozenset({PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY})
 
 
 def _extended_package_manifests(root: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
