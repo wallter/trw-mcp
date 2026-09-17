@@ -50,11 +50,19 @@ def _client_from_req(req_path: Path) -> DispatchClient:
 
 
 def _failure_result(req_path: Path, exc: BaseException) -> DispatchResult:
-    """Build a minimal ok=False result describing an unexpected runner failure."""
+    """Build a minimal ok=False result describing an unexpected runner failure.
+
+    ``posture_enforced=False`` is a FACT about this path, not a default: reaching
+    here means no child was launched (or the request could not even be parsed),
+    so nothing was bounded. The runner derives the true value from the registry
+    on the paths where a child actually ran; hardcoding True here would let a
+    crashed job report containment it never performed.
+    """
     return DispatchResult(
         client=_client_from_req(req_path),
         argv_redacted=[],
         read_only_enforced=True,
+        posture_enforced=False,
         exit_code=-1,
         timed_out=False,
         duration_s=0.0,

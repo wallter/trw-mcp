@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager, suppress
 import structlog
 from fastmcp import FastMCP
 
+from trw_mcp import __version__
 from trw_mcp.meta_tune.boot_checks import validate_defaults as validate_meta_tune_defaults
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
@@ -348,6 +349,10 @@ def create_app(
     """
     return FastMCP(
         "trw",
+        # PRD-FIX-141-FR01: without this the handshake advertises FastMCP's own
+        # version as ``serverInfo.version``, so every client-side trw-mcp version
+        # check reads the wrong number (observed 3.4.7 for a 3.0.0 install).
+        version=__version__,
         instructions=instructions or _load_server_instructions(),
         middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
         lifespan=_build_sync_lifespan,

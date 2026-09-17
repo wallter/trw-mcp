@@ -32,6 +32,16 @@ def test_profile_explain_contract_payload_shape() -> None:
         "surface_snapshot_id",
         "session_override_hash",
         "resolved_profile",
+        # PRD-FIX-141-FR06: what this profile was resolved FROM. session_start
+        # emits the identical block, so two reports of one session can be
+        # reconciled instead of read as a contradiction (learning L-Rikf).
+        "profile_resolution_basis",
+    }
+    assert set(payload["profile_resolution_basis"]) == {  # type: ignore[arg-type]
+        "run_dir",
+        "session_layer_present",
+        "layers_applied",
+        "ceremony_tier",
     }
     # Every surface key appears exactly once in fields.
     field_names = {f["field"] for f in payload["fields"]}  # type: ignore[union-attr]

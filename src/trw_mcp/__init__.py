@@ -2,11 +2,16 @@
 
 SQLite Driver Selection
 -----------------------
-The very first import below performs an idempotent swap of stdlib ``sqlite3``
-with ``pysqlite3-binary`` (when installed) so that every subsequent
-``import sqlite3`` resolves to a SQLite build that carries the WAL-reset bug
-fix. ``trw_memory`` does the same swap; importing either package first is
-sufficient. The swap is a no-op when ``pysqlite3`` is absent.
+There is exactly ONE place that decides which SQLite module this process runs:
+``trw_memory.storage._dbapi``, which ranks the stdlib engine against an
+installed ``pysqlite3`` on ``(carries the WAL-reset fix, version)`` and never
+lets an older wheel replace a newer interpreter. The first import below reaches
+it, before anything in this package can ``import sqlite3``.
+
+This module used to perform its own inline ``sys.modules`` swap as well, on the
+reasoning that ``trw-mcp`` might be installed without ``trw-memory``. It cannot
+be — ``trw-memory`` is a required dependency — and a second, policy-free
+decision point could only ever disagree with the first (PRD-INFRA-185 FR05).
 
 Error Handling Policy (PRD-FIX-043)
 ------------------------------------
@@ -32,32 +37,26 @@ New ``except Exception`` blocks require both the ``# justified:`` comment
 and a corresponding log call.
 """
 
-# MUST be first and INLINE for the same reason as trw_memory/__init__.py:
-# any import that ends up touching ``trw_memory.storage`` will eagerly
-# load ``sqlite_backend`` → ``_init_helpers`` → ``_connection``, each of
-# which captures stdlib ``sqlite3`` into its module namespace. By doing
-# the swap inline here with no other package imports, we guarantee that
-# all subsequent submodule loads see the swapped ``sys.modules["sqlite3"]``.
-# The swap is idempotent — if trw_memory loaded first it has already run.
-try:
-    import sys as _sys
-
-    import pysqlite3 as _pysqlite3  # type: ignore[import-untyped]
-
-    _sys.modules["sqlite3"] = _pysqlite3
-    _sys.modules["sqlite3.dbapi2"] = _pysqlite3.dbapi2
-    _pysqlite3._trw_pysqlite3_active = True
-except ImportError:
-    pass
-
-# Expose the observability shim for callers that want to inspect which
-# driver is active. ``trw_memory`` re-runs the swap idempotently if it
-# happens to load first.
+# The SQLite driver policy lives in trw_memory.storage._dbapi, and this import
+# MUST stay first: importing ``trw_memory.storage`` runs the selection before
+# ``_wal_checkpoint``/``_connection``/``sqlite_backend`` capture ``sqlite3`` in
+# their own namespaces, and before any trw_mcp submodule loads. The binding is
+# also the observability shim — callers ask ``_dbapi.backend()`` /
+# ``_dbapi.sqlite_version()`` which engine won.
 from trw_memory.storage import _dbapi as _dbapi  # noqa: I001
 
 import importlib.metadata as _importlib_metadata
+from datetime import datetime as _datetime
+from datetime import timezone as _timezone
 import re as _re
 from pathlib import Path as _Path
+
+
+#: When this process imported trw_mcp — for a server, its boot. Read by the
+#: unpinned deliver gate as "every unpinned change since this server started";
+#: it must NOT live in the gate module, which is imported lazily at the first
+#: deliver call, after the edits it needs to see (release-verify 2026-09-17 F1).
+PROCESS_STARTED_AT = _datetime.now(_timezone.utc)
 
 
 def _resolve_version() -> str:

@@ -86,6 +86,7 @@ def run_dispatch(args: argparse.Namespace) -> None:
             read_only=(False if bool(getattr(args, "allow_writes", False)) else None),
             isolate=not bool(getattr(args, "no_isolate", False)),
             use_pty=bool(getattr(args, "pty", False)),
+            verify_sandbox=bool(getattr(args, "verify_sandbox", False)),
             dispatch_cfg=dispatch_cfg,
         )
     except DispatchResolutionError as err:

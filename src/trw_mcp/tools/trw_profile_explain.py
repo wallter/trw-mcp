@@ -64,7 +64,7 @@ def register_trw_profile_explain_tools(server: FastMCP) -> None:
                 task_name=task_name or None,
                 trw_dir=trw_dir,
             )
-            return build_explanation(resolved)
+            return build_explanation(resolved, run_dir=run_dir)
         except Exception as exc:  # justified: fail-open, tool must never crash
             logger.warning("profile_explain_tool_failed", error=str(exc))
             return {"error": str(exc), "fields": [], "layers_applied": []}

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tests._tools_learning_shared import _get_tools
+from tests._tools_learning_shared import _get_tools, no_machine_wide_ide_detection  # noqa: F401
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateWriter

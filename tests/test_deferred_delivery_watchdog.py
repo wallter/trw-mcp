@@ -35,7 +35,13 @@ from trw_memory.storage import _dbapi as memory_dbapi
 
 
 class TestPysqlite3Shim:
-    """Driver preference shim correctness."""
+    """One driver decision, made in trw-memory, inherited by trw-mcp.
+
+    PRD-INFRA-185 FR05 removed trw_mcp/__init__.py's own inline
+    ``sys.modules["sqlite3"]`` swap. Two independent decision points could only
+    ever disagree, and the trw-mcp one had no version policy at all: it installed
+    pysqlite3 whenever it imported, which on a current interpreter is a downgrade.
+    """
 
     def test_reports_backend(self) -> None:
         backend = memory_dbapi.backend()
@@ -50,24 +56,35 @@ class TestPysqlite3Shim:
             assert part.isdigit(), f"non-numeric version component: {part!r}"
 
     def test_wal_reset_safe_threshold(self) -> None:
-        # Pure logic test of the cutoff: 3.51.3 and later are safe, as
-        # are the backports 3.44.6 and 3.50.7. Drive via the function
-        # directly so we don't depend on the installed wheel.
-        from trw_memory.storage._dbapi import is_wal_reset_safe as _is_safe
+        """The cutoff is a pure function of a version string, so assert it directly."""
+        from trw_memory.storage._dbapi import is_wal_reset_safe, wal_reset_safe_version
 
-        # We can't change the global without polluting other tests, so
-        # we exercise the equivalent boundary by reading the function's
-        # current verdict and asserting it's a bool — the per-version
-        # logic is exercised below via direct version manipulation.
-        verdict = _is_safe()
-        assert isinstance(verdict, bool)
+        assert wal_reset_safe_version("3.51.3") is True
+        assert wal_reset_safe_version("3.51.1") is False
+        assert wal_reset_safe_version("3.50.7") is True
+        assert wal_reset_safe_version("3.44.6") is True
+        assert isinstance(is_wal_reset_safe(), bool)
 
-    def test_sqlite3_module_resolves_to_pysqlite3_when_active(self) -> None:
+    def test_the_resolved_sqlite3_module_is_the_selected_driver(self) -> None:
+        """Whatever won, ``import sqlite3`` must resolve to exactly that engine.
+
+        This is the assertion that would fail if trw_mcp re-introduced a swap:
+        a second, policy-free swap can put a module here that the reported
+        selection disagrees with.
+        """
         import sqlite3 as resolved_sqlite3
 
-        # If pysqlite3 is installed, the shim swapped it in.
-        if memory_dbapi.backend() == "pysqlite3":
-            assert resolved_sqlite3.sqlite_version == memory_dbapi.sqlite_version()
+        assert resolved_sqlite3.sqlite_version == memory_dbapi.sqlite_version()
+
+    def test_trw_mcp_does_not_swap_sys_modules_itself(self) -> None:
+        """The decision point is singular, proven against the source."""
+        import trw_mcp
+
+        source = Path(trw_mcp.__file__).read_text(encoding="utf-8")
+        assert 'sys.modules["sqlite3"]' not in source
+        assert "_sys.modules[" not in source
+        assert "import pysqlite3" not in source
+        assert "from trw_memory.storage import _dbapi as _dbapi" in source
 
 
 # --- auto_prune deadline + cancellation ---

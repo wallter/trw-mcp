@@ -24,8 +24,28 @@ from trw_mcp.dispatch._types import DispatchClient
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
+# A pseudo-terminal in cooked mode ECHOES the EOF it receives: with stdin closed
+# (PRD-CORE-277-FR01) `script` forwards EOF immediately and the pty prints the
+# literal characters ``^D`` followed by backspaces, so the stream starts
+# ``^D\x08\x08{...`` and every JSON parser here bails to raw text. Measured on
+# Darwin 2026-09-16; a denied agy run then came back as non-empty "text" and
+# reported ok=True.
+#
+# Only a LEADING run is stripped, and the ``^D`` spelling must be followed by AT
+# LEAST ONE backspace (``\x08+``, never ``\x08*``): the pty always backspaces
+# over its own echo, so requiring it keeps an answer that merely opens with the
+# literal text ``^D means EOF`` intact. Bare EOT/backspace control bytes are
+# stripped on their own because they are never an answer.
+_PTY_EOF_ECHO_RE = re.compile(r"\A(?:\^D\x08+|[\x04\x08])+")
+
+
+def _strip_pty_echo(text: str) -> str:
+    """Remove the pseudo-terminal's echo of the EOF we sent the child."""
+    return _PTY_EOF_ECHO_RE.sub("", text)
+
+
 def _strip_ansi(text: str) -> str:
-    return _ANSI_RE.sub("", text)
+    return _strip_pty_echo(_ANSI_RE.sub("", text))
 
 
 def _normalize_claude(raw: str) -> tuple[str, dict[str, object] | None]:
@@ -129,6 +149,11 @@ def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None
     Degrades like every sibling: any non-JSON line, any untagged line, or a
     stream with no terminal envelope returns the ANSI-cleaned raw text and no
     structured payload, so a shape chosen wrongly costs nothing.
+
+    A RECOGNIZED terminal envelope is the one case that does not degrade to raw
+    text. If its answer field is absent, empty, whitespace-only or not a string,
+    the answer is ``""`` and only the payload comes back — the stream parsed, so
+    its bytes are diagnostics, not the model's reply.
     """
 
     cleaned = _strip_ansi(raw)
@@ -158,7 +183,13 @@ def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None
         answer = terminal.get(field)
         if isinstance(answer, str) and answer.strip():
             return answer.strip(), terminal
-    return cleaned.strip(), terminal
+    # Recognized terminal envelope, no usable answer: the client spoke the
+    # protocol and said nothing. Returning the raw NDJSON here would make the
+    # diagnostic stream masquerade as the model's answer and flip
+    # ``DispatchResult.ok`` to True (a denied-permission agy run has already
+    # been recorded as a successful dispatch that way). The empty answer is the
+    # truthful one; the payload is still handed back as diagnostics.
+    return "", terminal
 
 
 def _normalize_agy(raw: str) -> tuple[str, dict[str, object] | None]:
@@ -197,3 +228,126 @@ def normalize_output(client: DispatchClient, raw_stdout: str) -> tuple[str, dict
         return normalizer(cleaned)
     except Exception:  # justified: normalization must degrade, never raise
         return cleaned.strip(), None
+
+
+# ── Silence classification (PRD-CORE-277-FR04) ───────────────────────────────
+
+# Substrings that mark a credential or policy STOP. Matched case-insensitively
+# against the child's STDERR and against NAMED status fields of the structured
+# payload — never against the answer text, because a review whose subject is
+# authentication would otherwise classify itself as an auth failure.
+_STOP_MARKERS: tuple[str, ...] = (
+    "401 unauthorized",
+    "unauthorized",
+    "not logged in",
+    "invalid api key",
+    "authentication",
+    "auth expired",
+    "credential",
+    "content filter",
+    "content_filter",
+    "content policy",
+    "refused by policy",
+    "permission that headless mode cannot prompt for",
+)
+
+# Phrases a CLIENT emits to announce that it did not do the work. Unlike the
+# markers above these are checked even when the run produced text, because the
+# case they exist for is a stream where the "text" IS the diagnostic: a pty has
+# one stream, so under --pty the child's stderr arrives inside stdout (measured
+# 2026-09-17).
+#
+# They are consulted ONLY against that merged pty stream, and only when it did
+# not parse into a structured payload. The wider version was measured WRONG the
+# same day: a codex code-review dispatch of this very diff came back
+# ok=False/auth_or_content_stop, because codex echoes the PROMPT to stderr and
+# the prompt quoted "no output produced". A diagnostic phrase is no safer than a
+# generic one on a channel that carries the caller's own words, which is exactly
+# the false positive 3a2634cf4 fixed for the generic set.
+_HARD_STOP_MARKERS: tuple[str, ...] = (
+    "no output produced",
+    "permission that headless mode cannot prompt for",
+    "requires approval, but approval policy is never",
+)
+
+# Structured fields that carry a client's OWN verdict on the turn. Read by name;
+# a blanket walk over structured VALUES is forbidden here because those values
+# include the answer (agy's ``response``, claude's ``result``).
+_STATUS_FIELDS: tuple[str, ...] = ("status", "subtype", "error", "error_type", "stop_reason", "finish_reason")
+
+# Values of a status field that mean "the turn completed normally". Anything else
+# in a status field is treated as a stop.
+_OK_STATUS_VALUES: frozenset[str] = frozenset({"success", "ok", "completed", "complete", "done", "stop", "end_turn"})
+
+
+def _structured_stop(structured: dict[str, object] | None) -> bool:
+    """True if the client's own structured payload reports a stop."""
+    if not structured:
+        return False
+    if structured.get("is_error") is True:
+        return True
+    for field in _STATUS_FIELDS:
+        value = structured.get(field)
+        if isinstance(value, str) and value.strip() and value.strip().lower() not in _OK_STATUS_VALUES:
+            return True
+        if isinstance(value, dict) and value:
+            return True
+    return False
+
+
+def classify_silence(
+    *,
+    text: str,
+    raw_stderr: str,
+    structured: dict[str, object] | None,
+    exit_code: int | None,
+    timed_out: bool,
+    merged_stderr: str = "",
+) -> str | None:
+    """Name why a run produced no usable answer, or return ``None``.
+
+    Precedence is most-specific-first: a timeout, then a stop the child or its
+    transport reported, then a bare non-zero exit, then an empty answer. The
+    order matters because an expired codex credential exits 1 AND prints a 401 —
+    measured 2026-09-16 — and "auth_or_content_stop" is the actionable half of
+    that pair.
+
+    ``merged_stderr`` is the PTY exception and the runner decides when it applies.
+    A pseudo-terminal has ONE stream: under ``use_pty`` the child's stderr is
+    merged into stdout and ``proc.stderr`` arrives empty, so both rules above
+    would inspect nothing — measured 2026-09-17, a stub whose only output was a
+    denial on stderr came back through ``script`` as non-empty ``text`` with
+    ``ok=True``. The merged stream is therefore searched too, and for that shape
+    alone — and only when the stream did NOT parse into a structured payload —
+    the hard markers decide: an unparsed pty stream carrying a client's own
+    "I did not run" line is diagnostics, whatever its length. A pty run that
+    parsed is judged by the ordinary rules.
+
+    KNOWN LIMIT (PRD-CORE-277-FR04): a client that exits 0, writes nothing to
+    stderr and returns a prose refusal as its answer is NOT detectable here, and
+    deliberately so — the alternative is scanning the answer for policy words,
+    which misfires on any review whose subject is authentication. codex is in
+    exactly that position today because TRW launches it without a structured
+    output flag. Closing it means adopting ``codex exec --json`` and a parser for
+    that schema.
+    """
+    if timed_out:
+        return "timed_out"
+    if _structured_stop(structured):
+        return "auth_or_content_stop"
+    produced_answer = exit_code == 0 and bool(text.strip())
+    # A stderr marker counts only when the run produced no usable answer. codex
+    # echoes the whole PROMPT to stderr, so a prompt that merely mentions
+    # "credential" or "authentication" would otherwise turn a complete, exit-0
+    # review into a reported auth stop (measured 2026-09-17 on PRD-CORE-278's
+    # adversarial-audit dispatch: full text, ok=false).
+    if structured is None and any(marker in merged_stderr.lower() for marker in _HARD_STOP_MARKERS):
+        return "auth_or_content_stop"
+    haystack = f"{raw_stderr}\n{merged_stderr}".lower()
+    if not produced_answer and any(marker in haystack for marker in _STOP_MARKERS):
+        return "auth_or_content_stop"
+    if exit_code != 0:
+        return "nonzero_exit"
+    if not text.strip():
+        return "empty_output"
+    return None

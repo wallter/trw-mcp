@@ -7,11 +7,19 @@ from pathlib import Path
 
 import pytest
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.bootstrap import _DATA_DIR, init_project
 from trw_mcp.models.config import TRWConfig
 
 from ._bootstrap_test_support import fake_git_repo  # noqa: F401
 from .test_bootstrap_update_core import resolve_instruction_text
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``."""
+    isolate_ide_detection(monkeypatch)
+
 
 # The EXACT deployed hook/agent set is environment-dependent: a standalone
 # install (the public PyPI/GitHub mirror) legitimately installs the opt-in

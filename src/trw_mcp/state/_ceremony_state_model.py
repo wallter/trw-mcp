@@ -21,6 +21,10 @@ class CeremonyState:
 
     session_started: bool = False
     session_build_results: dict[str, str] = field(default_factory=dict)
+    #: ISO timestamp of each session's most recent recorded build result; a
+    #: pass is only evidence for the tree as it stood then (release-verify
+    #: 2026-09-17 P1-1).
+    session_build_results_at: dict[str, str] = field(default_factory=dict)
     checkpoint_count: int = 0
     last_checkpoint_ts: str | None = None
     last_checkpoint_turn: int = 0
@@ -131,6 +135,7 @@ def ceremony_state_from_dict(data: dict[str, object]) -> CeremonyState:
     return CeremonyState(
         session_started=_bool("session_started"),
         session_build_results=_dict_str_str("session_build_results"),
+        session_build_results_at=_dict_str_str("session_build_results_at"),
         checkpoint_count=_int("checkpoint_count"),
         last_checkpoint_ts=_opt_str("last_checkpoint_ts"),
         last_checkpoint_turn=_int("last_checkpoint_turn"),

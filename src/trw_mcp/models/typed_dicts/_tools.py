@@ -58,7 +58,17 @@ class RecallResultDict(TypedDict, total=False):
     patterns: list[dict[str, object]]
     context: RecallContextDict
     total_matches: int
+    # PRD-FIX-141-FR05. Three counts, three populations, stated once:
+    #   total_matches    — entries + patterns actually returned after the cap.
+    #   total_available  — bounded PRE-CAP match population (learnings + patterns);
+    #                      a FLOOR, not a corpus size, because the DB fetch itself
+    #                      is capped at max_results * PREFETCH_MULTIPLIER.
+    #   candidate_count  — rows the backend returned before ranking/dedup/cap.
+    #   store_count      — the project store's own inventory; OMITTED (never 0)
+    #                      when the store could not be read.
     total_available: int
+    candidate_count: int
+    store_count: int
     compact: bool
     max_results: int
     topic_filter_ignored: bool
@@ -114,7 +124,11 @@ class SessionStartResultDict(TypedDict, total=False):
     # returned learnings are the query-independent impact-ranked baseline and
     # points the caller at trw_recall for full hybrid search.
     query_advisory: str
+    # ``total_available`` here is the RETURNED set, not the corpus; ``store_count``
+    # is the project store's inventory, omitted when it could not be read
+    # (PRD-FIX-141-FR05).
     total_available: int
+    store_count: int
     # PRD-CORE-215 FR01 connection fingerprint. Full ten-field block under
     # verbose=True; compact mode keeps only build_identity + connection_nonce
     # (see tools/_session_start_trim.py::_FINGERPRINT_COMPACT_FIELDS).
@@ -210,6 +224,11 @@ class SessionStartResultDict(TypedDict, total=False):
     # is the session-layer delta hash (FR-13). All omitted when the profile
     # system is disabled or resolution fails open.
     resolved_profile: dict[str, object]
+    # PRD-FIX-141-FR06: what the profile above was resolved FROM (run dir,
+    # whether the Scout's session layer existed yet, layers applied, tier).
+    # trw_profile_explain emits the identical block, so two reports of the same
+    # session are reconcilable instead of contradictory.
+    profile_resolution_basis: dict[str, object]
     profile_layers_applied: list[str]
     profile_snapshot_id: str
     session_override_hash: str

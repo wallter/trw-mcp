@@ -111,15 +111,15 @@ def register_delivery_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Recover a stale/crashed delivery. Use when a lease is stale or
         its process crashed — not for routine checks (trw_delivery_status).
-        Requires the delivery_id AND capability_token trw_deliver returned
-        (the recovery secret) plus exact expected_revision.
+        Requires the delivery_id and capability_token trw_deliver returned,
+        plus the exact expected_revision.
 
         Args: action in {takeover_pending, resume, reconcile_applied,
-        reconcile_not_applied, request_cancel}. Use resume to finish a
-        crashed delivery under the SAME delivery_id: it classifies the
-        crashed steps, refuses with reconciliation_required while any is
-        indeterminate, and otherwise grants this process a fresh lease so
-        a re-invoked trw_deliver runs only the steps that never started.
+        reconcile_not_applied, request_cancel}. resume finishes a crashed
+        delivery under the SAME delivery_id: it classifies the crashed
+        steps, refuses with reconciliation_required while any is
+        indeterminate, otherwise leases this process so a re-invoked
+        trw_deliver runs only the steps that never started.
         """
         if action not in _SUPPORTED_ACTIONS:
             return {"result": "unsupported_action", "action": action, "supported": list(_SUPPORTED_ACTIONS)}

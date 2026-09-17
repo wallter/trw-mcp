@@ -22,7 +22,12 @@ def test_trw_runtime_classifier_documents_path_tiers() -> None:
 
     assert checker.classify_trw_path(".trw/frameworks/VERSION.yaml") == "canonical"
     assert checker.classify_trw_path(".trw/config.yaml") == "canonical"
-    assert checker.classify_trw_path(".trw/compliance/reviews/2026/05/review.yaml") == "audit"
+    # "canonical", not "audit": PRD-INFRA-181 (in the tree at 426348624)
+    # deleted the `audit` tier outright -- classify_trw_path's own docstring
+    # records it as "a synonym for canonical that no caller distinguished".
+    # What this path must still be is COMMITTABLE, which is asserted directly
+    # by test_precommit_check_accepts_canonical_and_audit_paths below.
+    assert checker.classify_trw_path(".trw/compliance/reviews/2026/05/review.yaml") == "canonical"
     assert checker.classify_trw_path(".trw/runtime/pins.json") == "ephemeral"
     assert checker.classify_trw_path(".trw/context/session-events.jsonl") == "ephemeral"
     assert checker.classify_trw_path(".trw/security/rate_limits.yaml") == "ephemeral"

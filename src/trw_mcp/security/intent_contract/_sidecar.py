@@ -24,13 +24,21 @@ Three properties make that conclusion sound, and each is enforced on BOTH sides:
   so a sidecar left over from a DIFFERENT contract does not match the live marker
   and the shell refuses it;
 * every artifact the marker's three digests cover is listed as a ``g1``/``g0``
-  freshness line, and the shell defers as soon as any of them is NEWER than this
-  file (or has appeared, or gone). This is what keeps the fast path from outliving the
-  enrollment it was derived from: an edited contract (a NEW anchor the sidecar
-  has never heard of), a resynced hook, or a rewritten pre-commit registration
-  each make the marker ``stale`` — which Python fails CLOSED on — and each also
-  advances an mtime past the sidecar's, so the shell defers instead of
-  self-approving a write Python would have blocked.
+  freshness line, and the shell defers as soon as any of them no longer HASHES to
+  what it hashed to here (or has appeared, or gone). This is what keeps the fast
+  path from outliving the enrollment it was derived from: an edited contract (a
+  NEW anchor the sidecar has never heard of), a resynced hook, or a rewritten
+  pre-commit registration each make the marker ``stale`` — which Python fails
+  CLOSED on — and each also changes a recorded digest, so the shell defers
+  instead of self-approving a write Python would have blocked.
+
+  The ``g1`` lines carried no digest until 2026-09-17 and the shell compared
+  MTIME ORDERING instead (``[ "$art" -nt "$sidecar" ]``). ``-nt`` resolution
+  belongs to the shell, and bash 3.2 — ``/bin/sh`` on macOS — compares whole
+  ``st_mtime`` SECONDS: a contract edited in the same second as the sidecar was
+  not "newer", so the fast path cleared a project the marker condemns. A content
+  digest has no resolution to lose, and it costs ONE ``sha256sum``/``shasum``
+  process for the whole artifact set.
 
 RESIDUAL, stated plainly rather than implied away, because the PRD's FR05 claims
 more than this mechanism can deliver. The trailing digest is the CONTRACT's, so
@@ -54,15 +62,18 @@ boundary that already exists:
 * the marker's digests, the pre-commit/pre-push control-plane checks and C9 are
   unchanged and remain the durable answer.
 
-The mtime freshness proof is likewise defeated by an actor who can backdate an
-mtime, and it is second-granular under busybox. Both bound the same actor.
+The digest freshness proof is defeated by the same actor, who can simply rewrite
+the recorded digest along with the file. It bounds accident and drift, not that
+actor — who is already inside the trusted computing base above.
 
 FILE FORMAT (line-oriented, ASCII, one meaning per prefix; anything else makes
 the shell defer):
 
     # <comment>            ignored
     p <pattern>            POSIX `case` pattern for one rendered anchor
-    g1 <repo-rel path>     guarded artifact PRESENT at write time
+    g1 <sha256hex> <repo-rel path>
+                           guarded artifact PRESENT at write time, with the
+                           digest of the bytes it had then
     g0 <repo-rel path>     guarded artifact ABSENT at write time
     sha256:<hex>           the marker's expected_contract_digest; LAST line
 
@@ -71,6 +82,7 @@ Belongs to the ``trw_mcp.security.intent_contract`` facade.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from trw_mcp.security.intent_contract._anchors import eligible_claims, is_glob_anchor
@@ -161,6 +173,22 @@ def _patterns_for(anchor: str) -> tuple[str, ...] | None:
     return (normalized, f"{normalized}/*")
 
 
+def _artifact_digest(path: Path) -> str | None:
+    """The sha256 of *path*, or ``None`` when it is not a readable regular file.
+
+    ``None`` is the ``g0`` (absent) case, which the shell already treats as "this
+    must still be absent". A file that exists but cannot be read is reported the
+    same way on purpose: the shell then defers the moment it finds the file
+    present, which is the safe direction.
+    """
+    if not is_regular_file(path):
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:  # trw-fail-silent-allow: an unreadable artifact renders as `g0` (absent), and the shell defers the moment it finds that file PRESENT -- the safe direction, and the same answer the absent case gets
+        return None
+
+
 def render_glob_sidecar(
     root: Path, contract: Contract | None, contract_rel_path: str, contract_digest: str
 ) -> str | None:
@@ -182,7 +210,8 @@ def render_glob_sidecar(
     for artifact in guarded_artifacts(contract_rel_path):
         if not _renderable(artifact):
             return None
-        lines.append(f"g1 {artifact}" if is_regular_file(root / artifact) else f"g0 {artifact}")
+        digest = _artifact_digest(root / artifact)
+        lines.append(f"g0 {artifact}" if digest is None else f"g1 {digest} {artifact}")
     lines.append(f"sha256:{contract_digest}")
     return _HEADER + "\n".join(lines) + "\n"
 

@@ -16,6 +16,11 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
+# PRD-FIX-141-FR10: the per-host accepted-frontmatter schema and its tables live
+# in ``_skill_host_schema`` so this module stays under the 350 effective-LOC
+# gate. Import the two accessors only; callers address the tables at the leaf.
+from trw_mcp.models._skill_host_schema import host_blank_allowed_fields, host_frontmatter_fields
+
 SkillValidationMode: TypeAlias = Literal["compat", "strict"]
 SkillRiskLevel: TypeAlias = Literal["low", "medium", "high", "critical"]
 IssueSeverity: TypeAlias = Literal["warning", "error"]
@@ -130,8 +135,17 @@ def validate_skill_markdown(
     *,
     path: str | Path,
     mode: SkillValidationMode = "compat",
+    host: str | None = None,
 ) -> SkillManifestValidationResult:
-    """Parse and validate a ``SKILL.md`` markdown document."""
+    """Parse and validate a ``SKILL.md`` markdown document.
+
+    ``host`` names the skill loader the document is authored for and selects its
+    accepted-frontmatter schema (:data:`HOST_FRONTMATTER_FIELDS`). It is passed
+    in by the caller rather than read from config here, so this module stays a
+    pure parser and a multi-target install can validate one artifact per target
+    without a global to switch between them. ``None`` means
+    :data:`DEFAULT_SKILL_HOST`.
+    """
 
     path_text = str(path)
     frontmatter, body, envelope_errors = _extract_frontmatter(markdown, path_text, mode)
@@ -142,7 +156,7 @@ def validate_skill_markdown(
     if yaml_errors:
         return SkillManifestValidationResult(errors=tuple(yaml_errors), body=body)
 
-    data, unknown_issues, alias_issues = _normalize_frontmatter(raw_data, path_text, mode)
+    data, unknown_issues, alias_issues = _normalize_frontmatter(raw_data, path_text, mode, host)
     warnings = [issue for issue in (*unknown_issues, *alias_issues) if issue.severity == "warning"]
     errors = [issue for issue in (*unknown_issues, *alias_issues) if issue.severity == "error"]
 
@@ -240,14 +254,22 @@ def _normalize_frontmatter(
     raw_data: Mapping[str, object],
     path: str,
     mode: SkillValidationMode,
+    host: str | None = None,
 ) -> tuple[dict[str, object], list[SkillManifestIssue], list[SkillManifestIssue]]:
     normalized: dict[str, object] = {}
     unknown_issues: list[SkillManifestIssue] = []
     alias_issues: list[SkillManifestIssue] = []
+    host_fields = host_frontmatter_fields(host)
+    blank_allowed = host_blank_allowed_fields(host)
 
     for key, value in raw_data.items():
         canonical = _ALIAS_TO_FIELD.get(key)
         if canonical is None:
+            # PRD-FIX-141-FR10: a key the ACTIVE host defines is accepted and
+            # dropped — it belongs to that loader, not to this manifest. Every
+            # other unknown key keeps its previous severity.
+            if key in host_fields:
+                continue
             severity: IssueSeverity = "error" if mode == "strict" else "warning"
             reason = (
                 "unknown field is not allowed in strict mode"
@@ -269,7 +291,15 @@ def _normalize_frontmatter(
                 )
             )
             continue
-        if mode == "compat" and canonical == "argument_hint" and isinstance(value, str) and not value.strip():
+        # A blank value the host legitimately writes normalizes to unset. Compat
+        # mode always did this for ``argument_hint``; strict mode rejecting the
+        # same bundled file was the two modes disagreeing about one artifact.
+        if (
+            canonical == "argument_hint"
+            and isinstance(value, str)
+            and not value.strip()
+            and (mode == "compat" or canonical in blank_allowed)
+        ):
             normalized[canonical] = None
             continue
         normalized[canonical] = value

@@ -33,7 +33,9 @@ class _PathsFields:
     context_dir: str = "context"
     scratch_dir: str = "scratch"
     events_file: str = "events.jsonl"
-    checkpoints_file: str = "checkpoints.jsonl"
+    # checkpoints_file and test_map_filename were removed 2026-09-16 (PRD-QUAL-139-FR05): no
+    # consumer under the corrected scan, no originating PRD, no test. Both keys are listed in
+    # trw_mcp/data/config-retired-keys.json.
     frameworks_dir: str = "frameworks"
     templates_dir: str = "templates"
 
@@ -66,7 +68,6 @@ class _PathsFields:
     source_package_path: str = "trw-mcp/src"
     source_package_name: str = "trw_mcp"
     tests_relative_path: str = "trw-mcp/tests"
-    test_map_filename: str = "test-map.yaml"
 
     # -- Platform & update channel --
 

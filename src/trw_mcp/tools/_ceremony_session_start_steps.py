@@ -170,6 +170,8 @@ def step_recall_learnings(
             results["query_advisory"] = str(extra["query_advisory"])
         if "total_available" in extra:
             results["total_available"] = int(str(extra["total_available"]))
+        if "store_count" in extra:
+            results["store_count"] = int(str(extra["store_count"]))
         if "response_compacted" in extra:
             results["response_compacted"] = bool(extra["response_compacted"])
         if "side_effects_deferred" in extra:
@@ -415,21 +417,21 @@ def step_assertion_health(
 def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None = None) -> dict[str, object] | None:
     """PRD-FIX-COMPOUNDING-2 FR04 — graph-empty advisory for session_start.
 
-    Asks :func:`trw_mcp.state._graph_relations.graph_has_relations` whether the
-    live backend holds any relation. When it holds none AND there are more than
-    10 memories, returns a ``graph_health`` advisory so the wiring gap surfaces
-    before more un-graphed learnings accumulate. Returns ``None`` (advisory
-    omitted) when the graph is populated, when the corpus is small, or on any
-    error (fail-open). A probe that cannot READ the store now raises out of
-    ``graph_has_relations`` into the wrapper below, so it is recorded as a
-    ``graph_health`` degradation in the payload rather than reported as an
-    empty graph — those are different facts and used to share one answer.
+    PRD-FIX-141-FR02: this used to hold its OWN copy of the predicate — its own
+    ``graph_has_relations`` call over the live backend connection, its own
+    ``count_entries`` population (canary-excluded, capped at 100,000) and its own
+    literal ``memories > 10`` threshold. That made three predicates for one
+    question, and on 2026-09-16 they disagreed on the same store in the same
+    second (learning L-Rikf). It asks
+    :func:`trw_mcp.tools._pipeline_health.probe_graph_edges` now — the one place
+    that decides — so this advisory, ``trw_pipeline_health`` and the fail-closed
+    gate cannot drift apart again.
 
-    The question used to be ``SELECT COUNT(*) FROM memory_graph_edges``. After
-    PRD-CORE-245 FR07 that counts one half of the graph: tag co-occurrence is
-    derived from ``memory_tags`` and materialises no row, so a tag-related
-    corpus with no embeddings reads zero edges and would have drawn this
-    advisory on every session for the rest of its life.
+    Returns ``None`` (advisory omitted) when the graph holds a relation, when the
+    corpus is below the configured minimum, when the probe could not read the
+    store, or on any error (fail-open). "Could not read" is deliberately NOT an
+    advisory: an unmeasured probe is not evidence of an empty graph, and those
+    are different facts that used to share one answer.
 
     The remedy is config-derived, never asserted: ``trw_deliver`` backfills the
     graph inside ``step_knowledge_sync`` only while
@@ -437,40 +439,26 @@ def step_graph_health(trw_dir: Path, degradations: DegradationCollector | None =
     off, "re-deliver to trigger graph backfill" would send an agent to a step
     that no longer runs, so the advisory names the config field instead.
     """
-    import sqlite3
-
-    from trw_memory.models.config import MemoryConfig
-
-    from trw_mcp.state._constants import DEFAULT_NAMESPACE
-    from trw_mcp.state._graph_relations import graph_has_relations
-    from trw_mcp.state.memory_adapter import count_entries, get_backend
+    from trw_mcp.tools._pipeline_health import probe_graph_edges
 
     try:
-        backend = get_backend(trw_dir)
-        conn = getattr(backend, "_conn", None)
-        if not isinstance(conn, sqlite3.Connection):
+        graph = probe_graph_edges(trw_dir)
+        if not graph.get("measured", True) or not graph.get("degraded"):
             return None
-        has_relations = graph_has_relations(
-            conn,
-            namespace=DEFAULT_NAMESPACE,
-            config=MemoryConfig(storage_path=str(trw_dir / "memory")),
-        )
-        memories = count_entries(trw_dir)
-        if not has_relations and memories > 10:
-            from trw_mcp.models.config import get_config
 
-            backfill_on = bool(getattr(get_config(), "deliver_graph_backfill_enabled", True))
-            remedy = (
-                "re-deliver (trw_deliver) to trigger graph backfill"
-                if backfill_on
-                else "deliver-time backfill is off (deliver_graph_backfill_enabled=false)"
-            )
-            return {
-                "status": "empty",
-                "memories": memories,
-                "advisory": f"knowledge graph empty — {remedy}",
-            }
-        return None
+        from trw_mcp.models.config import get_config
+
+        backfill_on = bool(getattr(get_config(), "deliver_graph_backfill_enabled", True))
+        remedy = (
+            "re-deliver (trw_deliver) to trigger graph backfill"
+            if backfill_on
+            else "deliver-time backfill is off (deliver_graph_backfill_enabled=false)"
+        )
+        return {
+            "status": "empty",
+            "memories": int(str(graph.get("corpus_count", 0))),
+            "advisory": f"{graph.get('advisory', 'knowledge graph empty')} — {remedy}",
+        }
     except Exception as exc:  # justified: fail-open — graph-health probe must not block session start
         _record_or_debug(degradations, "graph_health", exc, "graph_health_probe_failed")
         return None

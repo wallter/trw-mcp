@@ -37,10 +37,16 @@ logger = structlog.get_logger(__name__)
 
 _SYNC_FAILURE_THRESHOLD: int = 10
 _SYNC_STALE_HOURS: float = 6.0
-_GRAPH_MIN_CORPUS: int = 100
-_EMBED_COVERAGE_THRESHOLD: float = 0.10
 _RECALL_MIN_CORPUS: int = 100
 _BANDIT_STALE_DAYS: float = 7.0
+
+# PRD-FIX-141-FR02/FR03: the graph and embedding verdicts used to carry PRIVATE
+# thresholds here (100 memories, 10% coverage) while the two other surfaces
+# asking the same questions read CONFIG fields that mean the same thing. That is
+# how ``trw_pipeline_health`` reported ``graph_edges.degraded=false`` in the same
+# second ``trw_session_start`` reported "knowledge graph dead" at severity error
+# (learning L-Rikf). One threshold per question, resolved from config, read by
+# every consumer of this module's verdict.
 
 # Type alias for probe results
 SignalResult = dict[str, Any]
@@ -66,6 +72,20 @@ def _unmeasured(probe: str, reason: str, **fields: Any) -> SignalResult:
         **fields,
         "advisory": f"{probe} not measured: {reason}",
     }
+
+
+def _resolve_config(config: Any | None) -> Any:
+    """Return *config*, or the live ``TRWConfig`` when the caller passed none.
+
+    The gate (``_pipeline_health_gate.check_pipeline_health``) hands its own
+    already-resolved config down so its thresholds and the probe's are the same
+    object; session start and the tool surface pass nothing and get the live one.
+    """
+    if config is not None:
+        return config
+    from trw_mcp.models.config import get_config
+
+    return get_config()
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +181,7 @@ def probe_sync_push(trw_dir: Path) -> SignalResult:
         return _unmeasured("sync_push", type(exc).__name__, consecutive_failures=0, last_push_at=None)
 
 
-def probe_graph_edges(trw_dir: Path) -> SignalResult:
+def probe_graph_edges(trw_dir: Path, config: Any | None = None) -> SignalResult:
     """Report whether the corpus holds any knowledge-graph relation.
 
     ``edge_count`` still reports the MATERIALISED half alone, because that is
@@ -184,6 +204,7 @@ def probe_graph_edges(trw_dir: Path) -> SignalResult:
         "corpus_count": int, "advisory": str}``
     """
 
+    min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 10))
     try:
         from trw_memory.models.config import MemoryConfig
 
@@ -194,23 +215,38 @@ def probe_graph_edges(trw_dir: Path) -> SignalResult:
         if not db_path.is_file():
             # A store that does not exist yet is a MEASURED empty corpus, not an
             # unreadable one: there is nothing to read and nothing to warn about.
-            return {"degraded": False, "measured": True, "edge_count": 0, "corpus_count": 0, "advisory": ""}
+            return {
+                "degraded": False,
+                "measured": True,
+                "edge_count": 0,
+                "corpus_count": 0,
+                "has_relations": False,
+                "min_corpus": min_corpus,
+                "advisory": "",
+            }
 
         with sqlite3.connect(str(db_path), check_same_thread=False, timeout=2.0) as conn:
             edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
-            corpus_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+            # Counted in the SAME namespace ``graph_has_relations`` inspects: a
+            # corpus size taken over the whole file and a relation verdict taken
+            # over one namespace are not two views of one population, and
+            # dividing them produced the "dead graph for N memories" claim about
+            # entries the relation probe never looked at.
+            corpus_count = conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE namespace = ?", (DEFAULT_NAMESPACE,)
+            ).fetchone()[0]
             has_relations = graph_has_relations(
                 conn,
                 namespace=DEFAULT_NAMESPACE,
                 config=MemoryConfig(storage_path=str(trw_dir / "memory")),
             )
 
-        degraded = not has_relations and corpus_count >= _GRAPH_MIN_CORPUS
+        degraded = not has_relations and corpus_count > min_corpus
         advisory = ""
         if degraded:
             advisory = (
-                f"graph_edges degraded: no materialised edge and no derived tag relation "
-                f"for {corpus_count} memories — knowledge graph is empty"
+                f"knowledge graph dead: no materialised edge and no derived tag relation "
+                f"for {corpus_count} memories (min corpus {min_corpus})"
             )
 
         return {
@@ -218,25 +254,29 @@ def probe_graph_edges(trw_dir: Path) -> SignalResult:
             "measured": True,
             "edge_count": edge_count,
             "corpus_count": corpus_count,
+            "has_relations": has_relations,
+            "min_corpus": min_corpus,
             "advisory": advisory,
         }
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
         logger.warning("pipeline_probe_graph_edges_failed", error=type(exc).__name__, exc_info=True)
-        return _unmeasured("graph_edges", type(exc).__name__, edge_count=0, corpus_count=0)
+        return _unmeasured("graph_edges", type(exc).__name__, edge_count=0, corpus_count=0, has_relations=False)
 
 
-def probe_embedding_coverage(trw_dir: Path) -> SignalResult:
+def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> SignalResult:
     """Query vec_memories vs memories ratio via a short-lived connection.
 
     Returns:
         ``{"degraded": bool, "coverage_ratio": float|None, "embedded": int, "total": int, "advisory": str}``
     """
+    threshold = float(getattr(_resolve_config(config), "embeddings_coverage_warn_threshold", 0.10))
     safe_default: SignalResult = {
         "degraded": False,
         "measured": True,
         "coverage_ratio": None,
         "embedded": 0,
         "total": 0,
+        "coverage_threshold": threshold,
         "advisory": "",
     }
     # sqlite_vec missing means the coverage ratio was never computed — the
@@ -263,7 +303,12 @@ def probe_embedding_coverage(trw_dir: Path) -> SignalResult:
                 # sqlite_vec missing means the coverage ratio was never computed.
                 conn.close()
                 return _unmeasured(
-                    "embedding_coverage", "sqlite_vec_unavailable", coverage_ratio=None, embedded=0, total=0
+                    "embedding_coverage",
+                    "sqlite_vec_unavailable",
+                    coverage_ratio=None,
+                    embedded=0,
+                    total=0,
+                    coverage_threshold=threshold,
                 )
 
             embedded = conn.execute("SELECT COUNT(*) FROM vec_memories").fetchone()[0]
@@ -275,10 +320,13 @@ def probe_embedding_coverage(trw_dir: Path) -> SignalResult:
             return safe_default
 
         coverage_ratio = embedded / total
-        degraded = coverage_ratio < _EMBED_COVERAGE_THRESHOLD
+        degraded = coverage_ratio < threshold
         advisory = ""
         if degraded:
-            advisory = f"embedding_coverage degraded: {embedded}/{total} entries embedded ({coverage_ratio:.1%})"
+            advisory = (
+                f"embedding_coverage degraded: {embedded}/{total} entries embedded "
+                f"({coverage_ratio:.1%}, threshold {threshold:.1%})"
+            )
 
         return {
             "degraded": degraded,
@@ -286,11 +334,19 @@ def probe_embedding_coverage(trw_dir: Path) -> SignalResult:
             "coverage_ratio": coverage_ratio,
             "embedded": embedded,
             "total": total,
+            "coverage_threshold": threshold,
             "advisory": advisory,
         }
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
         logger.warning("pipeline_probe_embedding_coverage_failed", error=type(exc).__name__, exc_info=True)
-        return _unmeasured("embedding_coverage", type(exc).__name__, coverage_ratio=None, embedded=0, total=0)
+        return _unmeasured(
+            "embedding_coverage",
+            type(exc).__name__,
+            coverage_ratio=None,
+            embedded=0,
+            total=0,
+            coverage_threshold=threshold,
+        )
 
 
 def probe_recall_feedback(trw_dir: Path) -> SignalResult:
@@ -421,7 +477,7 @@ def probe_bandit_state(trw_dir: Path) -> SignalResult:
 # ---------------------------------------------------------------------------
 
 
-def step_pipeline_health(trw_dir: Path) -> PipelineHealthResult:
+def step_pipeline_health(trw_dir: Path, config: Any | None = None) -> PipelineHealthResult:
     """Run all five compounding-pipeline probes and aggregate the result.
 
     Each probe is individually fail-open: an exception returns a safe default
@@ -441,9 +497,9 @@ def step_pipeline_health(trw_dir: Path) -> PipelineHealthResult:
            "bandit_state": SignalResult}``
     """
 
-    def _run_probe(name: str, fn: Any) -> SignalResult:
+    def _run_probe(name: str, fn: Any, *, takes_config: bool = False) -> SignalResult:
         try:
-            result: SignalResult = fn(trw_dir)
+            result: SignalResult = fn(trw_dir, config) if takes_config else fn(trw_dir)
         except Exception as exc:  # trw-fail-silent-allow: the probes catch their own failures, so this is the belt to their braces; it cannot classify a failure it was never designed to see, so it reports not-measured rather than inventing a verdict
             logger.warning("pipeline_probe_failed", probe=name, error=type(exc).__name__, exc_info=True)
             return _unmeasured(name, f"aggregator_caught_{type(exc).__name__}")
@@ -462,8 +518,8 @@ def step_pipeline_health(trw_dir: Path) -> PipelineHealthResult:
         return result
 
     sync_push = _run_probe("sync_push", probe_sync_push)
-    graph_edges = _run_probe("graph_edges", probe_graph_edges)
-    embedding_coverage = _run_probe("embedding_coverage", probe_embedding_coverage)
+    graph_edges = _run_probe("graph_edges", probe_graph_edges, takes_config=True)
+    embedding_coverage = _run_probe("embedding_coverage", probe_embedding_coverage, takes_config=True)
     recall_feedback = _run_probe("recall_feedback", probe_recall_feedback)
     bandit_state = _run_probe("bandit_state", probe_bandit_state)
 
@@ -485,7 +541,14 @@ def step_pipeline_health(trw_dir: Path) -> PipelineHealthResult:
     advisory = ""
     if degraded:
         signals_str = ", ".join(degraded_signals)
-        advisory = f"pipeline degraded: {signals_str} — call trw_pipeline_health() for details"
+        # PRD-FIX-140-FR06: the advisory names a tool that progressive disclosure
+        # masks for every standard task type, so it carries the grant step when
+        # this session cannot call it (empty string when it can).
+        from trw_mcp.tools._masked_tool_hint import unmask_hint
+
+        advisory = f"pipeline degraded: {signals_str} — call trw_pipeline_health() for details" + unmask_hint(
+            "trw_pipeline_health", reason="inspect degraded pipeline signals"
+        )
         logger.warning(
             "pipeline_health_degraded",
             signals=degraded_signals,

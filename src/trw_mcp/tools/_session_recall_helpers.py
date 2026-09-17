@@ -13,6 +13,8 @@ from trw_mcp.models.typed_dicts import (
     AutoRecalledItemDict,
     SessionRecallExtrasDict,
 )
+from trw_mcp.state._origin_project import demote_unattributable
+from trw_mcp.state._store_counts import store_entry_count
 from trw_mcp.state.deferral_ledger import record_completion, step_deferral_decision
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.propensity_log import log_ranked_selections
@@ -67,6 +69,19 @@ _SYSTEM_TASK_KEYWORDS: tuple[str, ...] = (
 )
 
 _WRITER_PRESSURE_RECALL_CAP = 8
+
+#: PRD-CORE-278 FR09: acquire twice the cap so the attribution partition has
+#: something to promote. Partitioning AFTER a cap cannot recover a local row the
+#: cap already excluded — with 1,330 synced rows against 13 local ones, every
+#: slot was spent before this project's own knowledge was reached (L-XIhp). Two
+#: is a bounded factor, not a heuristic: it is the smallest multiple that lets a
+#: fully foreign first page be replaced by a fully local second one.
+#:
+#: It is SUSPENDED under writer pressure: the pressure path exists to do less
+#: work against a contended store, and doubling the acquisition there would
+#: spend the saving it was opening. Under pressure the partition still orders
+#: what was fetched; it just cannot reach past the cap.
+_ATTRIBUTION_OVERFETCH = 2
 _SESSION_START_COMPACT_FIELDS = ("id", "summary", "impact", "status", "verification_evidence", "verification_status")
 
 
@@ -146,6 +161,7 @@ def perform_session_recalls(
     )
     if compact_for_pressure:
         effective_max = min(effective_max, _WRITER_PRESSURE_RECALL_CAP)
+    overfetch = 1 if compact_for_pressure else _ATTRIBUTION_OVERFETCH
 
     # PRD-FIX-085 FR05: use named recall factories instead of direct
     # adapter_recall calls so the call site declares its intent.
@@ -159,8 +175,8 @@ def perform_session_recalls(
     if is_focused:
         from trw_mcp.tools._session_recall_content import carry_focused_content
 
-        focused = carry_focused_content(recall_focused(trw_dir, query, max_results=effective_max))
-        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
+        focused = carry_focused_content(recall_focused(trw_dir, query, max_results=effective_max * overfetch))
+        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max * overfetch)
         extra["query"] = query
         extra["query_matched"] = len(focused)
         if not focused:
@@ -177,7 +193,7 @@ def perform_session_recalls(
                 seen_ids.add(learning_id)
                 learnings.append(entry)
     else:
-        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max)
+        baseline = recall_baseline_high_impact(trw_dir, max_results=effective_max * overfetch)
         # L-fovv fix: union the baseline (high-impact, for cross-session tribal
         # knowledge) with fresh low-impact learnings (for chain-mode + per-
         # project session context). trw_learn defaults new entries to
@@ -217,6 +233,10 @@ def perform_session_recalls(
 
     # Qualify every acquired candidate before the final startup result cap.
     learnings = _verify_assertions(learnings, query.lower().split() if is_focused else [], config, rank_by_utility)
+    # PRD-CORE-278 FR09: this project's own knowledge takes the slots first.
+    # Ordering, not filtering — a repository whose store is thin still sees the
+    # rest, just after what is actually about the checkout in front of it.
+    learnings = demote_unattributable(learnings)
     if effective_max > 0:
         learnings = learnings[:effective_max]
 
@@ -282,6 +302,12 @@ def perform_session_recalls(
         )
 
     extra["total_available"] = len(learnings)
+    # PRD-FIX-141-FR05: ``total_available`` here is the RETURNED set, which a
+    # reader had no way to tell from the corpus. Name the corpus separately;
+    # omitted rather than zeroed when the store could not be read.
+    store_count = store_entry_count(trw_dir)
+    if store_count is not None:
+        extra["store_count"] = store_count
     logger.debug(
         "session_recalls_complete",
         count=len(learnings),

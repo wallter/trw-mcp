@@ -108,10 +108,13 @@ def test_w06_the_fail_closed_gate_will_not_escalate_an_unmeasured_probe() -> Non
     unmeasured: dict[str, Any] = {
         "graph_edges": {"measured": False, "edge_count": 0, "corpus_count": 5000, "degraded": False}
     }
-    assert _check_empty_graph(unmeasured, None) is None
+    # One argument, not two: 8af881a11 (PRD-FIX-141-FR02) dropped the ``config``
+    # parameter when the gate stopped re-deriving the verdict from edge_count
+    # against a second threshold and started reporting the probe's own.
+    assert _check_empty_graph(unmeasured) is None
 
     measured = {"graph_edges": {"measured": True, "edge_count": 0, "corpus_count": 5000, "degraded": True}}
-    assert _check_empty_graph(measured, None) is not None
+    assert _check_empty_graph(measured) is not None
 
 
 # ---------------------------------------------------------------------------

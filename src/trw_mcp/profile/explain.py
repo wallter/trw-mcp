@@ -14,10 +14,44 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from trw_mcp.profile.model import ResolvedProfile
 
 
-def build_explanation(resolved: ResolvedProfile) -> dict[str, object]:
+def resolution_basis(resolved: ResolvedProfile, *, run_dir: Path | None) -> dict[str, object]:
+    """Describe WHAT a resolved profile was resolved from.
+
+    PRD-FIX-141-FR06. ``trw_session_start`` reported
+    ``resolved_profile.ceremony_tier: COMPREHENSIVE`` and ``trw_profile_explain``
+    reported ``STANDARD`` on the same machine in the same run (learning L-Rikf).
+    Both surfaces already call the SAME :func:`resolve_session_profile`; the
+    divergence is an ORDERING effect. ``trw_session_start`` runs before
+    ``trw_init``, so no run directory — and therefore no Scout-written
+    ``meta/session_profile.yaml`` session layer — existed yet, and the tier came
+    from the defaults layer. ``trw_profile_explain``, called afterwards, read the
+    session layer the Scout had since written.
+
+    Neither value was wrong. What was missing is that neither payload said what
+    it had been resolved FROM, so two correct answers read as a contradiction.
+    Both surfaces emit this block, so a reader can tell "the same inputs
+    disagree" (a defect) from "the inputs changed" (a session profile arriving).
+
+    Returns:
+        ``{"run_dir": str|None, "session_layer_present": bool,
+        "layers_applied": [...], "ceremony_tier": str|None}``.
+    """
+    layers = list(resolved.layers_applied)
+    tier = resolved.profile.ceremony_tier
+    return {
+        "run_dir": str(run_dir) if run_dir is not None else None,
+        "session_layer_present": "session" in layers,
+        "layers_applied": layers,
+        "ceremony_tier": tier,
+    }
+
+
+def build_explanation(resolved: ResolvedProfile, *, run_dir: Path | None = None) -> dict[str, object]:
     """Build the FR-11 explanation payload for ``resolved``.
 
     Returns a dict with ``fields`` (a list of per-field attribution records,
@@ -42,7 +76,10 @@ def build_explanation(resolved: ResolvedProfile) -> dict[str, object]:
         "surface_snapshot_id": resolved.surface_snapshot_id,
         "session_override_hash": resolved.session_override_hash,
         "resolved_profile": resolved.profile.model_dump(exclude_none=True, mode="json"),
+        # PRD-FIX-141-FR06: the same block session_start emits, so a reader can
+        # reconcile two reports instead of choosing between them.
+        "profile_resolution_basis": resolution_basis(resolved, run_dir=run_dir),
     }
 
 
-__all__ = ["build_explanation"]
+__all__ = ["build_explanation", "resolution_basis"]

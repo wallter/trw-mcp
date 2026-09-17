@@ -250,3 +250,79 @@ class TestExternallyOwnedKeysAreNotWarnedAbout:
         assert owners, "the externally-owned map must not be empty"
         for key, owner in owners.items():
             assert owner.strip(), f"{key} claims an owner but names none"
+
+
+#: The twenty-one fields PRD-QUAL-139-FR05 retired. Listed rather than derived:
+#: deriving the set from the retired map would make this test assert that the map
+#: agrees with itself, which is exactly the vacuity the ledger it replaces had.
+PRD_QUAL_139_RETIRED = (
+    "build_freshness_window_secs",
+    "checkpoint_secs",
+    "checkpoints_file",
+    "compliance_history_file",
+    "compliance_long_session_event_threshold",
+    "compliance_warning_threshold",
+    "consensus_quorum",
+    "finding_dedup_threshold",
+    "framework_overhead_threshold",
+    "learning_prune_age_days",
+    "max_child_depth",
+    "memory_consolidation_interval_days",
+    "min_shards_floor",
+    "min_shards_target",
+    "reflect_q_value_threshold",
+    "reflect_sequence_lookback",
+    "scout_max_mode3_rate",
+    "skill_active_cap",
+    "test_map_filename",
+    "validation_fk_optimal_max",
+    "validation_fk_optimal_min",
+)
+
+
+def test_prd_qual_139_retired_fields_are_gone_and_warned(capsys: pytest.CaptureFixture[str]) -> None:
+    """PRD-QUAL-139-FR05. Removal is only honest if the operator hears about it.
+
+    Each of these had no consumer in ANY scanned corpus once the consumer scan
+    learned to see bundled-hook readers and aliased nested reads (so "the scanner
+    could not see it" is no longer an available excuse), no originating PRD past
+    a draft, and no test beyond a default pin. They are also settable public keys,
+    and ``TRWConfig`` is ``extra="ignore"`` — so without the retired map they
+    would go from doing nothing quietly to not existing quietly.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._field_admission import LEGACY_ADMITTED_FIELDS
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    retired = retired_config_keys()
+    for key in PRD_QUAL_139_RETIRED:
+        assert key not in TRWConfig.model_fields, f"{key} is still a live field"
+        assert key not in LEGACY_ADMITTED_FIELDS, f"{key} still claims an admission budget"
+        assert key in retired, f"{key} was removed without a retired-map entry"
+
+    warned = warn_unrecognised_config_keys(
+        dict.fromkeys(PRD_QUAL_139_RETIRED, "operator-set-value"),
+        set(TRWConfig.model_fields),
+    )
+    err = capsys.readouterr().err
+    assert warned == sorted(PRD_QUAL_139_RETIRED)
+    assert "operator-set-value" not in err, "the warning must never echo the value"
+    for key in PRD_QUAL_139_RETIRED:
+        assert key in err
+
+
+def test_max_research_waves_was_deliberately_not_retired() -> None:
+    """PRD-QUAL-139-FR05's one hold-back, pinned so it is a decision not a slip.
+
+    It is as unread as the twenty-one, but ``OrchestrationConfig`` redeclares it
+    in ``_sub_models.py``. Deleting the flat field would leave the nested default
+    live, so the removal would change nothing an operator can observe while a
+    retired-key warning told them it had. The platform config-schema docs page
+    also still advertises it.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys
+
+    assert "max_research_waves" in TRWConfig.model_fields
+    assert "max_research_waves" not in retired_config_keys()
+    assert "max_research_waves" in type(TRWConfig().orchestration).model_fields

@@ -36,8 +36,11 @@ lib-distill-hint.sh are present. The shell hook activates CC-04 correlation
 by invoking write_hint_file via its Python subprocess (inline Python in the
 shell script, not a separate hook file).
 
-Timeout alignment (fixed): The shell hook previously used `timeout 2` (2000ms)
-but documented budget is 2500ms. Fixed to `timeout 2.5`. compute_before_edit_hint
+Timeout alignment (fixed): the hook previously used a bare `timeout 2.5` prefix,
+a GNU coreutils binary macOS does not ship, so the bound failed with 127 before
+the interpreter started and every record read `timeout_fallback`. The 2500ms
+budget is now the program's own SIGALRM deadline with `_trw_bounded_python` as
+the outer backstop (2026-09-17). compute_before_edit_hint
 does NOT import the embedding/trw-memory stack at module level (~0.76s warm),
 so write_hint_file runs within the aligned 2.5s budget on warm invocations.
 Cold-start (.pyc compilation) may still exceed 2.5s on first run; the hook
@@ -50,6 +53,8 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -290,8 +295,6 @@ class TestExceptionIsNotTelemeteredAsATimeout:
         # `from trw_mcp.tools.before_edit_hint import ...`.
         system_python = str(Path(sys.base_prefix) / "bin" / "python3")
         if not Path(system_python).is_file():
-            import pytest
-
             pytest.skip(f"no non-venv interpreter at {system_python} to force an ImportError")
 
         project = self._project(tmp_path, system_python)
@@ -303,9 +306,11 @@ class TestExceptionIsNotTelemeteredAsATimeout:
     def test_genuine_timeout_still_records_timeout(self, tmp_path: Path) -> None:
         """Non-vacuity control: a real 2.5s overrun must still read ``timeout_fallback``.
 
-        The shim runs the stdlib-only provisional write normally and hangs only
-        on the intelligence call, so ``timeout 2.5`` kills the subprocess before
-        any handler can run and the provisional record is the correct answer.
+        The shim hangs INSTEAD of running Python, so the program's own SIGALRM
+        deadline can never fire — this is exactly the case ``_trw_bounded_python``
+        exists for. Its outer bound (``timeout`` where the box has one, a POSIX
+        watchdog where it does not) kills the subprocess before any handler can
+        run, and the provisional record is the correct answer.
         """
         shim = tmp_path / "slow-python.sh"
         shim.write_text(

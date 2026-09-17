@@ -186,6 +186,11 @@ def register_orchestration_tools(server: FastMCP) -> None:
         resolved_task_root = task_root if task_root is not None else config.task_root
 
         task_dir = project_root / resolved_task_root / task_name
+        # PRD-FIX-141-FR07: run.yaml advertises TASK_DIR as the deliverable
+        # destination (FRAMEWORK.md names it a write-scope boundary), so the
+        # directory has to exist. It used to be computed, written into the run
+        # record, and never created, leaving every agent to mkdir it by hand.
+        task_dir.mkdir(parents=True, exist_ok=True)
         resolved_runs_root = project_root / config.runs_root
         run_root = resolved_runs_root / task_name / run_id
 

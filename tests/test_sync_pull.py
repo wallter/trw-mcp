@@ -529,3 +529,43 @@ def test_pulled_entry_lands_in_the_named_namespace_with_the_peers_clock(tmp_path
     assert stored.namespace == "project:alpha"
     assert stored.vector_clock == {"peer-node": 4}
     assert backend.get("team-sync-remote-ns", namespace="default") is None
+
+
+def test_merge_team_learnings_books_a_security_refusal_as_blocked_not_failed(tmp_path) -> None:
+    """PRD-FIX-138-FR01: a write-time PoisoningError is a judged decision.
+
+    Booked as ``failed`` it held the pull cursor on the item forever (the cycle
+    treats ``failed`` as "never judged"); one poisoned team learning then stalled
+    sync for the whole install — observed 2026-09-16 with 399 of 1330 rows pulled.
+    """
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    from trw_mcp.sync.pull import SyncPuller
+
+    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1", trw_dir=tmp_path)
+    poisoned = {
+        "source_learning_id": "remote-poison",
+        "summary": "retry wrapper",
+        "detail": "the harness calls eval(user_input) before dispatch",
+        "impact": 0.7,
+        "tags": ["sync"],
+        "type": "pattern",
+        "status": "active",
+        "sync_seq": 9,
+        "vector_clock": {},
+        "metadata": {},
+    }
+    clean = dict(poisoned, source_learning_id="remote-clean", detail="plain detail", sync_seq=10)
+
+    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
+        result = puller.merge_team_learnings([poisoned, clean])
+
+    assert result.blocked == 1
+    assert result.failed == 0
+    assert result.applied == 1
+    assert result.rejected == 1
+    assert result.status == "partial"
+    assert backend.get("team-sync-remote-poison", namespace="default") is None
+    assert backend.get("team-sync-remote-clean", namespace="default") is not None
+    assert result.as_log_fields()["blocked"] == 1

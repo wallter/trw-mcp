@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
@@ -25,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 # asserts their equality at import (PRD-CORE-266-FR01).
 from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS as SUPPORTED_CLIENTS
 from trw_mcp.dispatch._client_specs import DispatchClient as DispatchClient
+from trw_mcp.dispatch._client_specs import DispatchPosture as DispatchPosture
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 
 # Upper bound on a forwarded model-override string. A model name is concatenated
@@ -159,17 +161,51 @@ class DispatchRequest(BaseModel):
         default=True,
         description="Isolate the child from the host project's config/hooks/MCP (e.g. claude --bare, codex --ignore-user-config).",
     )
+    posture: DispatchPosture = Field(
+        default="default",
+        description=(
+            "Session IDENTITY of the child, distinct from read_only (permission) and role "
+            "(a prompt preamble). 'reviewer' launches the child with TRW's OWN trw-mcp server "
+            "in its argv, marked TRW_SURFACE_ROLE=reviewer, so the server bounds it to the nine "
+            "REVIEWER_TOOLS server-side. Refused before spawn for a client whose spec carries no "
+            "reviewer argv template, and refused with writes — see the model validator."
+        ),
+    )
     use_pty: bool = Field(
         default=False,
         description="Opt-in pseudo-TTY wrapper (script) for clients that drop stdout in non-TTY contexts (agy bug #76).",
     )
-    extra_args: list[str] = Field(
-        default_factory=list, description="Additional raw argv tokens appended to the command."
+    extra_args: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Additional raw argv tokens appended to the command. A TUPLE, not a list, and "
+            "that is a security property rather than a style choice (PRD-CORE-277-FR10): "
+            "``model_config`` freezes the MODEL, not a mutable field VALUE, so with a list "
+            "a caller could construct a validated read-only request and then "
+            "``req.extra_args.append('--dangerously-skip-permissions')`` -- measured "
+            "2026-09-16, that produced `codex exec ... --sandbox read-only "
+            "--dangerously-skip-permissions <prompt>`, because the validators run at "
+            "construction and the runner re-checks only reviewer posture. An immutable "
+            "value closes the window everywhere at once instead of adding a second check a "
+            "third launch path could skip."
+        ),
+    )
+    verify_sandbox: bool = Field(
+        default=False,
+        description=(
+            "Run a live write-containment probe before this dispatch and report the verdict "
+            "in ``DispatchResult.sandbox_verified``. OFF by default because it costs a "
+            "second model call; refused on the background job path, whose watchdog budgets "
+            "one child (PRD-CORE-277-FR03). BUDGET: ``timeout_s`` bounds EACH child, so a "
+            "verified run can take up to ``timeout_s`` plus the probe's own bounded budget "
+            "(``min(timeout_s, 180)``) in wall clock, and ``duration_s`` reports the task "
+            "child alone."
+        ),
     )
 
     @field_validator("extra_args")
     @classmethod
-    def _reject_security_override_tokens(cls, value: list[str]) -> list[str]:
+    def _reject_security_override_tokens(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         """Reject ``extra_args`` tokens that would override the security posture.
 
         ``extra_args`` is a convenience for benign extra CLI flags; it must never
@@ -200,6 +236,26 @@ class DispatchRequest(BaseModel):
         for tok in self.extra_args:
             if tok.split("=", 1)[0] in own:
                 raise ValueError(f"extra_args may not override security flag: {tok!r} (client {self.client!r})")
+        return self
+
+    @model_validator(mode="after")
+    def _reviewer_posture_is_read_only(self) -> DispatchRequest:
+        """Refuse ``posture='reviewer'`` together with writes, at construction.
+
+        The earliest possible refusal on purpose: every launch path (CLI, MCP
+        tool, synchronous runner, background job, the detached ``_run_job``
+        child) builds this model first, so a writable reviewer cannot exist as
+        an object, let alone as a command line. Placing the check only in the
+        resolver would leave the API and the job re-hydration path open.
+
+        The reviewer TOOL bound is read-only by construction (nine read-report
+        tools); a child that could still edit the work it reviews would make
+        ``posture='reviewer'`` a claim about the MCP surface and nothing else.
+        """
+        if self.posture == "reviewer" and not self.read_only:
+            raise ValueError(
+                "posture='reviewer' requires read_only=True (a reviewer may not modify the work it reviews)"
+            )
         return self
 
     @field_validator("model")
@@ -253,6 +309,21 @@ class DispatchResult(BaseModel):
             "here went stale the moment the registry grew past four."
         ),
     )
+    posture: DispatchPosture = Field(
+        default="default",
+        description="The posture the request ASKED for. Compare with posture_enforced before trusting it.",
+    )
+    posture_enforced: bool = Field(
+        default=False,
+        description=(
+            "True iff a reviewer posture was requested AND this client's spec carried a reviewer "
+            "argv template that was rendered into the launched command — i.e. the child's MCP "
+            "server came from TRW's argv and is marked TRW_SURFACE_ROLE=reviewer. Derived per run "
+            "from the registry, never hardcoded: 'posture' alone records an intention, and an "
+            "intention beside an argv with no MCP override is exactly the delivered-but-not-wired "
+            "claim this field exists to expose. False on every default-posture run."
+        ),
+    )
     exit_code: int | None = Field(description="Child process exit code; None if it timed out before exiting.")
     timed_out: bool = Field(description="True if the child exceeded timeout_s and was killed.")
     duration_s: float = Field(description="Wall-clock duration of the child process in seconds.")
@@ -263,6 +334,36 @@ class DispatchResult(BaseModel):
         default=None,
         description="Parsed structured payload when the client emitted JSON/NDJSON; None otherwise.",
     )
+    sandbox_verified: bool | Literal["unverified"] = Field(
+        default="unverified",
+        description=(
+            "Whether a LIVE probe established that this client, argv and platform could not "
+            "write to the filesystem on the read-only path. True and False are measurements "
+            "from a disposable fixture; 'unverified' -- the default -- means no claim is "
+            "being made, which is the honest value for every run that did not ask for the "
+            "probe. Deliberately NOT derived from the registry's ``sandbox`` field: that "
+            "field records what a client's flags are documented to do, and republishing it "
+            "per run is how ``sandbox=enforced`` came to stand beside agy runs that wrote "
+            "files (PRD-CORE-277-FR03)."
+        ),
+    )
+    sandbox_note: str = Field(
+        default="",
+        description=(
+            "What the sandbox verdict does and does not cover: the mechanism used, or why "
+            "none was available. Scope is local filesystem writes only -- never network "
+            "egress, never a tool the child reached through its own MCP servers."
+        ),
+    )
+    silence_reason: str | None = Field(
+        default=None,
+        description=(
+            "Why this run produced no usable answer: 'timed_out', 'auth_or_content_stop', "
+            "'nonzero_exit', 'empty_output', or None when the answer is usable. Exists "
+            "because a caller that sees only empty findings cannot tell a clean review from "
+            "a child that never ran (PRD-CORE-277-FR04)."
+        ),
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -270,10 +371,16 @@ class DispatchResult(BaseModel):
         """True iff the run completed cleanly with a non-empty answer.
 
         A run is successful only when it did not time out, the child exited
-        zero, and we extracted a non-empty normalized answer — an empty answer
-        from a zero exit (e.g. agy's non-TTY stdout drop) is not a success.
+        zero, we extracted a non-empty normalized answer, and no silence reason
+        was recorded — an empty answer from a zero exit (e.g. agy's non-TTY
+        stdout drop) is not a success, and neither is a zero-exit run whose
+        structured payload reports an error status.
+
+        ``silence_reason is None`` is the load-bearing addition: the other three
+        conditions already described "an answer arrived", and the fourth covers
+        the case where an answer arrived that the CLIENT itself marked as a stop.
 
         Exposed as a ``computed_field`` so it is included in ``model_dump_json``
         for the ``--output-file`` / ``--json`` CLI surfaces.
         """
-        return not self.timed_out and self.exit_code == 0 and bool(self.text.strip())
+        return not self.timed_out and self.exit_code == 0 and bool(self.text.strip()) and self.silence_reason is None

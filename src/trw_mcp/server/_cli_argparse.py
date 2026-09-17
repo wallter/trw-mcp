@@ -396,6 +396,15 @@ def _add_dispatch_subcommand(
         help="Wrap the child in a pseudo-TTY (use if stdout comes back empty, e.g. agy bug #76).",
     )
     dispatch_parser.add_argument(
+        "--verify-sandbox",
+        dest="verify_sandbox",
+        action="store_true",
+        help=(
+            "Run a live write-containment probe in a disposable fixture and report the verdict "
+            "as sandbox_verified (true/false/unverified). Costs one extra model call; off by default."
+        ),
+    )
+    dispatch_parser.add_argument(
         "--json",
         action="store_true",
         help="Print the full DispatchResult as JSON instead of just the answer text.",

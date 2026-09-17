@@ -47,8 +47,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal, get_args
 
+from trw_mcp.dispatch._client_spec_types import REVIEWER_ARGV_PLACEHOLDERS as REVIEWER_ARGV_PLACEHOLDERS
 from trw_mcp.dispatch._client_spec_types import ClientSpec as ClientSpec
 from trw_mcp.dispatch._client_spec_types import ClientVerification as ClientVerification
+from trw_mcp.dispatch._client_spec_types import DispatchPosture as DispatchPosture
 from trw_mcp.dispatch._client_spec_types import OutputShape as OutputShape
 from trw_mcp.dispatch._client_spec_types import SandboxPosture as SandboxPosture
 from trw_mcp.dispatch._client_spec_types import SubAgentSupport as SubAgentSupport
@@ -57,10 +59,12 @@ from trw_mcp.dispatch._client_spec_types import VerificationMethod as Verificati
 
 __all__ = [
     "CLIENT_SPECS",
+    "REVIEWER_ARGV_PLACEHOLDERS",
     "SUPPORTED_CLIENTS",
     "ClientSpec",
     "ClientVerification",
     "DispatchClient",
+    "DispatchPosture",
     "OutputShape",
     "SandboxPosture",
     "SubAgentSupport",
@@ -108,6 +112,35 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         base_argv=("claude",),
         structured_output_argv=("--output-format", "json"),
         isolation_argv=("--setting-sources", "user", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}'),
+        # REVIEWER POSTURE (OD-6 / PRD-SEC-015-FR06). Emitted INSTEAD of
+        # isolation_argv, which is why it repeats --setting-sources/--strict-mcp-config
+        # rather than adding to them: two --mcp-config values on one command line is
+        # an ambiguity, not a defense. Same three flags, same evidence record — only
+        # the payload changes, from the empty server map to TRW's own stdio server.
+        #
+        # --strict-mcp-config is what makes this an OD-6 posture rather than a hint:
+        # with it, the ONLY MCP servers the child sees are the ones in this argv, so
+        # the reviewed repository's .mcp.json cannot add a server or replace ours.
+        # The ``env`` key on a server entry is the same one the installer's
+        # .mcp.json writer treats as user customization (bootstrap/_mcp_json.py
+        # ``_is_user_customized_trw_entry``), so it is this client's documented
+        # per-server environment channel, not an invention here.
+        #
+        # ONE layer, stated plainly: claude has no client-side MCP tool allowlist TRW
+        # can use — its --allowedTools flag pre-authorises tool use without a prompt
+        # and is in the forbidden-token floor as a permission bypass. So {reviewer_tools}
+        # is deliberately absent here and the bound is the SERVER-side role alone (the
+        # actual control per PRD-SEC-015; the codex allowlist below is defense in depth
+        # that claude simply does not get). Do not "fix" this by adding --allowedTools.
+        reviewer_argv_template=(
+            "--setting-sources",
+            "user",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{"trw":{"command":"{mcp_command}","args":{mcp_args},'
+            '"env":{"TRW_SURFACE_ROLE":"reviewer"}}}}',
+        ),
+        reviewer_env={"TRW_SURFACE_ROLE": "reviewer"},
         allow_writes_argv=("--permission-mode", "acceptEdits"),
         model_flag="--model",
         prompt_flag="-p",
@@ -144,6 +177,49 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         base_argv=("codex", "exec"),
         always_argv=("--skip-git-repo-check",),
         isolation_argv=("--ignore-user-config",),
+        # REVIEWER POSTURE (OD-6 / PRD-SEC-015-FR06/FR07). Two layers, rendered
+        # from one source: the SERVER-side role (mcp_servers.trw.env.TRW_SURFACE_ROLE
+        # — the actual control, enforced by SurfaceAuthorityMiddleware) and the
+        # CLIENT-side enabled_tools allowlist (defense in depth, hard-enforced by
+        # codex). Both are the exact key/value forms scripts/audit-external.sh runs
+        # live, and the allowlist is rendered from reviewer_tools_toml_array(), the
+        # same SSOT scripts/print_reviewer_tools.py reads, so the two layers cannot
+        # disagree.
+        #
+        # command/args are supplied here as well, which audit-external.sh does NOT do
+        # — and that difference IS the OD-6 decision. That script depends on the
+        # reviewed repository's .codex/config.toml to supply the transport; OD-6 says
+        # a reviewer's MCP server must come from TRW's argv, never from the repo it is
+        # auditing (L-XW1l). ``mcp_servers.trw.command``/``args`` are the documented
+        # key names for that table (bootstrap/_codex.py::_trw_mcp_server_entry writes
+        # exactly those; docs/CLIENT-PROFILES.md §245 states them), and ``-c`` is
+        # measured to reach dotted mcp_servers.trw.* sub-keys, so this composes two
+        # verified facts rather than inventing a flag.
+        #
+        # NO --ignore-user-config under this posture, deliberately (L-VupD): probe 2
+        # showed it drops project MCP servers outright and probe 3 showed the -c
+        # overrides failed beside it with "invalid transport in mcp_servers.trw" —
+        # measured when only enabled_tools/env were overridden and no transport
+        # existed anywhere. Supplying command/args here is what removes that
+        # dependency, but the combination has NOT been run, so the flag stays off
+        # until the live FR-12 probe settles it.
+        # TRUST RESIDUE, recorded rather than absorbed: the child therefore still
+        # READS the reviewed repo's .codex/config.toml. Our -c flags win for the trw
+        # server (that is what -c is for), so the reviewer surface does not come from
+        # that file; but OTHER servers declared there still load. posture="reviewer"
+        # bounds the TRW surface, not the child's whole tool inventory — do not
+        # report it as full config isolation.
+        reviewer_argv_template=(
+            "-c",
+            'mcp_servers.trw.command="{mcp_command}"',
+            "-c",
+            "mcp_servers.trw.args={mcp_args}",
+            "-c",
+            'mcp_servers.trw.env.TRW_SURFACE_ROLE="reviewer"',
+            "-c",
+            "mcp_servers.trw.enabled_tools={reviewer_tools}",
+        ),
+        reviewer_env={"TRW_SURFACE_ROLE": "reviewer"},
         read_only_argv=("--sandbox", "read-only"),
         allow_writes_argv=("--sandbox", "workspace-write"),
         model_flag="--model",
@@ -177,7 +253,25 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         structured_output_argv=("--output-format", "stream-json"),
         read_only_argv=("--sandbox",),
         allow_writes_argv=("--dangerously-skip-permissions",),
+        # MEASURED 2026-09-16 (agy 1.2.4, Darwin 25.5.0), PRD-CORE-277-FR02. Headless agy
+        # AUTO-DENIES file reads without --dangerously-skip-permissions: a read-only review
+        # exited 0 having read nothing, with "no output produced — a tool required the
+        # 'command' permission that headless mode cannot prompt for". So agy's read-only
+        # lane is only usable when the permission prompt is relaxed AND the host denies the
+        # writes instead. Under `sandbox-exec -p "(version 1)(allow default)(deny
+        # file-write*)(allow file-write* (subpath \"/dev\"))"` the same run READ the
+        # workspace canary and BOTH write attempts (inside cwd and outside it) failed with
+        # "operation not permitted". The runner emits this fragment only when it actually
+        # built that wrapper; with no wrapper the fragment is omitted and agy still cannot
+        # read, which is the fail-closed direction.
+        confined_read_only_argv=("--dangerously-skip-permissions",),
+        host_confinement=True,
         model_flag="--model",
+        # MEASURED 2026-09-16: without --add-dir, agy loads NONE of the project's
+        # instruction files (the AGENTS.md canary came back NOT LOADED); with it, the canary
+        # returned the file's first line. instruction_files below declares AGENTS.md, so
+        # without this flag that declaration was a claim the argv did not deliver.
+        cwd_flag="--add-dir",
         prompt_flag="-p",
         version_argv=("--version",),
         output_shape="enveloped_ndjson_events",
@@ -188,7 +282,16 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         instruction_files=("AGENTS.md",),
         profile_id="antigravity-cli",
         sub_agents="yes",
-        sandbox="enforced",
+        # CORRECTED 2026-09-16 from "enforced" (PRD-CORE-277). `agy --help` describes
+        # --sandbox as "Run in a sandbox with terminal restrictions enabled" -- it restricts
+        # SHELL COMMANDS, not agy's file-edit tool, and a run under it created files inside
+        # cwd and at an absolute path outside cwd and --add-dir alike. TRW does emit the
+        # flag, so "available_default_off" reads oddly for a flag that IS passed; it is
+        # nevertheless the honest member of this vocabulary, because the operator must not
+        # read this row as write protection. The protection TRW can actually provide is the
+        # host wrapper above, which is per-run and platform-dependent and is therefore
+        # reported per run in DispatchResult.sandbox_verified, not here.
+        sandbox="available_default_off",
         verification=ClientVerification(
             method="executable",
             evidence=(
@@ -197,9 +300,14 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
                 "--input-format text|stream-json, --print/-p, --model, --sandbox, "
                 "--dangerously-skip-permissions, --add-dir, --agent, --effort, --mode; and "
                 "`agy -p '...' --output-format stream-json` was RUN, emitting tagged-envelope "
-                "NDJSON (init -> step_update{text_delta} -> result{status,response,usage})"
+                "NDJSON (init -> step_update{text_delta} -> result{status,response,usage}). "
+                "RE-VERIFIED against agy 1.2.4 on 2026-09-16: read-only (--sandbox alone) "
+                "exits 0 with EMPTY stdout and an auto-denied permission on stderr; "
+                "--add-dir loads AGENTS.md while its absence loads nothing; and under a "
+                "macOS sandbox-exec write-denial profile with --dangerously-skip-permissions "
+                "the workspace was readable while every write failed"
             ),
-            verified_at=date(2026, 9, 11),
+            verified_at=date(2026, 9, 16),
         ),
     ),
     # opencode run "<prompt>" --format json --dir <cwd> -> NDJSON events.
@@ -231,8 +339,19 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         cwd_flag="--dir",
         version_argv=("--version",),
         output_shape="ndjson_events",
-        # opencode is multi-provider — forward all three provider keys.
-        credential_env=("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"),
+        # opencode is multi-provider — forward all three provider keys. The two
+        # OPENCODE_CONFIG* variables are config-LOCATION pointers, not secrets:
+        # without them the child always loads the repo's opencode.json (OpenCode's
+        # loader order is global -> OPENCODE_CONFIG -> project -> OPENCODE_CONFIG_DIR,
+        # last wins), so a dispatch cannot be pointed at a working provider on a
+        # box whose repo config names a dead local server (peer finding 2026-09-17).
+        credential_env=(
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+            "OPENCODE_CONFIG",
+            "OPENCODE_CONFIG_DIR",
+        ),
         instruction_files=("AGENTS.md",),
         profile_id="opencode",
         sub_agents="yes",

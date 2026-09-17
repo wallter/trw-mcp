@@ -91,7 +91,14 @@ def test_probe_source_checks_both_libraries_and_never_hits_the_network(installer
 
 
 def test_pinned_fixture_matches_the_trw_memory_ci_fixture(installer: ModuleType) -> None:
-    """Do not invent a second pinned model: reuse trw-memory CI's snapshot."""
+    """Do not invent a second pinned model: reuse trw-memory CI's snapshot.
+
+    The step this reads was absent from the whole tracked history of that
+    workflow until 2026-09-17 (``git log -S 'repo_id=' --`` returned nothing),
+    so CI installed sentence-transformers and resolved whatever revision the hub
+    served while the installer probed a pinned one with ``local_files_only=True``
+    — one pin in name only. This is the drift guard for the restored pair.
+    """
     ci = _MEMORY_CI.read_text(encoding="utf-8")
     assert f'repo_id="{installer.SEMANTIC_MODEL_REPO_ID}"' in ci
     assert f'revision="{installer.SEMANTIC_MODEL_REVISION}"' in ci
@@ -109,12 +116,8 @@ def test_healthy_environment_is_quiet_and_changes_nothing(
 ) -> None:
     """Idempotence: a second run with the extra present must not alarm or act."""
     monkeypatch.setattr(installer, "probe_semantic_stack", lambda *a, **k: installer.SEMANTIC_OK)
-    monkeypatch.setattr(
-        installer, "pip_install", lambda *a, **k: pytest.fail("healthy env must not install anything")
-    )
-    monkeypatch.setattr(
-        installer, "prompt_yes_no", lambda *a, **k: pytest.fail("healthy env must not prompt")
-    )
+    monkeypatch.setattr(installer, "pip_install", lambda *a, **k: pytest.fail("healthy env must not install anything"))
+    monkeypatch.setattr(installer, "prompt_yes_no", lambda *a, **k: pytest.fail("healthy env must not prompt"))
     status = installer.phase_semantic_readiness(_ui(installer), "/py", interactive=True)
     out = capsys.readouterr().out
     assert status == installer.SEMANTIC_OK
@@ -125,12 +128,8 @@ def test_non_interactive_missing_library_warns_and_never_reads_stdin(
     installer: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(installer, "probe_semantic_stack", lambda *a, **k: installer.SEMANTIC_MISSING_LIBRARY)
-    monkeypatch.setattr(
-        installer, "prompt_yes_no", lambda *a, **k: pytest.fail("non-interactive run must not prompt")
-    )
-    monkeypatch.setattr(
-        installer, "pip_install", lambda *a, **k: pytest.fail("non-interactive run must not install")
-    )
+    monkeypatch.setattr(installer, "prompt_yes_no", lambda *a, **k: pytest.fail("non-interactive run must not prompt"))
+    monkeypatch.setattr(installer, "pip_install", lambda *a, **k: pytest.fail("non-interactive run must not install"))
 
     status = installer.phase_semantic_readiness(_ui(installer), "/opt/py", interactive=False)
     out = capsys.readouterr().out
@@ -149,9 +148,7 @@ def test_missing_weights_offers_a_download_not_a_pip_install(
 ) -> None:
     """Library-present-but-weights-absent is a different failure + different fix."""
     monkeypatch.setattr(installer, "probe_semantic_stack", lambda *a, **k: installer.SEMANTIC_MISSING_WEIGHTS)
-    monkeypatch.setattr(
-        installer, "pip_install", lambda *a, **k: pytest.fail("weights gap must not pip-install")
-    )
+    monkeypatch.setattr(installer, "pip_install", lambda *a, **k: pytest.fail("weights gap must not pip-install"))
 
     status = installer.phase_semantic_readiness(_ui(installer), "/opt/py", interactive=False)
     out = capsys.readouterr().out

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests._tools_learning_shared import _get_tools
+from tests._tools_learning_shared import _get_tools, no_machine_wide_ide_detection  # noqa: F401
 from trw_mcp.models.config import get_config
 
 _USER_LINES = 40

@@ -16,7 +16,30 @@ beyond the global HOOKS_ENABLED contract.
 
 from __future__ import annotations
 
+import sys
+
 from pydantic import Field
+
+#: PRD-CORE-250-NFR01 is a 50 ms budget, and the adapter MEETS it on Linux where a
+#: process spawn costs ~1 ms. It does not on macOS: measured 2026-09-17 on arm64
+#: Darwin 25.5.0 (/bin/sh = bash 3.2), the adapter's own pre-verdict work costs
+#: 65-75 ms on an idle box and the whole invocation 203-206 ms under load, so a
+#: 50 ms deadline expired before the verdict on EVERY invocation and the advisory
+#: was a permanent no-op for every macOS user -- 3/3 fresh projects emitted 0
+#: advisories at the default and 1/1 at 5000 ms.
+#:
+#: The deadline is checked AFTER the bounded read and the jq render, so raising it
+#: buys back the advisory without buying new latency: the work it would have
+#: abandoned is already paid by the time the check runs. 300 ms is the 203-206 ms
+#: loaded measurement with margin and stays well inside the ``le=500`` bound.
+#: Linux is untouched -- this is a platform floor, not a budget increase.
+_DARWIN_DEADLINE_MS = 300
+_DEFAULT_DEADLINE_MS = 50
+
+
+def _default_deadline_ms() -> int:
+    """The self-deadline default for THIS platform (see the note above)."""
+    return _DARWIN_DEADLINE_MS if sys.platform == "darwin" else _DEFAULT_DEADLINE_MS
 
 
 class _DegenerateResultFields:
@@ -35,7 +58,7 @@ class _DegenerateResultFields:
         description="Cap on bytes read from a PostToolUse tool_response before shape classification (NFR03).",
     )
     degenerate_result_deadline_ms: int = Field(
-        default=50,
+        default_factory=_default_deadline_ms,
         ge=5,
         le=500,
         description="Self-imposed wall-clock deadline; past it the adapter exits 0 without emitting (NFR01).",

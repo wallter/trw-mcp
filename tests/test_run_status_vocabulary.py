@@ -328,6 +328,22 @@ def test_gate_fails_on_unparseable_status(tmp_path: Path) -> None:
     assert "corrupt" in result.stdout
 
 
+#: The corpus size the NFR01 budget below was measured against. ``.trw/runs/``
+#: is GITIGNORED (``.trw/.gitignore:33``, 0 tracked files), so this number is
+#: one machine's local run history and not a property of the repository: a
+#: fresh clone scans 0 and this box scans 5. It is kept as the threshold for
+#: "is the timing measurement meaningful", never as a floor a checkout must
+#: meet -- asserting it made the test report the author's ``.trw/runs``
+#: directory rather than the gate.
+_NFR01_MEASURED_CORPUS = 191
+
+
+def _live_corpus_size() -> int:
+    """Files the gate scans in this checkout's (untracked) ``.trw/runs`` tree."""
+    payload = json.loads(_invoke_gate(_REPO_ROOT, "--json").stdout)
+    return int(payload["scanned"])
+
+
 def test_gate_reports_the_live_tree(tmp_path: Path) -> None:
     """FR05: the live ``.trw/runs`` tree parses completely.
 
@@ -338,7 +354,8 @@ def test_gate_reports_the_live_tree(tmp_path: Path) -> None:
     result = _invoke_gate(_REPO_ROOT, "--json")
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
-    assert payload["scanned"] >= 191, "live corpus shrank below the measured baseline"
+    if payload["scanned"] == 0:
+        pytest.skip("no live .trw/runs tree in this checkout (the directory is gitignored)")
     assert payload["parsed"] == payload["scanned"]
     assert payload["findings"] == []
 
@@ -348,9 +365,20 @@ def test_gate_reports_the_live_tree(tmp_path: Path) -> None:
 
 @pytest.mark.slow
 def test_gate_completes_within_budget() -> None:
-    """NFR01: p95 wall time under 5 s over 5 runs on the >=191-file corpus."""
-    payload = json.loads(_invoke_gate(_REPO_ROOT, "--json").stdout)
-    assert payload["scanned"] >= 191
+    """NFR01: p95 wall time under 5 s over 5 runs on the measured corpus.
+
+    Skipped, not relaxed, when the local ``.trw/runs`` tree is smaller than the
+    corpus the budget was measured against: five files complete in a few
+    milliseconds no matter how slow the gate is, so a pass there would assert
+    nothing about NFR01 while looking like it did.
+    """
+    scanned = _live_corpus_size()
+    if scanned < _NFR01_MEASURED_CORPUS:
+        pytest.skip(
+            f"live .trw/runs corpus is {scanned} files, below the {_NFR01_MEASURED_CORPUS} "
+            "the NFR01 budget was measured against; the directory is gitignored, so this "
+            "is machine-local state and a smaller corpus cannot test the budget"
+        )
 
     timings: list[float] = []
     for _ in range(_GATE_TIMING_RUNS):

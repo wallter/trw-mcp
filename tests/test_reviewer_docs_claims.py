@@ -52,8 +52,22 @@ def test_reviewer_role_documented_in_all_three_surfaces() -> None:
         text = _text(path)
         assert "TRW_SURFACE_ROLE" in text, path
         assert "Reviewer role" in text, path
-        missing = [name for name in REVIEWER_TOOLS if name not in text]
-        assert not missing, f"{path.name} does not name reviewer tools: {missing}"
+
+    # The two surfaces document the same bound in deliberately different ways,
+    # and this test used to demand the enumeration from BOTH. dde1c6fb6
+    # (PRD-FIX-140-FR08/FR09) removed the hand-copied list from AGENTS.md and
+    # said why in the paragraph itself: a second copy drifts and can promise a
+    # tool the session cannot call. Asserting the copy in a file that now
+    # points at the source would force the drift the change removed, so each
+    # surface is held to the contract it actually carries -- and both are
+    # checked, so a silent loss in either is still red.
+    agents = _text(_AGENTS)
+    assert "surface_packs.py" in agents, "AGENTS.md must POINT at the enumeration it no longer copies"
+    assert "tool_not_in_reviewer_surface" in agents
+
+    profiles = _text(_PROFILES)
+    missing = [name for name in REVIEWER_TOOLS if name not in profiles]
+    assert not missing, f"{_PROFILES.name} does not name reviewer tools: {missing}"
 
     codex_doc = _text(_CODEX_DOC)
     assert "0.134.0" in codex_doc

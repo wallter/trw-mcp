@@ -188,9 +188,18 @@ def test_prd_core_219_fr04_hooks_cannot_stage_or_mutate_unowned_shared_paths(tmp
             text=True,
         )
 
-    index_path = Path(git("rev-parse", "--path-format=absolute", "--git-path", "index").stdout.strip())
     before_head = git("rev-parse", "HEAD").stdout
-    before_index_bytes = index_path.read_bytes()
+    # The STAGED CONTENT, not the index FILE. The index file additionally carries
+    # a per-entry stat cache, and git legitimately rewrites it without anything
+    # being staged: when an entry's mtime matches the index's own, git zeroes the
+    # entry's size field to mark it "racily clean" and re-checksums the file.
+    # Measured here on macOS 2026-09-17 -- the raw file differed in exactly one
+    # stat byte (offset 51, the size field's low byte: 3 -> 0) plus the trailing
+    # 20-byte SHA, while ls-files --stage, write-tree, status --porcelain=v2,
+    # HEAD and the foreign file were all byte-identical. Comparing the raw file
+    # asserted the filesystem's timestamp granularity; comparing --stage asserts
+    # every staged path, mode and blob, which is what FR04 is about.
+    before_index_stage = git("ls-files", "--stage").stdout
     before_index_tree = git("write-tree").stdout
     before_porcelain = git("--no-optional-locks", "status", "--porcelain=v2", "--untracked-files=all").stdout
     before_foreign = foreign.read_bytes()
@@ -199,7 +208,7 @@ def test_prd_core_219_fr04_hooks_cannot_stage_or_mutate_unowned_shared_paths(tmp
         publish_reviewed_candidate(repo, reviewed, "feat: isolated hooks")
 
     assert git("rev-parse", "HEAD").stdout == before_head
-    assert index_path.read_bytes() == before_index_bytes
+    assert git("ls-files", "--stage").stdout == before_index_stage
     assert git("write-tree").stdout == before_index_tree
     assert git("--no-optional-locks", "status", "--porcelain=v2", "--untracked-files=all").stdout == before_porcelain
     assert foreign.read_bytes() == before_foreign

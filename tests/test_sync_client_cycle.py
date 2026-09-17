@@ -575,3 +575,66 @@ class TestThePullCursorNeverPassesAnUnjudgedItem:
         the fix would have frozen every cursor in place."""
         coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, inserted=1))
         assert _recorded_pull_seq(coordinator) == 7
+
+
+async def _client_after_cycle(tmp_path: Any, *, merge: TeamMergeResult) -> Any:
+    """Like ``_cycle_with`` but returns the client, for cache/ETag assertions."""
+    from trw_mcp.sync.client import BackendSyncClient
+    from trw_mcp.sync.pull import PullResult
+
+    config = _make_config()
+    config.team_sync_enabled = True
+    config.intel_cache_enabled = True
+    with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
+        client = BackendSyncClient(config, tmp_path)
+    client._coordinator = MagicMock()
+    client._coordinator.should_sync.return_value = True
+    client._coordinator.acquire_sync_lock.return_value = _acquired_lock()
+    client._coordinator.get_last_pull_seq.return_value = 4
+    client._pusher = MagicMock()
+    client._puller = MagicMock()
+    client._puller.pull_intel_state = AsyncMock(
+        return_value=PullResult(
+            state={"etag": "etag-1"},
+            etag="etag-1",
+            team_learnings=[{"source_learning_id": "remote-1", "sync_seq": 7}],
+            sync_hints={},
+            status_code=200,
+        )
+    )
+    client._puller.merge_team_learnings.return_value = merge
+    client._cache = MagicMock()
+    client._get_dirty_entries = MagicMock(return_value=[])
+    await client._run_one_cycle()
+    return client
+
+
+class TestAHeldCursorNeverCachesTheEtag:
+    """PRD-FIX-138-FR02. The cache recorded the response ETag BEFORE the merge ran.
+
+    When the merge then held the cursor, the next pull sent If-None-Match with
+    that ETag, the server answered 304, and the 304 arm booked a success — so the
+    held batch was never re-offered. Held cursor + cached ETag = permanent stall.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_blocked_item_is_a_judged_decision_and_advances(self, tmp_path) -> None:
+        """FR01 partner: the new ``blocked`` arm sits with the judged rejections."""
+        coordinator = await _cycle_with(tmp_path, merge=TeamMergeResult(attempted=1, blocked=1))
+        assert _recorded_pull_seq(coordinator) == 7
+
+    @pytest.mark.asyncio
+    async def test_a_held_cursor_withholds_the_etag(self, tmp_path) -> None:
+        client = await _client_after_cycle(tmp_path, merge=TeamMergeResult(attempted=1, failed=1))
+        client._cache.update.assert_called_once_with({"etag": "etag-1"}, etag=None)
+
+    @pytest.mark.asyncio
+    async def test_an_unavailable_merge_withholds_the_etag(self, tmp_path) -> None:
+        client = await _client_after_cycle(tmp_path, merge=TeamMergeResult(attempted=1, unavailable=True))
+        client._cache.update.assert_called_once_with({"etag": "etag-1"}, etag=None)
+
+    @pytest.mark.asyncio
+    async def test_an_advancing_cursor_still_caches_the_etag(self, tmp_path) -> None:
+        """Non-vacuity: the conditional-request optimisation survives on the happy path."""
+        client = await _client_after_cycle(tmp_path, merge=TeamMergeResult(attempted=1, inserted=1))
+        client._cache.update.assert_called_once_with({"etag": "etag-1"}, etag="etag-1")

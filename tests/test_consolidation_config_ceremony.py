@@ -130,10 +130,14 @@ class TestConsolidationConfig:
         cfg = TRWConfig()
         assert cfg.memory_consolidation_enabled is True
 
-    def test_default_interval_days(self) -> None:
-        """memory_consolidation_interval_days defaults to 7."""
-        cfg = TRWConfig()
-        assert cfg.memory_consolidation_interval_days == 7
+    def test_interval_days_is_retired(self) -> None:
+        """memory_consolidation_interval_days was retired 2026-09-16 (PRD-QUAL-139-FR05).
+
+        It had no reader in any corpus, so the cadence it named never gated a
+        consolidation run. Asserting its absence keeps the retirement from being
+        silently undone by a re-added declaration.
+        """
+        assert not hasattr(TRWConfig(), "memory_consolidation_interval_days")
 
     def test_default_min_cluster(self) -> None:
         """memory_consolidation_min_cluster defaults to 3."""

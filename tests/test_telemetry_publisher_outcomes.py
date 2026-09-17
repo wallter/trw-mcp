@@ -97,7 +97,11 @@ class TestPublishAnonymization:
             _make_learning(
                 impact=0.9,
                 summary="Contact user@example.com for details",
-                detail="API key: sk-abcdefghijklmnopqrstuvwx1234567890",
+                # Split so the contiguous pattern never appears in source: a secret
+                # scanner cannot tell this fabricated fixture from a real key, and a
+                # literal here would block pushes to the public mirror. The value the
+                # redactor sees is unchanged.
+                detail="API key: " + "sk-" + "abcdefghijklmnopqrstuvwx1234567890",
             ),
         )
 

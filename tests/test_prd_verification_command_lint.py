@@ -204,7 +204,14 @@ def test_missing_traceability_names_the_quality_gate_it_failed() -> None:
 
 
 def test_shipped_prd_infra_179_validates_clean() -> None:
-    """The PRD this work implements must not be rejected by warnings alone."""
+    """The PRD this work implements must not be rejected by warnings alone.
+
+    Its ``evidence.sources`` and traceability used to cite artifacts under
+    ``.trw/runs/``, which is gitignored: ``repo_path_exists`` raised four errors
+    in every checkout that was not the machine that produced the run, and the
+    run directory no longer exists there either. The citations now name the run
+    and the line, not a path, and the PRD says so once in section 1.
+    """
     if not (REPO_ROOT / "release-packages.yaml").is_file():
         pytest.skip("shipped PRD assertion requires the monorepo requirements corpus")
     path = (

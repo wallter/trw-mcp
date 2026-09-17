@@ -8,7 +8,13 @@ from unittest.mock import patch
 import pytest
 from trw_memory.models.memory import MemoryEntry
 
-from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics, set_project_root  # noqa: F401
+from tests._tools_learning_shared import (  # noqa: F401
+    _CFG,
+    _get_tools,
+    _write_analytics,
+    no_machine_wide_ide_detection,
+    set_project_root,
+)
 from trw_mcp.state.claude_md import (
     CEREMONY_TOOLS,
     load_claude_md_template,
@@ -167,12 +173,23 @@ class TestCeremonyRendering:
         assert "trw_deliver()" in result
 
     def test_render_imperative_opener_uses_analytics_counts(self, tmp_path: Path) -> None:
-        """FR06: opener claims use analytics-driven learning/session counts."""
+        """PRD-FIX-141-FR04: the opener names its population and never fabricates a zero.
+
+        With the analytics counters at 0/0 and no store on disk, the honest
+        answer is "not measured". The pre-FR04 opener said "0 learnings from 0
+        prior sessions" — the exact sentence that shipped into every session on
+        2026-09-16 over a 1,346-entry store (learning L-Rikf).
+        """
+        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache, _store_counts_cache
+
         _write_analytics(tmp_path, sessions_tracked=0, total_learnings=0)
+        _analytics_cache.set(None)
+        _store_counts_cache.set(None)
 
         result = render_imperative_opener()
 
-        assert "0 learnings from 0 prior sessions" in result
+        assert "could not be measured" in result
+        assert "0 learnings" not in result
 
     def test_render_closing_reminder(self) -> None:
         """Closing reminder bookends with session boundaries."""

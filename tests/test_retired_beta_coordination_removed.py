@@ -7,11 +7,19 @@ from typing import Any
 
 import pytest
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from tests._test_bundle_asset_support import _PKG_DATA
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig, resolve_client_profile
 from trw_mcp.state.claude_md import render_template
 from trw_mcp.state.claude_md._parser import load_claude_md_template
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``."""
+    isolate_ide_detection(monkeypatch)
+
 
 _CFG = TRWConfig()
 _BETA_LABEL = "Agent " + "Teams"

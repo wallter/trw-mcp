@@ -24,7 +24,8 @@ import structlog
 # an unwanted import-time side effect for this state-layer module. The eligible
 # public surface computed here is byte-identical to ``eligible_tool_names()``
 # (both = PACK_TOOLS minus OPERATOR_ONLY_TOOLS).
-from trw_mcp.models.surface_packs import KERNEL_TOOLS, OPERATOR_ONLY_TOOLS, PACK_TOOLS
+from trw_mcp.models.phase_policy import RIGID_TOOLS
+from trw_mcp.models.surface_packs import KERNEL_TOOLS, OPERATOR_ONLY_TOOLS, PACK_TOOLS, REVIEWER_TOOLS
 
 _logger = structlog.get_logger(__name__)
 
@@ -188,17 +189,26 @@ if _ALL_TOOLS != _DESCRIBED_TOOLS:
 
 
 def resolve_exposed_tools(mode: str = "standard") -> frozenset[str]:
-    """Resolve the tool surface an instruction file should describe (PRD-CORE-218).
+    """The tool surface an instruction file may describe (PRD-CORE-218 + PRD-FIX-140-FR08).
 
-    Instruction files (CLAUDE.md/AGENTS.md/etc.) project the TASK-INDEPENDENT
-    baseline of the CORE-218 resolution authority:
+    Instruction files project the TASK-INDEPENDENT baseline of the CORE-218
+    resolution authority, scoped to the ROLE that will read them:
 
-      * ``"all"`` — the full eligible public surface (operator-escape mode).
-      * anything else (``"standard"``, the default) — the kernel-only baseline,
-        i.e. ``resolve_tool_surface(None, "standard").tools``. A concrete run's
-        task packs are resolved per-session at the middleware layer
-        (SurfaceAuthorityMiddleware); instruction files stay task-independent so
-        they never over-promise tools a given session has masked.
+      * a reviewer lane (``state._surface_role.reviewer_role_active``) resolves to
+        ``REVIEWER_TOOLS`` and nothing else — the middleware REPLACES the surface
+        for that role, ahead of mode, task packs and the never-hide union, so an
+        agent-shaped baseline would promise a reviewer tools it cannot call;
+      * ``"all"`` — the full eligible public surface (operator-escape mode);
+      * anything else (``"standard"``, the default) — the kernel UNION the
+        never-hide ``RIGID_TOOLS``. The kernel alone under-reported the guarantee:
+        ``middleware/surface_authority.py`` and ``middleware/phase_exposure.py``
+        both apply ``| RIGID_TOOLS`` at the point of use, so ``trw_build_check``
+        and ``trw_review`` are callable in every agent session — yet
+        ``check-instructions`` flagged the Deliver Gate section for naming
+        ``trw_build_check``, which is the remedy that section exists to state.
+
+    A concrete run's task packs are resolved per-session at the middleware layer,
+    so instruction files stay task-independent and never over-promise.
 
     Args:
         mode: ``tool_resolution_mode`` (``"standard"`` | ``"all"``).
@@ -206,10 +216,14 @@ def resolve_exposed_tools(mode: str = "standard") -> frozenset[str]:
     Returns:
         Immutable set of tool names the instruction surface may describe.
     """
-    if mode == "all":
+    from trw_mcp.state._surface_role import reviewer_role_active
+
+    if reviewer_role_active():
+        result = frozenset(REVIEWER_TOOLS)
+    elif mode == "all":
         result = frozenset(_ELIGIBLE_TOOLS)
     else:
-        result = frozenset(KERNEL_TOOLS)
+        result = frozenset(KERNEL_TOOLS) | RIGID_TOOLS
     _logger.debug("resolved_exposed_tools", mode=mode, count=len(result))
     return result
 

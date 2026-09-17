@@ -157,7 +157,8 @@ def _publish_new(path: Path, busy_timeout_ms: int) -> None:
                 os.link(staging, path)  # No overwrite; only a complete DB becomes canonical.
                 published = True
             except FileExistsError:
-                pass  # Winner is checked through the same existing-file path below.
+                # trw-fail-silent-allow: another publisher won the no-overwrite race; open_store validates that winner (regular nonempty file + _verify_schema) before any caller uses it
+                pass
             except (OSError, NotImplementedError) as exc:
                 raise StoreError(StoreRefusal.UNAVAILABLE, "atomic no-overwrite publication unavailable") from exc
             try:

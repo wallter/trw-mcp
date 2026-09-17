@@ -41,6 +41,40 @@ class ScopeScene:
     def notify(self, scope: str = f"{COMMS}/_store.py", key: str = "k1", body: str = "heads up") -> dict[str, Any]:
         return self.call("trw_send", {"scope": scope, "request_key": key, "body": body})
 
+    def inbox_of(self, member: str) -> list[str]:
+        """The bodies a member can actually read. Fetching is non-consuming."""
+        self.actor(member)
+        return [item["body"] for item in self.call("trw_inbox", {"action": "fetch"})["items"]]
+
+    def redeclare(self, member: str, owned_paths: list[str]) -> None:
+        """Rewrite one member's declared ownership in the manifest the snapshot reads.
+
+        Declared ownership is the only thing that decides who a scope matches, so
+        this is the honest way to move a member into or out of a match between two
+        calls. The replacement globs must stay non-overlapping: the manifest model
+        re-validates that on every load, so an overlapping edit would fail the read
+        rather than exercise the retry path.
+        """
+        from ruamel.yaml import YAML
+
+        yaml = YAML()
+        path = self.formation.manifest_path()
+        with path.open(encoding="utf-8") as handle:
+            data = yaml.load(handle)
+        for entry in data["members"]:
+            if entry["member_id"] == member:
+                entry["owned_paths"] = list(owned_paths)
+        with path.open("w", encoding="utf-8") as handle:
+            yaml.dump(data, handle)
+
+    def set_lease(self, member: str, *, live: bool) -> None:
+        """Expire or restore a member's endpoint lease without re-enrolling it."""
+        offset = 86400.0 if live else 0.0
+        self.rows(
+            "UPDATE endpoints SET lease_expires_at=last_seen_at+? WHERE member_id=?",
+            (offset, member),
+        )
+
     def rows(self, sql: str, parameters: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:
         from trw_mcp.comms import _store
 
@@ -107,7 +141,7 @@ def test_scope_reaches_the_declared_owner_and_nobody_else(scene: ScopeScene) -> 
 
 def test_a_scope_matching_no_declaration_refuses_rather_than_succeeding_silently(scene: ScopeScene) -> None:
     """FR03. Reaching nobody is a refusal; a cheerful empty success is a lie."""
-    result = scene.notify(scope="backend/app/main.py")
+    result = scene.notify(scope="svc/app/main.py")
     assert result["reason"] == "scope_matches_no_peer"
     assert scene.rows("SELECT COUNT(*) FROM admissions") == [(0,)]
 
@@ -146,12 +180,20 @@ def test_the_ceiling_refuses_before_a_single_row_is_written(scene: ScopeScene) -
 
 
 def test_exact_retry_returns_the_same_receipts_and_writes_nothing(scene: ScopeScene) -> None:
-    """FR04. Idempotency is a property of the whole fan-out, not of one row."""
+    """FR04 and FR08. Idempotency is a property of the whole fan-out, not of one row.
+
+    The unchanged case is where ``not_delivered_to`` must be EMPTY and still
+    present: a sender that reads the key only when something is wrong cannot
+    tell "nothing withheld" from "this build does not report withholding".
+    """
     first = scene.notify()
     again = scene.notify()
     assert again["recipients"] == first["recipients"]
+    assert again["not_delivered_to"] == {}
+    assert first["not_delivered_to"] == {}
     assert scene.rows("SELECT COUNT(*) FROM admissions") == [(1,)]
     assert scene.rows("SELECT charge FROM groups") == [(1,)]
+    assert scene.inbox_of("impl-2") == ["heads up"], "a retry must not deliver a second copy"
 
 
 def test_the_same_key_with_a_changed_body_refuses(scene: ScopeScene) -> None:
@@ -285,7 +327,7 @@ def test_a_bare_directory_declaration_still_reaches_its_owner(scene: ScopeScene)
 
     assert intersects(f"{COMMS}/_store.py", COMMS), "bare directory declaration must cover files beneath it"
     assert intersects(f"{COMMS}/_store.py", f"{COMMS}/**")
-    assert not intersects("backend/app.py", COMMS)
+    assert not intersects("svc/app.py", COMMS)
 
 
 def test_addressing_and_enforcement_answer_ownership_the_same_way(scene: ScopeScene) -> None:
@@ -303,8 +345,86 @@ def test_addressing_and_enforcement_answer_ownership_the_same_way(scene: ScopeSc
         (f"{COMMS}/_store.py", f"{COMMS}/**"),
         ("src/alpha/x.py", "src/alpha"),
         ("src/alphabet/x.py", "src/alpha"),
-        ("backend/app.py", COMMS),
+        ("svc/app.py", COMMS),
     ]
     for path, glob in cases:
         expected = declaration_covers(glob, path) or glob.startswith(f"{path}/")
         assert intersects(path, glob) is expected, (path, glob)
+
+
+def test_a_retry_whose_match_grew_replays_and_names_the_new_owner(scene: ScopeScene) -> None:
+    """FR04 and FR08. A frozen fan-out, and the growth it excludes stated out loud.
+
+    impl-3 declares ground outside ``trw-mcp`` for the first call, then declares
+    ground inside it. The retry therefore matches a strictly larger set than the
+    one it admitted. It replays rather than refusing -- a sender that lost the
+    response must still be able to learn whether its first send landed, and a
+    peer declaring a matching path in between is not the sender's doing -- and it
+    names impl-3 under ``not_delivered_to`` so the sender knows to address it
+    under a fresh key. The oracle is impl-3's EMPTY inbox, not the response.
+    """
+    scene.redeclare("impl-3", ["svc/**"])
+    first = scene.notify(scope="trw-mcp", key="grow")
+    assert list(first["recipients"]) == ["impl-2"], first
+    assert first["not_delivered_to"] == {}
+
+    scene.redeclare("impl-3", ["trw-mcp/docs/**"])
+    scene.actor("impl-1")
+    again = scene.notify(scope="trw-mcp", key="grow")
+    assert again["status"] == "ok", again
+    assert again["recipients"] == first["recipients"], "the retained fan-out is replayed verbatim"
+    assert again["not_delivered_to"] == {"impl-3": "not_in_retained_notify"}, again
+
+    assert scene.inbox_of("impl-2") == ["heads up"]
+    assert scene.inbox_of("impl-3") == [], "a grown match must not widen the fan-out"
+    assert scene.rows("SELECT COUNT(*) FROM admissions") == [(1,)]
+    assert scene.rows("SELECT charge FROM groups") == [(1,)]
+
+
+def test_a_retry_whose_match_contracted_refuses(scene: ScopeScene) -> None:
+    """FR04. Losing a recipient is a different message, and must not replay as one.
+
+    Growth is replayable because everyone who was told is still told. Contraction
+    is not: the retained set contains a member the scope no longer reaches, so
+    answering with the first call's receipts would report a fan-out the caller
+    can no longer reproduce. The scope string is IDENTICAL here, so the refusal
+    is the subset rule talking and not the scope-digest guard.
+    """
+    first = scene.notify(scope="trw-mcp", key="shrink")
+    assert sorted(first["recipients"]) == ["impl-2", "impl-3"], first
+
+    scene.redeclare("impl-3", ["svc/**"])
+    scene.actor("impl-1")
+    again = scene.notify(scope="trw-mcp", key="shrink")
+    assert again["reason"] == "idempotency_conflict", again
+    assert scene.rows("SELECT COUNT(*) FROM admissions") == [(2,)]
+    assert scene.inbox_of("impl-2") == ["heads up"]
+    assert scene.inbox_of("impl-3") == ["heads up"]
+
+
+def test_an_owner_that_was_offline_is_never_delivered_under_that_key(scene: ScopeScene) -> None:
+    """FR06 and FR08. The most likely real growth: a peer that was not listening.
+
+    impl-3 owns matching ground throughout, so it is MATCHED on both calls; it
+    simply could not be admitted on the first. Once its lease is live the retry
+    still withholds -- that message was admitted without it -- and says so. The
+    remedy the response implies is a fresh key, and that remedy is asserted to
+    work rather than assumed.
+    """
+    scene.set_lease("impl-3", live=False)
+    first = scene.notify(scope="trw-mcp", key="offline")
+    assert list(first["recipients"]) == ["impl-2"], first
+    assert first["skipped"] == {"impl-3": "recipient_unavailable"}
+    assert first["not_delivered_to"] == {}
+
+    scene.set_lease("impl-3", live=True)
+    again = scene.notify(scope="trw-mcp", key="offline")
+    assert again["status"] == "ok", again
+    assert again["not_delivered_to"] == {"impl-3": "not_in_retained_notify"}, again
+    assert scene.inbox_of("impl-3") == [], "coming back does not retroactively join a fan-out"
+
+    scene.actor("impl-1")
+    fresh = scene.notify(scope="trw-mcp", key="offline-2", body="second try")
+    assert sorted(fresh["recipients"]) == ["impl-2", "impl-3"], fresh
+    assert fresh["not_delivered_to"] == {}
+    assert scene.inbox_of("impl-3") == ["second try"], "a fresh key is the remedy and it works"

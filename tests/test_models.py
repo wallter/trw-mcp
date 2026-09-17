@@ -43,9 +43,6 @@ class TestTRWConfig:
     def test_defaults(self) -> None:
         config = TRWConfig()
         assert config.parallelism_max == 10
-        assert config.min_shards_target == 3
-        assert config.consensus_quorum == 0.67
-        assert config.checkpoint_secs == 600
         assert config.timebox_hours == 8
         assert config.framework_version.startswith("v") and "_TRW" in config.framework_version
         assert config.telemetry is False
@@ -54,7 +51,6 @@ class TestTRWConfig:
         config = TRWConfig()
         assert config.learning_max_entries == 500
         assert config.learning_promotion_impact == 0.7
-        assert config.learning_prune_age_days == 30
         assert config.learning_repeated_op_threshold == 3
         assert config.claude_md_max_lines == 500
         assert config.sub_claude_md_max_lines == 50
@@ -108,12 +104,17 @@ class TestTRWConfig:
             assert not hasattr(config, removed), f"{removed} should be removed"
 
     def test_orc_defaults_still_exist(self) -> None:
-        """PRD-FIX-016-FR03: ORC prompt-level fields still present with correct defaults."""
+        """PRD-FIX-016-FR03: the ORC prompt-level field that survives keeps its default.
+
+        Five of the six ORC knobs -- min_shards_target, min_shards_floor,
+        consensus_quorum, max_child_depth and checkpoint_secs -- were retired on
+        2026-09-16 (PRD-QUAL-139-FR05) after the corrected consumer scan found no
+        reader in any corpus. Their default pins went with them: a default pin on
+        a field nothing reads asserts that a number is still the number, which is
+        the shape this suite grew to 21 entries proving. max_research_waves stays
+        because OrchestrationConfig redeclares it.
+        """
         config = TRWConfig()
-        # Fields unique to ORC (min_shards_target, consensus_quorum,
-        # checkpoint_secs already verified in test_defaults)
-        assert config.min_shards_floor == 2
-        assert config.max_child_depth == 2
         assert config.max_research_waves == 3
 
     def test_extra_env_vars_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:

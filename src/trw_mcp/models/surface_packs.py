@@ -166,11 +166,15 @@ def reviewer_tools_toml_array() -> str:
     """Render :data:`REVIEWER_TOOLS` as a TOML array literal (PRD-SEC-015-FR01).
 
     The ONE rendering of the reviewer set for the Codex ``-c
-    mcp_servers.trw.enabled_tools=[...]`` allowlist layer — emitted by the
-    dispatch call site and by ``scripts/print_reviewer_tools.py`` so the two
-    layers can never disagree the way the generated client config and the server
-    surface do. Tool ids are ``[a-z_]`` only, so plain double quotes are exact
-    TOML; the output round-trips through ``tomllib`` to ``sorted(REVIEWER_TOOLS)``.
+    mcp_servers.trw.enabled_tools=[...]`` allowlist layer. Three consumers read
+    it — ``dispatch/_posture.py`` (the ``posture="reviewer"`` argv renderer),
+    ``scripts/print_reviewer_tools.py`` (the shell audit lane), and through that
+    script ``scripts/audit-external.sh`` — so no layer can disagree with the
+    server-side bound the way a generated client config and the server surface
+    do. Tool ids are ``[a-z_]`` only, so plain double quotes are exact TOML —
+    and exact JSON too, which is what lets the same rendering serve the claude
+    ``--mcp-config`` payload. The output round-trips through ``tomllib`` to
+    ``sorted(REVIEWER_TOOLS)``.
     """
     return "[" + ", ".join(f'"{name}"' for name in sorted(REVIEWER_TOOLS)) + "]"
 

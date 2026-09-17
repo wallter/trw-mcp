@@ -6,7 +6,12 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-CodexToolApprovalMode = Literal["auto", "prompt", "approve"]
+#: The four values codex accepts for an MCP approval mode. MEASURED 2026-09-16
+#: against codex-cli 0.154.0: `codex exec --strict-config` rejected an
+#: out-of-enum value with "unknown variant `bogus_value`, expected one of `auto`,
+#: `prompt`, `writes`, `approve`". "writes" was missing here, so a user who set
+#: it had the setting silently dropped on the next update-project.
+CodexToolApprovalMode = Literal["auto", "prompt", "writes", "approve"]
 
 
 class CodexMcpToolConfigEntry(TypedDict, total=False):
@@ -26,6 +31,13 @@ class CodexMcpServerEntry(TypedDict, total=False):
     enabled: bool
     enabled_tools: list[str]
     disabled_tools: list[str]
+    # `enabled_tools` is the VISIBILITY axis; `tools` carries the APPROVAL axis.
+    # Under `approval_policy = "never"` a visible tool is still refused at call
+    # time unless something grants it an approval mode, which is why a codex
+    # member could see every trw_* tool and call none of them (PRD-CORE-277-FR06).
+    tools: dict[str, CodexMcpToolConfigEntry]
+    env: dict[str, str]
+    default_tools_approval_mode: CodexToolApprovalMode
 
 
 class CodexSkillConfigEntry(TypedDict, total=False):

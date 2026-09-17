@@ -867,6 +867,61 @@ class TestMigrationClaim:
     calls — both callers see the same absent marker.
     """
 
+    def test_a_published_claim_is_never_observed_half_written(self, tmp_path: Path) -> None:
+        """The module's stated invariant, under THREADS rather than processes.
+
+        ``_publish`` writes the payload to a temp file and ``os.link``s it into
+        place, so the claim is atomic — as long as each writer owns its temp
+        file. The temp name was keyed on the PID alone, so two threads of one
+        process shared it and the linked INODE was still being rewritten by the
+        loser: the winner's claim read as illegible JSON, ``_is_stale`` called a
+        LIVE claim reclaimable, and the guarded work ran twice. That is how
+        ``test_two_racing_migrations_run_the_scan_once`` failed.
+
+        NON-VACUITY (observed 2026-09-17): restore the pid-only temp name and
+        this reports an unreadable claim within a few rounds, and the migration
+        test above fails outright.
+        """
+        import json
+        import os
+        import threading
+
+        from trw_mcp.state._learn_journal_claims import acquire_claim, release_claim
+
+        target = tmp_path / "work-unit.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        claim_file = target.with_name(target.name + ".claim")
+        racers = 8
+
+        for _round in range(10):
+            start = threading.Barrier(racers, timeout=30.0)
+            held: list[object] = []
+            lock = threading.Lock()
+
+            def _race() -> None:
+                start.wait()
+                claim = acquire_claim(target)
+                if claim is not None:
+                    with lock:
+                        held.append(claim)
+
+            threads = [threading.Thread(target=_race) for _ in range(racers)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(30.0)
+                assert not thread.is_alive()
+
+            assert len(held) == 1, f"{len(held)} threads all believed they held the same claim"
+            # The winner's claim must NAME ITS OWNER. An illegible one is what
+            # the staleness rule reclaims, which is the double-run in disguise.
+            record = json.loads(claim_file.read_text(encoding="utf-8"))
+            assert record["pid"] == os.getpid(), record
+            assert [path for path in target.parent.iterdir() if path.name.endswith(".tmp")] == [], (
+                "a temp file survived publication"
+            )
+            release_claim(held[0])  # type: ignore[arg-type]
+
     def test_two_racing_migrations_run_the_scan_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import threading
         import time as _time

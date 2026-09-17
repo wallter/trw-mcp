@@ -409,8 +409,9 @@ def register_ceremony_tools(server: FastMCP) -> None:
         unverified_reason as a structured acceptable-failure record (JSON or
         YAML) with all four of failed_command, residual_risk, owner and
         expiry_iso (YYYY-MM-DD). Free text and review-verdict labels are
-        rejected. run_path auto-detects; delivery_id/capability_token make
-        timeouts recoverable.
+        rejected.
+        run_path auto-detects; delivery_id/capability_token make timeouts
+        recoverable.
 
         Output: run_path, reflect/checkpoint results, counts, errors.
 

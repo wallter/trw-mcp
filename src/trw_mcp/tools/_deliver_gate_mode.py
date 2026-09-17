@@ -258,3 +258,45 @@ def apply_deliver_gate_mode(
             )
     except Exception:  # justified: fail-open, gate-mode dispatch must not wedge delivery
         logger.warning("deliver_gate_mode_check_failed", exc_info=True)
+
+
+def resolve_unpinned_gate_decision(files_changed: int | None = None) -> tuple[bool, str]:
+    """``(blocked, mode)`` for a delivery with NO run pin — PRD-FIX-140-FR04.
+
+    ``check_delivery_gates`` returns before :func:`apply_deliver_gate_mode` when
+    ``run_path`` is ``None``, so until now an unpinned delivery could only ever be
+    WARNED — including one whose own session recorded a build check that FAILED.
+    That gap was invisible because the bundled PreToolUse hook blocked the same
+    condition from the client side; demoting the hook to a diagnostic
+    (PRD-FIX-140-FR01) makes it reachable, so the decision moves here.
+
+    The decision is the SAME predicate the pinned path uses, with the SAME
+    change-evidence clause — ``task_type="unknown"`` (there is no run.yaml to
+    classify, and PRD-CORE-246-FR03 gates ``unknown`` on change evidence rather
+    than on the task-type heuristic) plus ``files_changed`` measured from the
+    session-scoped surfaces by
+    ``_delivery_event_checks.unpinned_session_changed_files``. So:
+
+    * a session that recorded modifications to at least
+      ``deliver_gate_unclassified_change_threshold`` distinct files, with no
+      passing build record, BLOCKS — the rule CLAUDE.md and CONSTITUTION §1.a
+      state, which admit no pinned/unpinned carve-out;
+    * a session with no recorded modifications stays ADVISORY, so the docs-only
+      over-block (L-eWzn) does not return;
+    * ``files_changed=None`` (uncomputable evidence) BLOCKS, matching the pinned
+      path's fail-closed posture. That is the default, so a caller with no count
+      at all — the recorded-failure branch — gets the strict answer.
+
+    An EXPLICIT ``advisory`` mode still never blocks, and an unreadable config
+    still evaluates the clause. The block is STRUCTURED: ``allow_unverified`` +
+    a valid acceptable-failure record still releases it.
+    """
+    mode, from_fallback = resolve_gate_mode_with_source("unknown")
+    blocked = resolve_deliver_gate_decision(
+        mode=mode,
+        task_type="unknown",
+        build_check_missing=True,
+        files_changed=files_changed,
+        mode_from_fallback=from_fallback,
+    )
+    return blocked, mode

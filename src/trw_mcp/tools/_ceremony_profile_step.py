@@ -61,7 +61,7 @@ def step_resolve_profile(
     if not getattr(config, "profile_system_enabled", True):
         return
     try:
-        from trw_mcp.profile import resolve_session_profile
+        from trw_mcp.profile import resolution_basis, resolve_session_profile
         from trw_mcp.profile.loader import LayerLoadError
         from trw_mcp.state._paths import resolve_trw_dir
 
@@ -89,6 +89,12 @@ def step_resolve_profile(
             return
         results["resolved_profile"] = resolved.profile.model_dump(exclude_none=True, mode="json")
         results["profile_layers_applied"] = list(resolved.layers_applied)
+        # PRD-FIX-141-FR06: state WHAT this was resolved from. session_start runs
+        # before trw_init, so the Scout's session layer usually does not exist
+        # yet and the tier comes from defaults; trw_profile_explain, called
+        # later, legitimately sees a different one. Same resolver, same block,
+        # so a reader can reconcile the two instead of choosing between them.
+        results["profile_resolution_basis"] = resolution_basis(resolved, run_dir=run_dir)
         results["profile_snapshot_id"] = resolved.surface_snapshot_id
         results["session_override_hash"] = resolved.session_override_hash
         logger.debug(

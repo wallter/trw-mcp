@@ -248,8 +248,6 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
                 )
             return
 
-        if client._config.intel_cache_enabled and pull_result.state is not None:
-            client._cache.update(pull_result.state, etag=pull_result.etag)
         pulled = len(pull_result.team_learnings or [])
         merge_result = (
             client._puller.merge_team_learnings(pull_result.team_learnings, namespace=DEFAULT_NAMESPACE)
@@ -317,6 +315,21 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
                     ),
                     detail="the cursor did not advance; these items will be re-offered rather than skipped",
                 )
+        # PRD-FIX-138-FR02: the ETag is cached only when the cursor advanced. A
+        # held cursor means this batch must be RE-OFFERED next cycle — but the
+        # cache used to record the ETag before the merge ran, so the next pull
+        # sent If-None-Match, the server answered 304, and the 304 arm above
+        # booked a success. Held batch, cached ETag, permanent stall.
+        if client._config.intel_cache_enabled and pull_result.state is not None:
+            etag_to_cache = pull_result.etag if cursor_may_advance else None
+            if not cursor_may_advance and pull_result.etag:
+                facade_logger.info(
+                    "sync_pull_etag_withheld",
+                    client_id=client._client_id,
+                    pull_seq=pull_seq,
+                    detail="cursor held; next pull is unconditional so the batch is re-offered",
+                )
+            client._cache.update(pull_result.state, etag=etag_to_cache)
         client._coordinator.record_company_pull_seq(max(company_pull_seq, pull_result.next_company_seq))
         client._apply_sync_hints(pull_result.sync_hints)
         cycle_emit = facade_logger.warning if merge_result.rejected else facade_logger.info
@@ -332,6 +345,7 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
             merge_skipped_no_id=merge_result.skipped_no_id,
             merge_invalid=merge_result.invalid,
             merge_quarantined=merge_result.quarantined,
+            merge_blocked=merge_result.blocked,
             merge_failed=merge_result.failed,
             next_delay_seconds=client._next_sleep_seconds,
             immediate_repoll=client._next_cycle_force,

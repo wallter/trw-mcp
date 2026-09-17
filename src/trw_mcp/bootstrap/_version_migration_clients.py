@@ -337,6 +337,13 @@ def _remove_stale_client_surface(
             if surface.is_dir_artifact and bundled_keys:
                 _remove_stale_files_in_kept_dir(surface, entry, bundled_keys, manifest_hashes, result, dry_run=dry_run)
             continue
+        # PRD-FIX-139-FR03: a mirror follows its source. A skill dir absent
+        # from the bundle but still present under the canonical
+        # ``.claude/skills`` is the project's own (retired-name collision, or a
+        # local skill) and its projections stay with it.
+        if surface.is_dir_artifact and (target_dir / ".claude" / "skills" / name).is_dir():
+            result.setdefault("preserved", []).append(f"preserved:{entry} (mirror of a live .claude/skills source)")
+            continue
         if dry_run:
             result.setdefault("updated", []).append(f"would remove:{entry}")
             continue

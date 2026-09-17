@@ -27,6 +27,11 @@ template_version: "3.2"
 # Functionality truthfulness (FPI #7 / AARE-F §6.2): status=implemented REQUIRES
 # functionality_level=live AND stubs: []. Use stub/partial (with stubs listed)
 # until every path is real — never claim implemented over a stub.
+#
+# Required once status is implemented (trw_prd_validate rule
+# `aaref_functionality_level_required`): this key must be present and set to
+# stub | partial | live. It is NOT optional after implementation, and a PRD that
+# omits it validates with verdict=NEEDS_WORK however high it scores.
 functionality_level: planned  # planned | stub | partial | live
 stubs: []                     # every not-yet-real path, while functionality_level != live
 
@@ -87,6 +92,14 @@ verification:
   #   pass_condition: "The asserted observable value equals the requirement target"
   #   automated: true
   #   automation_infeasible_reason: null
+  #
+  # Required once status is implemented (rule
+  # `implemented_requirement_automation`): every mapping must carry EITHER
+  # automated behavioral evidence OR an automation_infeasible_reason naming why
+  # another method is required. `method: test` with a test-shaped
+  # evidence_artifact (`trw-mcp/tests/test_x.py::test_y`) already counts as
+  # automated behavioral evidence — the `automated:` flag is then optional.
+  # Set `automated: false` only with an automation_infeasible_reason.
 
 # Optional executable commands retained for project-native verification runners.
 verification_commands: []

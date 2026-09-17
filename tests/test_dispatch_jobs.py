@@ -331,6 +331,12 @@ def test_start_background_uses_full_uuid_job_id(tmp_path: Path, monkeypatch: pyt
         def wait(self) -> int:
             return 0
 
+        def __enter__(self) -> _FakeProc:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
     monkeypatch.setattr(jobs_mod.subprocess, "Popen", lambda *a, **k: _FakeProc())
     req = DispatchRequest(client="codex", prompt="hi", timeout_s=30, read_only=True)
     job = start_background(req, trw_dir=tmp_path / ".trw")

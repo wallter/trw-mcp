@@ -300,7 +300,7 @@ def test_gate_silent_when_sync_push_probe_is_unmeasured(tmp_path: Path, monkeypa
         },
         "graph_edges": {"measured": True, "edge_count": 0, "corpus_count": 5},
     }
-    monkeypatch.setattr(_pipeline_health_gate, "step_pipeline_health", lambda _trw_dir: unmeasured_health)
+    monkeypatch.setattr(_pipeline_health_gate, "step_pipeline_health", lambda _trw_dir, _config=None: unmeasured_health)
 
     result = _pipeline_health_gate.check_pipeline_health(
         trw_dir, _make_config(platform_urls=["https://api.example.com"])
@@ -489,7 +489,7 @@ def test_gate_fail_open_on_internal_error(tmp_path: Path, monkeypatch: pytest.Mo
     """
     import trw_mcp.tools._pipeline_health_gate as gate_mod
 
-    def _boom(_trw_dir: Path) -> dict[str, object]:
+    def _boom(_trw_dir: Path, _config: object = None) -> dict[str, object]:
         raise RuntimeError("probe exploded")
 
     monkeypatch.setattr(gate_mod, "step_pipeline_health", _boom)
@@ -668,7 +668,7 @@ def test_gate_fails_open_on_probe_error(monkeypatch: pytest.MonkeyPatch, tmp_pat
     monkeypatch.setattr(paths_mod, "resolve_trw_dir", lambda: trw_dir)
     monkeypatch.setattr(loader_mod, "get_config", lambda: _make_config(platform_urls=["https://api.trwframework.com"]))
 
-    def _boom(_trw_dir: Path) -> dict[str, object]:
+    def _boom(_trw_dir: Path, _config: object = None) -> dict[str, object]:
         raise RuntimeError("probe exploded")
 
     monkeypatch.setattr(gate_mod, "step_pipeline_health", _boom)

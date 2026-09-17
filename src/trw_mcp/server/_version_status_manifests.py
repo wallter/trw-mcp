@@ -58,6 +58,10 @@ class VersionStatus(TypedDict):
     compatibility_matrix: dict[str, object]
     live_process: dict[str, object]
     historical: dict[str, object]
+    # PRD-CORE-277-FR09. Its own layer, beside live_process rather than inside
+    # it: live_process answers "is THIS process current", this answers "is some
+    # OTHER process still writing the store with code that predates the install".
+    predating_writers: dict[str, object]
     compatible: bool
     mismatches: list[str]
     warnings: list[str]

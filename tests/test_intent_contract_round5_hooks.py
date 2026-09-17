@@ -204,6 +204,46 @@ def _sigterm_at(project: Path, hook: str, delay_seconds: float) -> int:
 _WINDOW_MS = [0.2, 0.4, 0.6, 0.8, 1.0]
 
 
+def _unsignalled_run(project: Path, hook: str) -> tuple[int, float]:
+    """Run the hook to completion with no signal; return ``(exit_code, seconds)``."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    env["TRW_INTENT_PRE_WRITE_BUDGET_SECONDS"] = "60"
+    env["TRW_INTENT_POST_EDIT_BUDGET_SECONDS"] = "120"
+    started = time.perf_counter()
+    result = subprocess.run(
+        ["sh", str(project / ".claude" / "hooks" / hook)],
+        input='{"tool_name": "Edit", "tool_input": {"file_path": "protected/module.py"}}',
+        text=True,
+        capture_output=True,
+        cwd=project,
+        env=env,
+        timeout=60,
+        check=False,
+    )
+    return result.returncode, time.perf_counter() - started
+
+
+def _sweep_delays(runtime_seconds: float) -> list[float]:
+    """SIGTERM delays spanning BOTH the preamble and the armed path.
+
+    ``_WINDOW_MS`` is always swept: it is the sub-millisecond band a probe
+    measured as the silent-allow window, and it is the whole point of F-C.
+    The tail is DERIVED from a measured unsignalled run instead of assumed,
+    because "one millisecond is long enough to reach the armed path" is a
+    statement about the host, not about the hook. On macOS one run costs ~10x
+    what it costs on Linux (every ``$(...)`` is a process), so the fixed band
+    lies entirely inside the preamble, every sample comes back -15, and the
+    ``2 in observed`` non-vacuity guard fired on the PLATFORM rather than on a
+    regression. The >1.0 factor guarantees at least one completed run, so the
+    guard is satisfiable by construction wherever the hook still blocks.
+    """
+    base = [ms / 1000.0 for ms in _WINDOW_MS]
+    tail = [runtime_seconds * factor for factor in (0.5, 0.9, 1.3)]
+    return base + [delay for delay in tail if delay > base[-1]]
+
+
 @pytest_skip_no_sh
 @pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
 def test_fc_a_sigterm_inside_the_preamble_never_silently_allows(tmp_path: Path, hook: str) -> None:
@@ -215,7 +255,12 @@ def test_fc_a_sigterm_inside_the_preamble_never_silently_allows(tmp_path: Path, 
     the test below.
     """
     project = _blocking_project(tmp_path, f"fc-{hook}", hook)
-    observed = [_sigterm_at(project, hook, milliseconds / 1000.0) for milliseconds in _WINDOW_MS for _ in range(4)]
+    unsignalled_code, runtime_seconds = _unsignalled_run(project, hook)
+    assert unsignalled_code == 2, (
+        f"the armed path is unreachable even with no signal (exit {unsignalled_code}); "
+        "the sweep below would pass vacuously"
+    )
+    observed = [_sigterm_at(project, hook, delay) for delay in _sweep_delays(runtime_seconds) for _ in range(4)]
 
     assert 0 not in observed, f"a SIGTERM in the preamble converted a block into a silent allow: {observed}"
     assert 2 in observed, "the sweep never reached the armed path — it would pass vacuously"

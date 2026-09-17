@@ -7,6 +7,7 @@ import get_config(), while _build_config() imports state modules.
 from __future__ import annotations
 
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -164,7 +165,7 @@ def exclude_env_shadowed_keys(merged: dict[str, object]) -> dict[str, object]:
     return {k: v for k, v in merged.items() if k == "platform_api_key" or f"TRW_{k.upper()}" not in os.environ}
 
 
-def _build_config() -> TRWConfig:
+def _build_config_unguarded() -> TRWConfig:
     """Build TRWConfig with the machine -> project -> env config cascade merged.
 
     Precedence (highest wins) -- PRD-CORE-185 FR04:
@@ -230,6 +231,54 @@ def _build_config() -> TRWConfig:
         if _config_strict_mode():
             raise
     return TRWConfig()
+
+
+_META_TUNE_SANDBOX_PLATFORM = "Linux"
+
+
+def apply_platform_meta_tune_gate(config: TRWConfig, *, system: str | None = None) -> TRWConfig:
+    """Force meta-tune OFF on any platform that cannot host its sandbox (PRD-FIX-137-FR01).
+
+    SAFE-001's ``subprocess-seccomp-v1`` sandbox exists only on Linux, and the
+    boot validator in ``meta_tune.boot_checks`` refuses ``platform != Linux``.
+    Before this gate that refusal was raised from ``_build_middleware``, so a
+    ``.trw/config.yaml`` written on a Linux box with ``meta_tune_enabled: true``
+    killed the whole MCP server on a macOS checkout — ``--version``, ``doctor``
+    and every tool included — over a feature the platform cannot run anyway.
+
+    The safety property SAFE-001 protects is "no meta-tune without a sandbox".
+    Disabling meta-tune preserves it exactly; aborting boot only adds collateral.
+    So on a non-Linux host the effective config carries ``meta_tune.enabled=False``
+    and a WARNING names the override, its cause, and the remedy. Linux is left
+    untouched: there the fail-loud validator still runs, because a Linux operator
+    who enabled meta-tune without the extra installed must be told, not silently
+    downgraded (PRD-FIX-137-FR02).
+
+    Mutates *config* in place (both the nested flag and the legacy mirror field,
+    which the model validator keeps aligned only at construction) and returns it
+    so call sites can wrap a constructor expression.
+    """
+    current = system if system is not None else platform.system()
+    if current == _META_TUNE_SANDBOX_PLATFORM or not config.meta_tune.enabled:
+        return config
+    logger.warning(
+        "meta_tune_disabled_unsupported_platform",
+        platform=current,
+        required_platform=_META_TUNE_SANDBOX_PLATFORM,
+        detail=(
+            "meta_tune.enabled=true in the resolved config, but the SAFE-001 sandbox "
+            "is Linux-only; forcing meta_tune.enabled=false for this process. Set "
+            "meta_tune_enabled: false (or TRW_META_TUNE_ENABLED=false) to silence this."
+        ),
+    )
+    config.meta_tune = config.meta_tune.model_copy(update={"enabled": False})
+    config.meta_tune_enabled = False
+    return config
+
+
+def _build_config() -> TRWConfig:
+    """The cascade in :func:`_build_config_unguarded`, then the platform meta-tune gate."""
+    return apply_platform_meta_tune_gate(_build_config_unguarded())
 
 
 def reload_config(config: TRWConfig | None = None) -> None:

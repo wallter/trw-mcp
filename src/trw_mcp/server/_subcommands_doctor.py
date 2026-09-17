@@ -373,6 +373,24 @@ def _check_thread_hotspots(target: Path, config: TRWConfig) -> CheckResult:
     return CheckResult("thread_hotspots", cast("DoctorStatus", status), message)
 
 
+# ── PRD-CORE-277-FR09: live writers older than the installed distribution ────
+
+
+def _check_predating_writers(target: Path, _config: TRWConfig) -> CheckResult:
+    """Name running server processes whose writer registration predates this install.
+
+    Delegates to the ``_doctor_predating_writers`` sibling (kept out of this file
+    for the eLOC gate). It REPORTS: after an in-place upgrade the previous
+    sessions keep writing the same store, and detection is not permission to kill
+    another session's process. SKIPs when the install receipt is unreadable,
+    because an unmeasured check must not render as PASS.
+    """
+    from trw_mcp.server._doctor_predating_writers import predating_writers_row
+
+    status, message = predating_writers_row(target / ".trw")
+    return CheckResult("predating_writers", cast("DoctorStatus", status), message)
+
+
 # ── PRD-SEC-014-FR04: embedding cache state + egress posture ─────────────────
 
 
@@ -531,6 +549,7 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("memory_backend", "_check_memory_backend"),
     ("memory_daemon", "_check_memory_daemon"),
     ("thread_hotspots", "_check_thread_hotspots"),
+    ("predating_writers", "_check_predating_writers"),
     ("embedding_egress", "_check_embedding_egress"),
     ("backend_connectivity", "_check_backend_connectivity"),
     ("installer_flag_advisory", "_check_installer_flag_advisory"),
@@ -609,7 +628,7 @@ def _resolve_target_config(target: Path) -> TRWConfig:
     its own FAIL row.
     """
     from trw_mcp.exceptions import StateError
-    from trw_mcp.models.config._loader import resolve_config_overrides
+    from trw_mcp.models.config._loader import apply_platform_meta_tune_gate, resolve_config_overrides
 
     try:
         overrides = resolve_config_overrides(target / ".trw" / "config.yaml")
@@ -619,7 +638,9 @@ def _resolve_target_config(target: Path) -> TRWConfig:
     if not overrides:
         return TRWConfig()
     try:
-        return TRWConfig(**overrides)  # type: ignore[arg-type]
+        # PRD-FIX-137-FR03: the doctor reports the config the server would RUN
+        # with, so the non-Linux meta-tune override applies here as well.
+        return apply_platform_meta_tune_gate(TRWConfig(**overrides))  # type: ignore[arg-type]
     except Exception:  # justified: an invalid config.yaml is _check_config's verdict, not this row's
         logger.warning("doctor_target_config_invalid", path=str(target / ".trw" / "config.yaml"))
         return TRWConfig()

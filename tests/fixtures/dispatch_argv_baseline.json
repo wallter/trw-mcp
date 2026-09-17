@@ -590,6 +590,8 @@
         "--output-format",
         "stream-json",
         "--sandbox",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -624,6 +626,8 @@
         "--sandbox",
         "--model",
         "baseline-model-1",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -654,6 +658,8 @@
         "--output-format",
         "stream-json",
         "--dangerously-skip-permissions",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -688,6 +694,8 @@
         "--dangerously-skip-permissions",
         "--model",
         "baseline-model-1",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -718,6 +726,8 @@
         "--output-format",
         "stream-json",
         "--sandbox",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -752,6 +762,8 @@
         "--sandbox",
         "--model",
         "baseline-model-1",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -782,6 +794,8 @@
         "--output-format",
         "stream-json",
         "--dangerously-skip-permissions",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -816,6 +830,8 @@
         "--dangerously-skip-permissions",
         "--model",
         "baseline-model-1",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "-p",
         "audit this"
       ]
@@ -1124,6 +1140,8 @@
         "--output-format",
         "stream-json",
         "--sandbox",
+        "--add-dir",
+        "/tmp/dispatch-baseline",
         "--verbose",
         "--foo=bar",
         "-p",

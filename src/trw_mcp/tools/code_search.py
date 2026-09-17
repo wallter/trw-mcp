@@ -20,6 +20,27 @@ from trw_mcp.code_index.search import lexical_search, response_to_dict, symbol_s
 from trw_mcp.tools.telemetry import log_tool_call
 
 
+def _with_unmask_hint(payload: dict[str, object]) -> dict[str, object]:
+    """Append the grant step to a ``missing_index`` remediation — PRD-FIX-140-FR06.
+
+    Both failure paths in ``code_index/search.py`` tell the caller to run
+    ``trw_code_index_update``, a ``code_risk`` pack member no standard task type
+    resolves — so the remediation named a tool the session could not see. The
+    hint is added at THIS boundary rather than in the search module because
+    reachability is a property of the live session, and ``code_index`` is a pure
+    layer with no session context. Returns the payload unchanged when the tool is
+    reachable or the error is not ``missing_index``.
+    """
+    if payload.get("error_code") != "missing_index":
+        return payload
+    from trw_mcp.tools._masked_tool_hint import unmask_hint
+
+    hint = unmask_hint("trw_code_index_update", reason="build the local code index")
+    if hint:
+        payload["remediation"] = f"{payload.get('remediation', '')}{hint}".strip()
+    return payload
+
+
 def trw_code_search(
     repo_root: str,
     query: str,
@@ -28,7 +49,7 @@ def trw_code_search(
 ) -> dict[str, object]:
     """Search indexed code chunks and return capped, privacy-safe snippets."""
 
-    return response_to_dict(lexical_search(repo_root, query=query, top_k=top_k, path=path))
+    return _with_unmask_hint(response_to_dict(lexical_search(repo_root, query=query, top_k=top_k, path=path)))
 
 
 def trw_code_symbol(
@@ -39,7 +60,7 @@ def trw_code_symbol(
 ) -> dict[str, object]:
     """Look up indexed symbols with exact matches ranked before fuzzy matches."""
 
-    return response_to_dict(symbol_search(repo_root, symbol=symbol, top_k=top_k, path=path))
+    return _with_unmask_hint(response_to_dict(symbol_search(repo_root, symbol=symbol, top_k=top_k, path=path)))
 
 
 def register_code_search_tools(server: FastMCP) -> None:

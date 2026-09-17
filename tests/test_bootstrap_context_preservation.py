@@ -201,18 +201,19 @@ class TestNoDriftBetweenWritersAndCleanup:
                 continue
             found.update(writer.findall(path.read_text(encoding="utf-8")))
 
-        # The bundled shell hooks write here too, and scanning only *.py left the
-        # single most important file uncovered: `deliver-override-audit.jsonl`,
-        # the record of every truthfulness-gate override, is written by
-        # `data/hooks/pre-tool-deliver-gate.sh` — so the guard protecting the
-        # audit trail could not see the audit trail.
+        # The bundled shell hooks write here too, and scanning only *.py leaves
+        # every shell-written context file uncovered. The canary was
+        # `deliver-override-audit.jsonl` (written by the deliver-gate hook) until
+        # PRD-FIX-140-FR01 demoted that hook to a diagnostic and removed the
+        # write; `pre_compact_state.json` is now the canary, written by
+        # `data/hooks/pre-compact.sh` and by nothing in *.py.
         for path in root.rglob("*.sh"):
             found.update(shell_writer.findall(path.read_text(encoding="utf-8")))
 
         assert found, "the writer scan found nothing — the regex has rotted"
-        assert "deliver-override-audit.jsonl" in found, (
-            "the shell-hook scan is not reaching data/hooks/pre-tool-deliver-gate.sh; "
-            "without it this guard silently stops covering the override audit trail"
+        assert "pre_compact_state.json" in found, (
+            "the shell-hook scan is not reaching data/hooks/pre-compact.sh; "
+            "without it this guard silently stops covering every shell-written context file"
         )
 
         # Collisions that are correct by design. Named individually rather than

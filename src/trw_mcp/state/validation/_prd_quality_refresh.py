@@ -14,7 +14,7 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResultV2,
 )
-from trw_mcp.state.validation._prd_validation_findings import enforce_valid_invariant, has_blocking_failure
+from trw_mcp.state.validation._prd_validation_findings import finalize_verdict, has_blocking_failure
 from trw_mcp.state.validation.prd_integrity import build_path_index_partial_warning, run_prd_integrity_checks
 from trw_mcp.state.validation.prd_quality import (
     _build_smell_suggestion,
@@ -291,7 +291,7 @@ def refresh_dynamic_prd_validation(
                 "grounding for the skipped groups was NOT performed."
             )
         result.integrity_warnings = [marker, *result.integrity_warnings]
-    enforce_valid_invariant(result)
+    finalize_verdict(result)
     if budget_report is not None:
         budget_report["validation_partial"] = validation_partial
         budget_report["checks_skipped"] = list(checks_skipped)

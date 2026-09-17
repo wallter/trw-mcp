@@ -136,10 +136,17 @@ def notify(
         # reached before. That is a different message, not a retry.
         raise AdmissionError("idempotency_conflict")
 
+    # Computed once, before anything is admitted, because it is the answer to a
+    # question the sender must be able to ask of the RESPONSE: which members
+    # that this scope reaches will get nothing under this key? On a first send
+    # it is empty; on a retry it names the growth the frozen fan-out excludes.
+    frozen = retained or {peer.member_id for peer in reachable}
+    not_delivered_to = {peer.member_id: NOT_RETAINED for peer in reachable if peer.member_id not in frozen}
+
     receipts: dict[str, Any] = {}
     skipped: dict[str, str] = {}
     for peer in reachable:
-        if retained and peer.member_id not in retained:
+        if peer.member_id in not_delivered_to:
             skipped[peer.member_id] = NOT_RETAINED
             continue
         envelope = Envelope(peer.member_id, shard_key(request_key, scope, peer.member_id), body, kind, delivery_class)
@@ -154,4 +161,4 @@ def notify(
         # reason rather than the scope-shaped one, so the sender can tell
         # "nobody owns this" from "the owner is not listening".
         raise AdmissionError("recipient_unavailable")
-    return {"scope": scope, "recipients": receipts, "skipped": skipped}
+    return {"scope": scope, "recipients": receipts, "skipped": skipped, "not_delivered_to": not_delivered_to}

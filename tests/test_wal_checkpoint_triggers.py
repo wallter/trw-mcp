@@ -467,6 +467,9 @@ def test_no_resetting_mode_survives_on_an_unsafe_engine_end_to_end(
     from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
 
     monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: False)
+    # The BACKEND derives its gate from the driver it opens (PRD-INFRA-185 FR07),
+    # so forcing the process verdict alone no longer forces the backend's.
+    monkeypatch.setattr(_dbapi, "wal_reset_safe_version", lambda _version: False)
     trw_dir = _trw_dir(tmp_path)
     db_path = trw_dir / "memory" / "memory.db"
     holder = _seed_wal(db_path)

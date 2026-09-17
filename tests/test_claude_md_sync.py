@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
 
 # ---------------------------------------------------------------------------
@@ -29,29 +30,13 @@ def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make ``detect_ide`` depend only on what each test seeds into ``tmp_path``.
 
     ``detect_ide`` mixes two signals: files under the project root, and
-    machine-global ones — ``shutil.which("cursor")``, ``shutil.which("cursor-agent")``
-    and the ``CURSOR_*`` env vars (PRD-CORE-136-FR07). On any developer box with
-    Cursor installed, that makes *every* ``tmp_path`` project detect as
-    ``cursor-ide`` even when the directory is empty, so this file's "nothing
-    detected" assertions were answering a question about the host, not about the
-    code. Twin of the fixture in ``test_target_platforms.py``; both exist because
-    the leak is in production detection, not in the tests.
+    machine-global ones (PRD-CORE-136-FR07). On any developer box with Cursor
+    installed, that makes *every* ``tmp_path`` project detect as ``cursor-ide``
+    even when the directory is empty, so this file's "nothing detected"
+    assertions would be answering a question about the host, not about the
+    code. Shared helper: ``tests/_ide_detection_isolation``.
     """
-    import shutil as _shutil
-
-    from trw_mcp.bootstrap import _utils
-
-    original_which = _shutil.which
-
-    def _which_filtered(cmd: str, *args: object, **kwargs: object) -> str | None:
-        if cmd in {"cursor", "cursor-agent"}:
-            return None
-        return original_which(cmd, *args, **kwargs)
-
-    monkeypatch.setattr(_utils.shutil, "which", _which_filtered)
-    monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
-    monkeypatch.delenv("CURSOR_SESSION_ID", raising=False)
-    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    isolate_ide_detection(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
@@ -460,11 +445,16 @@ _OPENCODE_SHA_PATH = _FIXTURE_DIR / "opencode_agents_md_baseline.sha256"
 
 
 def _normalize_agents_md_for_parity(content: str) -> str:
-    """Remove dynamic learning/session counts before hashing rendered AGENTS.md."""
+    """Remove the dynamic scale claim before hashing rendered AGENTS.md.
+
+    PRD-FIX-141-FR04 made the claim name its population, so it now varies by
+    store inventory as well as by the analytics counters. Normalising the whole
+    clause (rather than the two counts inside the old sentence) keeps this
+    parity hash about the SURFACE and not about the corpus that rendered it.
+    """
     return re.sub(
-        r"loads \d+ learnings from \d+ prior sessions.*?from \d+ prior sessions",
-        "loads <learning-count> learnings from <session-count> prior sessions and recovers any active run; "
-        "use it to load context from <session-count> prior sessions",
+        r"it loads .*? and recovers any active run",
+        "it loads <scale-claim> and recovers any active run",
         content,
     )
 

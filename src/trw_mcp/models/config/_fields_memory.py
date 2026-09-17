@@ -28,7 +28,9 @@ class _MemoryFields:
 
     learning_max_entries: int = DEFAULT_LEARNING_MAX_ENTRIES
     learning_promotion_impact: float = 0.7
-    learning_prune_age_days: int = 30
+    # learning_prune_age_days and memory_consolidation_interval_days were removed 2026-09-16
+    # (PRD-QUAL-139-FR05): no consumer under the corrected scan, no originating PRD, and only
+    # default pins in tests. Both keys are listed in trw_mcp/data/config-retired-keys.json.
     learning_repeated_op_threshold: int = 3
     recall_receipt_max_entries: int = DEFAULT_RECALL_RECEIPT_MAX_ENTRIES
     recall_max_results: int = DEFAULT_RECALL_MAX_RESULTS
@@ -89,7 +91,6 @@ class _MemoryFields:
     # -- Memory consolidation (CORE-044, FIX-071) --
 
     memory_consolidation_enabled: bool = True
-    memory_consolidation_interval_days: int = 7
     memory_consolidation_min_cluster: int = Field(default=3, ge=2)
     memory_consolidation_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     memory_consolidation_max_per_cycle: int = Field(default=50, ge=1)

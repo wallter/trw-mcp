@@ -181,6 +181,16 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
     child agent tree) is fully detached from the MCP server; stdout/stderr are
     sent to ``/dev/null`` since the only durable output is the result file.
     """
+    if req.verify_sandbox:
+        # PRD-CORE-277-FR03. The watchdog below budgets 1.5x timeout_s for ONE
+        # child; a probe adds a second sequential model call, so a legitimate
+        # verified run could be killed as a hang. Refuse rather than silently
+        # drop the flag: a caller who asked for proof must not be handed an
+        # unverified result that looks the same.
+        raise ValueError(
+            "verify_sandbox is not supported on the background job path "
+            "(the job watchdog budgets one child); run the probe synchronously."
+        )
     jobs_dir = _jobs_dir(trw_dir)
     # Sweep stale terminal jobs before creating a new one so the directory does
     # not accumulate request prompts / records indefinitely.
@@ -222,7 +232,7 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
             # Minimal env (NOT the full host os.environ): only the per-client
             # allowlist + PYTHONPATH/VIRTUAL_ENV the ``python -m`` import needs. This
             # keeps host secrets out of both the intermediate and the foreign agent.
-            env=build_runner_env(req.client),
+            env=build_runner_env(req.client, posture=req.posture),
         )
     except BaseException:
         try:

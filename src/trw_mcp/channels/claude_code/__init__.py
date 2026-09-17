@@ -20,7 +20,7 @@ from trw_mcp.channels.claude_code._explorer_subagent import (
 )
 
 # Re-export the standalone compute function (P0-09 canonical re-export path)
-from trw_mcp.tools.before_edit_hint import (
+from trw_mcp.tools._before_edit_hint_core import (
     compute_before_edit_hint as compute_before_edit_hint,
 )
 

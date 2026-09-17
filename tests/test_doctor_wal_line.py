@@ -14,6 +14,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -151,14 +152,224 @@ def test_warn_reads_the_effective_clock_not_the_attempt_clock(tmp_path: Path) ->
     assert "cleared the WAL backlog" in row.message
 
 
-def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(tmp_path: Path) -> None:
+def _unsafe_engine_target(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, object]:
+    """A store that earns the engine remedy, with the engine forced unsafe.
+
+    The engine has to be FORCED: on an interpreter whose own SQLite already
+    carries the fix (this repository's dev box runs 3.53.4) the branch under test
+    is unreachable, and a test that silently depends on the box's SQLite is a test
+    that reports the box, not the code.
+    """
+    import time as _time
+
+    from trw_memory.storage import _dbapi
+
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state._wal_triggers import record_effective_checkpoint
+
+    monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: False)
+    monkeypatch.setattr(_dbapi, "sqlite_version", lambda: "3.50.4")
+    cfg = TRWConfig()
+    target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
+    record_effective_checkpoint(target / ".trw" / "memory" / "memory.db", now=_time.time())
+    return target, cfg
+
+
+def test_the_row_always_reports_the_selected_engine(tmp_path: Path) -> None:
+    """PRD-INFRA-185 FR04 — an operator can see which driver actually won."""
+    from trw_memory.storage._dbapi import backend, sqlite_version
+
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server._doctor_memory_wal import memory_wal_row
+
+    target = _seed_project(tmp_path, wal_bytes=0)
+    _status, message = memory_wal_row(target, TRWConfig())
+    assert f"engine {backend()} {sqlite_version()}" in message
+
+
+def test_unsafe_engine_row_names_qualifying_interpreters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD-INFRA-185 FR04 — the remedy names something that exists on THIS box.
+
+    sub_oASyvgLj4UwcwK2c followed the old remedy literally on macOS, installed the
+    only pysqlite3 wheel there is, and got SQLite 3.51.1: an engine change with no
+    effect on the problem. The row now points at interpreters it actually probed.
+    """
+    from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
+
+    from trw_mcp.server import _doctor_memory_wal
+    from trw_mcp.server._doctor_memory_wal import memory_wal_row
+
+    target, cfg = _unsafe_engine_target(tmp_path, monkeypatch)
+    monkeypatch.setattr(_doctor_memory_wal, "qualifying_interpreters", lambda: [("python3.14", "3.53.4")])
+
+    status, message = memory_wal_row(target, cfg)
+
+    assert status == "WARN"
+    assert WAL_RESET_UNSAFE_REMEDY in message
+    assert "Qualifying interpreters found here: python3.14 (SQLite 3.53.4)." in message
+
+
+def test_unsafe_engine_row_says_when_no_candidate_qualified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """It reports the CANDIDATES it probed, never a search of PATH it did not do."""
+    from trw_mcp.server import _doctor_memory_wal
+    from trw_mcp.server._doctor_memory_wal import memory_wal_row
+
+    target, cfg = _unsafe_engine_target(tmp_path, monkeypatch)
+    monkeypatch.setattr(_doctor_memory_wal, "qualifying_interpreters", list)
+
+    _status, message = memory_wal_row(target, cfg)
+
+    assert "None of the probed candidates (python3.14, python3.13, python3.12, python3)" in message
+    assert "no interpreter on PATH" not in message
+
+
+def test_a_safe_engine_probes_no_interpreters(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD-INFRA-185 NFR01 — the probe is paid for only on the branch that needs it."""
+    import time as _time
+
+    from trw_memory.storage import _dbapi
+
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server import _doctor_memory_wal
+    from trw_mcp.server._doctor_memory_wal import memory_wal_row
+    from trw_mcp.state._wal_triggers import record_effective_checkpoint
+
+    monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: True)
+    calls: list[int] = []
+    monkeypatch.setattr(_doctor_memory_wal, "qualifying_interpreters", lambda: calls.append(1) or [])
+    cfg = TRWConfig()
+    target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
+    record_effective_checkpoint(target / ".trw" / "memory" / "memory.db", now=_time.time())
+
+    status, _message = memory_wal_row(target, cfg)
+
+    assert status == "WARN", "a safe engine can still warn; it just gets different advice"
+    assert calls == [], "a capable engine must not pay for four subprocess probes"
+
+
+class TestQualifyingInterpreters:
+    """The probe itself: read-only, bounded, isolated, and never raising."""
+
+    def test_isolated_flags_are_passed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A plain -c run puts CWD first on sys.path; a repo sqlite3.py would answer."""
+        import subprocess
+
+        from trw_mcp.server import _doctor_memory_wal
+
+        seen: list[tuple[str, ...]] = []
+
+        def _fake_run(argv: tuple[str, ...], **kwargs: object) -> object:
+            seen.append(argv)
+            assert kwargs["stdin"] is subprocess.DEVNULL
+            assert kwargs["timeout"] == _doctor_memory_wal._PROBE_TIMEOUT_SECONDS
+            return SimpleNamespace(returncode=0, stdout="3.53.4\n", stderr="")
+
+        monkeypatch.setattr(_doctor_memory_wal.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(_doctor_memory_wal.subprocess, "run", _fake_run)
+
+        found = _doctor_memory_wal.qualifying_interpreters(("python3.14",))
+
+        assert found == [("python3.14", "3.53.4")]
+        assert seen[0][1:5] == ("-I", "-S", "-B", "-c")
+
+    def test_absent_timed_out_failed_and_garbage_candidates_are_omitted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        from trw_mcp.server import _doctor_memory_wal
+
+        outcomes: dict[str, object] = {
+            "/bin/gone": None,
+            "/bin/slow": subprocess.TimeoutExpired(cmd="x", timeout=2.0),
+            "/bin/broken": SimpleNamespace(returncode=1, stdout="", stderr="boom"),
+            "/bin/garbage": SimpleNamespace(returncode=0, stdout="not-a-version", stderr=""),
+            "/bin/old": SimpleNamespace(returncode=0, stdout="3.50.4", stderr=""),
+            "/bin/unspawnable": OSError("exec format error"),
+            "/bin/good": SimpleNamespace(returncode=0, stdout="3.51.3", stderr=""),
+        }
+
+        def _which(name: str) -> str | None:
+            path = f"/bin/{name}"
+            return None if outcomes.get(path) is None else path
+
+        def _run(argv: tuple[str, ...], **_kwargs: object) -> object:
+            outcome = outcomes[argv[0]]
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+        monkeypatch.setattr(_doctor_memory_wal.shutil, "which", _which)
+        monkeypatch.setattr(_doctor_memory_wal.subprocess, "run", _run)
+
+        found = _doctor_memory_wal.qualifying_interpreters(
+            ("gone", "slow", "broken", "garbage", "old", "unspawnable", "good")
+        )
+
+        assert found == [("good", "3.51.3")]
+
+    def test_a_duplicate_resolution_is_probed_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """python3 is usually a symlink to python3.X; do not pay for it twice."""
+        from trw_mcp.server import _doctor_memory_wal
+
+        runs: list[str] = []
+
+        def _run(argv: tuple[str, ...], **_kwargs: object) -> object:
+            runs.append(argv[0])
+            return SimpleNamespace(returncode=0, stdout="3.53.4", stderr="")
+
+        monkeypatch.setattr(_doctor_memory_wal.shutil, "which", lambda _name: "/usr/bin/python3.14")
+        monkeypatch.setattr(_doctor_memory_wal.subprocess, "run", _run)
+
+        found = _doctor_memory_wal.qualifying_interpreters(("python3.14", "python3"))
+
+        assert runs == ["/usr/bin/python3.14"]
+        assert len(found) == 1
+
+    def test_the_aggregate_budget_stops_the_sweep(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp.server import _doctor_memory_wal
+
+        clock = iter([0.0, 0.0, 99.0, 99.0, 99.0])
+        monkeypatch.setattr(_doctor_memory_wal.time, "monotonic", lambda: next(clock))
+        monkeypatch.setattr(_doctor_memory_wal.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(
+            _doctor_memory_wal.subprocess,
+            "run",
+            lambda *_a, **_k: SimpleNamespace(returncode=0, stdout="3.53.4", stderr=""),
+        )
+
+        found = _doctor_memory_wal.qualifying_interpreters(("python3.14", "python3.13", "python3.12"))
+
+        assert len(found) == 1, "the budget must cut the sweep short"
+
+    def test_an_old_trw_memory_degrades_instead_of_raising(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """trw-mcp's declared floor still admits a release without the predicate."""
+        import builtins
+
+        from trw_mcp.server import _doctor_memory_wal
+
+        real_import = builtins.__import__
+
+        def _no_predicate(name: str, *args: object, **kwargs: object) -> object:
+            if name == "trw_memory.storage._dbapi" and args and "wal_reset_safe_version" in (args[2] or ()):
+                raise ImportError("cannot import name 'wal_reset_safe_version'")
+            return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(builtins, "__import__", _no_predicate)
+        assert _doctor_memory_wal.qualifying_interpreters(("python3.14",)) == []
+
+
+def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """OQ-1 reversal: the operator is told WHY the WAL cannot shrink, and what to do."""
+    from trw_memory.storage import _dbapi
     from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
 
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.server._doctor_memory_wal import memory_wal_row
     from trw_mcp.state._wal_triggers import record_effective_checkpoint
 
+    monkeypatch.setattr(_dbapi, "is_wal_reset_safe", lambda: False)
+    monkeypatch.setattr(_dbapi, "sqlite_version", lambda: "3.50.4")
     cfg = TRWConfig()
     target = _seed_project(tmp_path, wal_bytes=(cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024)
     # The engine remedy answers "why is this never RECLAIMED", not "why is it
@@ -173,7 +384,7 @@ def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(tmp_path: Pat
 
     assert status == "WARN", "never reclaimed is a warning however fresh the backlog clock is"
     assert "not been reclaimed" in message
-    # The active driver is below the 3.51.3 fix, so the engine branch is live.
+    # The driver is forced below the 3.51.3 fix above, so the engine branch is live.
     assert WAL_RESET_UNSAFE_REMEDY in message
     assert "journal_size_limit" in message, "the row must reconcile the 10 MB trigger with the 64 MiB cap"
 

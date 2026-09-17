@@ -190,12 +190,19 @@ class StdioServerHarness:
 
     # ── environment ──────────────────────────────────────────────────────
 
-    def child_env(self, session_id: str) -> dict[str, str]:
+    def child_env(self, session_id: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
         """Build the child environment: no inherited ``TRW_*`` reaches the child.
 
         Dropping the whole ``TRW_*`` namespace first is what makes the "never
         touches a live store" claim checkable -- the test session's own
         isolation variables cannot leak a second root in behind our two.
+
+        *extra* is applied LAST and defaults to ``None``, so every existing
+        caller gets the byte-identical environment it got before. It exists so a
+        test can spawn a child under a declared IDENTITY (PRD-SEC-015:
+        ``TRW_SURFACE_ROLE=reviewer``) -- which the namespace strip above
+        deliberately makes unreachable by inheritance, and which therefore has
+        to be injected here or not at all.
         """
         env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")}
         env["PYTHONPATH"] = os.pathsep.join(_SRC_ROOTS)
@@ -204,6 +211,8 @@ class StdioServerHarness:
         env["TRW_USER_DIR"] = str(self.user_dir)
         env["TRW_SESSION_ID"] = session_id
         env["TRW_HOT_PATH_STRICT"] = "0"
+        if extra:
+            env.update(extra)
         return env
 
     # ── spawn / drive ────────────────────────────────────────────────────

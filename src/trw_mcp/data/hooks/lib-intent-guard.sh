@@ -300,12 +300,19 @@ _trw_fast_target() {
 #     expected_contract_digest -- a sidecar left over from a DIFFERENT contract
 #     names a digest the live marker does not, so it is refused;
 #   * every artifact the marker's three digests cover is carried as a g1/g0
-#     freshness line, and any of them being NEWER than the sidecar defers. This
-#     is what stops the fast path from outliving its enrollment: an edited
-#     contract (a new anchor this file has never heard of), a resynced hook, or a
-#     rewritten pre-commit registration each make the marker `stale`, which the
-#     Python path fails CLOSED on -- so without this check the shell would have
-#     answered ALLOW where Python answers BLOCK;
+#     freshness line, and any of them no longer HASHING to the digest recorded
+#     beside it defers. This is what stops the fast path from outliving its
+#     enrollment: an edited contract (a new anchor this file has never heard of),
+#     a resynced hook, or a rewritten pre-commit registration each make the
+#     marker `stale`, which the Python path fails CLOSED on -- so without this
+#     check the shell would have answered ALLOW where Python answers BLOCK.
+#     Until 2026-09-17 this was an MTIME ORDERING test (`[ "$art" -nt "$file" ]`)
+#     and `-nt` resolution belongs to the SHELL: bash 3.2, which is `/bin/sh` on
+#     macOS, compares whole st_mtime SECONDS, so a contract edited in the same
+#     second as the sidecar was not "newer" and the fast path cleared a project
+#     the marker condemns. A digest has no resolution to lose, and the whole
+#     artifact set costs ONE `sha256sum`/`shasum` process -- paid only on the
+#     path that was about to answer ALLOW, never on a deferral;
 #   * the sidecar must not be NEWER than the marker. Enrollment writes the
 #     sidecar first and stamps the marker after it, so a sidecar rewritten on its
 #     own -- the one shape the digest line cannot catch, since that digest is
@@ -346,6 +353,12 @@ _trw_sidecar_clears() {
   [ -n "$_sc_digest" ] || return 1
 
   _sc_seen=0
+  # The g1 artifacts and their recorded digests, accumulated in file order and
+  # verified in ONE hash process after the parse. `set --` rewrites this
+  # FUNCTION's positional parameters only, which is what keeps the caller's
+  # untouched.
+  set --
+  _sc_want=""
   while IFS= read -r _sc_line || [ -n "$_sc_line" ]; do
     # The digest line is the LAST line. Anything after it -- appended patterns,
     # an appended second digest -- means this file is not the artifact the writer
@@ -365,10 +378,22 @@ _trw_sidecar_clears() {
         esac
         ;;
       'g1 '*)
-        _sc_art="$_trw_fp_root/${_sc_line#g1 }"
-        [ -f "$_sc_art" ] || return 1
-        if [ "$_sc_art" -nt "$_sc_file" ]; then
-          return 1
+        # `g1 <sha256hex> <repo-rel path>`. A line of any other shape -- the
+        # pre-2026-09-17 digest-less spelling included -- is not this writer's
+        # artifact, so it defers rather than being read leniently.
+        _sc_rest="${_sc_line#g1 }"
+        _sc_hash="${_sc_rest%% *}"
+        _sc_art="${_sc_rest#* }"
+        case "$_sc_hash" in '' | *[!0-9a-f]*) return 1 ;; esac
+        [ -n "$_sc_art" ] || return 1
+        case "$_sc_art" in *' '*) return 1 ;; esac
+        [ -f "$_trw_fp_root/$_sc_art" ] || return 1
+        set -- "$@" "$_trw_fp_root/$_sc_art"
+        if [ -n "$_sc_want" ]; then
+          _sc_want="$_sc_want
+$_sc_hash"
+        else
+          _sc_want="$_sc_hash"
         fi
         ;;
       'g0 '*)
@@ -385,7 +410,36 @@ _trw_sidecar_clears() {
     esac
   done < "$_sc_file"
   [ "$_sc_seen" = "1" ] || return 1
+  [ "$#" -eq 0 ] || _trw_digests_match "$_sc_want" "$@" || return 1
   return 0
+}
+
+# Do the recorded digests still describe the files? One hash process for the
+# whole set, its output reduced to bare digests in argument order so a path
+# needing shell-quoting (or the leading `\` GNU coreutils prefixes such a line
+# with) cannot make a MATCH look like a mismatch or the reverse.
+#
+# No hasher, a short read, an unreadable file: all produce a mismatch, which is
+# a DEFERRAL to the Python entry point. This function can only ever turn a
+# would-be ALLOW into "ask Python" -- it can never answer ALLOW by itself.
+_trw_digests_match() {
+  _tdm_want="$1"
+  shift
+  # The hasher is PREPENDED to the file list rather than the loop being written
+  # twice: `sha256sum` is coreutils, `shasum` is the perl one macOS ships, and
+  # both print `<hex>  <path>` in argument order.
+  if command -v sha256sum >/dev/null 2>&1; then
+    set -- sha256sum -- "$@"
+  elif command -v shasum >/dev/null 2>&1; then
+    set -- shasum -a 256 -- "$@"
+  else
+    return 1
+  fi
+  _tdm_got=$("$@" 2>/dev/null | while IFS= read -r _tdm_line; do
+    _tdm_field="${_tdm_line%% *}"
+    printf '%s\n' "${_tdm_field#\\}"
+  done)
+  [ "$_tdm_got" = "$_tdm_want" ]
 }
 
 # --- interpreter resolution ---------------------------------------------------

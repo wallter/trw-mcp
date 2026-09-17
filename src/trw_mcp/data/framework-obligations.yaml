@@ -6,13 +6,13 @@
     "rationale": 7,
     "reference": 5
   },
-  "core_digest": "1834cee95691394b4a24f2f6d7262eb307b598b8cf2880fb55a3696e7e69569d",
+  "core_digest": "a8d63ea48025cf754210a6168f96e8f31acced8237eb5d7ba7acda1c032972e5",
   "obligations": [
     {
       "body_lines": 4,
       "class": "normative",
       "dest": "both",
-      "digest": "26d34563ac9dd0940d0a446c8188d4b0e02d670f7389282d0de71f12fccd96f4",
+      "digest": "d59630265d3cef7da78694dcfac5c25eaf19d131085e0ca734aeb4208db13f21",
       "id": "fw-title",
       "nonblank_lines": 3,
       "start_line": 1
@@ -21,7 +21,7 @@
       "body_lines": 2,
       "class": "normative",
       "dest": "core",
-      "digest": "7169c7915c1a2d74f730c0a50684a01f383f790bdc1d8d6c5dc1245c7a856bfe",
+      "digest": "595d4e858ab270f2efa0a5d76fe98cb968e09e483285f847c4a6ed1b3efc2867",
       "id": "fw-mandate-trw-is-a-method-not-a-model-prompt",
       "nonblank_lines": 1,
       "start_line": 6
@@ -48,7 +48,7 @@
       "body_lines": 13,
       "class": "normative",
       "dest": "core",
-      "digest": "0b6d8ec0583cc14e2ef37ccee4302f80c6c958a5decbe4baf9cc4a05136c4896",
+      "digest": "131fd7483a5f632e31367ca76e8622984e22520a294dc31c01285932cf113bb1",
       "id": "fw-execution-model-summary",
       "nonblank_lines": 10,
       "start_line": 14
@@ -432,8 +432,8 @@
       "start_line": 763
     }
   ],
-  "reference_digest": "b14407775c065a60ec37b89116af32a2f0aa12f50a1f2021907b48e80fbd0dcc",
+  "reference_digest": "9d10087e02cc5c8d4a55115b0afa5b1f9a1e4ab0d0030b30fe9ba878988c31d1",
   "schema": 1,
-  "source_digest_combined": "8519b3e64184f57eb788b03b51b432ed66b0d4272d13e4bdb8b04468f55e6171",
+  "source_digest_combined": "a57027d0ca5d7e7800682c4132ca5c273d39933681251f2f3a3c6cb93d910184",
   "span_count": 47
 }

@@ -182,7 +182,13 @@ class TestStepGraphHealthFR04:
         assert advisory is not None
         assert advisory["status"] == "empty"
         assert int(cast("int", advisory["memories"])) > 10
-        assert "knowledge graph empty" in str(advisory["advisory"])
+        # "dead", not "empty": 8af881a11 (PRD-FIX-141-FR02) made the advisory
+        # the graph_edges probe's own string, because a tag co-occurrence
+        # relation is DERIVED and materialises no row, so "empty" named the
+        # wrong question. The trailing remedy is asserted too — the advisory is
+        # only actionable if it says what to do next.
+        assert "knowledge graph dead" in str(advisory["advisory"])
+        assert "trw_deliver" in str(advisory["advisory"])
 
     def test_small_corpus_no_advisory(self, trw_dir: Path) -> None:
         """<=10 memories → no advisory even if graph is empty."""

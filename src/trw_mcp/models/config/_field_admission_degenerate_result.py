@@ -82,7 +82,9 @@ DEGENERATE_RESULT_ADMISSIONS: dict[str, ConfigAdmission] = {
         owner=_OWNER,
         consumer=_CONSUMER,
         default_rationale=(
-            "Defaults to 50 ms, the NFR01/SLO figure. Self-imposed rather than inherited from the "
+            "Defaults to the NFR01/SLO figure of 50 ms, raised to 300 ms on Darwin where the "
+            "adapter's own pre-verdict work costs 203-206 ms under load and a 50 ms deadline made "
+            "the advisory a permanent no-op (measured 2026-09-17). Self-imposed rather than inherited from the "
             "3000 ms hook timeout registered in settings.json: an advisory that costs the user "
             "measurable latency is a worse trade than a missed advisory, so the adapter gives up "
             "on itself long before the client would. Bounded ge=5 (below that the deadline would "

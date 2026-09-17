@@ -93,16 +93,50 @@ class TestExistsEdgeCases:
         target.unlink()
         assert reader.exists(link) is False
 
-    def test_symlink_loop_is_typed_content_free_state_error(self, tmp_path: Path) -> None:
+    def test_symlink_loop_is_reported_absent_not_raised(self, tmp_path: Path) -> None:
+        """A self-referential symlink resolves without error and simply is not there.
+
+        This used to assert ``StateError(... RuntimeError)``. That expectation
+        described pathlib's own resolver, which raised
+        ``RuntimeError("Symlink loop from ...")``; CPython replaced it with
+        ``os.path.realpath(self, strict=strict)`` and ``strict=False`` returns
+        the path unchanged on a cycle instead of raising. Verified on Python
+        3.14.7: ``Path.resolve()`` returns the path, ``exists()`` is False, and
+        only ``stat()`` surfaces ``OSError(ELOOP)``. The typed content-free
+        mapping the old assertion existed for is covered directly below, so
+        nothing is lost by this test telling the truth about a loop.
+        """
         loop = tmp_path / "loop.yaml"
         loop.symlink_to(loop)
         reader = FileStateReader(base_dir=tmp_path)
 
-        with pytest.raises(StateError, match="state read path resolution failed: RuntimeError") as exc_info:
-            reader.exists(loop)
+        assert reader.exists(loop) is False
 
-        assert exc_info.value.context["path"] == str(loop)
-        assert "Symlink loop" not in str(exc_info.value)
+    def test_path_resolution_failure_is_a_typed_content_free_state_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A resolver failure names its exception TYPE and the path, never the OS text.
+
+        The OS message can carry a filesystem path the caller never asked
+        about; the contract is that ``StateError`` carries the requested path in
+        ``context`` and the exception type in the message, and nothing else.
+        """
+        import errno
+
+        target = tmp_path / "file.yaml"
+        target.write_text("a: 1\n", encoding="utf-8")
+        reader = FileStateReader(base_dir=tmp_path)
+
+        def _boom(self: Path, strict: bool = False) -> Path:
+            raise OSError(errno.ELOOP, "Too many levels of symbolic links")
+
+        monkeypatch.setattr(Path, "resolve", _boom)
+
+        with pytest.raises(StateError, match="state read path resolution failed: OSError") as exc_info:
+            reader.exists(target)
+
+        assert exc_info.value.context["path"] == str(target)
+        assert "Too many levels" not in str(exc_info.value)
 
 
 class TestProtocolCompliance:

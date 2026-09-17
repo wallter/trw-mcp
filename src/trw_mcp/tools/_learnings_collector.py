@@ -29,6 +29,13 @@ logger = structlog.get_logger(__name__)
 DEFAULT_TOP_N: int = 5
 MAX_QUERIES: int = 10
 
+#: PRD-CORE-278 FR09: collect twice the requested count before partitioning by
+#: origin. Every tool behind this seam is keyed on a path in THIS checkout, and
+#: returning early at ``top_n`` meant a file-name token matching five learnings
+#: from another repository filled the whole hint (L-XIhp, trw_before_edit_hint on
+#: models/config/_loader.py).
+_ATTRIBUTION_OVERFETCH: int = 2
+
 
 class LearningSummary(BaseModel):
     """Compact learning entry shown to consumers (subset of full record).
@@ -73,11 +80,13 @@ def collect_learnings(
         return []
     deduplicated: set[str] = set()
     out: list[LearningSummary] = []
+    collect_target = top_n * _ATTRIBUTION_OVERFETCH
+    rows_by_id: dict[str, dict[str, object]] = {}
     for q in queries[:MAX_QUERIES]:
         if not isinstance(q, str) or not q:
             continue
         try:
-            rows = recall_learnings(q, max_results=top_n)
+            rows = recall_learnings(q, max_results=collect_target)
         except Exception:  # justified: scan-resilience -- skip failed recall query and continue
             logger.warning("recall_learnings_failed", query=q, exc_info=True)
             continue
@@ -88,6 +97,7 @@ def collect_learnings(
             if not isinstance(rid, str) or rid in deduplicated:
                 continue
             deduplicated.add(rid)
+            rows_by_id[rid] = r
             summary = r.get("summary")
             if not isinstance(summary, str):
                 continue
@@ -101,9 +111,22 @@ def collect_learnings(
                     tags=[str(t) for t in tags] if isinstance(tags, list) else [],
                 )
             )
-            if len(out) >= top_n:
-                return out
-    return out
+            if len(out) >= collect_target:
+                return _attributable_first(out, rows_by_id, top_n)
+    return _attributable_first(out, rows_by_id, top_n)
+
+
+def _attributable_first(
+    summaries: list[LearningSummary],
+    rows_by_id: dict[str, dict[str, object]],
+    top_n: int,
+) -> list[LearningSummary]:
+    """Order this project's own learnings first, then truncate (FR09)."""
+    from trw_mcp.state._origin_project import demote_unattributable
+
+    ordered = demote_unattributable([rows_by_id.get(item.id, {"id": item.id}) for item in summaries])
+    by_id = {item.id: item for item in summaries}
+    return [by_id[str(row["id"])] for row in ordered if str(row.get("id", "")) in by_id][:top_n]
 
 
 def build_file_queries(file_path: str) -> list[str]:

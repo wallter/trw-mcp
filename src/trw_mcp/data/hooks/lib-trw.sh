@@ -919,7 +919,14 @@ _trw_pin_is_live() {
   kill -0 "$1" 2>/dev/null && return 0
   [ -d "/proc/$1" ] && return 0
   [ -n "$4" ] || return 0
+  # Heartbeat ISO timestamp -> epoch. GNU date first, then BSD date, which needs
+  # an explicit format and no fractional seconds or zone suffix. Without the
+  # fallback every macOS host read "" here and pin-TTL expiry never fired.
   _tpil_hb=$(date -u -d "$2" '+%s' 2>/dev/null) || _tpil_hb=""
+  if [ -z "$_tpil_hb" ]; then
+    _tpil_iso=$(printf '%s' "$2" | sed -E 's/\.[0-9]+//; s/(Z|[+-][0-9]{2}:?[0-9]{2})$//')
+    _tpil_hb=$(date -j -u -f '%Y-%m-%dT%H:%M:%S' "$_tpil_iso" '+%s' 2>/dev/null) || _tpil_hb=""
+  fi
   [ -n "$_tpil_hb" ] || return 0
   [ $(((${4} - _tpil_hb) / 3600)) -gt "$3" ] 2>/dev/null || return 0
   return 1
@@ -1469,7 +1476,23 @@ trw_degenerate_result_setting() {
       _tdrs_default='65536'; _tdrs_min='1024'; _tdrs_max='1048576'
       _tdrs_env="${TRW_DEGENERATE_RESULT_MAX_READ_BYTES:-}" ;;
     deadline_ms) _tdrs_field='degenerate_result_deadline_ms'; _tdrs_kind=int
-      _tdrs_default='50'; _tdrs_min='5'; _tdrs_max='500'
+      # The ONE platform-aware default here, mirroring _fields_degenerate_result.py
+      # (_DARWIN_DEADLINE_MS / _DEFAULT_DEADLINE_MS). NFR01's 50 ms is met on Linux,
+      # where a process spawn costs ~1 ms. On macOS the adapter's own pre-verdict
+      # work costs 65-75 ms idle and 203-206 ms under load (measured 2026-09-17,
+      # arm64 Darwin 25.5.0, /bin/sh = bash 3.2), so 50 ms expired before the
+      # verdict on EVERY invocation and the advisory was a permanent no-op there.
+      # The deadline is checked AFTER the bounded read and the jq render, so this
+      # buys back the advisory without buying new latency -- the work it would have
+      # abandoned is already paid by the time the check runs.
+      # An `if`, not `[ ... ] && ...`: the latter leaves the case branch with a
+      # non-zero status on Linux and `set -e` in the calling hook would take it.
+      if [ "$(uname -s 2>/dev/null)" = 'Darwin' ]; then
+        _tdrs_default='300'
+      else
+        _tdrs_default='50'
+      fi
+      _tdrs_min='5'; _tdrs_max='500'
       _tdrs_env="${TRW_DEGENERATE_RESULT_DEADLINE_MS:-}" ;;
     truncation_markers) _tdrs_field='degenerate_result_truncation_markers'; _tdrs_kind=list
       _tdrs_default='more lines]

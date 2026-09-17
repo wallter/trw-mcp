@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from trw_mcp.models.requirements import ValidationFailure, VerificationMapping
+from trw_mcp.state.validation._prd_scoring_traceability import _BARE_TEST_REF_RE
 
 _REQUIREMENT_ID_RE = re.compile(
     r"^###\s+((?:[A-Za-z0-9][A-Za-z0-9_-]*-)?(?:FR|NFR)\d+):(?:\s|$)",
@@ -19,6 +20,35 @@ def _uses_aaref_32_verification_contract(frontmatter: dict[str, object]) -> bool
     if match is None:
         return False
     return (int(match.group(1)), int(match.group(2) or 0)) >= (3, 2)
+
+
+def _is_automated_behavioral_evidence(mapping: VerificationMapping) -> bool:
+    """True when ``method: test`` names a test-shaped evidence artifact.
+
+    PRD-FIX-141-FR09. ``implemented_requirement_automation`` fired on PRDs whose
+    every mapping already declared ``method: test`` with a named pytest file,
+    because the rule only looked at the OPTIONAL ``automated`` flag: an author
+    who described the automation precisely was told they had "neither automated
+    behavioral evidence nor an automation_infeasible_reason" (learning L-9GXR).
+    A declared test method pointing at a test artifact IS the declaration the
+    flag exists to carry.
+
+    Deliberately a PURE, syntactic check — no filesystem access. The
+    validate-result cache (``tools/_prd_validation_cache.py``) keys on PRD text,
+    config and version, so a rule that consulted mutable external state would
+    hand back a stale acceptance after the named file was deleted, and the MCP
+    tool's own cached call has no repository root to resolve against. Whether
+    the artifact EXISTS is a separate question, already owned by the
+    ``repo_path_exists`` integrity check in the dynamic refresh phase, which
+    runs with a repo root and is not cached across trees. Two rules, one each.
+
+    ``automated: false`` is untouched: an explicit opt-out still requires
+    ``automation_infeasible_reason`` via the arm above this one.
+    """
+    if str(mapping.method) != "test":
+        return False
+    artifact = mapping.evidence_artifact.strip()
+    return bool(_BARE_TEST_REF_RE.fullmatch(artifact) or _BARE_TEST_REF_RE.search(artifact))
 
 
 def validate_verification_mappings(
@@ -103,6 +133,7 @@ def validate_verification_mappings(
             lifecycle_status in {"implemented", "done"}
             and mapping.automated is None
             and not mapping.automation_infeasible_reason
+            and not _is_automated_behavioral_evidence(mapping)
         ):
             failures.append(
                 ValidationFailure(

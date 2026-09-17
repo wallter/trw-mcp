@@ -9,7 +9,14 @@ import pytest
 import structlog
 import tomllib
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.bootstrap import init_project
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``."""
+    isolate_ide_detection(monkeypatch)
 
 
 @pytest.fixture(autouse=True)

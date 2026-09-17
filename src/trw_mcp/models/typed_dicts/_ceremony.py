@@ -539,6 +539,9 @@ class SessionRecallExtrasDict(TypedDict, total=False):
     query_matched: int
     query_advisory: str
     total_available: int
+    # PRD-FIX-141-FR05: the project store's inventory, which ``total_available``
+    # (the returned set) was mistaken for. Omitted, never zeroed, when unread.
+    store_count: int
     response_compacted: bool
     side_effects_deferred: dict[str, object]
 

@@ -29,7 +29,7 @@ from trw_mcp.models.requirements import (
 )
 from trw_mcp.state.validation import _prd_scoring_smells as _smells
 from trw_mcp.state.validation._prd_validation_findings import (
-    enforce_valid_invariant,
+    finalize_verdict,
     has_blocking_failure,
     verification_command_failures,
 )
@@ -388,7 +388,7 @@ def validate_prd_quality_v2(
             config=config,
             project_root=project_root,
         )
-    enforce_valid_invariant(result)
+    finalize_verdict(result)
     return result
 
 

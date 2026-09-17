@@ -113,9 +113,9 @@ class _BuildFields:
     build_check_pytest_args: str = ""
     build_check_mypy_args: str = "--strict"
     build_check_pytest_cmd: str | None = None
-    # PRD-FIX-077-FR05: freshness window (seconds) for ceremony-state fallback
-    # in the deliver-gate hook. Bounded 60..86400 at hook parse time.
-    build_freshness_window_secs: int = 1800
+    # build_freshness_window_secs (PRD-FIX-077-FR05's deliver-gate freshness
+    # window) was removed 2026-09-16 under PRD-QUAL-139-FR05: no consumer, no
+    # test, PRD-FIX-077 still draft -- the hook parses its own bound.
 
     # -- Run maintenance --
 

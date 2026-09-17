@@ -71,8 +71,10 @@ class _CeremonyFields:
     validation_skeleton_threshold: float = 30.0
     validation_draft_threshold: float = 60.0
     validation_review_threshold: float = 85.0
-    validation_fk_optimal_min: float = 8.0
-    validation_fk_optimal_max: float = 12.0
+    # validation_fk_optimal_min/_max (the Flesch-Kincaid "optimal" band) were
+    # removed 2026-09-16 (PRD-QUAL-139-FR05): no consumer under the corrected
+    # scan, no originating PRD, no test. The readability scorer never consulted
+    # a band. Retired keys are listed in trw_mcp/data/config-retired-keys.json.
     # Wiring gate (PRD-CORE-190): warn=advisory; block=opt-in WIRING_GATE_FAIL.
     wiring_gate_mode: Literal["warn", "block"] = "warn"
     # PRD-CORE-231-FR04: per-PRD-category override consulted BEFORE the global
@@ -95,15 +97,16 @@ class _CeremonyFields:
 
     # The five grooming_* and three findings_* fields were removed 2026-07-28
     # (PRD-QUAL-131-FR01): no production reader, and no grooming or findings
-    # subsystem for them to configure. ``finding_dedup_threshold`` (singular) is
-    # a separate field and is retained -- it is unread too, but it is not part of
-    # a whole-cluster removal and is triaged on its own evidence.
-    finding_dedup_threshold: float = 0.6
+    # subsystem for them to configure. ``finding_dedup_threshold`` (singular)
+    # was held back then as "triaged on its own evidence"; that triage finished
+    # on 2026-09-16 with the same answer, and it left with
+    # reflect_sequence_lookback and reflect_q_value_threshold under
+    # PRD-QUAL-139-FR05. reflect_max_positive_learnings is equally unread but
+    # STAYED: its originating PRD-FIX-021 is done, which makes removing it a
+    # scope decision about a delivered requirement rather than a retirement.
 
-    reflect_sequence_lookback: int = 3
     reflect_max_positive_learnings: int = 5
     reflect_max_success_patterns: int = 5
-    reflect_q_value_threshold: float = 0.6
 
     reversion_rate_elevated: float = 0.15
     reversion_rate_concerning: float = 0.30
@@ -115,12 +118,14 @@ class _CeremonyFields:
     # as the non-vacuity control. There was no debt subsystem for them to
     # configure; the whole cluster described a feature that does not exist.
 
+    # compliance_long_session_event_threshold, compliance_warning_threshold and
+    # compliance_history_file were removed 2026-09-16 (PRD-QUAL-139-FR05): no
+    # consumer under the corrected scan, no originating PRD, no test.
+    # compliance_strictness and compliance_pass_threshold are equally unread but
+    # STAYED -- PRD-INFRA-027 and PRD-CORE-060 are done.
     compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
-    compliance_long_session_event_threshold: int = 5
     compliance_pass_threshold: float = 0.8
-    compliance_warning_threshold: float = 0.5
     compliance_dir: str = "compliance"
-    compliance_history_file: str = "history.jsonl"
     compliance_changelog_filename: str = "CHANGELOG.md"
     # PRD-LOCAL-049 FR03: package-changelog advisory (opt-in). Default OFF —
     # the session changelog (FR01) always writes; this only warns when source

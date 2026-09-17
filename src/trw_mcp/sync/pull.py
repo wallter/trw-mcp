@@ -11,6 +11,7 @@ import structlog
 from pydantic import BaseModel
 
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
+from trw_mcp.state._origin_project import ORIGIN_PROJECT_KEY, UNKNOWN_ORIGIN_PROJECT
 from trw_mcp.sync._team_entry import team_learning_to_entry
 from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.identity import resolve_sync_client_id
@@ -257,6 +258,7 @@ class SyncPuller:
             return TeamMergeResult()
 
         try:
+            from trw_memory.exceptions import PIIBlockError, PoisoningError
             from trw_memory.models.config import MemoryConfig
             from trw_memory.security.runtime import prepare_entry_for_store, store_quarantined_entry
             from trw_memory.storage._row_mapper import row_to_entry
@@ -274,6 +276,7 @@ class SyncPuller:
         skipped_no_id = 0
         invalid = 0
         quarantined = 0
+        blocked = 0
         failed = 0
         backend = _get_backend(self._trw_dir)
         sec_cfg = MemoryConfig(storage_path=str(self._trw_dir / "memory"))
@@ -336,6 +339,19 @@ class SyncPuller:
                     inserted += 1
                 else:
                     merged += 1
+            except (PoisoningError, PIIBlockError) as exc:
+                # PRD-FIX-138-FR01: a write-time security REFUSAL is a judged
+                # decision, not a store failure. Booking it as ``failed`` held
+                # the pull cursor on this item forever (see _client_cycle), and
+                # one poisoned team learning then stalled sync for the install.
+                blocked += 1
+                logger.warning(
+                    "sync_team_merge_entry_blocked",
+                    event_type="sync_team_merge",
+                    outcome="blocked",
+                    source_learning_id=source_learning_id,
+                    reason=getattr(exc, "reason", "") or type(exc).__name__,
+                )
             except Exception:  # justified: per-item, one invalid team learning must not abort the full merge
                 failed += 1
                 logger.warning(
@@ -353,6 +369,7 @@ class SyncPuller:
             skipped_no_id=skipped_no_id,
             invalid=invalid,
             quarantined=quarantined,
+            blocked=blocked,
             failed=failed,
         )
         emit = logger.warning if result.rejected else logger.info
@@ -378,6 +395,16 @@ class SyncPuller:
             metadata.update({str(key): str(value) for key, value in remote_metadata.items()})
         if pull_seq is not None:
             metadata["team_sync_pull_seq"] = str(pull_seq)
+        # PRD-CORE-278 FR08: record WHERE this row was authored, from the payload
+        # only. The server currently sends no project identity (its
+        # TeamLearningEntry model forbids extra fields, so it could only ever
+        # arrive inside `metadata`), which is exactly why the literal `unknown`
+        # is written rather than left absent: "we do not know" is a fact worth
+        # recording, and the namespace, tags and content are NOT evidence of
+        # origin — inferring from them would write a guess that the next reader
+        # cannot tell from a fact.
+        recorded_origin = str(metadata.get(ORIGIN_PROJECT_KEY, "")).strip()
+        metadata[ORIGIN_PROJECT_KEY] = recorded_origin or UNKNOWN_ORIGIN_PROJECT
         # FR06: honor the server-provided source tag (company_sync vs team_sync).
         sync_source = _resolve_sync_source(metadata)
         return entry.model_copy(

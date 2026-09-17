@@ -19,7 +19,15 @@ absent marker, so two can run the quadratic scan against the same sidecars.
 is written to a temp file FIRST and ``os.link``-ed into place, so a claim file is
 never observed half-written: link(2) either creates the name or fails with
 ``EEXIST``, and there is no window in which the name exists without its owner
-recorded. (``os.link`` is unavailable on a few exotic filesystems; the O_EXCL
+recorded. That holds only if each writer has its OWN temp file: the temp name was
+keyed on the PID alone until 2026-09-17, so two THREADS of one process — the
+shape ``run_batch_dedup_migration`` exists to guard, and the shape a server whose
+sweep overlaps its own continuation produces — wrote the same temp path, and
+``os.link`` published an INODE the loser was still rewriting. The winner's claim
+then read as illegible JSON, the staleness rule below reclaimed a LIVE claim, and
+both threads ran the quadratic migration (reproduced 2026-09-17: the test logs
+``learn_journal_claim_unreadable outcome=reclaimable`` in the failing run). The
+temp name is now per THREAD as well as per process. (``os.link`` is unavailable on a few exotic filesystems; the O_EXCL
 fallback keeps the atomicity and only re-opens the half-written window, which the
 staleness rule then treats as unowned.)
 
@@ -41,6 +49,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +63,12 @@ from trw_mcp.state._writer_census_identity import (
 from trw_mcp.state.memory_pressure import _pid_is_alive
 
 logger = structlog.get_logger(__name__)
+
+#: How long an ILLEGIBLE claim is assumed to be mid-publication rather than
+#: abandoned. It bounds the O_EXCL fallback's name-before-payload window (one
+#: syscall), so it is generous by three orders of magnitude and still expires
+#: long before any caller would notice a deferral.
+_ILLEGIBLE_CLAIM_GRACE_SECONDS = 5.0
 
 #: Suffix appended to the claimed path. Deliberately NOT ``.json`` — the pending
 #: scan globs ``*.json``, so a claim must not be mistaken for a record.
@@ -85,13 +100,28 @@ def _is_stale(path: Path) -> bool:
 
     True only when the owner is PROVABLY gone: a dead PID, or a live PID whose
     process birth epoch post-dates the claim (PID reuse). An unreadable or
-    unowned claim is also stale — :func:`acquire_claim` publishes the content
-    atomically, so a claim with no legible owner was not written by this code
-    path and holding work behind it forever would be a new stall mode.
+    unowned claim is stale too — holding work behind a claim that names no owner
+    would be a new stall mode — but only once it is older than
+    :data:`_ILLEGIBLE_CLAIM_GRACE_SECONDS`.
+
+    That grace is the O_EXCL fallback's window, named rather than assumed: where
+    ``link(2)`` is unavailable the name exists one syscall before its payload
+    does, so a peer reading in that instant sees an empty file. Treating THAT as
+    abandoned reclaims a live claim and runs the guarded work twice, which is the
+    exact defect this module exists to prevent; waiting out a window measured in
+    microseconds costs nothing, and a genuinely orphaned illegible claim is still
+    reclaimed a moment later.
     """
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):  # justified: an illegible claim names no owner
+        try:
+            age = time.time() - path.stat().st_mtime
+        except OSError:  # the claim vanished under us: it holds nothing
+            return True
+        if age < _ILLEGIBLE_CLAIM_GRACE_SECONDS:
+            logger.debug("learn_journal_claim_unreadable", path=str(path), outcome="publishing")
+            return False
         logger.warning("learn_journal_claim_unreadable", path=str(path), outcome="reclaimable")
         return True
     if not isinstance(data, dict):
@@ -110,7 +140,10 @@ def _is_stale(path: Path) -> bool:
 
 def _publish(claim: Path, payload: bytes) -> bool:
     """Create *claim* atomically. False means someone else already holds it."""
-    tmp = claim.with_name(f"{claim.name}.{os.getpid()}.tmp")
+    # Per PROCESS and per THREAD. A pid-only name is shared by two threads of one
+    # process, and because the payload is published by LINKING this inode, a peer
+    # still writing it corrupts the claim that was already linked into place.
+    tmp = claim.with_name(f"{claim.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         tmp.write_bytes(payload)
     except OSError as exc:  # fail-open: an unwritable claim dir means "no claim"

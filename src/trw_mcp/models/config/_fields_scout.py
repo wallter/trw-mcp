@@ -8,8 +8,7 @@ small mixin (well under the 200-raw-line domain-mixin gate enforced by
 advisory + fail-open, so even enabled it only ever downgrades ceremony on
 clearly-low-blast tasks and degrades to DIRECT on any signal failure). The
 ``scout_*_threshold`` knobs are the FR01 hand-tuned signal thresholds (v1;
-meta-tune is PRD-HPO-MTPROP-001 scope, NG4). ``scout_max_mode3_rate`` is the
-FR14 anti-inflation cap on TRIANGULATED_WITH_PROBE escalation.
+meta-tune is PRD-HPO-MTPROP-001 scope, NG4).
 """
 
 from __future__ import annotations
@@ -32,6 +31,8 @@ class _ScoutFields:
     #: signal counts as a "hit".
     scout_churn_commit_threshold: int = 8
 
-    #: FR14 anti-inflation cap: rolling-window TRIANGULATED_WITH_PROBE
-    #: escalation rate above which thresholds auto-tighten + a warning emits.
-    scout_max_mode3_rate: float = 0.15
+    # scout_max_mode3_rate -- the FR14 anti-inflation cap on
+    # TRIANGULATED_WITH_PROBE escalation -- was removed 2026-09-16
+    # (PRD-QUAL-139-FR05). Nothing ever read it, so no rate was ever computed and
+    # no threshold ever auto-tightened; the cap was a setting, not a behaviour.
+    # The key is listed in trw_mcp/data/config-retired-keys.json.

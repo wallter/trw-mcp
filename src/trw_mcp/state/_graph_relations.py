@@ -29,6 +29,23 @@ from trw_memory.retrieval.tag_derivation import derive_tag_neighbours
 logger = structlog.get_logger(__name__)
 
 
+#: How many of the most recently updated entries the derived half samples.
+#: PRD-FIX-141-FR02: this was ONE root, which is a very thin basis for a verdict
+#: the fail-closed gate escalates at severity error — a single isolated newest
+#: entry reported the whole graph dead. The derivation is documented
+#: single-root only (a 25-root batch measured 912 ms against 195 ms for the same
+#: work looped), so the sample is widened by looping a handful rather than by
+#: batching, and :data:`RELATION_SAMPLE_BASIS` states the basis in the advisory
+#: so the verdict never reads as a census it is not.
+RELATION_SAMPLE_ROOTS: int = 3
+
+#: Human-readable description of what a False answer actually rests on.
+RELATION_SAMPLE_BASIS: str = (
+    "no materialised edge in this namespace and no derived tag relation "
+    f"for its {RELATION_SAMPLE_ROOTS} most recently updated entries"
+)
+
+
 def graph_has_relations(
     conn: sqlite3.Connection,
     *,
@@ -38,16 +55,21 @@ def graph_has_relations(
     """Return whether *namespace* holds at least one graph relation.
 
     Answers with the materialised half first because it is a single indexed
-    existence check. Only when no edge exists at all does it pay for the derived
-    half, and then for exactly ONE root: the most recently updated entry.
+    existence check, SCOPED to *namespace* (PRD-FIX-141-FR02: it used to accept
+    any edge anywhere in the file, so one other namespace's edge concealed an
+    empty project graph). A store whose ``memory_graph_edges`` predates the
+    namespace column keeps the unscoped check — that is a schema-version branch,
+    not a swallowed failure. Only when no edge exists does it pay for the
+    derived half, and then for at most :data:`RELATION_SAMPLE_ROOTS` roots: the
+    most recently updated entries.
 
-    A single root is deliberate. The derivation is documented single-root only
-    (a 25-root batch measured 912 ms against 195 ms for the same work looped),
-    and probing the newest entry asks the question a health probe actually
-    means — "is the graph being maintained for what we are writing now?" —
-    rather than scanning a whole namespace to answer it. The cost is one bounded
-    query whose p50 is budgeted at 15 ms on a 10,000-entry namespace
-    (PRD-CORE-245 NFR01).
+    The sample is BOUNDED, not exhaustive: a False answer means
+    :data:`RELATION_SAMPLE_BASIS`, and every caller renders that basis rather
+    than claiming a census. Probing the newest entries asks the question a
+    health probe actually means — "is the graph being maintained for what we are
+    writing now?" — rather than scanning a whole namespace to answer it. The cost
+    is a handful of bounded queries whose per-root p50 is budgeted at 15 ms on a
+    10,000-entry namespace (PRD-CORE-245 NFR01).
 
     Args:
         conn: The connection serving *namespace* (the MCP singleton's own, or a
@@ -58,9 +80,10 @@ def graph_has_relations(
             ``graph_tag_derive_top_k``).
 
     Returns:
-        True when a materialised edge exists, or when the newest entry derives
-        at least one tag neighbour. False ONLY when the store was read and holds
-        no relation — never when it could not be read. False when the namespace
+        True when a materialised edge exists in *namespace*, or when one of the
+        sampled roots derives at least one tag neighbour. False ONLY when the
+        store was read and the bounded sample found no relation — never when it
+        could not be read, and never as a claim that the namespace holds none. False when the namespace
         is empty, and False for the derived half on a store that predates schema 5 — the derivation
         already degrades to an empty list there, and a store with no
         ``memory_tags`` index has no derived relation to find, so the
@@ -76,20 +99,30 @@ def graph_has_relations(
             already own a fail-open wrapper that records the degradation; give
             them the exception rather than a fabricated verdict.
     """
-    if conn.execute("SELECT 1 FROM memory_graph_edges LIMIT 1").fetchone() is not None:
+    edge_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(memory_graph_edges)")}
+    if "namespace" in edge_columns:
+        materialised = conn.execute(
+            "SELECT 1 FROM memory_graph_edges WHERE namespace = ? LIMIT 1", (namespace,)
+        ).fetchone()
+    else:
+        materialised = conn.execute("SELECT 1 FROM memory_graph_edges LIMIT 1").fetchone()
+    if materialised is not None:
         return True
-    row = conn.execute(
-        "SELECT id FROM memories WHERE namespace = ? ORDER BY updated_at DESC, id DESC LIMIT 1",
-        (namespace,),
-    ).fetchone()
-    if row is None:
+    roots = conn.execute(
+        "SELECT id FROM memories WHERE namespace = ? ORDER BY updated_at DESC, id DESC LIMIT ?",
+        (namespace, RELATION_SAMPLE_ROOTS),
+    ).fetchall()
+    if not roots:
         return False
-    root_id = str(row[0])
-    neighbours = derive_tag_neighbours(conn, root_id, namespace=namespace, config=config)
-    logger.debug(
-        "graph_relation_probe",
-        namespace=namespace,
-        root_id=root_id,
-        derived_neighbours=len(neighbours),
-    )
-    return bool(neighbours)
+    for row in roots:
+        root_id = str(row[0])
+        neighbours = derive_tag_neighbours(conn, root_id, namespace=namespace, config=config)
+        logger.debug(
+            "graph_relation_probe",
+            namespace=namespace,
+            root_id=root_id,
+            derived_neighbours=len(neighbours),
+        )
+        if neighbours:
+            return True
+    return False

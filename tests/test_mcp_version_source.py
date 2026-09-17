@@ -133,9 +133,30 @@ def test_uv_lock_dependency_specifiers_match_pyproject() -> None:
         f"uv.lock resolved trw-memory=={resolved}, which does not satisfy {declared}"
     )
 
+    # PRD-INFRA-185 FR01: pysqlite3-binary is an OPTIONAL extra now, not a runtime
+    # requirement. As a hard Linux dependency it made aarch64 Linux installs fail
+    # outright (it publishes one manylinux2014_x86_64 wheel and nothing else) while
+    # delivering SQLite 3.51.1 -- below the 3.51.3 WAL-reset fix it existed for.
+    # This is the check that would catch a lock still recording the old shape;
+    # `make lockfile-parity` compares SELF-VERSIONS only and would not notice.
     sqlite_deps = [dep for dep in requirements if isinstance(dep, dict) and dep.get("name") == "pysqlite3-binary"]
-    assert sqlite_deps == [{"name": "pysqlite3-binary", "marker": "sys_platform == 'linux'", "specifier": ">=0.5.4"}]
+    assert sqlite_deps == [
+        {
+            "name": "pysqlite3-binary",
+            "marker": "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'sqlite-fix'",
+            "specifier": ">=0.5.4",
+        }
+    ]
     assert SpecifierSet(">=0.5.4").contains(str(_lock_package("pysqlite3-binary")["version"]))
+
+    declared_runtime = _pyproject()["project"]
+    assert isinstance(declared_runtime, dict)
+    runtime_deps = declared_runtime["dependencies"]
+    assert isinstance(runtime_deps, list)
+    assert not [dep for dep in runtime_deps if "pysqlite3" in str(dep)]
+    optional = declared_runtime["optional-dependencies"]
+    assert isinstance(optional, dict)
+    assert "sqlite-fix" in optional
 
 
 def test_pyproject_declares_core_runtime_direct_dependencies() -> None:

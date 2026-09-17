@@ -106,6 +106,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
         cwd: str | None = None,
         isolate: bool = True,
         use_pty: bool = False,
+        posture: str = "default",
         wait: bool = False,
         verbose: bool = False,
     ) -> dict[str, object]:
@@ -121,6 +122,9 @@ def register_dispatch_tools(server: FastMCP) -> None:
 
         Args:
             prompt: instruction for the child; never echoed back.
+            posture: "reviewer" bounds the child's own TRW tools to the nine
+                read-only reviewer tools via argv; refused for clients that
+                cannot carry it, and never with allow_writes.
             verbose: raw streams on success.
         """
         dispatch_cfg = get_config().dispatch
@@ -134,6 +138,25 @@ def register_dispatch_tools(server: FastMCP) -> None:
             if ".." in Path(cwd).parts:
                 return {"error": "cwd must not contain '..'", "exit_code": 2}
             resolved_cwd = Path(cwd)
+
+        # PRD-SEC-015-FR13: a REVIEWER-role server refuses to widen a grandchild.
+        # trw_dispatch is already outside REVIEWER_TOOLS, so the middleware denies
+        # it first — this is the second layer, because a later surface change or a
+        # tool_resolution_mode="all" misconfiguration must not silently restore the
+        # escape the external audit measured (row 9): a child confined by --sandbox
+        # read-only reaching this tool could spawn a grandchild with
+        # --sandbox workspace-write. Refused before resolution, so no subprocess.
+        from trw_mcp.state._surface_role import reviewer_role_active
+
+        if allow_writes and reviewer_role_active():
+            logger.warning("dispatch_tool_reviewer_allow_writes_refused", client=client, surface_role="reviewer")
+            return {
+                "error": (
+                    "allow_writes is refused under surface_role='reviewer': a reviewer lane may not "
+                    "spawn a writable agent. No process was launched."
+                ),
+                "exit_code": 2,
+            }
 
         # F-03: an explicit read_only is honored; allow_writes=True forces writes
         # (read_only=False); None defers to dispatch_default_read_only (True).
@@ -171,6 +194,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
                 read_only=resolved_read_only,
                 isolate=isolate,
                 use_pty=use_pty,
+                posture=posture,
                 dispatch_cfg=dispatch_cfg,
             )
         except DispatchResolutionError as err:

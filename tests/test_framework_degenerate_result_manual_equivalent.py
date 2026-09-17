@@ -16,6 +16,7 @@ operational three-step checklist does not belong in a kernel that tight.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -81,7 +82,12 @@ def test_the_span_is_reference_class_so_the_core_budget_holds() -> None:
 def test_the_generated_canon_parity_gate_agrees() -> None:
     """FR07's acceptance command, run rather than asserted about."""
     result = subprocess.run(
-        ["python3", "scripts/check-aaref-sync.py"],
+        # sys.executable, not a bare "python3": the gate imports trw_mcp, which
+        # imports trw_memory.storage, and both are editable installs in THIS
+        # interpreter's environment. A bare name resolves through PATH, where a
+        # foreign interpreter (homebrew's python3, or any venv a shell profile
+        # prepends) answers with ModuleNotFoundError and the gate looks broken.
+        [sys.executable, "scripts/check-aaref-sync.py"],
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,

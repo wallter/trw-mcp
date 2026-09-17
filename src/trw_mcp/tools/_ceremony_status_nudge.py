@@ -20,6 +20,7 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.state._origin_project import is_verified, nudge_eligible_pool
 from trw_mcp.state.ceremony_progress import CeremonyState
 from trw_mcp.tools._ceremony_status_helpers import (
     _cached_bandit_weight,
@@ -60,14 +61,26 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
         except Exception:  # justified: config may not be available, use defaults
             logger.debug("ceremony_status_config_defaults", exc_info=True)
 
-        candidates = recall_for_nudge_pool(trw_dir, query="*", min_impact=0.5, max_results=10)
+        candidates = recall_for_nudge_pool(trw_dir, query="*", min_impact=0.5, max_results=20)
         if not candidates:
             return None
 
-        # Dedup: filter candidates already shown in current phase (P1 fix)
+        # Dedup FIRST: filter candidates already shown in current phase (P1 fix).
+        # Provenance narrowing runs after it, never before — narrowing to a
+        # single already-shown row would empty the unseen set and send the
+        # fallback below straight back to the row the dedup exists to avoid.
         eligible_candidates = [c for c in candidates if is_nudge_eligible(state, str(c.get("id", "")), state.phase)]
         if not eligible_candidates:
             eligible_candidates = candidates
+
+        # PRD-CORE-278 FR09: narrow the POOL before any selection runs. A sort
+        # cannot constrain the contextual and bandit selection below, and this is
+        # the one slot that speaks with the framework's voice: on 2026-09-16 it
+        # quoted a dead-code claim about a different repository (L-XIhp) and a
+        # repo-state claim that had become false (sub_n98TiMz4ioCKf5Lj).
+        # Attribution first, then verification.
+        wider_pool = eligible_candidates
+        eligible_candidates = nudge_eligible_pool(eligible_candidates)
 
         recall_context = build_recall_context(trw_dir, "*")
         is_transition = bool(state.previous_phase and state.previous_phase != state.phase)
@@ -94,7 +107,30 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
 
         content = _deterministic_fallback_text(selected_learning)
         if not content:
+            # The preferred row has no renderable text. Narrowing the pool must
+            # not be able to SILENCE a surface that would otherwise have spoken,
+            # so retry over every OTHER candidate the dedup left eligible.
+            rejected_id = str(selected_learning.get("id", ""))
+            remainder = [row for row in wider_pool if str(row.get("id", "")) != rejected_id]
+            selected_learning = (
+                _select_cached_or_deterministic_learning(
+                    remainder,
+                    phase=state.phase,
+                    inferred_domains=inferred_domains,
+                    bandit_params=bandit_params,
+                )
+                if remainder
+                else None
+            )
+            content = _deterministic_fallback_text(selected_learning) if selected_learning is not None else ""
+        if not content or selected_learning is None:
             return None
+        if not is_verified(selected_learning):
+            # The claim carries its own epistemic status rather than borrowing
+            # the framework's. Abstaining instead would silence the surface
+            # entirely: every row in every store observed on 2026-09-16 carried
+            # verification_status "unknown" (PRD-CORE-278 Open Question 6).
+            content = f"Unverified: {content}"
 
         learning_id = str(selected_learning.get("id", ""))
         if learning_id:

@@ -158,5 +158,15 @@ class TestRecallCappingLightMode:
                 reader,
             )
 
-        assert all(mr <= LIGHT_MODE_RECALL_CAP for mr in captured_max_results)
+        # PRD-CORE-084 bounds the session-start PAYLOAD; that assertion is
+        # unchanged. PRD-CORE-278 FR09 over-fetches by a bounded factor before
+        # partitioning by origin project, because partitioning AFTER a cap
+        # cannot recover a local row the cap already excluded — and light mode,
+        # with the smallest cap, is the mode most likely to spend every slot on
+        # another repository's learnings. Acquisition is therefore bounded by
+        # cap * factor, and the factor is read from the implementation so the
+        # two cannot drift.
+        from trw_mcp.tools._session_recall_helpers import _ATTRIBUTION_OVERFETCH
+
+        assert all(mr <= LIGHT_MODE_RECALL_CAP * _ATTRIBUTION_OVERFETCH for mr in captured_max_results)
         assert len(learnings) <= LIGHT_MODE_RECALL_CAP

@@ -13,14 +13,18 @@ liftable into a shared cross-harness seam on its own (PRD-CORE-266-FR01).
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "REVIEWER_ARGV_PLACEHOLDERS",
     "ClientSpec",
     "ClientVerification",
+    "DispatchPosture",
     "OutputShape",
     "SandboxPosture",
     "SubAgentSupport",
@@ -82,6 +86,48 @@ OutputShape = Literal[
     "enveloped_ndjson_events",
     "trailing_text",
 ]
+
+
+#: Which POSTURE a dispatch runs under — the session-identity axis, distinct
+#: from ``read_only`` (a permission axis) and from ``role`` (a prompt preamble
+#: that binds nothing).
+#:
+#: ``default``  — the child's MCP surface is whatever its own configuration
+#:                gives it. TRW makes no containment claim.
+#: ``reviewer`` — the child is launched so that ITS trw-mcp server comes from
+#:                TRW's own argv and runs with ``TRW_SURFACE_ROLE=reviewer``,
+#:                which the server-side ``SurfaceAuthorityMiddleware`` bounds to
+#:                :data:`trw_mcp.models.surface_packs.REVIEWER_TOOLS`. A
+#:                ``reviewer`` request is refused before spawn for any client
+#:                whose spec carries no ``reviewer_argv_template`` — the bound
+#:                must be a mechanism, never a sentence in a prompt
+#:                (PRD-SEC-015-FR06/FR07, OD-6).
+DispatchPosture = Literal["default", "reviewer"]
+
+#: The substitution vocabulary a ``reviewer_argv_template`` may reference.
+#: Declared HERE, beside the field it constrains, so a malformed template fails
+#: at import with the offending client id rather than rendering a literal
+#: ``{typo}`` onto a command line. The renderer (``_posture.py``) imports this
+#: set; the dependency runs one way, so this module still imports nothing from
+#: the rest of the package.
+#:
+#: ``{reviewer_tools}`` — the reviewer allowlist as a TOML/JSON array literal.
+#: ``{mcp_command}``    — absolute path to the interpreter that launches the
+#:                        child's trw-mcp server (never a PATH lookup, never a
+#:                        path inside the reviewed repository).
+#: ``{mcp_args}``       — that server's argv tail as an array literal.
+REVIEWER_ARGV_PLACEHOLDERS: frozenset[str] = frozenset({"reviewer_tools", "mcp_command", "mcp_args"})
+
+#: A ``{bare_identifier}`` occurrence. Deliberately NARROW: a reviewer template
+#: token can be a whole JSON document (claude's ``--mcp-config`` payload), and a
+#: pattern that matched any brace pair would read ``{"mcpServers":{}}`` as a
+#: placeholder and refuse a valid entry.
+_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _placeholder_names(token: str) -> list[str]:
+    """Every ``{name}`` placeholder referenced by one argv token."""
+    return _PLACEHOLDER_RE.findall(token)
 
 
 class UnknownClientError(KeyError):
@@ -171,6 +217,50 @@ class ClientSpec(BaseModel):
         default=(),
         description="Emitted only when read_only is False. This is the write-enabling fragment.",
     )
+    confined_read_only_argv: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Emitted on the read-only path ONLY while a HOST write-denial wrapper is "
+            "actually applied to the child (PRD-CORE-277-FR02). It exists for a client "
+            "whose own headless permission layer denies READS as well as writes, so the "
+            "only way to obtain a usable read-only run is to relax the client's permission "
+            "prompt and let the operating system deny the writes instead. It is a "
+            "permission bypass by itself, which is why the builder refuses to emit it "
+            "unless the caller proves the wrapper was built: an empty tuple is the correct "
+            "value for every client that can already read under read_only."
+        ),
+    )
+    host_confinement: bool = Field(
+        default=False,
+        description=(
+            "True iff TRW should try to wrap this client's read-only runs in a host "
+            "write-denial sandbox. Declared per client rather than derived, because the "
+            "wrapper changes what the child may do and that decision belongs beside the "
+            "flags it pairs with."
+        ),
+    )
+    reviewer_argv_template: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Argv fragment emitted INSTEAD of isolation_argv when the request carries "
+            "posture='reviewer'. Tokens may reference the placeholders in "
+            "REVIEWER_ARGV_PLACEHOLDERS, which the renderer substitutes literally (never "
+            "str.format: a claude --mcp-config payload is JSON and is full of braces). "
+            "EMPTY IS A REFUSAL, not a default: a client with no template has no argv "
+            "channel able to carry the MCP transport, so a reviewer dispatch to it is "
+            "rejected before spawn rather than downgraded to a prompt-only 'reviewer'."
+        ),
+    )
+    reviewer_env: Mapping[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Environment injected into the DIRECT child under posture='reviewer' (e.g. "
+            "TRW_SURFACE_ROLE=reviewer). Defense in depth beside the argv template: the "
+            "template marks the MCP server the child spawns, this marks the child itself, "
+            "so a client that forwards its own environment to that server is bounded by "
+            "either path. Applied on top of the credential allowlist, never instead of it."
+        ),
+    )
     model_flag: str | None = None
     cwd_flag: str | None = Field(
         default=None,
@@ -226,6 +316,17 @@ class ClientSpec(BaseModel):
         return (self.binary, *self.binary_aliases)
 
     @property
+    def supports_reviewer_posture(self) -> bool:
+        """True iff this client can be launched under ``posture='reviewer'``.
+
+        DERIVED from the template's presence rather than declared separately: a
+        boolean a maintainer sets by hand could claim a posture the argv cannot
+        deliver, which is precisely the "bounded by a sentence" failure OD-6
+        exists to end.
+        """
+        return bool(self.reviewer_argv_template)
+
+    @property
     def headless_json(self) -> bool:
         """True iff this client can be asked for machine-readable output."""
         return bool(self.structured_output_argv)
@@ -248,6 +349,29 @@ class ClientSpec(BaseModel):
         from trw_mcp.agents.agent_formats import agent_format_for
 
         return agent_format_for(self.profile_id).supports_agents
+
+    @model_validator(mode="after")
+    def _reviewer_posture_is_expressible(self) -> ClientSpec:
+        """Reject a reviewer posture that could not be delivered as argv.
+
+        Two ways an entry can claim containment it cannot perform, both fatal at
+        import: a ``reviewer_env`` with no template (the marked child would spawn
+        an MCP server TRW never configured), and a template naming a placeholder
+        the renderer does not know (which would reach a command line verbatim).
+        """
+        if self.reviewer_env and not self.reviewer_argv_template:
+            raise ValueError(
+                f"{self.client_id!r}: reviewer_env is set but reviewer_argv_template is empty; "
+                "the env alone marks the child without giving it a TRW-controlled MCP transport"
+            )
+        for token in self.reviewer_argv_template:
+            for name in _placeholder_names(token):
+                if name not in REVIEWER_ARGV_PLACEHOLDERS:
+                    raise ValueError(
+                        f"{self.client_id!r}: reviewer_argv_template references unknown placeholder "
+                        f"{{{name}}}; known: {sorted(REVIEWER_ARGV_PLACEHOLDERS)}"
+                    )
+        return self
 
     @model_validator(mode="after")
     def _base_argv_starts_with_the_binary(self) -> ClientSpec:

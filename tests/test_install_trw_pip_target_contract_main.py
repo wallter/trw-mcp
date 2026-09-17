@@ -10,6 +10,21 @@ import pytest
 from tests._install_trw_pip_target_contract_support import _INSTALLER_PATHS, _load_installer_module
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_installer_env(monkeypatch) -> None:
+    """Drive ``main()`` from the argv under test, not from the developer's shell.
+
+    ``main()`` ORs ``--with-proprietary`` with ``TRW_WITH_PROPRIETARY``, so a
+    shell that exports it (a normal thing on a machine that installs the
+    proprietary wheels) sent every case in this file into
+    ``_resolve_proprietary_license``, which raised the missing-platform-key
+    precondition and exited 2 before any assertion ran. The env var is real
+    input to the installer; it is simply not this file's input.
+    """
+    for name in ("TRW_WITH_PROPRIETARY", "TRW_LICENSE_KEY", "TRW_API_KEY", "TRW_PLATFORM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
 def test_main_threads_pip_target_into_extras_phase_when_enabled(
     installer_path: Path, tmp_path: Path, monkeypatch

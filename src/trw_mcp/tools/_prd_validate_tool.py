@@ -80,11 +80,11 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
 
         Args:
             prd_path: path to the PRD markdown file (required).
-            fast: skip repo-grounded dynamic checks for a quick text-only score;
-                result is flagged validation_partial=true with checks_skipped
-                naming what was omitted. Re-run without fast for a full verdict.
-            verbose: return the full diagnostic payload instead of the default
-                compact, token-capped one; scores/verdicts are identical either way.
+            fast: text-only score, skipping repo-grounded checks; flagged
+                validation_partial=true with checks_skipped naming what was
+                omitted. Re-run without it for a full verdict.
+            verbose: full diagnostic payload instead of the compact,
+                token-capped default; scores and verdicts are identical.
         """
         # prd_path has an empty default so FastMCP can inject ctx as the first
         # typed kwarg (PRD-CORE-141 FR03); an empty path is still rejected.

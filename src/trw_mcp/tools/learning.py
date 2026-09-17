@@ -98,8 +98,8 @@ def register_learning_tools(server: FastMCP) -> None:
         phase_origin, phase_affinity, protection_tier. client_profile and
         model_id auto-detect when omitted.
 
-        consolidated_from lists predecessor IDs to obsolete. Check
-        consolidation_warning and recall: retirement can partially fail.
+        consolidated_from: predecessor IDs to obsolete — check
+        consolidation_warning and recall, retirement can partially fail.
 
         Output: status, learning_id, path. Status: recorded, skipped/merged
         (dedup), or rejected with reason.
@@ -224,21 +224,21 @@ def register_learning_tools(server: FastMCP) -> None:
         Use when a learning is fixed or stale, needs sharper text, or should be
         boosted/demoted in recall.
 
-        Pass learning_id (e.g. "L-abc12345") plus only what changes; anything
-        you omit is left untouched. status: active | resolved | obsolete (last
-        two drop out of recall). feedback: helpful | unhelpful. tags (list or
-        comma/space string) replace the existing set; [] clears it.
+        Pass learning_id plus only what changes; anything omitted is
+        untouched. status: active | resolved | obsolete (last two drop out of
+        recall). feedback: helpful | unhelpful. tags (list or comma/space
+        string) replace the set; [] clears it.
 
         supersedes: id of a PRIOR learning this replaces; closes its validity
         window (never a delete). reverify_anchors rechecks anchors against the
         current tree — use after a rename.
 
-        fields is an optional object of typed attributes; unknown keys are
-        rejected. Accepted: type (incident|pattern|convention|hypothesis|
-        workaround), confidence (unverified|low|medium|high|verified), expires,
-        nudge_line (cut at 80 chars), task_type, domain, phase_origin ("" or a
-        phase name), phase_affinity, team_origin, protection_tier, assertions
-        (replaces the set; [] clears it).
+        fields: typed attributes; unknown keys are rejected. Accepted: type
+        (incident|pattern|convention|hypothesis|workaround), confidence
+        (unverified|low|medium|high|verified), expires, nudge_line (cut at 80
+        chars), task_type, domain, phase_origin ("" or a phase name),
+        phase_affinity, team_origin, protection_tier, assertions (replaces the
+        set; [] clears it).
 
         Output: {status, learning_id, changes} — changes names what was
         written. status is "no_changes", "not_found", or "invalid" (with error).
@@ -396,8 +396,9 @@ def register_learning_tools(server: FastMCP) -> None:
         Output: relevance-ranked learnings and a count.
 
         Shaping: compact trims fields (auto-on for "*"), ultra_compact leaves
-        id+summary only. token_budget (>0) budgets learning entries (minimum one),
-        not metadata/advisories. max_results defaults to 25 (0 = unlimited). Filters: tags (list or comma/space string), topic slug, min_impact 0.0-1.0,
+        id+summary only. token_budget (>0) budgets learning entries (min one),
+        not metadata/advisories. max_results defaults to 25 (0 = unlimited).
+        Filters: tags (list or comma/space string), topic slug, min_impact 0-1,
         as_of (ISO-8601 instant: returns records whose validity window covered
         it; omitted means open records only), include_superseded (ranked below
         open records).
@@ -489,10 +490,10 @@ def register_learning_tools(server: FastMCP) -> None:
         """Sync TRW protocol and ceremony guidance into the client's instruction file.
 
         Use when onboarding a project whose instruction file — CLAUDE.md,
-        AGENTS.md, or the equivalent for the active client — lacks the TRW
-        auto-generated block, after changing the protocol template, or when
-        switching IDE clients. Your hand-written content is never truncated: a
-        write that would shrink it is refused and reported.
+        AGENTS.md, or the client equivalent — lacks the TRW auto-generated
+        block, after changing the protocol template, or when switching IDE
+        clients. Hand-written content is never truncated: a write that would
+        shrink it is refused and reported.
         Learnings are not promoted into the instruction file — trw_session_start() recall covers that.
 
         Output: {status: "synced" | "unchanged" | "dry_run" | "refused", diffs, refusals}.
@@ -528,7 +529,7 @@ def register_learning_tools(server: FastMCP) -> None:
         """Deprecated alias for ``trw_instructions_sync`` — call that instead.
 
         Use when an older caller still references this name; it warns on every
-        invocation and will be removed in a future release.
+        invocation and will be removed.
 
         Output: same as trw_instructions_sync.
         """

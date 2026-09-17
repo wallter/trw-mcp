@@ -69,6 +69,21 @@ def test_opencode_gets_all_three_provider_keys() -> None:
     assert "AWS_SECRET_ACCESS_KEY" not in env
 
 
+def test_opencode_config_location_vars_pass_through() -> None:
+    """OPENCODE_CONFIG / OPENCODE_CONFIG_DIR are config pointers, not secrets.
+
+    Dropping them forces the child onto the repo's opencode.json, so a dispatch
+    could never be redirected to a live provider on a box whose project config
+    names a dead local endpoint (peer finding 2026-09-17).
+    """
+    src = {**_source(), "OPENCODE_CONFIG": "/tmp/oc.json", "OPENCODE_CONFIG_DIR": "/tmp/ocdir"}
+    env = build_subprocess_env("opencode", source_env=src)
+    assert env["OPENCODE_CONFIG"] == "/tmp/oc.json"
+    assert env["OPENCODE_CONFIG_DIR"] == "/tmp/ocdir"
+    # and they are opencode-only: codex must not receive them
+    assert "OPENCODE_CONFIG" not in build_subprocess_env("codex", source_env=src)
+
+
 def test_missing_allowed_var_is_simply_absent() -> None:
     env = build_subprocess_env("codex", source_env={"PATH": "/bin"})
     assert env == {"PATH": "/bin"}

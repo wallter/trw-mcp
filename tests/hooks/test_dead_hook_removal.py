@@ -68,19 +68,30 @@ def test_the_deliver_gate_still_blocks_an_unverified_deliver() -> None:
     """FR01's paired coverage assertion — the condition is still enforced.
 
     ``completion-gate.sh`` claimed to require a passing build check before a task
-    could complete. That requirement is live in ``pre-tool-deliver-gate.sh``,
-    which IS registered in both shipped templates. This asserts the enforcing
-    branch is still present and still reachable, so "we deleted the dead copy"
-    cannot silently become "we deleted the requirement".
+    could complete. That requirement used to be carried by the ``exit 2`` branch
+    of ``pre-tool-deliver-gate.sh``. PRD-FIX-140-FR01 demoted that hook to a
+    diagnostic because a project-global YAML file is not session evidence, and
+    moved the requirement into the server's delivery path — so this assertion now
+    follows the requirement to where it lives, rather than pinning the hook that
+    used to hold it. "We deleted the dead copy" still cannot become "we deleted
+    the requirement"; only the enforcing layer changed.
     """
+    from trw_mcp.tools._deliver_gate_mode import resolve_deliver_gate_decision
+
+    assert resolve_deliver_gate_decision(
+        mode="block_coding",
+        task_type="coding",
+        build_check_missing=True,
+        files_changed=0,
+    ), "the server deliver gate no longer blocks a coding delivery with no build check"
+
     gate = (_HOOK_DIR / "pre-tool-deliver-gate.sh").read_text(encoding="utf-8")
-    assert "exit 2" in gate, "the deliver gate no longer blocks anything"
-    assert "allow_unverified" in gate, "the documented recourse path is gone"
+    assert "exit 2" not in gate, "the hook re-derives a verdict again (PRD-FIX-140-FR01)"
 
     assert len(_CARRIERS) >= hc.MINIMUM_HOOK_CARRIERS, f"only {len(_CARRIERS)} carrier(s) discovered"
     for template in _CARRIERS:
         assert "pre-tool-deliver-gate.sh" in hc.registered_in(template), (
-            f"{template.name} no longer registers the gate that carries FR01's coverage"
+            f"{template.name} no longer registers the diagnostic that reports FR01's evidence"
         )
 
 

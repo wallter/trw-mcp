@@ -430,7 +430,7 @@ def test_no_suppression_branch_exists_for_the_retained_telemetry_appends() -> No
     """
     src = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
     modules = [
-        src / "tools" / "before_edit_hint.py",
+        src / "tools" / "_before_edit_hint_core.py",
         src / "tools" / "codebase_risk_report.py",
         src / "channels" / "_distill_telemetry.py",
     ]

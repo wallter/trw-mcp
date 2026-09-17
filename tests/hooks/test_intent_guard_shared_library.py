@@ -283,6 +283,35 @@ def _counting_interpreter(tmp_path: Path) -> tuple[Path, Path]:
     return stub, log
 
 
+def _observably_newer(path: Path, *, than: Path) -> None:
+    """Advance *path*'s mtime past *than*'s by whole seconds.
+
+    The shell decides freshness with `-nt`, whose resolution is the shell's, not
+    the filesystem's: bash 3.2 (``/bin/sh`` on macOS) compares ``st_mtime``
+    SECONDS, so a tamper written microseconds after the artifact it must appear
+    newer than is simply not newer, the deferral never fires, and the fast path
+    answers ALLOW. Stating the ordering in whole seconds makes the case the test
+    describes true on every shell instead of only where `-nt` reads nanoseconds.
+    """
+    stamp = than.stat().st_mtime + 2
+    os.utime(path, (stamp, stamp))
+
+
+def _stamped_equal(path: Path, sidecar: Path) -> None:
+    """Give *path* the sidecar's exact mtime — the case an ordering test cannot see.
+
+    ``[ "$art" -nt "$sidecar" ]`` is false for equal mtimes on every shell, so a
+    tamper stamped this way is invisible to mtime ordering at ANY resolution and
+    only a content comparison can catch it.
+    """
+    stamp = sidecar.stat().st_mtime
+    os.utime(path, (stamp, stamp))
+    # Non-vacuity, asserted rather than asserted-about: if the two mtimes were
+    # not equal the deferral below could be coming from an ordering test again,
+    # and this case would stop proving anything.
+    assert path.stat().st_mtime == sidecar.stat().st_mtime
+
+
 def _spawns(log: Path) -> int:
     return len(log.read_text(encoding="utf-8").splitlines()) if log.exists() else 0
 
@@ -490,10 +519,11 @@ def test_fast_path_defers_when_jq_is_absent(tmp_path: Path) -> None:
         "malformed-line",
         "appended-after-digest",
         "patterns-emptied",
-        "guarded-artifact-newer",
+        "guarded-artifact-modified",
         "guarded-artifact-deleted",
         "guarded-absent-artifact-appeared",
         "contract-edited-without-reenrol",
+        "contract-edited-in-the-same-second",
     ],
 )
 def test_tampered_sidecar_never_self_allows(tmp_path: Path, tamper: str) -> None:
@@ -505,6 +535,14 @@ def test_tampered_sidecar_never_self_allows(tmp_path: Path, tamper: str) -> None
     a NEW anchor to the contract without re-enrolling: the marker goes stale, so
     Python BLOCKS every write, and a fast path that trusted its own unchanged
     digest line would have converted that block into an allow.
+
+    ``contract-edited-in-the-same-second`` is the same tamper with the edit's
+    mtime stamped back to the SIDECAR's. It is the regression pin for the
+    2026-09-17 defect: the check used to be ``[ "$art" -nt "$sidecar" ]`` and
+    ``-nt`` resolution belongs to the shell, so under bash 3.2 (``/bin/sh`` on
+    macOS) a contract edited in the same whole second was not "newer" and the
+    fast path cleared a condemned project. Stamping the mtimes EQUAL makes that
+    ordering false on every shell, so only a content check can pass this case.
     """
     from tests._intent_contract_hooks import CONTRACT_REL, run_hook
     from trw_mcp.security.intent_contract._sidecar import glob_sidecar_path
@@ -528,9 +566,14 @@ def test_tampered_sidecar_never_self_allows(tmp_path: Path, tamper: str) -> None
     elif tamper == "patterns-emptied":
         kept = [line for line in lines if not line.startswith("p ")]
         sidecar.write_text("\n".join(kept) + "\n", encoding="utf-8")
-    elif tamper == "guarded-artifact-newer":
-        time.sleep(0.02)
-        (project / ".claude" / "hooks" / "lib-trw.sh").touch()
+        _observably_newer(sidecar, than=sidecar)  # a sidecar rewritten after its marker
+    elif tamper == "guarded-artifact-modified":
+        # CONTENT, not just an mtime: `compute_digests` hashes bytes, so a bare
+        # `touch` leaves the marker fresh and Python ALLOWS — deferring on it
+        # would be a slower answer to the same question, not a safety property.
+        guarded = project / ".claude" / "hooks" / "lib-trw.sh"
+        guarded.write_text(guarded.read_text(encoding="utf-8") + "# vendor v2\n", encoding="utf-8")
+        _stamped_equal(guarded, sidecar)
     elif tamper == "guarded-artifact-deleted":
         (project / ".claude" / "hooks" / "lib-trw.sh").unlink()
     elif tamper == "guarded-absent-artifact-appeared":
@@ -542,6 +585,10 @@ def test_tampered_sidecar_never_self_allows(tmp_path: Path, tamper: str) -> None
             .replace('anchors: ["protected/module.py"]', 'anchors: ["protected/module.py", "unrelated/notes.py"]'),
             encoding="utf-8",
         )
+        if tamper == "contract-edited-in-the-same-second":
+            _stamped_equal(project / CONTRACT_REL, sidecar)
+        else:
+            _observably_newer(project / CONTRACT_REL, than=sidecar)
 
     target = "unrelated/notes.py"
     if tamper == "patterns-emptied":

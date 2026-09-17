@@ -67,6 +67,18 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+### Supported interpreters
+
+`trw-mcp` is tested on CPython 3.10 through 3.14 (this repository's own development
+interpreter is CPython 3.14.7). The interpreter's bundled SQLite matters too: the memory
+store only RECLAIMS WAL space on SQLite >= 3.51.3 (or the 3.44.6 / 3.50.7 backports). Below
+that, checkpoints still run and the store is safe, but the `-wal` file grows without
+shrinking — `trw-mcp doctor`'s `memory_wal` row reports the engine in use and names the
+interpreters on your PATH that would qualify. The driver is selected by `trw-memory` at
+import, ranking the interpreter's SQLite against an installed `pysqlite3` so an older wheel
+can never replace a newer engine. The optional `[sqlite-fix]` extra pulls `pysqlite3-binary`
+on x86_64 Linux only; no published wheel currently bundles a qualifying SQLite.
+
 ### Deploy to a Project
 
 `trw-mcp init-project` bootstraps the full TRW framework in any git repository. Full configuration reference at [trwframework.com/docs/config](https://trwframework.com/docs/config).
@@ -104,6 +116,7 @@ trw-mcp is **local-first**: with the default configuration it persists everythin
 | Surface | When | Default | Opt-out / control |
 |---------|------|---------|-------------------|
 | **Embedding model download** | Only when `all-MiniLM-L6-v2` is **not** already complete in your local Hugging Face cache. A complete cached snapshot makes **zero** huggingface.co requests — the loader probes the cache first and forces `local_files_only=True` (only relevant when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the fetch and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
+| **Re-ranker model download** | Only when `recall_rerank` is enabled (the default) **and** the `[vectors]`/`[embeddings]` extra is installed **and** `cross-encoder/ms-marco-MiniLM-L-6-v2` is not already in your local Hugging Face cache; without the extra no re-ranker path exists and nothing is fetched | `recall_rerank: true` | `recall_rerank: false` disables the second model; `TRW_OFFLINE=1` / `HF_HUB_OFFLINE=1` suppress the fetch and recall proceeds without re-ranking |
 | **Usage telemetry** | Only if explicitly enabled | **off** (gated by `platform_telemetry_enabled`, default `false`) | leave `platform_telemetry_enabled=false`; see PRD-SEC-004 |
 | **Learning-content publishing** | Only if explicitly enabled | **off** (gated by `learning_sharing_enabled`, default `false`) | leave `learning_sharing_enabled=false`; learning content is never published off-box by default |
 

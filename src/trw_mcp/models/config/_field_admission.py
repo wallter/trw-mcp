@@ -140,7 +140,6 @@ build_check_mypy_args
 build_check_pytest_args
 build_check_pytest_cmd
 build_check_timeout_secs
-build_freshness_window_secs
 build_gate_enforcement
 ceremony_alert_consecutive
 ceremony_alert_threshold
@@ -151,9 +150,7 @@ ceremony_feedback_quality_threshold
 ceremony_feedback_score_threshold
 ceremony_mode
 changelog_advisory_enabled
-checkpoint_secs
 checkpoint_suggest_hours
-checkpoints_file
 claude_md_max_lines
 cleanup_on_boot
 code_index_enabled
@@ -176,14 +173,10 @@ complexity_weight_large_refactoring
 complexity_weight_novel_patterns
 compliance_changelog_filename
 compliance_dir
-compliance_history_file
-compliance_long_session_event_threshold
 compliance_pass_threshold
 compliance_review_retention_days
 compliance_strictness
-compliance_warning_threshold
 confidence_threshold
-consensus_quorum
 consistency_validation_min
 context_dir
 cross_model_provider
@@ -228,9 +221,7 @@ external_store_recall_cap
 extra_prd_categories
 extra_read_stores
 feedback
-finding_dedup_threshold
 framework_md_enabled
-framework_overhead_threshold
 framework_version
 frameworks_dir
 hooks_enabled
@@ -266,7 +257,6 @@ learning_outcome_correlation_scope
 learning_outcome_correlation_window_minutes
 learning_outcome_history_cap
 learning_promotion_impact
-learning_prune_age_days
 learning_recall_enabled
 learning_repeated_op_threshold
 learning_sharing_enabled
@@ -280,14 +270,12 @@ llm_utility_filter_enabled
 logs_dir
 max_audit_cycles
 max_auto_lines
-max_child_depth
 max_cluster_size
 max_consolidated_tags
 max_research_waves
 mcp_server_instructions_enabled
 memory_cold_threshold_days
 memory_consolidation_enabled
-memory_consolidation_interval_days
 memory_consolidation_max_per_cycle
 memory_consolidation_min_cluster
 memory_consolidation_similarity_threshold
@@ -301,8 +289,6 @@ memory_store_path
 meta_tune
 meta_tune_enabled
 migration_gate_enabled
-min_shards_floor
-min_shards_target
 minimal_after_turns
 model_family
 mutation_critical_paths
@@ -374,8 +360,6 @@ recall_utility_lambda
 receipts_dir
 reflect_max_positive_learnings
 reflect_max_success_patterns
-reflect_q_value_threshold
-reflect_sequence_lookback
 reflections_dir
 response_format
 retrieval_embedding_dim
@@ -399,7 +383,6 @@ scoring_recency_discount_floor
 scout_blast_radius_threshold
 scout_churn_commit_threshold
 scout_enabled
-scout_max_mode3_rate
 scratch_dir
 scripts_dir
 security
@@ -411,7 +394,6 @@ session_start_recall_enabled
 session_start_recent_bypass_days
 session_start_recent_bypass_min_impact
 session_start_writer_pressure_threshold
-skill_active_cap
 skill_contribution_cold_start
 skill_contribution_half_life_days
 skill_duplicate_max_skills
@@ -438,7 +420,6 @@ telemetry
 telemetry_enabled
 telemetry_file
 templates_dir
-test_map_filename
 test_skeleton_dir
 tests_relative_path
 timebox_hours
@@ -455,8 +436,6 @@ user_tier_enabled
 validation_density_weight
 validation_draft_threshold
 validation_ears_weight
-validation_fk_optimal_max
-validation_fk_optimal_min
 validation_implementation_readiness_weight
 validation_readability_weight
 validation_review_threshold

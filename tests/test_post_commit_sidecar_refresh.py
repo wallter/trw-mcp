@@ -435,6 +435,13 @@ def test_receipt_records_delivered_not_planned(git_repo: Path) -> None:
     assert receipt is not None
     assert receipt["sidecar_files_planned"] == 3
     assert receipt["sidecar_files"] == 1
+    # PRD-INFRA-186 FR05: the single-flight outcome rides in the same receipt, so
+    # "the hook fired" and "the hook swept" stop being the same observation.
+    assert receipt["lock_state"] == "acquired"
+    assert receipt["pending_marked"] is False
+    assert receipt["follow_up_ran"] is False
+    assert receipt["bounded_stop"] is False
+    assert isinstance(receipt["duration_ms"], int)
 
 
 def test_refresh_failures_stay_out_of_the_return_value(git_repo: Path) -> None:

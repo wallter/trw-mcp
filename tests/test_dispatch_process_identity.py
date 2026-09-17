@@ -110,8 +110,19 @@ def test_runner_refused_timeout_has_bounded_drain(monkeypatch, sender):
     fake_subprocess = SimpleNamespace(**vars(subprocess))
     fake_subprocess.Popen = MagicMock(return_value=process)
     monkeypatch.setattr(_runner, "subprocess", fake_subprocess)
-    monkeypatch.setattr(_runner, "build_command", lambda req: ["stub"])
-    monkeypatch.setattr(_runner, "build_subprocess_env", lambda client: {})
+    # Keyword-only ``confined`` mirrors the real builder (PRD-CORE-277-FR02): the
+    # runner passes it on every call, so a stub without it raises a TypeError that
+    # reads like a runner bug.
+    # argv[0] must be a REAL executable: on a host where agy's writes can be
+    # confined the runner resolves the client binary before wrapping, so that a
+    # missing binary still reports -127 instead of the wrapper's own exit code
+    # (PRD-CORE-277-FR02). Popen itself is mocked, so nothing is launched.
+    monkeypatch.setattr(_runner, "build_command", lambda req, *, confined=False: [sys.executable])
+    # ``posture`` is keyword-only on the real builder; a stub without it raises a
+    # TypeError from inside dispatch() that reads like a production bug. (This
+    # stub was already stale at HEAD 417b4d1b3 — both tests in this file failed
+    # the same way before PRD-CORE-277 touched the runner.)
+    monkeypatch.setattr(_runner, "build_subprocess_env", lambda client, *, posture="default": {})
     result = _runner.dispatch(DispatchRequest(client="agy", prompt="x", timeout_s=1))
     assert result.timed_out
     assert process.communicate.call_args_list[0].kwargs == {"timeout": 1}
@@ -138,6 +149,7 @@ def test_legacy_job_record_cannot_signal(tmp_path, sender):
 
 @pytest.mark.parametrize("field", [2, 3])
 def test_capture_rejects_foreign_group_or_session(monkeypatch, field):
+    monkeypatch.setattr(identity.sys, "platform", "linux")
     fields = ["S", "1", "4242", "4242"] + ["0"] * 16
     fields[field] = "4231"
     stat = "4242 (name with ) parentheses) " + " ".join(fields)
@@ -147,11 +159,13 @@ def test_capture_rejects_foreign_group_or_session(monkeypatch, field):
 
 @pytest.mark.parametrize("stat", ["", "4242 (broken", "4242 (x) S 1 4242 4242"])
 def test_capture_malformed_stat_fails_closed(monkeypatch, stat):
+    monkeypatch.setattr(identity.sys, "platform", "linux")
     monkeypatch.setattr(identity, "Path", lambda path: SimpleNamespace(read_text=lambda: stat))
     assert identity.capture_identity(4242) is None
 
 
 def test_capture_empty_boot_id_fails_closed(monkeypatch):
+    monkeypatch.setattr(identity.sys, "platform", "linux")
     fields = ["S", "1", "4242", "4242"] + ["0"] * 16
     stat = "4242 (x) " + " ".join(fields)
     monkeypatch.setattr(

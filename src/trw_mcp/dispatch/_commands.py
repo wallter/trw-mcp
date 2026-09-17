@@ -25,6 +25,7 @@ from trw_mcp.dispatch._client_specs import (
     UnknownClientError,
     client_spec_for,
 )
+from trw_mcp.dispatch._posture import REVIEWER_POSTURE, render_reviewer_argv
 from trw_mcp.dispatch._types import DispatchRequest
 
 # ``SUPPORTED_CLIENTS`` is derived from the registry key set in ``_client_specs``
@@ -38,13 +39,14 @@ class UnsupportedClientError(ValueError):
     """Raised for a client id outside :data:`SUPPORTED_CLIENTS`."""
 
 
-def build_command(req: DispatchRequest) -> list[str]:
+def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     """Build the exact argv for *req*.
 
     Fragments are concatenated in a fixed order, each one supplied by the
     client's registry entry::
 
-        base_argv always_argv structured_output_argv [isolation_argv]
+        base_argv always_argv structured_output_argv
+        (reviewer_argv_template | [isolation_argv])
         (read_only_argv | allow_writes_argv) [model_flag MODEL]
         [cwd_flag CWD] *extra_args (prompt_flag PROMPT | PROMPT)
 
@@ -52,10 +54,33 @@ def build_command(req: DispatchRequest) -> list[str]:
     why an empty ``read_only_argv`` is a posture and not a gap: for a client that
     denies writes headlessly, read-only IS the omission of ``allow_writes_argv``.
 
+    ``confined`` (keyword-only, default False) is the caller's ASSERTION that it
+    has built a host write-denial wrapper around this child, and it is the only
+    condition under which ``confined_read_only_argv`` is emitted. It is a
+    parameter rather than a probe because this function must stay pure: the same
+    (request, confined) pair produces the same argv on every box, which is what
+    the recorded baselines in ``tests/fixtures/dispatch_argv_baseline.json``
+    pin. The runner computes it (``_confine.confinement_prefix``); nothing else
+    may pass True.
+
+    ``posture='reviewer'`` selects the rendered reviewer template INSTEAD of
+    ``isolation_argv``, never in addition to it: both fragments configure the
+    child's MCP wiring, and emitting claude's empty ``--mcp-config`` beside the
+    reviewer one, or codex's ``--ignore-user-config`` beside the ``-c`` overrides
+    it is measured to conflict with (L-VupD), would produce an ambiguous command
+    line rather than a stronger one. The sandbox flag is NOT part of the template
+    — it stays in ``read_only_argv``, its single source, and a reviewer request
+    is validated read-only upstream, so a reviewer argv still carries it exactly
+    once.
+
     Raises:
         UnsupportedClientError: if ``req.client`` has no registered spec. There is
             no default spec — building some other client's argv would answer the
             caller with a different agent.
+        ReviewerPostureError: if ``posture='reviewer'`` and this client cannot
+            carry TRW's MCP server in its argv. Raising here (rather than
+            degrading to isolation_argv) is what keeps an unsupported posture
+            from becoming a silently unbounded run.
     """
     try:
         spec = client_spec_for(req.client)
@@ -63,9 +88,16 @@ def build_command(req: DispatchRequest) -> list[str]:
         raise UnsupportedClientError(f"No command spec for client {req.client!r}") from exc
 
     argv: list[str] = [*spec.base_argv, *spec.always_argv, *spec.structured_output_argv]
-    if req.isolate:
+    if req.posture == REVIEWER_POSTURE:
+        argv += render_reviewer_argv(spec)
+    elif req.isolate:
         argv += spec.isolation_argv
-    argv += spec.read_only_argv if req.read_only else spec.allow_writes_argv
+    if req.read_only:
+        argv += spec.read_only_argv
+        if confined:
+            argv += spec.confined_read_only_argv
+    else:
+        argv += spec.allow_writes_argv
     if spec.model_flag is not None and req.model:
         argv += [spec.model_flag, req.model]
     if spec.cwd_flag is not None and req.cwd is not None:

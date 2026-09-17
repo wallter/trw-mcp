@@ -29,7 +29,10 @@ def _write_stub(tmp_path: Path, name: str, body: str) -> Path:
 def _patch_argv(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
     """Make the runner execute *argv* regardless of the request's client."""
 
-    def _fixed(_req: DispatchRequest) -> list[str]:
+    def _fixed(_req: DispatchRequest, *, confined: bool = False) -> list[str]:
+        # Keyword-only ``confined`` mirrors the real builder (PRD-CORE-277-FR02):
+        # the runner passes it on every call, so a stub without it would fail with
+        # a TypeError that looks like a runner bug.
         return argv
 
     monkeypatch.setattr("trw_mcp.dispatch._runner.build_command", _fixed)
@@ -156,7 +159,11 @@ def test_pty_redacts_prompt_inside_script_wrapper(tmp_path: Path, monkeypatch: p
 
     joined = " ".join(result.argv_redacted)
     assert secret_prompt not in joined
-    assert result.argv_redacted[0] == "script"  # displayed form is the PTY wrapper
+    # The displayed form is the PTY wrapper. On a host where TRW can confine agy's
+    # writes (PRD-CORE-277-FR02) the seatbelt wrapper is the OUTERMOST element, so
+    # assert `script` is present and precedes the command rather than pinning
+    # index 0 to a platform-dependent value.
+    assert "script" in result.argv_redacted
     assert f"<prompt:{len(secret_prompt)} chars>" in joined
 
 

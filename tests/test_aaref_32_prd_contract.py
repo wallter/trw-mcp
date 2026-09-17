@@ -296,6 +296,41 @@ def test_current_low_risk_prd_reports_nonblocking_mapping_warning() -> None:
 
 
 def test_implemented_high_risk_mapping_requires_automation_or_reason() -> None:
+    """A mapping that declares neither automated evidence nor a reason is an error.
+
+    PRD-FIX-141-FR09 narrowed what counts as "declared": ``method: test`` with a
+    TEST-shaped ``evidence_artifact`` is itself automated behavioral evidence, so
+    the fixture's artifact is redirected at a document to keep this test about
+    the rule it names. The positive half — a named pytest file no longer trips
+    the rule — is pinned in ``tests/test_prd_readiness_verdict.py``.
+    """
+    from trw_mcp.state.prd_utils import parse_frontmatter
+    from trw_mcp.state.validation._prd_validation import validate_verification_mappings
+
+    content = (
+        _contract_prd(risk_level="high")
+        .replace("status: draft", "status: implemented")
+        .replace("      automated: true\n", "")
+        .replace("      method: test\n", "      method: inspection\n")
+        .replace("evidence_artifact: tests/test_behavior.py::test_behavior", "evidence_artifact: docs/REVIEW.md")
+    )
+    failures, _ = validate_verification_mappings(
+        parse_frontmatter(content),
+        content,
+        effective_risk_level="high",
+    )
+    assert any(
+        failure.rule == "implemented_requirement_automation" and failure.severity == "error" for failure in failures
+    )
+
+
+def test_implemented_mapping_with_a_named_test_artifact_is_accepted() -> None:
+    """PRD-FIX-141-FR09: the same fixture, unmodified apart from status.
+
+    ``method: test`` + ``tests/test_behavior.py::test_behavior`` was reported as
+    "neither automated behavioral evidence nor an automation_infeasible_reason"
+    purely because the OPTIONAL ``automated`` flag was absent (learning L-9GXR).
+    """
     from trw_mcp.state.prd_utils import parse_frontmatter
     from trw_mcp.state.validation._prd_validation import validate_verification_mappings
 
@@ -309,9 +344,7 @@ def test_implemented_high_risk_mapping_requires_automation_or_reason() -> None:
         content,
         effective_risk_level="high",
     )
-    assert any(
-        failure.rule == "implemented_requirement_automation" and failure.severity == "error" for failure in failures
-    )
+    assert "implemented_requirement_automation" not in {failure.rule for failure in failures}
 
 
 def test_verification_mapping_normalizes_and_rejects_blank_fields() -> None:

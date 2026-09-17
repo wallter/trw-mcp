@@ -79,10 +79,16 @@ from trw_mcp.tools._deliver_gate_selfcomputed import (
     evaluate_acceptance_integrity as _evaluate_acceptance_integrity,
 )
 from trw_mcp.tools._deliver_gate_selfcomputed import (
+    evaluate_build_authority as _evaluate_build_authority,
+)
+from trw_mcp.tools._deliver_gate_selfcomputed import (
     evaluate_formation as _evaluate_formation,
 )
 from trw_mcp.tools._deliver_gate_selfcomputed import (
     evaluate_plan_acceptance as _evaluate_plan_acceptance,
+)
+from trw_mcp.tools._deliver_gate_selfcomputed import (
+    log_unused_override_intent as _log_unused_override_intent,
 )
 
 logger = structlog.get_logger(__name__)
@@ -261,6 +267,12 @@ def evaluate_delivery_gates(
         typed_gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
     ):
         return True
+    # PRD-FIX-140-FR04/FR05: the two build-evidence rules that used to live ONLY
+    # in the bundled PreToolUse hook. They run here, immediately after the
+    # STRUCTURED phase, so the server decides them before any softer gate and
+    # under the same acceptable-failure contract.
+    if _evaluate_build_authority(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
+        return True
     # PRD-CORE-213-FR04/FR05: acceptance-integrity transition gate. Runs after the
     # existing STRUCTURED gates and shares their PRD-CORE-191 override contract. It
     # self-computes (path-limited PRD diff + coherence) rather than reading a
@@ -280,6 +292,7 @@ def evaluate_delivery_gates(
     # Deleting this call is the FR11 rollback lever and turns its gate test red.
     if _evaluate_formation(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
         return True
+    _log_unused_override_intent(allow_unverified, unverified_reason, resolved_run)
     return _evaluate_advisory(typed_gate_result, resolved_run)
 
 

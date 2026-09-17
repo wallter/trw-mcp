@@ -88,6 +88,45 @@ def test_nudge_selection_cache_based(tmp_path: Path) -> None:
     ):
         result = append_ceremony_status({"status": "ok"}, trw_dir)
 
+    # PRD-CORE-278 FR09: the selection is unchanged, but an unverified claim now
+    # says so in the one slot that speaks with the framework's voice. Every
+    # learning in every store observed on 2026-09-16 carried
+    # verification_status "unknown", and the most prominent one was false
+    # (sub_n98TiMz4ioCKf5Lj).
+    assert result["nudge_content"] == "Unverified: Retry the failed queue workers before closing the run."
+
+
+def test_nudge_from_a_verified_learning_is_not_labelled(tmp_path: Path) -> None:
+    """The label is a statement about evidence, not decoration."""
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    trw_dir = tmp_path / ".trw"
+    (trw_dir / "context").mkdir(parents=True)
+    IntelligenceCache(trw_dir).update({"bandit_params": {"L-2": 1.9}})
+
+    learnings = [
+        {
+            "id": "L-2",
+            "summary": "Retry failed queue workers",
+            "nudge_line": "Retry the failed queue workers before closing the run.",
+            "impact": 0.7,
+            "domain": ["backend"],
+            "phase_affinity": ["implement"],
+            "verification_status": "verified",
+        },
+    ]
+    recall_context = type(
+        "RecallContext",
+        (),
+        {"inferred_domains": {"backend"}, "current_phase": "implement", "modified_files": []},
+    )()
+
+    with (
+        patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=learnings),
+        patch("trw_mcp.state.recall_context.build_recall_context", return_value=recall_context),
+    ):
+        result = append_ceremony_status({"status": "ok"}, trw_dir)
+
     assert result["nudge_content"] == "Retry the failed queue workers before closing the run."
 
 

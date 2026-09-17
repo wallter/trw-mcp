@@ -23,6 +23,55 @@ logger = structlog.get_logger(__name__)
 
 _QUERY_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
+#: Query tokens that carry no selection signal. PRD-FIX-141-FR10: ranking
+#: counted them as matches, so "audit the code and fix it with care" scored a
+#: point against every skill whose description contains "and" and reported
+#: ``query matched: and, with`` as the REASON (learning L-ODuU). Removed from the
+#: QUERY side only — a skill's own name and description are left intact, so a
+#: skill legitimately named after one of these is still findable by name.
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "but",
+        "if",
+        "then",
+        "than",
+        "so",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "with",
+        "by",
+        "from",
+        "into",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "as",
+        "not",
+        "no",
+        "do",
+        "does",
+    }
+)
+
 
 class SkillDiscoveryCandidate(BaseModel):
     """Ranked skill recommendation without execution side effects."""
@@ -58,6 +107,7 @@ def discover_meta_skills(
     active_cap: int | None = None,
     session_id: str = "",
     lifecycle_states: Mapping[str, SkillLifecycleState] | None = None,
+    host: str | None = None,
 ) -> SkillDiscoveryResult:
     """Return ranked eligible skills from SKILL.md paths without executing them.
 
@@ -72,6 +122,11 @@ def discover_meta_skills(
       candidate (after the cap). When the flag is false (default), zero events
       are written and the returned tuple is byte-for-byte identical to today.
 
+    PRD-FIX-141-FR10: ``host`` selects the accepted-frontmatter schema each
+    SKILL.md is validated against (``None`` -> the resolved client profile, or
+    ``DEFAULT_SKILL_HOST``). Passed down explicitly rather than read inside the
+    model layer so a multi-target install can validate per target.
+
     PRD-CORE-218-FR07: ``lifecycle_states`` maps a skill name to its lifecycle
     state. When supplied, skills whose state is NOT advertisable (retired,
     removed, or hidden) are withheld — discovery stops advertising a skill on its
@@ -80,7 +135,7 @@ def discover_meta_skills(
 
     candidates: list[SkillDiscoveryCandidate] = []
     warnings: list[SkillManifestIssue] = []
-    query_terms = _terms(query)
+    query_terms = _query_terms(query)
 
     for skill_path_like in skill_paths:
         skill_path = Path(skill_path_like)
@@ -89,7 +144,7 @@ def discover_meta_skills(
             warnings.append(read_issue)
             continue
 
-        validation = validate_skill_markdown(content, path=skill_path, mode=mode)
+        validation = validate_skill_markdown(content, path=skill_path, mode=mode, host=host)
         warnings.extend(validation.warnings)
         warnings.extend(validation.errors)
         if validation.manifest is None or not validation.ok:
@@ -165,6 +220,23 @@ def _maybe_log_surface_events(
         logger.debug("skill_surface_tracking_skipped", exc_info=True)
 
 
+def _resolve_skill_host() -> str | None:
+    """Resolve the active client profile id for the per-host frontmatter schema.
+
+    Read HERE (a tool) rather than inside ``models/skill_manifest.py``, which
+    stays a pure parser. Fail-open to ``None``, which the model reads as the
+    default host: a config that cannot be resolved must not turn every bundled
+    skill into a strict-mode error.
+    """
+    try:
+        from trw_mcp.models.config import get_config
+
+        return str(get_config().client_profile.client_id)
+    except Exception as exc:  # trw:intentional fail-open: host resolution must not block discovery
+        logger.warning("skill_host_resolution_skipped", reason=type(exc).__name__, exc_info=True)
+        return None
+
+
 def _load_lifecycle_states() -> Mapping[str, SkillLifecycleState]:
     """Load persisted lifecycle states for the advertising filter (FR07 wiring).
 
@@ -215,6 +287,7 @@ def register_skill_discovery_tools(server: FastMCP) -> None:
             include_private=include_private,
             active_cap=active_cap,
             lifecycle_states=_load_lifecycle_states(),
+            host=_resolve_skill_host(),
         ).model_dump(mode="json")
 
 
@@ -282,3 +355,8 @@ def _risk_warnings(manifest: SkillManifest) -> tuple[str, ...]:
 
 def _terms(text: str) -> frozenset[str]:
     return frozenset(token.lower() for token in _QUERY_TOKEN_RE.findall(text))
+
+
+def _query_terms(query: str) -> frozenset[str]:
+    """Tokenise a QUERY, dropping stopwords so they can neither score nor explain."""
+    return frozenset(term for term in _terms(query) if term not in _STOPWORDS)

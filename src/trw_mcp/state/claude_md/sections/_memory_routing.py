@@ -194,12 +194,72 @@ def _load_analytics_counts() -> tuple[int, int]:
     return 0, 0
 
 
+_store_counts_cache: contextvars.ContextVar[tuple[str, object, float] | None] = contextvars.ContextVar(
+    "_store_counts_cache",
+    default=None,
+)
+
+
+def _load_store_counts() -> object:
+    """Return this project's :class:`StoreCounts`, or ``None`` when unmeasured.
+
+    Cached on the same TTL as the analytics counters, for the same reason: the
+    instruction surface re-renders several sections per sync and each of them
+    wants the counts, so one bounded query per turn is the budget. The cached
+    value may legitimately be ``None`` — "we could not read the store" is an
+    answer worth not re-asking within a turn.
+    """
+    from trw_mcp.state._store_counts import read_store_counts
+
+    config = _facade.get_config()
+    trw_dir = _paths.resolve_project_root() / config.trw_dir
+    key = str(trw_dir)
+    cached = _store_counts_cache.get()
+    if cached is not None and cached[0] == key and (_facade.time.monotonic() - cached[2]) < _ANALYTICS_TTL_SECONDS:
+        return cached[1]
+    counts = read_store_counts(trw_dir)
+    _store_counts_cache.set((key, counts, _facade.time.monotonic()))
+    return counts
+
+
+def _session_phrase(sessions_tracked: int) -> str:
+    """Render " across N prior sessions", or "" when no session was tracked."""
+    if sessions_tracked <= 0:
+        return ""
+    label = "session" if sessions_tracked == 1 else "sessions"
+    return f" across {sessions_tracked} prior {label}"
+
+
 def _format_learning_session_claim() -> str:
-    """Render a truthful analytics-backed learning/session claim."""
-    sessions_tracked, total_learnings = _load_analytics_counts()
-    session_label = "session" if sessions_tracked == 1 else "sessions"
-    learning_label = "learning" if total_learnings == 1 else "learnings"
-    return f"{total_learnings} {learning_label} from {sessions_tracked} prior {session_label}"
+    """Render the session_start scale claim, naming the population it counts.
+
+    PRD-FIX-141-FR04. This used to read "``N`` learnings from ``M`` prior
+    sessions" straight off ``analytics.yaml``, which counts DELIVERED SESSIONS
+    and the learnings recorded in them — not the store. On 2026-09-16 that file
+    was written AFTER the instruction render, so the line every session reads
+    said "0 learnings from 0 prior sessions" over a store holding 1,346 entries
+    (learning L-Rikf). A generated instruction that understates the corpus by
+    1,346 is not a rounding error: it tells the agent there is nothing to recall.
+
+    The inventory numbers now come from the store itself and name their
+    population; ``analytics.yaml`` is consulted only for the session count,
+    which is the one thing the store cannot answer. An unreadable store renders
+    as "not measured", never as a zero.
+    """
+    from trw_mcp.state._store_counts import StoreCounts
+
+    sessions_tracked, _ = _load_analytics_counts()
+    counts = _load_store_counts()
+    session_phrase = _session_phrase(sessions_tracked)
+    if not isinstance(counts, StoreCounts):
+        return f"a store whose entry count could not be measured{session_phrase}"
+    label = "learning" if counts.total == 1 else "learnings"
+    if counts.synced == 0:
+        return f"{counts.total} {label} recorded locally in this project's store{session_phrase}"
+    return (
+        f"{counts.total} {label} in this project's store "
+        f"({counts.local} recorded locally{session_phrase}, {counts.synced} pulled from team sync)"
+    )
 
 
 def render_memory_harmonization() -> str:
@@ -211,8 +271,7 @@ def render_memory_harmonization() -> str:
     policy = re.sub(r"\A\s*<!--.*?-->\s*", "", body, count=1, flags=re.DOTALL)
     policy = re.sub(r"(?m)^(#{1,4}) ", r"##\1 ", policy)
     policy = policy.replace("### TRW Memory Routing\n", "### Memory Routing\n", 1)
-    sessions_tracked, total_learnings = _load_analytics_counts()
-    scale_claim = f"{total_learnings} learnings across {sessions_tracked} sessions"
+    scale_claim = _format_learning_session_claim()
     return (
         f"{MEMORY_ROUTING_SYNC_MARKER_PREFIX}{digest} -->\n\n"
         f"{policy.rstrip()}\n\n"

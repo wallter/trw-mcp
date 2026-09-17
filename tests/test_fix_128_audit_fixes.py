@@ -55,13 +55,29 @@ _PRE_FIX_COMMIT = "e74389584d"
 
 
 def _old_lib_text() -> str:
-    return subprocess.run(
+    """The pre-fix library text, or a skip when this clone cannot reach it.
+
+    The red halves below are only runnable where ``_PRE_FIX_COMMIT`` is still an
+    object in the local history. The deploy reconciles squash local main onto
+    origin/main (``4072622d6`` and its predecessors), which drops the original
+    commits, so a clone made after one of them resolves the SHA to
+    ``fatal: invalid object name`` and every red half died on ``check=True``.
+    The green halves above each call site assert the CURRENT behavior and still
+    run; only the historical comparison is skipped, and the reason says so.
+    """
+    proc = subprocess.run(
         ["git", "show", f"{_PRE_FIX_COMMIT}:trw-mcp/src/trw_mcp/data/hooks/lib-trw.sh"],
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
-        check=True,
-    ).stdout
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.skip(
+            f"red half unavailable: pre-fix commit {_PRE_FIX_COMMIT} is not reachable in this clone "
+            f"(history was squashed by a deploy reconcile); the current-behavior assertions above ran"
+        )
+    return proc.stdout
 
 
 def _source_and_run(root: Path, lib: Path, script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:

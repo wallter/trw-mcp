@@ -79,6 +79,12 @@ def test_startup_validation_activates_from_legacy_flat_meta_tune_key(
     )
 
     validate_calls: list[bool] = []
+    # Pinned to Linux: PRD-FIX-137 forces meta-tune off on any other host at
+    # config build time, so on macOS the resolved config never activates and
+    # these assertions would measure the host gate, not startup validation.
+    # That gate has its own tests (tests/unit/meta_tune/test_platform_gate.py).
+    monkeypatch.setattr("trw_mcp.models.config._loader.platform.system", lambda: "Linux")
+    monkeypatch.delenv("TRW_META_TUNE_ENABLED", raising=False)
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: repo_root)
     monkeypatch.setattr(_app, "validate_meta_tune_defaults", lambda cfg: validate_calls.append(cfg.meta_tune.enabled))
     reload_config(None)
@@ -212,6 +218,12 @@ def test_startup_validation_uses_custom_kill_switch_path_and_sandbox_image_tag(
         ),
         encoding="utf-8",
     )
+    # Pinned to Linux: PRD-FIX-137 forces meta-tune off on any other host at
+    # config build time, so on macOS the resolved config never activates and
+    # these assertions would measure the host gate, not startup validation.
+    # That gate has its own tests (tests/unit/meta_tune/test_platform_gate.py).
+    monkeypatch.setattr("trw_mcp.models.config._loader.platform.system", lambda: "Linux")
+    monkeypatch.delenv("TRW_META_TUNE_ENABLED", raising=False)
     monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: repo_root)
     monkeypatch.setattr("trw_mcp.meta_tune.boot_checks._HAS_SECCOMP", True)
     monkeypatch.setattr("trw_mcp.meta_tune.boot_checks._IS_LINUX", True)

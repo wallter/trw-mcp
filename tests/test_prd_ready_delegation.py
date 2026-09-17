@@ -90,6 +90,15 @@ def test_clients_without_internal_phases_retain_self_contained_workflow(tmp_path
         assert resource.name in adapter
         assert resource.read_bytes() == (DATA / "skills" / name / "SKILL.md").read_bytes()
     # Cursor remains a separate self-contained projection, not silently excluded.
+    #
+    # "Use EARS patterns only when" used to stand in for "this is the whole
+    # body". That sentence no longer exists ANYWHERE in the tree -- EARS
+    # authoring guidance now lives in trw-prd-groom ("Use EARS patterns only
+    # where they improve requirement clarity") -- so it had stopped being
+    # evidence of anything. The self-containment claim is asserted directly
+    # instead: gate vocabulary from the skill body, and the ABSENCE of the
+    # resource-pointing shape the opencode adapter above is built from.
     cursor = (ROOT / ".cursor/skills/trw-prd-ready/SKILL.md").read_text()
-    for phrase in ("Use EARS patterns only when", "READY", "NEEDS WORK", "BLOCK"):
+    for phrase in ("quality_tier: approved", "validation_partial: false", "READY", "NEEDS WORK", "BLOCK"):
         assert phrase in cursor
+    assert "-contract.md" not in cursor, "the cursor projection must be the body, not an adapter"

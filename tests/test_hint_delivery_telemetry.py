@@ -40,7 +40,7 @@ def _hint_events(repo: Path) -> list[dict[str, object]]:
 
 def _compute(monkeypatch: pytest.MonkeyPatch, repo: Path, *, eligible: bool, file_path: str = "src/app.py") -> object:
     """Run the real hint computation with entitlement forced on/off."""
-    from trw_mcp.tools import before_edit_hint as beh
+    from trw_mcp.tools import _before_edit_hint_core as beh
 
     # The channel-event writer resolves its log via TRW_REPO_ROOT.
     monkeypatch.setenv("TRW_REPO_ROOT", str(repo))

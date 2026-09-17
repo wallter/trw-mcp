@@ -6,6 +6,7 @@ import hashlib
 
 import pytest
 
+from trw_mcp.state._store_counts import StoreCounts as _StoreCounts
 from trw_mcp.state.claude_md.sections import _memory_routing as routing
 
 
@@ -19,6 +20,7 @@ def test_renderer_consumes_loaded_policy_once(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(routing, "_read_bundled_surface", read)
     monkeypatch.setattr(routing, "_load_analytics_counts", lambda: (12, 34))
+    monkeypatch.setattr(routing, "_load_store_counts", lambda: _StoreCounts(total=40, local=34, synced=6))
     rendered = routing.render_memory_harmonization()
     assert calls == ["memory-routing.md"]
     assert "### Memory Routing\n" in rendered
@@ -28,7 +30,11 @@ def test_renderer_consumes_loaded_policy_once(monkeypatch: pytest.MonkeyPatch) -
     assert "canonical metadata" not in rendered
     digest = hashlib.sha256(body.encode()).hexdigest()[:12]
     assert f"{routing.MEMORY_ROUTING_SYNC_MARKER_PREFIX}{digest} -->\n" in rendered
-    assert "34 learnings across 12 sessions" in rendered
+    # PRD-FIX-141-FR04: the claim names its population instead of printing one
+    # unqualified number for two different ones.
+    assert "40 learnings in this project's store" in rendered
+    assert "34 recorded locally across 12 prior sessions" in rendered
+    assert "6 pulled from team sync" in rendered
     assert "native" not in rendered.lower()  # no independently hardcoded policy
 
 
@@ -41,6 +47,7 @@ def test_renderer_portable_policy(monkeypatch: pytest.MonkeyPatch, fallback: boo
 
         monkeypatch.setattr(routing, "_read_bundled_surface", missing)
     monkeypatch.setattr(routing, "_load_analytics_counts", lambda: (0, 0))
+    monkeypatch.setattr(routing, "_load_store_counts", lambda: None)
     rendered = routing.render_memory_harmonization()
     for forbidden in (
         "**NEVER**",

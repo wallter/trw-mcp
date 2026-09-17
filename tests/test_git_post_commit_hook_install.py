@@ -178,6 +178,46 @@ def test_hook_fires_on_a_real_commit(git_repo: Path) -> None:
     assert "verify_entries_processed" in receipt
 
 
+def test_the_hook_passes_the_triggering_head_to_the_worker(git_repo: Path) -> None:
+    """PRD-INFRA-186 FR06 — the receipt names the commit that summoned the worker.
+
+    A detached worker can start after HEAD has moved again (that is exactly why
+    coalescing exists), and a sha it resolves for itself then describes a
+    different commit. The hook exports the sha it fired for.
+    """
+    install_git_post_commit_hook(git_repo)
+    _commit(git_repo, "head.py")
+
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=git_repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    receipt = read_receipt(git_repo)
+    assert receipt is not None
+    assert receipt["head_sha"] == head
+
+
+def test_consecutive_commits_each_acquire_the_lock_normally(git_repo: Path) -> None:
+    """PRD-INFRA-186 FR01 — single-flight must not break the ordinary case.
+
+    Synchronous invocations WAIT for each worker, so they never overlap; this is
+    the regression check that the lock is released and re-acquired cleanly, not
+    a demonstration of coalescing (see test_post_commit_single_flight.py for
+    that, which overlaps deliberately).
+    """
+    from trw_mcp.tools._post_commit import LOCK_REL_PATH, PENDING_REL_PATH
+
+    install_git_post_commit_hook(git_repo)
+    for name in ("one.py", "two.py", "three.py"):
+        _commit(git_repo, name)
+
+    receipt = read_receipt(git_repo)
+    assert receipt is not None
+    assert receipt["lock_state"] == "acquired", "each sequential commit owns the lock outright"
+    assert receipt["follow_up_ran"] is False
+    assert not (git_repo / ".trw" / LOCK_REL_PATH).exists(), "the lock must not survive the worker"
+    assert not (git_repo / ".trw" / PENDING_REL_PATH).exists(), "nothing was deferred"
+
+
 def test_hook_never_fails_the_commit(git_repo: Path) -> None:
     """NFR02 fail-open: a hostile dispatch target must not break `git commit`."""
     install_git_post_commit_hook(git_repo)

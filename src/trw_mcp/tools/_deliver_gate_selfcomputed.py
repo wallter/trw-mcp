@@ -26,7 +26,13 @@ from trw_mcp.models.typed_dicts import DeliverResultDict
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["evaluate_acceptance_integrity", "evaluate_formation", "evaluate_plan_acceptance"]
+__all__ = [
+    "evaluate_acceptance_integrity",
+    "evaluate_build_authority",
+    "evaluate_formation",
+    "evaluate_plan_acceptance",
+    "log_unused_override_intent",
+]
 
 
 def evaluate_acceptance_integrity(
@@ -178,3 +184,158 @@ def evaluate_formation(
         gate_type="formation_member_incomplete",
         result_block_key="formation_gate_block",
     )
+
+
+def log_unused_override_intent(allow_unverified: bool, unverified_reason: str, resolved_run: Path | None) -> None:
+    """Record that an override was OFFERED to a delivery no gate blocked — PRD-FIX-140-FR02.
+
+    The bundled hook used to append a line to ``.trw/context/deliver-override-audit.jsonl``
+    whenever override intent arrived on its advisory path, because the server
+    never saw that case: a structured record is only validated when a STRUCTURED
+    gate actually fires. Demoting the hook (FR01) would have dropped that
+    observation entirely, so it is emitted here instead — the caller asserted an
+    acceptable failure for a delivery that had nothing to accept.
+    """
+    if not (allow_unverified and unverified_reason.strip()):
+        return
+    logger.info(
+        "deliver_override_intent_unused",
+        run=str(resolved_run) if resolved_run else "",
+        reason_chars=len(unverified_reason.strip()),
+    )
+
+
+def evaluate_build_authority(
+    results: DeliverResultDict,
+    errors: list[str],
+    resolved_run: Path | None,
+    trw_dir: Path,
+    allow_unverified: bool,
+    unverified_reason: str,
+) -> bool:
+    """PRD-FIX-140-FR04/FR05 — the build rules the client-side hook used to own.
+
+    Two conditions, both previously enforced ONLY by
+    ``data/hooks/pre-tool-deliver-gate.sh`` and therefore invisible to any client
+    that does not run it:
+
+    * FR04 — an UNPINNED delivery with no passing build record for its own session.
+      ``check_delivery_gates`` returns before the gate-mode dispatch for
+      ``run_path=None``, so the decision is made here, against the SAME predicate
+      and the same change-evidence clause the pinned path uses: a recorded build
+      FAILURE blocks, and so does a session that recorded modifications to at
+      least ``deliver_gate_unclassified_change_threshold`` distinct files with no
+      passing build. A session with no recorded modifications stays advisory, so
+      the docs-only over-block this PRD exists to fix does not return. Unreadable
+      evidence — of the build result OR of the change count — blocks.
+    * FR05 — a pinned run whose MOST RECENT build check reported failure. The
+      build gate is satisfied by any earlier passing event, so a pass-then-fail
+      run could deliver on stale good news.
+
+    Both are STRUCTURED blocks: a PRD-CORE-191 acceptable-failure record still
+    releases them, so the gate can force evidence or a record but never wedge a
+    session. Both fail CLOSED on uncomputable evidence. Any unexpected fault
+    degrades to no-block (NFR02), matching the other self-computing gates.
+    """
+    try:
+        if resolved_run is None:
+            from trw_mcp.state._paths import get_session_id, resolve_pin_key
+            from trw_mcp.tools._deliver_gate_mode import resolve_unpinned_gate_decision
+            from trw_mcp.tools._delivery_event_checks import (
+                PROCESS_STARTED_AT,
+                unpinned_build_failure_recorded,
+                unpinned_build_passed,
+                unpinned_session_changed_files,
+            )
+
+            # resolve_pin_key, NOT get_session_id: the two evidence WRITERS key on
+            # the pin key — trw_build_check persists its receipt under
+            # ``resolve_pin_key(ctx=ctx)`` (tools/build/_registration.py) and the
+            # PostToolUse hook writes its unpinned change record under
+            # ``trw_pin_key`` (lib-trw.sh), which is the same TRW_SESSION_ID-first
+            # ladder. Reading with the process UUID instead would miss both records
+            # whenever TRW_SESSION_ID is set — i.e. exactly when hooks are wired —
+            # and the gate would silently measure "nothing recorded".
+            session_id = resolve_pin_key(None)
+            # Only claude-code exports an identifier the shell hook and this
+            # server both see. When the ladder bottomed out at the process UUID
+            # the hook's records carry a key this process can never match, so the
+            # change evidence is read unscoped: every unpinned record since this
+            # server started (PRD-FIX-140-FR04, release-verify 2026-09-17 P1-2).
+            key_is_unshared = session_id == get_session_id()
+            recorded_failure = unpinned_build_failure_recorded(trw_dir, session_id)
+            if recorded_failure is False and unpinned_build_passed(
+                trw_dir, session_id, unscoped_since=PROCESS_STARTED_AT if key_is_unshared else None
+            ):
+                return False  # this session recorded a PASSING build after its last edit: satisfied
+            files_changed = (
+                None
+                if recorded_failure is not False
+                else unpinned_session_changed_files(
+                    trw_dir, session_id, unscoped_since=PROCESS_STARTED_AT if key_is_unshared else None
+                )
+            )
+            blocked, mode = resolve_unpinned_gate_decision(files_changed)
+            if not blocked:
+                return False
+            if recorded_failure:
+                cause = "the last trw_build_check recorded by this session reported a failure"
+            elif recorded_failure is None:
+                cause = "this session's ceremony state could not be read, so its build result is unknown"
+            elif files_changed is None:
+                cause = "this session's change evidence could not be read, so it cannot be shown to be code-free"
+            elif key_is_unshared:
+                cause = (
+                    f"{files_changed} file(s) were modified by unpinned sessions in this checkout since this "
+                    "server started (this client publishes no session id a hook can share, so the evidence "
+                    "is read unscoped) and no passing trw_build_check was recorded"
+                )
+            else:
+                cause = f"this session recorded modifications to {files_changed} file(s) and no passing trw_build_check"
+            reason = (
+                f"Delivery blocked: {cause}, and the session is not pinned to a run "
+                f"(deliver_gate_mode={mode}). "
+                "Run project-native validation and record it with trw_build_check(), call "
+                "trw_init()/trw_adopt_run() so run-scoped evidence can be checked, or override with "
+                "allow_unverified=true + an unexpired acceptable-failure record."
+            )
+        else:
+            from trw_mcp.tools._delivery_event_checks import latest_build_check_failed_for_run
+
+            latest_failed = latest_build_check_failed_for_run(resolved_run)
+            if latest_failed is False:
+                return False
+            reason = (
+                "Delivery blocked: the most recent trw_build_check in this run reported a failure"
+                if latest_failed
+                else "Delivery blocked: this run's event log could not be read, so the latest build result is unknown"
+            ) + (
+                ". Fix the failures, re-run project-native validation and record the new result with "
+                "trw_build_check(), or override with allow_unverified=true + an unexpired "
+                "acceptable-failure record."
+            )
+    # trw-fail-silent-allow: matches the fail-OPEN contract every self-computing gate
+    # in this module already carries (NFR02) — a fault in gate dispatch must never
+    # wedge delivery. The fail-CLOSED decisions live INSIDE the predicates this calls
+    # (an unreadable event log and an unreadable ceremony state both return the
+    # blocking value), so this handler covers unexpected faults only, and logs them.
+    except Exception:  # justified: fail-open, a fault in this dispatch must not wedge delivery
+        logger.warning("deliver_build_authority_degraded", run=str(resolved_run), exc_info=True)
+        # trw-fail-silent-allow: NFR02 fail-OPEN dispatch contract; the fail-CLOSED decisions live in the predicates
+        return False
+    from trw_mcp.tools._deliver_gate_dispatch import _hard_block_override
+
+    blocked_delivery = _hard_block_override(
+        results=results,
+        errors=errors,
+        resolved_run=resolved_run,
+        trw_dir=trw_dir,
+        allow_unverified=allow_unverified,
+        unverified_reason=unverified_reason,
+        block_reason=reason,
+        gate_type="delivery_blocked",
+        result_block_key="delivery_blocked",
+    )
+    if blocked_delivery:
+        results["missing_gate"] = "build_check"
+    return blocked_delivery

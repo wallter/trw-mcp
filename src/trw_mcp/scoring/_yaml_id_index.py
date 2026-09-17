@@ -46,8 +46,8 @@ def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
     """
     try:
         raw = yaml_file.read_bytes()
-    except OSError:  # justified: fail-open, skip unreadable entries during index build
-        logger.debug("yaml_path_index_entry_skipped", path=str(yaml_file), exc_info=True)
+    except OSError as exc:  # justified: fail-open, skip unreadable entries during index build
+        logger.debug("yaml_path_index_entry_skipped", path=str(yaml_file), reason=type(exc).__name__, exc_info=True)
         return None
 
     match = _TOP_LEVEL_ID_RE.search(raw)
@@ -70,8 +70,8 @@ def _read_learning_id(reader: _YamlReader, yaml_file: Path) -> str | None:
     # rather than silently dropping the entry from the index.
     try:
         data = reader.read_yaml(yaml_file)
-    except Exception:  # justified: fail-open, skip unreadable entries during index build
-        logger.debug("yaml_path_index_entry_skipped", path=str(yaml_file), exc_info=True)
+    except Exception as exc:  # justified: fail-open, skip unreadable entries during index build
+        logger.debug("yaml_path_index_entry_skipped", path=str(yaml_file), reason=type(exc).__name__, exc_info=True)
         return None
 
     lid_any = data.get("id")
@@ -90,8 +90,22 @@ def _build_yaml_path_index(entries_dir: Path) -> dict[str, Path]:
 
     index: dict[str, Path] = {}
     reader = FileStateReader()
+    skipped = 0
     for yaml_file in iter_yaml_entry_files(entries_dir):
         lid = _read_learning_id(reader, yaml_file)
-        if lid is not None:
-            index[lid] = yaml_file
+        if lid is None:
+            # Per-file causes are debug-level; the COUNT is the part an operator
+            # must see, because an entry missing from this index is an entry
+            # lookup silently cannot find.
+            skipped += 1
+            continue
+        index[lid] = yaml_file
+    if skipped:
+        logger.warning(
+            "yaml_path_index_incomplete",
+            entries_dir=str(entries_dir),
+            indexed=len(index),
+            skipped=skipped,
+            reason="unreadable_or_id_less_entry",
+        )
     return index

@@ -22,7 +22,8 @@ from __future__ import annotations
 import os
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
-from trw_mcp.dispatch._types import DispatchClient
+from trw_mcp.dispatch._posture import reviewer_env_for
+from trw_mcp.dispatch._types import DispatchClient, DispatchPosture
 
 # Always-safe base variables every CLI needs to locate binaries, resolve $HOME,
 # and render output correctly. Deliberately excludes anything secret-bearing.
@@ -63,6 +64,8 @@ def _allowed_names(client: DispatchClient) -> set[str]:
 def build_subprocess_env(
     client: DispatchClient,
     source_env: dict[str, str] | None = None,
+    *,
+    posture: DispatchPosture = "default",
 ) -> dict[str, str]:
     """Build a sanitized env for launching *client*.
 
@@ -70,14 +73,26 @@ def build_subprocess_env(
         client: Which CLI is being launched (selects the API-key allowlist).
         source_env: Environment to filter (defaults to ``os.environ``). Injected
             for testability — tests plant a fake secret and assert it is absent.
+        posture: ``"reviewer"`` overlays that client's ``reviewer_env`` (e.g.
+            ``TRW_SURFACE_ROLE=reviewer``) AFTER filtering. The overlay is
+            keyword-only and defaults to ``"default"``, so every existing caller
+            keeps the exact environment it had.
 
     Returns:
         A new dict containing only allowlisted variables that are actually set
-        in *source_env*. No secret outside the allowlist can reach the child.
+        in *source_env*, plus the posture overlay.
+
+    The overlay is applied LAST and deliberately: a reviewer marking is a
+    decision of the DISPATCHING process, so an inherited ``TRW_SURFACE_ROLE``
+    from the host environment must never be able to un-mark a reviewer child (it
+    cannot reach the child at all — it is outside the allowlist), and a
+    default-posture dispatch must never be marked by inheritance either.
     """
     src = dict(os.environ) if source_env is None else source_env
     allowed = _allowed_names(client)
-    return {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
+    env = {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
+    env.update(reviewer_env_for(client, posture))
+    return env
 
 
 def build_probe_env(source_env: dict[str, str] | None = None) -> dict[str, str]:
@@ -100,6 +115,8 @@ def build_probe_env(source_env: dict[str, str] | None = None) -> dict[str, str]:
 def build_runner_env(
     client: DispatchClient,
     source_env: dict[str, str] | None = None,
+    *,
+    posture: DispatchPosture = "default",
 ) -> dict[str, str]:
     """Build the env for the INTERMEDIATE ``_run_job`` child of a background job.
 
@@ -115,9 +132,14 @@ def build_runner_env(
 
     No host secret outside the client allowlist can reach the runner (and thus
     the foreign agent) through this env.
+
+    ``posture`` is forwarded so the detached intermediate carries the same
+    reviewer marking the synchronous path gives the foreign agent. Without it,
+    the two launch paths would produce different child environments for the same
+    request — the class of divergence the shared resolver exists to prevent.
     """
     src = dict(os.environ) if source_env is None else source_env
-    env = build_subprocess_env(client, source_env=src)
+    env = build_subprocess_env(client, source_env=src, posture=posture)
     for name in _RUNNER_PASSTHROUGH:
         value = src.get(name)
         if value is not None:

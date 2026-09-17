@@ -12,7 +12,7 @@ ResolvedProfile`` rather than reaching into sibling modules.
 
 from __future__ import annotations
 
-from trw_mcp.profile.explain import build_explanation
+from trw_mcp.profile.explain import build_explanation, resolution_basis
 from trw_mcp.profile.inference import infer_domain, infer_task_type
 from trw_mcp.profile.invariants import (
     InvariantViolation,
@@ -70,6 +70,7 @@ __all__ = [
     "infer_domain",
     "infer_task_type",
     "load_layer",
+    "resolution_basis",
     "resolve_session_profile",
     "run_invariants",
     "translate_legacy_client_profile",

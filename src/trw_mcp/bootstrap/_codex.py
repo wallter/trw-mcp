@@ -46,6 +46,8 @@ from trw_mcp.bootstrap._codex_toml import (
     _toml_dumps,
     _toml_key,
     _toml_value,
+    render_config_text,
+    split_managed_block,
 )
 from trw_mcp.models.typed_dicts import (
     BootstrapFileResult,
@@ -73,6 +75,43 @@ _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
 _TRW_PROJECT_DOC = "AGENTS.md"
 _LEGACY_PROJECT_DOC = "CLAUDE.md"
 _TRW_TOOL_PREFIX = "trw_"
+
+#: TRW tools granted ``approval_mode = "approve"`` in the generated config
+#: (PRD-CORE-277-FR06). MEASURED 2026-09-16 against codex-cli 0.154.0: under
+#: ``approval_policy = "never"`` every MCP call is refused with "MCP tool call
+#: requires approval, but approval policy is never" unless the tool carries an
+#: approval mode, which left ``--dangerously-bypass-approvals-and-sandbox`` --
+#: which ALSO drops the OS sandbox -- as the only working path.
+#:
+#: This is the CEREMONY CORE and nothing else: read and progress-recording tools
+#: a non-interactive session must call to start from prior context and leave a
+#: trace. Deliberately absent, and therefore still prompted for: ``trw_deliver``
+#: (records acceptance), ``trw_dispatch`` (launches another agent),
+#: ``trw_instructions_sync`` and ``trw_claude_md_sync`` (rewrite the operator's
+#: instruction files). ``default_tools_approval_mode`` is NOT emitted: a blanket
+#: grant would cover those four the moment a new one is registered.
+_CODEX_APPROVED_TOOLS: tuple[str, ...] = (
+    "trw_session_start",
+    "trw_init",
+    "trw_status",
+    "trw_checkpoint",
+    "trw_recall",
+    "trw_learn",
+    "trw_peers",
+    "trw_send",
+    "trw_inbox",
+)
+
+#: Keys of ``mcp_servers.trw`` that TRW owns and overwrites on every run.
+#: Everything else under that table belongs to the user and is carried through.
+#: ``url`` is in the managed set even though TRW never writes it: the stdio
+#: launcher IS the portability boundary, so a legacy direct-HTTP entry must be
+#: REPLACED, not merged beside a command (a server table carrying both is
+#: ambiguous). ``cwd`` and ``env`` are absent on purpose -- those are the user's.
+_TRW_MANAGED_SERVER_KEYS: frozenset[str] = frozenset(
+    {"command", "args", "url", "enabled", "enabled_tools", "disabled_tools", "tools"}
+)
+
 
 __all__ = [
     "BootstrapFileResult",
@@ -230,6 +269,29 @@ def _trw_mcp_disabled_tools(existing_server: CodexMcpServerEntry) -> list[str]:
     return sorted(disabled_tools)
 
 
+def _trw_mcp_tool_approvals(existing_server: CodexMcpServerEntry) -> dict[str, CodexMcpToolConfigEntry]:
+    """Grant the ceremony core an approval mode, preserving the user's own entries.
+
+    A user entry WINS for its tool: someone who set ``approval_mode = "prompt"``
+    on ``trw_checkpoint`` asked to be asked, and a generated file that silently
+    re-approved it would be the same defect as dropping the table. TRW only fills
+    in a core tool the user has not spoken about, and only for names the eligible
+    manifest still carries -- a renamed tool must not linger as a stale grant.
+    """
+    registered = set(_registered_trw_tool_names())
+    approvals: dict[str, CodexMcpToolConfigEntry] = dict(existing_server.get("tools", {}))
+    for tool_name in _CODEX_APPROVED_TOOLS:
+        if tool_name not in registered:
+            logger.warning("codex_approval_tool_unregistered", tool=tool_name)
+            continue
+        if tool_name in approvals and "approval_mode" in approvals[tool_name]:
+            continue
+        entry: CodexMcpToolConfigEntry = dict(approvals.get(tool_name, {}))  # type: ignore[assignment]
+        entry["approval_mode"] = "approve"
+        approvals[tool_name] = entry
+    return approvals
+
+
 def _skill_paths() -> list[str]:
     """Return repo-local skill paths for Codex config."""
     skills_dir = _codex_skills_source_dir()
@@ -286,10 +348,19 @@ def merge_codex_config(existing: CodexConfigDict, *, target_dir: Path | None = N
     mcp_servers = _normalize_mcp_servers(result.get("mcp_servers"))
     existing_trw_server: CodexMcpServerEntry = mcp_servers.get("trw", {})
     trw_server = _trw_mcp_server_entry(target_dir)
+    # Carry through every key TRW does not own (``env`` above all). The entry used
+    # to be REPLACED wholesale, which is why a hand-added [mcp_servers.trw.env]
+    # table did not survive one update-project (PRD-CORE-277-FR07).
+    for key, value in existing_trw_server.items():
+        if key not in _TRW_MANAGED_SERVER_KEYS:
+            trw_server[key] = value  # type: ignore[literal-required]
     trw_server["enabled_tools"] = _trw_mcp_enabled_tools(existing_trw_server)
     disabled_tools = _trw_mcp_disabled_tools(existing_trw_server)
     if disabled_tools:
         trw_server["disabled_tools"] = disabled_tools
+    approvals = _trw_mcp_tool_approvals(existing_trw_server)
+    if approvals:
+        trw_server["tools"] = approvals
     mcp_servers["trw"] = trw_server
     mcp_servers.setdefault("openaiDeveloperDocs", _docs_mcp_server_entry())
     result["mcp_servers"] = mcp_servers
@@ -340,16 +411,18 @@ def generate_codex_config(
 
     if existed and not force:
         try:
-            existing = _parse_codex_toml(config_path.read_text(encoding="utf-8"))
+            raw = config_path.read_text(encoding="utf-8")
+            existing = _parse_codex_toml(raw)
             merged = merge_codex_config(existing, target_dir=target_dir)
-            config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
+            text = render_config_text(merged, user_region=split_managed_block(raw), result=result)
+            config_path.write_text(text, encoding="utf-8")
             _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=True)
         except (OSError, tomllib.TOMLDecodeError) as exc:
             result["errors"].append(f"Failed to read/merge {config_path}: {exc}")
     else:
         try:
             merged = merge_codex_config({}, target_dir=target_dir)
-            config_path.write_text(_toml_dumps(cast("dict[str, object]", merged)), encoding="utf-8")
+            config_path.write_text(render_config_text(merged, user_region="", result=result), encoding="utf-8")
             _record_write(cast("dict[str, list[str]]", result), _CODEX_CONFIG_PATH, existed=existed)
         except OSError as exc:
             result["errors"].append(f"Failed to write {config_path}: {exc}")

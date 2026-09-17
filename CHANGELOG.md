@@ -4,6 +4,120 @@ All notable changes to the TRW MCP server package.
 
 ## [Unreleased]
 
+## [3.1.0] — 2026-09-17
+
+### Added
+
+- **`trw_recall` reports `store_count` and `candidate_count`** beside the unchanged
+  `total_available`, and every generated count names the population it counts: local-authored,
+  synced, or total. A store that holds rows no longer prints `0 learnings`.
+- **`trw_prd_validate` returns one readiness verdict.** `verdict: READY|NEEDS_WORK` is derived from
+  the rules, the quality score is secondary, and a `verdict_note` names the blocking failure whenever
+  tier and verdict disagree. A requirement verified by `method: test` with an `evidence_artifact`
+  naming a test file counts as automated behavioural evidence, and the PRD template resource
+  documents `functionality_level` and `automation_infeasible_reason`.
+- **Dispatch results carry `sandbox_verified` and `silence_reason`.** A canary probe proves a
+  read-only child could not write, and `silence_reason` (`timed_out`, `auth_or_content_stop`,
+  `nonzero_exit`, `empty_output`) forces `ok` to false, so an empty or stopped review is never read
+  as a clean one. `trw-mcp dispatch --verify-sandbox` exercises the probe on demand.
+- **`trw-mcp version-status` and `trw-mcp doctor` warn about running server processes that predate
+  the installed distribution**, so a stale process explains a stale tool surface. `version-status`
+  never prints `compatible: false` with an empty `errors` list.
+- **Team-synced learnings carry `origin_project`** in metadata, taken from the backend payload when
+  it names one and recorded as `unknown` otherwise, never inferred. Project-scoped surfaces partition
+  on it, so another project's rows no longer displace this project's in session-start recall, the
+  learnings summary, before-edit hints or nudge selection.
+- **`make probe-mcp` runs a read-only MCP contract probe** against a disposable project: twelve
+  assertions covering the handshake version, the exposed tool set against the profile manifest, the
+  resource and prompt catalogues, and agreement between the health verdicts `trw_session_start` and
+  `trw_pipeline_health` report. Nothing it does reaches a live store.
+
+### Changed
+
+- **The server's deliver gate is the only delivery authority.** It now also refuses an unpinned
+  session that recorded a build failure, and a run whose latest build failed after an earlier pass.
+  The bundled `pre-tool-deliver-gate.sh` hook prints the evidence it sees and always exits 0, and
+  wall-clock build freshness (`TRW_BUILD_FRESHNESS_SECS`) and cross-session receipt acceptance are
+  retired.
+- **Advisories that name a masked tool now carry the step that unmasks it.** Session-start health
+  advisories, the `trw_code_search` missing-index remediation and every `Run trw_*` string include
+  `trw_request_tool_access(...)` when the named tool sits outside the exposed set; operator-only and
+  reviewer-forbidden tools stay distinct and are never auto-exposed. Generated instruction text lists
+  only callable tools plus one pointer, so `trw-mcp check-instructions` reports zero unexposed
+  references on a fresh install.
+- **The MCP handshake reports the trw-mcp version**, read from package metadata; clients previously
+  saw FastMCP's own version.
+- **`trw_session_start` and `trw_pipeline_health` report one graph verdict**, computed from the same
+  function, threshold and namespace-scoped population. The thresholds are now the config keys
+  `pipeline_health_gate_graph_min_corpus` and `embeddings_coverage_warn_threshold`.
+- **`trw_skill_discovery` accepts each host's skill frontmatter.** Claude Code's `context`, `agent`,
+  `disable-model-invocation`, `category` and a blank `argument_hint` are admitted by a per-host
+  schema instead of reporting eleven bundled skills as malformed, and query ranking ignores
+  stopwords.
+- **Meta-tune is forced off on non-Linux hosts with one warning** instead of aborting boot. The gate
+  runs in the config loader and the doctor; Linux keeps the fail-loud validator.
+- **The post-commit sweep is single-flight per store.** An exclusive lock with dead-owner reclaim and
+  a pending marker coalesce commits arriving mid-sweep into exactly one follow-up, and
+  `TRW_POST_COMMIT_BUDGET_SECONDS` (default 300) bounds the work that used to be one unbounded
+  full-store pass per commit. The receipt records `lock_state`, `pending_marked`, `follow_up_ran` and
+  `bounded_stop`.
+- **Dispatch children no longer inherit the server's stdin.** A synchronous codex dispatch inside the
+  MCP server used to hold the JSON-RPC pipe and wait for EOF until it timed out. Read-only dispatch
+  to `agy` is confined by a seatbelt profile that denies all writes, and `update-project` keeps
+  user-edited regions of the generated Codex config while granting the ceremony tools under
+  `approval_policy = "never"`.
+- **The pysqlite3 engine is an optional extra**: `pip install "trw-mcp[sqlite-fix]"`, on x86_64 Linux
+  only. The default install uses the interpreter's own SQLite, chosen by `trw-memory`'s version
+  policy, and the doctor names qualifying interpreters on the box when that engine predates the
+  3.51.3 WAL-reset fix.
+- **Twenty-one config fields that nothing read are retired**, and their keys now raise the
+  retired-key warning: `build_freshness_window_secs`, `skill_active_cap`, `checkpoint_secs`,
+  `consensus_quorum`, `max_child_depth`, `min_shards_floor`, `min_shards_target`,
+  `learning_prune_age_days`, `memory_consolidation_interval_days`, `compliance_history_file`,
+  `compliance_long_session_event_threshold`, `compliance_warning_threshold`,
+  `reflect_q_value_threshold`, `reflect_sequence_lookback`, `validation_fk_optimal_min`,
+  `validation_fk_optimal_max`, `framework_overhead_threshold`, `checkpoints_file`,
+  `finding_dedup_threshold`, `scout_max_mode3_rate`, `test_map_filename`.
+- The `trw_learn` validity-window nudge no longer fires on records that state a defect or an
+  invariant, and the bare-cardinal trigger is removed. `trw_init` creates the `TASK_DIR` it
+  advertises.
+
+### Fixed
+
+- **A passing `trw_build_check` no longer outlives the edits made after it.** The unpinned deliver gate records when each session's build passed and treats the pass as stale once a later file change is recorded, so validation has to be re-run after the last edit rather than once per session. After upgrading, one fresh `trw_build_check` is needed before an unpinned delivery: a pass recorded by an earlier version carries no timestamp and cannot be shown current.
+- **The deliver gate sees change evidence on every client profile.** Only claude-code exports a
+  session id that both the edit hook and the server observe; on the other six profiles the server
+  read the event stream under its own process id and always measured zero changes. When the key is
+  unshared it now counts every unpinned `file_modified` record since the server started, and says so
+  in the block reason.
+- **The PreToolUse edit-hint hooks no longer time out on macOS.** The hook now imports a compute path
+  that does not pull in `fastmcp`, and `trw-memory` loads lazily, so the hook's import cost fell from
+  2.0 s to 0.19 s against its 2.5 s budget. This covers the claude-code, cursor and copilot hooks;
+  the tool surface is unchanged.
+- **Hook deadlines are portable.** The 2.5 s edit-hint bound no longer depends on GNU `timeout`,
+  which macOS does not ship — the deadline lives inside the hint program itself, with
+  `timeout`/`gtimeout` or a POSIX watchdog as the outer backstop, so a hook that had failed before it
+  started now runs and a real timeout is reported as one. The degenerate-result advisory's own
+  deadline defaults to 300 ms on macOS, where a process spawn costs far more than the 50 ms Linux
+  budget allowed, and pin-TTL expiry falls back to BSD `date -j -f` where GNU `date -d` is absent.
+- **Team-learning pull no longer deadlocks on an entry the security gate refused.** A poisoning or
+  PII rejection is booked as `blocked` — a judged rejection that advances the cursor — and the
+  response ETag is cached only when the cursor advances, so a held batch is re-offered instead of
+  answered with 304 forever. The `sync_cycle_completed` log now carries `merge_blocked`, so a gate
+  refusal is distinguishable from quarantine or a malformed payload.
+- **`update-project` no longer deletes a repo-local skill.** A retired bundle name is removed only
+  with manifest proof that TRW wrote it, and client-mirror skill directories follow their
+  `.claude/skills` source.
+- **Dispatch on macOS kills the child tree it started.** Process identity now comes from `ps` plus
+  `sysctl kern.boottime`, so a timed-out or cancelled child is no longer orphaned by a refused
+  `killpg`. `trw-mcp dispatch --pty` uses BSD `script` syntax on macOS, `OPENCODE_CONFIG` and
+  `OPENCODE_CONFIG_DIR` are forwarded to opencode children, and a stderr stop marker counts only when
+  the run produced no answer.
+- Four errors that were being swallowed now name their cause or their fail-closed reason.
+- The bundled framework and AARE-F canon baselines are re-frozen to their v27.1 sources.
+- macOS test hygiene: the suite no longer inherits developer environment state or the developer's
+  `PATH`, and skips the half that needs an artifact this platform does not build.
+
 ## [3.0.0] — 2026-09-15
 
 ### Removed

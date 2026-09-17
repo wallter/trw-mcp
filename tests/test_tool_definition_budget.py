@@ -117,6 +117,19 @@ pytestmark = pytest.mark.unit
 # Re-measured after merging main rather than trusting the arithmetic: 39,895
 # across 51 tools, 55 chars under this ceiling. Narrow headroom is the point —
 # the next tool should have to justify itself here rather than inherit room.
+#
+# 2026-09-17: measured 40,132 across the same 51 tools — 182 over. The ceiling
+# was NOT raised. Prose was re-tightened in five definitions (trw_learn,
+# trw_learn_update, trw_deliver, trw_delivery_recover, trw_instructions_sync)
+# plus two advanced-knob parameter descriptions (trw_prd_validate.fast/verbose)
+# and the deprecated trw_claude_md_sync alias: wording only, no clause and no
+# required header removed. SIX shortenings were REVERTED because other tests pin
+# the exact phrases they touched ("structured acceptable-failure", "with all
+# four of", "Free text and review-verdict labels are", "manufacture a learning",
+# "unknown keys are rejected", "Learnings are not promoted into the instruction
+# file") -- the whole trw_deliver paragraph is pinned, so the saving came from
+# unpinned prose in trw_recall instead. That feedback loop is the point; expect
+# it rather than routing around it. Re-measured 39,931 across 51 tools, 19 under.
 FULL_SURFACE_CEILING_CHARS: Final[int] = 39_950
 CORE_PRESET_CEILING_CHARS: Final[int] = 15_200
 

@@ -184,8 +184,23 @@ def _check_push_staleness(health: GateResult, config: TRWConfig | None) -> str |
     )
 
 
-def _check_empty_graph(health: GateResult, config: TRWConfig | None) -> str | None:
-    """Return a reason string when the knowledge graph is empty for a populated corpus."""
+def _check_empty_graph(health: GateResult) -> str | None:
+    """Return the ``graph_edges`` probe's own reason when it reports the graph dead.
+
+    PRD-FIX-141-FR02: this used to RE-DERIVE the verdict from ``edge_count == 0``
+    against its own threshold, which is how ``trw_session_start`` escalated
+    "knowledge graph dead: 0 edges for 1343 memories" at severity error in the
+    same second ``trw_pipeline_health`` reported ``graph_edges.degraded=false``
+    for the same store (learning L-Rikf). Two defects in one line: ``edge_count``
+    stopped being the question when PRD-CORE-245 FR07 moved tag co-occurrence to
+    a DERIVED relation that materialises no row, and the threshold here was a
+    second number for a question the probe had already answered.
+
+    The gate now reads the probe's verdict and reports the probe's own string,
+    so agreement is by construction rather than by two predicates happening to
+    coincide. ``config`` is no longer a parameter: the single threshold is
+    resolved once, inside the probe, from the config the gate threads in.
+    """
     graph = health.get("graph_edges")
     if not isinstance(graph, dict):
         return None
@@ -193,19 +208,10 @@ def _check_empty_graph(health: GateResult, config: TRWConfig | None) -> str | No
     # fail-closed gate could escalate a store it never managed to read.
     if graph.get("measured") is False:
         return None
-
-    min_corpus = 10
-    if config is not None:
-        min_corpus = int(getattr(config, "pipeline_health_gate_graph_min_corpus", 10))
-
-    edge_raw = graph.get("edge_count", 0)
-    edge_count = int(edge_raw) if isinstance(edge_raw, (int, float)) else 0
-    corpus_raw = graph.get("corpus_count", 0)
-    corpus_count = int(corpus_raw) if isinstance(corpus_raw, (int, float)) else 0
-
-    if edge_count == 0 and corpus_count > min_corpus:
-        return f"knowledge graph dead: 0 edges for {corpus_count} memories (min corpus {min_corpus})"
-    return None
+    if not graph.get("degraded"):
+        return None
+    advisory = str(graph.get("advisory") or "")
+    return advisory or "knowledge graph dead: the graph_edges probe reported a degraded graph"
 
 
 def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> GateResult:
@@ -239,7 +245,10 @@ def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> Gat
         return {"healthy": True, "status": "disabled", "reasons": []}
 
     try:
-        health = step_pipeline_health(trw_dir)
+        # PRD-FIX-141-FR02: thread the gate's own config into the probes so the
+        # thresholds this gate enforces and the thresholds the advisory surface
+        # reports are the same numbers, resolved once.
+        health = step_pipeline_health(trw_dir, config)
     except Exception as exc:  # justified: fail-open on internal error, never wedge CI on a false negative
         logger.warning("pipeline_health_gate_probe_failed", error=str(exc))
         return {"healthy": True, "status": "probe_error", "reasons": []}
@@ -248,7 +257,7 @@ def check_pipeline_health(trw_dir: Path, config: TRWConfig | None = None) -> Gat
         reason
         for reason in (
             _check_push_staleness(health, config),
-            _check_empty_graph(health, config),
+            _check_empty_graph(health),
             _check_localhost_only(config),
         )
         if reason

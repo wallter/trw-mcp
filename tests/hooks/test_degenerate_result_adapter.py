@@ -130,25 +130,56 @@ def test_registered_in_both_templates() -> None:
 # --------------------------------------------------------------------------- #
 # FR10 — five typed tunables behind one accessor
 # --------------------------------------------------------------------------- #
-def test_shell_defaults_match_the_typed_fields() -> None:
+def _shell_setting(root: Path, key: str) -> str:
+    """What ``trw_degenerate_result_setting <key>`` resolves to for *root*.
+
+    No config file and no ``TRW_DEGENERATE_RESULT_*`` in the environment, so the
+    answer is the accessor's own default for the platform running the test.
+    """
+    child = {k: v for k, v in os.environ.items() if not k.startswith("TRW_DEGENERATE_RESULT_")}
+    child["CLAUDE_PROJECT_DIR"] = str(root)
+    library = root / ".claude" / "hooks" / "lib-trw.sh"
+    result = subprocess.run(
+        ["sh", "-c", f'. "{library}" && trw_degenerate_result_setting "$1"', "sh", key],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        env=child,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, f"{key}: accessor exited {result.returncode}\n{result.stderr}"
+    return result.stdout.strip()
+
+
+def test_shell_defaults_match_the_typed_fields(tmp_path: Path) -> None:
     """The two copies of each default cannot drift.
 
     A shell hook cannot import a Pydantic model, so the accessor in lib-trw.sh
     carries its own copy of every default. The Pydantic field is the source of
     truth; this is what keeps the copy honest.
+
+    The three scalars are compared by RUNNING the accessor, not by grepping it.
+    ``deadline_ms`` now resolves per platform (50 ms on Linux, 300 ms on Darwin —
+    see ``_fields_degenerate_result.py``), and a grep for the literal would pass
+    on either host as long as BOTH numbers appear somewhere in the function, which
+    is exactly the drift — a swapped branch — that this test exists to catch.
     """
     from trw_mcp.models.config import TRWConfig
 
     config = TRWConfig()
     library = (_HOOKS / "lib-trw.sh").read_text(encoding="utf-8")
     accessor = library.split("trw_degenerate_result_setting() {", 1)[1]
-    for field in (
-        "degenerate_result_cooldown_calls",
-        "degenerate_result_max_read_bytes",
-        "degenerate_result_deadline_ms",
+    root = _project(tmp_path, "shell-defaults")
+    for field, short in (
+        ("degenerate_result_cooldown_calls", "cooldown_calls"),
+        ("degenerate_result_max_read_bytes", "max_read_bytes"),
+        ("degenerate_result_deadline_ms", "deadline_ms"),
     ):
         value = getattr(config, field)
-        assert f"_tdrs_default='{value}'" in accessor, f"{field}: shell default drifted from the typed default {value}"
+        assert _shell_setting(root, short) == str(value), (
+            f"{field}: the shell accessor resolves a different default than the typed {value}"
+        )
     for marker in config.degenerate_result_truncation_markers:
         assert marker in accessor, f"truncation marker {marker!r} is missing from the shell default"
     for prefix in config.degenerate_result_freshness_commands:

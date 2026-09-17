@@ -7,10 +7,17 @@ from pathlib import Path
 
 import pytest
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.bootstrap import init_project, update_project
 from trw_mcp.state.persistence import FileStateReader
 
 from ._bootstrap_test_support import patch_update_project_internals
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``."""
+    isolate_ide_detection(monkeypatch)
 
 
 @pytest.mark.unit

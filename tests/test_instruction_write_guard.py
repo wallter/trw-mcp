@@ -109,12 +109,24 @@ class TestOverflowIsRefused:
         assert refusal["reason"] == "oversized"
         assert refusal["file"] == str(target)
         assert refusal["limit"] == 300
-        # Merged line count, measured on this fixture; the point is that the
-        # gate now sees the MERGED total rather than the 104-line section.
-        # 428, not 429: PRD-CORE-243-FR06/FR08's render_merged_content fix
-        # removed a redundant blank line this no-markers-found branch used to
-        # add at EOF (trw_section already carries its own trailing newline).
-        assert refusal["lines"] == 428
+        # The gate must see the MERGED total, not just the rendered section.
+        #
+        # DERIVED, not pinned. The literal used to be 428 and drifted to 430
+        # the moment two tools were registered: ``_rendered_section`` embeds
+        # ``render_tool_list()``, so the section is one line longer per tool and
+        # a hardcoded total makes every new tool fail this file for a reason
+        # that has nothing to do with the write guard. Only the JOIN is a
+        # constant here: two blank separator lines between the user region and
+        # the block (PRD-CORE-243-FR06/FR08's render_merged_content fix removed
+        # a third one this no-markers-found branch used to add at EOF, because
+        # trw_section already carries its own trailing newline).
+        merge_separator_lines = 2
+        expected_lines = (
+            len(_handwritten(322).splitlines()) + len(_rendered_section().splitlines()) + merge_separator_lines
+        )
+        assert refusal["lines"] == expected_lines
+        # Non-vacuity: the number is the merged total, not the section alone.
+        assert refusal["lines"] > len(_rendered_section().splitlines())
         assert refusal["lines"] > refusal["limit"]
         # Every single hand-written line survives.
         surviving = target.read_text(encoding="utf-8")

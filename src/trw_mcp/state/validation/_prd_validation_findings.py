@@ -19,7 +19,7 @@ Split out of ``_prd_validation.py``/``prd_quality.py`` to keep both under the
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from trw_mcp.models.requirements import PRDQualityGates, ValidationFailure
 from trw_mcp.state.validation._verification_command_lint import malformed_verification_commands
@@ -35,6 +35,34 @@ VERIFICATION_COMMAND_RULE = "verification_command_runnable"
 #: without naming itself. Seeing this in output is a validator defect, not a
 #: PRD defect — it means a gate needs to emit its own error-severity finding.
 VALID_WITHOUT_ERROR_RULE = "valid_without_error_finding"
+
+
+#: The verdict vocabulary. Two values, because readiness is a decision, not a
+#: band: a caller either may implement this PRD or must fix something first.
+VERDICT_READY = "READY"
+VERDICT_NEEDS_WORK = "NEEDS_WORK"
+
+#: Prefix ``_prd_quality_refresh`` puts on the integrity warning that discloses
+#: a partial validation (fast mode, budget exhaustion, or a failed check group).
+PARTIAL_MARKER_PREFIX = "validation_partial:"
+
+
+@runtime_checkable
+class _VerdictCarrier(Protocol):
+    """The V2-only surface :func:`finalize_verdict` writes.
+
+    Runtime-checkable so the shared V1/V2 entry point can tell the two apart
+    without an ``hasattr`` dance mypy cannot narrow.
+    """
+
+    valid: bool
+    failures: list[ValidationFailure]
+    integrity_warnings: list[str]
+    quality_tier: object
+    grade: str
+    total_score: float
+    verdict: str
+    verdict_note: str
 
 
 class _ValidationResultLike(Protocol):
@@ -124,3 +152,70 @@ def enforce_valid_invariant(result: _ValidationResultLike) -> None:
             severity="error",
         ),
     ]
+
+
+def _blocking_rules(failures: Sequence[ValidationFailure]) -> list[str]:
+    """Distinct rule names of the ``error``-severity findings, in report order."""
+    return list(dict.fromkeys(failure.rule for failure in failures if failure.severity == "error"))
+
+
+def finalize_verdict(result: _ValidationResultLike) -> None:
+    """Enforce the valid/error invariant, then derive the ONE readiness verdict.
+
+    PRD-FIX-141-FR09. ``trw_prd_validate`` used to answer the readiness question
+    twice and differently: ``total_score: 91.87``, ``quality_tier: approved``,
+    ``grade: A`` — and ``valid: false`` with three error-severity failures, for
+    the same PRD in the same payload (learning L-9GXR). Both halves were
+    internally correct. A score band is not a readiness decision, and nothing in
+    the payload said which one to act on.
+
+    ``verdict`` is derived from the RULES, with the score demoted to a secondary
+    signal it never claims to be more than:
+
+    * ``READY`` — ``valid`` and the validation was complete.
+    * ``NEEDS_WORK`` — a rule blocks it, OR the run was PARTIAL. A partial run
+      (fast mode, budget exhaustion, a failed check group) leaves grounding
+      checks unperformed, so ``valid: true`` there means "nothing we ran
+      objected", which is not the same claim and must not be promoted to one.
+
+    ``verdict_note`` is non-empty for every ``NEEDS_WORK`` and names what blocks
+    it — including, explicitly, when an approving tier or grade sits beside it,
+    because that pairing is the one a reader is most likely to misread.
+
+    Combined with :func:`enforce_valid_invariant` in ONE call because the two
+    must not be done separately: a verdict derived before the invariant backstop
+    could name no rule at all. Both the offline scorer and the dynamic-refresh
+    path call this, so they cannot report different readiness for one PRD.
+    """
+    enforce_valid_invariant(result)
+    if not isinstance(result, _VerdictCarrier):  # ValidationResult (V1) carries no verdict
+        return
+
+    warnings = list(getattr(result, "integrity_warnings", []))
+    partial_markers = [w for w in warnings if str(w).startswith(PARTIAL_MARKER_PREFIX)]
+    blocking = _blocking_rules(result.failures)
+
+    if result.valid and not partial_markers:
+        result.verdict = VERDICT_READY
+        result.verdict_note = ""
+        return
+
+    result.verdict = VERDICT_NEEDS_WORK
+    reasons: list[str] = []
+    if blocking:
+        reasons.append(f"blocked by: {', '.join(blocking)}")
+    if partial_markers:
+        reasons.append("validation was PARTIAL — some grounding checks did not run")
+    if not reasons:
+        reasons.append("the validator rejected this PRD without naming a rule")
+
+    tier = str(getattr(getattr(result, "quality_tier", ""), "value", getattr(result, "quality_tier", "")))
+    grade = str(getattr(result, "grade", ""))
+    score_note = ""
+    if tier == "approved" or grade == "A":
+        score_note = (
+            f" The score band (quality_tier={tier}, grade={grade}, total_score="
+            f"{getattr(result, 'total_score', 0.0)}) describes WRITING QUALITY, not readiness; "
+            "the verdict above is the one to act on."
+        )
+    result.verdict_note = "NEEDS_WORK: " + "; ".join(reasons) + "." + score_note

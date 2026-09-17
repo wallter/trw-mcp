@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -342,8 +343,18 @@ def test_writer_identity_and_heartbeat_state(tmp_path: Path) -> None:
     _write_lock(trw_dir, "self.lock", os.getpid())
     _write_lock(trw_dir, "ghost.lock", os.getppid(), epoch=1000.0)
     census = take_writer_census(trw_dir, threshold=8)
-    assert os.getppid() not in census.writer_pids
-    assert census.writer_pids == (os.getpid(),)
+    if sys.platform == "linux":
+        assert os.getppid() not in census.writer_pids
+        assert census.writer_pids == (os.getpid(),)
+    else:
+        # Ghost detection needs a birth time, and only Linux exposes one
+        # (/proc/<pid>/stat field 22 + /proc/stat btime). Everywhere else
+        # process_birth_epoch returns None BY DESIGN, and the contract is
+        # "unverified, retained" -- never a false exclusion. Asserted rather
+        # than skipped, because a fail-OPEN that started excluding pids it
+        # cannot verify would be the more dangerous regression.
+        assert census.identity_state == "unverified"
+        assert os.getppid() in census.writer_pids
     # This reader NEVER unlinks a lock — pruning belongs to trw-memory.
     assert (writers / "ghost.lock").exists()
 

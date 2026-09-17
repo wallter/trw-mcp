@@ -8,10 +8,13 @@ import structlog
 from fastmcp import FastMCP
 
 logger = structlog.get_logger(__name__)
+from pathlib import Path
+
 from ruamel.yaml import YAML
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import get_config
+from trw_mcp.models.config import TRWConfig, get_config
+from trw_mcp.state._origin_project import demote_unattributable
 from trw_mcp.state._paths import resolve_project_root
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
@@ -133,43 +136,69 @@ def register_config_resources(server: FastMCP) -> None:
         patterns, and context (architecture + conventions) from .trw/.
         """
         config = get_config()
-        reader = FileStateReader()
-        project_root = resolve_project_root()
-        trw_dir = project_root / config.trw_dir
+        return _build_learnings_summary(resolve_project_root() / config.trw_dir, config)
 
-        lines: list[str] = ["# TRW Learnings Summary\n"]
 
-        # High-impact learnings (SQLite-backed via memory_adapter)
-        high_impact = list_active_learnings(trw_dir, min_impact=0.7, limit=10)
-        if high_impact:
-            lines.append("## High-Impact Learnings\n")
-            for entry in high_impact:
-                summary = entry.get("summary", "")
-                detail = entry.get("detail", "")
-                lines.append(f"- **{summary}**: {detail}\n")
+def _build_learnings_summary(trw_dir: Path, config: TRWConfig) -> str:
+    """Render the ``trw://learnings/summary`` body for one resolved ``.trw`` dir.
 
-        # Patterns
-        patterns_dir = trw_dir / config.patterns_dir
-        if patterns_dir.exists():
-            lines.append("\n## Discovered Patterns\n")
-            for pattern_file in sorted(patterns_dir.glob("*.yaml")):
-                if pattern_file.name == "index.yaml":
-                    continue
-                try:
-                    data = reader.read_yaml(pattern_file)
-                    name = data.get("name", "")
-                    desc = data.get("description", "")
-                    lines.append(f"- **{name}**: {desc}\n")
-                except (StateError, ValueError, TypeError):
-                    continue
+    Split out of the resource closure so PRD-FIX-141-FR04's population labels
+    are testable against a real store without standing up an MCP server.
+    """
+    reader = FileStateReader()
 
-        # Analytics
-        analytics_path = trw_dir / config.context_dir / "analytics.yaml"
-        if reader.exists(analytics_path):
-            data = reader.read_yaml(analytics_path)
-            lines.append("\n## Analytics\n")
-            lines.append(f"- Sessions tracked: {data.get('sessions_tracked', 0)}\n")
-            lines.append(f"- Total learnings: {data.get('total_learnings', 0)}\n")
-            lines.append(f"- Avg per session: {data.get('avg_learnings_per_session', 0)}\n")
+    lines: list[str] = ["# TRW Learnings Summary\n"]
 
-        return "".join(lines)
+    # High-impact learnings (SQLite-backed via memory_adapter)
+    # PRD-CORE-278 FR09: fetch twice the rendered count, partition by origin,
+    # then render — a summary titled "High-Impact Learnings" for THIS project
+    # listed another repository's Teams-ingestion notes because the cap was spent
+    # before any local row was reached (L-XIhp).
+    high_impact = demote_unattributable(list_active_learnings(trw_dir, min_impact=0.7, limit=20))[:10]
+    if high_impact:
+        lines.append("## High-Impact Learnings\n")
+        for entry in high_impact:
+            summary = entry.get("summary", "")
+            detail = entry.get("detail", "")
+            lines.append(f"- **{summary}**: {detail}\n")
+
+    # Patterns
+    patterns_dir = trw_dir / config.patterns_dir
+    if patterns_dir.exists():
+        lines.append("\n## Discovered Patterns\n")
+        for pattern_file in sorted(patterns_dir.glob("*.yaml")):
+            if pattern_file.name == "index.yaml":
+                continue
+            try:
+                data = reader.read_yaml(pattern_file)
+                name = data.get("name", "")
+                desc = data.get("description", "")
+                lines.append(f"- **{name}**: {desc}\n")
+            except (StateError, ValueError, TypeError):
+                continue
+
+    # Analytics. PRD-FIX-141-FR04: "Total learnings: 9" was the analytics
+    # counter for LOCALLY RECORDED learnings, printed without saying so on a
+    # store holding 1,346 entries (learning L-Rikf). Every line here now
+    # names the population it counts, and the store's own inventory is
+    # reported beside the counters rather than implied by them.
+    from trw_mcp.state._store_counts import read_store_counts
+
+    counts = read_store_counts(trw_dir)
+    analytics_path = trw_dir / config.context_dir / "analytics.yaml"
+    has_analytics = reader.exists(analytics_path)
+    if has_analytics or counts is not None:
+        lines.append("\n## Analytics\n")
+    if counts is None:
+        lines.append("- Entries in this project's store: not measured (store unreadable)\n")
+    else:
+        lines.append(f"- Entries in this project's store: {counts.total}\n")
+        lines.append(f"  - recorded locally: {counts.local}\n")
+        lines.append(f"  - pulled from team sync: {counts.synced}\n")
+    if has_analytics:
+        data = reader.read_yaml(analytics_path)
+        lines.append(f"- Sessions tracked (delivered): {data.get('sessions_tracked', 0)}\n")
+        lines.append(f"- Learnings recorded in those sessions: {data.get('total_learnings', 0)}\n")
+        lines.append(f"- Avg recorded per session: {data.get('avg_learnings_per_session', 0)}\n")
+
+    return "".join(lines)

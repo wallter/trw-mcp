@@ -542,15 +542,29 @@ def check_projection_parity(
 
 
 def render_client_capability_instructions(profile: ResolvedProfile, *, client_id: str) -> str:
-    """Render human-readable client instructions distinguishing the three classes."""
+    """Render human-readable client instructions distinguishing the three classes.
+
+    PRD-FIX-140-FR08: only the AVAILABLE class is enumerated. Naming every
+    discoverable and operator-gated tool made the generated block itself the
+    largest source of ``trw-mcp check-instructions`` mismatches (38 references on
+    2026-09-16) — the framework's own parity check failing against the
+    framework's own text — and told an agent about tools it cannot call without
+    telling it how. The other two classes are reported as counts plus the one
+    step that actually reaches them.
+    """
     proj = render_capability_projection(profile, client_id=client_id, fmt=ProjectionFormat.BULLET_LIST)
-    labels = (
-        (proj.available, "Available now (kernel + selected packs)"),
-        (proj.discoverable, "Discoverable via trw_skill_discovery / trw_request_tool_access"),
-        (proj.gated, "Operator-grant only"),
-    )
     lines = [f"<!-- trw:capabilities:{client_id} -->", f"## Resolved capabilities ({profile.task_type})", ""]
-    lines += [f"- **{label}** ({len(members)}): {', '.join(members) or '(none)'}" for members, label in labels]
+    lines.append(
+        f"- **Available now (kernel + selected packs)** ({len(proj.available)}): "
+        f"{', '.join(proj.available) or '(none)'}"
+    )
+    lines.append(
+        f"- **Discoverable via trw_skill_discovery / trw_request_tool_access** ({len(proj.discoverable)}) "
+        "and **Operator-grant only** "
+        f"({len(proj.gated)}): not listed here — ask for one by name with "
+        "`trw_request_tool_access(tool_name=..., reason=...)`, or run `trw_profile_explain` to see the "
+        "resolved surface."
+    )
     return "\n".join(lines)
 
 

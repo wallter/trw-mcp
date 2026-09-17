@@ -84,11 +84,12 @@ def test_unparseable_streams_degrade_to_cleaned_text_and_no_payload(raw: str, wh
     assert text == raw.strip()
 
 
-def test_a_terminal_envelope_with_no_answer_field_still_returns_its_payload() -> None:
+def test_a_terminal_envelope_with_no_answer_field_returns_its_payload_but_no_text() -> None:
+    """The raw NDJSON is diagnostics, not an answer — see test_dispatch_semantic_success."""
     raw = json.dumps({"event": "result", "result": {"status": "SUCCESS"}})
     text, structured = normalize_output("agy", raw)
     assert structured == {"status": "SUCCESS"}
-    assert text == raw.strip()
+    assert text == ""
 
 
 def test_the_last_terminal_envelope_wins() -> None:

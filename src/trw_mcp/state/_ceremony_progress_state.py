@@ -143,7 +143,9 @@ def _touch_session_build_result(state: CeremonyState, session_id: str, result: s
     state.session_build_results.pop(session_id, None)
     state.session_build_results[session_id] = result
     while len(state.session_build_results) > 2048:
-        state.session_build_results.pop(next(iter(state.session_build_results)))
+        evicted = next(iter(state.session_build_results))
+        state.session_build_results.pop(evicted)
+        state.session_build_results_at.pop(evicted, None)
 
 
 def mark_session_started(trw_dir: Path, session_id: str | None = None) -> None:
@@ -178,9 +180,10 @@ def mark_build_check(trw_dir: Path, passed: bool, session_id: str | None = None)
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
         state.build_check_result = "passed" if passed else "failed"
+        state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
         if session_id:
             _touch_session_build_result(state, session_id, state.build_check_result)
-        state.last_build_check_ts = datetime.now(timezone.utc).isoformat()
+            state.session_build_results_at[session_id] = state.last_build_check_ts
         write_ceremony_state(trw_dir, state)
 
 

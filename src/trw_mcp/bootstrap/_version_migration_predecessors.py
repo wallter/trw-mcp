@@ -12,6 +12,7 @@ isolation guarantees.
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -28,11 +29,20 @@ def _migrate_predecessor_set(
     is_dir_artifact: bool,
     log_event: str,
     dry_run: bool,
+    manifest_hashes: dict[str, str] | None = None,
+    target_dir: Path | None = None,
 ) -> None:
     """Remove predecessor artifacts when their successor is installed or dropped.
 
     When *new_name* is ``None`` (PRD-CORE-092), the predecessor is removed
-    unconditionally (deletion-only, no successor required).
+    without a successor — but only with PROOF that TRW wrote it
+    (PRD-FIX-139-FR01). *manifest_hashes* is the pre-run manifest's
+    ``content_hashes``; a retired name is deleted only when every regular file
+    under it is recorded there and its bytes still hash to that record. A name
+    with no record, or with drifted content, is the project's own artifact
+    that merely collides with a retired bundle name — it is preserved and
+    reported as ``preserved:<path>``. With no hash record at all (a legacy v1
+    manifest, or a first run) the pre-existing unconditional behaviour holds.
 
     Args:
         parent_dir: Directory containing both predecessor and successor artifacts.
@@ -61,6 +71,16 @@ def _migrate_predecessor_set(
             else:
                 if not successor.is_file():
                     continue
+        if new_name is None and manifest_hashes and not _trw_authored(predecessor, manifest_hashes, target_dir):
+            result.setdefault("preserved", []).append(
+                f"preserved:{predecessor} (retired name, not TRW-authored per manifest)"
+            )
+            logger.info(
+                "predecessor_removal_preserved",
+                path=str(predecessor),
+                reason="no matching content_hashes record; the project owns this artifact",
+            )
+            continue
         if dry_run:
             result["updated"].append(f"would migrate:{predecessor}")
             continue
@@ -74,10 +94,40 @@ def _migrate_predecessor_set(
             logger.debug(log_event, path=str(predecessor), exc_info=True)
 
 
+def _trw_authored(artifact: Path, manifest_hashes: dict[str, str], target_dir: Path | None) -> bool:
+    """True when every regular file under *artifact* hashes to its manifest record.
+
+    Manifest keys are written in more than one shape (``<skill>/SKILL.md`` for
+    ``.claude/skills``, ``.opencode/skills/<skill>/SKILL.md`` for opencode, bare
+    ``<agent>.md`` for ``.claude/agents``), so a file is matched by any recorded
+    key that equals its path relative to *target_dir* or a suffix of it at a
+    path boundary. An unreadable file counts as unproven.
+    """
+    files = [f for f in sorted(artifact.rglob("*")) if f.is_file()] if artifact.is_dir() else [artifact]
+    if not files:
+        return False
+    for path in files:
+        rel = path.relative_to(target_dir).as_posix() if target_dir is not None else path.as_posix()
+        recorded = next(
+            (digest for key, digest in manifest_hashes.items() if rel == key or rel.endswith("/" + key)),
+            None,
+        )
+        if recorded is None:
+            return False
+        try:
+            if hashlib.sha256(path.read_bytes()).hexdigest() != recorded:
+                return False
+        except OSError:  # trw-fail-silent-allow: unreadable means unproven; False preserves the artifact (the safe direction) and the warning above-the-fold reports it
+            logger.warning("predecessor_authorship_unreadable", path=str(path), exc_info=True)
+            return False
+    return True
+
+
 def _migrate_prefix_predecessors(
     target_dir: Path,
     result: dict[str, list[str]],
     dry_run: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Remove non-prefixed predecessor skills/agents when trw- successor is installed.
 
@@ -103,9 +153,20 @@ def _migrate_prefix_predecessors(
         is_dir_artifact=True,
         log_event="predecessor_skill_removal_failed",
         dry_run=dry_run,
+        manifest_hashes=manifest_hashes,
+        target_dir=target_dir,
     )
 
-    retired_skills: dict[str, str | None] = {name: None for name, successor in skill_map.items() if successor is None}
+    # PRD-FIX-139-FR03: a client mirror follows its source. When the canonical
+    # ``.claude/skills/<name>`` survived the pass above (preserved as the
+    # project's own artifact), the mirrors TRW rendered FROM it are not stale
+    # either — deleting them would leave the source without its projections
+    # and re-create the churn the preservation exists to stop.
+    retired_skills: dict[str, str | None] = {
+        name: None
+        for name, successor in skill_map.items()
+        if successor is None and not (target_dir / ".claude" / "skills" / name).is_dir()
+    }
     client_skill_roots = (
         target_dir / ".agents" / "skills",
         target_dir / ".cursor" / "skills",
@@ -120,6 +181,8 @@ def _migrate_prefix_predecessors(
             is_dir_artifact=True,
             log_event="predecessor_skill_removal_failed",
             dry_run=dry_run,
+            manifest_hashes=manifest_hashes,
+            target_dir=target_dir,
         )
     _migrate_predecessor_set(
         agents_dir,
@@ -128,6 +191,8 @@ def _migrate_prefix_predecessors(
         is_dir_artifact=False,
         log_event="predecessor_agent_removal_failed",
         dry_run=dry_run,
+        manifest_hashes=manifest_hashes,
+        target_dir=target_dir,
     )
 
     # Retired agent NAMES follow the client trees too, the same way retired
@@ -142,6 +207,8 @@ def _migrate_prefix_predecessors(
             is_dir_artifact=False,
             log_event="predecessor_agent_removal_failed",
             dry_run=dry_run,
+            manifest_hashes=manifest_hashes,
+            target_dir=target_dir,
         )
 
     # Directories TRW no longer writes to at all, swept by exact filename.
@@ -153,6 +220,8 @@ def _migrate_prefix_predecessors(
             is_dir_artifact=False,
             log_event="relocated_agent_removal_failed",
             dry_run=dry_run,
+            manifest_hashes=manifest_hashes,
+            target_dir=target_dir,
         )
 
 

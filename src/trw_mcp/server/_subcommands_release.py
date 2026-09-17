@@ -20,9 +20,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import structlog
 
+from trw_mcp.server._doctor_predating_writers import predating_writers
 from trw_mcp.server._version_status_layers import (
     historical_installer_layer,
     live_process_layer,
@@ -63,6 +65,27 @@ __all__ = [
     "historical_installer_layer",
     "live_process_layer",
 ]
+
+
+def _explain_mismatches(mismatches: list[str], *, warnings: list[str], errors: list[str]) -> None:
+    """Guarantee every mismatch id is NAMED in a diagnostic (PRD-CORE-277-FR08).
+
+    ``compatible`` is derived from ``mismatches``, but ``errors``/``warnings``
+    were appended only by the manifest readers, so two mismatch ids had no
+    diagnostic writer at all. Measured in the field: ``{"compatible": false,
+    "errors": [], "warnings": [], "mismatches": ["trw_mcp_package_vs_installed_asset"]}``
+    — a consumer reading the conventional fields saw nothing wrong
+    (sub_ThQtB4q1pMKoHi4i, 2026-09-16).
+
+    Each id is added as a WARNING only when nothing already explains it, so a
+    reader that produced a precise message keeps ownership of the wording.
+    """
+    explained = " ".join((*errors, *warnings))
+    warnings.extend(
+        f"version mismatch: {mismatch} (compatible=false is derived from this mismatch)"
+        for mismatch in mismatches
+        if mismatch not in explained
+    )
 
 
 def collect_version_status(project_root: Path | None = None) -> VersionStatus:
@@ -130,6 +153,19 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
         mismatches.append(f"live_process_currentness_{live_currentness}")
         errors.append(f"live process currentness is {live_currentness}; release requires current")
     historical = historical_installer_layer(root)
+    predating = predating_writers(root / ".trw")
+    if predating["pids"]:
+        # A WARNING and never a mismatch: ``compatible`` is derived from
+        # ``mismatches`` and ``assert_version_status_compatible`` turns a false
+        # ``compatible`` into a SystemExit, so putting a timestamp heuristic there
+        # would block ``build-release`` whenever an older session happened to be
+        # running (PRD-CORE-277-FR09).
+        warnings.append(
+            f"{len(predating['pids'])} running server process(es) predate the installed version "
+            f"(pids {', '.join(str(pid) for pid in predating['pids'])}); their loaded versions are unknown. "
+            "Restart those sessions."
+        )
+    _explain_mismatches(mismatches, warnings=warnings, errors=errors)
     status: VersionStatus = {
         "taxonomy": {
             "package_version": "package manifest version (pyproject.toml/package.json)",
@@ -157,6 +193,7 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
         },
         "live_process": live_process,
         "historical": historical,
+        "predating_writers": cast("dict[str, object]", predating),
         "compatible": not mismatches,
         "mismatches": mismatches,
         "warnings": warnings,

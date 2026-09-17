@@ -22,6 +22,9 @@ rather than fabricating an age.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,9 +35,73 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["memory_wal_row"]
+__all__ = ["memory_wal_row", "qualifying_interpreters"]
 
 _MIB = 1024 * 1024
+
+#: Interpreters the engine remedy is worth checking for, newest first. This is a
+#: named CANDIDATE list, not a search of PATH — the row says so, because claiming
+#: "no interpreter on PATH qualifies" would assert a search nobody performed.
+_INTERPRETER_CANDIDATES = ("python3.14", "python3.13", "python3.12", "python3")
+_PROBE_TIMEOUT_SECONDS = 2.0
+_PROBE_BUDGET_SECONDS = 5.0
+_PROBE_PROGRAM = "import sqlite3; print(sqlite3.sqlite_version)"
+
+
+def qualifying_interpreters(
+    candidates: tuple[str, ...] = _INTERPRETER_CANDIDATES,
+) -> list[tuple[str, str]]:
+    """Return ``(name, sqlite_version)`` for candidates whose stdlib clears 3.51.3.
+
+    Read-only and bounded: each candidate gets ``_PROBE_TIMEOUT_SECONDS`` and the
+    whole sweep gets ``_PROBE_BUDGET_SECONDS``, after which the rest are skipped.
+    A candidate that is absent, times out, exits non-zero, or prints something
+    unparseable is simply omitted — a diagnostic row must not raise.
+
+    The probe runs ISOLATED (``-I -S -B``) with stdin closed. A plain ``-c`` run
+    puts the current directory first on ``sys.path``, so a repository file named
+    sqlite3.py would execute and fabricate the answer. Isolation bounds what the
+    probed interpreter imports; it does not make an executable on PATH inert, so
+    the list is of NAMED CANDIDATES and the caller reports it as such.
+    """
+    try:
+        from trw_memory.storage._dbapi import wal_reset_safe_version
+    except ImportError:  # trw-fail-silent-allow: an absent predicate means the probe cannot be performed, and the caller renders "none of the probed candidates qualified" -- a claim about candidates, never about PATH
+        # The installed trw-memory predates the shared predicate (its floor still
+        # admits such a release). Report nothing rather than guessing a threshold.
+        logger.debug("doctor_wal_interpreter_probe_unavailable")
+        return []
+
+    deadline = time.monotonic() + _PROBE_BUDGET_SECONDS
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name in candidates:
+        if time.monotonic() >= deadline:
+            break
+        resolved = shutil.which(name)
+        if resolved is None or resolved in seen:
+            continue
+        seen.add(resolved)
+        try:
+            # S603: argv is fixed, no shell, the executable comes from PATH
+            # lookup by design (that is the question being asked), stdin closed.
+            completed = subprocess.run(  # noqa: S603
+                (resolved, "-I", "-S", "-B", "-c", _PROBE_PROGRAM),
+                capture_output=True,
+                text=True,
+                timeout=_PROBE_TIMEOUT_SECONDS,
+                check=False,
+                stdin=subprocess.DEVNULL,
+            )
+        except (
+            OSError,
+            subprocess.SubprocessError,
+        ):  # trw-fail-silent-allow: a candidate that cannot be spawned or timed out is not a qualifying interpreter, which is the question asked; a diagnostic row must never raise into `trw-mcp doctor`
+            continue
+        version = completed.stdout.strip()
+        if completed.returncode == 0 and wal_reset_safe_version(version):
+            found.append((name, version))
+    return found
 
 
 def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
@@ -47,7 +114,7 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
             ``.trw/config.yaml``, so the row would measure against a threshold
             the operator did not set.
     """
-    from trw_memory.storage._dbapi import is_wal_reset_safe, sqlite_version
+    from trw_memory.storage._dbapi import backend, is_wal_reset_safe, sqlite_version
     from trw_memory.storage._wal_checkpoint import WAL_RESET_UNSAFE_REMEDY
 
     from trw_mcp.state._wal_triggers import (
@@ -125,6 +192,7 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     status = "WARN" if (oversized and (behind or unreclaimed) and not never_checkpointed) else "PASS"
 
     message = (
+        f"engine {backend()} {sqlite_version()}, "
         f"WAL {wal_mib:.1f} MiB (checkpoint due at {config.wal_checkpoint_threshold_mb} MiB; "
         f"journal_size_limit asks SQLite to trim it toward 64 MiB when it next resets, "
         f"which is a request, not a hard cap on an active WAL), "
@@ -149,6 +217,19 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
             )
         elif not reset_safe:
             message += f" Cause: SQLite {sqlite_version()} -- {WAL_RESET_UNSAFE_REMEDY}."
+            # Only this branch pays for the probe: it is the one that prints the
+            # engine remedy, and an operator told to change interpreter deserves
+            # to be told which ones on this box would do.
+            qualifying = qualifying_interpreters()
+            if qualifying:
+                named = ", ".join(f"{name} (SQLite {version})" for name, version in qualifying)
+                message += f" Qualifying interpreters found here: {named}."
+            else:
+                message += (
+                    " None of the probed candidates ("
+                    + ", ".join(_INTERPRETER_CANDIDATES)
+                    + ") qualified on this PATH."
+                )
         elif len(writers) > 1:
             # Name the cause that actually applies here. The engine-capable
             # branch below used to be the only one, and it sent an operator

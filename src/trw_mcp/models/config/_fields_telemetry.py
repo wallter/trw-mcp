@@ -83,7 +83,9 @@ class _TelemetryFields:
     #
     # The seven velocity_* fields that used to sit here were removed 2026-07-28
     # (PRD-QUAL-131-FR01): no production reader, and no velocity-tracking
-    # subsystem for them to configure. ``framework_overhead_threshold`` IS read
-    # and stays; it was filed under the velocity heading but is not a velocity
-    # field.
-    framework_overhead_threshold: float = 0.30
+    # subsystem for them to configure. ``framework_overhead_threshold`` was kept
+    # then on the claim that it "IS read" -- which the corrected consumer scan
+    # (PRD-QUAL-139) shows was never true in any corpus, Python, shell or alias.
+    # It followed the velocity_* fields out on 2026-09-16 (PRD-QUAL-139-FR05):
+    # no consumer, no originating PRD, no test. The key is listed in
+    # trw_mcp/data/config-retired-keys.json.

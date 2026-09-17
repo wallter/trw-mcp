@@ -83,7 +83,10 @@ class _ScoringFields:
     skill_surface_tracking_enabled: bool = False  # FR01 side-write gate (default OFF)
     skill_contribution_half_life_days: int = 90  # FR02 Ebbinghaus half-life (mirrors impact_decay)
     skill_contribution_cold_start: float = 0.5  # FR02 never-surfaced score (above floor)
-    skill_active_cap: int = 3  # FR03 default cap WHEN enabled (Library-Drift 2-3 band)
+    # skill_active_cap -- PRD-QUAL-111-FR03's active-skill cap -- was removed
+    # 2026-09-16 (PRD-QUAL-139-FR05): no consumer under the corrected scan, no
+    # test, and PRD-QUAL-111 is still draft, so the cap never capped anything.
+    # The key is listed in trw_mcp/data/config-retired-keys.json.
     skill_retirement_floor: float = 0.15  # FR04 strict-less-than floor
     skill_retirement_windows: int = 3  # FR04 consecutive sub-floor windows to retire
     skill_duplicate_similarity_threshold: float = 0.85  # FR05 cosine flag threshold

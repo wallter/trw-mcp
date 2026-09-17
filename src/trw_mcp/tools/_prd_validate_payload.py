@@ -67,6 +67,10 @@ def build_validate_payload(
     payload: ValidateResultDict = {
         # V1 fields (backward compatible, from V2 inline computation)
         "path": str(path),
+        # PRD-FIX-141-FR09: the readiness answer leads, and the score band that
+        # used to contradict it follows. Projected in BOTH modes — an explicit
+        # projection means a model field alone would never have reached the wire.
+        "verdict": v2_result.verdict,
         "valid": v2_result.valid,
         "completeness_score": v2_result.completeness_score,
         "traceability_coverage": v2_result.traceability_coverage,
@@ -145,6 +149,10 @@ def build_validate_payload(
             **cache_metadata,
         },
     }
+    # Non-empty only for a NEEDS_WORK verdict, so a READY payload pays nothing
+    # for it and the note is never mistaken for a standing caveat.
+    if v2_result.verdict_note:
+        payload["verdict_note"] = v2_result.verdict_note
     if verbose:
         payload["compact"] = False
         return payload

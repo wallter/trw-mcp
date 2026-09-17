@@ -396,6 +396,18 @@ class ValidationResultV2(BaseModel):
     status_drift_warnings: list[str] = Field(default_factory=list)
     integrity_warnings: list[str] = Field(default_factory=list)
 
+    # Readiness verdict (PRD-FIX-141-FR09). ONE answer to "may this be
+    # implemented", derived from the rules by
+    # ``state.validation._prd_validation_findings.finalize_verdict`` — never
+    # from the score. ``quality_tier``/``grade`` band the SCORE; a PRD scoring
+    # 91.87 with three error-severity failures was reported as
+    # ``grade: A, quality_tier: approved, valid: false`` and a reader had no way
+    # to tell which of the two answers governed (learning L-9GXR).
+    # ``verdict_note`` is non-empty whenever the verdict is NEEDS_WORK and names
+    # what blocks it.
+    verdict: str = "NEEDS_WORK"
+    verdict_note: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Traceability

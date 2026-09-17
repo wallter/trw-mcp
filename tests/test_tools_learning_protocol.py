@@ -9,7 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from tests._tools_learning_shared import _CFG, _get_tools, _write_analytics
+from tests._tools_learning_shared import (  # noqa: F401
+    _CFG,
+    _get_tools,
+    _write_analytics,
+    no_machine_wide_ide_detection,
+)
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
     render_agents_trw_section,
@@ -177,25 +182,35 @@ class TestProgressiveDisclosure:
         # The conftest _isolate_trw_dir fixture points resolve_project_root at
         # tmp_path (late-resolved by the renderer); clear the turn-scoped
         # analytics cache so the freshly-written tmp analytics.yaml is re-read.
-        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache
+        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache, _store_counts_cache
 
         _analytics_cache.set(None)
+        _store_counts_cache.set(None)
 
         result = render_memory_harmonization()
 
-        assert "34 learnings across 12 sessions" in result
+        # PRD-FIX-141-FR04: the scale claim names its populations. With no store
+        # on disk the inventory is NOT MEASURED — never rendered as a zero.
+        assert "could not be measured" in result
+        assert "across 12 prior sessions" in result
+        assert "0 learnings" not in result
 
     def test_render_agents_trw_section_uses_analytics_counts(self, tmp_path: Path) -> None:
         """FR06: AGENTS-facing TRW section uses analytics-backed counts."""
         _write_analytics(tmp_path, sessions_tracked=7, total_learnings=19)
-        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache
+        from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache, _store_counts_cache
 
         _analytics_cache.set(None)
 
+        _store_counts_cache.set(None)
+
         result = render_agents_trw_section()
 
-        assert "loads 19 learnings from 7 prior sessions and recovers any active run" in result
-        assert "load context from 7 prior sessions" in result
+        # PRD-FIX-141-FR04: one population-naming claim, rendered once. The old
+        # sentence printed the analytics counters twice and named neither
+        # population; with no store on disk the inventory is not measured.
+        assert "could not be measured across 7 prior sessions" in result
+        assert "and recovers any active run" in result
 
     def test_closing_reminder_includes_deliver_gate(self) -> None:
         """PRD-CORE-062-FR01 / v26: render_closing_reminder carries deliver-gate language.

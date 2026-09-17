@@ -18,7 +18,9 @@
 #   6. Python import fails AND no learnings match
 #
 # Hook latency budget: ≤ 3000ms registered timeout (NFR06).
-# Python subprocess: ≤ 2500ms (timeout 2.5); fallback to T0 beacon on timeout (FR30).
+# Python subprocess: ≤ 2500ms, bounded by _trw_bounded_python (portable: the
+# program's own SIGALRM, plus `timeout` only where the box has it); fallback to
+# the T0 beacon on timeout (FR30).
 
 set -e
 trap 'exit 0' EXIT
@@ -110,7 +112,7 @@ _py=$(_get_python_path 2>/dev/null) || {
 }
 
 # --- Call compute_before_edit_hint via Python subprocess (FR30) ---
-# Timeout of 2500ms (timeout 2.5); fall back to T0 beacon on failure/timeout.
+# Bounded at 2500ms by _trw_bounded_python; fall back to T0 beacon on failure/timeout.
 _hints_dir="${_repo}/.trw/context/cc03-hints"
 mkdir -p "$_hints_dir" 2>/dev/null || true
 
@@ -146,6 +148,58 @@ if re.fullmatch(r"[A-Za-z0-9_.-]+", tool_use_id):
 ' >/dev/null 2>&1 || true
 fi
 
+# --- Portable 2.5s bound for the hint subprocess (FR30) -----------------------
+# This call used to read `timeout 2.5 "$_py" -c ...`. `timeout` is GNU
+# coreutils and macOS ships neither it nor `gtimeout`, so on every Mac the
+# command failed with 127 BEFORE the interpreter started: the fallback below
+# fired on every single edit, the hint program never ran, and the CC-04
+# correlation record reported a `timeout_fallback` for a timeout that had not
+# happened (verified 2026-09-17). The deadline now lives where it is portable:
+#   1. INSIDE the program (SIGALRM -> os._exit(124), installed as its first
+#      statement) — the truthful bound whenever $_py is really an interpreter;
+#   2. this function as the OUTER backstop for what an alarm cannot cover, an
+#      interpreter that hangs before it runs our code. It delegates to
+#      `timeout`/`gtimeout` where the box has one and uses a POSIX watchdog
+#      (background child + `sleep` + `kill`) where it does not.
+# Usage: _trw_bounded_python <seconds> <VAR=value ...> "$_py" -c <program>
+_TRW_TIMEOUT_BIN=""
+for _bp_cand in timeout gtimeout; do
+    if command -v "$_bp_cand" >/dev/null 2>&1; then
+        _TRW_TIMEOUT_BIN=$(command -v "$_bp_cand")
+        break
+    fi
+done
+
+_trw_bounded_python() {
+    _bp_secs="$1"
+    shift
+    _bp_rc=0
+    # The bounded child writes to a FILE, never straight into the caller's
+    # command substitution: killing it does not kill a grandchild it left
+    # behind (a wrapper script's `sleep`, a forked worker), and any survivor
+    # holding the substitution pipe open makes the caller wait for the very
+    # runtime this bound exists to cut -- measured 10s for a 1s bound under
+    # dash and bash 3.2 before the file was introduced.
+    _bp_out=$(mktemp 2>/dev/null) || _bp_out=""
+    if [ -z "$_bp_out" ]; then
+        env "$@" || _bp_rc=$?
+        return $_bp_rc
+    fi
+    if [ -n "$_TRW_TIMEOUT_BIN" ]; then
+        "$_TRW_TIMEOUT_BIN" "$_bp_secs" env "$@" > "$_bp_out" || _bp_rc=$?
+    else
+        env "$@" > "$_bp_out" &
+        _bp_pid=$!
+        ( sleep "$_bp_secs"; kill -TERM "$_bp_pid" ) >/dev/null 2>&1 &
+        _bp_watch=$!
+        wait "$_bp_pid" || _bp_rc=$?
+        kill -TERM "$_bp_watch" 2>/dev/null || true
+    fi
+    cat "$_bp_out" 2>/dev/null || true
+    rm -f "$_bp_out" 2>/dev/null || true
+    return $_bp_rc
+}
+
 # TRW_EMBEDDINGS_ENABLED=false is load-bearing, not a tuning preference.
 # Measured on a warm dev box (7 runs each, seconds):
 #   embedding cold start in a FRESH process   14.48  (torch 1.76 + sentence-
@@ -164,12 +218,13 @@ fi
 # Scope is this subprocess only — the long-lived MCP server keeps hybrid recall,
 # where the model is warm and a query costs 0.23s.
 _hint_output=$(
+    _trw_bounded_python 2.5 \
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
     TRW_EMBEDDINGS_ENABLED=false \
     TRW_CC04_HINTS_DIR="$_hints_dir" \
     TRW_CC04_TOOL_USE_ID="$_tool_use_id" \
     TRW_CC04_FILE_PATH="$_file_path" \
-    timeout 2.5 "$_py" -c '
+    "$_py" -c '
 # SINGLE-quoted on purpose. This program used to be double-quoted, so ${_file_path}
 # — a model-controlled PreToolUse field — was spliced into Python SOURCE. A payload
 # with file_path = x.py"+__import__("os").system("...")+".py executed as the
@@ -183,8 +238,25 @@ _hint_output=$(
 # therefore uses double quotes. Same invariant as the sibling hooks —
 # hooks/cursor/trw-before-edit-hint.sh and git_hooks/trw-post-commit.sh.
 import os
+# The 2.5s budget belongs to THIS interpreter, because `timeout` is a GNU binary
+# macOS does not ship (see _trw_bounded_python in the calling hook). os._exit,
+# never an exception: the handler below would otherwise record
+# exception_fallback for an event that is a genuine timeout. 124 is what
+# `timeout` returned, so the shell fallback path is unchanged. 2.4s rather than
+# 2.5 so this truthful in-process bound wins the race against the outer
+# backstop whenever the interpreter is alive to answer.
 try:
-    from trw_mcp.tools.before_edit_hint import compute_before_edit_hint
+    import signal
+    def _trw_on_deadline(_signum, _frame):
+        os._exit(124)
+    signal.signal(signal.SIGALRM, _trw_on_deadline)
+    signal.setitimer(signal.ITIMER_REAL, 2.4)
+except Exception:
+    # A box without SIGALRM keeps the outer shell backstop; it does not lose
+    # the hint. Nothing is swallowed here: the bound below is still enforced.
+    pass
+try:
+    from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
         format_t0_beacon, format_t1_hint, format_t2_hint
     )

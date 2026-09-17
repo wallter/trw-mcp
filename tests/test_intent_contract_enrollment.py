@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -472,9 +473,15 @@ def test_the_sidecar_records_presence_so_an_appearing_artifact_is_visible(tmp_pa
     lines = _sidecar_lines(root)
 
     assert "g0 .pre-commit-config.yaml" in lines
-    (root / ".pre-commit-config.yaml").write_text("repos: []\n", encoding="utf-8")
+    body = "repos: []\n"
+    (root / ".pre-commit-config.yaml").write_text(body, encoding="utf-8")
     write_enrollment(root, CONTRACT)
-    assert "g1 .pre-commit-config.yaml" in _sidecar_lines(root)
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    # The digest is the freshness proof (the shell compared MTIMES until
+    # 2026-09-17 and bash 3.2 reads those in whole seconds), so assert the
+    # recorded one actually describes the bytes -- a constant would pass here
+    # while the shell rejected every real file.
+    assert f"g1 {digest} .pre-commit-config.yaml" in _sidecar_lines(root)
 
 
 def test_an_unloadable_contract_leaves_no_sidecar(tmp_path: Path) -> None:

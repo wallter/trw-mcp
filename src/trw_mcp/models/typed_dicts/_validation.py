@@ -97,6 +97,12 @@ class ValidateResultDict(TypedDict, total=False):
     """
 
     path: str
+    # PRD-FIX-141-FR09: the ONE readiness answer (READY | NEEDS_WORK), derived
+    # from the rules. ``verdict_note`` is present only when the verdict is
+    # NEEDS_WORK and names what blocks it — including when an approving
+    # ``quality_tier``/``grade`` sits beside it.
+    verdict: str
+    verdict_note: str
     valid: bool
     completeness_score: float
     traceability_coverage: float

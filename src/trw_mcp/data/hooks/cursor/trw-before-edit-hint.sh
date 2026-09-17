@@ -116,25 +116,96 @@ fi
 # --- Resolve Python path; no python => plain allow (still advisory) ---
 _py=$(_get_python_path 2>/dev/null) || _allow_and_exit
 
+# --- Portable 2.5s bound for the hint subprocess (FR30) -----------------------
+# This call used to read `timeout 2.5 "$_py" -c ...`. `timeout` is GNU
+# coreutils and macOS ships neither it nor `gtimeout`, so on every Mac the
+# command failed with 127 BEFORE the interpreter started: the fallback below
+# fired on every single edit, the hint program never ran, and the CC-04
+# correlation record reported a `timeout_fallback` for a timeout that had not
+# happened (verified 2026-09-17). The deadline now lives where it is portable:
+#   1. INSIDE the program (SIGALRM -> os._exit(124), installed as its first
+#      statement) — the truthful bound whenever $_py is really an interpreter;
+#   2. this function as the OUTER backstop for what an alarm cannot cover, an
+#      interpreter that hangs before it runs our code. It delegates to
+#      `timeout`/`gtimeout` where the box has one and uses a POSIX watchdog
+#      (background child + `sleep` + `kill`) where it does not.
+# Usage: _trw_bounded_python <seconds> <VAR=value ...> "$_py" -c <program>
+_TRW_TIMEOUT_BIN=""
+for _bp_cand in timeout gtimeout; do
+    if command -v "$_bp_cand" >/dev/null 2>&1; then
+        _TRW_TIMEOUT_BIN=$(command -v "$_bp_cand")
+        break
+    fi
+done
+
+_trw_bounded_python() {
+    _bp_secs="$1"
+    shift
+    _bp_rc=0
+    # The bounded child writes to a FILE, never straight into the caller's
+    # command substitution: killing it does not kill a grandchild it left
+    # behind (a wrapper script's `sleep`, a forked worker), and any survivor
+    # holding the substitution pipe open makes the caller wait for the very
+    # runtime this bound exists to cut -- measured 10s for a 1s bound under
+    # dash and bash 3.2 before the file was introduced.
+    _bp_out=$(mktemp 2>/dev/null) || _bp_out=""
+    if [ -z "$_bp_out" ]; then
+        env "$@" || _bp_rc=$?
+        return $_bp_rc
+    fi
+    if [ -n "$_TRW_TIMEOUT_BIN" ]; then
+        "$_TRW_TIMEOUT_BIN" "$_bp_secs" env "$@" > "$_bp_out" || _bp_rc=$?
+    else
+        env "$@" > "$_bp_out" &
+        _bp_pid=$!
+        ( sleep "$_bp_secs"; kill -TERM "$_bp_pid" ) >/dev/null 2>&1 &
+        _bp_watch=$!
+        wait "$_bp_pid" || _bp_rc=$?
+        kill -TERM "$_bp_watch" 2>/dev/null || true
+    fi
+    cat "$_bp_out" 2>/dev/null || true
+    rm -f "$_bp_out" 2>/dev/null || true
+    return $_bp_rc
+}
+
 # --- Compute hint via compute_before_edit_hint (distill-unaware) and emit ---
 # The Python emits the full Cursor JSON envelope itself via json.dumps so the
 # hint text is correctly escaped into agent_message. On no hint it prints the
-# plain allow envelope. Timeout matches the hook latency budget.
+# plain allow envelope. The deadline matches the hook latency budget and is
+# enforced portably by _trw_bounded_python (see below).
 # TRW_EMBEDDINGS_ENABLED=false: a fresh interpreter per edit pays the full
 # embedding cold start (measured 14.48s: torch + sentence-transformers + MiniLM
 # load), which no PreToolUse budget can cover, while the sidecar read this hook
 # exists for costs 3ms. Lexical recall keeps T1 alive at ~0.44s. Full
 # measurement table: claude_code/hooks/pre-tool-distill-hint.sh.
 _response=$(
+    _trw_bounded_python 2.5 \
     PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=1 \
     TRW_EMBEDDINGS_ENABLED=false \
     TRW_CUR06_FILE_PATH="$_file_path" \
-    timeout 2.5 "$_py" -c '
+    "$_py" -c '
 import os, json
+# The 2.5s budget belongs to THIS interpreter, because `timeout` is a GNU binary
+# macOS does not ship (see _trw_bounded_python in the calling hook). os._exit,
+# never an exception: the handler below would otherwise record
+# exception_fallback for an event that is a genuine timeout. 124 is what
+# `timeout` returned, so the shell fallback path is unchanged. 2.4s rather than
+# 2.5 so this truthful in-process bound wins the race against the outer
+# backstop whenever the interpreter is alive to answer.
+try:
+    import signal
+    def _trw_on_deadline(_signum, _frame):
+        os._exit(124)
+    signal.signal(signal.SIGALRM, _trw_on_deadline)
+    signal.setitimer(signal.ITIMER_REAL, 2.4)
+except Exception:
+    # A box without SIGALRM keeps the outer shell backstop; it does not lose
+    # the hint. Nothing is swallowed here: the bound below is still enforced.
+    pass
 # Always-valid fallback: a non-blocking allow with no agent_message.
 _fallback = {"permission": "allow"}
 try:
-    from trw_mcp.tools.before_edit_hint import compute_before_edit_hint
+    from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
     from trw_mcp.channels.claude_code._hook_helpers import (
         format_t0_beacon, format_t1_hint, format_t2_hint,
     )

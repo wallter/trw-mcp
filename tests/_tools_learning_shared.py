@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.models.config import TRWConfig
 
@@ -36,6 +37,22 @@ def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_machine_wide_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep client detection inside the temp project, off the developer's PATH.
+
+    ``trw_instructions_sync(client="auto")`` resolves its write targets through
+    ``detect_ide``, which reads machine-global signals by design. On a
+    workstation with Cursor installed, every empty ``tmp_path`` therefore looks
+    like a Cursor project whose profile does not claim CLAUDE.md, so the sync
+    correctly wrote nothing and these tests failed on the machine rather than
+    on the code. An empty detection list is the "no client identified yet"
+    scaffold case these tests mean; a test that wants a specific client passes
+    ``client=`` explicitly. Shared helper: ``tests/_ide_detection_isolation``.
+    """
+    isolate_ide_detection(monkeypatch)
 
 
 def _get_tools() -> dict[str, Any]:

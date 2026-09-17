@@ -18,6 +18,7 @@ import structlog
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import RecallContextDict, RecallResultDict
 from trw_mcp.scoring._recall import RecallContext
+from trw_mcp.state._store_counts import store_entry_count
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.state.propensity_log import log_ranked_selections
 
@@ -223,6 +224,14 @@ def execute_recall(
         # identical whenever nothing was capped) into one field plus ``capped``;
         # that FR is not approved, so the wire shape is left alone here.
         total_available = len(ranked_learnings) + len(matching_patterns)
+        # PRD-FIX-141-FR05: the two counts ``total_available`` was mistaken for.
+        # ``candidate_count`` is what the backend handed back BEFORE ranking,
+        # deduplication and the output cap; ``store_count`` is the project
+        # store's own inventory (``None`` when it could not be read). Neither
+        # redefines ``total_available`` — they exist because a caller reading
+        # ``total_available=25`` against a 1,346-entry store had no way to learn
+        # that it was a bounded pre-cap match population (learning L-Rikf).
+        candidate_count = len(matching_learnings)
 
     # Move already-in-context learnings behind fresh results before truncation.
     if deprioritized_ids:
@@ -330,6 +339,7 @@ def execute_recall(
         "context": context_data,
         "total_matches": len(ranked_learnings) + len(matching_patterns),
         "total_available": total_available,
+        "candidate_count": candidate_count,
         "compact": use_compact,
         "max_results": max_results,
         "tokens_used": tokens_used,
@@ -344,6 +354,11 @@ def execute_recall(
         recall_result["topic_filter_warning"] = topic_filter_warning
     if remote_recall_status is not None:
         recall_result["remote_recall"] = remote_recall_status
+    # Omitted rather than reported as 0 when the store could not be read: an
+    # unmeasured inventory and an empty one are different facts.
+    store_count = store_entry_count(trw_dir)
+    if store_count is not None:
+        recall_result["store_count"] = store_count
 
     # Ledger UF-043: trw_recall's ceremony-status injection was dropped by merge
     # 70bb84843f (2026-04-11), leaving ToolName.RECALL with no production

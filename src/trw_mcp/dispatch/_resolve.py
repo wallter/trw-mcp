@@ -16,6 +16,9 @@ Precedence (highest wins):
 - read_only: an EXPLICIT ``read_only`` (True or False) is honored; ``None`` ->
   the ``dispatch_default_read_only`` config baseline. (The caller is responsible
   for turning an ``--allow-writes`` request into ``read_only=False``.)
+- posture: taken from the caller only; there is deliberately NO config default,
+  because a config that could turn any dispatch into a "reviewer" would let a
+  project's own file decide that a child is contained.
 
 A resolved client absent from ``dispatch_enabled_clients`` is rejected, as is a
 client whose registry entry records its capabilities as UNVERIFIED
@@ -37,8 +40,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
+from trw_mcp.dispatch._posture import ReviewerPostureError, verify_reviewer_posture
 from trw_mcp.dispatch._roles import apply_role
-from trw_mcp.dispatch._types import DispatchRequest
+from trw_mcp.dispatch._types import DispatchPosture, DispatchRequest
 
 
 class DispatchResolutionError(ValueError):
@@ -131,6 +135,8 @@ def resolve_dispatch_request(
     read_only: bool | None = None,
     isolate: bool,
     use_pty: bool,
+    posture: str = "default",
+    verify_sandbox: bool = False,
     dispatch_cfg: object,
 ) -> DispatchRequest:
     """Build a validated :class:`DispatchRequest` from loose inputs + config.
@@ -161,15 +167,60 @@ def resolve_dispatch_request(
     else:
         effective_read_only = read_only
 
+    resolved_posture = _resolve_posture(posture, client=resolved_client, read_only=effective_read_only)
     resolved_prompt = apply_role(role, prompt)
+    resolved_cwd = _resolve_cwd(cwd, client=resolved_client)
 
     return DispatchRequest(
         client=resolved_client,  # type: ignore[arg-type]  # validated against the Literal by Pydantic
         prompt=resolved_prompt,
         model=resolved_model,
-        cwd=cwd,
+        cwd=resolved_cwd,
         timeout_s=int(resolved_timeout),
         read_only=effective_read_only,
         isolate=isolate,
         use_pty=use_pty,
+        posture=resolved_posture,
+        verify_sandbox=verify_sandbox,
     )
+
+
+def _resolve_cwd(cwd: Path | None, *, client: str) -> Path | None:
+    """Default the working directory for a client that carries it in argv.
+
+    For a client with a ``cwd_flag``, ``cwd=None`` does not mean "the child runs
+    in our directory" -- it means the flag is never emitted, so the child is
+    given no workspace at all. Measured 2026-09-16: an agy dispatch without
+    ``--add-dir`` loads none of the project's instruction files and can read
+    none of its code, while still exiting 0 (PRD-CORE-277-FR02). Clients with no
+    ``cwd_flag`` are untouched: they inherit the process working directory
+    through ``Popen(cwd=...)`` as before.
+    """
+    if cwd is not None:
+        return cwd
+    try:
+        spec = client_spec_for(client)
+    except UnknownClientError:  # trw-fail-silent-allow: an unregistered id is refused upstream; no cwd to default here
+        return None
+    return Path.cwd().resolve() if spec.cwd_flag is not None else None
+
+
+def _resolve_posture(posture: str, *, client: str, read_only: bool) -> DispatchPosture:
+    """Validate the requested posture for this client, or refuse with exit_code=2.
+
+    Refusal, not degradation, for the same reason ``_refuse_unverified`` refuses:
+    a caller who asked for a bounded reviewer and silently received an unbounded
+    child would have no way to know the bound was missing, and would then cite
+    that child's output as contained evidence. The message names the client and
+    the reason so the caller has a next step other than a bypass.
+    """
+    if posture not in ("default", "reviewer"):
+        raise DispatchResolutionError(
+            f"unknown dispatch posture {posture!r}; expected 'default' or 'reviewer'.",
+            exit_code=2,
+        )
+    try:
+        verify_reviewer_posture(client, posture, read_only=read_only)
+    except ReviewerPostureError as exc:
+        raise DispatchResolutionError(str(exc), exit_code=2) from exc
+    return "reviewer" if posture == "reviewer" else "default"

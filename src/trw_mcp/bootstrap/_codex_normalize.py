@@ -48,7 +48,7 @@ def _normalize_mcp_tool_config(existing: object) -> dict[str, CodexMcpToolConfig
         entry: CodexMcpToolConfigEntry = {}
         approval_mode = raw_entry.get("approval_mode")
         enabled = raw_entry.get("enabled")
-        if approval_mode in {"auto", "prompt", "approve"}:
+        if approval_mode in {"auto", "prompt", "writes", "approve"}:
             entry["approval_mode"] = approval_mode
         if isinstance(enabled, bool):
             entry["enabled"] = enabled
@@ -70,6 +70,7 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
     enabled_tools = existing.get("enabled_tools")
     disabled_tools = existing.get("disabled_tools")
     tools = existing.get("tools")
+    env = existing.get("env")
 
     if isinstance(command, str):
         entry["command"] = command
@@ -86,11 +87,22 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
     if isinstance(disabled_tools, list) and all(isinstance(tool_name, str) for tool_name in disabled_tools):
         entry["disabled_tools"] = cast("list[str]", disabled_tools)
 
-    # Backward compatibility: older TRW bootstrap versions wrote unsupported
-    # per-MCP-tool config under `tools`. Preserve only the enable/disable
-    # signal by translating it to the documented enabled/disabled tool lists.
+    # The per-server `env` table is the user's only durable channel for feeding a
+    # variable to the server codex spawns (TRW_COMMS_ENABLED, for one). Dropping
+    # it here is what made `trw-mcp update-project` delete a hand-added
+    # [mcp_servers.trw.env] table and forced launch-time -c overrides
+    # (PRD-CORE-277-FR07).
+    if isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
+        entry["env"] = cast("dict[str, str]", env)
+
+    # `tools` carries BOTH an enable signal and an approval mode. The enable
+    # signal is still mirrored into enabled_tools/disabled_tools below (that
+    # translation predates this change and callers read those lists); the table
+    # itself is now KEPT, because the approval mode has no other home and codex
+    # 0.154 refuses an unapproved tool under approval_policy = "never".
     normalized_tools = _normalize_mcp_tool_config(tools)
     if normalized_tools:
+        entry["tools"] = normalized_tools
         enabled_tool_set = set(entry.get("enabled_tools", []))
         disabled_tool_set = set(entry.get("disabled_tools", []))
         for tool_name, tool_config in normalized_tools.items():

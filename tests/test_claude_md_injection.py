@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md._parser import (
@@ -26,6 +27,13 @@ from trw_mcp.state.claude_md._parser import (
     merge_trw_section,
     render_template,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``."""
+    isolate_ide_detection(monkeypatch)
+
 
 # ---------------------------------------------------------------------------
 # Test 1: render_template resolves all markers

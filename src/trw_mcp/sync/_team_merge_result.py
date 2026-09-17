@@ -33,6 +33,11 @@ class TeamMergeResult:
         skipped_no_id: Items carrying no ``source_learning_id`` to key on.
         invalid: Items whose payload could not be deserialised.
         quarantined: Items the security gate diverted rather than stored.
+        blocked: Items the write-time security gate REFUSED (poisoning /
+            injection pattern, PII policy). A judged decision about the item,
+            not an infrastructure failure: it would be refused identically on
+            every re-offer, so it counts toward ``rejected`` and lets the pull
+            cursor advance (PRD-FIX-138-FR01).
         failed: Items that raised while being stored.
         unavailable: True when the merge could not run at all (missing optional
             dependencies, no ``trw_dir``). Distinct from an empty batch, which
@@ -45,6 +50,7 @@ class TeamMergeResult:
     skipped_no_id: int = 0
     invalid: int = 0
     quarantined: int = 0
+    blocked: int = 0
     failed: int = 0
     unavailable: bool = False
 
@@ -56,7 +62,7 @@ class TeamMergeResult:
     @property
     def rejected(self) -> int:
         """Items that were attempted and did not reach storage."""
-        return self.skipped_no_id + self.invalid + self.quarantined + self.failed
+        return self.skipped_no_id + self.invalid + self.quarantined + self.blocked + self.failed
 
     @property
     def status(self) -> str:
@@ -75,6 +81,7 @@ class TeamMergeResult:
             "skipped_no_id": self.skipped_no_id,
             "invalid": self.invalid,
             "quarantined": self.quarantined,
+            "blocked": self.blocked,
             "failed": self.failed,
             "rejected": self.rejected,
             "outcome": self.status,

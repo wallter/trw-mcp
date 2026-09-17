@@ -247,13 +247,21 @@ class TestConfigYamlLoading:
     def test_meta_tune_flat_key_populates_nested_config(
         self, config_project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """SAFE-001: legacy ``meta_tune_enabled`` still activates nested config."""
+        """SAFE-001: legacy ``meta_tune_enabled`` still activates nested config.
+
+        Pinned to Linux: PRD-FIX-137 forces meta-tune off on any other host at
+        config build time, which is a separate contract with its own tests
+        (tests/unit/meta_tune/test_platform_gate.py).
+        """
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text("meta_tune_enabled: true\n", encoding="utf-8")
         monkeypatch.setattr(
             "trw_mcp.state._paths.resolve_project_root",
             lambda: config_project,
         )
+        monkeypatch.setattr("trw_mcp.models.config._loader.platform.system", lambda: "Linux")
+        # env > file: a TRW_META_TUNE_ENABLED in the developer's shell would shadow the key under test.
+        monkeypatch.delenv("TRW_META_TUNE_ENABLED", raising=False)
         _reset_config()
         try:
             cfg = get_config()

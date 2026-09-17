@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import structlog
 
+from trw_mcp import PROCESS_STARTED_AT as _PROCESS_STARTED_AT
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._delivery_helpers import (
     COMPLEXITY_DRIFT_MULTIPLIER,
@@ -14,6 +17,13 @@ from trw_mcp.tools._delivery_helpers import (
 )
 
 logger = structlog.get_logger(__name__)
+
+#: When this server process started (stamped in ``trw_mcp/__init__``, the first
+#: import of every process — this module loads lazily at the first deliver call,
+#: which is after the edits it must see). An unpinned session whose pin key is
+#: the process UUID has no identifier a shell hook can observe, so its change
+#: evidence is read as every unpinned record written since this moment.
+PROCESS_STARTED_AT = _PROCESS_STARTED_AT
 
 
 def _read_run_events(run_path: Path, reader: FileStateReader) -> list[dict[str, object]] | None:
@@ -300,3 +310,274 @@ def _check_complexity_drift(
         logger.warning("complexity_drift_check_failed", exc_info=True)
 
     return None
+
+
+def latest_build_check_failed(events: list[dict[str, object]] | None) -> bool | None:
+    """Did the MOST RECENT recorded build check report failure? — PRD-FIX-140-FR05.
+
+    ``True``  — the last ``build_check_complete`` event reported
+                ``tests_passed`` falsy (an explicit failure, or a timeout
+                recorded as one).
+    ``False`` — the last one reported a pass, or the run recorded none at all.
+    ``None``  — the event log could not be read (``events is None``); the caller
+                treats that as a block, matching every other fail-closed input on
+                the delivery path.
+
+    The existing build gate asks ``any(_build_passed(e) for e in events)``, so a
+    run that passed, then edited, then FAILED still satisfies it on the strength
+    of the earlier pass unless the staleness heuristic happens to fire. The
+    bundled PreToolUse hook covered that case by reading only the CURRENT
+    ``build-status.yaml`` receipt; with the hook demoted to a diagnostic the
+    latest-verdict rule has to live here.
+
+    Deliberately narrow: only a self-reported failure counts. The degenerate-pass
+    rejections (``test_count=0``, empty scope) stay with the build gate that owns
+    them, so this predicate cannot double-report an existing warning as a new
+    block.
+    """
+    if events is None:
+        logger.warning("latest_build_check_uncomputable", outcome="fail_closed", reason="events_unreadable")
+        return None
+    from trw_mcp.tools._delivery_build_gates import _build_event_payload, _truthy
+
+    for event in reversed(events):
+        if str(event.get("event", "")) != "build_check_complete":
+            continue
+        return not _truthy(_build_event_payload(event).get("tests_passed"))
+    return False
+
+
+def latest_build_check_failed_for_run(run_path: Path) -> bool | None:
+    """:func:`latest_build_check_failed` over a run directory's own event log.
+
+    One bounded re-read of ``meta/events.jsonl`` on the delivery path: the
+    dispatcher runs after ``check_delivery_gates`` has returned and no longer
+    holds the materialised list, and threading it through would change a public
+    signature owned by another module.
+    """
+    return latest_build_check_failed(_read_run_events(run_path, FileStateReader()))
+
+
+def _read_unpinned_ceremony_state(trw_dir: Path | None) -> dict[str, object] | None | bool:
+    """``dict`` when readable, ``False`` when absent/not-started, ``None`` when unreadable.
+
+    Read here rather than through ``state._ceremony_progress_state.read_ceremony_state``
+    because that reader deliberately fails OPEN to defaults on a corrupt file, which
+    would report "nothing recorded" for a file nobody could read — the opposite of
+    what a delivery gate needs.
+    """
+    if trw_dir is None:
+        return False
+    state_path = trw_dir / "context" / "ceremony-state.json"
+    if not state_path.is_file():
+        return False
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:  # justified: fail-CLOSED, an unreadable state is not proof of a passing build
+        logger.warning("unpinned_build_state_unreadable", outcome="fail_closed", path=str(state_path), exc_info=True)
+        return None
+    if not isinstance(state, dict) or not state.get("session_started"):
+        return False
+    return state
+
+
+def _recorded_session_build(state: dict[str, object], session_id: str) -> object:
+    """This session's recorded build result, or ``None``.
+
+    Keyed on the CURRENT session only. ``build_check_result`` at the top level is
+    project-global — it is exactly the cross-session state that made the bundled
+    hook accept (or reject) evidence produced by a different agent in the same
+    checkout, so it is not consulted.
+    """
+    per_session = state.get("session_build_results")
+    return per_session.get(session_id) if isinstance(per_session, dict) else None
+
+
+def unpinned_build_failure_recorded(trw_dir: Path | None, session_id: str) -> bool | None:
+    """Did THIS session record a FAILED build check? — PRD-FIX-140-FR04.
+
+    ``True``  — ``ceremony-state.json`` records a failure for ``session_id``.
+    ``False`` — no ceremony state, ceremony never started, nothing recorded for
+                this session, or the recorded result is pending/passing.
+    ``None``  — the state file exists but could not be read or parsed, so the
+                answer is uncomputable and the caller blocks (fail-closed).
+    """
+    state = _read_unpinned_ceremony_state(trw_dir)
+    if not isinstance(state, dict):
+        return None if state is None else False
+    recorded = _recorded_session_build(state, session_id)
+    if recorded is False:
+        return True
+    return isinstance(recorded, str) and recorded.strip().lower() in {"failed", "fail", "false"}
+
+
+def unpinned_build_passed(trw_dir: Path | None, session_id: str, *, unscoped_since: datetime | None = None) -> bool:
+    """Did THIS session record a PASSING build check that is still current? — PRD-FIX-140-FR04.
+
+    Only a positive, session-attributed pass returns ``True``; everything else
+    (absent, pending, failed, unreadable) is ``False``, so this can only ever
+    RELEASE the gate on evidence, never on the absence of it.
+
+    A pass is evidence for the tree as it stood when it was recorded. A
+    ``file_modified`` record stamped after it (this session's, or any unpinned
+    session's when ``unscoped_since`` says the key is unshared) makes it stale,
+    and a pass with no recorded time cannot be shown current (release-verify
+    2026-09-17 P1-1).
+    """
+    state = _read_unpinned_ceremony_state(trw_dir)
+    if not isinstance(state, dict):
+        return False
+    recorded = _recorded_session_build(state, session_id)
+    passed = recorded is True or (
+        isinstance(recorded, str) and recorded.strip().lower() in {"pass", "passed", "success", "true"}
+    )
+    if not passed:
+        return False
+    stamps = state.get("session_build_results_at")
+    passed_at = stamps.get(session_id) if isinstance(stamps, dict) else None
+    if not isinstance(passed_at, str) or not passed_at:
+        return False
+    try:
+        passed_dt = datetime.fromisoformat(passed_at.replace("Z", "+00:00"))
+    except ValueError:
+        # trw-fail-silent-allow: False is the CLOSED outcome — a pass whose stamp cannot be parsed cannot be shown current
+        return False
+    if passed_dt.tzinfo is None:
+        passed_dt = passed_dt.replace(tzinfo=timezone.utc)
+    return not _file_modified_since(trw_dir, session_id, passed_dt, unscoped_since=unscoped_since)
+
+
+def _file_modified_since(
+    trw_dir: Path | None, session_id: str, since: datetime, *, unscoped_since: datetime | None
+) -> bool:
+    """True when the session-scoped stream holds a ``file_modified`` record stamped at or after *since*.
+
+    Fails closed: an unreadable stream counts as modified.
+    """
+    if trw_dir is None:
+        return False
+    events_path = trw_dir / "context" / "session-events.jsonl"
+    if not events_path.exists():
+        return False
+    try:
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
+                continue
+            if not isinstance(record, dict) or str(record.get("event", "")) != "file_modified":
+                continue
+            if unscoped_since is None and str(record.get("session_id", "")) != session_id:
+                continue
+            if _stamped_at_or_after(record.get("ts"), since):
+                return True
+        return False
+    except (OSError, UnicodeDecodeError):  # justified: fail-CLOSED, an unreadable session log counts as modified
+        logger.warning("unpinned_session_changes_unreadable", outcome="fail_closed", path=str(events_path))
+        # trw-fail-silent-allow: True is the BLOCKING outcome here — an unreadable log is read as "modified"
+        return True
+
+
+def _stamped_at_or_after(raw_ts: object, since: datetime) -> bool:
+    """True when an event's ``ts`` (``%Y-%m-%dT%H:%M:%SZ``, second resolution) is not before *since*.
+
+    A missing or unparseable stamp (the writer emits the literal ``unknown`` when
+    ``date`` fails) counts as inside the window: this reader exists to fail
+    closed, and an edit whose time is unknown cannot be shown to predate the server.
+    """
+    if not isinstance(raw_ts, str) or not raw_ts:
+        return True
+    try:
+        stamped = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if stamped.tzinfo is None:
+        stamped = stamped.replace(tzinfo=timezone.utc)
+    return stamped >= since.replace(microsecond=0)
+
+
+def unpinned_session_changed_files(
+    trw_dir: Path | None, session_id: str, *, unscoped_since: datetime | None = None
+) -> int | None:
+    """Distinct files THIS unpinned session recorded modifying — PRD-FIX-140-FR04.
+
+    The pinned path counts ``file_modified`` events in the run's own
+    ``events.jsonl`` (:func:`_count_file_modified_current_session`). An unpinned
+    session has no run directory, so the same evidence is read from the two
+    session-scoped surfaces that survive without a pin:
+
+    * ``.trw/context/session-events.jsonl`` — the stream the unpinned deliver
+      marker already uses (``_delivery_build_gates.write_session_deliver_marker``);
+      ``file_modified`` records carrying this ``session_id`` are counted by
+      distinct normalised path, exactly like the pinned counter.
+    * ``ceremony-state.json``'s ``files_modified_since_checkpoint`` — a count, not
+      paths, so it is combined with ``max`` rather than added (the same file could
+      appear in both).
+
+    ``0`` is an HONEST zero: nothing was recorded, which is what a docs-only or
+    research session looks like, and the caller leaves that advisory. ``None``
+    means a surface exists but could not be read, and the caller blocks.
+
+    The writer is ``data/hooks/post-tool-event.sh`` (``_append_unpinned_change``),
+    keyed on ``TRW_SESSION_ID`` when the client exports one and otherwise on the
+    host's own session id. Only ``claude-code`` publishes an identifier that both
+    the hook and this server can observe (``client_profiles/session_identity.py``);
+    for every other profile the server's key is its process UUID and can never
+    equal the hook's. Passing ``unscoped_since`` is the caller's declaration that
+    its key is unshared: every ``file_modified`` record stamped at or after that
+    instant is then counted regardless of ``session_id``. That over-counts when two
+    unpinned sessions edit the same checkout at once, which fails closed (a block
+    that names the reason) rather than the silent zero a key mismatch produced.
+    """
+    state = _read_unpinned_ceremony_state(trw_dir)
+    if state is None:
+        return None
+    counted = 0
+    if isinstance(state, dict):
+        raw = state.get("files_modified_since_checkpoint")
+        if isinstance(raw, int) and raw > 0:
+            counted = raw
+    if trw_dir is None:
+        return counted
+    events_path = trw_dir / "context" / "session-events.jsonl"
+    if not events_path.exists():
+        return counted
+    if not events_path.is_file():
+        # Present but not a regular file: uncomputable, NOT an honest zero. Same
+        # distinction ``_read_run_events`` draws for the pinned path (WD-03).
+        logger.warning("unpinned_session_changes_unreadable", outcome="fail_closed", path=str(events_path))
+        return None
+    try:
+        paths: set[str] = set()
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                # A damaged LINE is not an unreadable FILE: the enclosing handler still fails closed
+                # for the latter, and FileStateReader.read_jsonl skips a torn tail line the same way
+                # on the pinned path.
+                # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
+                continue
+            if not isinstance(record, dict) or str(record.get("event", "")) != "file_modified":
+                continue
+            # One writer, one shape: post-tool-event.sh appends flat
+            # {"event","session_id","file",...} lines (PRD-FIX-140-FR04).
+            if unscoped_since is None:
+                if str(record.get("session_id", "")) != session_id:
+                    continue
+            elif not _stamped_at_or_after(record.get("ts"), unscoped_since):
+                continue
+            raw_path = str(record.get("file", ""))
+            if raw_path:
+                paths.add(_normalize_event_path(raw_path, trw_dir.parent))
+        return max(counted, len(paths))
+    except Exception:  # justified: fail-CLOSED, an unreadable session log is uncomputable, not zero
+        logger.warning("unpinned_session_changes_unreadable", outcome="fail_closed", path=str(events_path))
+        return None

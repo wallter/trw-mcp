@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from tests._ide_detection_isolation import isolate_ide_detection
 from trw_mcp.bootstrap._init_project import init_project
 from trw_mcp.bootstrap._update_project import update_project
 from trw_mcp.models.config import TRWConfig
@@ -27,32 +28,12 @@ from trw_mcp.tools.ceremony import _do_instruction_sync
 
 @pytest.fixture(autouse=True)
 def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make detect_ide deterministic regardless of the developer's installed IDEs.
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``.
 
-    Wave 1 of Sprint 91 (PRD-CORE-136) added `shutil.which("cursor")` and
-    `shutil.which("cursor-agent")` to `detect_ide`, which means this test
-    suite's `tmp_path` projects inherited the developer's globally-installed
-    Cursor binary. Combined with the augmentation fix (PRD-FIX-076), that
-    leaked `cursor-ide` into every auto-detected target_platforms result.
-
-    This fixture filters cursor binaries from shutil.which lookup and clears
-    the CURSOR_* env vars so tests see only the IDEs the fixture seeds.
+    Without it the developer's globally-installed Cursor binary leaks
+    ``cursor-ide`` into every auto-detected ``target_platforms`` result.
     """
-    import shutil as _shutil
-
-    from trw_mcp.bootstrap import _utils
-
-    original_which = _shutil.which
-
-    def _which_filtered(cmd: str, *args: object, **kwargs: object) -> str | None:
-        if cmd in {"cursor", "cursor-agent"}:
-            return None
-        return original_which(cmd, *args, **kwargs)
-
-    monkeypatch.setattr(_utils.shutil, "which", _which_filtered)
-    monkeypatch.delenv("CURSOR_TRACE_ID", raising=False)
-    monkeypatch.delenv("CURSOR_SESSION_ID", raising=False)
-    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    isolate_ide_detection(monkeypatch)
 
 
 @pytest.fixture()

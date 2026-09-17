@@ -513,7 +513,16 @@ def test_registered_startup_checkpoint_pointer_is_bounded_and_nonmutating(
     monkeypatch.setattr(
         ceremony, "SESSION_START_STEPS", tuple(s for s in ceremony.SESSION_START_STEPS if s.key == "run_resolve")
     )
-    real_open, real_stat = Path.open, Path.stat
+    # The step reads the log's metadata with ``Path.lstat``. Both metadata
+    # entry points are observed because their relationship is a pathlib
+    # implementation detail that moved: through 3.12 ``Path.lstat`` delegated to
+    # ``Path.stat(follow_symlinks=False)``, so patching ``stat`` alone saw the
+    # call; on 3.14 ``lstat`` reaches ``os.lstat`` directly, and this test
+    # recorded zero metadata calls and injected no denial for the
+    # ``metadata_error`` case — it stopped exercising its own subject.
+    # Recording the operation NAME keeps the next such move visible instead of
+    # silently empty.
+    real_open, real_stat, real_lstat = Path.open, Path.stat, Path.lstat
     metadata_calls: list[str] = []
 
     def guarded_open(path: Path, *args: Any, **kwargs: Any) -> Any:
@@ -527,14 +536,22 @@ def test_registered_startup_checkpoint_pointer_is_bounded_and_nonmutating(
                 raise PermissionError("synthetic metadata denial")
         return real_stat(path, *args, **kwargs)
 
+    def observed_lstat(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path == log:
+            metadata_calls.append("lstat")
+            if log_kind == "metadata_error":
+                raise PermissionError("synthetic metadata denial")
+        return real_lstat(path, *args, **kwargs)
+
     monkeypatch.setattr(Path, "open", guarded_open)
     monkeypatch.setattr(Path, "stat", observed_stat)
+    monkeypatch.setattr(Path, "lstat", observed_lstat)
     result = extract_tool_fn(make_test_server("ceremony"), "trw_session_start")(ctx=ctx, verbose=verbose)
     assert result["success"] is True
     assert result["run"]["status"] == "active"
     if log_kind in {"short", "large"}:
         assert result["run"]["checkpoint_log_path"] == str(log)
-        assert metadata_calls == ["stat"]  # identical path operations for either log size
+        assert metadata_calls == ["lstat"]  # identical path operations for either log size
     else:
         assert "checkpoint_log_path" not in result["run"]
     assert "private checkpoint" not in str(result)

@@ -18,6 +18,7 @@ control, so a future refactor that breaks enforcement outright cannot pass here.
 from __future__ import annotations
 
 import io
+import os
 import shutil
 from pathlib import Path
 
@@ -288,11 +289,29 @@ def test_stale_sidecar_falls_through_to_python_unchanged(tmp_path: Path, state: 
     (project / "unrelated" / "notes.py").write_text("x = 1\n", encoding="utf-8")
     sidecar = glob_sidecar_path(project)
 
+    def _stamp_newer_than_sidecar(path: Path) -> None:
+        """Make *path* unambiguously newer than the sidecar, in WHOLE seconds.
+
+        ``_trw_sidecar_clears`` decides staleness with ``[ "$_sc_art" -nt
+        "$_sc_file" ]``, and ``-nt`` resolution belongs to the SHELL running the
+        hook. Under macOS's ``/bin/sh`` (bash 3.2) it compares ``st_mtime``
+        SECONDS, so an edit written microseconds after the sidecar is not
+        "newer" and the fast path cleared a project the marker condemns --
+        turning this parity test into a measurement of the host's shell. dash,
+        which is ``/bin/sh`` on most Linux images, compares nanoseconds and
+        happened to agree with the intent. Stamping the edit two whole seconds
+        ahead states the ordering the fixture always meant, on either shell.
+        """
+        os.utime(path, (sidecar.stat().st_mtime + 2, sidecar.stat().st_mtime + 2))
+
     if state == "contract-edited":
-        (project / CONTRACT_REL).write_text(contract_yaml(anchors="somewhere/else.py"), encoding="utf-8")
+        contract = project / CONTRACT_REL
+        contract.write_text(contract_yaml(anchors="somewhere/else.py"), encoding="utf-8")
+        _stamp_newer_than_sidecar(contract)
     elif state == "hook-resynced":
         hook = project / ".claude" / "hooks" / "lib-trw.sh"
         hook.write_text(hook.read_text(encoding="utf-8") + "# vendor v2\n", encoding="utf-8")
+        _stamp_newer_than_sidecar(hook)
     elif state == "sidecar-emptied":
         sidecar.write_text("", encoding="utf-8")
     elif state == "sidecar-digest-forged":

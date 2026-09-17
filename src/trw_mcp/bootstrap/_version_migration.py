@@ -471,7 +471,7 @@ def _cleanup_stale_artifacts(
             of TRW authorship before deleting anything inside a kept skill dir.
     """
     # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
-    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run)
+    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run, manifest_hashes=manifest_hashes)
 
     # Remove stale hooks/skills/agents no longer in bundled data. dry_run is
     # threaded down so --dry-run REPORTS the pending removals ("would remove:

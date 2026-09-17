@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 # PRD-CORE-149-FR01: resolve ``get_config`` via the facade.
 import trw_mcp.state.claude_md._static_sections as _facade
 from trw_mcp.state.claude_md._renderer import SESSION_BOUNDARY_TEXT as _SESSION_BOUNDARY_TEXT
-from trw_mcp.state.claude_md.sections._memory_routing import _load_analytics_counts
+from trw_mcp.state.claude_md.sections._memory_routing import _format_learning_session_claim
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._client_profile import ClientProfile
@@ -131,9 +131,6 @@ def render_agents_trw_section(
         render_deliver_gate_statement,
     )
 
-    sessions_tracked, total_learnings = _load_analytics_counts()
-    session_label = "session" if sessions_tracked == 1 else "sessions"
-
     tool_list = render_tool_list(exposed_tools)
     delegation_block = "\n\n" + render_delegation_protocol(client_profile) if client_profile is not None else ""
 
@@ -148,7 +145,11 @@ def render_agents_trw_section(
         "\n" + tool_list + "\n"
         "## Workflow\n"
         "\n"
-        f"1. **Start**: call `trw_session_start()` — it loads {total_learnings} learnings from {sessions_tracked} prior {session_label} and recovers any active run; use it to load context from {sessions_tracked} prior {session_label}\n"
+        # PRD-FIX-141-FR04: one population-naming claim, rendered once by
+        # ``_format_learning_session_claim``. The repetition here printed the
+        # analytics counters twice in one sentence and named neither population.
+        f"1. **Start**: call `trw_session_start()` — it loads {_format_learning_session_claim()} "
+        "and recovers any active run\n"
         "2. **During**: call `trw_learn()` when you discover gotchas, patterns, or errors\n"
         "3. **During**: call `trw_checkpoint()` after milestones to save progress\n"
         "4. Preserve material unfinished work with a checkpoint or durable native handoff and next-read pointer; nothing material to preserve: no artifact needed. Use `trw_deliver()` only for completed-work acceptance under the delivery gates\n"

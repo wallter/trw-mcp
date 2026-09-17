@@ -40,7 +40,7 @@ class TestCheckInstructionsCLI:
         from unittest.mock import patch
 
         agents = tmp_path / "AGENTS.md"
-        agents.write_text("Use trw_build_check() for validation.\n")
+        agents.write_text("Use trw_pipeline_health() for validation.\n")
 
         args = argparse.Namespace(target_dir=str(tmp_path))
         mock_config = type(
@@ -105,7 +105,7 @@ class TestCheckInstructionsCore:
         from unittest.mock import patch
 
         agents = tmp_path / "AGENTS.md"
-        agents.write_text("Use trw_build_check() here.\n")
+        agents.write_text("Use trw_pipeline_health() here.\n")
 
         mock_config = type(
             "MockConfig",
@@ -121,4 +121,4 @@ class TestCheckInstructionsCore:
             exit_code, mismatches = _check_instructions_core(tmp_path)
             assert exit_code == 1
             assert "AGENTS.md" in mismatches
-            assert "trw_build_check" in mismatches["AGENTS.md"]
+            assert "trw_pipeline_health" in mismatches["AGENTS.md"]

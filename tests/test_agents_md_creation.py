@@ -4,12 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from tests._ide_detection_isolation import isolate_ide_detection
 from tests._test_agents_md_support import (
     _TRW_SECTION,
     _extract_trw_section,
     _patched_learning_env,
 )
 from trw_mcp.state.claude_md import TRW_MARKER_END, TRW_MARKER_START, merge_trw_section
+
+
+@pytest.fixture(autouse=True)
+def _isolate_ide_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detect clients from ``tmp_path`` only — see ``tests/_ide_detection_isolation``."""
+    isolate_ide_detection(monkeypatch)
 
 
 class TestAgentsMdCreation:

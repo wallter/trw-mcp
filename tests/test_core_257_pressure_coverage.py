@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -79,6 +80,17 @@ def _iso_ago(hours: float) -> str:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason=(
+        "PID-reuse ghost detection is a Linux capability: process_birth_epoch "
+        "reads field 22 of /proc/<pid>/stat against /proc/stat btime and returns "
+        "None on every other platform BY DESIGN, so the lock is reported as "
+        "identity_state unverified and RETAINED, never falsely excluded (see "
+        "_writer_census_identity.process_birth_epoch). The non-Linux contract is "
+        "asserted in test_session_start_runtime_pressure."
+    ),
+)
 def test_pid_reuse_ghost_excluded_and_logged_at_warning(tmp_path: Path) -> None:
     """A ghost is excluded from the census AND the exclusion is observable.
 
