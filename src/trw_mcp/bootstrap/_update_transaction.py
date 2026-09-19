@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
+import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from trw_mcp.canons.registry import install_view, load_registry
@@ -43,6 +46,8 @@ _TRANSACTION_FILES: tuple[str, ...] = (
     ".trw/channels/manifest.yaml",
     ".trw/client-profile.env",
     ".trw/config.yaml",
+    # PRD-SEC-013 marker: update-project re-blesses its hook digest after a resync.
+    ".trw/contracts/enrollment.yaml",
     ".trw/context/behavioral_protocol.md",
     ".trw/context/behavioral_protocol.yaml",
     ".trw/context/messages.yaml",
@@ -52,6 +57,9 @@ _TRANSACTION_FILES: tuple[str, ...] = (
     ".trw/runtime/hook-env.sh",
     ".trw/templates/claude_md.md",
     ".trw/frameworks/VERSION.yaml",
+    # Store-rendered projections the instruction sync writes (PRD-INFRA-190 FR02:
+    # a write the transaction cannot see is a write the report cannot name).
+    ".trw/INSTRUCTIONS.md",
     ".mcp.json",
     "AGENTS.md",
     "ANTIGRAVITY.md",
@@ -59,6 +67,7 @@ _TRANSACTION_FILES: tuple[str, ...] = (
     # Root FRAMEWORK.md is a live update target fed by the canon registry.
     "FRAMEWORK.md",
     "opencode.json",
+    "REVIEW.md",
 )
 
 
@@ -105,7 +114,7 @@ def _remove_transaction_path(path: Path) -> None:
             if child.is_symlink() or child.is_file():
                 child.unlink()
             elif child.is_dir():
-                shutil.rmtree(child)
+                _remove_transaction_path(child)
         # Remove the now-managed-empty dir only if nothing survived (no pruned
         # children); otherwise leave it holding the preserved worktrees.
         if not any(path.iterdir()):
@@ -137,11 +146,9 @@ def _validate_transaction_surface(target_dir: Path) -> None:
             # flags their symlinks.
             dirnames[:] = [d for d in dirnames if not _is_pruned_nested_dir(base / d)]
             # Reject only symlinked DIRECTORIES: a symlinked dir could redirect a
-            # recursive managed write. Symlink FILES are safe — the snapshot copies
-            # them with follow_symlinks=False and the framework writer guards its
-            # own targets — and commonly appear as unmanaged client runtime state
-            # (e.g. .antigravitycli session json), so scanning them would abort the
-            # update for no security benefit.
+            # recursive managed write. Symlink FILES are allowed — they commonly
+            # appear as unmanaged client runtime state (e.g. .antigravitycli session
+            # json) — because park_surface_links keeps writers from following them.
             for name in dirnames:
                 candidate = base / name
                 if candidate.is_symlink():
@@ -204,3 +211,148 @@ def _restore_transaction_snapshot(target_dir: Path, snapshot_root: Path) -> None
             shutil.copytree(src, dest, symlinks=True, ignore=_snapshot_copy_ignore)
         else:
             shutil.copy2(src, dest, follow_symlinks=False)
+
+
+def _is_surface_path(rel: str) -> bool:
+    """True when repo-relative *rel* lies inside the transaction surface."""
+    return rel in _TRANSACTION_FILES or any(rel.startswith(f"{root}/") for root in _TRANSACTION_DIRS)
+
+
+def _file_signature(path: Path) -> tuple[str, int, bytes] | None:
+    """``(kind, mode, content)`` of a surface file, or ``None`` when absent.
+
+    mtime is deliberately not part of it: a rewrite of identical bytes is not a
+    change (PRD-INFRA-190 FR02 boundary semantics).
+    """
+    if path.is_symlink():
+        return ("link", 0, os.readlink(path).encode())
+    if not path.is_file():
+        return None
+    return ("file", stat.S_IMODE(path.stat().st_mode), path.read_bytes())
+
+
+def _surface_files(root: Path) -> set[str]:
+    """Repo-relative paths of every file or symlink in *root*'s transaction surface."""
+    found = {rel for rel in _TRANSACTION_FILES if (root / rel).is_file() or (root / rel).is_symlink()}
+    for rel_dir in _TRANSACTION_DIRS:
+        top = root / rel_dir
+        if not top.is_dir() or top.is_symlink():
+            continue
+        for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
+            base = Path(dirpath)
+            dirnames[:] = [d for d in dirnames if not _is_pruned_nested_dir(base / d)]
+            found.update((base / name).relative_to(root).as_posix() for name in filenames)
+            found.update((base / d).relative_to(root).as_posix() for d in dirnames if (base / d).is_symlink())
+    return found
+
+
+def _diff_transaction_paths(before_root: Path, after_root: Path) -> dict[str, str]:
+    """``{repo-relative path: created|updated|deleted}`` across the transaction surface.
+
+    The one source of update-project's changed-file report, in both modes.
+    """
+    changes: dict[str, str] = {}
+    for rel in sorted(_surface_files(before_root) | _surface_files(after_root)):
+        before = _file_signature(before_root / rel)
+        after = _file_signature(after_root / rel)
+        if before == after:
+            continue
+        changes[rel] = "created" if before is None else "deleted" if after is None else "updated"
+    return changes
+
+
+def _restore_transaction_file(target_dir: Path, snapshot_root: Path, rel: str) -> None:
+    """Put one surface file back to its snapshot state (restored, or removed if it was absent)."""
+    _reject_symlink_path(target_dir, rel)
+    dest = target_dir / rel
+    src = snapshot_root / rel
+    if dest.is_symlink() or dest.is_file():
+        dest.unlink()
+    if src.is_symlink() or src.is_file():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest, follow_symlinks=False)
+
+
+def park_surface_links(root: Path) -> list[str]:
+    """Unlink every surface symlink so no writer writes through it (PRD-INFRA-190 FR02).
+
+    A link can resolve outside the project, or — in the dry-run scratch copy — back
+    into the real target. The transaction snapshot still holds each link and
+    :func:`unpark_surface_links` puts it back. Both modes run this, so a dry run
+    reports what the real run does.
+    """
+    parked = sorted(rel for rel in _surface_files(root) if (root / rel).is_symlink())
+    for rel in parked:
+        (root / rel).unlink()
+    return parked
+
+
+def unpark_surface_links(root: Path, snapshot_root: Path, parked: list[str], result: dict[str, list[str]]) -> None:
+    """Restore each parked link, discarding (and reporting) whatever a writer put in its place."""
+    for rel in parked:
+        if (root / rel).exists() or (root / rel).is_symlink():
+            result.setdefault("preserved", []).append(f"{rel} (symlink)")
+        _restore_transaction_file(root, snapshot_root, rel)
+
+
+#: Store and analytics inputs the instruction render reads. They sit outside the
+#: transaction surface, so the dry-run scratch tree needs its own copy of them.
+_RENDER_INPUT_DIRS: tuple[str, ...] = (".trw/memory", ".trw/context")
+
+
+def dirty_state(
+    target_dir: Path, effective_data: Path, result: dict[str, list[str]]
+) -> tuple[set[str] | None, list[str]]:
+    """``(dirty surface paths, dirty bundle paths)`` from one ``git status`` (PRD-INFRA-190 FR04/FR05).
+
+    The dirty set is ``None`` when git could not answer (NFR01); the bundle list
+    is then empty and both checks are reported as unknown.
+    """
+    from ._version_manifest import git_dirty_paths
+
+    data_root = effective_data.resolve()
+    target_root = target_dir.resolve()
+    bundle_rel = data_root.relative_to(target_root).as_posix() if data_root.is_relative_to(target_root) else None
+    dirty = git_dirty_paths(
+        target_dir, [*_TRANSACTION_DIRS, *_TRANSACTION_FILES, *([bundle_rel] if bundle_rel else [])]
+    )
+    if dirty is None:
+        result["warnings"].append(
+            "git status unavailable: uncommitted-change and dirty-bundle checks are unknown; "
+            "only the managed-artifacts hash guard protects edited files"
+        )
+        return None, []
+    bundle_dirty = sorted(p for p in dirty if bundle_rel and p.startswith(f"{bundle_rel}/"))
+    return {p for p in dirty if _is_surface_path(p)}, bundle_dirty
+
+
+def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callable[[Path], None]) -> None:
+    """Run *apply* against a scratch copy of the surface; the target is never written (FR02).
+
+    The scratch tree is the transaction snapshot plus a ``.git`` marker and the
+    render inputs, so the real update code produces the same bytes it would
+    produce in place.
+    """
+    try:
+        scratch = _snapshot_transaction_paths(target_dir)
+    except OSError as exc:
+        result["errors"].append(f"Failed to copy update targets for dry run: {exc}")
+        return
+    try:
+        # A real repository, so writers that ask git for the top level
+        # (REVIEW.md) resolve to the scratch tree exactly as they would in place.
+        if subprocess.run(["git", "init", "-q", str(scratch)], capture_output=True, check=False).returncode:  # noqa: S603,S607
+            (scratch / ".git").mkdir()
+        # Render inputs are copied as content: a copied link could reach the real tree.
+        for rel in _RENDER_INPUT_DIRS:
+            if (target_dir / rel).is_dir():
+                shutil.copytree(target_dir / rel, scratch / rel, ignore_dangling_symlinks=True, dirs_exist_ok=True)
+        apply(scratch)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    # Writers name absolute paths in their notes; point them at the real target.
+    for key, items in result.items():
+        result[key] = [
+            item.replace(str(scratch.resolve()), str(target_dir)).replace(str(scratch), str(target_dir))
+            for item in items
+        ]

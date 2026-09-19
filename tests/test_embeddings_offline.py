@@ -1,7 +1,7 @@
 """PRD-QUAL-110-FR04: disclosed + gated embeddings HF download.
 
 With ``embeddings_enabled=True`` the first model load triggers a
-huggingface.co download of all-MiniLM-L6-v2. The warmup path now:
+huggingface.co download of the configured retrieval model. The warmup path now:
 
   * honors an offline switch (``TRW_OFFLINE`` master switch and/or
     ``HF_HUB_OFFLINE``) that suppresses the background download, and
@@ -28,7 +28,7 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     # Force the warmup guard to see embeddings as enabled and not yet checked.
     monkeypatch.setattr(
         "trw_mcp.models.config.get_config",
-        lambda: SimpleNamespace(embeddings_enabled=True),
+        lambda: SimpleNamespace(embeddings_enabled=True, retrieval_embedding_model="configured/test-model"),
     )
     _memory_connection._embedder_checked = False
     yield
@@ -86,6 +86,8 @@ def test_warmup_discloses_egress_when_online(monkeypatch: pytest.MonkeyPatch) ->
     assert "embedder_download_disclosure" in events
     disclosure = next(e for e in logs if e.get("event") == "embedder_download_disclosure")
     assert "huggingface" in str(disclosure).lower()
+    # The disclosure names the model the warm-up will actually load, not a constant.
+    assert disclosure["model"] == "configured/test-model"
 
 
 def test_offline_env_helper() -> None:

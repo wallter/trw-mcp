@@ -147,13 +147,11 @@ def _check_config(target: Path, _config: TRWConfig) -> CheckResult:
     except Exception as exc:
         return CheckResult("config", "FAIL", f"config.yaml parse error: {exc}")
 
-    from trw_mcp.models.config._loader import _normalize_meta_tune_overrides
-
     overrides = raw if isinstance(raw, dict) else {}
     overrides = {str(k): v for k, v in overrides.items() if v is not None}
     overrides.pop("platform_api_key", None)
     try:
-        TRWConfig(**_normalize_meta_tune_overrides(overrides))  # type: ignore[arg-type]
+        TRWConfig(**overrides)
     except Exception as exc:
         return CheckResult("config", "FAIL", f"config.yaml present but schema-invalid: {exc}")
     return CheckResult("config", "PASS", f"{config_path} found and valid.")
@@ -525,6 +523,21 @@ def _check_antigravity_mcp(target: Path, _config: TRWConfig) -> CheckResult:
     return CheckResult("antigravity_mcp", cast("DoctorStatus", status), message)
 
 
+# ── PRD-INFRA-189: environment parity ────────────────────────────────────────
+
+
+def _check_gnu_timeout(_target: Path, _config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_environment import gnu_timeout_row
+
+    return CheckResult("gnu_timeout", *gnu_timeout_row())
+
+
+def _check_foreign_client_paths(target: Path, _config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_environment import foreign_client_paths_row
+
+    return CheckResult("foreign_client_paths", *foreign_client_paths_row(target))
+
+
 # ── Catalogue + orchestration ────────────────────────────────────────────────
 
 _CheckFn = Callable[[Path, TRWConfig], CheckResult]
@@ -561,6 +574,9 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     # position — the doctor's row order is asserted by its own tests and relied
     # on by operator habit; it is the later of the two subprocess-spawning checks.
     ("formation_readiness", "_check_formation_readiness"),
+    # PRD-INFRA-189 FR02/FR05: appended after it for the same reason.
+    ("gnu_timeout", "_check_gnu_timeout"),
+    ("foreign_client_paths", "_check_foreign_client_paths"),
 )
 
 

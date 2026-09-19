@@ -9,9 +9,9 @@ Security posture:
 - ``shell=False`` + argv list — the prompt is a single token, never shell-parsed.
 - Sanitized allowlisted env — no wholesale ``os.environ`` to the child.
 - The prompt body is redacted in the logged/returned argv.
-- The child runs in its own process group (``start_new_session``) so a timeout
-  kills the WHOLE tree — including the PTY ``script`` grandchild and any
-  subprocesses the agent spawned — leaving no orphans.
+- The child runs in its own process group (``start_new_session``). Abnormal
+  exits attempt a verified group kill, then reap the direct child with a bounded
+  wait. Escaped descendants are not guaranteed to terminate.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from typing import Literal
 
 import structlog
 
+from trw_mcp.dispatch._child_marker import dispatched_child_active
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._confine import CONFINEMENT_MECHANISM, confinement_prefix, confinement_unavailable_reason
@@ -36,8 +37,11 @@ from trw_mcp.dispatch._env import build_subprocess_env
 from trw_mcp.dispatch._normalize import classify_silence, normalize_output
 from trw_mcp.dispatch._posture import (
     ReviewerPostureError,
+    TrwAccessError,
     reviewer_posture_enforced,
+    trw_access_enforced,
     verify_reviewer_posture,
+    verify_trw_access,
 )
 from trw_mcp.dispatch._process_identity import capture_identity, signal_group
 from trw_mcp.dispatch._sandbox_probe import SandboxProbe, probe_write_containment
@@ -96,8 +100,39 @@ def _kill_tree(proc: subprocess.Popen[str], identity: dict[str, str | int] | Non
         if _POSIX and signal_group(identity, signal.SIGKILL):
             return
         proc.kill()
-    except (ProcessLookupError, OSError):  # pragma: no cover - benign race
-        pass
+    except ProcessLookupError:  # pragma: no cover  # trw-fail-silent-allow: child already exited
+        return
+    except OSError as exc:
+        logger.warning("dispatch_child_kill_failed", pid=proc.pid, reason=type(exc).__name__)
+
+
+def _finish_child(proc: subprocess.Popen[str], identity: dict[str, str | int] | None, *, terminate: bool) -> str:
+    """Release direct-child ownership without an unbounded pipe drain.
+
+    This also runs when identity capture or the PID callback raises. Unexpected
+    dispatch exceptions remain exceptions; cleanup failures are logged, and on
+    returning paths also appended to stderr. No escaped-descendant claim is made.
+    """
+    failures: list[str] = []
+    try:
+        if terminate:
+            _kill_tree(proc, identity)
+        try:
+            proc.wait(timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            failures.append(f"direct child not reaped ({type(exc).__name__})")
+    finally:
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError as exc:
+                    failures.append(f"pipe close failed ({type(exc).__name__})")
+    if failures:
+        note = "Dispatch cleanup incomplete: " + "; ".join(failures)
+        logger.warning("dispatch_cleanup_incomplete", pid=proc.pid, detail=note)
+        return note
+    return ""
 
 
 def _binary_resolves(binary: str, cwd: Path | None) -> bool:
@@ -151,7 +186,7 @@ def dispatch(
     """Run *req* and return a normalized :class:`DispatchResult`.
 
     Never raises for an expected outcome: a timeout sets ``timed_out=True`` /
-    ``exit_code=None`` (and the whole process tree is killed); a non-zero exit is
+    ``exit_code=None`` (and group termination is attempted); a non-zero exit is
     reported as-is; a missing/un-spawnable binary returns ``exit_code=-127``; an
     invalid ``cwd`` returns ``exit_code=-1`` without spawning.
 
@@ -163,6 +198,19 @@ def dispatch(
     When ``pid_callback is None`` (the CLI / synchronous / ``_run_job``-less
     callers) the behavior is byte-identical to before — nothing else changes.
     """
+    # Nested-launch guard, second layer (PRD-CORE-281-FR07). ``trw_dispatch``
+    # refuses first; this covers every OTHER in-process caller on a server started
+    # for a dispatched child (``trw_review``'s cross-model path calls this function
+    # directly). The detached job runner and a shell-run CLI are not affected: the
+    # subprocess env allowlist never forwards a ``TRW_*`` name to them.
+    if dispatched_child_active():
+        logger.warning("dispatch_nested_launch_refused", client=req.client)
+        return _early_result(
+            req,
+            [],
+            exit_code=-1,
+            stderr="nested dispatch is refused: this TRW server was started for a dispatched child",
+        )
     # Posture is settled BEFORE any argv exists and therefore before any spawn.
     # DispatchRequest already refuses reviewer+writes at construction; this second
     # check costs nothing and covers a request reconstructed by another path (a
@@ -174,10 +222,19 @@ def dispatch(
     sandbox_verdict, sandbox_note = _sandbox_claim(req, confine_note)
     try:
         verify_reviewer_posture(req.client, req.posture, read_only=req.read_only)
+        verify_trw_access(req.client, req.with_trw)
         argv = build_command(req, confined=bool(confine_argv))
     except ReviewerPostureError as exc:
         logger.warning("dispatch_posture_refused", client=req.client, posture=req.posture, error=str(exc))
         return _early_result(req, [], exit_code=-1, stderr=f"reviewer posture refused: {exc}")
+    except TrwAccessError as exc:
+        # Same shape as the posture refusal and for the same reason: a request
+        # built by another path (model_construct, a hand-written job file) must
+        # not reach Popen with ``with_trw`` silently dropped, because the caller
+        # would then read a TRW-less child's answer as a TRW-connected one.
+        logger.warning("dispatch_trw_access_refused", client=req.client, error=str(exc))
+        return _early_result(req, [], exit_code=-1, stderr=f"trw access refused: {exc}")
+    _warn_trw_access_config_residue(req)
     # Redact the prompt on the bare argv BEFORE PTY-wrapping, then wrap the
     # redacted form for display — otherwise the prompt would survive inside the
     # `script -qec` inner string and leak into logs / argv_redacted.
@@ -207,7 +264,7 @@ def dispatch(
         # of every process in the tree, or a grandchild escapes the denial.
         run_argv = [*confine_argv, *run_argv]
         argv_redacted = [*confine_argv, *argv_redacted]
-    env = build_subprocess_env(req.client, posture=req.posture)
+    env = build_subprocess_env(req.client, posture=req.posture, with_trw=req.with_trw)
 
     # Validate cwd in the RUNNER (not just the CLI) so the future MCP path is
     # protected too: a non-directory cwd would make subprocess raise.
@@ -272,28 +329,34 @@ def dispatch(
             stderr=f"Failed to launch {req.client!r}: {exc}",
         )
 
-    identity = capture_identity(proc.pid) if _POSIX else None
-    if pid_callback is not None:
-        pid_callback(proc.pid)
-
+    identity = None
+    communicated = False
     try:
-        raw_stdout, raw_stderr = proc.communicate(timeout=req.timeout_s)
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc, identity)
-        # Bounded drain: refusal or escaped descendants can leave writers alive.
+        identity = capture_identity(proc.pid) if _POSIX else None
+        if pid_callback is not None:
+            pid_callback(proc.pid)
         try:
-            raw_stdout, raw_stderr = proc.communicate(timeout=5)
+            raw_stdout, raw_stderr = proc.communicate(timeout=req.timeout_s)
         except subprocess.TimeoutExpired:
-            # A refused kill or escaped descendant must not hang the caller.
-            raw_stdout, raw_stderr = "", "Dispatch cleanup incomplete; process may still be running."
-            logger.warning("dispatch_cleanup_incomplete", pid=proc.pid)
-            for stream in (proc.stdout, proc.stderr):
-                if stream is not None:
-                    stream.close()
-        timed_out = True
-        exit_code = None
-    else:
-        exit_code = proc.returncode
+            _kill_tree(proc, identity)
+            # Bounded drain: escaped descendants may still hold these pipes.
+            try:
+                raw_stdout, raw_stderr = proc.communicate(timeout=5)
+                communicated = True
+            except subprocess.TimeoutExpired:
+                raw_stdout, raw_stderr = "", "Dispatch cleanup incomplete; process may still be running."
+                logger.warning("dispatch_cleanup_incomplete", pid=proc.pid)
+            timed_out = True
+            exit_code = None
+        else:
+            communicated = True
+            exit_code = proc.returncode
+    finally:
+        cleanup_note = _finish_child(proc, identity, terminate=not communicated)
+    if cleanup_note:
+        raw_stderr = f"{raw_stderr or ''}\n{cleanup_note}".strip()
+        if not timed_out:
+            exit_code = -1
 
     raw_stdout = _cap_output(raw_stdout or "")
     raw_stderr = _cap_output(raw_stderr or "")
@@ -318,6 +381,7 @@ def dispatch(
         read_only_enforced=req.read_only,
         posture=req.posture,
         posture_enforced=reviewer_posture_enforced(req.client, req.posture),
+        trw_access_enforced=trw_access_enforced(req.client, req.with_trw),
         exit_code=exit_code,
         timed_out=timed_out,
         duration_s=duration_s,
@@ -407,6 +471,37 @@ def _sandbox_claim(req: DispatchRequest, confine_note: str) -> tuple[bool | Lite
     return probe.verdict, probe.note
 
 
+def _warn_trw_access_config_residue(req: DispatchRequest) -> None:
+    """Log what a ``with_trw`` launch stopped isolating, when it stopped isolating it.
+
+    PRD-CORE-281-FR04. ``trw_access_enforced=True`` says TRW's own server reached
+    the child; for codex it ALSO means ``--ignore-user-config`` was displaced, so
+    the child reads the user's and the project's codex config after all. Leaving
+    that in a source comment made it true and unreadable at the same time — the
+    operator weighing a with_trw dispatch never sees the module.
+
+    A WARNING, not a debug line: under the shipped default install the effective
+    level is INFO, so a debug event here would exist only for someone who had
+    already opted into verbose logging — i.e. not for the run that needed it. It
+    stays out of ``DispatchResult`` on the response-token rule; the string is
+    registry DATA (``ClientSpec.trw_access_config_residue``) and is reachable
+    from there by anyone rendering the client table.
+    """
+    if not req.with_trw:
+        return
+    # No except-and-return here, deliberately: this runs only AFTER
+    # ``verify_trw_access`` accepted the client and ``build_command`` built its
+    # argv, both of which refuse an unregistered id, so the lookup cannot fail.
+    # Catching it would add an unreachable silent branch to satisfy a shape.
+    spec = client_spec_for(req.client)
+    if spec.trw_access_config_residue:
+        logger.warning(
+            "dispatch_trw_access_config_residue",
+            client=req.client,
+            residue=spec.trw_access_config_residue,
+        )
+
+
 def _early_result(
     req: DispatchRequest,
     argv_redacted: list[str],
@@ -416,9 +511,10 @@ def _early_result(
 ) -> DispatchResult:
     """Build a clean failure result for a pre-spawn / launch failure (no child).
 
-    ``posture_enforced`` is False on every one of these paths by construction: no
-    child was launched, so nothing was bounded. Reporting the spec's capability
-    here would claim containment for a process that never existed.
+    ``posture_enforced`` and ``trw_access_enforced`` are False on every one of
+    these paths by construction: no child was launched, so nothing was bounded
+    and nothing was connected. Reporting the spec's capability here would claim
+    containment -- or a TRW connection -- for a process that never existed.
     """
     return DispatchResult(
         client=req.client,
@@ -426,6 +522,7 @@ def _early_result(
         read_only_enforced=req.read_only,
         posture=req.posture,
         posture_enforced=False,
+        trw_access_enforced=False,
         exit_code=exit_code,
         timed_out=False,
         duration_s=0.0,

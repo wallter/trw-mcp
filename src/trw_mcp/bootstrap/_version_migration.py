@@ -139,6 +139,7 @@ from trw_mcp.bootstrap._version_manifest import (
 from trw_mcp.bootstrap._version_manifest import (
     _compute_content_hashes as _compute_content_hashes,
 )
+from trw_mcp.bootstrap._version_manifest import _manifest_content_hashes
 from trw_mcp.bootstrap._version_manifest import (
     _read_manifest as _read_manifest,
 )
@@ -179,7 +180,7 @@ def _write_manifest(
     and overwritten on the following update. Inlining a fourth key producer here
     is what the FR05 totality test exists to catch — add it to the registry.
     """
-    from ._manifest_recorders import collect_manifest_content_hashes
+    from ._manifest_recorders import collect_manifest_content_hashes, dropped_manifest_keys
     from ._template_updater import _get_bundled_names, _get_custom_names
     from ._version_manifest import _manifest_content_hashes
 
@@ -191,6 +192,7 @@ def _write_manifest(
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
     prev_hashes = _manifest_content_hashes(_read_manifest(target_dir))
     content_hashes = collect_manifest_content_hashes(target_dir, prev_hashes, data_dir)
+    result.setdefault("warnings", []).extend(dropped_manifest_keys(target_dir, prev_hashes, content_hashes))
     manifest = {
         "version": 2,
         "skills": bundled["skills"],
@@ -256,6 +258,7 @@ from trw_mcp.bootstrap._version_migration_predecessors import (
 from trw_mcp.bootstrap._version_migration_predecessors import (
     _migrate_prefix_predecessors as _migrate_prefix_predecessors,
 )
+from trw_mcp.bootstrap._version_migration_predecessors import preserve_unowned
 
 # ---------------------------------------------------------------------------
 # Stale artifact removal
@@ -271,7 +274,8 @@ def _remove_stale_set(
     is_dir_artifact: bool,
     log_event: str,
     valid_prefixes: tuple[str, ...] | None = ("trw-",),
-    dry_run: bool = False,
+    manifest_hashes: dict[str, str] | None,
+    project_root: Path,
 ) -> None:
     """Remove a set of stale artifacts from *target_dir*.
 
@@ -289,7 +293,9 @@ def _remove_stale_set(
         log_event: structlog event name on removal failure.
         valid_prefixes: Tuple of allowed prefixes for stale removal.
             ``None`` disables prefix filtering entirely.
-        dry_run: When ``True``, report ``would remove:<path>`` without deleting.
+        manifest_hashes: Pre-run ``content_hashes``; an artifact is deleted only
+            when they prove TRW wrote it (PRD-INFRA-190-FR06).
+        project_root: Repository root the manifest keys are relative to.
     """
     if not target_dir.is_dir():
         return
@@ -302,15 +308,13 @@ def _remove_stale_set(
         exists = stale.is_dir() if is_dir_artifact else stale.is_file()
         if not exists:
             continue
-        if dry_run:
-            result["updated"].append(f"would remove:{stale}")
+        if preserve_unowned(stale, manifest_hashes, project_root, result):
             continue
         try:
             if is_dir_artifact:
                 shutil.rmtree(stale)
             else:
                 stale.unlink()
-            result["updated"].append(f"removed:{stale}")
         except OSError:
             logger.debug(log_event, path=str(stale), exc_info=True)
 
@@ -319,7 +323,6 @@ def _remove_stale_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
     data_dir: Path | None = None,
-    dry_run: bool = False,
 ) -> None:
     """Remove hooks/skills/agents that no longer exist in bundled data.
 
@@ -331,9 +334,8 @@ def _remove_stale_artifacts(
     On the first update after manifest support is added, no stale cleanup
     is performed (the manifest is written for future updates).
 
-    When *dry_run* is ``True`` the pending removals are reported
-    (``would remove:<path>``) and NO files are deleted or written — including
-    the manifest, which must stay untouched in preview mode.
+    The manifest itself is written once, by ``update_project``, after every
+    writer has run.
     """
     from ._template_updater import _get_bundled_names
 
@@ -347,10 +349,7 @@ def _remove_stale_artifacts(
     bundled_opencode_skills = set(bundled.get("opencode_skills", []))
 
     if prev_manifest is None:
-        # First run with manifest support -- write manifest, skip cleanup.
-        # In dry-run mode leave the manifest unwritten (report nothing to remove).
-        if not dry_run:
-            _write_manifest(target_dir, result, data_dir)
+        # First run with manifest support: nothing is provably TRW's yet.
         return
 
     def _manifest_set(key: str) -> set[str]:
@@ -360,6 +359,7 @@ def _remove_stale_artifacts(
     prev_skills = _manifest_set("skills")
     prev_agents = _manifest_set("agents")
     prev_hooks = _manifest_set("hooks")
+    hashes = _manifest_content_hashes(prev_manifest)
     prev_custom_skills = _manifest_set("custom_skills")
     prev_custom_agents = _manifest_set("custom_agents")
     prev_custom_hooks = _manifest_set("custom_hooks")
@@ -379,7 +379,8 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=True,
         log_event="stale_skill_removal_failed",
-        dry_run=dry_run,
+        manifest_hashes=hashes,
+        project_root=target_dir,
     )
     _remove_stale_set(
         stale_names=prev_agents - bundled_agents,
@@ -389,7 +390,8 @@ def _remove_stale_artifacts(
         is_dir_artifact=False,
         log_event="stale_agent_removal_failed",
         valid_prefixes=("trw-", "reviewer-"),
-        dry_run=dry_run,
+        manifest_hashes=hashes,
+        project_root=target_dir,
     )
     _remove_stale_set(
         stale_names=prev_hooks - bundled_hooks,
@@ -399,7 +401,8 @@ def _remove_stale_artifacts(
         is_dir_artifact=False,
         log_event="stale_hook_removal_failed",
         valid_prefixes=None,
-        dry_run=dry_run,
+        manifest_hashes=hashes,
+        project_root=target_dir,
     )
     _remove_stale_set(
         stale_names=prev_opencode_commands - bundled_opencode_commands,
@@ -408,7 +411,8 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_opencode_command_removal_failed",
-        dry_run=dry_run,
+        manifest_hashes=hashes,
+        project_root=target_dir,
     )
     _remove_stale_set(
         stale_names=prev_opencode_agents - bundled_opencode_agents,
@@ -417,7 +421,8 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=False,
         log_event="stale_opencode_agent_removal_failed",
-        dry_run=dry_run,
+        manifest_hashes=hashes,
+        project_root=target_dir,
     )
     _remove_stale_set(
         stale_names=prev_opencode_skills - bundled_opencode_skills,
@@ -426,12 +431,9 @@ def _remove_stale_artifacts(
         result=result,
         is_dir_artifact=True,
         log_event="stale_opencode_skill_removal_failed",
-        dry_run=dry_run,
+        manifest_hashes=hashes,
+        project_root=target_dir,
     )
-
-    # Write updated manifest (never on a dry-run preview).
-    if not dry_run:
-        _write_manifest(target_dir, result, data_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -443,48 +445,36 @@ def _cleanup_stale_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
     data_dir: Path | None,
-    dry_run: bool,
     *,
-    cleanup_context: bool = True,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
-    """Remove stale and transient artifacts after a framework update.
+    """Remove stale artifacts after a framework update.
 
-    Runs three cleanup passes in order:
+    Runs two cleanup passes in order:
 
     1. PRD-FIX-032: Migrate non-prefixed predecessor skills/agents to their
        ``trw-`` successors (safe: only removes old name when new name exists).
     2. Remove stale bundled artifacts (hooks/skills/agents that were previously
        managed by TRW but are no longer in the current bundle).
-    3. Remove transient files from ``.trw/context/`` (cache/session files that
-       should not persist across updates).
+
+    Every deletion needs manifest proof of TRW authorship (PRD-INFRA-190-FR06).
+    Context transients are not swept here: they are live session state outside
+    the update transaction, cleaned by ``update_project`` after it commits.
 
     Args:
         target_dir: Root of the target git repository.
-        result: Mutable result dict accumulating ``updated``, ``cleaned``,
-            and ``errors`` entries.
+        result: Mutable result dict accumulating ``preserved`` and ``errors``.
         data_dir: Optional override for the bundled data directory; passed
             through to ``_remove_stale_artifacts``.
-        dry_run: When ``True``, report what would change without deleting files.
         manifest_hashes: The PRE-run manifest content hashes, threaded from
-            ``update_project``. Pass 2's file-granular sweep uses them as proof
-            of TRW authorship before deleting anything inside a kept skill dir.
+            ``update_project``: the proof of TRW authorship every sweep requires.
     """
     # PRD-FIX-032: Remove non-prefixed predecessors before stale cleanup
-    _migrate_prefix_predecessors(target_dir, result, dry_run=dry_run, manifest_hashes=manifest_hashes)
+    _migrate_prefix_predecessors(target_dir, result, manifest_hashes=manifest_hashes)
 
-    # Remove stale hooks/skills/agents no longer in bundled data. dry_run is
-    # threaded down so --dry-run REPORTS the pending removals ("would remove:
-    # <path>") instead of silently skipping the whole pass — otherwise the
-    # preview under-reports what a real run would delete.
-    _remove_stale_artifacts(target_dir, result, data_dir, dry_run=dry_run)
+    # Remove stale hooks/skills/agents no longer in bundled data.
+    _remove_stale_artifacts(target_dir, result, data_dir)
 
     # FIX A: sweep codex/cursor/copilot mirror dirs for dropped bundled
-    # artifacts (trw- prefixed names no longer in the current bundle). Runs the
-    # same dry_run-aware "would remove:" reporting as the .claude/.opencode pass.
-    _remove_stale_client_artifacts(target_dir, result, dry_run=dry_run, manifest_hashes=manifest_hashes)
-
-    # Context cleanup can run post-transaction so a failed update never
-    # deletes live session state that rollback deliberately does not snapshot.
-    if cleanup_context:
-        _cleanup_context_transients(target_dir, result, dry_run=dry_run)
+    # artifacts (trw- prefixed names no longer in the current bundle).
+    _remove_stale_client_artifacts(target_dir, result, manifest_hashes=manifest_hashes)

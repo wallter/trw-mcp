@@ -5,6 +5,8 @@ from __future__ import annotations
 import statistics
 import time
 
+import pytest
+
 from trw_mcp.profile import (
     PROFILE_SURFACE_KEYS,
     ProfileLayer,
@@ -69,6 +71,7 @@ def test_explain_renders_override_chain() -> None:
     assert review["override_chain"] == ["defaults:MINIMAL", "org:STANDARD"]
 
 
+@pytest.mark.perf
 def test_explain_build_latency_under_generous_bound() -> None:
     """F-09 / NFR-5 — building the explanation payload is cheap.
 

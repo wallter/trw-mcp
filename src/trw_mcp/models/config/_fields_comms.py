@@ -1,6 +1,6 @@
 """Cross-harness comms config fields (PRD-CORE-274-NFR06).
 
-Ten typed, bounded knobs. ``comms_enabled`` is the execution kill switch and
+Typed, bounded knobs. ``comms_enabled`` is the execution kill switch and
 defaults to **false**: the tools register either way, but with it off no
 communications state is created at all — not an empty database, not a group row.
 
@@ -115,6 +115,21 @@ class _CommsFields:
     #: Bounded SQLite busy wait. A timeout REFUSES; it never writes unlocked.
     comms_sqlite_busy_timeout_ms: int = Field(
         default=5000, ge=1, le=30000, description="Bounded SQLite busy timeout for comms transactions, in ms."
+    )
+
+    #: Ceiling for ``trw_inbox(wait_seconds=...)`` (PRD-CORE-274 Amendment 01,
+    #: FR11). 0 is the kill switch: every positive wait refuses ``wait_disabled``.
+    #: Deliberately NOT tied to the lease by a validator — a wait cannot promise
+    #: remaining lease anyway; each attempt re-checks the lease itself.
+    comms_wait_max_seconds: int = Field(
+        default=30, ge=0, le=300, description="Maximum bounded inbox wait a caller may request, in seconds; 0 disables."
+    )
+
+    #: Sleep between attempts of a bounded wait. A server-internal re-read inside
+    #: the enrolled process, not a client poll; ``comms_poll_interval_seconds``
+    #: still governs how often a CLIENT should call.
+    comms_wait_interval_ms: int = Field(
+        default=1000, ge=100, le=15000, description="Sleep between bounded inbox wait attempts, in milliseconds."
     )
 
     @model_validator(mode="after")

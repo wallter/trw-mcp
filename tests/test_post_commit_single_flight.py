@@ -298,6 +298,7 @@ def unarmed_timer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pc.signal, "getitimer", lambda _which: (0.0, 0.0))
 
 
+@pytest.mark.perf
 def test_the_sweep_stops_at_its_budget(repo: Path, monkeypatch: pytest.MonkeyPatch, unarmed_timer: None) -> None:
     monkeypatch.setenv(pc.BUDGET_ENV_VAR, "0.2")
     started: list[float] = []

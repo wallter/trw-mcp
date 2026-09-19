@@ -433,6 +433,7 @@ def check_projection_drift(
     missing marker section — is drift and fails the gate.
     """
     findings: list[str] = []
+    expected_sections: dict[str, str] | None = None
     for path, kind, start, end in (
         (index_path, "index", INDEX_CATALOGUE_START, INDEX_CATALOGUE_END),
         (roadmap_path, "roadmap", ROADMAP_CATALOGUE_START, ROADMAP_CATALOGUE_END),
@@ -447,7 +448,16 @@ def check_projection_drift(
             findings.append(f"{kind}: catalogue markers missing in {path}")
             continue
         current = content[start_span[0] : end_span[1]]
-        expected = render_expected_projection(prds_dir, kind=kind)
+        if expected_sections is None:
+            # One invocation observes one corpus/registry state for both outputs.
+            # Keep this lazy: missing files/markers must not cause registry writes.
+            entries = scan_prd_frontmatters(prds_dir)
+            registry = _apply_registry_authority(entries, prds_dir)
+            expected_sections = {
+                "index": render_index_catalogue(entries, registry),
+                "roadmap": render_roadmap_catalogue(entries, registry),
+            }
+        expected = expected_sections[kind]
         if current.strip() != expected.strip():
             findings.append(f"{kind}: catalogue section drifted from registry projection in {path}")
     return findings

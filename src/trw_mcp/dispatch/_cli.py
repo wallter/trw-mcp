@@ -85,6 +85,9 @@ def run_dispatch(args: argparse.Namespace) -> None:
             # read_only unset (None) so the config default applies.
             read_only=(False if bool(getattr(args, "allow_writes", False)) else None),
             isolate=not bool(getattr(args, "no_isolate", False)),
+            # None (neither --with-trw nor --no-with-trw) defers to the config
+            # default; an explicit flag is authoritative, like --allow-writes.
+            with_trw=getattr(args, "with_trw", None),
             use_pty=bool(getattr(args, "pty", False)),
             verify_sandbox=bool(getattr(args, "verify_sandbox", False)),
             dispatch_cfg=dispatch_cfg,

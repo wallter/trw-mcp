@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -84,13 +85,15 @@ class TestUpdateProjectMultiIDE:
         assert isinstance(manifest, dict)
         manifest["opencode_commands"] = [*manifest.get("opencode_commands", []), "trw-stale.md"]
         manifest.setdefault("custom_opencode_commands", [])
+        # What TRW last wrote: the proof every sweep requires (PRD-INFRA-190-FR06).
+        manifest["content_hashes"][".opencode/commands/trw-stale.md"] = hashlib.sha256(b"stale\n").hexdigest()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         result = update_project(tmp_path, ide="opencode")
 
         assert not result["errors"], result["errors"]
         assert not stale_path.exists()
-        assert any("removed:" in item and "trw-stale.md" in item for item in result["updated"])
+        assert ".opencode/commands/trw-stale.md" in result["cleaned"]
 
     def test_fr15_update_opencode_preserves_user_modified_agent(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
@@ -134,13 +137,15 @@ class TestUpdateProjectMultiIDE:
         assert isinstance(manifest, dict)
         manifest["opencode_agents"] = [*manifest.get("opencode_agents", []), "trw-stale-agent.md"]
         manifest.setdefault("custom_opencode_agents", [])
+        # What TRW last wrote: the proof every sweep requires (PRD-INFRA-190-FR06).
+        manifest["content_hashes"][".opencode/agents/trw-stale-agent.md"] = hashlib.sha256(b"stale\n").hexdigest()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         result = update_project(tmp_path, ide="opencode")
 
         assert not result["errors"], result["errors"]
         assert not stale_path.exists()
-        assert any("removed:" in item and "trw-stale-agent.md" in item for item in result["updated"])
+        assert ".opencode/agents/trw-stale-agent.md" in result["cleaned"]
 
     def test_fr15_update_opencode_removes_stale_managed_skill(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()
@@ -156,13 +161,15 @@ class TestUpdateProjectMultiIDE:
         assert isinstance(manifest, dict)
         manifest["opencode_skills"] = [*manifest.get("opencode_skills", []), "trw-stale-skill"]
         manifest.setdefault("custom_opencode_skills", [])
+        # What TRW last wrote: the proof every sweep requires (PRD-INFRA-190-FR06).
+        manifest["content_hashes"][".opencode/skills/trw-stale-skill/SKILL.md"] = hashlib.sha256(b"stale\n").hexdigest()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
         result = update_project(tmp_path, ide="opencode")
 
         assert not result["errors"], result["errors"]
         assert not stale_path.parent.exists()
-        assert any("removed:" in item and "trw-stale-skill" in item for item in result["updated"])
+        assert ".opencode/skills/trw-stale-skill/SKILL.md" in result["cleaned"]
 
     def test_fr15_update_codex_preserves_user_modified_instructions(self, tmp_path: Path) -> None:
         (tmp_path / ".git").mkdir()

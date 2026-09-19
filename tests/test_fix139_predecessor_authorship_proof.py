@@ -46,7 +46,7 @@ class TestRetiredNameNeedsAuthorshipProof:
         skill = _project_with_retired_skill(tmp_path)
         result = _run(tmp_path, {f"{RETIRED}/SKILL.md": _sha(skill)})
         assert not skill.parent.exists()
-        assert result["updated"] == [f"migrated:{skill.parent}"]
+        assert not result.get("preserved")
 
     def test_unrecorded_is_preserved_and_reported(self, tmp_path: Path) -> None:
         """FR01: the monorepo case — a manifest with hashes but none for this name."""
@@ -54,7 +54,7 @@ class TestRetiredNameNeedsAuthorshipProof:
         result = _run(tmp_path, {"trw-audit/SKILL.md": "0" * 64})
         assert skill.exists()
         assert result["updated"] == []
-        assert result["preserved"] == [f"preserved:{skill.parent} (retired name, not TRW-authored per manifest)"]
+        assert result["preserved"] == [f".claude/skills/{RETIRED} (not_installer_owned)"]
 
     def test_drifted_content_is_preserved(self, tmp_path: Path) -> None:
         """FR01: TRW wrote it once, the user edited it since -> user work, keep it."""
@@ -72,12 +72,13 @@ class TestRetiredNameNeedsAuthorshipProof:
         assert result["preserved"]
 
     @pytest.mark.parametrize("legacy", [None, {}])
-    def test_no_hash_record_keeps_the_pre_existing_unconditional_behaviour(self, tmp_path: Path, legacy) -> None:
-        """FR02: a first run or a v1 manifest carries no proof either way; the old contract holds."""
+    def test_no_hash_record_means_no_proof_so_the_artifact_is_kept(self, tmp_path: Path, legacy) -> None:
+        """PRD-INFRA-190-FR06 supersedes FIX-139-FR02: a first run or a v1 manifest proves
+        nothing, and a sweep deletes only what TRW can prove it wrote."""
         skill = _project_with_retired_skill(tmp_path)
         result = _run(tmp_path, legacy)
-        assert not skill.parent.exists()
-        assert result["updated"] == [f"migrated:{skill.parent}"]
+        assert skill.exists()
+        assert result["preserved"] == [f".claude/skills/{RETIRED} (not_installer_owned)"]
 
     def test_client_mirror_keys_match_by_path_suffix(self, tmp_path: Path) -> None:
         """FR01: opencode records ``.opencode/skills/<name>/SKILL.md``; the proof must find it."""
@@ -86,10 +87,10 @@ class TestRetiredNameNeedsAuthorshipProof:
         mirror.write_text("# mirror\n", encoding="utf-8")
         result = _run(tmp_path, {f".opencode/skills/{RETIRED}/SKILL.md": _sha(mirror)})
         assert not mirror.parent.exists()
-        assert f"migrated:{mirror.parent}" in result["updated"]
+        assert not result.get("preserved")
 
-    def test_rename_migrations_are_unaffected(self, tmp_path: Path) -> None:
-        """Successor-present renames keep their existing rule: the successor IS the proof."""
+    def test_rename_migrations_need_the_same_proof(self, tmp_path: Path) -> None:
+        """PRD-INFRA-190-FR06: a present successor proves nothing about who wrote the predecessor."""
         from trw_mcp.bootstrap._version_migration import PREDECESSOR_MAP
 
         old, new = next((o, n) for o, n in PREDECESSOR_MAP["skills"].items() if n is not None)
@@ -99,8 +100,11 @@ class TestRetiredNameNeedsAuthorshipProof:
         (skills / new).mkdir(parents=True)
         (skills / new / "SKILL.md").write_text("new", encoding="utf-8")
         result = _run(tmp_path, {"unrelated/SKILL.md": "0" * 64})
+        assert (skills / old).exists()
+        assert result["preserved"] == [f".claude/skills/{old} (not_installer_owned)"]
+        recorded = _run(tmp_path, {f"{old}/SKILL.md": _sha(skills / old / "SKILL.md")})
         assert not (skills / old).exists()
-        assert f"migrated:{skills / old}" in result["updated"]
+        assert not recorded.get("preserved")
 
 
 class TestClientMirrorsFollowTheirSource:
@@ -123,7 +127,7 @@ class TestClientMirrorsFollowTheirSource:
         mirror.write_text("# mirror\n", encoding="utf-8")
         result = _run(tmp_path, {f".agents/skills/{RETIRED}/SKILL.md": _sha(mirror)})
         assert not mirror.parent.exists()
-        assert f"migrated:{mirror.parent}" in result["updated"]
+        assert not result.get("preserved")
 
 
 class TestStaleClientSurfaceSweepFollowsTheSource:
@@ -150,6 +154,8 @@ class TestStaleClientSurfaceSweepFollowsTheSource:
 
         mirror = self._mirror(tmp_path, ".agents/skills")
         result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _remove_stale_client_artifacts(tmp_path, result)
+        _remove_stale_client_artifacts(
+            tmp_path, result, manifest_hashes={f".agents/skills/{RETIRED}/SKILL.md": _sha(mirror)}
+        )
         assert not mirror.parent.exists()
-        assert f"removed:{mirror.parent}" in result["updated"]
+        assert not result.get("preserved")

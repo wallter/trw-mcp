@@ -13,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import step_sync_health
 
@@ -194,6 +196,7 @@ def test_advisory_includes_remediation(tmp_path: Path) -> None:
     assert "config.yaml" in advisory
 
 
+@pytest.mark.perf
 def test_latency_under_budget(tmp_path: Path) -> None:
     """NFR01: step adds <= 5ms p95. Single file read is O(1)."""
     trw_dir = tmp_path / ".trw"

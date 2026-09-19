@@ -161,6 +161,7 @@ def test_unreadable_payload_fails_closed(tmp_path: Path, intent_env: IntentContr
     assert root.exists()
 
 
+@pytest.mark.perf
 def test_hook_latency_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, intent_env: IntentContractConfig) -> None:
     """NFR02 evidence artifact: FR05 <= 1s (no falsifier), FR07 <= 5s (with one)."""
     root = make_project(tmp_path, contract=fifty_claim_contract())

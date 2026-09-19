@@ -46,7 +46,7 @@ class MemoryStore:
         Args:
             db_path: Path to the SQLite database file. Parent directories
                 are created automatically.
-            dim: Embedding dimension. Defaults to 384 (all-MiniLM-L6-v2).
+            dim: Embedding dimension. Defaults to 384 (the retrieval_embedding_dim default).
         """
         self._db_path = db_path
         self._dim = dim

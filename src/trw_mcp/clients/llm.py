@@ -256,16 +256,20 @@ class LLMClient:
         import httpx
 
         host = os.environ.get("OLLAMA_HOST") or os.environ.get("OLLAMA_API_BASE") or "http://localhost:11434"
-        url = f"{host.rstrip('/')}/api/generate"
-        payload: dict[str, Any] = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-        }
-
+        # ``/api/chat`` (not the legacy ``/api/generate``): the chat endpoint is the
+        # one Ollama keeps evolving (structured ``format``, ``think``, tools) and the
+        # one every other TRW package speaks, so behaviour and gotchas line up.
+        url = f"{host.rstrip('/')}/api/chat"
+        messages: list[dict[str, str]] = []
         effective_system = system or self._system_prompt
         if effective_system:
-            payload["system"] = effective_system
+            messages.append({"role": "system", "content": effective_system})
+        messages.append({"role": "user", "content": prompt})
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+        }
 
         start = time.monotonic()
         try:
@@ -278,7 +282,8 @@ class LLMClient:
                 return None
 
             data = response.json()
-            response_text = str(data.get("response", ""))
+            message = data.get("message") if isinstance(data, dict) else None
+            response_text = str((message or {}).get("content", "") or "")
 
             eval_count = int(data.get("eval_count", 0) or 0)
             self._append_usage_record(model, 0, eval_count, latency_ms, success=True)

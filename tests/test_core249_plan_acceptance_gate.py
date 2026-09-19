@@ -330,6 +330,7 @@ def test_failclosed_gate_failopen_write(project: Path, monkeypatch: pytest.Monke
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.perf
 @pytest.mark.integration
 def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR01: gate <=150 ms p95 at 200 identifiers; handoff write <=100 ms p95."""

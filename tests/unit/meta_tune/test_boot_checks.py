@@ -192,6 +192,7 @@ def test_resolve_kill_switch_path_raises_without_anchor(tmp_path: Path, monkeypa
         )
 
 
+@pytest.mark.perf
 def test_validate_defaults_is_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR-10: ≤2s wall-clock."""
     import time

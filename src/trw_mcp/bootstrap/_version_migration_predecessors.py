@@ -6,8 +6,8 @@ compatibility with callers that import via the parent module
 
 PRD-FIX-032: When projects upgrade past the trw- prefix migration, old
 non-prefixed skill/agent artifacts need to be removed once their trw- successors
-land. These helpers handle that cleanup with appropriate dry-run + error
-isolation guarantees.
+land. These helpers handle that cleanup with ownership proof (PRD-INFRA-190-FR06)
+and error isolation.
 """
 
 from __future__ import annotations
@@ -28,21 +28,18 @@ def _migrate_predecessor_set(
     *,
     is_dir_artifact: bool,
     log_event: str,
-    dry_run: bool,
-    manifest_hashes: dict[str, str] | None = None,
-    target_dir: Path | None = None,
+    manifest_hashes: dict[str, str] | None,
+    target_dir: Path,
 ) -> None:
     """Remove predecessor artifacts when their successor is installed or dropped.
 
     When *new_name* is ``None`` (PRD-CORE-092), the predecessor is removed
-    without a successor — but only with PROOF that TRW wrote it
-    (PRD-FIX-139-FR01). *manifest_hashes* is the pre-run manifest's
-    ``content_hashes``; a retired name is deleted only when every regular file
-    under it is recorded there and its bytes still hash to that record. A name
-    with no record, or with drifted content, is the project's own artifact
-    that merely collides with a retired bundle name — it is preserved and
-    reported as ``preserved:<path>``. With no hash record at all (a legacy v1
-    manifest, or a first run) the pre-existing unconditional behaviour holds.
+    without a successor. Either way a predecessor is deleted only with PROOF
+    that TRW wrote it (PRD-FIX-139-FR01, PRD-INFRA-190-FR06): *manifest_hashes*
+    is the pre-run manifest's ``content_hashes``, and every regular file under
+    the artifact must be recorded there with its bytes unchanged. Anything else
+    — no record, drifted content, or no manifest at all — is the project's own
+    artifact and is preserved as ``not_installer_owned``.
 
     Args:
         parent_dir: Directory containing both predecessor and successor artifacts.
@@ -51,7 +48,6 @@ def _migrate_predecessor_set(
         result: Mutable result dict.
         is_dir_artifact: ``True`` for directory artifacts (skills), ``False`` for files (agents).
         log_event: structlog event name on removal failure.
-        dry_run: When ``True``, only report without deleting.
     """
     for old_name, new_name in name_map.items():
         predecessor = parent_dir / old_name
@@ -71,27 +67,27 @@ def _migrate_predecessor_set(
             else:
                 if not successor.is_file():
                     continue
-        if new_name is None and manifest_hashes and not _trw_authored(predecessor, manifest_hashes, target_dir):
-            result.setdefault("preserved", []).append(
-                f"preserved:{predecessor} (retired name, not TRW-authored per manifest)"
-            )
-            logger.info(
-                "predecessor_removal_preserved",
-                path=str(predecessor),
-                reason="no matching content_hashes record; the project owns this artifact",
-            )
-            continue
-        if dry_run:
-            result["updated"].append(f"would migrate:{predecessor}")
+        if preserve_unowned(predecessor, manifest_hashes, target_dir, result):
             continue
         try:
             if is_dir_artifact:
                 shutil.rmtree(predecessor)
             else:
                 predecessor.unlink()
-            result["updated"].append(f"migrated:{predecessor}")
         except OSError:
             logger.debug(log_event, path=str(predecessor), exc_info=True)
+
+
+def preserve_unowned(
+    artifact: Path, manifest_hashes: dict[str, str] | None, target_dir: Path, result: dict[str, list[str]]
+) -> bool:
+    """Report and keep *artifact* when TRW cannot prove it wrote it (FR06); True means keep."""
+    if _trw_authored(artifact, manifest_hashes or {}, target_dir):
+        return False
+    rel = artifact.relative_to(target_dir).as_posix()
+    result.setdefault("preserved", []).append(f"{rel} (not_installer_owned)")
+    logger.info("sweep_removal_preserved", path=rel, reason="not_installer_owned")
+    return True
 
 
 def _trw_authored(artifact: Path, manifest_hashes: dict[str, str], target_dir: Path | None) -> bool:
@@ -126,7 +122,6 @@ def _trw_authored(artifact: Path, manifest_hashes: dict[str, str], target_dir: P
 def _migrate_prefix_predecessors(
     target_dir: Path,
     result: dict[str, list[str]],
-    dry_run: bool = False,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Remove non-prefixed predecessor skills/agents when trw- successor is installed.
@@ -152,7 +147,6 @@ def _migrate_prefix_predecessors(
         result,
         is_dir_artifact=True,
         log_event="predecessor_skill_removal_failed",
-        dry_run=dry_run,
         manifest_hashes=manifest_hashes,
         target_dir=target_dir,
     )
@@ -180,7 +174,6 @@ def _migrate_prefix_predecessors(
             result,
             is_dir_artifact=True,
             log_event="predecessor_skill_removal_failed",
-            dry_run=dry_run,
             manifest_hashes=manifest_hashes,
             target_dir=target_dir,
         )
@@ -190,7 +183,6 @@ def _migrate_prefix_predecessors(
         result,
         is_dir_artifact=False,
         log_event="predecessor_agent_removal_failed",
-        dry_run=dry_run,
         manifest_hashes=manifest_hashes,
         target_dir=target_dir,
     )
@@ -206,7 +198,6 @@ def _migrate_prefix_predecessors(
             result,
             is_dir_artifact=False,
             log_event="predecessor_agent_removal_failed",
-            dry_run=dry_run,
             manifest_hashes=manifest_hashes,
             target_dir=target_dir,
         )
@@ -219,7 +210,6 @@ def _migrate_prefix_predecessors(
             result,
             is_dir_artifact=False,
             log_event="relocated_agent_removal_failed",
-            dry_run=dry_run,
             manifest_hashes=manifest_hashes,
             target_dir=target_dir,
         )

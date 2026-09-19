@@ -13,6 +13,7 @@ from tests._intent_contract_hooks import (
     PROTECTED,
     contract_yaml,
     intent_env,  # noqa: F401 — fixture
+    isolate_fixture_pytest_plugins,
     make_project,
     payload,
 )
@@ -151,6 +152,7 @@ def test_missing_post_edit_target_fails_closed(tmp_path: Path, intent_env: Inten
 def test_real_falsifier_runs_against_the_actual_written_file(tmp_path: Path, intent_env: IntentContractConfig) -> None:
     """End-to-end with a REAL pytest node id in a temp package (no stubbing)."""
     root = make_project(tmp_path, contract=contract_yaml(node_id="tests/test_guard.py::test_guard_is_present"))
+    isolate_fixture_pytest_plugins(root)
     (root / "tests").mkdir(parents=True, exist_ok=True)
     (root / "tests/test_guard.py").write_text(
         "from pathlib import Path\n\n\n"
@@ -158,13 +160,25 @@ def test_real_falsifier_runs_against_the_actual_written_file(tmp_path: Path, int
         "    assert 'return True' in Path('protected/module.py').read_text()\n",
         encoding="utf-8",
     )
-    assert post_edit_check.run(payload(root)).code == ALLOW
+    defended = (root / PROTECTED).read_text(encoding="utf-8")
+    initial = post_edit_check.run(payload(root))
+    assert initial.code == ALLOW, initial.message
+    assert open_violations(root) == []
 
     # Now make the ACTUAL post-edit file violate the claim.
     (root / PROTECTED).write_text("def guard():\n    return False\n", encoding="utf-8")
     decision = post_edit_check.run(payload(root))
     assert decision.code == BLOCK
     assert "pytest:tests/test_guard.py::test_guard_is_present" in decision.message
+    assert "INFRA_ERROR" not in decision.message
+    assert len(open_violations(root)) == 1
+    assert open_violations(root)[0]["detail"].startswith("fail: exit 1:")
+
+    (root / PROTECTED).write_text(defended, encoding="utf-8")
+    restored = post_edit_check.run(payload(root))
+    assert restored.code == ALLOW, restored.message
+    assert open_violations(root) == []
+    assert intent_violation_gate_block(root) is None
 
 
 def test_toctou_edit_that_became_unsafe_after_pre_write_is_caught(
@@ -174,6 +188,7 @@ def test_toctou_edit_that_became_unsafe_after_pre_write_is_caught(
     from trw_mcp.security.intent_contract import check_write
 
     root = make_project(tmp_path, contract=contract_yaml(node_id="tests/test_guard.py::test_guard_is_present"))
+    isolate_fixture_pytest_plugins(root)
     (root / "tests").mkdir(parents=True, exist_ok=True)
     (root / "tests/test_guard.py").write_text(
         "from pathlib import Path\n\n\n"
@@ -185,8 +200,11 @@ def test_toctou_edit_that_became_unsafe_after_pre_write_is_caught(
     assert check_write.run(payload(root)).code == ALLOW
     # ...the write lands and makes it unsafe...
     (root / PROTECTED).write_text("def guard():\n    return False\n", encoding="utf-8")
-    # ...and FR07 catches it because it reads the real file.
-    assert post_edit_check.run(payload(root)).code == BLOCK
+    # ...and FR07 catches it because it reads the real file, not an infra error.
+    decision = post_edit_check.run(payload(root))
+    assert decision.code == BLOCK
+    assert "INFRA_ERROR" not in decision.message
+    assert open_violations(root)[0]["detail"].startswith("fail: exit 1:")
 
 
 def test_hardlink_alias_to_an_anchored_file_is_still_enforced(
@@ -233,6 +251,7 @@ def test_unevaluable_falsifier_blocks_as_infra_error_not_as_a_violation(tmp_path
     from trw_mcp.security.intent_contract._falsifier import run_falsifier
     from trw_mcp.security.intent_contract._models import PytestFalsifier
 
+    isolate_fixture_pytest_plugins(tmp_path)
     # A node id that cannot be collected -> pytest usage/collection error, not a failure.
     missing = PytestFalsifier(kind="pytest", node_id="tests/nope_does_not_exist.py::test_x")
     result = run_falsifier(tmp_path, missing, timeout_seconds=60, allowed_commands=("pytest",))
@@ -248,8 +267,28 @@ def test_a_genuinely_failing_falsifier_is_still_classified_as_a_violation(tmp_pa
     from trw_mcp.security.intent_contract._falsifier import run_falsifier
     from trw_mcp.security.intent_contract._models import PytestFalsifier
 
+    isolate_fixture_pytest_plugins(tmp_path)
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_real.py").write_text("def test_boom():\n    assert False\n", encoding="utf-8")
     ref = PytestFalsifier(kind="pytest", node_id="tests/test_real.py::test_boom")
     result = run_falsifier(tmp_path, ref, timeout_seconds=60, allowed_commands=("pytest",))
     assert result.outcome == "fail", f"a failing test must classify as 'fail', got {result.outcome!r}"
+
+
+def test_fixture_pytest_isolation_excludes_discovered_plugins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shlex
+    from importlib.metadata import EntryPoint
+
+    from tests import _intent_contract_hooks
+
+    def discovered(*, group: str):
+        assert group == "pytest11"
+        return [
+            EntryPoint(name=name, value="unused:plugin", group=group) for name in ["z_plugin", "a plugin", "z_plugin"]
+        ]
+
+    monkeypatch.setattr(_intent_contract_hooks.metadata, "entry_points", discovered)
+    isolate_fixture_pytest_plugins(tmp_path)
+    config = (tmp_path / "pytest.ini").read_text(encoding="utf-8")
+    assert config.startswith("[pytest]\naddopts = ")
+    assert shlex.split(config.split("addopts = ", 1)[1]) == ["-p", "no:a plugin", "-p", "no:z_plugin"]

@@ -87,6 +87,32 @@ class _DispatchFields:
         default=True,
         description="Default read-only posture for dispatched children; --allow-writes overrides to False.",
     )
+    # Expose the ``dispatch`` capability pack on a session's resolved MCP tool
+    # surface (PRD-CORE-281). OFF by default: ``dispatch`` is a HIGH-RISK pack
+    # (``_defaults.HIGH_RISK_PACKS``) whose tools launch another agent process,
+    # so joining the advertised surface of every session is an operator act.
+    # Read by ``middleware/surface_authority`` -> ``resolve_tool_surface``.
+    dispatch_tools_exposed: bool = Field(
+        default=False,
+        description=(
+            "Expose the dispatch capability pack (trw_dispatch, trw_dispatch_status, "
+            "trw_agent_work_evidence, trw_validate_agent_work_evidence) on the resolved tool "
+            "surface. Off by default; otherwise reachable only via trw_request_tool_access."
+        ),
+    )
+    # Give a DISPATCHED child its own stdio trw-mcp connection to this project
+    # (PRD-CORE-281). OFF by default: the isolation contract for a dispatched
+    # child is "nothing of the host's config, hooks or MCP reaches it", and this
+    # is the single documented exception to the MCP half of it. ``--with-trw`` /
+    # ``with_trw=True`` overrides per call.
+    dispatch_child_trw_access: bool = Field(
+        default=False,
+        description=(
+            "Default for dispatch --with-trw: inject ONLY TRW's own stdio trw-mcp server into the "
+            "child's argv so a dispatched peer can use TRW session/memory tools. Host hooks and "
+            "user/project client config stay isolated. Refused for clients with no argv channel."
+        ),
+    )
     # Optional per-role default client, e.g. ``{"adversarial-audit": "codex"}``.
     # Consulted only when neither ``--client`` nor ``dispatch_default_client``
     # resolves a target and a ``--role`` was supplied.

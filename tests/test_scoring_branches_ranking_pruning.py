@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from trw_mcp.scoring import rank_by_utility, utility_based_prune_candidates
+from trw_mcp.scoring import rank_targeted_by_utility, utility_based_prune_candidates
 
 
 class TestRankByUtility:
-    """Tests for rank_by_utility — re-ranking matched learnings."""
+    """Tests for rank_targeted_by_utility — re-ranking matched learnings."""
 
     def _make_entry(self, summary: str, impact: float = 0.5) -> dict[str, object]:
         return {
@@ -27,12 +27,12 @@ class TestRankByUtility:
         }
 
     def test_empty_list_returns_empty(self) -> None:
-        result = rank_by_utility([], query_tokens=["test"], lambda_weight=0.5)
+        result = rank_targeted_by_utility([], query_tokens=["test"], lambda_weight=0.5)
         assert result == []
 
     def test_single_entry_returned(self) -> None:
         entries = [self._make_entry("testing framework")]
-        result = rank_by_utility(entries, query_tokens=["testing"], lambda_weight=0.5)
+        result = rank_targeted_by_utility(entries, query_tokens=["testing"], lambda_weight=0.5)
         assert len(result) == 1
 
     def test_higher_relevance_ranked_first(self) -> None:
@@ -41,7 +41,7 @@ class TestRankByUtility:
             self._make_entry("unrelated content"),
             self._make_entry("testing best practices"),
         ]
-        result = rank_by_utility(entries, query_tokens=["testing"], lambda_weight=0.0)
+        result = rank_targeted_by_utility(entries, query_tokens=["testing"], lambda_weight=0.0)
         assert "testing" in str(result[0]["summary"]).lower()
 
     def test_wildcard_query_uses_utility(self) -> None:
@@ -50,7 +50,7 @@ class TestRankByUtility:
             self._make_entry("low impact entry", impact=0.2),
             self._make_entry("high impact entry", impact=0.9),
         ]
-        result = rank_by_utility(entries, query_tokens=[], lambda_weight=1.0)
+        result = rank_targeted_by_utility(entries, query_tokens=[], lambda_weight=1.0)
         assert result[0]["summary"] == "high impact entry"
 
     def test_human_source_boosts_utility(self) -> None:
@@ -59,7 +59,7 @@ class TestRankByUtility:
         human_entry = self._make_entry("human learning", impact=0.7)
         human_entry["source_type"] = "human"
 
-        result = rank_by_utility([agent_entry, human_entry], query_tokens=[], lambda_weight=1.0)
+        result = rank_targeted_by_utility([agent_entry, human_entry], query_tokens=[], lambda_weight=1.0)
         assert result[0]["summary"] == "human learning"
 
     def test_tag_hits_boost_relevance(self) -> None:
@@ -70,7 +70,7 @@ class TestRankByUtility:
         entry_no_tag = self._make_entry("also generic", impact=0.5)
         entry_no_tag["tags"] = []
 
-        result = rank_by_utility(
+        result = rank_targeted_by_utility(
             [entry_no_tag, entry_with_tag],
             query_tokens=["pytest"],
             lambda_weight=0.0,

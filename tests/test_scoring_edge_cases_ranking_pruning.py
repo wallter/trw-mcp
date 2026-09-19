@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from trw_mcp.scoring import rank_by_utility, utility_based_prune_candidates
+from trw_mcp.scoring import rank_targeted_by_utility, utility_based_prune_candidates
 
 
 class TestRankByUtilityEdgeCases:
-    """Additional edge cases for rank_by_utility."""
+    """Additional edge cases for rank_targeted_by_utility."""
 
     def _make_entry(
         self,
@@ -36,14 +36,14 @@ class TestRankByUtilityEdgeCases:
         """Non-list tags field is handled gracefully."""
         entry = self._make_entry("test", tags=None)
         entry["tags"] = "not-a-list"
-        result = rank_by_utility([entry], query_tokens=["test"], lambda_weight=0.5)
+        result = rank_targeted_by_utility([entry], query_tokens=["test"], lambda_weight=0.5)
         assert len(result) == 1
 
     def test_detail_hits_contribute_to_relevance(self) -> None:
         """Query tokens found in detail contribute to relevance scoring."""
         entry_in_detail = self._make_entry("generic", detail="pytest framework testing")
         entry_no_match = self._make_entry("generic", detail="unrelated content")
-        result = rank_by_utility(
+        result = rank_targeted_by_utility(
             [entry_no_match, entry_in_detail],
             query_tokens=["pytest"],
             lambda_weight=0.0,
@@ -54,7 +54,7 @@ class TestRankByUtilityEdgeCases:
         """CORE-116 RA2 retires pure-utility targeted recall, including lambda=1."""
         low_impact = self._make_entry("pytest testing", impact=0.1)
         high_impact = self._make_entry("unrelated", impact=0.9)
-        result = rank_by_utility(
+        result = rank_targeted_by_utility(
             [high_impact, low_impact],
             query_tokens=["pytest"],
             lambda_weight=1.0,
@@ -65,7 +65,7 @@ class TestRankByUtilityEdgeCases:
         """lambda_weight=0.0 means pure relevance, ignores utility."""
         matching = self._make_entry("pytest testing", impact=0.1)
         non_matching = self._make_entry("unrelated stuff", impact=0.9)
-        result = rank_by_utility(
+        result = rank_targeted_by_utility(
             [non_matching, matching],
             query_tokens=["pytest", "testing"],
             lambda_weight=0.0,
@@ -76,7 +76,7 @@ class TestRankByUtilityEdgeCases:
         """Summary matches are weighted 3x vs detail matches 1x."""
         entry_summary = self._make_entry("pytest info")
         entry_detail = self._make_entry("generic", detail="pytest info")
-        result = rank_by_utility(
+        result = rank_targeted_by_utility(
             [entry_detail, entry_summary],
             query_tokens=["pytest"],
             lambda_weight=0.0,
@@ -90,7 +90,7 @@ class TestRankByUtilityEdgeCases:
             self._make_entry("second", impact=0.5),
             self._make_entry("third", impact=0.5),
         ]
-        result = rank_by_utility(entries, query_tokens=[], lambda_weight=1.0)
+        result = rank_targeted_by_utility(entries, query_tokens=[], lambda_weight=1.0)
         assert len(result) == 3
 
 

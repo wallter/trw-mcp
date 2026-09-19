@@ -220,7 +220,7 @@ def _pip_install_package(
             check=False,
         )
         if proc.returncode == 0:
-            result["updated"].append("pip install trw-mcp (reinstalled)")
+            result.setdefault("info", []).append("pip install trw-mcp (reinstalled)")
         else:
             result["errors"].append(f"pip install failed (exit {proc.returncode}): {proc.stderr[:200]}")
     except (subprocess.TimeoutExpired, OSError) as exc:

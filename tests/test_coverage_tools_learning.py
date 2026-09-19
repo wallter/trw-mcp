@@ -144,7 +144,7 @@ class TestLearningRecallTrackingException:
             patch("trw_mcp.tools.learning.adapter_recall", return_value=[{"id": "L-001", "summary": "test"}]),
             patch("trw_mcp.tools.learning.adapter_update_access"),
             patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
-            patch("trw_mcp.tools.learning.rank_by_utility", return_value=[{"id": "L-001", "summary": "test"}]),
+            patch("trw_mcp.tools.learning.rank_targeted_by_utility", return_value=[{"id": "L-001", "summary": "test"}]),
             patch("trw_mcp.tools.learning.collect_context", return_value={}),
             patch.dict(
                 "sys.modules",

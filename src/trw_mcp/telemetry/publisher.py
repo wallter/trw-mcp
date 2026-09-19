@@ -16,17 +16,37 @@ from pathlib import Path
 
 import httpx
 import structlog
+from trw_memory.exceptions import LocalOnlyViolationError, RemoteCodeNotPermittedError
 from typing_extensions import TypedDict
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
-from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.telemetry.anonymizer import anonymize_installation_id, strip_pii
+from trw_mcp.telemetry.embeddings import embed as _platform_embed
 from trw_mcp.telemetry.retention import rotate_and_compress
 
 logger = structlog.get_logger(__name__)
+
+
+def embed(text: str) -> list[float] | None:
+    """Encode *text* in the platform's shared embedding space, if embeddings are on.
+
+    The platform compares published vectors across projects and clients, so they
+    must come from its one fixed encoder (``telemetry.embeddings``), never from
+    the local retrieval model, which a project may configure or a release may
+    change (it did: all-MiniLM-L6-v2 -> bge-small-en-v1.5).
+    """
+    if not get_config().embeddings_enabled:
+        return None
+    try:
+        return _platform_embed(text)
+    except (LocalOnlyViolationError, RemoteCodeNotPermittedError) as exc:
+        # trw-fail-silent-allow: the refusal is logged at WARNING; the learning is still published, without a vector
+        logger.warning("publish_embedding_refused", error_type=type(exc).__name__, detail=str(exc))
+        return None
+
 
 _HASH_FILE = ".publish_hashes.json"
 

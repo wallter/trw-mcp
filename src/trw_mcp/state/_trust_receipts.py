@@ -3,10 +3,10 @@
 Belongs to the ``state/trust.py`` facade. Re-exported there.
 
 Bridges persisted PRD-CORE-205 typed receipts to the outcome-consumption
-primitives in ``_trust_outcome.py``. A receipt reaches this layer only after the
-build/verification gate validated its plan coverage at write time; here we
-re-verify that the bound content is still *current* and that the recorded outcome
-is a *pass* before treating a kind as positive evidence. Review receipts and
+primitives in ``_trust_outcome.py``. Build receipts are revalidated against their
+persisted plans. Verification receipts require current source and named artifact
+bytes plus a PASS outcome; this does not authenticate their execution or prove
+the currency of their mapping snapshot. Review receipts and
 acceptable-failure records are never collected — they are never eligible kinds.
 
 Freshness re-verification matters: a receipt that was a pass when written is stale
@@ -56,10 +56,19 @@ def _build_receipt_is_positive(
 
 
 def _verification_receipt_is_positive(receipt: VerificationReceipt, project_root: Path) -> bool:
-    """A verification receipt is positive iff its outcome is PASS and content is current."""
+    """Require PASS plus current source and independently named artifact bytes.
+
+    This collector has no authoritative current mapping snapshot; artifact
+    freshness does not establish mapping currency or executor authentication.
+    """
+    from trw_mcp.state._verification_artifact import verification_artifact_is_current
+
     if receipt.outcome is not VerificationOutcome.PASS:
         return False
-    return _binding_current(receipt.content_binding, project_root)
+    return (
+        _binding_current(receipt.content_binding, project_root)
+        and verification_artifact_is_current(receipt, project_root).state is ReceiptState.VALID
+    )
 
 
 def collect_positive_trust_evidence(

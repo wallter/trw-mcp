@@ -46,7 +46,11 @@ class _MemoryFields:
     # Hybrid retrieval defaults on; initialization remains non-blocking and
     # degrades to keyword search until the embedder is ready. Operators may opt out.
     embeddings_enabled: bool = True
-    retrieval_embedding_model: str = "all-MiniLM-L6-v2"
+    # Follows trw-memory's default encoder. Vectors written under another model
+    # are excluded from dense recall until re-encoded: session start does that
+    # in the background (state/_embedding_migration.py), update-project in the
+    # foreground, and `trw-mcp update-project --repair-embeddings N` by hand.
+    retrieval_embedding_model: str = "BAAI/bge-small-en-v1.5"
     retrieval_embedding_dim: int = 384
     # PRD-FIX-COMPOUNDING-3-FR02: Coverage warning threshold for coverage_probe.
     # When coverage_ratio < this value, check_embeddings_status() emits an advisory.
@@ -58,6 +62,8 @@ class _MemoryFields:
     # _schedule_post_recovery_backfill thread guard (one backfill at a time, no-op
     # while running), so it never starves the shared HTTP hot path the way a
     # synchronous backfill would. Set False to keep the old advisory-only posture.
+    # Also gates the automatic re-embedding of vectors outside the configured
+    # model's space (the same self-heal, for an embedding-model upgrade).
     embeddings_auto_backfill_on_low_coverage: bool = True
     hybrid_bm25_candidates: int = 50
     hybrid_vector_candidates: int = 50

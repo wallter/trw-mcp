@@ -228,6 +228,7 @@ def test_deferral_set_is_invariant_across_writer_counts(benchmark: BenchmarkResu
         )
 
 
+@pytest.mark.perf
 def test_session_start_latency_is_asserted_only_on_an_undeferred_arm(benchmark: BenchmarkResult) -> None:
     """FR01: a bare first-session_start bound under deferral would be a tautology."""
     undeferred = [record for record in benchmark.arms.values() if not record.deferral_names]
@@ -370,6 +371,7 @@ def test_teardown_survives_raising_waits_with_multiple_children(tmp_path: Path) 
 # ── FR03 ─────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.perf
 def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
     """FR03: assert the PRD-FIX-130 bound where the budget exists, report xfail where it does not.
 
@@ -445,6 +447,7 @@ def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
 # ── NFR01 / NFR02 / NFR03 / NFR04 ────────────────────────────────────────────
 
 
+@pytest.mark.perf
 def test_module_budget_and_marker_placement(benchmark: BenchmarkResult) -> None:
     """NFR01: the module stays out of the fast lane and inside its wall budget."""
     from tests.conftest import _SLOW_FILES, _UNIT_FILES

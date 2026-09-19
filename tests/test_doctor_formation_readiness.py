@@ -146,6 +146,7 @@ def test_binary_alias_is_reported_by_the_name_that_actually_answered(
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.perf
 def test_a_hanging_probe_is_bounded_and_reports_not_measured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = tmp_path / "bin"
     # /bin/sleep by absolute path: PATH is pinned to the fixture dir, so a bare
@@ -262,6 +263,7 @@ def test_empty_enabled_list_skips_rather_than_passing_vacuously(
     assert "NOT MEASURED" in message
 
 
+@pytest.mark.perf
 def test_check_completes_quickly_when_no_binary_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # NFR01: a PATH lookup that fails costs no subprocess, so seven absent
     # clients must not cost seven timeouts.
@@ -281,8 +283,8 @@ def test_formation_readiness_is_registered_in_the_doctor_catalogue() -> None:
 
     names = [name for name, _fn in doctor._CHECKS]
     assert "formation_readiness" in names
-    # Appended last: every pre-existing row keeps its position.
-    assert names[-1] == "formation_readiness"
+    # Appended after every pre-existing row; only later additions follow it.
+    assert names[names.index("formation_readiness") + 1 :] == ["gnu_timeout", "foreign_client_paths"]
     assert hasattr(doctor, "_check_formation_readiness")
 
 

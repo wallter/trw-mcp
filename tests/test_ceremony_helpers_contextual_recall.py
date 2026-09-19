@@ -173,7 +173,7 @@ def test_no_context_skips_secondary_work(trw_dir, config, query, run_status):
         patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=AssertionError("secondary lookup")),
         patch("trw_mcp.state._recall_signals.recall_signal_scope", side_effect=AssertionError("signal scope")),
         patch("trw_mcp.sync.cache.IntelligenceCache", side_effect=AssertionError("cache")),
-        patch("trw_mcp.tools._session_recall_phase.rank_by_utility", side_effect=AssertionError("ranking")),
+        patch("trw_mcp.tools._session_recall_phase.rank_targeted_by_utility", side_effect=AssertionError("ranking")),
     ):
         assert _phase_contextual_recall(trw_dir, query, config, None, run_status) == []
 

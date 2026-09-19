@@ -12,9 +12,10 @@ from typing import Any
 
 import yaml
 
-from trw_mcp.models._evidence_core import ContentBinding, EntryState
+from trw_mcp.models._evidence_core import ContentBinding, EntryState, ReceiptState
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.git_commit_transaction import PREPARED_MANIFESTS_RELATIVE_DIR, OwnershipManifest
+from trw_mcp.state._evidence_identity import project_identity_is_current
 from trw_mcp.state._git_commit_claims import persist_claim
 from trw_mcp.state.git_commit_transaction import GitTransactionError, _git, load_active_claims
 
@@ -232,7 +233,7 @@ def _binding_matches_final_content(
     repo_root: Path,
     final_digests: dict[str, str],
 ) -> bool:
-    if binding.project_identity != repo_root.name:
+    if project_identity_is_current(binding.project_identity, repo_root)[0] is not ReceiptState.VALID:
         return False
     entries = {entry.path: entry for entry in binding.entries}
     for path, expected in final_digests.items():
@@ -258,7 +259,7 @@ def _binding_matches_final_content(
                 return False
         else:
             return False
-    return True
+    return project_identity_is_current(binding.project_identity, repo_root)[0] is ReceiptState.VALID
 
 
 def _successful_post_claim_build_receipts(

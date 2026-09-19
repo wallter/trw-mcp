@@ -207,7 +207,7 @@ def generate_codex_hooks(
         payload = _codex_hooks_payload()
 
     try:
-        hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        hooks_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except OSError as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")
         return result

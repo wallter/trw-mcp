@@ -753,3 +753,89 @@ def test_fallback_rows_keep_class_m_and_heading_only_prds_visible(tmp_path: Path
     assert by_id["PRD-CORE-001"].status == "implemented"
     assert by_id["PRD-CORE-002"].title == "Heading Only Record"
     assert by_id["PRD-CORE-002"].status == "done"
+
+
+def test_projection_drift_reuses_one_snapshot_per_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FIX145: share expensive inputs within a call, never cache across calls."""
+    from trw_mcp.state import index_sync as module
+
+    prds = tmp_path / "prds"
+    prds.mkdir()
+    index = tmp_path / "INDEX.md"
+    roadmap = tmp_path / "ROADMAP.md"
+    sync_index_md(index, prds)
+    sync_roadmap_md(roadmap, prds)
+    counts = {"scan": 0, "registry": 0}
+    original_scan = module.scan_prd_frontmatters
+    original_apply = module._apply_registry_authority
+
+    def scan(path: Path):
+        counts["scan"] += 1
+        return original_scan(path)
+
+    def apply(entries, path: Path):
+        counts["registry"] += 1
+        return original_apply(entries, path)
+
+    monkeypatch.setattr(module, "scan_prd_frontmatters", scan)
+    monkeypatch.setattr(module, "_apply_registry_authority", apply)
+    assert module.check_projection_drift(index, roadmap, prds) == []
+    assert counts == {"scan": 1, "registry": 1}
+    (prds / "PRD-FIX-001.md").write_text("---\nprd:\n  id: PRD-FIX-001\n  title: New\n  status: draft\n---\n")
+    assert len(module.check_projection_drift(index, roadmap, prds)) == 2
+    assert counts == {"scan": 2, "registry": 2}
+
+
+def test_projection_drift_skips_scan_without_valid_markers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state import index_sync as module
+
+    def forbidden(*args):
+        pytest.fail("invalid projections must not trigger a corpus scan")
+
+    monkeypatch.setattr(module, "scan_prd_frontmatters", forbidden)
+    index = tmp_path / "INDEX.md"
+    index.write_text("no markers")
+    findings = module.check_projection_drift(index, tmp_path / "ROADMAP.md", tmp_path)
+    assert len(findings) == 2
+    assert "markers missing" in findings[0]
+    assert "file missing" in findings[1]
+
+
+def test_projection_shared_renderers_are_order_independent(tmp_path: Path) -> None:
+    from copy import deepcopy
+
+    from trw_mcp.state import index_sync as module
+
+    prds = tmp_path / "prds"
+    prds.mkdir()
+    (prds / "PRD-FIX-001.md").write_text("---\nprd:\n  id: PRD-FIX-001\n  title: First\n  status: draft\n---\n")
+    entries = module.scan_prd_frontmatters(prds)
+    registry = module._apply_registry_authority(entries, prds)
+    original = deepcopy(entries)
+    index = module.render_index_catalogue(entries, registry)
+    roadmap = module.render_roadmap_catalogue(entries, registry)
+    assert module.render_roadmap_catalogue(entries, registry) == roadmap
+    assert module.render_index_catalogue(entries, registry) == index
+    assert entries == original
+    assert module.render_expected_projection(prds, kind="index") == index
+    assert module.render_expected_projection(prds, kind="roadmap") == roadmap
+
+
+def test_projection_drift_propagates_ledger_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trw_mcp.state import index_sync as module
+    from trw_mcp.state.requirements_registry import SchedulingLedgerError
+
+    index = tmp_path / "INDEX.md"
+    index.write_text(f"{INDEX_CATALOGUE_START}\n{INDEX_CATALOGUE_END}\n")
+    refusal = SchedulingLedgerError("fixture: stale ledger")
+    calls = []
+
+    def refuse(entries, path):
+        calls.append(path)
+        raise refusal
+
+    monkeypatch.setattr(module, "_apply_registry_authority", refuse)
+    with pytest.raises(SchedulingLedgerError, match="fixture: stale ledger") as exc:
+        module.check_projection_drift(index, tmp_path / "ROADMAP.md", tmp_path)
+    assert exc.value is refusal
+    assert calls == [tmp_path]

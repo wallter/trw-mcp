@@ -187,7 +187,7 @@ def smart_merge_cursor_json(
                 path=rel,
                 action="overwrite",
             )
-            target_path.write_text(json.dumps(trw_entries, indent=2) + "\n", encoding="utf-8")
+            target_path.write_text(json.dumps(trw_entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             result["updated"].append(rel)
             return result
         existing: dict[str, Any] = existing_obj
@@ -237,10 +237,10 @@ def smart_merge_cursor_json(
             else:
                 existing[key] = value
 
-        target_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+        target_path.write_text(json.dumps(existing, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         result["updated"].append(rel)
     else:
-        target_path.write_text(json.dumps(trw_entries, indent=2) + "\n", encoding="utf-8")
+        target_path.write_text(json.dumps(trw_entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         result["created"].append(rel)
 
     logger.debug(

@@ -143,6 +143,7 @@ def test_every_finding_is_actionable(live_result: DetectorResult) -> None:
         assert finding.producer_side.strip() and finding.consumer_side.strip(), f"{finding.key} names only one side"
 
 
+@pytest.mark.perf
 def test_full_scan_under_ten_seconds(live_result: DetectorResult, repo_root: Path) -> None:
     """NFR02: a check people are tempted to disable is a check that gets disabled.
 

@@ -85,7 +85,7 @@ class TestRecallRankingDecayIntegration:
         compute_utility_score retention), not on linear time decay from
         created date (which was the double-decay bug).
         """
-        from trw_mcp.scoring import rank_by_utility
+        from trw_mcp.scoring import rank_targeted_by_utility
 
         now = datetime.now(timezone.utc)
         fresh_entry: dict[str, object] = {
@@ -117,7 +117,7 @@ class TestRecallRankingDecayIntegration:
             "last_accessed_at": (now - timedelta(days=60)).strftime("%Y-%m-%d"),
         }
 
-        ranked = rank_by_utility(
+        ranked = rank_targeted_by_utility(
             [old_entry, fresh_entry],
             query_tokens=["fresh", "learning", "testing"],
             lambda_weight=0.3,
@@ -127,7 +127,7 @@ class TestRecallRankingDecayIntegration:
 
     def test_decay_does_not_affect_entries_without_created(self) -> None:
         """Entries without 'created' field fall back to raw impact — no crash."""
-        from trw_mcp.scoring import rank_by_utility
+        from trw_mcp.scoring import rank_targeted_by_utility
 
         entry_no_created: dict[str, object] = {
             "id": "L-nc",
@@ -139,13 +139,13 @@ class TestRecallRankingDecayIntegration:
             "q_observations": 5,
             "recurrence": 1,
         }
-        result = rank_by_utility([entry_no_created], query_tokens=[], lambda_weight=0.3)
+        result = rank_targeted_by_utility([entry_no_created], query_tokens=[], lambda_weight=0.3)
         assert len(result) == 1
         assert result[0]["id"] == "L-nc"
 
     def test_decay_with_invalid_created_date_no_crash(self) -> None:
         """Malformed 'created' value falls back to raw impact gracefully."""
-        from trw_mcp.scoring import rank_by_utility
+        from trw_mcp.scoring import rank_targeted_by_utility
 
         entry_bad_date: dict[str, object] = {
             "id": "L-bad",
@@ -158,5 +158,5 @@ class TestRecallRankingDecayIntegration:
             "recurrence": 1,
             "created": "not-a-date",
         }
-        result = rank_by_utility([entry_bad_date], query_tokens=[], lambda_weight=0.3)
+        result = rank_targeted_by_utility([entry_bad_date], query_tokens=[], lambda_weight=0.3)
         assert len(result) == 1

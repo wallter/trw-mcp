@@ -272,9 +272,16 @@ class SurfaceAuthorityMiddleware(Middleware):
         from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
         task_type = resolve_task_type(session_id=session_id, fastmcp_context=fastmcp_context)
+        config = get_config()
         surface = set(
             resolve_tool_surface(
-                task_type, "standard", comms_enabled=getattr(get_config(), "comms_enabled", False) is True
+                task_type,
+                "standard",
+                comms_enabled=getattr(config, "comms_enabled", False) is True,
+                # PRD-CORE-281-FR01: the ``dispatch`` pack is named by no task
+                # type (it is HIGH-RISK), so without this opt-in the bundled
+                # trw-delegate skill named two tools no session could list.
+                dispatch_enabled=getattr(config, "dispatch_tools_exposed", False) is True,
             ).tools
         )
         surface |= _ALWAYS_EXPOSED

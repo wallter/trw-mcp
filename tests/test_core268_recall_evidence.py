@@ -347,7 +347,7 @@ def test_registered_miss_is_unknown_without_implicit_work(tmp_path, monkeypatch,
 @pytest.mark.parametrize("reverse", [False, True])
 def test_acquired_same_id_penalty_belongs_to_candidate(namespaced, reverse):
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.scoring._recall import rank_by_utility
+    from trw_mcp.scoring._recall import rank_targeted_by_utility
     from trw_mcp.tools._recall_assertion_verification import _verify_assertions
 
     stamp = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
@@ -363,7 +363,7 @@ def test_acquired_same_id_penalty_belongs_to_candidate(namespaced, reverse):
     ]
     if reverse:
         rows.reverse()
-    result = _verify_assertions(rows, [], TRWConfig(), rank_by_utility)
+    result = _verify_assertions(rows, [], TRWConfig(), rank_targeted_by_utility)
     assert result[0]["verification_evidence"]["observation"] == "pass"
     assert result[1]["verification_evidence"]["observation"] == "failure"
     assert result[0]["combined_score"] > result[1]["combined_score"]

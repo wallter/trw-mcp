@@ -37,6 +37,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -344,3 +346,47 @@ def test_undeclared_third_session_cannot_join_or_use_the_mailbox(bench: Bench) -
     members = coord.manifest_members()
     assert members[_MEMBER_A]["pin_key"] == _SESSION_A
     assert members[_MEMBER_B]["status"] == "pending"
+
+
+def test_bounded_wait_on_one_real_process_observes_a_message_sent_by_another(bench: Bench) -> None:
+    """PRD-CORE-274 Amendment 01 (FR11), T12: B calls trw_inbox(wait_seconds=10)
+    on its OWN real stdio server; ~2s later A sends on ITS OWN real stdio
+    server. B's page must arrive before its 10s deadline and carry the message
+    — proof that the bounded wait genuinely spans two independent processes,
+    not an in-process simulation. The two child processes are already distinct
+    OS processes with their own stdio pipes (the harness's own isolation), so
+    driving B's blocking call from a background THREAD in this test process
+    touches no shared identity — each thread only ever reads/writes the one
+    child's own pipe.
+    """
+    harness, coord = bench.harness, bench.coord
+    alpha = harness.ready_member(
+        "alpha", session_id=_SESSION_A, project_root=coord.root, cwd=bench.worktrees[_MEMBER_A]
+    )
+    beta = harness.ready_member("beta", session_id=_SESSION_B, project_root=coord.root, cwd=bench.worktrees[_MEMBER_B])
+    harness.call_ok(alpha, "trw_init", _join_args(coord, _MEMBER_A, "worker_a_task"))
+    harness.call_ok(beta, "trw_init", _join_args(coord, _MEMBER_B, "worker_b_task"))
+    harness.call_ok(alpha, "trw_peers", {"action": "enroll"})
+    harness.call_ok(beta, "trw_peers", {"action": "enroll"})
+
+    outcome: dict[str, Any] = {}
+
+    def wait_on_beta() -> None:
+        outcome["payload"] = harness.call_ok(beta, "trw_inbox", {"action": "fetch", "wait_seconds": 10})
+
+    started = time.monotonic()
+    waiter = threading.Thread(target=wait_on_beta)
+    waiter.start()
+    time.sleep(2.0)
+    receipt = _send(harness, alpha, recipient=_MEMBER_B, request_key="waited", body="arrived-during-wait")
+    waiter.join(timeout=15)
+    elapsed = time.monotonic() - started
+
+    assert not waiter.is_alive(), "B's wait must have returned, not hung past its own join timeout"
+    assert elapsed < 8, "the page must arrive well before B's 10s deadline, not by exhausting it"
+    payload = outcome["payload"]
+    assert payload["status"] == "ok"
+    assert [item["message_id"] for item in payload["items"]] == [receipt["message_id"]]
+    assert payload["items"][0]["body"] == "arrived-during-wait"
+    # Wait-free payload shape: identical keys to an ordinary zero-wait fetch page.
+    assert set(payload) == {"status", "delivery", "items", "next_cursor"}

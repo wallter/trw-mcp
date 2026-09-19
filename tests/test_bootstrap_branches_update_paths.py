@@ -16,113 +16,44 @@ from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F4
 
 
 @pytest.mark.unit
-class TestDryRunWouldCreate:
-    """Cover the 'would create' branches in dry-run mode."""
+class TestDryRunReportsTheScratchDiff:
+    """PRD-INFRA-190 FR02: a dry run reports repo-relative paths from a scratch run's diff."""
 
-    def test_dry_run_framework_would_create(self, fake_git_repo: Path) -> None:
-        """Missing framework file in dry-run reports 'would create'."""
+    def test_missing_artifacts_are_reported_created_and_not_written(self, fake_git_repo: Path) -> None:
         (fake_git_repo / ".trw").mkdir()
-        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
-        (fake_git_repo / ".trw" / "context").mkdir()
-        (fake_git_repo / ".trw" / "templates").mkdir()
-        (fake_git_repo / ".claude" / "settings.json").parent.mkdir(parents=True)
 
         result = update_project(fake_git_repo, dry_run=True)
 
-        assert any("would create" in c for c in result["created"])
+        from trw_mcp.bootstrap import _DATA_DIR
 
-    def test_dry_run_identical_file_not_reported(self, initialized_repo: Path) -> None:
-        """Dry-run skips identical files — only changed files reported as 'would update'."""
+        hook = next(p.name for p in sorted((_DATA_DIR / "hooks").glob("*.sh")))
+        assert f".claude/hooks/{hook}" in result["created"]
+        assert ".claude/agents/trw-implementer.md" in result["created"]
+        assert any(p.startswith(".claude/skills/") for p in result["created"])
+        assert "CLAUDE.md" in result["created"]
+        assert ".mcp.json" in result["created"]
+        # Nothing the report names was written. (Whole-tree byte identity is
+        # pinned out-of-process in test_update_project_determinism.py: this
+        # harness reroutes resolve_trw_dir to the fixture root.)
+        for rel in (".claude", "CLAUDE.md", ".mcp.json"):
+            assert not (fake_git_repo / rel).exists()
+
+    def test_dry_run_warns_and_reports_nothing_for_a_current_install(self, initialized_repo: Path) -> None:
+        update_project(initialized_repo)
         result = update_project(initialized_repo, dry_run=True)
         assert any("DRY RUN" in w for w in result["warnings"])
+        assert ".claude/agents/trw-implementer.md" not in result["updated"] + result["created"]
+        assert ".mcp.json" not in result["updated"]
 
-    def test_dry_run_hook_would_create_when_missing(self, fake_git_repo: Path) -> None:
-        """Dry-run reports hook 'would create' when hooks dir is missing."""
-        (fake_git_repo / ".trw").mkdir()
-
-        result = update_project(fake_git_repo, dry_run=True)
-
-        all_output = result["created"] + result["updated"]
-        hook_creates = [x for x in all_output if "would create" in x and "hook" in x.lower()]
-        from trw_mcp.bootstrap import _DATA_DIR
-
-        if (_DATA_DIR / "hooks").is_dir():
-            assert len(hook_creates) > 0
-
-    def test_dry_run_skill_would_create(self, fake_git_repo: Path) -> None:
-        """Dry-run reports skill 'would create' when skills dir is missing."""
-        (fake_git_repo / ".trw").mkdir()
-        result = update_project(fake_git_repo, dry_run=True)
-        all_output = result["created"] + result["updated"]
-        skill_creates = [x for x in all_output if "would create" in x and "skill" in x.lower()]
-        from trw_mcp.bootstrap import _DATA_DIR
-
-        if (_DATA_DIR / "skills").is_dir():
-            assert len(skill_creates) > 0
-
-    def test_dry_run_agent_would_create(self, fake_git_repo: Path) -> None:
-        """Dry-run reports agent 'would create' when agents dir is missing."""
-        (fake_git_repo / ".trw").mkdir()
-        result = update_project(fake_git_repo, dry_run=True)
-        all_output = result["created"] + result["updated"]
-        agent_creates = [x for x in all_output if "would create" in x and ".md" in x]
-        from trw_mcp.bootstrap import _DATA_DIR
-
-        if (_DATA_DIR / "agents").is_dir():
-            assert len(agent_creates) > 0
-
-    def test_dry_run_agent_would_update_when_present(self, initialized_repo: Path) -> None:
-        """Dry-run reports a resolved agent as 'would update', not 'would create'.
-
-        The agent already exists (resolved) after init, so the resolve-aware
-        dry-run compare must classify it as an update.
-        """
-        result = update_project(initialized_repo, dry_run=True)
-        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
-        # Existing resolved agent must not be reported as a create.
-        assert not any("would create" in c and "trw-implementer.md" in c for c in result["created"])
-        # Nothing changed (already resolved), so it must not be a spurious update either.
-        assert not any("would update" in u and str(agent) in u for u in result["updated"])
-
-    def test_dry_run_claude_md_would_create(self, fake_git_repo: Path) -> None:
-        """Dry-run reports CLAUDE.md 'would create' when file is missing."""
-        (fake_git_repo / ".trw").mkdir()
-        result = update_project(fake_git_repo, dry_run=True)
-        all_output = result["created"]
-        assert any("CLAUDE.md" in c for c in all_output)
-
-    def test_dry_run_claude_md_would_update(self, initialized_repo: Path) -> None:
-        """Dry-run reports CLAUDE.md 'would update' when file exists."""
-        result = update_project(initialized_repo, dry_run=True)
-        assert any("CLAUDE.md" in u and "would update" in u for u in result["updated"])
-
-    def test_dry_run_mcp_json_preserved_when_trw_present(self, initialized_repo: Path) -> None:
-        """Dry-run reports .mcp.json preserved when trw key already present."""
-        result = update_project(initialized_repo, dry_run=True)
+    @pytest.mark.parametrize("content", [json.dumps({"mcpServers": {"other": {}}}), "not-json{{{"])
+    def test_mcp_json_without_trw_entry_is_reported_updated(self, initialized_repo: Path, content: str) -> None:
         mcp_path = initialized_repo / ".mcp.json"
-        assert any(str(mcp_path) in p for p in result["preserved"])
-
-    def test_dry_run_mcp_json_would_merge_when_trw_missing(self, initialized_repo: Path) -> None:
-        """Dry-run reports .mcp.json would merge when trw key is missing."""
-        mcp_path = initialized_repo / ".mcp.json"
-        mcp_path.write_text(json.dumps({"mcpServers": {"other": {}}}), encoding="utf-8")
+        mcp_path.write_text(content, encoding="utf-8")
 
         result = update_project(initialized_repo, dry_run=True)
-        assert any("would merge" in u and "trw entry" in u for u in result["updated"])
 
-    def test_dry_run_mcp_json_invalid_json_would_merge(self, initialized_repo: Path) -> None:
-        """Dry-run handles corrupt .mcp.json by reporting would-merge."""
-        mcp_path = initialized_repo / ".mcp.json"
-        mcp_path.write_text("not-json{{{", encoding="utf-8")
-
-        result = update_project(initialized_repo, dry_run=True)
-        assert any("would merge" in u for u in result["updated"])
-
-    def test_dry_run_mcp_json_would_create_if_missing(self, fake_git_repo: Path) -> None:
-        """Dry-run reports .mcp.json 'would create' when file doesn't exist."""
-        (fake_git_repo / ".trw").mkdir()
-        result = update_project(fake_git_repo, dry_run=True)
-        assert any(".mcp.json" in c and "would create" in c for c in result["created"])
+        assert ".mcp.json" in result["updated"]
+        assert mcp_path.read_text(encoding="utf-8") == content
 
 
 @pytest.mark.unit
@@ -160,6 +91,8 @@ class TestUpdateOSErrorPaths:
 
         if not (_DATA_DIR / "skills").is_dir():
             pytest.skip("no bundled skills")
+        # An identical destination is never rewritten (FR03), so remove one to force a copy.
+        (initialized_repo / ".claude" / "skills" / "trw-learn" / "SKILL.md").unlink()
 
         original_copy2 = shutil.copy2
         call_count = [0]
@@ -185,6 +118,8 @@ class TestUpdateOSErrorPaths:
 
         if not (_DATA_DIR / "agents").is_dir():
             pytest.skip("no bundled agents")
+        # An identical destination is never rewritten (FR03), so remove one to force a write.
+        (initialized_repo / ".claude" / "agents" / "trw-implementer.md").unlink()
 
         original_write = Path.write_text
 
@@ -205,7 +140,7 @@ class TestRunAutoMaintenance:
         mock_logger = MagicMock()
 
         with (
-            patch("trw_mcp.bootstrap._update_project._logger", mock_logger),
+            patch("trw_mcp.bootstrap._update_external._logger", mock_logger),
             patch("trw_mcp.models.config._reset_config", side_effect=[None, None]),
             patch(
                 "trw_mcp.models.config.get_config",
@@ -227,7 +162,7 @@ class TestRunAutoMaintenance:
         mock_logger = MagicMock()
 
         with (
-            patch("trw_mcp.bootstrap._update_project._logger", mock_logger),
+            patch("trw_mcp.bootstrap._update_external._logger", mock_logger),
             patch(
                 "trw_mcp.models.config._reset_config",
                 side_effect=[None, RuntimeError("reset failed")],
@@ -251,11 +186,12 @@ class TestUpdateProjectPipInstall:
     """Cover pip_install + dry_run interaction."""
 
     def test_pip_install_skipped_in_dry_run(self, initialized_repo: Path) -> None:
-        """pip_install=True is ignored in dry_run mode."""
-        with patch("subprocess.run") as mock_run:
-            update_project(initialized_repo, pip_install=True, dry_run=True)
+        """pip_install=True is only named under would_run in dry_run mode."""
+        with patch("trw_mcp.bootstrap._update_project._pip_install_package") as mock_pip:
+            result = update_project(initialized_repo, pip_install=True, dry_run=True)
 
-        mock_run.assert_not_called()
+        mock_pip.assert_not_called()
+        assert "pip_install" in result["would_run"]
 
 
 @pytest.mark.unit

@@ -5,9 +5,11 @@ from __future__ import annotations
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,19 @@ def contract_yaml(
         f'    anchors: ["{anchors}"]\n'
         "    falsifiers:\n" + falsifier
     )
+
+
+def isolate_fixture_pytest_plugins(root: Path) -> None:
+    """Keep stdlib/builtin-pytest scratch projects independent of host plugins.
+
+    This is fixture configuration, not a production falsifier policy. Explicit
+    plugin exclusions work on the supported pytest 8.0 floor; the newer
+    --disable-plugin-autoload option does not. Discover names without importing
+    plugins, and do not change the production child environment or deadlines.
+    """
+    names = sorted({entry.name for entry in metadata.entry_points(group="pytest11")})
+    options = shlex.join([token for name in names for token in ("-p", f"no:{name}")])
+    (root / "pytest.ini").write_text(f"[pytest]\naddopts = {options}\n", encoding="utf-8")
 
 
 def make_project(tmp_path: Path, contract: str | None = contract_yaml(), *, enroll: bool = True) -> Path:

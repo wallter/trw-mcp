@@ -36,6 +36,17 @@ _T2_CLIENTS = ("opencode", "codex")
 _T1_CLIENTS = ("claude-code",)
 
 
+def _commit_all(root: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"],
+        check=True,
+        capture_output=True,
+    )
+
+
 class TestT2ClientsOwnTheirInstructionFile:
     """FR04 is DEFERRED — see test_t2_agents_md_removal_is_blocked_on_a_prd_conflict.
 
@@ -402,6 +413,7 @@ class TestClaudeMdWrittenOnlyWhereRead:
 
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         init_project(root, ide=client)
+        _commit_all(root)
         claude_md = root / "CLAUDE.md"
         return claude_md.read_text(encoding="utf-8") if claude_md.is_file() else None
 
@@ -523,6 +535,7 @@ class TestTheDecisionSurvivesReinstall:
 
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         init_project(root, ide=client)
+        _commit_all(root)
 
     @pytest.mark.parametrize("client", ["codex", "opencode", "cursor-cli"])
     def test_update_project_does_not_reinject(self, tmp_path: Path, client: str) -> None:
@@ -598,6 +611,7 @@ class TestReviewerFoundReinjection:
 
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         init_project(root, ide=client)
+        _commit_all(root)
 
     @pytest.mark.parametrize("client", ["codex", "opencode", "cursor-cli"])
     def test_bare_update_does_not_reinject(self, tmp_path: Path, client: str) -> None:
@@ -716,6 +730,9 @@ class TestOrphanedAgentsMdBlockIsRemovedByUpdate:
             f"# House rules\n\nKeep this.\n\n{TRW_MARKER_START}\nstale protocol\n{TRW_MARKER_END}\n\nAnd this.\n",
             encoding="utf-8",
         )
+        # Committed, as a real pre-withdrawal project is: update-project never
+        # rewrites an UNCOMMITTED file it did not write (PRD-INFRA-190 FR04).
+        _commit_all(tmp_path)
         return agents
 
     def test_update_removes_the_block_no_client_claims(self, tmp_path: Path) -> None:

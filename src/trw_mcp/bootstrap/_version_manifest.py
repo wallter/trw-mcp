@@ -363,7 +363,6 @@ def _apply_agent_update(
     agent_file: Path,
     dest: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback,
     manifest_hashes: dict[str, str] | None,
     *,
@@ -389,7 +388,10 @@ def _apply_agent_update(
 
     key = manifest_key or agent_file.name
     framework_hashes = _framework_agent_hashes(agent_file, client=client)
-    if _is_user_modified(dest, key, manifest_hashes, framework_hashes=framework_hashes):
+    # `.claude/agents` records under the bare filename; looking it up by path
+    # found no record, so every bundle change to a claude-code agent was
+    # preserved as a "user edit" and never landed (PRD-INFRA-190 FR02 scenario 2).
+    if _is_user_modified(dest, _manifest_key_for(key), manifest_hashes, framework_hashes=framework_hashes):
         logger.info("artifact_user_modified", path=str(dest))
         result.setdefault("modified", []).append(str(dest))
         # Also recorded under ``preserved``, which is the bucket the CLI summary
@@ -399,25 +401,102 @@ def _apply_agent_update(
         result.setdefault("preserved", []).append(key)
         return
 
-    if dry_run:
-        resolved = _render_agent(agent_file, client=client)
-        if not dest.exists():
-            result["created"].append(f"would create: {dest}")
-        elif resolved is None or dest.read_text(encoding="utf-8") != resolved:
-            result["updated"].append(f"would update: {dest}")
+    resolved = _render_agent(agent_file, client=client)
+    if resolved is not None and dest.is_file() and dest.read_text(encoding="utf-8") == resolved:
         return
-
     existed = dest.exists()
     error_count = len(result["errors"])
-    _install_one_agent(agent_file, dest, force=True, result=result, on_progress=None, client=client)
-    if len(result["errors"]) > error_count:
-        if on_progress:
-            on_progress("Error", str(dest))
-        return
-    # _install_one_agent always records "created"; on update an existing dest is
-    # semantically an update, so reclassify for accurate reporting.
-    if existed and str(dest) in result["created"]:
-        result["created"].remove(str(dest))
-        result.setdefault("updated", []).append(str(dest))
+    # A scratch dict: this function writes; the update reports from the diff.
+    scratch = {"created": [], "errors": result["errors"]}
+    _install_one_agent(agent_file, dest, force=True, result=scratch, on_progress=None, client=client)
     if on_progress:
-        on_progress("Updated" if existed else "Created", str(dest))
+        on_progress("Error" if len(result["errors"]) > error_count else "Updated" if existed else "Created", str(dest))
+
+
+# ---------------------------------------------------------------------------
+# Uncommitted-change ownership (PRD-INFRA-190 FR04/FR05/NFR01)
+# ---------------------------------------------------------------------------
+
+#: ``content_hashes`` keys for these surfaces are the path BELOW the directory
+#: (a bare agent/hook filename, ``<skill>/<file>``); every other key is the
+#: repo-relative path itself.
+_BARE_KEY_DIRS: tuple[str, ...] = (".claude/agents/", ".claude/hooks/", ".claude/skills/")
+
+
+def _manifest_key_for(rel: str) -> str:
+    """The ``content_hashes`` key under which repo-relative *rel* is recorded."""
+    for prefix in _BARE_KEY_DIRS:
+        if rel.startswith(prefix):
+            return rel.removeprefix(prefix)
+    return rel
+
+
+def _manifest_key_path(key: str) -> str:
+    """The repo-relative path a ``content_hashes`` key records (inverse of :func:`_manifest_key_for`)."""
+    if key.startswith("."):
+        return key
+    if "/" in key:
+        return f".claude/skills/{key}"
+    return f".claude/hooks/{key}" if key.endswith(".sh") else f".claude/agents/{key}"
+
+
+def git_dirty_paths(target_dir: Path, pathspecs: list[str]) -> set[str] | None:
+    """Repo-relative paths git reports modified, staged, added, renamed or untracked.
+
+    ``None`` means git could not answer (missing binary, timeout, not a work
+    tree): the caller reports ``unknown`` and falls back to the manifest guard
+    (NFR01). Ignored files are never dirty — they stay under the manifest guard.
+    """
+    import os
+    import subprocess
+
+    env = {**os.environ, "GIT_CEILING_DIRECTORIES": str(target_dir.parent), "GIT_OPTIONAL_LOCKS": "0"}
+    command = ["git", "-C", str(target_dir), "status", "--porcelain=v1", "-z", "--untracked-files=all", "--"]
+    try:
+        proc = subprocess.run([*command, *pathspecs], capture_output=True, timeout=5, env=env, check=False)  # noqa: S603
+    except (
+        OSError,
+        subprocess.TimeoutExpired,
+    ):  # trw-fail-silent-allow: None is "unknown", which the caller reports as a warning (NFR01)
+        logger.warning("git_dirty_check_unavailable", target=str(target_dir), exc_info=True)
+        return None
+    if proc.returncode != 0:
+        logger.warning("git_dirty_check_failed", target=str(target_dir), returncode=proc.returncode)
+        return None
+    dirty: set[str] = set()
+    fields = iter(proc.stdout.split(b"\0"))
+    for entry in fields:
+        if len(entry) < 4:
+            continue
+        dirty.add(entry[3:].decode("utf-8", "surrogateescape").rstrip("/"))
+        if entry[:1] in (b"R", b"C"):
+            dirty.add(next(fields, b"").decode("utf-8", "surrogateescape"))
+    return dirty
+
+
+def preserve_uncommitted_changes(
+    target_dir: Path,
+    snapshot_root: Path,
+    dirty: set[str],
+    manifest_hashes: dict[str, str] | None,
+    result: dict[str, list[str]],
+) -> None:
+    """Undo every write to a dirty path whose pre-run bytes TRW did not record.
+
+    Runs after the writers and before the manifest is recorded, so the
+    ownership recorders see the preserved bytes. A dirty path whose pre-run
+    bytes hash to its ``content_hashes`` record is TRW's own last write and
+    keeps the refresh.
+    """
+    from ._update_transaction import _file_signature, _restore_transaction_file
+
+    for rel in sorted(dirty):
+        before, after = snapshot_root / rel, target_dir / rel
+        if _file_signature(before) == _file_signature(after):
+            continue
+        if before.is_file() and not before.is_symlink():
+            recorded = (manifest_hashes or {}).get(_manifest_key_for(rel))
+            if recorded == hashlib.sha256(before.read_bytes()).hexdigest():
+                continue
+        _restore_transaction_file(target_dir, snapshot_root, rel)
+        result.setdefault("preserved", []).append(f"{rel} (uncommitted_changes)")

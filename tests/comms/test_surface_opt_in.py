@@ -146,3 +146,21 @@ async def test_opt_in_does_not_bypass_composed_phase_gate(
     accepted = await comms_server.call_tool("trw_peers", {"action": "enroll"})
     assert accepted.structured_content is not None
     assert accepted.structured_content["status"] == "ok"
+
+
+async def test_fr11_wait_seconds_parameter_does_not_grow_the_comms_pack_or_register_a_new_tool(
+    comms_server: FastMCP,
+) -> None:
+    """PRD-CORE-274 Amendment 01: trw_inbox gained a PARAMETER, not the pack a member.
+
+    The pack membership and tool count must stay exactly what they were before
+    the amendment; a positive control (the parameter itself IS present) rules
+    out this test silently passing because nothing was actually registered.
+    """
+    from trw_mcp.models.surface_packs import PACK_TOOLS
+
+    assert PACK_TOOLS["peer_comms"] == ("trw_peers", "trw_send", "trw_inbox")
+    assert len(PACK_TOOLS["peer_comms"]) == 3
+    tools = {tool.name: tool for tool in await comms_server.list_tools()}
+    assert set(tools) & set(PACK_TOOLS["peer_comms"]) == set(PACK_TOOLS["peer_comms"])
+    assert "wait_seconds" in tools["trw_inbox"].parameters["properties"]

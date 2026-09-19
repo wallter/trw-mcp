@@ -154,7 +154,7 @@ class TestEntryUtilityInvalidCreatedDate:
 
     def test_invalid_created_date_uses_raw_values(self) -> None:
         """When created field has invalid date, ValueError is caught and raw values used."""
-        from trw_mcp.scoring import rank_by_utility
+        from trw_mcp.scoring import rank_targeted_by_utility
 
         entry: dict[str, object] = {
             "id": "L-bad-date",
@@ -170,7 +170,7 @@ class TestEntryUtilityInvalidCreatedDate:
             "created": "not-a-real-date",
         }
 
-        result = rank_by_utility([entry], query_tokens=[], lambda_weight=0.5)
+        result = rank_targeted_by_utility([entry], query_tokens=[], lambda_weight=0.5)
         assert len(result) == 1
         assert result[0]["id"] == "L-bad-date"
 

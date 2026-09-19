@@ -101,13 +101,17 @@ class TestUpdateProjectBasics:
         assert not result["errors"]
 
     def test_reports_updated_files(self, initialized_repo: Path) -> None:
-        """update_project reports framework files as updated."""
+        """update_project reports exactly the files it changed, repo-relative."""
+        framework = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
+        framework.write_text("stale\n", encoding="utf-8")
+        hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        hook.unlink()
+
         result = update_project(initialized_repo)
-        assert len(result["updated"]) > 0
-        # Should have updated hooks, skills, agents, framework files
-        updated_str = "\n".join(result["updated"])
-        assert "FRAMEWORK.md" in updated_str
-        assert "hooks" in updated_str
+
+        assert ".trw/frameworks/FRAMEWORK.md" in result["updated"]
+        assert ".claude/hooks/session-start.sh" in result["created"]
+        assert ".claude/agents/trw-implementer.md" not in result["updated"]  # unchanged → unreported
 
     def test_reports_preserved_files(self, initialized_repo: Path) -> None:
         """update_project reports user files as preserved."""
@@ -370,7 +374,7 @@ class TestUpdateResolvesAgentModelTier:
             "errors": [],
             "modified": [],
         }
-        _update_framework_files(initialized_repo, _DATA_DIR, result, dry_run=False, manifest_hashes=manifest_hashes)
+        _update_framework_files(initialized_repo, _DATA_DIR, result, manifest_hashes=manifest_hashes)
 
         # User edit survives untouched and is reported as modified.
         assert agent.read_text(encoding="utf-8") == edited
@@ -612,7 +616,6 @@ class TestUpdatePreservesUserEditedHooksAndSkills:
             initialized_repo,
             _DATA_DIR,
             result,
-            dry_run=False,
             manifest_hashes={"session-start.sh": stale_hash},
         )
 
@@ -636,7 +639,6 @@ class TestUpdatePreservesUserEditedHooksAndSkills:
             initialized_repo,
             _DATA_DIR,
             result,
-            dry_run=False,
             manifest_hashes={"trw-deliver/SKILL.md": stale_hash},
         )
 
@@ -685,7 +687,7 @@ class TestUpdatePreservesUserEditsWithoutManifest:
         hook.write_text(edited, encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "created": [], "errors": [], "modified": []}
-        _update_hooks(initialized_repo, _DATA_DIR, result, dry_run=False, manifest_hashes=None)
+        _update_hooks(initialized_repo, _DATA_DIR, result, manifest_hashes=None)
 
         assert hook.read_text(encoding="utf-8") == edited
         assert any("session-start.sh" in m for m in result["modified"])
@@ -704,10 +706,9 @@ class TestUpdatePreservesUserEditsWithoutManifest:
         hook.write_text(shipped, encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "created": [], "errors": [], "modified": []}
-        _update_hooks(initialized_repo, _DATA_DIR, result, dry_run=False, manifest_hashes=None)
+        _update_hooks(initialized_repo, _DATA_DIR, result, manifest_hashes=None)
 
         assert not any("session-start.sh" in m for m in result["modified"])
-        assert any("session-start.sh" in u for u in result["updated"])
 
 
 @pytest.mark.unit
@@ -740,19 +741,18 @@ class TestLivePathExistingAgentRelabel:
     """P2-4 round-2 audit: an existing agent on the live path is 'updated', not 'created'."""
 
     def test_existing_agent_reported_updated_not_created(self, initialized_repo: Path) -> None:
-        """A pre-existing agent is reclassified from created→updated on live update.
-
-        Exercises the relabel block in ``_apply_agent_update`` (``_install_one_agent``
-        always records 'created'; an existing dest is semantically an update).
-        """
+        """A pre-existing agent the update rewrites is reported ``updated``, never ``created``."""
         agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
-        assert agent.exists()
+        from trw_mcp.bootstrap import _DATA_DIR
+
+        # The raw bundled form is a framework rendering, so the update heals it.
+        agent.write_bytes((_DATA_DIR / "agents" / "trw-implementer.md").read_bytes())
 
         result = update_project(initialized_repo)
         assert not result["errors"]
 
-        assert str(agent) in result["updated"]
-        assert str(agent) not in result["created"]
+        assert ".claude/agents/trw-implementer.md" in result["updated"]
+        assert ".claude/agents/trw-implementer.md" not in result["created"]
 
 
 class TestCompactCanonUpdateOrdering:

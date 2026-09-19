@@ -98,19 +98,19 @@ class TestSearchEntriesHybrid:
             assert isinstance(results, list)
 
     def test_embed_query_returns_none(self, trw_dir: Path) -> None:
-        """When embedder.embed(query) returns None, falls back (line 411)."""
+        """When the query encode (embed_query) returns None, falls back."""
         backend = get_backend(trw_dir)
         backend.store(MemoryEntry(id="L-en1", content="embed none", detail="d"))
         mock_embedder = MagicMock()
         mock_embedder.embedding_space.return_value = _HybridEmbedder().embedding_space()
-        mock_embedder.embed.return_value = None
+        mock_embedder.embed_query.return_value = None
         with patch(
             "trw_mcp.state._memory_connection.get_embedder",
             return_value=mock_embedder,
         ):
             results = _search_entries(backend, "embed")
             assert [entry.id for entry in results] == ["L-en1"]
-            mock_embedder.embed.assert_called_once_with("embed")
+            mock_embedder.embed_query.assert_called_once_with("embed")
 
     def test_empty_vector_hits(self, trw_dir: Path) -> None:
         """No qualified generation records means lexical fallback, even with a ready encoder."""
@@ -118,7 +118,7 @@ class TestSearchEntriesHybrid:
         backend.store(MemoryEntry(id="L-ev1", content="vector empty", detail="d"))
         mock_embedder = MagicMock()
         mock_embedder.embedding_space.return_value = _HybridEmbedder().embedding_space()
-        mock_embedder.embed.return_value = [0.1, 0.2, 0.3]
+        mock_embedder.embed_query.return_value = [0.1, 0.2, 0.3]
         with (
             patch(
                 "trw_mcp.state._memory_connection.get_embedder",
@@ -218,7 +218,7 @@ class TestSearchEntriesHybrid:
 
         mock_embedder = MagicMock()
         mock_embedder.embedding_space.return_value = _HybridEmbedder().embedding_space()
-        mock_embedder.embed.side_effect = RuntimeError("vector crash")
+        mock_embedder.embed_query.side_effect = RuntimeError("vector crash")
 
         with patch(
             "trw_mcp.state._memory_connection.get_embedder",
@@ -226,4 +226,4 @@ class TestSearchEntriesHybrid:
         ):
             results = _search_entries(backend, "exception")
             assert [entry.id for entry in results] == ["L-ex1"]
-            mock_embedder.embed.assert_called_once_with("exception")
+            mock_embedder.embed_query.assert_called_once_with("exception")

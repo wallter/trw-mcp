@@ -104,7 +104,7 @@ def run_embeddings_maintenance(
         # Option A+ (council-ratified 2026-06-10): first-recall download guard.
         # With embeddings ON by default, the hot path deferred cold init
         # (allow_initialize=False). On a never-cached box the FIRST trw_recall
-        # that allows cold init would pay the all-MiniLM-L6-v2 *download*
+        # that allows cold init would pay the embedding-model *download*
         # synchronously, risking an MCP-client timeout. Kick a NON-BLOCKING
         # background warm-up so the download lands off the hot path; recall
         # degrades to keyword (get_initialized_embedder -> None) until it
@@ -122,6 +122,19 @@ def run_embeddings_maintenance(
                 "embedder_warmup_scheduled_session_start",
                 thread_started=warmup_started,
             )
+
+        # Vectors outside the configured model's embedding space (an older
+        # model, or written before vectors recorded a space) are invisible to
+        # dense recall and similarity edges. Re-embed them on a bounded,
+        # resumable background thread (one migrating process per project) so
+        # an upgrade migrates itself instead of degrading silently. Same
+        # opt-out as the low-coverage self-heal below. Not writer-pressure
+        # deferred: it adds no process, and each row is its own short write.
+        if emb_status.get("enabled") and config.embeddings_auto_backfill_on_low_coverage:
+            from trw_mcp.state._embedding_migration_schedule import plan_session_migration
+
+            if migration := plan_session_migration(trw_dir):
+                maintenance["embeddings_migration"] = migration
 
         # PRD-FIX-105-FR01: When coverage is LOW (advisory present), the prior
         # code only surfaced the warning and never remediated — so a

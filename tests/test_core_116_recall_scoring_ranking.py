@@ -9,15 +9,15 @@ class TestRankByUtilityEdgeCases:
     """Edge cases for the ranking function."""
 
     def test_empty_matches_returns_empty(self) -> None:
-        """rank_by_utility([]) returns []."""
-        from trw_mcp.scoring._recall import rank_by_utility
+        """rank_targeted_by_utility([]) returns []."""
+        from trw_mcp.scoring._recall import rank_targeted_by_utility
 
-        result = rank_by_utility([], query_tokens=["payments"], lambda_weight=0.3)
+        result = rank_targeted_by_utility([], query_tokens=["payments"], lambda_weight=0.3)
         assert result == []
 
     def test_wildcard_combined_score_clamped_to_2(self) -> None:
         """Wildcard browsing retains the historical upper clamp."""
-        from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+        from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
         entry = _make_entry(
             id="L-max",
@@ -35,12 +35,12 @@ class TestRankByUtilityEdgeCases:
             prd_knowledge_ids={"L-max"},
         )
 
-        result = rank_by_utility([entry], query_tokens=[], lambda_weight=0.0, context=ctx)
+        result = rank_targeted_by_utility([entry], query_tokens=[], lambda_weight=0.0, context=ctx)
         assert _score_of(result) == 2.0
 
     def test_results_sorted_descending(self) -> None:
         """Results are sorted by combined_score descending."""
-        from trw_mcp.scoring._recall import rank_by_utility
+        from trw_mcp.scoring._recall import rank_targeted_by_utility
 
         entries = [
             _make_entry(id="L-low", impact=0.1, q_value=0.1),
@@ -48,17 +48,17 @@ class TestRankByUtilityEdgeCases:
             _make_entry(id="L-mid", impact=0.5, q_value=0.5),
         ]
 
-        result = rank_by_utility(entries, query_tokens=["payments"], lambda_weight=0.3)
+        result = rank_targeted_by_utility(entries, query_tokens=["payments"], lambda_weight=0.3)
 
         scores = [_score_of(result, i) for i in range(3)]
         assert scores == sorted(scores, reverse=True)
 
     def test_original_entries_not_mutated(self) -> None:
-        """rank_by_utility returns copies, does not mutate input entries."""
-        from trw_mcp.scoring._recall import rank_by_utility
+        """rank_targeted_by_utility returns copies, does not mutate input entries."""
+        from trw_mcp.scoring._recall import rank_targeted_by_utility
 
         entry = _make_entry()
 
-        rank_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
+        rank_targeted_by_utility([entry], query_tokens=["payments"], lambda_weight=0.3)
 
         assert "combined_score" not in entry

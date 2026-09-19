@@ -346,7 +346,10 @@ def _search_entries(
         if not all_entries:
             return _keyword_fallback()
 
+        from trw_memory.embeddings import embed_query
         from trw_memory.embeddings.provenance import provider_embedding_space, vector_digest
+
+        from trw_mcp.state._embedding_space import admit_in_space
 
         # Identity must bracket the actual query encode. A model name, current
         # provider object or a nonempty legacy vector is not generation proof.
@@ -354,7 +357,8 @@ def _search_entries(
         if query_space is None:
             logger.debug("semantic_recall_unqualified", reason="provider_identity_unknown")
             return _keyword_fallback()
-        query_vec = embedder.embed(query)
+        # Query role: an asymmetric encoder (bge) needs its query instruction.
+        query_vec = embed_query(embedder, query)
         if (
             query_vec is None
             or provider_embedding_space(embedder) != query_space
@@ -396,11 +400,15 @@ def _search_entries(
         entries_by_key = {(entry.namespace, entry.id): entry for entry in all_entries}
         for candidate_namespace, candidate_ids in ids_by_namespace.items():
             records = record_reader(candidate_ids, namespace=candidate_namespace)
+            # trw-memory's space gate: other-space vectors are excluded (and
+            # reported once, naming the re-embed need); BM25 still ranks their rows.
+            in_space = admit_in_space(records, query_space, namespace=candidate_namespace, surface="trw_mcp_recall")
             for entry_id in candidate_ids:
                 record = records.get(entry_id)
                 entry = entries_by_key[(candidate_namespace, entry_id)]
                 if (
-                    record is not None
+                    entry_id in in_space
+                    and record is not None
                     and record.provenance is not None
                     and record.provenance.matches(query_space, f"{entry.content} {entry.detail}", record.embedding)
                 ):

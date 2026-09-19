@@ -1,7 +1,6 @@
 """Per-client command (argv) builder for the dispatch layer.
 
-Belongs to the ``trw_mcp.dispatch`` package. ``build_command`` is a *pure*
-function (no I/O, no subprocess, no PATH lookup) that turns a
+Belongs to the ``trw_mcp.dispatch`` package. ``build_command`` is a function with no I/O, subprocess or PATH lookup that turns a
 :class:`DispatchRequest` into the exact ``list[str]`` argv to execute. The prompt
 is always passed as a single argv token — never shell-interpolated — so a
 malicious prompt body cannot break out into shell metacharacters.
@@ -12,10 +11,11 @@ only knows the ORDER the fragments are concatenated in. Adding a client is a dat
 entry there and no edit here, and there is no ``req.client == ...`` comparison
 left to grow a second branch.
 
-Purity is load-bearing rather than stylistic: it is what makes the same request
-produce the same argv on every box, and what lets the 64 recorded baselines in
+Default-posture command construction is deterministic, which lets the recorded baselines in
 ``tests/fixtures/dispatch_argv_baseline.json`` prove the registry migration was
-behaviour-preserving.
+behaviour-preserving. Injected Codex MCP transports are the deliberate exception:
+the renderer generates a fresh server ID so project config cannot pre-populate
+its env, cwd or tool filters through Codex's recursive configuration merge.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from trw_mcp.dispatch._client_specs import (
     UnknownClientError,
     client_spec_for,
 )
-from trw_mcp.dispatch._posture import REVIEWER_POSTURE, render_reviewer_argv
+from trw_mcp.dispatch._posture import REVIEWER_POSTURE, render_reviewer_argv, render_trw_access_argv
 from trw_mcp.dispatch._types import DispatchRequest
 
 # ``SUPPORTED_CLIENTS`` is derived from the registry key set in ``_client_specs``
@@ -46,7 +46,7 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     client's registry entry::
 
         base_argv always_argv structured_output_argv
-        (reviewer_argv_template | [isolation_argv])
+        (reviewer_argv_template | trw_access_argv_template | [isolation_argv])
         (read_only_argv | allow_writes_argv) [model_flag MODEL]
         [cwd_flag CWD] *extra_args (prompt_flag PROMPT | PROMPT)
 
@@ -57,8 +57,8 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     ``confined`` (keyword-only, default False) is the caller's ASSERTION that it
     has built a host write-denial wrapper around this child, and it is the only
     condition under which ``confined_read_only_argv`` is emitted. It is a
-    parameter rather than a probe because this function must stay pure: the same
-    (request, confined) pair produces the same argv on every box, which is what
+    parameter rather than a probe because command construction does no I/O: the
+    same (request, confined) pair produces the same default-posture argv, which is what
     the recorded baselines in ``tests/fixtures/dispatch_argv_baseline.json``
     pin. The runner computes it (``_confine.confinement_prefix``); nothing else
     may pass True.
@@ -73,6 +73,14 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     is validated read-only upstream, so a reviewer argv still carries it exactly
     once.
 
+    ``with_trw=True`` selects the rendered TRW-access template in the SAME
+    mutually-exclusive slot, for the same reason: both fragments decide which
+    MCP servers the child sees, and emitting one beside ``isolation_argv``
+    (claude's empty ``--mcp-config``, codex's ``--ignore-user-config``) would
+    produce an ambiguous command line rather than a stronger one. The request
+    model refuses ``with_trw`` together with ``posture='reviewer'``, so the two
+    branches can never both apply.
+
     Raises:
         UnsupportedClientError: if ``req.client`` has no registered spec. There is
             no default spec — building some other client's argv would answer the
@@ -81,6 +89,10 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
             carry TRW's MCP server in its argv. Raising here (rather than
             degrading to isolation_argv) is what keeps an unsupported posture
             from becoming a silently unbounded run.
+        TrwAccessError: if ``with_trw=True`` and this client exposes no argv
+            channel for an MCP transport. Degrading to ``isolation_argv`` would
+            hand the caller a child with no TRW tools while the request said it
+            had them.
     """
     try:
         spec = client_spec_for(req.client)
@@ -90,6 +102,8 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     argv: list[str] = [*spec.base_argv, *spec.always_argv, *spec.structured_output_argv]
     if req.posture == REVIEWER_POSTURE:
         argv += render_reviewer_argv(spec)
+    elif req.with_trw:
+        argv += render_trw_access_argv(spec)
     elif req.isolate:
         argv += spec.isolation_argv
     if req.read_only:

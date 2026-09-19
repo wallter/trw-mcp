@@ -458,3 +458,7 @@ def test_sandbox_and_sub_agent_fields_are_typed_tri_states() -> None:
         assert spec.sub_agents in sub_agent_values
         assert not isinstance(spec.sandbox, bool)
     assert CLIENT_SPECS["copilot"].sandbox == "available_default_off"
+
+
+def test_fresh_mcp_table_capability_is_declared_only_by_recursive_merge_transport() -> None:
+    assert {name for name, spec in CLIENT_SPECS.items() if spec.fresh_mcp_server_table} == {"codex"}

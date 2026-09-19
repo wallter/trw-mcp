@@ -482,7 +482,7 @@ def recall_learnings(
         results.append(projected)
 
     # R-RANK-002/004: wildcard list_entries orders by updated_at DESC only; route
-    # through rank_by_utility so impact/utility drives order (recency is a decay
+    # through rank_targeted_by_utility so impact/utility drives order (recency is a decay
     # term, not the sole key). The non-wildcard branch is left to execute_recall.
     ranked_results: list[dict[str, object]] = cast("list[dict[str, object]]", results)
     if is_wildcard and ranked_results:
@@ -503,17 +503,17 @@ def _rank_wildcard_by_utility(results: list[dict[str, object]]) -> list[dict[str
     """Re-rank wildcard recall results so impact/utility drives order.
 
     R-RANK-002/004: ``backend.list_entries`` returns ``updated_at DESC`` only.
-    For a wildcard query every entry has relevance 1.0, so ``rank_by_utility``
+    For a wildcard query every entry has relevance 1.0, so ``rank_targeted_by_utility``
     blends ``(1 - lambda) * 1.0 + lambda * utility`` and the utility term
     (impact + Ebbinghaus recency decay) becomes the sole differentiator. Fails
     open: any ranking error returns the recency-ordered list unchanged.
     """
     try:
         from trw_mcp.models.config import get_config
-        from trw_mcp.scoring import rank_by_utility
+        from trw_mcp.scoring import rank_targeted_by_utility
 
         lambda_weight = get_config().recall_utility_lambda
-        return rank_by_utility(results, [], lambda_weight)
+        return rank_targeted_by_utility(results, [], lambda_weight)
     except Exception:  # justified: fail-open, ranking must never block recall
         logger.debug("wildcard_utility_rank_failed", exc_info=True)
         return results

@@ -298,11 +298,14 @@ def find_duplicate_skills(
 
     # Try embeddings; on any failure, fall back to token-Jaccard (degrade).
     vectors: dict[str, list[float] | None] = {}
+    dense_thr = thr
     try:
-        from trw_memory.embeddings import get_local_embedder
+        from trw_memory.embeddings import calibrated_threshold, get_local_embedder
 
         embedder = get_local_embedder()
         if embedder is not None:
+            # thr is on the reference-encoder scale; cosines are in embedder's.
+            dense_thr = calibrated_threshold(thr, embedder)
             for name, desc in items:
                 vectors[name] = embedder.embed(desc)
     except Exception:  # trw:intentional fail-open: embeddings optional, fall back to Jaccard
@@ -316,9 +319,9 @@ def find_duplicate_skills(
             name_b, desc_b = items[j]
             va, vb = vectors.get(name_a), vectors.get(name_b)
             if va is not None and vb is not None and len(va) == len(vb):
-                sim = _cosine(va, vb)
+                sim, pair_thr = _cosine(va, vb), dense_thr
             else:
-                sim = _token_jaccard(desc_a, desc_b)
-            if sim >= thr:
+                sim, pair_thr = _token_jaccard(desc_a, desc_b), thr
+            if sim >= pair_thr:
                 flags.append({"name_a": name_a, "name_b": name_b, "similarity": round(sim, 6)})
     return flags

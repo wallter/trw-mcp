@@ -146,7 +146,7 @@ class TestStorageErrorPropagation:
         store_learning(trw_dir, "L-p1a002", "setup entry", "detail", impact=0.5)
 
         embedder = MagicMock()
-        embedder.embed.return_value = [0.1] * 384
+        embedder.embed_query.return_value = [0.1] * 384
         embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
         embedder.available.return_value = True
         monkeypatch.setattr("trw_mcp.state._memory_connection.get_embedder", lambda: embedder)
@@ -353,7 +353,7 @@ class TestHybridSearchPath:
         # 384 dims matches default retrieval_embedding_dim in TRWConfig
         fixed_vector = [0.1] * 384
         mock_embedder = MagicMock()
-        mock_embedder.embed.return_value = fixed_vector
+        mock_embedder.embed_query.return_value = fixed_vector
         mock_embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
         backend = get_backend(trw_dir)
         records = _qualified_vectors(backend, fixed_vector)
@@ -426,7 +426,7 @@ class TestHybridSearchPath:
         store_learning(trw_dir, "L-hyb003", "exception fallback test", "detail")
 
         mock_embedder = MagicMock()
-        mock_embedder.embed.side_effect = RuntimeError("model load failed")
+        mock_embedder.embed_query.side_effect = RuntimeError("model load failed")
         mock_embedder.embedding_space.return_value = EmbeddingSpace("a" * 64, "boundary-fixture-v1", 384)
         mock_embedder.available.return_value = True
 
@@ -439,10 +439,10 @@ class TestHybridSearchPath:
         try:
             results = recall_learnings(trw_dir, "exception fallback")
             assert [entry["id"] for entry in results] == ["L-hyb003"]
-            mock_embedder.embed.assert_called_once_with("exception fallback")
+            mock_embedder.embed_query.assert_called_once_with("exception fallback")
         except RuntimeError:
             pytest.fail(
-                "RuntimeError from embedder.embed() propagated through _search_entries. "
+                "RuntimeError from the query encode propagated through _search_entries. "
                 "The hybrid path must catch embedder exceptions and fall back to keyword search."
             )
 

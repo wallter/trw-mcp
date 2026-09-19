@@ -180,6 +180,7 @@ def test_prd_core_218_fr02() -> None:
     assert mutated_digest != KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
 
 
+@pytest.mark.perf
 @pytest.mark.unit
 def test_prd_core_218_nfr01() -> None:
     """NFR01: manifest + pack resolution is local, deterministic, and completes

@@ -363,6 +363,7 @@ def test_gate_reports_the_live_tree(tmp_path: Path) -> None:
 # ── NFR01 ───────────────────────────────────────────────────────────────
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 def test_gate_completes_within_budget() -> None:
     """NFR01: p95 wall time under 5 s over 5 runs on the measured corpus.

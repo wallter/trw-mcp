@@ -474,7 +474,7 @@ def generate_copilot_hooks(
             payload = _merge_copilot_hooks(raw_existing)
         else:
             payload = _copilot_hooks_payload()
-        hooks_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        hooks_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         _record_write(result, _COPILOT_HOOKS_PATH, existed=existed)
     except OSError as exc:
         result["errors"].append(f"Failed to write {hooks_path}: {exc}")

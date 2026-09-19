@@ -2,11 +2,47 @@
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 from pathlib import Path
 
 from trw_mcp.bootstrap import init_project, update_project
 
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+class TestSweepsDeleteOnlyInstallerOwnedFiles:
+    """PRD-INFRA-190-FR06: a file TRW cannot prove it wrote is never swept."""
+
+    def test_committed_local_skill_and_gated_agent_survive_an_unentitled_update(self, tmp_path: Path) -> None:
+        _git(tmp_path, "init", "-q")
+        assert not init_project(tmp_path, ide="claude-code")["errors"]
+        # A repo-local skill whose name collides with a retired bundle name, and
+        # the entitlement-gated explorer committed by a licensed teammate.
+        local_skill = tmp_path / ".claude" / "skills" / "trw-release-verify" / "SKILL.md"
+        local_skill.parent.mkdir(parents=True)
+        local_skill.write_text("# our own release checklist\n", encoding="utf-8")
+        gated = tmp_path / ".agents" / "agents" / "trw-distill-explorer.md"
+        gated.parent.mkdir(parents=True, exist_ok=True)
+        gated.write_text("---\nname: trw-distill-explorer\n---\nteammate's copy\n", encoding="utf-8")
+        _git(tmp_path, "add", "-A")
+        _git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local artifacts")
+
+        result = update_project(tmp_path)
+
+        assert not result["errors"], result["errors"]
+        assert local_skill.read_text(encoding="utf-8") == "# our own release checklist\n"
+        assert gated.is_file()
+        assert ".claude/skills/trw-release-verify (not_installer_owned)" in result["preserved"]
+        assert ".agents/agents/trw-distill-explorer.md (not_installer_owned)" in result["preserved"]
 
 
 class TestUpdateRemovesStaleArtifacts:
@@ -24,6 +60,7 @@ class TestUpdateRemovesStaleArtifacts:
         hooks_list = list(manifest.get("hooks", []))
         hooks_list.append("old-removed-hook.sh")
         manifest["hooks"] = hooks_list
+        manifest["content_hashes"]["old-removed-hook.sh"] = _sha("#!/bin/sh\nexit 0")
         FileStateWriter().write_yaml(manifest_path, manifest)
 
         stale_hook = initialized_repo / ".claude" / "hooks" / "old-removed-hook.sh"
@@ -32,7 +69,7 @@ class TestUpdateRemovesStaleArtifacts:
         result = update_project(initialized_repo)
 
         assert not stale_hook.exists()
-        assert any("removed:" in u and "old-removed-hook" in u for u in result["updated"])
+        assert ".claude/hooks/old-removed-hook.sh" in result["cleaned"]
 
     def test_removes_stale_managed_skill(self, initialized_repo: Path) -> None:
         """Skill listed in manifest but no longer bundled is removed."""
@@ -45,6 +82,7 @@ class TestUpdateRemovesStaleArtifacts:
         skills_list = list(manifest.get("skills", []))
         skills_list.append("trw-old-skill")
         manifest["skills"] = skills_list
+        manifest["content_hashes"]["trw-old-skill/SKILL.md"] = _sha("old")
         FileStateWriter().write_yaml(manifest_path, manifest)
 
         stale_skill = initialized_repo / ".claude" / "skills" / "trw-old-skill"
@@ -66,6 +104,7 @@ class TestUpdateRemovesStaleArtifacts:
         agents_list = list(manifest.get("agents", []))
         agents_list.append("trw-old-agent.md")
         manifest["agents"] = agents_list
+        manifest["content_hashes"]["trw-old-agent.md"] = _sha("old agent")
         FileStateWriter().write_yaml(manifest_path, manifest)
 
         stale_agent = initialized_repo / ".claude" / "agents" / "trw-old-agent.md"
@@ -166,10 +205,10 @@ class TestContextCleanup:
 
         result = update_project(initialized_repo)
 
-        assert len(result["cleaned"]) >= 2
-        cleaned_names = [Path(p).name for p in result["cleaned"]]
-        assert "velocity.yaml" in cleaned_names
-        assert "tc_block_x" in cleaned_names
+        # Live context state is outside the managed surface: itemised under
+        # ``info``, never in the changed-file report (PRD-INFRA-190 FR02).
+        removed = [Path(p.removeprefix("removed transient: ")).name for p in result["info"] if "transient" in p]
+        assert {"velocity.yaml", "tc_block_x"} <= set(removed)
 
     def test_dry_run_reports_without_deleting(self, initialized_repo: Path) -> None:
         """dry_run=True reports would-be removals without deleting files."""
@@ -182,10 +221,9 @@ class TestContextCleanup:
         # Files still exist
         assert (context / "velocity.yaml").exists()
         assert (context / "idle_block_lead").exists()
-        # Cleaned entries have "would remove:" prefix
-        assert len(result["cleaned"]) == 2
-        for entry in result["cleaned"]:
-            assert entry.startswith("would remove: ")
+        # Named as an effect the real run would have, not as a surface change
+        assert "context_transient_cleanup" in result["would_run"]
+        assert result["cleaned"] == []
 
     def test_noop_when_only_allowlisted(self, initialized_repo: Path) -> None:
         """No files removed when only allowlisted files are present."""

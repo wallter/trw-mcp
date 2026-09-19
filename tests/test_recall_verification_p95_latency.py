@@ -30,6 +30,7 @@ def forbid_work(monkeypatch):
     monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", forbidden)
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 @pytest.mark.xdist_group(name="recall_verification_latency")
 def test_recall_verification_p95_within_budget(tmp_path: Path, monkeypatch):

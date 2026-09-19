@@ -180,6 +180,7 @@ class TestCheckFrameworkVersionStaleness:
 # --- PRD-CORE-265-NFR01: owner_of is cheap enough for the commit boundary ----
 
 
+@pytest.mark.perf
 def test_formation_owner_of_latency_budget(formation_env: FormationFixture) -> None:
     """NFR01. 16 members, 200 resolutions, median at or under 50 ms each.
 

@@ -524,24 +524,33 @@ def test_registered_startup_checkpoint_pointer_is_bounded_and_nonmutating(
     # silently empty.
     real_open, real_stat, real_lstat = Path.open, Path.stat, Path.lstat
     metadata_calls: list[str] = []
+    inside_lstat = False
 
     def guarded_open(path: Path, *args: Any, **kwargs: Any) -> Any:
         assert path.name != "checkpoints.jsonl", "startup must not read checkpoint content"
         return real_open(path, *args, **kwargs)
 
     def observed_stat(path: Path, *args: Any, **kwargs: Any) -> Any:
-        if path == log:
+        if path == log and not inside_lstat:
             metadata_calls.append("stat")
             if log_kind == "metadata_error":
                 raise PermissionError("synthetic metadata denial")
         return real_stat(path, *args, **kwargs)
 
     def observed_lstat(path: Path, *args: Any, **kwargs: Any) -> Any:
+        nonlocal inside_lstat
         if path == log:
             metadata_calls.append("lstat")
             if log_kind == "metadata_error":
                 raise PermissionError("synthetic metadata denial")
-        return real_lstat(path, *args, **kwargs)
+        # Count the requested operation, not pathlib's internal delegation.
+        # An extra direct stat/lstat request still adds an entry and fails.
+        previous = inside_lstat
+        inside_lstat = True
+        try:
+            return real_lstat(path, *args, **kwargs)
+        finally:
+            inside_lstat = previous
 
     monkeypatch.setattr(Path, "open", guarded_open)
     monkeypatch.setattr(Path, "stat", observed_stat)

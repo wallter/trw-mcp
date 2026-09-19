@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -23,11 +24,12 @@ def test_retired_skill_removed_from_every_managed_client(tmp_path: Path, relativ
     retired.mkdir(parents=True)
     (retired / "SKILL.md").write_text("retired", encoding="utf-8")
     result: dict[str, list[str]] = {"updated": [], "errors": []}
+    recorded = {f"{relative_root}/trw-review-pr/SKILL.md": hashlib.sha256(b"retired").hexdigest()}
 
-    _migrate_prefix_predecessors(tmp_path, result)
+    _migrate_prefix_predecessors(tmp_path, result, manifest_hashes=recorded)
 
     assert not retired.exists()
-    assert result["updated"] == [f"migrated:{retired}"]
+    assert not result.get("preserved")
 
 
 @pytest.mark.parametrize("relative_root", SKILL_ROOTS)

@@ -79,7 +79,7 @@ _BACKFILL_LOCK = threading.Lock()
 
 # Option A+ (council-ratified 2026-06-10): first-recall download warm-up guard.
 # With embeddings ON by default, the FIRST trw_recall that allows cold init would
-# otherwise pay the all-MiniLM-L6-v2 *download* synchronously on a never-cached
+# otherwise pay the embedding-model *download* synchronously on a never-cached
 # box, risking an MCP-client timeout on slow networks. `_schedule_embedder_warmup`
 # runs the cold `get_embedder()` load on a daemon thread (same single-flight
 # pattern as `_BACKFILL_THREAD`), kicked off at session_start, never blocking the
@@ -180,7 +180,7 @@ def _schedule_embedder_warmup() -> bool:
     Option A+ (council-ratified 2026-06-10, PRD-DIST-254 §FR03 follow-up):
     With ``embeddings_enabled`` now defaulting to True, the FIRST ``trw_recall``
     that passes ``allow_cold_embedding_init=True`` would otherwise pay the
-    all-MiniLM-L6-v2 model *download* synchronously on a never-cached box, which
+    embedding-model *download* synchronously on a never-cached box, which
     can exceed an MCP client timeout on slow networks. This kicks off the cold
     :func:`get_embedder` load (which performs the import + download + load) on a
     daemon thread so the download is paid in the background. ``trw_session_start``

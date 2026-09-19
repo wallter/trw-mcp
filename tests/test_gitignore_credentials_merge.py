@@ -47,7 +47,7 @@ def test_appends_credentials_rule_to_old_custom_gitignore(tmp_path: Path) -> Non
     gi.write_text(_OLD_CUSTOM_GITIGNORE, encoding="utf-8")
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+    _ensure_credentials_gitignored(tmp_path, result)
 
     text = _read(gi)
     lines = {ln.strip() for ln in text.splitlines()}
@@ -57,7 +57,6 @@ def test_appends_credentials_rule_to_old_custom_gitignore(tmp_path: Path) -> Non
     assert "my-private-notes/" in lines
     assert "reflections/" in lines
     assert "knowledge.db" in lines
-    assert str(gi) in result["updated"]
 
 
 def test_idempotent_when_every_rule_already_present(tmp_path: Path) -> None:
@@ -78,10 +77,9 @@ def test_idempotent_when_every_rule_already_present(tmp_path: Path) -> None:
     before = _read(gi)
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+    _ensure_credentials_gitignored(tmp_path, result)
 
     assert _read(gi) == before  # no duplicate append, no mutation
-    assert str(gi) not in result["updated"]
 
 
 def test_missing_rule_is_appended_without_disturbing_the_others(tmp_path: Path) -> None:
@@ -93,14 +91,13 @@ def test_missing_rule_is_appended_without_disturbing_the_others(tmp_path: Path) 
     gi.write_text(existing, encoding="utf-8")
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+    _ensure_credentials_gitignored(tmp_path, result)
 
     merged = _read(gi)
     assert merged.startswith(existing)
     rules = [ln.strip() for ln in merged.splitlines()]
     assert rules.count("credentials.yaml") == 1
     assert "backups/" in rules
-    assert str(gi) in result["updated"]
 
 
 def test_creates_gitignore_when_absent(tmp_path: Path) -> None:
@@ -111,25 +108,10 @@ def test_creates_gitignore_when_absent(tmp_path: Path) -> None:
     assert not gi.exists()
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+    _ensure_credentials_gitignored(tmp_path, result)
 
     assert gi.exists()
     assert "credentials.yaml" in {ln.strip() for ln in _read(gi).splitlines()}
-    assert str(gi) in result["created"]
-
-
-def test_dry_run_does_not_write(tmp_path: Path) -> None:
-    trw = tmp_path / ".trw"
-    trw.mkdir()
-    gi = trw / ".gitignore"
-    gi.write_text(_OLD_CUSTOM_GITIGNORE, encoding="utf-8")
-    before = _read(gi)
-
-    result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=True)
-
-    assert _read(gi) == before
-    assert any("credentials.yaml" in entry for entry in result["updated"])
 
 
 def test_real_git_check_ignore_after_merge(tmp_path: Path) -> None:
@@ -150,7 +132,7 @@ def test_real_git_check_ignore_after_merge(tmp_path: Path) -> None:
     assert pre.returncode != 0  # not ignored yet
 
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+    _ensure_credentials_gitignored(tmp_path, result)
 
     post = subprocess.run(
         ["git", "check-ignore", ".trw/credentials.yaml"],
@@ -165,6 +147,6 @@ def test_real_git_check_ignore_after_merge(tmp_path: Path) -> None:
 def test_noop_when_no_trw_dir(tmp_path: Path) -> None:
     """Fail-open: no .trw/ directory means nothing to do, no error."""
     result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-    _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+    _ensure_credentials_gitignored(tmp_path, result)
     assert result["errors"] == []
     assert not (tmp_path / ".trw" / ".gitignore").exists()

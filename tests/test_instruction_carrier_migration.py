@@ -178,6 +178,13 @@ class TestExistingInstallMigrates:
         )
         assert classify_carrier_state(claude_md) == "legacy_inline", "precondition"
         assert _check_instruction_carrier_state(tmp_path, TRWConfig()).status == "WARN"
+        # Committed, as a real legacy install is: update-project never rewrites
+        # an UNCOMMITTED file it did not write (PRD-INFRA-190 FR04).
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "legacy"],
+            check=True,
+        )
 
         update_project(tmp_path)
 

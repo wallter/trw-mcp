@@ -104,21 +104,32 @@ def test_duplication_lint_detects_reintroduction(tmp_path: Path) -> None:
 
 @requires_monorepo
 def test_hub_links_extracted_docs() -> None:
-    """FR09: the docs hub points at both canonical files."""
-    hub = _REPO_ROOT / "docs" / "documentation" / "CLAUDE.md"
+    """FR09: the docs hub points at both canonical files.
+
+    The hub's prose lives in ``docs/documentation/AGENTS.md`` since the
+    2026-09-18 repo-hygiene inversion; its sibling CLAUDE.md is now a one-line
+    ``@AGENTS.md`` pointer.
+    """
+    hub = _REPO_ROOT / "docs" / "documentation" / "AGENTS.md"
     content = hub.read_text(encoding="utf-8")
     assert "tool-lifecycle.md" in content, "hub missing link to tool-lifecycle.md"
     assert "memory-routing.md" in content, "hub missing link to memory-routing.md"
 
 
+# Authored monorepo instructions are deliberately omitted from public exports.
+@requires_monorepo
 def test_trw_mcp_claude_md_pointer() -> None:
-    """FR05: trw-mcp/CLAUDE.md points at canonical docs; no duplicated table, no markers."""
-    pkg_claude_md = PACKAGE_ROOT / "CLAUDE.md"
-    content = pkg_claude_md.read_text(encoding="utf-8")
-    assert "tool-lifecycle.md" in content, "trw-mcp/CLAUDE.md must point at canonical tool-lifecycle.md"
+    """FR05: trw-mcp/AGENTS.md points at canonical docs; no duplicated table, no markers.
+
+    trw-mcp/CLAUDE.md is a one-line ``@AGENTS.md`` pointer (2026-09-18); the
+    prose this test guards now lives in the sibling AGENTS.md.
+    """
+    pkg_agents_md = PACKAGE_ROOT / "AGENTS.md"
+    content = pkg_agents_md.read_text(encoding="utf-8")
+    assert "tool-lifecycle.md" in content, "trw-mcp/AGENTS.md must point at canonical tool-lifecycle.md"
     assert "Mandatory Tool Lifecycle" not in content, (
-        "trw-mcp/CLAUDE.md must not re-embed the Mandatory Tool Lifecycle table"
+        "trw-mcp/AGENTS.md must not re-embed the Mandatory Tool Lifecycle table"
     )
     assert _MARKER_START not in content, (
-        "trw-mcp/CLAUDE.md must not carry trw:start markers — sync targets the project root only"
+        "trw-mcp/AGENTS.md must not carry trw:start markers — sync targets the project root only"
     )

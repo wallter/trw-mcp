@@ -34,6 +34,14 @@ from tests._trw_home import (
     isolated_trw_home,  # noqa: F401  (shared HOME/XDG/TRW_USER_DIR floor; see that module's docstring)
 )
 
+# Git exports GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE into hooks and some worktree
+# contexts. A test that runs `git init --bare` from a directory while GIT_DIR is
+# inherited re-initialises the REAL repository as bare: on 2026-09-18 that set
+# core.bare=true on the shared checkout and broke every git command until a peer
+# session restored it. No test may address the developer's repository implicitly.
+for _git_var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX"):
+    os.environ.pop(_git_var, None)
+
 pytest_plugins = ("tests._ceremony_helpers_support",)
 
 
@@ -629,7 +637,7 @@ def _join_and_reset_deferred() -> None:
         # Clear the reference so the next test starts fresh
         with _ds._deferred_lock:
             _ds._deferred_thread = None
-    except Exception:
+    except Exception:  # trw-fail-silent-allow: test-isolation reset; module may not be loaded
         pass
 
 
@@ -656,12 +664,12 @@ def _join_and_reset_q_learning() -> None:
             try:
                 while True:
                     _qls._q_queue.get_nowait()
-            except _queue.Empty:
+            except _queue.Empty:  # trw-fail-silent-allow: drain loop ends when the queue is empty
                 pass
         # PRD-FIX-088 P1.5 Fix 9: zero the worker-health dataclass so the
         # next test starts with a clean error_count / last_error.
         _qls.reset_health()
-    except Exception:
+    except Exception:  # trw-fail-silent-allow: test-isolation reset; module may not be loaded
         pass
 
 
@@ -685,12 +693,16 @@ def _reset_memory_backend() -> Iterator[None]:
     separate ``reset_user_scope_cache()`` call below is only needed for tests
     that never construct a user backend at all.
     """
+    from trw_mcp.state._embedding_migration_schedule import wait_for_migration
     from trw_mcp.state._tier_routing import reset_user_scope_cache
     from trw_mcp.state._user_tier import reset_user_backend
     from trw_mcp.state.memory_adapter import reset_backend
 
     _join_and_reset_deferred()
     _join_and_reset_q_learning()
+    # A session_start in the previous test may have started the background
+    # embedding migration; let it finish before its store is torn down.
+    wait_for_migration(timeout=15)
     reset_backend()
     reset_user_backend()
     # core185-8: the user-scope presence probe is memoized; clear it between
@@ -700,6 +712,7 @@ def _reset_memory_backend() -> Iterator[None]:
     yield
     _join_and_reset_deferred()
     _join_and_reset_q_learning()
+    wait_for_migration(timeout=15)
     reset_backend()
     reset_user_backend()
     reset_user_scope_cache()
@@ -713,7 +726,7 @@ def _reset_telemetry_pipeline() -> Iterator[None]:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
 
         TelemetryPipeline.reset()
-    except Exception:  # justified: fail-open — pipeline may not be importable in all test configs
+    except Exception:  # trw-fail-silent-allow: test-isolation reset; pipeline may not be importable
         pass
 
 
@@ -729,14 +742,14 @@ def _reset_telemetry_run_cache() -> Iterator[None]:
         import trw_mcp.tools.telemetry as tel_mod
 
         tel_mod._cached_run_dir = (0.0, None)
-    except Exception:  # justified: fail-open — telemetry module may not be imported
+    except Exception:  # trw-fail-silent-allow: test-isolation reset; telemetry module may not be imported
         pass
     yield
     try:
         import trw_mcp.tools.telemetry as tel_mod
 
         tel_mod._cached_run_dir = (0.0, None)
-    except Exception:  # justified: fail-open
+    except Exception:  # trw-fail-silent-allow: test-isolation reset; telemetry module may not be imported
         pass
 
 
@@ -803,7 +816,7 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
             "trw_mcp.tools.telemetry.find_active_run",
             lambda session_id=None: None,
         )
-    except AttributeError:
+    except AttributeError:  # trw-fail-silent-allow: optional attribute absent in this build; nothing to patch
         pass  # Not yet imported
 
     yield

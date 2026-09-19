@@ -65,12 +65,11 @@ def test_stale_codex_agent_removed_bundled_and_user_kept(tmp_path: Path) -> None
     (agents / "my-agent.toml").write_text("user", encoding="utf-8")  # user file (no trw- prefix)
 
     result = _new_result()
-    _remove_stale_client_artifacts(tmp_path, result)
+    _remove_stale_client_artifacts(tmp_path, result, manifest_hashes={".codex/agents/trw-gone.toml": _sha(b"stale")})
 
     assert not (agents / "trw-gone.toml").exists()
     assert (agents / kept).exists()  # current bundle survives
     assert (agents / "my-agent.toml").exists()  # non-trw user file survives
-    assert any("removed:" in line and "trw-gone.toml" in line for line in result["updated"])
 
 
 def test_stale_cursor_skill_dir_removed(tmp_path: Path) -> None:
@@ -84,7 +83,9 @@ def test_stale_cursor_skill_dir_removed(tmp_path: Path) -> None:
     (skills / "my-skill" / "SKILL.md").write_text("user", encoding="utf-8")
 
     result = _new_result()
-    _remove_stale_client_artifacts(tmp_path, result)
+    _remove_stale_client_artifacts(
+        tmp_path, result, manifest_hashes={".cursor/skills/trw-gone/SKILL.md": _sha(b"stale")}
+    )
 
     assert not (skills / "trw-gone").exists()
     assert (skills / "trw-audit").exists()
@@ -99,7 +100,9 @@ def test_stale_copilot_agents_removed(tmp_path: Path) -> None:
     (copilot / kept).write_text("bundled", encoding="utf-8")  # in the bundle
 
     result = _new_result()
-    _remove_stale_client_artifacts(tmp_path, result)
+    _remove_stale_client_artifacts(
+        tmp_path, result, manifest_hashes={".github/agents/trw-gone.agent.md": _sha(b"stale")}
+    )
 
     assert not (copilot / "trw-gone.agent.md").exists()
     assert (copilot / kept).exists()
@@ -119,17 +122,17 @@ def test_stale_cleanup_leaves_unmanaged_client_dirs_untouched(tmp_path: Path) ->
     assert (unmanaged / "trw-gone.md").exists()
 
 
-def test_stale_cleanup_dry_run_reports_without_deleting(tmp_path: Path) -> None:
+def test_stale_cleanup_keeps_an_unrecorded_trw_file(tmp_path: Path) -> None:
+    """PRD-INFRA-190-FR06: a trw- name the manifest never recorded is not the installer's to delete."""
     agents = tmp_path / ".codex" / "agents"
     agents.mkdir(parents=True)
     (agents / "trw-gone.toml").write_text("stale", encoding="utf-8")
 
     result = _new_result()
-    _remove_stale_client_artifacts(tmp_path, result, dry_run=True)
+    _remove_stale_client_artifacts(tmp_path, result)
 
-    assert (agents / "trw-gone.toml").exists()  # nothing deleted in preview
-    assert any("would remove:" in line and "trw-gone.toml" in line for line in result["updated"])
-    assert not any("removed:" in line for line in result["updated"])
+    assert (agents / "trw-gone.toml").exists()
+    assert result["preserved"] == [".codex/agents/trw-gone.toml (not_installer_owned)"]
 
 
 def test_stale_cleanup_never_removes_dir_as_file_or_vice_versa(tmp_path: Path) -> None:

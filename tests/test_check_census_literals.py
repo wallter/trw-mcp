@@ -88,6 +88,22 @@ def _scan(tmp_path: Path, files: dict[str, str]) -> census.ScanReport:
     return census.run_scan(scope, tmp_path)
 
 
+@pytest.mark.parametrize("ancestor", sorted(REAL_SCOPE.exclude_dirs))
+def test_exclusions_are_relative_to_the_scan_root(tmp_path: Path, ancestor: str) -> None:
+    """A checkout under .trw/runs or build still scans; exclusions inside it hold."""
+    root = tmp_path / ancestor / "checkout"
+    report = _scan(
+        root,
+        {
+            "pkg/test_live.py": _FUNCTION_LOCAL_ROOT,
+            f"pkg/{ancestor}/test_excluded.py": _FUNCTION_LOCAL_ROOT,
+        },
+    )
+    assert report.python_files == 1
+    assert report.candidates == 1
+    assert [finding.path.relative_to(root).as_posix() for finding in report.findings] == ["pkg/test_live.py"]
+
+
 def _kinds(report: census.ScanReport) -> list[str]:
     return [f.kind.value for f in report.findings]
 
@@ -714,7 +730,7 @@ def test_census_recipe_carries_the_never_downgrade_comment_and_the_flag() -> Non
     assert "ENFORCING" in recipe
     assert "Never add the advisory flag" in recipe
     assert "--from-check" in recipe
-    assert "--report" not in recipe.split("python3")[1]
+    assert "--report" not in recipe.split("check_census_literals.py")[1]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -820,6 +836,7 @@ def test_two_scans_over_identical_inputs_are_byte_identical(tmp_path: Path) -> N
     assert lines == sorted(lines)
 
 
+@pytest.mark.perf
 def test_full_repository_scan_stays_within_a_gate_sized_budget() -> None:
     """NFR01: the scan must fit the budget of the fastest existing gate targets."""
     started = time.monotonic()

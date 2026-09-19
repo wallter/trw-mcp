@@ -179,6 +179,7 @@ def test_batch_sync_transaction_failure_falls_through_to_next_chunk(
     assert backend.update_call_count == 501
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 def test_batch_sync_2000_rows_under_300ms(
     tmp_path: Path,
@@ -237,6 +238,7 @@ def test_chunk_size_constant_is_documented_value(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 def test_batch_sync_2000_rows_real_sqlite_under_1s(
     tmp_path: Path,

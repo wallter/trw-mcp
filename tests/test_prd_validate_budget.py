@@ -165,6 +165,7 @@ def test_refresh_default_not_partial_and_score_identical_to_prechange(tmp_path: 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.perf
 def test_refresh_tiny_budget_returns_partial_shape_no_hang(tmp_path: Path, config: TRWConfig) -> None:
     """An already-expired deadline skips every dynamic group and returns a
     visibly-partial result promptly (never raises, never hangs)."""
@@ -398,6 +399,7 @@ def test_tool_tiny_budget_flags_partial(tmp_path: Path, monkeypatch: pytest.Monk
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.perf
 def test_fr5c_perf_smoke_largest_corpus_prd_full_path_under_budget(tmp_path: Path) -> None:
     """The largest real corpus PRD, validated through the FULL tool path with
     the default 60s budget, completes well under a generous 10s wall-clock

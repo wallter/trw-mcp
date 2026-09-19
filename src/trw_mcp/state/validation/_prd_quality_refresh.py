@@ -14,8 +14,13 @@ from trw_mcp.models.requirements import (
     ValidationFailure,
     ValidationResultV2,
 )
+from trw_mcp.state.validation._prd_integrity_artifacts import has_completed_mapping_artifacts
 from trw_mcp.state.validation._prd_validation_findings import finalize_verdict, has_blocking_failure
-from trw_mcp.state.validation.prd_integrity import build_path_index_partial_warning, run_prd_integrity_checks
+from trw_mcp.state.validation.prd_integrity import (
+    build_path_index_partial_warning,
+    normalize_status,
+    run_prd_integrity_checks,
+)
 from trw_mcp.state.validation.prd_quality import (
     _build_smell_suggestion,
     _check_sprint_deferral,
@@ -230,6 +235,9 @@ def refresh_dynamic_prd_validation(
                 logger.warning("prd_integrity_check_failed", exc_info=True)
                 checks_skipped.append("integrity_checks")
                 check_errors.append("integrity_checks")
+    elif has_completed_mapping_artifacts(frontmatter, normalize_status(str(frontmatter.get("status", "")))[0]):
+        checks_skipped.append("integrity:verification_artifacts")
+        integrity_warnings.append("Mapping-artifact existence was NOT verified: no project root was supplied.")
     result.integrity_warnings = integrity_warnings
 
     # --- Group 4: wiring / seam gate --------------------------------------
@@ -277,6 +285,11 @@ def refresh_dynamic_prd_validation(
                 "validation_partial: fast mode requested — the dynamic validation checks were "
                 f"SKIPPED ({joined}). Repo/wiring/duplicate grounding was NOT performed; re-run "
                 "without fast=True for a fully-grounded verdict."
+            )
+        elif root_path is None and "integrity:verification_artifacts" in checks_skipped:
+            marker = (
+                "validation_partial: project root unavailable — mapping-artifact grounding was NOT performed; "
+                f"skipped groups: ({joined})."
             )
         elif check_errors:
             marker = (

@@ -130,7 +130,15 @@ pytestmark = pytest.mark.unit
 # file") -- the whole trw_deliver paragraph is pinned, so the saving came from
 # unpinned prose in trw_recall instead. That feedback loop is the point; expect
 # it rather than routing around it. Re-measured 39,931 across 51 tools, 19 under.
-FULL_SURFACE_CEILING_CHARS: Final[int] = 39_950
+#
+# 2026-09-18: PRD-CORE-274 Amendment 01 (FR11) adds ONE optional parameter to
+# trw_inbox (`wait_seconds`, strict integer, default 0) and one 75-char clause
+# telling the caller what it does. Measured on the shared working tree (which
+# already carried other sessions' uncommitted definitions): 40,058 across the
+# registered tools, 108 over. The ceiling is raised by 150 to 40,100 for that
+# measured growth and nothing else; the clause stays because the parameter is
+# unusable without it. Authorised by the program lead (board seq 145).
+FULL_SURFACE_CEILING_CHARS: Final[int] = 40_100
 CORE_PRESET_CEILING_CHARS: Final[int] = 15_200
 
 # A tool definition has two independently-governed halves, and conflating them

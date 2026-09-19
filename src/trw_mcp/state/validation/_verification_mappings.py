@@ -23,7 +23,7 @@ def _uses_aaref_32_verification_contract(frontmatter: dict[str, object]) -> bool
 
 
 def _is_automated_behavioral_evidence(mapping: VerificationMapping) -> bool:
-    """True when ``method: test`` names a test-shaped evidence artifact.
+    """True for a declared automated test or omitted-flag test-artifact inference.
 
     PRD-FIX-141-FR09. ``implemented_requirement_automation`` fired on PRDs whose
     every mapping already declared ``method: test`` with a named pytest file,
@@ -37,16 +37,19 @@ def _is_automated_behavioral_evidence(mapping: VerificationMapping) -> bool:
     validate-result cache (``tools/_prd_validation_cache.py``) keys on PRD text,
     config and version, so a rule that consulted mutable external state would
     hand back a stale acceptance after the named file was deleted, and the MCP
-    tool's own cached call has no repository root to resolve against. Whether
-    the artifact EXISTS is a separate question, already owned by the
-    ``repo_path_exists`` integrity check in the dynamic refresh phase, which
-    runs with a repo root and is not cached across trees. Two rules, one each.
+    tool's own cached call has no repository root to resolve against. Dynamic
+    repository checks inspect backtick references and completed-state mapping
+    artifacts separately. Draft mappings remain prospective. Local artifact
+    existence is checked during dynamic refresh, never by this declaration
+    helper. Neither declaration nor existence establishes execution or success.
 
-    ``automated: false`` is untouched: an explicit opt-out still requires
-    ``automation_infeasible_reason`` via the arm above this one.
+    ``automated: false`` cannot be inferred away. A true flag declares test
+    automation only for ``method: test``, never analysis or inspection.
     """
     if str(mapping.method) != "test":
         return False
+    if mapping.automated is not None:
+        return mapping.automated
     artifact = mapping.evidence_artifact.strip()
     return bool(_BARE_TEST_REF_RE.fullmatch(artifact) or _BARE_TEST_REF_RE.search(artifact))
 
@@ -117,6 +120,9 @@ def validate_verification_mappings(
             continue
         mappings[mapping.requirement_id] = mapping
 
+        # Classification is author-declared; semantic correctness still needs review.
+        if mapping.requirement_kind == "non_behavioral":
+            continue
         if mapping.automated is False and not mapping.automation_infeasible_reason:
             failures.append(
                 ValidationFailure(
@@ -131,7 +137,7 @@ def validate_verification_mappings(
             )
         if (
             lifecycle_status in {"implemented", "done"}
-            and mapping.automated is None
+            and mapping.automated is not False
             and not mapping.automation_infeasible_reason
             and not _is_automated_behavioral_evidence(mapping)
         ):

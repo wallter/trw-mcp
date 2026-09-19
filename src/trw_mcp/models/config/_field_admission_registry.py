@@ -17,6 +17,7 @@ from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMIS
 from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
+from trw_mcp.models.config._field_admission_dispatch_access import DISPATCH_ACCESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_doctor_thread_hotspots import DOCTOR_THREAD_HOTSPOT_ADMISSIONS
 from trw_mcp.models.config._field_admission_drain_budget import DRAIN_BUDGET_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSIONS
@@ -377,4 +378,6 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     # PRD-FIX-131 follow-up: doctor thread-hotspot WARN threshold (own table).
     **DOCTOR_THREAD_HOTSPOT_ADMISSIONS,
     **TOOL_ACCESS_GRANT_ADMISSIONS,
+    # PRD-CORE-281: dispatch pack exposure + child TRW access (own table).
+    **DISPATCH_ACCESS_ADMISSIONS,
 }

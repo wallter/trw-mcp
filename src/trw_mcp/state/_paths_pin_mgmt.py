@@ -11,21 +11,33 @@ via the lower-level ``state._pin_store`` module:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from trw_mcp.state._pin_store import (
+    _iso_now,
+    _load_pin_store_uncached,
+    _pin_store_file_lock,
+    _pin_store_threading_lock,
+    _write_pin_store_locked,
     get_pin_entry,
+    load_pin_store,
+    pin_record,
     remove_pin_entry,
     upsert_pin_entry,
 )
+from trw_mcp.state._process_identity import process_start_time
 
 if TYPE_CHECKING:
     from trw_mcp.state._paths import TRWCallContext
 
 logger = structlog.get_logger(__name__)
+
+_sibling_adoption_done = False
+_superseded_logged = False
 
 
 def pin_active_run(
@@ -72,10 +84,16 @@ def unpin_active_run(
         context: TRWCallContext resolved from FastMCP Context (preferred).
         session_id: Legacy kwarg; ignored when ``context`` is provided.
     """
+    from trw_mcp.client_profiles.session_identity import resolve_client_session_id
     from trw_mcp.state._paths import _resolve_session_id
 
+    global _sibling_adoption_done
     sid = _resolve_session_id(context, session_id)
     removed = remove_pin_entry(sid)
+    if sid == resolve_client_session_id():
+        # Explicit user intent wins over reconnect recovery, even if this
+        # process has not performed its first automatic adoption yet.
+        _sibling_adoption_done = True
     if removed:
         logger.debug("pin_cleared", pin_key=sid)
 
@@ -96,10 +114,100 @@ def get_pinned_run(
     from trw_mcp.state._paths import _resolve_session_id
 
     sid = _resolve_session_id(context, session_id)
-    entry = get_pin_entry(sid)
+    entry = get_pin_entry(sid) or _adopt_client_sibling_pin(sid)
     if entry is None:
         return None
+    _note_if_superseded(sid, entry)
     run_path = entry.get("run_path")
     if isinstance(run_path, str) and run_path:
         return Path(run_path)
     return None
+
+
+def _adopt_client_sibling_pin(pin_key: str) -> dict[str, Any] | None:
+    """Carry this client's run pin across a reconnect (PRD-INFRA-189 FR08).
+
+    Claude Code hands an MCP server ``CLAUDE_CODE_SESSION_ID`` as it stood when the
+    server was SPAWNED. An interactive ``/resume`` changes the live session id
+    without respawning the server, so the server keeps pinning under the stale
+    id; the next ``/mcp`` spawns a server with the live id, which finds no pin.
+    ``resolve_pin_key`` is right on both sides -- the id really changed -- so the
+    new server adopts the newest pin written by a server of the SAME client
+    process: ``client_pid`` is our parent AND ``client_start`` is its birth time,
+    so a dead client's pid recycled by an unrelated client matches nothing, and
+    a pin written before ``client_start`` existed is never adopted. Only for a key
+    that came from the client's own session variable: clients that publish none
+    (Codex hosts several threads per process) key on per-connection ids and must
+    not share a run.
+    The old entry is left in place for the older server, which may still be live.
+    """
+    from trw_mcp.client_profiles.session_identity import resolve_client_session_id
+
+    global _sibling_adoption_done
+    parent = os.getppid()
+    if _sibling_adoption_done or parent <= 1 or pin_key != resolve_client_session_id():
+        return None
+    # Cheap cached pre-check: this runs on every unpinned lookup, so take the
+    # file lock only when a candidate exists.
+    if not any(_from_client(entry, parent) for entry in load_pin_store().values()):
+        return None
+    with _pin_store_threading_lock, _pin_store_file_lock():
+        store = _load_pin_store_uncached()
+        if pin_key in store:
+            return store[pin_key]
+        siblings = [(key, entry) for key, entry in store.items() if _from_client(entry, parent)]
+        if not siblings:
+            return None
+        previous_key, previous = max(siblings, key=lambda item: str(item[1].get("last_heartbeat_ts", "")))
+        now = _iso_now()
+        record = pin_record(str(previous["run_path"]), now, now)
+        store[pin_key] = record
+        _write_pin_store_locked(store)
+        # Once per process: a reconnect is a boot-time event, and a pin this
+        # server later drops (adoption by another session) must stay dropped.
+        _sibling_adoption_done = True
+    logger.info(
+        "pin_adopted_from_client_sibling",
+        pin_key=pin_key,
+        previous_pin_key=previous_key,
+        previous_pid=previous.get("pid"),
+        run_path=record["run_path"],
+    )
+    return record
+
+
+def _from_client(entry: dict[str, Any], client_pid: int) -> bool:
+    """True when *entry* was written by a server of this exact client process (pid + birth time)."""
+    start = process_start_time(client_pid)
+    return start is not None and entry.get("client_pid") == client_pid and entry.get("client_start") == start
+
+
+def _note_if_superseded(pin_key: str, own: dict[str, Any]) -> None:
+    """Log ``superseded_by_newer_server`` once when this client started a newer server (FR07).
+
+    After ``/mcp`` the client may keep this older process alive beside the new
+    one. The signal is a pin written later by ANOTHER server of the SAME client
+    process -- not merely a newer writer on the same ``.trw/``, which every
+    concurrent session produces.
+    """
+    global _superseded_logged
+    parent = os.getppid()
+    if _superseded_logged or parent <= 1 or not _from_client(own, parent):
+        return
+    own_created = str(own.get("created_ts", ""))
+    for key, entry in load_pin_store().items():
+        if (
+            key != pin_key
+            and _from_client(entry, parent)
+            and entry.get("pid") != os.getpid()
+            and str(entry.get("created_ts", "")) > own_created
+        ):
+            _superseded_logged = True
+            logger.warning(
+                "superseded_by_newer_server",
+                pid=os.getpid(),
+                newer_pid=entry.get("pid"),
+                newer_pin_key=key,
+                remedy=f"this server is no longer the client's current connection; kill {os.getpid()} once confirmed",
+            )
+            return

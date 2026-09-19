@@ -2,14 +2,14 @@
 
 This file used to import ``trw_memory.lifecycle.scoring.entry_utility`` directly
 and assert on it. That proved only that the *unused* implementation worked: the
-live ``trw_recall`` ranked through ``trw_mcp.scoring.rank_by_utility`` ->
+live ``trw_recall`` ranked through ``trw_mcp.scoring.rank_targeted_by_utility`` ->
 ``trw_mcp.scoring._decay._entry_utility``, a second implementation that read
 ``q_value``, ``impact``, ``recurrence``, ``access_count``, ``source_type``,
 ``type``, ``confidence`` and ``expires`` — and never ``helpful_count``,
 ``unhelpful_count`` or ``recall_count``, the counters ``trw_learn``'s own
 docstring credits with feeding decay.
 
-Every test here therefore enters through ``trw_mcp.scoring.rank_by_utility`` or
+Every test here therefore enters through ``trw_mcp.scoring.rank_targeted_by_utility`` or
 its config adapter. Each one FAILS against the pre-FR11 tree.
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.scoring import rank_by_utility
+from trw_mcp.scoring import rank_targeted_by_utility
 from trw_mcp.scoring._decay import entry_utility
 from trw_mcp.state.memory_adapter import (
     find_entry_by_id,
@@ -69,10 +69,10 @@ def trw_dir(tmp_path: Path) -> Path:
 class TestLiveRankerUsesUnifiedUtility:
     """FR11 acceptance: one implementation, reached by the live ranker."""
 
-    def test_rank_by_utility_uses_unified_entry_utility(self) -> None:
+    def test_rank_targeted_by_utility_uses_unified_entry_utility(self) -> None:
         """The live ranker's score must come from the trw-memory implementation.
 
-        Patching the unified function is the wiring proof: if ``rank_by_utility``
+        Patching the unified function is the wiring proof: if ``rank_targeted_by_utility``
         still called a private trw-mcp copy, the patch would not be observed and
         the ordering would not invert.
         """
@@ -88,11 +88,11 @@ class TestLiveRankerUsesUnifiedUtility:
 
         _unified.entry_utility = _spy  # type: ignore[assignment]
         try:
-            ranked = rank_by_utility([_entry("L-high", impact=0.95), _entry("L-low", impact=0.05)], [], 1.0)
+            ranked = rank_targeted_by_utility([_entry("L-high", impact=0.95), _entry("L-low", impact=0.05)], [], 1.0)
         finally:
             _unified.entry_utility = original  # type: ignore[assignment]
 
-        assert seen == ["L-high", "L-low"], "rank_by_utility did not reach the unified implementation"
+        assert seen == ["L-high", "L-low"], "rank_targeted_by_utility did not reach the unified implementation"
         assert [e["id"] for e in ranked] == ["L-low", "L-high"]
 
     def test_trw_mcp_no_longer_defines_its_own_entry_utility(self) -> None:

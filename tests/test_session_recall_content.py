@@ -131,7 +131,7 @@ def test_query_miss_baseline_unchanged(tmp_path):
 def test_full_body_does_not_change_compact_scoring_inputs():
     from trw_memory.models.memory import Assertion, AssertionType
 
-    from trw_mcp.scoring import rank_by_utility
+    from trw_mcp.scoring import rank_targeted_by_utility
     from trw_mcp.state._memory_transforms import _memory_to_learning_dict
     from trw_mcp.tools._recall_assertion_verification import _verify_assertions
     from trw_mcp.tools._session_recall_content import carry_focused_content
@@ -170,8 +170,8 @@ def test_full_body_does_not_change_compact_scoring_inputs():
         ]
         assert comparable == before
     config = TRWConfig()
-    expected = _verify_assertions(old, ["retention"], config, rank_by_utility)
-    actual = _verify_assertions(new, ["retention"], config, rank_by_utility)
+    expected = _verify_assertions(old, ["retention"], config, rank_targeted_by_utility)
+    actual = _verify_assertions(new, ["retention"], config, rank_targeted_by_utility)
     assert [(row["id"], row["combined_score"]) for row in actual] == [
         (row["id"], row["combined_score"]) for row in expected
     ]

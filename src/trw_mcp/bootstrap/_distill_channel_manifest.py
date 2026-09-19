@@ -53,8 +53,11 @@ def merge_distill_channel_manifest(repo_root: Path, manifest_data: Path, client_
         existing_ids.add(entry.id)
         added += 1
 
-    manifest.generated_at = now_utc_iso8601()
-    write(manifest, manifest_path)
+    # Rewriting an unchanged manifest would only move ``generated_at``: a no-op
+    # update must change nothing (PRD-INFRA-190 FR03).
+    if added:
+        manifest.generated_at = now_utc_iso8601()
+        write(manifest, manifest_path)
     return added, len(manifest.channels)
 
 

@@ -146,5 +146,6 @@ def predating_writers_row(trw_dir: Path) -> tuple[Literal["PASS", "WARN", "SKIP"
         f"{len(pids)} running server process(es) predate the installed version "
         f"(pids {', '.join(str(pid) for pid in pids)}): their writer registrations are older than the installed "
         f"distribution's metadata timestamp ({measurement['install_epoch_source']}), and their loaded versions are "
-        "unknown. Restart those sessions to be sure. Nothing was signalled.",
+        "unknown. Remedy: restart those sessions, or `kill <pid>` for each one after confirming it is not the "
+        "current connection (a client can keep its old server alive after /mcp). Nothing was signalled.",
     )

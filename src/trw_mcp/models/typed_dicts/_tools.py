@@ -187,6 +187,7 @@ class SessionStartResultDict(TypedDict, total=False):
     embeddings_backfill_deferred: dict[str, object]
     embeddings_backfill_not_performed: dict[str, object]  # PRD-CORE-263 DEF-11
     embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01
+    embeddings_migration: dict[str, object]  # background re-embed into the configured model's space
     # PRD-CORE-263 DEF-12: named ``_skipped``, not ``_deferred`` — nothing
     # journals or later performs either while ``response_compacted`` is true.
     auto_recall_skipped: dict[str, object]

@@ -46,6 +46,39 @@ response for the caller to apply.
 6. Compare manual findings with the validator. Explain disagreements rather
    than replacing the canonical result with a second fixed score gate.
 
+## Requirement classification and verification
+
+`verification.mappings[].requirement_kind` accepts exactly `software_behavior`
+or `non_behavioral`; omission defaults to `software_behavior`. Explicit null,
+blank, unknown and non-string values are invalid. Neither verification method,
+profile nor FR/NFR prefix determines kind: classify the requirement's subject,
+not the machinery used to check it.
+
+For `software_behavior` at `implemented`/`done`, require `method: test` with
+`automated: true` (or omitted automation with a test-shaped artifact), or a
+nonblank `automation_infeasible_reason`. Explicit `automated: false` requires
+that reason at every lifecycle status. An automated inspection, analysis or
+demonstration is not a behavioral test. Review an exception's justification;
+the validator only checks its declaration, not whether the reason is sound.
+
+For `non_behavioral`, all four methods remain legitimate when matched to the
+acceptance criteria; no automation excuse is needed, even with `automated: false`.
+Required evidence, exact coverage and grounding still apply, and a supplied
+blank reason remains invalid. Independently assess every nonbehavioral
+declaration against the requirement and acceptance criteria. A parser can accept
+the label without proving its semantics; report a misclassification as blocking.
+
+- Positive: a versioned release record naming its approver and decision is
+  `non_behavioral`; inspection of those fields is suitable planned verification.
+- Negative: an implemented handler returning HTTP 400 and code `invalid_request`
+  is `software_behavior`. Reject a deliberate `non_behavioral` label, even with
+  `method: inspection` and `automated: true`. Correct the kind and require
+  behavioral test evidence or a justified automation-infeasibility exception.
+
+For existing mappings, assess each affected requirement instead of bulk relabeling
+to silence failures. Classification and mapping acceptance do not prove execution,
+passing outcomes or completion, and do not promote lifecycle state.
+
 ## Verdict
 
 Per-dimension scores are advisory diagnostics. Readiness follows the canonical

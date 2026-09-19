@@ -51,7 +51,7 @@ class TestBootstrapDryRunBranches:
     @pytest.mark.skipif(not _HAS_HOOKS_DIR, reason="No hooks in bundled data")
     @pytest.mark.skipif(not _HAS_HOOK_FILES, reason="No .sh files in hooks")
     def test_dry_run_hook_identical_file_skips_update(self, tmp_path: Path) -> None:
-        """Line 272: dry_run with identical hook — no 'would update' added."""
+        """A dry run does not report an identical hook as updated."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
@@ -61,12 +61,10 @@ class TestBootstrapDryRunBranches:
         hook_src = hook_files[0]
         dest_hook = target / ".claude" / "hooks" / hook_src.name
         shutil.copy2(hook_src, dest_hook)
+        dest_hook.chmod(0o755)  # installed hooks are executable
 
         result = bs.update_project(target, dry_run=True)
-        would_update_names = [s for s in result.get("updated", []) if hook_src.name in s and "would update" in s]
-        assert len(would_update_names) == 0, (
-            f"Identical file should not appear in dry_run updated list: {would_update_names}"
-        )
+        assert f".claude/hooks/{hook_src.name}" not in result["updated"], "an identical file is not a change"
 
     @pytest.mark.skipif(not _HAS_HOOKS_DIR, reason="No hooks in bundled data")
     @pytest.mark.skipif(not _HAS_HOOK_FILES, reason="No .sh files in hooks")
@@ -87,8 +85,7 @@ class TestBootstrapDryRunBranches:
         dest_hook.write_text("#!/bin/bash\necho 'user customization'\n", encoding="utf-8")
 
         result = bs.update_project(target, dry_run=True)
-        would_update = [s for s in result.get("updated", []) if "would update" in s]
-        assert not any(hook_src.name in s for s in would_update)
+        assert f".claude/hooks/{hook_src.name}" not in result["updated"]
         assert any(hook_src.name in s for s in result.get("modified", []))
         # The user's content survives (dry-run or not — it was never a copy target).
         assert dest_hook.read_text(encoding="utf-8") == "#!/bin/bash\necho 'user customization'\n"
@@ -113,8 +110,7 @@ class TestBootstrapDryRunBranches:
         shutil.copy2(skill_file, dest_file)
 
         result = bs.update_project(target, dry_run=True)
-        would_update = [s for s in result.get("updated", []) if "would update" in s]
-        assert not any(skill_file.name in s for s in would_update), (
+        assert not any(skill_file.name in s for s in result["updated"]), (
             f"Identical skill file should not be flagged: {would_update}"
         )
 
@@ -138,8 +134,7 @@ class TestBootstrapDryRunBranches:
         dest_file.write_text("# user customization that differs", encoding="utf-8")
 
         result = bs.update_project(target, dry_run=True)
-        would_update = [s for s in result.get("updated", []) if "would update" in s]
-        assert not any(skill_file.name in s for s in would_update)
+        assert not any(skill_file.name in s for s in result["updated"])
         assert any(skill_file.name in s for s in result.get("modified", []))
         assert dest_file.read_text(encoding="utf-8") == "# user customization that differs"
 
@@ -147,18 +142,17 @@ class TestBootstrapDryRunBranches:
     @pytest.mark.skipif(not _HAS_SKILL_DIRS, reason="No skill directories")
     @pytest.mark.skipif(not _HAS_SKILL_FILES, reason="No files in skill dir")
     def test_dry_run_new_skill_file_would_create(self, tmp_path: Path) -> None:
-        """Line 315 (else branch): skill file doesn't exist → would create."""
+        """A missing skill file is reported as created by the dry run."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         result = bs.update_project(target, dry_run=True)
-        would_create = result.get("created", [])
-        assert any("would create" in s for s in would_create)
+        assert any(p.startswith(".claude/skills/") for p in result["created"])
 
     @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
     @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_agent_file_identical_not_flagged(self, tmp_path: Path) -> None:
-        """dry_run agent identical to the RESOLVED form — no 'would update' added.
+        """dry_run agent identical to the RESOLVED form is not reported as updated.
 
         sub_5ctrrLJ: agents are materialized through the capability-tier resolver
         (``model: frontier`` -> ``model: opus``), so "identical" means matching the
@@ -178,8 +172,7 @@ class TestBootstrapDryRunBranches:
         dest_agent.write_text(resolved, encoding="utf-8")
 
         result = bs.update_project(target, dry_run=True)
-        would_update = [s for s in result.get("updated", []) if "would update" in s]
-        assert not any(agent_file.name in s for s in would_update)
+        assert f".claude/agents/{agent_file.name}" not in result["updated"]
 
     @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
     @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
@@ -205,19 +198,17 @@ class TestBootstrapDryRunBranches:
         dest_agent.write_text(agent_file.read_text(encoding="utf-8"), encoding="utf-8")
 
         result = bs.update_project(target, dry_run=True)
-        would_update = [s for s in result.get("updated", []) if "would update" in s]
-        assert any(agent_file.name in s for s in would_update)
+        assert f".claude/agents/{agent_file.name}" in result["updated"]
 
     @pytest.mark.skipif(not _HAS_AGENTS_DIR, reason="No agents in bundled data")
     @pytest.mark.skipif(not _HAS_AGENT_FILES, reason="No .md agents")
     def test_dry_run_new_agent_file_would_create(self, tmp_path: Path) -> None:
-        """Line 340 (else branch): agent file doesn't exist → would create."""
+        """A missing agent file is reported as created by the dry run."""
         from trw_mcp import bootstrap as bs
 
         target = self._make_trw_target(tmp_path)
         result = bs.update_project(target, dry_run=True)
-        would_create = result.get("created", [])
-        assert any("would create" in s for s in would_create)
+        assert any(p.startswith(".claude/agents/") for p in result["created"])
 
     def test_update_project_claude_md_write_failure(self, tmp_path: Path) -> None:
         """An unwritable CLAUDE.md is reported, never silently swallowed.

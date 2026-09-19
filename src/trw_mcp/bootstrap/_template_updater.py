@@ -12,7 +12,6 @@ lives in ``_ide_targets.py`` and is re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import stat
@@ -99,53 +98,45 @@ def _update_or_report(
     src: Path,
     dest: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     *,
     make_executable: bool = False,
     on_progress: ProgressCallback = None,
 ) -> None:
-    """Copy *src* to *dest* (or report what would change in dry-run mode).
+    """Copy *src* to *dest* unless *dest* already holds the same bytes and mode.
+
+    Write-if-different (PRD-INFRA-190 FR03): an identical destination is not
+    touched, so a no-op update changes nothing — not even the exec bit.
 
     Args:
         src: Source file to copy from.
         dest: Destination path to copy to.
-        result: Mutable result dict.
-        dry_run: When ``True``, only report without writing.
-        make_executable: When ``True``, set executable bits on *dest* after copy.
+        result: Mutable result dict (errors only; changes are reported from the diff).
+        make_executable: When ``True``, set executable bits on *dest*.
         on_progress: Optional callback for real-time progress reporting.
     """
-    if dry_run:
-        if dest.exists():
-            if not _files_identical(src, dest):
-                result["updated"].append(f"would update: {dest}")
-        else:
-            result["created"].append(f"would create: {dest}")
-    else:
+    executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH if make_executable else 0
+    try:
+        if dest.is_file() and _files_identical(src, dest):
+            mode = os.stat(dest).st_mode
+            if mode & executable != executable:
+                os.chmod(dest, mode | executable)
+            return
         existed = dest.exists()
-        try:
-            shutil.copy2(src, dest)
-            if make_executable:
-                executable = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-                os.chmod(dest, os.stat(dest).st_mode | executable)
-            if existed:
-                result["updated"].append(str(dest))
-                if on_progress:
-                    on_progress("Updated", str(dest))
-            else:
-                result["created"].append(str(dest))
-                if on_progress:
-                    on_progress("Created", str(dest))
-        except OSError as exc:
-            result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
-            if on_progress:
-                on_progress("Error", str(dest))
+        shutil.copy2(src, dest)
+        if executable:
+            os.chmod(dest, os.stat(dest).st_mode | executable)
+        if on_progress:
+            on_progress("Updated" if existed else "Created", str(dest))
+    except OSError as exc:
+        result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+        if on_progress:
+            on_progress("Error", str(dest))
 
 
 def _update_always_overwrite_files(
     target_dir: Path,
     effective_data: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
 ) -> None:
     """Update framework files in ``_ALWAYS_UPDATE`` (always overwritten)."""
@@ -158,7 +149,7 @@ def _update_always_overwrite_files(
             continue
         src = effective_data / data_name
         dest = target_dir / dest_rel
-        _update_or_report(src, dest, result, dry_run, on_progress=on_progress)
+        _update_or_report(src, dest, result, on_progress=on_progress)
 
 
 def _report_preserved_files(
@@ -177,7 +168,6 @@ def _guarded_copy_update(
     dest: Path,
     manifest_key: str,
     result: dict[str, list[str]],
-    dry_run: bool,
     manifest_hashes: dict[str, str] | None,
     *,
     make_executable: bool = False,
@@ -205,14 +195,13 @@ def _guarded_copy_update(
         logger.info("artifact_user_modified", path=str(dest))
         result.setdefault("modified", []).append(str(dest))
         return
-    _update_or_report(src, dest, result, dry_run, make_executable=make_executable, on_progress=on_progress)
+    _update_or_report(src, dest, result, make_executable=make_executable, on_progress=on_progress)
 
 
 def _update_hooks(
     target_dir: Path,
     effective_data: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
@@ -227,13 +216,11 @@ def _update_hooks(
                     dest,
                     hook_file.name,
                     result,
-                    dry_run,
                     manifest_hashes,
                     make_executable=True,
                     on_progress=on_progress,
                 )
-    if not dry_run:
-        _rebless_intent_hook_digest(target_dir, result)
+    _rebless_intent_hook_digest(target_dir, result)
 
 
 def _rebless_intent_hook_digest(target_dir: Path, result: dict[str, list[str]]) -> None:
@@ -256,7 +243,6 @@ def _rebless_intent_hook_digest(target_dir: Path, result: dict[str, list[str]]) 
         from trw_mcp.security.intent_contract.enrollment import refresh_hook_digest
 
         if refresh_hook_digest(target_dir):
-            result.setdefault("updated", []).append(str(target_dir / ".trw/contracts/enrollment.yaml"))
             logger.info("intent_enrollment_hook_digest_refreshed", path=str(target_dir))
     except Exception as exc:  # justified: fail-open, an update must never abort here
         logger.warning("intent_enrollment_refresh_failed", error=str(exc))
@@ -267,7 +253,6 @@ def _update_skills(
     target_dir: Path,
     effective_data: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
@@ -277,8 +262,7 @@ def _update_skills(
         for skill_dir in sorted(skills_source.iterdir()):
             if skill_dir.is_dir():
                 dest_skill = target_dir / ".claude" / "skills" / skill_dir.name
-                if not dry_run:
-                    _ensure_dir(dest_skill, result, on_progress)
+                _ensure_dir(dest_skill, result, on_progress)
                 for skill_file in sorted(skill_dir.iterdir()):
                     if skill_file.is_file():
                         dest = dest_skill / skill_file.name
@@ -290,7 +274,6 @@ def _update_skills(
                             dest,
                             f"{skill_dir.name}/{skill_file.name}",
                             result,
-                            dry_run,
                             manifest_hashes,
                             on_progress=on_progress,
                         )
@@ -300,7 +283,6 @@ def _update_agents(
     target_dir: Path,
     effective_data: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
@@ -355,7 +337,6 @@ def _update_agents(
                 agent_file,
                 target_dir / rel,
                 result,
-                dry_run,
                 on_progress,
                 manifest_hashes,
                 client=client,
@@ -367,7 +348,6 @@ def _update_framework_files(
     target_dir: Path,
     effective_data: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
@@ -386,27 +366,25 @@ def _update_framework_files(
             the caller for testing).
         result: Mutable result dict accumulating ``updated``, ``created``,
             ``preserved``, ``modified``, and ``errors`` entries.
-        dry_run: When ``True``, report what would change without writing files.
         on_progress: Optional callback for real-time progress reporting.
         manifest_hashes: SHA256 content hashes from prior manifest for
             user-modification detection (PRD-FIX-068-FR05).
     """
-    _update_always_overwrite_files(target_dir, effective_data, result, dry_run, on_progress)
+    _update_always_overwrite_files(target_dir, effective_data, result, on_progress)
     _report_preserved_files(target_dir, result)
     # PRD-INFRA-044-FR04: Smart-merge settings.json (preserves user ENABLE_TOOL_SEARCH opt-out)
     _merge_settings_json(
         effective_data / "settings.json",
         target_dir / ".claude" / "settings.json",
         result,
-        dry_run,
     )
     # PRD-SEC-005-FR02: merge-ensure the credentials.yaml ignore rule on every
     # existing install (gitignore.txt is only deployed on INIT, so update-project
     # would otherwise never refresh a custom .trw/.gitignore).
-    _ensure_credentials_gitignored(target_dir, result, dry_run, on_progress)
-    _update_hooks(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
-    _update_skills(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
-    _update_agents(target_dir, effective_data, result, dry_run, on_progress, manifest_hashes)
+    _ensure_credentials_gitignored(target_dir, result, on_progress)
+    _update_hooks(target_dir, effective_data, result, on_progress, manifest_hashes)
+    _update_skills(target_dir, effective_data, result, on_progress, manifest_hashes)
+    _update_agents(target_dir, effective_data, result, on_progress, manifest_hashes)
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +420,6 @@ def _write_claude_md_scaffold(claude_md_path: Path, target_dir: Path, result: di
 def _update_mcp_config(
     target_dir: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
 ) -> None:
     """Update ``.mcp.json`` and ``CLAUDE.md`` configuration files.
@@ -456,111 +433,89 @@ def _update_mcp_config(
         target_dir: Root of the target git repository.
         result: Mutable result dict accumulating ``updated``, ``created``,
             ``preserved``, and ``errors`` entries.
-        dry_run: When ``True``, report what would change without writing files.
         on_progress: Optional callback for real-time progress reporting.
     """
     # Smart-merge .mcp.json (ensure trw entry, preserve user entries)
-    if not dry_run:
-        _merge_mcp_json(target_dir, result, on_progress)
-    else:
-        mcp_path = target_dir / ".mcp.json"
-        if mcp_path.exists():
-            try:
-                data = json.loads(mcp_path.read_text(encoding="utf-8"))
-                servers = data.get("mcpServers", {})
-                if "trw" not in servers:
-                    result["updated"].append(f"would merge: {mcp_path} (add trw entry)")
-                else:
-                    result["preserved"].append(str(mcp_path))
-            except (json.JSONDecodeError, OSError):
-                result["updated"].append(f"would merge: {mcp_path}")
-        else:
-            result["created"].append(f"would create: {mcp_path}")
+    _merge_mcp_json(target_dir, result, on_progress)
 
     # Smart-update CLAUDE.md (preserve user sections, update trw block)
     claude_md_path = target_dir / "CLAUDE.md"
-    if dry_run:
-        if claude_md_path.exists():
-            result["updated"].append(f"would update: {claude_md_path} (TRW section)")
-        else:
-            result["created"].append(f"would create: {claude_md_path}")
+    from trw_mcp.exceptions import StateError
+    from trw_mcp.state.claude_md._orphan_strip import (
+        strip_orphaned_agents_md_block,
+        strip_orphaned_claude_md_block,
+    )
+
+    from ._template_claude_md import _recorded_or_detected_targets, claude_md_is_claimed
+
+    # Recorded, NOT resolved: `resolve_ide_targets` falls through to
+    # detection, which reports claude-code for every project TRW has ever
+    # installed into (we create `.claude/` ourselves). Passing it here
+    # would answer "who reads this file?" with our own artifacts.
+    ide_targets = _recorded_or_detected_targets(target_dir)
+
+    # Same rule for the OTHER shared surface: a project installed before
+    # opencode's AGENTS.md was withdrawn still carries that block, and
+    # nothing refreshes it any more.
+    #
+    # CORE262-14: the strip's write now raises StateError on a genuine
+    # failure instead of silently returning False, so it must be caught
+    # here rather than left to escape uncaught -- a failed cleanup must be
+    # a recorded error, not either a swallowed no-op or an unhandled raise.
+    try:
+        agents_removed = strip_orphaned_agents_md_block(target_dir, ide_targets)
+    except StateError as exc:
+        result["errors"].append(f"Failed to remove orphaned TRW block from {target_dir / 'AGENTS.md'}: {exc}")
     else:
-        from trw_mcp.exceptions import StateError
-        from trw_mcp.state.claude_md._orphan_strip import (
-            strip_orphaned_agents_md_block,
-            strip_orphaned_claude_md_block,
-        )
-
-        from ._template_claude_md import _recorded_or_detected_targets, claude_md_is_claimed
-
-        # Recorded, NOT resolved: `resolve_ide_targets` falls through to
-        # detection, which reports claude-code for every project TRW has ever
-        # installed into (we create `.claude/` ourselves). Passing it here
-        # would answer "who reads this file?" with our own artifacts.
-        ide_targets = _recorded_or_detected_targets(target_dir)
-
-        # Same rule for the OTHER shared surface: a project installed before
-        # opencode's AGENTS.md was withdrawn still carries that block, and
-        # nothing refreshes it any more.
-        #
-        # CORE262-14: the strip's write now raises StateError on a genuine
-        # failure instead of silently returning False, so it must be caught
-        # here rather than left to escape uncaught -- a failed cleanup must be
-        # a recorded error, not either a swallowed no-op or an unhandled raise.
+        if agents_removed:
+            result.setdefault("updated", []).append(str(target_dir / "AGENTS.md"))
+    if not claude_md_is_claimed(target_dir):
+        # Only clients that declare CLAUDE.md get the block. Without this
+        # the update path re-injected it on every run into projects whose
+        # clients never read the file, undoing the install-path decision —
+        # and the re-injected copy then froze in place while the surfaces
+        # those clients DO read moved on. The scaffold is still written
+        # (it is a project doc); only TRW's block is withheld.
+        existed = claude_md_path.exists()
         try:
-            agents_removed = strip_orphaned_agents_md_block(target_dir, ide_targets)
-        except StateError as exc:
-            result["errors"].append(f"Failed to remove orphaned TRW block from {target_dir / 'AGENTS.md'}: {exc}")
+            if not existed and not _write_claude_md_scaffold(claude_md_path, target_dir, result):
+                return
+            removed = strip_orphaned_claude_md_block(target_dir, ide_targets)
+        except (OSError, StateError) as exc:
+            result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
         else:
-            if agents_removed:
-                result.setdefault("updated", []).append(str(target_dir / "AGENTS.md"))
-        if not claude_md_is_claimed(target_dir):
-            # Only clients that declare CLAUDE.md get the block. Without this
-            # the update path re-injected it on every run into projects whose
-            # clients never read the file, undoing the install-path decision —
-            # and the re-injected copy then froze in place while the surfaces
-            # those clients DO read moved on. The scaffold is still written
-            # (it is a project doc); only TRW's block is withheld.
-            existed = claude_md_path.exists()
-            try:
-                if not existed and not _write_claude_md_scaffold(claude_md_path, target_dir, result):
-                    return
-                removed = strip_orphaned_claude_md_block(target_dir, ide_targets)
-            except (OSError, StateError) as exc:
-                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
-            else:
-                if not existed:
-                    result["created"].append(str(claude_md_path))
-                    if on_progress:
-                        on_progress("Created", str(claude_md_path))
-                elif removed:
-                    result["updated"].append(str(claude_md_path))
-        elif claude_md_path.exists():
-            _update_claude_md_trw_section(claude_md_path, result, target_dir)
-            if on_progress and str(claude_md_path) in result.get("updated", []):
-                on_progress("Updated", str(claude_md_path))
-        else:
-            try:
-                if not _write_claude_md_scaffold(claude_md_path, target_dir, result):
-                    return
-                # Scaffold first, then resolve the carrier, so a newly-created
-                # file lands in the same shape an existing project converges to.
-                # A create path that skipped the carrier is how the two entry
-                # points came to disagree about the same file.
-                # Carrier bookkeeping goes to a scratch dict only to avoid
-                # double-reporting a file already counted as "created" — its
-                # ERRORS are merged back, since discarding a failed carrier write
-                # while still reporting a clean create misrepresents the result.
-                carrier_result: dict[str, list[str]] = {"updated": [], "preserved": [], "errors": []}
-                _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir)
-                result.setdefault("errors", []).extend(carrier_result["errors"])
+            if not existed:
                 result["created"].append(str(claude_md_path))
                 if on_progress:
                     on_progress("Created", str(claude_md_path))
-            except OSError as exc:
-                result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
-                if on_progress:
-                    on_progress("Error", str(claude_md_path))
+            elif removed:
+                result["updated"].append(str(claude_md_path))
+    elif claude_md_path.exists():
+        _update_claude_md_trw_section(claude_md_path, result, target_dir)
+        if on_progress and str(claude_md_path) in result.get("updated", []):
+            on_progress("Updated", str(claude_md_path))
+    else:
+        try:
+            if not _write_claude_md_scaffold(claude_md_path, target_dir, result):
+                return
+            # Scaffold first, then resolve the carrier, so a newly-created
+            # file lands in the same shape an existing project converges to.
+            # A create path that skipped the carrier is how the two entry
+            # points came to disagree about the same file.
+            # Carrier bookkeeping goes to a scratch dict only to avoid
+            # double-reporting a file already counted as "created" — its
+            # ERRORS are merged back, since discarding a failed carrier write
+            # while still reporting a clean create misrepresents the result.
+            carrier_result: dict[str, list[str]] = {"updated": [], "preserved": [], "errors": []}
+            _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir)
+            result.setdefault("errors", []).extend(carrier_result["errors"])
+            result["created"].append(str(claude_md_path))
+            if on_progress:
+                on_progress("Created", str(claude_md_path))
+        except OSError as exc:
+            result["errors"].append(f"Failed to write {claude_md_path}: {exc}")
+            if on_progress:
+                on_progress("Error", str(claude_md_path))
 
 
 # ---------------------------------------------------------------------------

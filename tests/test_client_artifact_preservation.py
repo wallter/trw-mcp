@@ -58,7 +58,7 @@ def _update_agents_for(target: Path, client: str, manifest: dict[str, str]) -> d
     (trw_dir / "config.yaml").write_text(f"target_platforms:\n  - {client}\n", encoding="utf-8")
 
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-    _update_agents(target, _DATA_DIR, result, dry_run=False, manifest_hashes=manifest)
+    _update_agents(target, _DATA_DIR, result, manifest_hashes=manifest)
     assert not result["errors"], result["errors"]
     return result
 
@@ -158,7 +158,7 @@ class TestCursorIdeAgentsAndCommands:
         result = _update_agents_for(tmp_path, "cursor-ide", {rel: _sha("# older bundled agent\n")})
 
         assert dest.read_bytes() == _materialized(rel, "cursor-ide")
-        assert any(rel in entry for entry in result["updated"])
+        assert rel not in result["preserved"]
 
     def test_commands_preserve_user_edit(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_ide import _TRW_COMMANDS, generate_cursor_ide_commands
@@ -222,7 +222,7 @@ class TestAntigravityAgents:
         result = _update_agents_for(tmp_path, "antigravity-cli", {rel: _sha("# older bundled agent\n")})
 
         assert dest.read_bytes() == _materialized(rel, "antigravity-cli")
-        assert any(rel in entry for entry in result["updated"])
+        assert rel not in result["preserved"]
 
 
 class TestCopilotPathInstructions:

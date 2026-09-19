@@ -71,7 +71,10 @@ def _check_duplicate_candidates(
 
     current_id = str(frontmatter.get("id", "")).strip()
     current_title_tokens = _title_tokens(str(frontmatter.get("title", "")))
-    current_paths = set(_extract_repo_path_refs(content))
+    # Directory-only references (``src/``, ``tests/``, ``trw-mcp/``) appear in
+    # hundreds of PRDs; counting them made every PRD "overlap" with most of the
+    # catalogue and buried the real overlaps. Only file paths identify scope.
+    current_paths = {path for path in _extract_repo_path_refs(content) if not path.endswith("/")}
     if not current_title_tokens and not current_paths:
         return []
 

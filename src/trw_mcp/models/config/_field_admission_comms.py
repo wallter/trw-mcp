@@ -268,6 +268,52 @@ COMMS_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer="trw-mcp/tests/comms/test_scoped_notify.py",
         budget_decision="admitted",
     ),
+    "comms_wait_max_seconds": ConfigAdmission(
+        field_name="comms_wait_max_seconds",
+        owner="PRD-CORE-274-FR11",
+        consumer="trw_mcp.comms inbox bounded wait admission",
+        default_rationale=(
+            "30 seconds, bounded 0..300; 0 refuses every positive wait (the kill switch). A "
+            "conservative policy choice, not a measured optimum. The cap bounds only how long a "
+            "caller may ASK to wait; it promises nothing about the remaining lease, and observed "
+            "latency to a message is unmeasured and depends on SQLite contention and the sleep "
+            "interval."
+        ),
+        interaction_analysis=(
+            "Per-call opt-in: wait_seconds defaults to 0, so existing callers are byte-identical. "
+            "Deliberately NOT validated against comms_lease_ttl_seconds — that would reject an "
+            "existing valid poll-15/lease-30 configuration and could not bound the REMAINING lease; "
+            "each attempt re-verifies lease and incarnation instead. Re-read from the effective "
+            "runtime config on every attempt, so lowering it to 0 ends an in-flight wait."
+        ),
+        deprecation_plan=(
+            "Retain until a native wake path exists; then this bounds the fallback retry, not the only mechanism."
+        ),
+        docs_pointer=_PRD,
+        test_pointer=_SURFACE_TEST,
+        budget_decision="admitted",
+    ),
+    "comms_wait_interval_ms": ConfigAdmission(
+        field_name="comms_wait_interval_ms",
+        owner="PRD-CORE-274-FR11",
+        consumer="trw_mcp.comms inbox bounded wait sleep between attempts",
+        default_rationale=(
+            "1000 ms, bounded 100..15000. A policy choice, not a measured optimum. Each attempt is a "
+            "write transaction (group clock touch plus a bounded read) whose cost under contention "
+            "is unmeasured; a shorter interval trades mailbox load for latency, and the floor stops "
+            "a caller turning the wait into a busy loop."
+        ),
+        interaction_analysis=(
+            "A server-internal re-read inside the enrolled process, distinct from "
+            "comms_poll_interval_seconds, which still governs how often a CLIENT should call. "
+            "Also the cancellation granularity while sleeping: a cancel or disconnect is noticed at "
+            "the next boundary, which is at most one interval away when the loop is asleep."
+        ),
+        deprecation_plan="Retain with the wait cap; meaningless without it.",
+        docs_pointer=_PRD,
+        test_pointer=_SURFACE_TEST,
+        budget_decision="admitted",
+    ),
 }
 
 __all__ = ["COMMS_ADMISSIONS"]

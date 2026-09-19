@@ -174,7 +174,7 @@ def test_registered_recall_retains_symptom_match_after_acquisition(
     monkeypatch.setattr(get_config(), "embeddings_enabled", False)
     from trw_mcp.tools import learning
 
-    original_rank = learning.rank_by_utility
+    original_rank = learning.rank_targeted_by_utility
     observed_rankings = []
 
     def observe_rank(*args, **kwargs):
@@ -190,7 +190,7 @@ def test_registered_recall_retains_symptom_match_after_acquisition(
         )
         return ranked
 
-    monkeypatch.setattr(learning, "rank_by_utility", observe_rank)
+    monkeypatch.setattr(learning, "rank_targeted_by_utility", observe_rank)
     backend = get_backend(tmp_project / ".trw")
     for token in ("read-only", "project", "tool", "discovery"):
         for index in range(26):

@@ -3445,9 +3445,10 @@ wheels = [
 
 [[package]]
 name = "trw-mcp"
-version = "3.1.0"
+version = "4.0.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "cryptography" },
     { name = "fastmcp" },
     { name = "httpx" },
@@ -3502,6 +3503,7 @@ vectors = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'ai'", specifier = ">=0.40.0" },
+    { name = "anyio", specifier = ">=4.11.0" },
     { name = "cryptography", specifier = ">=48.0.1" },
     { name = "deptry", marker = "extra == 'dev'", specifier = ">=0.21.0" },
     { name = "fastmcp", specifier = ">=3.2.0,<4.0.0" },
@@ -3532,7 +3534,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
-    { name = "trw-memory", specifier = ">=0.19.0,<1.0.0" },
+    { name = "trw-memory", specifier = ">=1.0.0,<2.0.0" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "typing-extensions", specifier = ">=4.6.0" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.11" },
@@ -3541,7 +3543,7 @@ provides-extras = ["sqlite-fix", "vectors", "meta-tune", "otel", "dev", "ai"]
 
 [[package]]
 name = "trw-memory"
-version = "0.19.0"
+version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
@@ -3558,9 +3560,9 @@ dependencies = [
     { name = "structlog" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/70/a1/8f0f45abd058f841a8a9717548199da2e8bf46ed075c72f18406af471eea/trw_memory-0.19.0.tar.gz", hash = "sha256:65475a1d53e6cb6d582cd288acae721c66bffc0018f8bd7d588e745e33089488", size = 1402800, upload-time = "2026-09-17T17:14:12.03Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/60/b7/d843d7832a09d5b189c9a69bc2864940bde6246b85c894add4b54cecbe9f/trw_memory-1.0.0.tar.gz", hash = "sha256:7dd8c1f27d8c17e33a9a7e353419fb57736bf485e66da7dbe0e01d475a4f603f", size = 1431679, upload-time = "2026-09-19T01:15:48.755Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/81/dac91bfd7cfe9346eb3f99d5acec2138ed4cb3806caa475fe7d671961006/trw_memory-0.19.0-py3-none-any.whl", hash = "sha256:3f9af484a78b1949ff6c5d4d319716bc47caef75328ebb92718043e17ddeb84e", size = 730355, upload-time = "2026-09-17T17:14:10.311Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/00/7d4e17daa17c02451964d9a6d052f1254e21ea5ddecc74d7d5eec8e3adae/trw_memory-1.0.0-py3-none-any.whl", hash = "sha256:ae28c7f0b3f5b2609f5ad687a37a28717253de8bb07434f3b5b3bd9e5e92d9b6", size = 781769, upload-time = "2026-09-19T01:15:46.981Z" },
 ]
 
 [[package]]

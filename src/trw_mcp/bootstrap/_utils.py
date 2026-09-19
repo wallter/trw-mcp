@@ -131,10 +131,21 @@ def _write_version_yaml(
                 _DATA_DIR / Path(canon.compact_core).name
             ).read_bytes()
             compiled_artifacts[Path(canon.runtime_reference)] = (_DATA_DIR / Path(canon.reference).name).read_bytes()
+        framework_source = (_DATA_DIR / "framework.md").read_text(encoding="utf-8")
+        aaref_source = (_DATA_DIR / "aaref.md").read_text(encoding="utf-8")
+        expected = {
+            Path(".trw/frameworks/FRAMEWORK.md"): framework_source.encode("utf-8"),
+            Path(".trw/frameworks/AARE-F-FRAMEWORK.md"): aaref_source.encode("utf-8"),
+            **compiled_artifacts,
+        }
+        from ._framework_generation import framework_generation_current
+
+        if framework_generation_current(target_dir, expected, registry.digest, pkg_version):
+            return
         repair_framework_runtime(
             target_dir,
-            framework_source=(_DATA_DIR / "framework.md").read_text(encoding="utf-8"),
-            aaref_source=(_DATA_DIR / "aaref.md").read_text(encoding="utf-8"),
+            framework_source=framework_source,
+            aaref_source=aaref_source,
             framework_version=config.framework_version,
             aaref_version=config.aaref_version,
             trw_mcp_version=pkg_version,

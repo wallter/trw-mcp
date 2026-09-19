@@ -24,6 +24,7 @@ def _dispatch_only() -> dict[str, object]:
     return {"q_learning_deferred": _dispatch_q_learning_async("build_passed", "test", "primitive-test")}
 
 
+@pytest.mark.perf
 def test_q_learning_runs_in_background_not_inline(
     build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,

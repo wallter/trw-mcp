@@ -20,6 +20,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
 from ruamel.yaml import YAML
 
 from trw_mcp.cognitive_scaling import scout
@@ -39,6 +40,7 @@ _NUL = chr(0)
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.perf
 def test_extract_symbols_is_bounded_and_fast() -> None:
     huge = "Symbol%d " % 0 + " ".join(f"Sym{i}" for i in range(500_000))
     start = time.monotonic()

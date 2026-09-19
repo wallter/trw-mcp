@@ -80,6 +80,7 @@ def _blocking_project(tmp_path: Path, name: str, hook: str) -> Path:
 # --- F-A: no lib invocation may sit between the decision and the exit ---------
 
 
+@pytest.mark.perf
 @pytest_skip_no_sh
 @pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])
 @pytest.mark.parametrize(
@@ -190,7 +191,7 @@ def _sigterm_at(project: Path, hook: str, delay_seconds: float) -> int:
             time.sleep(delay_seconds)
         try:
             os.kill(process.pid, signal.SIGTERM)
-        except ProcessLookupError:  # pragma: no cover - the hook already finished
+        except ProcessLookupError:  # pragma: no cover - the hook already finished  # trw-fail-silent-allow: the SIGTERM raced the hook's own exit; the process is already gone, which is the success case
             pass
         return process.wait(timeout=60)
     finally:

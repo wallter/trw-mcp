@@ -32,6 +32,7 @@ def create_verified_run(repo: Path, run_id: str) -> Path:
 
 def journal_edits_and_build(run_dir: Path, paths: tuple[str, ...], run_id: str) -> None:
     from trw_mcp.models._evidence_core import ContentEntry, EntryState, compute_manifest_digest
+    from trw_mcp.state._evidence_identity import resolve_project_identity
 
     events = run_dir / "meta" / "events.jsonl"
     with events.open("a", encoding="utf-8") as handle:
@@ -71,7 +72,7 @@ def journal_edits_and_build(run_dir: Path, paths: tuple[str, ...], run_id: str) 
                 "content_binding": {
                     "scope_id": "test-scope",
                     "scope_digest": "test-scope-digest",
-                    "project_identity": repo.name,
+                    "project_identity": resolve_project_identity(repo),
                     "entries": [entry.model_dump(mode="json") for entry in entries],
                     "manifest_digest": compute_manifest_digest(tuple(entries)),
                 },

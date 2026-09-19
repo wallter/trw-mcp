@@ -67,6 +67,8 @@ class DispatchConfig(BaseModel):
     dispatch_default_timeout_s: int = DEFAULT_DISPATCH_TIMEOUT_SECS
     dispatch_version_probe_timeout_s: int = DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS
     dispatch_default_read_only: bool = True
+    dispatch_tools_exposed: bool = False
+    dispatch_child_trw_access: bool = False
     dispatch_role_client: dict[str, str] = Field(default_factory=dict)
 
 

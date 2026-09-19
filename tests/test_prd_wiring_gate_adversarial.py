@@ -138,6 +138,7 @@ def test_extra_keys_do_not_crash() -> None:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.perf
 def test_ten_thousand_entries_stays_fast() -> None:
     seams = [_seam(target_prd=f"PRD-{i}") for i in range(10_000)]
     start = time.monotonic()

@@ -7,7 +7,7 @@ single import point.
 ``TRW_OFFLINE`` is the TRW master offline switch; ``HF_HUB_OFFLINE`` is the
 upstream huggingface_hub convention (also honored by trw-memory's embedding
 init via ``local_files_only``). Any truthy value engages offline mode and
-suppresses the all-MiniLM-L6-v2 download so an air-gapped deployer can prove
+suppresses the embedding-model download so an air-gapped deployer can prove
 zero huggingface.co egress at ``session_start``.
 """
 
@@ -24,6 +24,13 @@ def embeddings_offline(env: dict[str, str]) -> bool:
     Checks ``TRW_OFFLINE`` and ``HF_HUB_OFFLINE`` for any truthy value.
     """
     return any(env.get(name, "").strip().lower() in _TRUTHY for name in _OFFLINE_ENV_VARS)
+
+
+def _configured_model() -> str:
+    """The retrieval model the warm-up will load (``retrieval_embedding_model``)."""
+    from trw_mcp.models.config import get_config
+
+    return get_config().retrieval_embedding_model
 
 
 def warmup_suppressed_by_offline(logger: Any) -> bool:
@@ -43,7 +50,7 @@ def warmup_suppressed_by_offline(logger: Any) -> bool:
         return True
     logger.info(
         "embedder_download_disclosure",
-        model="all-MiniLM-L6-v2",
+        model=_configured_model(),
         source="huggingface.co",
         detail=(
             "Embeddings are enabled; the local embedding model may be downloaded "

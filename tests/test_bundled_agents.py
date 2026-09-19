@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._test_bundle_asset_support import _MONOREPO_CLAUDE, _resolve_data_path
+from tests._test_bundle_asset_support import _resolve_data_path
 
 
 class TestAgentDefinitions:
@@ -20,7 +20,8 @@ class TestAgentDefinitions:
        test_agent_no_stray_tags, test_agent_has_required_frontmatter) + role-specific tests
     4. Add to `TestAgents.EXPECTED_AGENTS` in `test_bootstrap.py`
     5. Update agent count in `test_manifest_lists_all_bundled_artifacts` in `test_bootstrap.py`
-    6. Keep bundled/root variants aligned via scripts/sync-agents.py
+    6. Regenerate the .claude/agents/ projection with `make client-mirror-sync`
+       (parity: tests/test_agents_sync.py)
     7. Use capability-tier frontmatter labels (`frontier`, `balanced`, `local-small`) in v25
     """
 
@@ -28,14 +29,6 @@ class TestAgentDefinitions:
     def agents_dir(self) -> Path:
         """Return path to bundled agent definitions."""
         return _resolve_data_path("agents", "agents")
-
-    @pytest.fixture()
-    def root_agents_dir(self) -> Path:
-        """Return path to monorepo root agent definitions when available."""
-        agents_dir = _MONOREPO_CLAUDE / "agents"
-        if not agents_dir.exists():
-            pytest.skip("root .claude/agents not available in this environment")
-        return agents_dir
 
     @pytest.mark.parametrize(
         "agent_name",
@@ -50,39 +43,6 @@ class TestAgentDefinitions:
     def test_agent_file_exists(self, agents_dir: Path, agent_name: str) -> None:
         """Agent definition file exists."""
         assert (agents_dir / agent_name).exists(), f"{agent_name} must exist"
-
-    @pytest.mark.parametrize("agent_name", ["trw-auditor.md"])
-    def test_audit_agent_prompt_pairs_match_root_sources(
-        self,
-        agents_dir: Path,
-        root_agents_dir: Path,
-        agent_name: str,
-    ) -> None:
-        """Bundled and .claude/ variants align after marker expansion + tier resolution.
-
-        - PRD-QUAL-073 FR10 (Route B): bundled carries ``{tool:trw_X}``
-          placeholders that get expanded to bare ``trw_X``.
-        - PRD-INFRA-104 FR-04: bundled also carries capability tiers in
-          ``model:`` that get resolved to Claude Code shortnames
-          (``frontier->opus``, ``balanced->sonnet``, ``local-small->haiku``).
-
-        After both transforms the dev-repo ``.claude/agents/`` copy must
-        match byte-for-byte. If this test fails, run
-        ``python3 scripts/sync-agents.py`` (without ``--check``).
-        """
-        import re as _re
-
-        from trw_mcp.agents.tier_resolver import rewrite_model_line
-
-        bundled_raw = (agents_dir / agent_name).read_text(encoding="utf-8")
-        bundled_expanded = _re.sub(r"\{tool:(trw_\w+)\}", lambda m: m.group(1), bundled_raw)
-        bundled_resolved = rewrite_model_line(bundled_expanded, client="claude-code")
-        root_content = (root_agents_dir / agent_name).read_text(encoding="utf-8")
-
-        assert bundled_resolved == root_content, (
-            f"{agent_name}: .claude/agents/ drifts from bundled source after marker "
-            "expansion + tier resolution. Run scripts/sync-agents.py to regenerate."
-        )
 
     def test_adversarial_auditor_is_a_thin_lens_adapter(self, agents_dir: Path) -> None:
         """The adapter keeps its red-team vocabulary and its read-only grant.
@@ -199,7 +159,7 @@ class TestAgentDefinitions:
 
         PRD-INFRA-104 (2026-05-05): Once the capability-tier resolver lands
         in ``trw_mcp.agents.tier_resolver`` and is wired into
-        ``_install_agents`` + ``scripts/sync-agents.py``, the bundle pins
+        ``_install_agents``, the bundle pins
         survive translation into the client-specific harness vocabulary.
         ``trw-implementer``, ``trw-lead``, ``trw-prd-groomer`` are pinned
         to ``frontier`` and resolve to ``opus`` at install time for the

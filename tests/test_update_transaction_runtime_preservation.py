@@ -132,3 +132,106 @@ def test_transaction_snapshot_rejects_managed_symlink_escape(
     assert after == before
     sentinel = external / "sentinel.txt" if is_directory else external
     assert sentinel.read_text(encoding="utf-8") == "untouched\n"
+
+
+# ---------------------------------------------------------------------------
+# PRD-INFRA-190 FR05 (dirty bundle) and NFR01 (git unavailable)
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True, capture_output=True
+    )
+
+
+def _repo_with_vendored_bundle(tmp_path: Path) -> tuple[Path, Path]:
+    """An installed repo whose bundle lives INSIDE its work tree (the editable-install case)."""
+    from trw_mcp.bootstrap import _DATA_DIR, init_project
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    assert not init_project(repo, ide="claude-code")["errors"]
+    bundle = repo / "vendor" / "data"
+    shutil.copytree(_DATA_DIR, bundle)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "installed")
+    return repo, bundle
+
+
+def _surface_state(repo: Path) -> dict[str, bytes]:
+    from trw_mcp.bootstrap._update_transaction import _surface_files
+
+    return {rel: (repo / rel).read_bytes() for rel in _surface_files(repo)}
+
+
+def test_dirty_bundle_inside_the_work_tree_is_refused_and_nothing_is_written(tmp_path: Path) -> None:
+    from trw_mcp.bootstrap import update_project
+
+    repo, bundle = _repo_with_vendored_bundle(tmp_path)
+    hook = bundle / "hooks" / "session-start.sh"
+    hook.write_text(hook.read_text(encoding="utf-8") + "\n# another lane's uncommitted edit\n", encoding="utf-8")
+    before = _surface_state(repo)
+
+    result = update_project(repo, data_dir=bundle)
+
+    assert len(result["errors"]) == 1
+    assert "vendor/data/hooks/session-start.sh" in result["errors"][0]
+    assert _surface_state(repo) == before
+
+
+def test_allow_dirty_bundle_projects_the_uncommitted_bundle(tmp_path: Path) -> None:
+    from trw_mcp.bootstrap import update_project
+
+    repo, bundle = _repo_with_vendored_bundle(tmp_path)
+    hook = bundle / "hooks" / "session-start.sh"
+    hook.write_text(hook.read_text(encoding="utf-8") + "\n# deliberate local change\n", encoding="utf-8")
+
+    result = update_project(repo, data_dir=bundle, allow_dirty_bundle=True)
+
+    assert not result["errors"], result["errors"]
+    assert (repo / ".claude" / "hooks" / "session-start.sh").read_bytes() == hook.read_bytes()
+
+
+def test_a_bundle_outside_the_work_tree_is_not_checked(tmp_path: Path) -> None:
+    from trw_mcp.bootstrap import _DATA_DIR, update_project
+
+    repo, _ = _repo_with_vendored_bundle(tmp_path)
+    outside = tmp_path / "wheel-data"
+    shutil.copytree(_DATA_DIR, outside)
+    hook = outside / "hooks" / "session-start.sh"
+    hook.write_text(hook.read_text(encoding="utf-8") + "\n# N+1\n", encoding="utf-8")
+
+    result = update_project(repo, data_dir=outside)
+
+    assert not result["errors"], result["errors"]
+    assert ".claude/hooks/session-start.sh" in result["updated"]
+
+
+def test_git_unavailable_warns_and_falls_back_to_the_manifest_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NFR01: a missing git binary is reported as unknown; the update still completes."""
+    import subprocess
+
+    from trw_mcp.bootstrap import update_project
+
+    repo, _ = _repo_with_vendored_bundle(tmp_path)
+    real_run = subprocess.run
+
+    def no_git(args: list[str], *a: object, **kw: object) -> object:
+        if args[:1] == ["git"] and "status" in args:
+            raise FileNotFoundError("git")
+        return real_run(args, *a, **kw)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(subprocess, "run", no_git)
+    (repo / ".trw" / "frameworks" / "FRAMEWORK.md").write_text("stale\n", encoding="utf-8")
+
+    result = update_project(repo)
+
+    assert not result["errors"], result["errors"]
+    assert any(w.startswith("git status unavailable") for w in result["warnings"])
+    assert ".trw/frameworks/FRAMEWORK.md" in result["updated"]

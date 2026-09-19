@@ -27,6 +27,8 @@ import pytest
 
 from trw_mcp.tools._ceremony_status import append_ceremony_status
 
+pytestmark = pytest.mark.perf
+
 
 def _build_warm_state(nudge_history_size: int = 50) -> dict[str, Any]:
     """Construct a realistic ceremony-state.json with ``nudge_history_size`` entries."""

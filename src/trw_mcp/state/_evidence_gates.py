@@ -198,6 +198,11 @@ def validate_verification_receipt(
     freshness = content_binding_is_current(receipt.content_binding, project_root)
     if freshness.state is not ReceiptState.VALID:
         return _result(freshness.state, freshness.reason_code, receipt_id=rid)
+    from trw_mcp.state._verification_artifact import verification_artifact_is_current
+
+    artifact = verification_artifact_is_current(receipt, project_root)
+    if artifact.state is not ReceiptState.VALID:
+        return _result(artifact.state, artifact.reason_code, receipt_id=rid)
     return _result(ReceiptState.VALID, "verification_recorded", receipt_id=rid)
 
 

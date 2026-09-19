@@ -181,6 +181,7 @@ def test_persisted_stale_timestamp_does_not_throttle(
     assert not result.get("throttled")
 
 
+@pytest.mark.perf
 def test_first_real_call_persists_timestamp(trw_dir: Path) -> None:
     """A non-throttled call writes auto_close_last_ts.json atomically."""
     from trw_mcp.state.analytics._stale_runs import (

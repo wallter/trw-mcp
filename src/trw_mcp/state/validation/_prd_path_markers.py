@@ -7,6 +7,10 @@ _GREENFIELD_WINDOW_CHARS = 16
 
 
 def has_trailing_planned_marker(content: str, token_end: int) -> bool:
-    """Return whether a supported marker occurs in the token's trailing window."""
+    """Accept an adjacent marker after spaces/tabs within the trailing window.
+
+    Do not borrow a marker from another token, line, or Markdown table cell.
+    The window is bounded before stripping to preserve its existing cutoff.
+    """
     window = content[token_end : token_end + _GREENFIELD_WINDOW_CHARS].casefold()
-    return any(marker in window for marker in _GREENFIELD_MARKERS)
+    return window.lstrip(" \t").startswith(_GREENFIELD_MARKERS)

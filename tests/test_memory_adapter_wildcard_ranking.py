@@ -107,9 +107,9 @@ class TestWildcardRanksByImpact:
         backend = MagicMock()
         backend.list_entries.return_value = _recency_ordered_entries()
 
-        # Patch rank_by_utility to raise; _rank_wildcard_by_utility must swallow
+        # Patch rank_targeted_by_utility to raise; _rank_wildcard_by_utility must swallow
         # it and return the unranked (recency) order instead of propagating.
-        with patch("trw_mcp.scoring.rank_by_utility", side_effect=RuntimeError("rank boom")):
+        with patch("trw_mcp.scoring.rank_targeted_by_utility", side_effect=RuntimeError("rank boom")):
             results = _patched_recall(backend, trw_dir, min_impact=0.0, max_results=10, compact=True)
 
         ids = [str(r.get("id")) for r in results]

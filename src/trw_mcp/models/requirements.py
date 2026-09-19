@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -191,6 +192,7 @@ class VerificationMapping(BaseModel):
     model_config = ConfigDict(strict=True, use_enum_values=True)
 
     requirement_id: str = Field(min_length=1)
+    requirement_kind: Literal["software_behavior", "non_behavioral"] = "software_behavior"
     acceptance_criteria: list[str] = Field(default_factory=list, min_length=1)
     method: VerificationMethod
     evidence_artifact: str = Field(min_length=1)

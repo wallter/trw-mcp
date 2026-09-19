@@ -7,6 +7,8 @@ The membership snapshot is fresh per call, not locked atomically with SQLite.
 from __future__ import annotations
 
 import sqlite3
+import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal
@@ -38,6 +40,7 @@ from trw_mcp.comms._peers_page import PageError, decode_cursor, pack_page
 from trw_mcp.comms._policy import AdmissionPolicy, count_refusal, ensure_group
 from trw_mcp.comms._scope import parse as parse_scope
 from trw_mcp.comms._store import StoreError, connect, effective_time, immediate, touch_group_time, validate_operation
+from trw_mcp.comms._wait import check_cancelled_cooperatively, run_bounded_wait
 
 if TYPE_CHECKING:
     from fastmcp import Context
@@ -46,6 +49,24 @@ if TYPE_CHECKING:
 
 PeerAction = Literal["enroll", "list", "heartbeat"]
 _logger = structlog.get_logger(__name__)
+
+#: One bounded wait per serving process (FR11). Non-blocking acquire; a second
+#: concurrent waiter refuses rather than queueing behind the first.
+_WAIT_GUARD = threading.Lock()
+#: The identity a wait was admitted under; any later attempt must match it.
+_WaitOwner = tuple[str, str, str, str, str | None]
+#: FR11 refusals are counted in the LEGACY persisted bucket so the stored
+#: vocabulary (and every old-version reader of the mailbox) is unchanged; the
+#: public ``reason`` stays precise. Closed by design: an unknown reason must
+#: still fail closed in ``count_refusal``. Trade-off accepted by the lead
+#: (board seq 148): the bucket is a compatible aggregate, not a diagnosis that
+#: an owner change or a disabled policy was malformed input.
+_PERSISTED_REFUSAL_BUCKET: dict[str, str] = {
+    "wait_disabled": "invalid_inbox_arguments",
+    "invalid_wait_seconds": "invalid_inbox_arguments",
+    "wait_requires_fresh_fetch": "invalid_inbox_arguments",
+    "wait_owner_changed": "invalid_inbox_arguments",
+}
 
 
 def _refused(reason: str) -> dict[str, Any]:
@@ -173,7 +194,7 @@ def _recorded_action(conn: sqlite3.Connection, group_id: str) -> Iterator[dict[s
     except (AdmissionError, EndpointError, PageError) as exc:
         conn.execute("ROLLBACK TO comms_action")
         reason = exc.refusal.value if isinstance(exc, EndpointError) else exc.reason
-        count_refusal(conn, group_id, reason)
+        count_refusal(conn, group_id, _PERSISTED_REFUSAL_BUCKET.get(reason, reason))
         rejection["reason"] = reason
     finally:
         conn.execute("RELEASE comms_action")
@@ -242,36 +263,70 @@ def send(
         return _exception_refused(exc)
 
 
-def inbox(
-    action: InboxAction = "fetch",
-    message_ids: list[str] | None = None,
-    cursor: str | None = None,
-    ctx: Context | None = None,
-) -> dict[str, Any]:
-    """Read pending traffic, acknowledge receipt, or inspect body-free facts."""
+def _validate_wait(
+    wait_seconds: object, action: InboxAction, message_ids: list[str] | None, cursor: str | None, config: TRWConfig
+) -> None:
+    """FR11 argument rules, applied AFTER closure and endpoint verification, in this order."""
+    # trw:intentional bool is an int subclass; a direct caller passing True must not become a 1 s wait.
+    positive = type(wait_seconds) is int and wait_seconds > 0
+    if positive and config.comms_wait_max_seconds == 0:
+        raise AdmissionError("wait_disabled")
+    if type(wait_seconds) is not int or not 0 <= wait_seconds <= config.comms_wait_max_seconds:
+        raise AdmissionError("invalid_wait_seconds")
+    if positive and (action != "fetch" or message_ids is not None or cursor is not None):
+        raise AdmissionError("wait_requires_fresh_fetch")
+
+
+def _inbox_attempt(
+    action: InboxAction,
+    message_ids: list[str] | None,
+    cursor: str | None,
+    ctx: Context | None,
+    wait_seconds: int,
+    owner: dict[str, _WaitOwner],
+) -> tuple[dict[str, Any], bool]:
+    """One complete ordinary inbox operation; the bool asks the caller to wait again.
+
+    Everything is re-resolved per call — effective config, binding, lease and
+    incarnation — so a wait observes changes exactly as a fresh fetch would.
+    """
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 
     config = get_config()
     if not config.comms_enabled:
-        return {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
+        return {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}, False
     if not config.ctx_isolation_enabled:
-        return _refused("context_isolation_disabled")
+        return _refused("context_isolation_disabled"), False
     try:
         snapshot = resolve_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
         if not snapshot.all_terminal:
             snapshot.assert_eligible()
+        binding = snapshot.binding
         result: dict[str, Any] = {}
         with (
             _operation(snapshot, config) as (conn, now, closed),
-            _recorded_action(conn, snapshot.binding.group_id) as rejection,
+            _recorded_action(conn, binding.group_id) as rejection,
         ):
             if snapshot.all_terminal or (closed and action != "status"):
                 raise AdmissionError("group_closed")
-            incarnation = receiver_incarnation(conn, snapshot.binding, now) if action in ("fetch", "ack") else None
+            incarnation = receiver_incarnation(conn, binding, now) if action in ("fetch", "ack") else None
+            _validate_wait(wait_seconds, action, message_ids, cursor, config)
+            if wait_seconds > 0:
+                # trw:intentional Owner is frozen by the FIRST attempt and compared BEFORE any message
+                # page is selected or prepared; a changed pin/run/incarnation cannot retarget a wait.
+                mine: _WaitOwner = (
+                    binding.group_id,
+                    binding.member_id,
+                    str(binding.run_path.resolve()),
+                    binding.session_id,
+                    incarnation,
+                )
+                if owner.setdefault("tuple", mine) != mine:
+                    raise AdmissionError("wait_owner_changed")
             result = inbox_action(
                 conn,
-                snapshot.binding,
+                binding,
                 action,
                 message_ids,
                 cursor,
@@ -280,9 +335,53 @@ def inbox(
                 limit=config.comms_fetch_max_items,
                 max_bytes=config.comms_response_max_bytes,
             )
-        return _refused(rejection["reason"]) if rejection else result
+        if rejection:
+            return _refused(rejection["reason"]), False
+        return result, wait_seconds > 0 and not result["items"]
     except (IdentityError, EndpointError, StoreError) as exc:
-        return _exception_refused(exc)
+        return _exception_refused(exc), False
+
+
+def inbox(
+    action: InboxAction = "fetch",
+    message_ids: list[str] | None = None,
+    cursor: str | None = None,
+    ctx: Context | None = None,
+    wait_seconds: int = 0,
+) -> dict[str, Any]:
+    """Read pending traffic, acknowledge receipt, or inspect body-free facts.
+
+    A positive ``wait_seconds`` (FR11) repeats an EMPTY fresh fetch inside this
+    process until a page arrives, a refusal occurs, or a monotonic retry
+    deadline passes. The first attempt is always ordinary; the payload shape and
+    every zero-wait byte are unchanged.
+    """
+    from trw_mcp.models.config import get_config
+
+    # The entry instant is captured now so the budget spans the first attempt too,
+    # but the deadline is only DERIVED after that attempt has admitted a bounded
+    # positive request: an unbounded integer must reach the ordinary refusal
+    # path (after closure) as invalid_wait_seconds, never overflow the clock here.
+    entry = time.monotonic()
+    owner: dict[str, _WaitOwner] = {}
+    payload, retry = _inbox_attempt(action, message_ids, cursor, ctx, wait_seconds, owner)
+    if type(wait_seconds) is int and wait_seconds > 0:
+        # Cooperative checkpoint after the first attempt of a positive wait, whatever
+        # it returned; zero-wait calls keep the pre-amendment path untouched.
+        check_cancelled_cooperatively()
+    if not retry:
+        return payload
+    if not _WAIT_GUARD.acquire(blocking=False):
+        return _refused("wait_already_active")
+    try:
+        return run_bounded_wait(
+            lambda: _inbox_attempt(action, message_ids, cursor, ctx, wait_seconds, owner),
+            last_empty=payload,
+            deadline=entry + wait_seconds,
+            interval_seconds=lambda: get_config().comms_wait_interval_ms / 1000.0,
+        )
+    finally:
+        _WAIT_GUARD.release()
 
 
 __all__ = [

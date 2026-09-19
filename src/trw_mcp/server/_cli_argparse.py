@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 
 from trw_mcp import __version__
+from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
 from trw_mcp.server._cli_argparse_project import add_project_subcommands
 
@@ -308,8 +309,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Emit the StaleRunReport as JSON instead of a human summary.",
     )
 
-    # dispatch — run another coding-agent CLI headlessly for a second-opinion audit.
-    _add_dispatch_subcommand(subparsers)
+    # dispatch — run another coding-agent CLI headlessly for a second-opinion
+    # audit. In a sibling module for the same 350 effective-LOC reason as the
+    # two blocks below: it is the widest flag set here and grew again with
+    # --with-trw / --no-with-trw (PRD-CORE-281-FR03).
+    add_dispatch_subcommand(subparsers)
 
     # Operational subcommands (build-release / channel-doctor / session-changelog
     # / tendencies / version-status / tier) live in a sibling module to keep this
@@ -317,95 +321,3 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     add_operational_subcommands(subparsers)
 
     return parser
-
-
-def _add_dispatch_subcommand(
-    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
-) -> None:
-    """Register the ``dispatch`` subcommand (cross-client second-opinion audits)."""
-    dispatch_parser = subparsers.add_parser(
-        "dispatch",
-        help="Run another coding-agent CLI (claude/codex/agy/opencode) headlessly for a second opinion",
-    )
-    dispatch_parser.add_argument(
-        "--client",
-        default=None,
-        help=(
-            "Target CLI: claude | codex | agy | opencode. "
-            "Optional: defaults to dispatch.default_client (or a --role default) "
-            "from .trw/config.yaml."
-        ),
-    )
-    dispatch_parser.add_argument(
-        "--prompt",
-        default=None,
-        help="The prompt/instruction for the child agent (or use --prompt-file).",
-    )
-    dispatch_parser.add_argument(
-        "--prompt-file",
-        dest="prompt_file",
-        default=None,
-        help="Read the prompt body from a file instead of --prompt.",
-    )
-    dispatch_parser.add_argument(
-        "--role",
-        default=None,
-        choices=["code-review", "design-audit", "architectural-audit", "adversarial-audit"],
-        help="Prepend a read-only second-opinion audit role preamble to the prompt.",
-    )
-    dispatch_parser.add_argument(
-        "--model",
-        default=None,
-        help="Optional model override for the child client.",
-    )
-    dispatch_parser.add_argument(
-        "--cwd",
-        default=None,
-        help="Working directory for the child process (default: current directory).",
-    )
-    dispatch_parser.add_argument(
-        "--timeout",
-        type=int,
-        default=None,
-        help=(
-            "Hard wall-clock timeout in seconds. Defaults to "
-            "dispatch.default_timeout_s from .trw/config.yaml (600 if unset)."
-        ),
-    )
-    dispatch_parser.add_argument(
-        "--output-file",
-        dest="output_file",
-        default=None,
-        help="Write the full DispatchResult JSON to this file.",
-    )
-    dispatch_parser.add_argument(
-        "--no-isolate",
-        dest="no_isolate",
-        action="store_true",
-        help="Do NOT isolate the child from host config/hooks/MCP (default: isolate).",
-    )
-    dispatch_parser.add_argument(
-        "--allow-writes",
-        dest="allow_writes",
-        action="store_true",
-        help="Allow the child agent to write/edit (default: read-only).",
-    )
-    dispatch_parser.add_argument(
-        "--pty",
-        action="store_true",
-        help="Wrap the child in a pseudo-TTY (use if stdout comes back empty, e.g. agy bug #76).",
-    )
-    dispatch_parser.add_argument(
-        "--verify-sandbox",
-        dest="verify_sandbox",
-        action="store_true",
-        help=(
-            "Run a live write-containment probe in a disposable fixture and report the verdict "
-            "as sandbox_verified (true/false/unverified). Costs one extra model call; off by default."
-        ),
-    )
-    dispatch_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Print the full DispatchResult as JSON instead of just the answer text.",
-    )

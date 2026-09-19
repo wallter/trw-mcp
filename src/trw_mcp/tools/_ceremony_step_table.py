@@ -253,6 +253,7 @@ MAINTENANCE_PROPAGATED_KEYS: tuple[str, ...] = (
     "embeddings_backfill_scheduled",
     "embeddings_backfill_deferred",
     "embeddings_backfill_not_performed",  # PRD-CORE-263 DEF-11
+    "embeddings_migration",
     # PRD-CORE-263-FR04: the three that were computed and dropped.
     "embedder_warmup_scheduled",
     "embeddings_coverage_ratio",

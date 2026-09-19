@@ -269,9 +269,11 @@ def find_clusters(
     if len(indexed) < min_cluster_size:
         return []
 
+    from trw_mcp.state._embedding_space import loaded_space_threshold
+
     result = complete_linkage_cluster(
         indexed,
-        similarity_threshold,
+        loaded_space_threshold(similarity_threshold),
         min_cluster_size,
         similarity_fn=cosine_similarity,
     )

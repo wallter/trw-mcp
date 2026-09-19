@@ -159,7 +159,7 @@ def test_no_redaction_ranking_or_persistence_logic_is_duplicated() -> None:
     """
     forbidden_names = {
         "_redact_pii",
-        "rank_by_utility",
+        "rank_targeted_by_utility",
         "store_learning",
         "search_patterns",
         "recall_learnings",

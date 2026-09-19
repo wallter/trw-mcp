@@ -1,23 +1,19 @@
-"""Agent-directory parity test (PRD-QUAL-073 FR13, Route B).
+"""Agent-directory parity test (PRD-QUAL-073 FR13; PRD-INFRA-190-FR01).
 
-``trw-mcp/src/trw_mcp/data/agents/`` is the source of truth. Bundled files
-carry ``{tool:trw_X}`` placeholders so they render correctly across client
-profiles; ``.claude/agents/`` is the dev-repo-local expansion (bare tool
-names, matching what ``trw_mcp.prompts.messaging._expand_tool_placeholders``
-would produce with ``profile=None``).
+``trw-mcp/src/trw_mcp/data/agents/`` is the source of truth and
+``.claude/agents/`` is its claude-code projection. The expectation is computed
+with ``materialize_agent(client="claude-code")`` -- the installer's own renderer
+-- and never with a local copy of it: four regex copies once rendered bare
+``trw_x`` names where the installer renders ``mcp__trw__trw_x``, so every
+update-project run and every sync undid the other.
 
-This test asserts every ``.claude/agents/*.md`` equals the marker-expansion
-*and* capability-tier resolution of its bundled counterpart, byte for byte
-(SHA-256) — the same two transforms ``scripts/sync-agents.py`` applies.
-
-Regenerate drift via ``scripts/sync-agents.py``.
+Regenerate drift with ``make client-mirror-sync``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import importlib.util
-import re
 from pathlib import Path
 
 import pytest
@@ -36,7 +32,6 @@ if not (REPO_ROOT / "scripts").is_dir():
 BUNDLED_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
 CLAUDE_DIR = REPO_ROOT / ".claude" / "agents"
 
-_TOOL_MARKER_RE = re.compile(r"\{tool:(trw_\w+)\}")
 _DEV_ONLY_AGENTS = {"trw-distill-sonnet-judge.md", "trw-distill-explorer.md"}
 
 _MANIFEST_SPEC = importlib.util.spec_from_file_location(
@@ -46,11 +41,6 @@ _MANIFEST_SPEC = importlib.util.spec_from_file_location(
 assert _MANIFEST_SPEC is not None and _MANIFEST_SPEC.loader is not None
 _MANIFEST_MODULE = importlib.util.module_from_spec(_MANIFEST_SPEC)
 _MANIFEST_SPEC.loader.exec_module(_MANIFEST_MODULE)
-
-
-def _expand_markers(text: str) -> str:
-    """Mirror of ``_expand_tool_placeholders(..., profile=None)`` behaviour."""
-    return _TOOL_MARKER_RE.sub(lambda m: m.group(1), text)
 
 
 def _sha256(data: bytes) -> str:
@@ -65,27 +55,44 @@ _AGENT_PARAMS = [pytest.param(name, id=name) for name in _agent_names()]
 
 
 @pytest.mark.parametrize("agent_name", _AGENT_PARAMS)
-def test_parity_after_marker_expansion(agent_name: str) -> None:
-    """``.claude/agents/X`` equals marker-expansion + tier resolution of the bundled copy."""
-    from trw_mcp.agents.tier_resolver import rewrite_model_line
+def test_parity_with_the_installer_rendering(agent_name: str) -> None:
+    """``.claude/agents/X`` equals what ``trw-mcp init`` writes for a Claude Code user."""
+    from trw_mcp.agents.tier_resolver import materialize_agent
 
     src = BUNDLED_DIR / agent_name
     dst = CLAUDE_DIR / agent_name
     assert src.is_file(), f"bundled source missing: {src}"
-    assert dst.is_file(), f".claude/agents copy missing: {dst} (run scripts/sync-agents.py)"
+    assert dst.is_file(), f".claude/agents copy missing: {dst} (run make client-mirror-sync)"
 
-    # .claude/agents/ mirrors what shipped Claude Code users get after
-    # ``trw-mcp init``: markers expanded AND capability tiers resolved to
-    # Claude shortnames (frontier->opus, balanced->sonnet, local-small->haiku).
-    # See PRD-INFRA-104 FR-04 and test_bundled_agents::
-    # test_audit_agent_prompt_pairs_match_root_sources (same two transforms).
-    expanded = _expand_markers(src.read_text(encoding="utf-8"))
-    expected = rewrite_model_line(expanded, client="claude-code").encode("utf-8")
-    actual = dst.read_bytes()
-    assert _sha256(actual) == _sha256(expected), (
-        f"{agent_name}: .claude/agents/ drifts from bundled source after marker "
-        "expansion + tier resolution. Run scripts/sync-agents.py to regenerate."
+    expected = materialize_agent(src.read_text(encoding="utf-8"), client="claude-code").encode("utf-8")
+    assert _sha256(dst.read_bytes()) == _sha256(expected), (
+        f"{agent_name}: .claude/agents/ drifts from materialize_agent(client='claude-code'). "
+        "Run make client-mirror-sync to regenerate."
     )
+
+
+def test_the_projection_uses_the_claude_code_tool_namespace() -> None:
+    """Non-vacuity: the rendering under test is the prefixed one, not bare names."""
+    rendered = "\n".join(p.read_text(encoding="utf-8") for p in sorted(CLAUDE_DIR.glob("trw-*.md")))
+    assert "mcp__trw__trw_checkpoint" in rendered
+
+
+def test_the_manifest_recorder_accepts_the_projection_and_not_bare_names() -> None:
+    """PRD-INFRA-190 Open Question 1, reproduced: the recorder's framework baseline
+    for an agent is the raw bundle plus ``materialize_agent``'s output, so a bare-name
+    rendering (the deleted ``scripts/sync-agents.py`` output) matched neither and was
+    classified as a user edit -- every ``.claude/agents`` key left ``content_hashes``.
+    """
+    import re
+
+    from trw_mcp.agents.tier_resolver import rewrite_model_line
+    from trw_mcp.bootstrap._version_manifest import _framework_agent_hashes
+
+    src = BUNDLED_DIR / "trw-reviewer.md"
+    baseline = _framework_agent_hashes(src, client="claude-code")
+    assert _sha256((CLAUDE_DIR / src.name).read_bytes()) in baseline
+    bare = re.sub(r"\{tool:(trw_\w+)\}", lambda m: m.group(1), src.read_text(encoding="utf-8"))
+    assert _sha256(rewrite_model_line(bare, client="claude-code").encode("utf-8")) not in baseline
 
 
 def test_counts_match() -> None:

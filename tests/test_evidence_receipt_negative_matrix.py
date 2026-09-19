@@ -74,7 +74,8 @@ class TestInvalidReceiptsFailTowardNoEvidence:
 
     def test_verification_negative_fixtures(self, tmp_path: Path) -> None:
         project, binding, _ = project_with_binding(tmp_path, {"src/a.py": "code"})
-        receipt = verification_receipt(binding, mapping_digest="m1")
+        receipt = verification_receipt(binding, mapping_digest="m1", project_root=project)
+        assert validate_verification_receipt(receipt, "m1", project).is_positive
         # Changed mapping.
         assert not validate_verification_receipt(receipt, "m2", project).is_positive
         # Stale content.

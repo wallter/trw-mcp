@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from trw_mcp.scoring import RecallContext, rank_by_utility
+from trw_mcp.scoring import RecallContext, rank_targeted_by_utility
 
 
 def _entry(entry_id: str, summary: str, *, detail: str = "", impact: float = 0.6) -> dict[str, object]:
@@ -32,7 +32,7 @@ def test_positive_context_cannot_override_stronger_query_match(weight: float) ->
     context = RecallContext(
         inferred_domains={"python"}, current_phase="IMPLEMENT", team="core", prd_knowledge_ids={"incidental"}
     )
-    result = rank_by_utility(
+    result = rank_targeted_by_utility(
         [incidental, relevant], ["read-only", "project", "tool", "discovery", "fails"], weight, context=context
     )
     assert result[0]["id"] == "specific", [(row["id"], row["combined_score"]) for row in result]
@@ -41,19 +41,19 @@ def test_positive_context_cannot_override_stronger_query_match(weight: float) ->
 def test_equal_query_evidence_retains_utility_tiebreak() -> None:
     weak = _entry("weak", "tool discovery", impact=0.1)
     strong = _entry("strong", "tool discovery", impact=0.9)
-    assert rank_by_utility([weak, strong], ["tool", "discovery"], 0.3)[0]["id"] == "strong"
+    assert rank_targeted_by_utility([weak, strong], ["tool", "discovery"], 0.3)[0]["id"] == "strong"
 
 
 def test_wildcard_retains_utility_order() -> None:
     weak = _entry("weak", "tool discovery", impact=0.1)
     strong = _entry("strong", "unrelated", impact=0.9)
-    assert rank_by_utility([weak, strong], [], 0.3)[0]["id"] == "strong"
+    assert rank_targeted_by_utility([weak, strong], [], 0.3)[0]["id"] == "strong"
 
 
 def test_negative_evidence_can_demote_query_match() -> None:
     failed = _entry("failed", "tool discovery", impact=0.9)
     alternative = _entry("alternative", "tool investigation", impact=0.6)
-    result = rank_by_utility(
+    result = rank_targeted_by_utility(
         [failed, alternative],
         ["tool", "discovery"],
         0.3,
@@ -79,21 +79,21 @@ def test_untrusted_private_fields_cannot_manufacture_semantic_evidence() -> None
     remote = _entry("remote", "apples", impact=1.0)
     remote.update(cosine=1.0, embedding_space="trusted", combined_score=1000.0, relevance=1000.0)
     with recall_signal_scope("network repair"):
-        assert rank_by_utility([remote, relevant], ["network", "repair"], 1.0)[0]["id"] == "relevant"
+        assert rank_targeted_by_utility([remote, relevant], ["network", "repair"], 1.0)[0]["id"] == "relevant"
 
 
 def test_candidate_order_does_not_change_distinct_relevance_winner() -> None:
     relevant = _entry("relevant", "network repair")
     incidental = _entry("incidental", "repair", impact=0.95)
     for entries in ([incidental, relevant], [relevant, incidental]):
-        assert rank_by_utility(entries, ["network", "repair"], 0.3)[0]["id"] == "relevant"
+        assert rank_targeted_by_utility(entries, ["network", "repair"], 0.3)[0]["id"] == "relevant"
 
 
 def test_known_invalid_anchor_qualifies_relevance_without_context() -> None:
     broken = _entry("broken", "network repair", impact=0.99)
     broken["anchor_validity"] = 0.0
     alternative = _entry("alternative", "network investigation")
-    assert rank_by_utility([broken, alternative], ["network", "repair"], 0.3)[0]["id"] == "alternative"
+    assert rank_targeted_by_utility([broken, alternative], ["network", "repair"], 0.3)[0]["id"] == "alternative"
 
 
 def test_unknown_cross_store_vectors_do_not_gain_common_dense_authority() -> None:
@@ -114,7 +114,7 @@ def test_unknown_cross_store_vectors_do_not_gain_common_dense_authority() -> Non
                 entry_id=str(candidate["id"]),
                 cosine=score,
             )
-        ranked = rank_by_utility([semantic, literal], ["network", "repair"], 1.0)
+        ranked = rank_targeted_by_utility([semantic, literal], ["network", "repair"], 1.0)
     assert ranked[0]["id"] == "literal"
     assert ranked[1]["combined_score"] == 0.0
 
@@ -140,6 +140,6 @@ def test_generation_qualified_cross_store_vectors_share_dense_authority() -> Non
                 entry_id=str(candidate["id"]),
                 cosine=score,
             )
-        ranked = rank_by_utility([semantic, literal], ["network", "repair"], 1.0)
+        ranked = rank_targeted_by_utility([semantic, literal], ["network", "repair"], 1.0)
     by_id = {row["id"]: row for row in ranked}
     assert by_id["semantic"]["combined_score"] > 0.0

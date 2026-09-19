@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import Context, FastMCP
+from pydantic import Field
 
 from trw_mcp.comms import DeliveryClass, InboxAction, MessageKind, PeerAction, inbox, peers, send
 
@@ -43,14 +44,17 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
         action: InboxAction = "fetch",
         message_ids: list[str] | None = None,
         cursor: str | None = None,
+        wait_seconds: Annotated[int, Field(strict=True)] = 0,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
         """Use when fetching messages, ACKing received IDs, or reading body-free status.
 
         Fetch/status return items and next_cursor; ACK takes message_ids only.
         Fresh fetch recovers pending traffic. Pull-only; ACK is not work completion.
+        wait_seconds>0 retries an empty fresh fetch in-process until the deadline.
         """
-        return inbox(action, message_ids, cursor, ctx)
+        # strict=True: the transport rejects bool/float/str before the handler (FR11).
+        return inbox(action, message_ids, cursor, ctx, wait_seconds)
 
 
 __all__ = ["register_swarm_comms_tools"]

@@ -175,6 +175,7 @@ class TestNoiseFilter:
         assert is_noise_summary("I read the file successfully") is True
         assert is_noise_summary("OAuth callbacks need explicit state validation") is False
 
+    @pytest.mark.perf
     @pytest.mark.unit
     def test_is_noise_perf(self) -> None:
         """Expanded noise detection stays within the PRD budget for 10k 500-char inputs."""
@@ -206,7 +207,7 @@ class TestNoiseFilter:
         for entry_file in entries_dir.glob("*.yaml"):
             try:
                 data = reader.read_yaml(entry_file)
-            except StateError:
+            except StateError:  # trw-fail-silent-allow: one unreadable entry in the live corpus must not abort this best-effort scan — skip that candidate
                 continue
             impact = float(str(data.get("impact", 0.5)))
             if impact < 0.5:

@@ -20,7 +20,7 @@ import structlog
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import AutoRecalledItemDict, RunStatusDict
-from trw_mcp.scoring import rank_by_utility
+from trw_mcp.scoring import rank_targeted_by_utility
 from trw_mcp.scoring._recall import RecallContext
 from trw_mcp.state.propensity_log import log_ranked_selections
 
@@ -97,7 +97,7 @@ def _phase_contextual_recall(
         from trw_mcp.tools._recall_assertion_verification import _verify_assertions
 
         ranked = _verify_assertions(
-            ar_entries, query_tokens, config, rank_by_utility, context=context, rank_always=True
+            ar_entries, query_tokens, config, rank_targeted_by_utility, context=context, rank_always=True
         )
     capped = ranked[: config.auto_recall_max_results]
     try:

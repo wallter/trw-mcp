@@ -56,6 +56,7 @@ def test_channel_lock_sequential_reacquire(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.perf
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="Windows advisory locking is a no-op — skip contention test",

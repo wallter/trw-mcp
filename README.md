@@ -126,6 +126,43 @@ With `TRW_OFFLINE=1` set, `session_start` makes **zero** huggingface.co calls â€
 
 Loading a model that ships its own Python modules is refused unless you set trw-memory's `embedding_trust_remote_code: true`; the shipped default model does not need it.
 
+### Cross-client messaging and dispatch (opt-in)
+
+To enable the existing collaboration tools, merge these **top-level** keys into
+this project's `.trw/config.yaml` (do not replace your other settings):
+
+```yaml
+comms_enabled: true
+dispatch_tools_exposed: true
+dispatch_child_trw_access: true
+```
+
+All three default to `false` and can be enabled independently:
+
+- `comms_enabled` enables peer enrollment, sending and inbox operations
+  (`trw_peers`, `trw_send`, `trw_inbox`). Messaging is pull-based: a message does
+  not wake an idle agent or guarantee when it will read the inbox.
+- `dispatch_tools_exposed` advertises the dispatch tool pack. Dispatch launches
+  another installed agent client; exposing the tools does not install that client
+  or supply its credentials.
+- `dispatch_child_trw_access` gives supported dispatched children only TRW's own
+  stdio MCP connection. It does not import host hooks or other client configuration.
+  For clients without an MCP argv channel, this config default falls back to no
+  TRW access; an explicit per-call `--with-trw` / `with_trw=True` request is refused.
+  Reviewer posture has its own restricted TRW connection and cannot be combined
+  with `with_trw=True`. Nested-launch guards remain in force.
+
+Restart each client's TRW MCP connection, or start a new client session, after
+changing configuration: an already-running server caches its settings. Environment
+variables such as `TRW_COMMS_ENABLED` override YAML; project settings override
+`~/.trw/config.yaml`. Set `TRW_CONFIG_STRICT=1` in the server's environment to fail
+closed on invalid configuration rather than falling back with a warning.
+
+To opt out again, set the corresponding keys to `false`, remove any conflicting
+environment overrides, and restart the connections. These switches do not grant
+permission to modify files, bypass review gates, or treat peer messages as trusted
+instructions.
+
 ### Environment-variable inventory
 
 | Variable | Purpose | Default |
@@ -222,6 +259,34 @@ trw-mcp version-status                # Compare package, framework, and live-ser
 trw-mcp export --format json          # Export learnings
 trw-mcp uninstall .                   # Remove TRW from a project
 ```
+
+### Headless Antigravity reviews
+
+Use TRW's dispatcher rather than invoking `agy -p` directly:
+
+```bash
+trw-mcp dispatch --client agy --cwd /path/to/repo \
+  --prompt-file /path/to/review.txt --no-with-trw --json --verify-sandbox
+```
+
+Select an installed model with `--model` if needed. Headless Antigravity can
+exit zero without doing a review when its tool permissions require a prompt.
+TRW classifies that empty/denied result as unsuccessful; inspect `ok`,
+`silence_reason`, and `sandbox_verified`, not only the child exit code.
+
+On macOS, TRW pairs its headless read permission allowance with a host
+`sandbox-exec` filesystem-write denial. Do not copy the allowance into a raw
+CLI invocation or disable permissions globally. Without the host wrapper, TRW
+withholds that allowance. `--verify-sandbox` costs an additional model call and
+checks file reads and attempted writes in a disposable fixture.
+
+This supports file-reading reviews, not unrestricted shell-based testing:
+Antigravity commands that initialize helper files can fail under write denial.
+The bound does **not** isolate network access or the client's existing MCP
+servers. Antigravity does not support TRW's enforced reviewer MCP posture or
+explicit child TRW injection; `--no-with-trw` prevents requesting injection,
+not loading the client's own configured servers. A review role prompt is not
+an additional security boundary.
 
 ## Development
 

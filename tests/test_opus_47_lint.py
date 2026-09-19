@@ -64,7 +64,7 @@ def _extract_frontmatter(path: Path) -> dict[str, Any] | None:
     block = body[:end]
     try:
         parsed = yaml.safe_load(block)
-    except yaml.YAMLError:
+    except yaml.YAMLError:  # trw-fail-silent-allow: unparseable frontmatter is treated the same as absent frontmatter — same contract as the two `return None` branches above
         return None
     if not isinstance(parsed, dict):
         return None
@@ -136,6 +136,7 @@ def test_missing_required_scan_tree_fails(tmp_path: Path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.perf
 def test_lint_runtime_under_2s() -> None:
     """NFR01: full frontmatter scan runs in under 2 seconds."""
     t0 = time.perf_counter()

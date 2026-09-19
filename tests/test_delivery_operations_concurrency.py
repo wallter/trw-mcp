@@ -59,6 +59,7 @@ def test_multi_process_single_claim_and_bounded_status_latency(tmp_path: Path, m
     assert ops[0].operation_id == did
 
 
+@pytest.mark.perf
 def test_status_read_p95_latency_under_50ms(tmp_path) -> None:
     """NFR03: 100 read-only status calls have p95 <= 50 ms on the repo fixture."""
     coord = make_coordinator(tmp_path)
@@ -75,6 +76,7 @@ def test_status_read_p95_latency_under_50ms(tmp_path) -> None:
     assert p95 <= 50.0, f"status p95={p95:.2f}ms"
 
 
+@pytest.mark.perf
 def test_duplicate_claim_read_p95_latency_under_100ms(tmp_path) -> None:
     """NFR03: 100 duplicate-claim reads have p95 <= 100 ms."""
     coord = make_coordinator(tmp_path)

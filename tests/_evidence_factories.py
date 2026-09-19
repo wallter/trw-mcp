@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -198,7 +199,16 @@ def verification_receipt(
     *,
     mapping_digest: str = "map1",
     outcome: VerificationOutcome = VerificationOutcome.PASS,
+    project_root: Path | None = None,
 ) -> VerificationReceipt:
+    """Build a legacy receipt by default, or explicitly create named proof bytes."""
+    artifact_path = ""
+    artifact_digest = ""
+    if project_root is not None:
+        artifact_path = "verification-proof.txt"
+        evidence = f"Recorded verification outcome: {outcome.value}\n".encode()
+        (project_root / artifact_path).write_bytes(evidence)
+        artifact_digest = hashlib.sha256(evidence).hexdigest()
     return VerificationReceipt(
         receipt_id="verify-test",
         run_id="run1",
@@ -208,4 +218,6 @@ def verification_receipt(
         completed_at="2026-07-10T00:00:00Z",
         content_binding=binding,
         outcome=outcome,
+        evidence_artifact_path=artifact_path,
+        evidence_artifact_digest=artifact_digest,
     )

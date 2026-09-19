@@ -141,6 +141,26 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
             '"env":{"TRW_SURFACE_ROLE":"reviewer"}}}}',
         ),
         reviewer_env={"TRW_SURFACE_ROLE": "reviewer"},
+        # with_trw POSTURE (PRD-CORE-281-FR02). The reviewer template above minus
+        # the role marking: same three flags, same evidence, same documented
+        # per-server key names — only the env payload is dropped, so the child
+        # gets an ORDINARY TRW session instead of the bounded reviewer surface.
+        #
+        # --setting-sources user and --strict-mcp-config are BOTH retained, and
+        # that is what keeps this an opt-in to ONE server rather than to the host:
+        # the child still loads no project settings and no hooks, and the only
+        # MCP server it sees is the one rendered here — this repository's
+        # .mcp.json cannot add one or replace ours.
+        trw_access_argv_template=(
+            "--setting-sources",
+            "user",
+            "--strict-mcp-config",
+            "--mcp-config",
+            # The env payload is the nested-launch marker and nothing else: it
+            # tells the child's TRW server it may not dispatch. It is a static
+            # literal, so no request field can drop or change it.
+            '{"mcpServers":{"trw":{"command":"{mcp_command}","args":{mcp_args},"env":{"TRW_DISPATCH_CHILD":"1"}}}}',
+        ),
         allow_writes_argv=("--permission-mode", "acceptEdits"),
         model_flag="--model",
         prompt_flag="-p",
@@ -173,6 +193,7 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
     # silently dropping the sandbox.
     "codex": ClientSpec(
         client_id="codex",
+        fresh_mcp_server_table=True,
         binary="codex",
         base_argv=("codex", "exec"),
         always_argv=("--skip-git-repo-check",),
@@ -205,7 +226,9 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # until the live FR-12 probe settles it.
         # TRUST RESIDUE, recorded rather than absorbed: the child therefore still
         # READS the reviewed repo's .codex/config.toml. Our -c flags win for the trw
-        # server (that is what -c is for), so the reviewer surface does not come from
+        # server only after _posture renames it to an unpredictable per-launch
+        # table and disables the legacy trw entry: dotted -c leaves otherwise
+        # MERGE with inherited enabled/cwd/env/tool filters. The surface does not come from
         # that file; but OTHER servers declared there still load. posture="reviewer"
         # bounds the TRW surface, not the child's whole tool inventory — do not
         # report it as full config isolation.
@@ -220,11 +243,62 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
             "mcp_servers.trw.enabled_tools={reviewer_tools}",
         ),
         reviewer_env={"TRW_SURFACE_ROLE": "reviewer"},
+        # with_trw POSTURE (PRD-CORE-281-FR02). The reviewer template minus the
+        # role env and minus the enabled_tools allowlist: the child gets an
+        # ORDINARY TRW session. ``-c mcp_servers.trw.command``/``args`` are the
+        # same documented dotted keys bootstrap/_codex.py::_trw_mcp_server_entry
+        # writes, so this composes verified facts rather than inventing a flag.
+        #
+        # NO --ignore-user-config here, for the SAME measured reason as the
+        # reviewer template (L-VupD): beside it, codex drops project MCP servers
+        # and the -c overrides fail with "invalid transport in mcp_servers.trw".
+        # TRUST RESIDUE, recorded rather than absorbed: the child therefore still
+        # reads the project's .codex/config.toml, so OTHER servers declared there
+        # load too. with_trw guarantees that TRW's server is present and comes
+        # from TRW's argv; it is NOT a claim of full config isolation.
+        # OPEN, stated rather than assumed: whether codex launches an MCP server
+        # INSIDE its --sandbox read-only confinement has not been measured here.
+        # If it does, the child's TRW server can recall but not persist, so treat
+        # a read-only with_trw codex child as read-mostly until that is probed.
+        trw_access_argv_template=(
+            "-c",
+            'mcp_servers.trw.command="{mcp_command}"',
+            "-c",
+            "mcp_servers.trw.args={mcp_args}",
+            # Nested-launch marker, same dotted env transport the reviewer
+            # template uses; last, so nothing in this template re-assigns it.
+            "-c",
+            'mcp_servers.trw.env.TRW_DISPATCH_CHILD="1"',
+            # Codex filters the CLI environment again for stdio MCP children.
+            "-c",
+            'mcp_servers.trw.env_vars=["TRW_PROJECT_ROOT"]',
+        ),
+        # The residue above, as DATA the runner can report (PRD-CORE-281-FR04).
+        # claude declares none because its with_trw template re-emits the whole
+        # of its isolation_argv bar the empty server map; codex's DROPS
+        # --ignore-user-config outright, which is a real and asymmetric loss.
+        trw_access_config_residue=(
+            "--ignore-user-config is NOT emitted under with_trw (codex rejects the -c transport "
+            "overrides beside it), so this child still reads the user's ~/.codex/config.toml and "
+            "the project's .codex/config.toml: a fresh per-launch TRW server comes from argv "
+            "and the legacy trw entry is disabled (incompatible legacy HTTP config fails closed), but OTHER "
+            "MCP servers declared in those files load as well. with_trw guarantees the presence "
+            "and provenance of the trw server, not full config isolation."
+        ),
         read_only_argv=("--sandbox", "read-only"),
         allow_writes_argv=("--sandbox", "workspace-write"),
         model_flag="--model",
         version_argv=("--version",),
         output_shape="json_lines",
+        # forbidden_tokens (REPAIR-DESIGN-01): ``-c``/``--config`` set ANY nested
+        # config key (sandbox_mode, approval_policy, mcp_servers.trw.env — the
+        # nested-launch marker and the reviewer role), so every raw override is
+        # refused, not a denylist of keys; the typed request fields are the
+        # supported way to choose a posture. ``-s``/``-a`` are codex's short
+        # aliases of ``--sandbox``/``--ask-for-approval``, already floored in their
+        # long form (codex-cli 0.153.4 ``codex --help``, measured 2026-09-05 by
+        # trw-loop). ``-s`` stays client-specific: it means a session to opencode.
+        forbidden_tokens=frozenset({"-c", "--config", "-s", "-a"}),
         credential_env=("OPENAI_API_KEY", "OPENAI_BASE_URL"),
         instruction_files=("AGENTS.md",),
         profile_id="codex",

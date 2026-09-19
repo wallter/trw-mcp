@@ -5,7 +5,7 @@ enforcement story the way a real project experiences it, driving the *installed
 hook scripts* (via `sh`, with realistic PreToolUse/PostToolUse stdin) and the
 real deliver-gate entry point — no mocks of the units under test:
 
-    enroll -> guarded edit is BLOCKED
+    enroll -> anchored edit is allowed by the metadata-only pre-write check
            -> unguarded edit is allowed
            -> post-edit falsifier failure records an open violation
            -> `trw_deliver`'s gate REFUSES while the violation is open
@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._intent_contract_hooks import isolate_fixture_pytest_plugins
 from trw_mcp.security.intent_contract.break_glass import mint_token
 from trw_mcp.security.intent_contract.enrollment import write_enrollment
 from trw_mcp.security.intent_contract.ledger import verify_override_ledger
@@ -123,6 +124,7 @@ def project(tmp_path: Path) -> Path:
     (root / "src" / "payments").mkdir(parents=True)
     (root / "tests").mkdir()
     (root / ".trw" / "contracts").mkdir(parents=True)
+    isolate_fixture_pytest_plugins(root)
 
     # A realistic src-layout project: conftest puts `src` on the path, exactly as
     # a real repo does, so the falsifier can import the code it guards.
@@ -206,6 +208,8 @@ def test_end_to_end_block_violate_refuse_breakglass_ledger(project: Path) -> Non
     )
     opened = open_violations(project)
     assert [v["claim_id"] for v in opened] == [_CLAIM_ID]
+    assert opened[0]["detail"].startswith("fail: exit 1:")
+    assert "INFRA_ERROR" not in post.stderr
 
     # 4. Delivery is refused while the violation is open — through the real gate.
     gates = dict(check_delivery_gates(None, FileStateReader(), trw_dir=project / ".trw"))
@@ -251,8 +255,15 @@ def test_restoring_the_defended_code_clears_the_violation_without_an_override(
     project: Path,
 ) -> None:
     """The intended resolution path: fix the code, the falsifier passes, the block lifts."""
+    defended = _run_hook(project, _POST_HOOK, _PROTECTED)
+    assert defended.returncode == 0, defended.stdout + defended.stderr
+    assert open_violations(project) == []
     (project / "src" / "payments" / "charge.py").write_text(_WEAKENED_SOURCE, encoding="utf-8")
-    assert _run_hook(project, _POST_HOOK, _PROTECTED).returncode == 2
+    weakened = _run_hook(project, _POST_HOOK, _PROTECTED)
+    assert weakened.returncode == 2, weakened.stdout + weakened.stderr
+    assert "INFRA_ERROR" not in weakened.stderr
+    assert len(open_violations(project)) == 1
+    assert open_violations(project)[0]["detail"].startswith("fail: exit 1:")
     assert intent_violation_gate_block(project) is not None
 
     (project / "src" / "payments" / "charge.py").write_text(_DEFENDED_SOURCE, encoding="utf-8")

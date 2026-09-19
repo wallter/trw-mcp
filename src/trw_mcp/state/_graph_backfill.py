@@ -126,6 +126,18 @@ def _save_state(trw_dir: Path, state: _SweepState) -> None:
         logger.debug("graph_backfill_state_write_failed", exc_info=True)
 
 
+def restart_graph_sweep(trw_dir: Path) -> None:
+    """Re-open a finished sweep from the top because the vectors under it changed.
+
+    Called when the stored vectors were re-embedded into the active space
+    (``_embedding_migration``): similarity edges computed before then could not
+    see those vectors, so the next deliver-time pass re-enriches the corpus.
+    Idempotent, and fail-open like every sweep-state write.
+    """
+    _save_state(trw_dir, _SweepState(None, False))
+    logger.info("graph_backfill_sweep_restarted", reason="vectors_reembedded")
+
+
 def backfill_graph(
     trw_dir: Path,
     *,

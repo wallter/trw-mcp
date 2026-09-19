@@ -23,6 +23,18 @@ Prefer MCP, especially in shell-less harnesses:
 Use `wait=True` only for short work; synchronous MCP dispatch is capped at 120 seconds. When MCP dispatch is unavailable
 and a shell exists, use `trw-mcp dispatch --help` and the CLI as a fallback rather than reproducing its mutable flags here.
 
+## When the dispatch tools are not listed
+
+They are masked, not missing. Both belong to a gated capability pack that no task type exposes, so a default session
+never lists them. Two ways through, in order of preference:
+
+- the operator sets `dispatch_tools_exposed: true` in `.trw/config.yaml` — persistent, and the client must refresh its
+  tool list (a reconnect if it cannot);
+- `trw_request_tool_access(tool_name="trw_dispatch", reason=...)` grants ONE call, so a launch-then-poll loop needs a
+  fresh grant before each `trw_dispatch_status` poll.
+
+Report which path you used. A reviewer-bounded session is refused both; do not treat that refusal as a transient error.
+
 ## Resolution and roles
 
 Omitted client, model, and timeout values resolve from `.trw/config.yaml`. Client precedence is explicit selection,

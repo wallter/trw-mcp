@@ -157,6 +157,7 @@ def test_resume_guards_all_fail_closed(tmp_path: Path) -> None:
 # --- NFR03 ------------------------------------------------------------------
 
 
+@pytest.mark.perf
 def test_resume_is_bounded_and_effect_free(tmp_path: Path) -> None:
     """NFR03: O(census) inside the busy-timeout budget, with zero product effects."""
     trw_dir = tmp_path / ".trw"

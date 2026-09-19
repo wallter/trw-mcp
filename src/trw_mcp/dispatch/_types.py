@@ -171,6 +171,17 @@ class DispatchRequest(BaseModel):
             "reviewer argv template, and refused with writes — see the model validator."
         ),
     )
+    with_trw: bool = Field(
+        default=False,
+        description=(
+            "Give the child its own stdio trw-mcp connection to THIS project, by rendering only "
+            "TRW's server into its argv (PRD-CORE-281-FR02). Isolation is client-specific: "
+            "Codex still loads user/project config and other MCP servers; a client with no "
+            "argv channel for an MCP transport is REFUSED "
+            "rather than launched with the flag dropped. Mutually exclusive with "
+            "posture='reviewer', which already injects the server under a bounded role."
+        ),
+    )
     use_pty: bool = Field(
         default=False,
         description="Opt-in pseudo-TTY wrapper (script) for clients that drop stdout in non-TTY contexts (agy bug #76).",
@@ -231,10 +242,19 @@ class DispatchRequest(BaseModel):
 
         The same ``security flag`` wording and the same ``=`` head split as the
         floor check, so callers and tests observe one error path.
+
+        A registered two-character flag ``-X`` is also refused in its ATTACHED
+        spelling (``-Xvalue``): argument parsers accept a short option's value
+        glued to it, so ``-sdanger-full-access`` means ``-s danger-full-access``
+        and a head split on ``=`` alone never sees it (REPAIR-DESIGN-01). The rule
+        is generic over the registry rather than a codex special case, so the
+        reported floor (``effective_forbidden_tokens``) stays the enforced floor.
         """
         own = effective_forbidden_tokens(self.client) - _FORBIDDEN_EXTRA_ARG_TOKENS
+        short = {tok for tok in own if len(tok) == 2 and tok[0] == "-" and tok[1] != "-"}
         for tok in self.extra_args:
-            if tok.split("=", 1)[0] in own:
+            attached = not tok.startswith("--") and tok[:2] in short
+            if tok.split("=", 1)[0] in own or attached:
                 raise ValueError(f"extra_args may not override security flag: {tok!r} (client {self.client!r})")
         return self
 
@@ -255,6 +275,23 @@ class DispatchRequest(BaseModel):
         if self.posture == "reviewer" and not self.read_only:
             raise ValueError(
                 "posture='reviewer' requires read_only=True (a reviewer may not modify the work it reviews)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _trw_access_is_not_a_second_mcp_source(self) -> DispatchRequest:
+        """Refuse ``with_trw`` together with ``posture='reviewer'``.
+
+        Both render an MCP server into the SAME argv slot, and the builder emits
+        exactly one. Silently preferring either would make the other a setting
+        the caller asked for and did not get — and in the reviewer direction that
+        is a bound the caller believes is present. Refused at construction, so
+        no launch path (CLI, MCP tool, background re-hydration) can build it.
+        """
+        if self.with_trw and self.posture == "reviewer":
+            raise ValueError(
+                "with_trw cannot be combined with posture='reviewer': the reviewer posture already "
+                "injects TRW's MCP server, bounded to the read-only reviewer surface. Choose one."
             )
         return self
 
@@ -322,6 +359,16 @@ class DispatchResult(BaseModel):
             "from the registry, never hardcoded: 'posture' alone records an intention, and an "
             "intention beside an argv with no MCP override is exactly the delivered-but-not-wired "
             "claim this field exists to expose. False on every default-posture run."
+        ),
+    )
+    trw_access_enforced: bool = Field(
+        default=False,
+        description=(
+            "True iff with_trw was requested AND this client's spec carried an argv template that "
+            "was rendered into the launched command — i.e. the child really did get a trw-mcp "
+            "connection to this project. Derived per run from the registry, never hardcoded: a "
+            "request flag alone records an intention, and an intention beside an argv with no MCP "
+            "entry is the delivered-but-not-wired claim this field exists to expose."
         ),
     )
     exit_code: int | None = Field(description="Child process exit code; None if it timed out before exiting.")

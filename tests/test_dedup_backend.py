@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tests._dedup_test_support import mock_embed, write_entry
+from tests._embedding_space_support import NEW_SPACE, SpaceProvider, stored
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.dedup import check_duplicate
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+
+@contextmanager
+def _in_loaded_space(backend: MagicMock) -> Iterator[None]:
+    """Every KNN hit's stored vector shares the loaded embedder's space."""
+    backend.get_vector_records.side_effect = lambda ids, namespace: {i: stored((1.0, 0.0), NEW_SPACE) for i in ids}
+    with patch("trw_mcp.state._memory_connection.get_initialized_embedder", return_value=SpaceProvider(NEW_SPACE)):
+        yield
 
 
 class TestCheckDuplicateViaBackend:
@@ -29,7 +40,10 @@ class TestCheckDuplicateViaBackend:
         mock_backend.search_vectors.return_value = [("L-active01", 0.0)]
         mock_backend.get.return_value = mock_entry
 
-        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+            _in_loaded_space(mock_backend),
+        ):
             result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
 
         assert result is not None
@@ -51,7 +65,10 @@ class TestCheckDuplicateViaBackend:
         mock_backend.search_vectors.return_value = [("L-obsolete01", 0.0)]
         mock_backend.get.return_value = mock_entry
 
-        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+            _in_loaded_space(mock_backend),
+        ):
             result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
 
         assert result is not None
@@ -75,7 +92,10 @@ class TestCheckDuplicateViaBackend:
         mock_backend.search_vectors.return_value = [("L-obsolete-merge", distance_for_090)]
         mock_backend.get.return_value = mock_entry
 
-        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+            _in_loaded_space(mock_backend),
+        ):
             result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
 
         assert result is not None
@@ -97,7 +117,10 @@ class TestCheckDuplicateViaBackend:
         mock_backend.search_vectors.return_value = [("L-active-merge", distance_for_090)]
         mock_backend.get.return_value = mock_entry
 
-        with patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend):
+        with (
+            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+            _in_loaded_space(mock_backend),
+        ):
             result = _check_duplicate_via_backend([0.0] * 384, tmp_path, 0.95, 0.85)
 
         assert result is not None

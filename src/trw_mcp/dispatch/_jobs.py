@@ -232,7 +232,7 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
             # Minimal env (NOT the full host os.environ): only the per-client
             # allowlist + PYTHONPATH/VIRTUAL_ENV the ``python -m`` import needs. This
             # keeps host secrets out of both the intermediate and the foreign agent.
-            env=build_runner_env(req.client, posture=req.posture),
+            env=build_runner_env(req.client, posture=req.posture, with_trw=req.with_trw),
         )
     except BaseException:
         try:

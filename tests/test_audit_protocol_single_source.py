@@ -180,6 +180,7 @@ def test_linter_reports_a_planted_duplicate(tmp_path: Path) -> None:
     assert _gate.run(check=True, surfaces=[owner]) == 0
 
 
+@pytest.mark.perf
 def test_linter_runtime_is_bounded() -> None:
     """NFR01: both linters together add under 5s to make bundle-sync."""
     started = time.perf_counter()

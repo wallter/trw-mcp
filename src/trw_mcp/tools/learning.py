@@ -23,7 +23,7 @@ from trw_mcp.models.typed_dicts import (
     LearnResultDict,
     RecallResultDict,
 )
-from trw_mcp.scoring import rank_by_utility
+from trw_mcp.scoring import rank_targeted_by_utility
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.analytics import (
     generate_learning_id,
@@ -463,7 +463,7 @@ def register_learning_tools(server: FastMCP) -> None:
             _adapter_recall=interactive_adapter,
             _adapter_update_access=adapter_update_access,
             _search_patterns=search_patterns,
-            _rank_by_utility=rank_by_utility,
+            _rank_by_utility=rank_targeted_by_utility,
             _collect_context=collect_context,
         )
         if retrieval_warning:

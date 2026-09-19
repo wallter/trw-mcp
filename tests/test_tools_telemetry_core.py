@@ -118,6 +118,7 @@ class TestLogToolCallDecorator:
         noop_tool2()
         assert _read_jsonl(run_dir / "meta" / "events.jsonl") == []
 
+    @pytest.mark.perf
     def test_t04_p95_overhead_under_5ms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """T-04: P95 overhead of the decorator on a no-op function is < 5 ms (100 iterations)."""
         # Production ``get_config()`` is cached. Constructing a fresh Pydantic

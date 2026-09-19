@@ -24,12 +24,12 @@ Cleanup therefore only ever considers on-disk entries that:
 3. match the artifact KIND (directory vs file) for that surface, **and**
 4. are NOT in the CURRENT bundled-name source.
 
-An entry meeting all four is a dropped TRW artifact and is removed. Anything
+An entry meeting all four is a dropped TRW artifact. Anything
 still bundled is left in place (the per-client installer refreshes it). This
 keeps the "never remove files that aren't derived from bundled names" invariant
-without needing to widen the managed-artifacts manifest schema. ``dry_run``
-reports ``would remove:<path>`` and deletes nothing (parity with
-``_remove_stale_set``).
+without needing to widen the managed-artifacts manifest schema. A whole entry is
+removed only when the pre-run manifest proves TRW wrote it (PRD-INFRA-190-FR06);
+otherwise it is kept and reported ``not_installer_owned``.
 
 File granularity inside a KEPT skill directory
 ----------------------------------------------
@@ -59,6 +59,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
+
+from ._version_migration_predecessors import preserve_unowned
 
 logger = structlog.get_logger(__name__)
 
@@ -241,8 +243,6 @@ def _remove_stale_files_in_kept_dir(
     bundled_keys: set[str],
     manifest_hashes: dict[str, str] | None,
     result: dict[str, list[str]],
-    *,
-    dry_run: bool,
 ) -> None:
     """Remove files TRW wrote into a KEPT skill dir that the bundle has since dropped.
 
@@ -279,12 +279,8 @@ def _remove_stale_files_in_kept_dir(
         except OSError:
             logger.debug(surface.log_event, path=str(path), exc_info=True)
             continue
-        if dry_run:
-            result.setdefault("updated", []).append(f"would remove:{path}")
-            continue
         try:
             path.unlink()
-            result.setdefault("updated", []).append(f"removed:{path}")
         except OSError:
             logger.debug(surface.log_event, path=str(path), exc_info=True)
 
@@ -305,7 +301,6 @@ def _remove_stale_client_surface(
     target_dir: Path,
     result: dict[str, list[str]],
     *,
-    dry_run: bool,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     """Remove stale trw-prefixed artifacts from a single client mirror surface."""
@@ -335,7 +330,7 @@ def _remove_stale_client_surface(
         # single file dropped from a kept skill is invisible to every guard above.
         if name in bundled:
             if surface.is_dir_artifact and bundled_keys:
-                _remove_stale_files_in_kept_dir(surface, entry, bundled_keys, manifest_hashes, result, dry_run=dry_run)
+                _remove_stale_files_in_kept_dir(surface, entry, bundled_keys, manifest_hashes, result)
             continue
         # PRD-FIX-139-FR03: a mirror follows its source. A skill dir absent
         # from the bundle but still present under the canonical
@@ -344,15 +339,13 @@ def _remove_stale_client_surface(
         if surface.is_dir_artifact and (target_dir / ".claude" / "skills" / name).is_dir():
             result.setdefault("preserved", []).append(f"preserved:{entry} (mirror of a live .claude/skills source)")
             continue
-        if dry_run:
-            result.setdefault("updated", []).append(f"would remove:{entry}")
+        if preserve_unowned(entry, manifest_hashes, target_dir, result):
             continue
         try:
             if surface.is_dir_artifact:
                 shutil.rmtree(entry)
             else:
                 entry.unlink()
-            result.setdefault("updated", []).append(f"removed:{entry}")
         except OSError:
             logger.debug(surface.log_event, path=str(entry), exc_info=True)
 
@@ -431,7 +424,6 @@ def _codex_manifest_hashes(target_dir: Path, prev_hashes: dict[str, str] | None 
 def _remove_stale_client_artifacts(
     target_dir: Path,
     result: dict[str, list[str]],
-    dry_run: bool = False,
     *,
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
@@ -449,4 +441,4 @@ def _remove_stale_client_artifacts(
     user file is deleted).
     """
     for surface in _CLIENT_ARTIFACT_SURFACES:
-        _remove_stale_client_surface(surface, target_dir, result, dry_run=dry_run, manifest_hashes=manifest_hashes)
+        _remove_stale_client_surface(surface, target_dir, result, manifest_hashes=manifest_hashes)

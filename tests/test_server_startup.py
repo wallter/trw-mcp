@@ -35,6 +35,7 @@ class TestModuleImports:
 
         assert trw_mcp.server is not None
 
+    @pytest.mark.perf
     def test_import_server_package_in_clean_interpreter(self, tmp_path: Path) -> None:
         """Catch fresh-process circular imports that in-process pytest can mask."""
         env = os.environ.copy()
@@ -51,6 +52,7 @@ class TestModuleImports:
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "ok"
 
+    @pytest.mark.perf
     def test_import_never_writes_to_the_caller_cwd(self, tmp_path: Path) -> None:
         """Importing ``trw_mcp.server`` must not create ``.trw/`` as a side effect.
 

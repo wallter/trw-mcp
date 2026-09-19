@@ -105,7 +105,7 @@ def execute_recall(
         _collect_context: Injected context collector.
     """
     # Resolve injected deps with fallbacks
-    from trw_mcp.scoring import rank_by_utility as _default_rank
+    from trw_mcp.scoring import rank_targeted_by_utility as _default_rank
     from trw_mcp.state.memory_adapter import recall_learnings as _default_recall
     from trw_mcp.state.memory_adapter import update_access_tracking as _default_access
     from trw_mcp.state.recall_search import collect_context as _default_collect
@@ -383,24 +383,24 @@ def _dedup_ranked_learnings(
 ) -> tuple[list[dict[str, object]], int]:
     """Collapse near-duplicate recall entries (F-DEDUP-001).
 
-    Exact-content collapse always runs; a cosine pass runs additionally when the
-    backend exposes stored embeddings. Both fail open — a backend error never
-    blocks recall, the entries are returned unchanged.
+    Exact-content collapse always runs; a cosine pass runs additionally over the
+    stored embeddings encoded in the loaded embedder's space. Both fail open — a
+    backend error never blocks recall, the entries are returned unchanged.
     """
-    from trw_mcp.tools._recall_dedup import dedup_ranked_learnings
+    from trw_mcp.state._embedding_space import loaded_space_threshold, space_gated_reader
+    from trw_mcp.tools._recall_dedup import DEFAULT_COSINE_DUP_THRESHOLD, dedup_ranked_learnings
 
     embeddings_fn: Callable[[list[str]], dict[str, list[float]]] | None = None
     try:
         from trw_mcp.state.memory_adapter import get_backend
 
-        backend = get_backend(trw_dir)
-        get_stored = getattr(backend, "get_stored_embeddings", None)
-        if callable(get_stored):
-            embeddings_fn = get_stored
+        # Stored vectors are compared only within the loaded embedder's space.
+        embeddings_fn = space_gated_reader(get_backend(trw_dir), surface="trw_recall_dedup")
     except Exception:  # justified: fail-open, embedding access must not block recall
         logger.debug("recall_dedup_backend_unavailable", exc_info=True)
 
-    return dedup_ranked_learnings(ranked_learnings, embeddings_fn=embeddings_fn)
+    threshold = loaded_space_threshold(DEFAULT_COSINE_DUP_THRESHOLD)  # in the loaded embedder's scale
+    return dedup_ranked_learnings(ranked_learnings, embeddings_fn=embeddings_fn, cosine_threshold=threshold)
 
 
 def _apply_recall_token_budget(

@@ -197,6 +197,7 @@ def test_duplicate_yaml_keys_are_rejected_not_crash() -> None:
     assert err is not None and "schema required" in err
 
 
+@pytest.mark.perf
 def test_yaml_anchor_alias_bomb_is_bounded() -> None:
     # billion-laughs style anchor expansion. ruamel's safe loader must not blow
     # up CPU/memory; bound with a generous timeout and assert clean rejection.

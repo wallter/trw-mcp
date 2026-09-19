@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "3.1.0"
+version = "4.0.0"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -29,6 +29,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    # Direct floor (PRD-CORE-274 Amendment 01, FR11): comms/_wait.py imports
+    # `anyio.NoEventLoopError`, first exposed in 4.11.0 (measured 4.5.0–4.10.0 lack
+    # it and raise a bare RuntimeError). Resolutions on AnyIO 4.5–4.10 are no
+    # longer supported; the catch is deliberately not widened to compensate.
+    "anyio>=4.11.0",
     "cryptography>=48.0.1",
     "fastmcp>=3.2.0,<4.0.0",
     "httpx>=0.27.0",
@@ -60,7 +65,7 @@ dependencies = [
     # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
-    "trw-memory>=0.19.0,<1.0.0",
+    "trw-memory>=1.0.0,<2.0.0",
     "typing_extensions>=4.6.0",
 ]
 
@@ -128,7 +133,7 @@ Homepage = "https://trwframework.com"
 Documentation = "https://trwframework.com/docs"
 Repository = "https://github.com/wallter/trw-mcp"
 Issues = "https://github.com/wallter/trw-mcp/issues"
-Changelog = "https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md"
+Changelog = "https://trwframework.com/docs/changelog"
 
 [project.scripts]
 trw-mcp = "trw_mcp.server:main"
@@ -142,7 +147,7 @@ trw-mcp = "trw_mcp.server:main"
 # fn is an observe-mode stub, capability_scope not wired, kill switches default
 # off) and cite internal PRD paths. Found in pre-release review, 2026-09-11.
 packages = ["src/trw_mcp"]
-exclude = ["**/CLAUDE.md", "**/AGENTS.md"]
+exclude = ["/CHANGELOG.md", "**/CLAUDE.md", "**/AGENTS.md"]
 
 [tool.hatch.build.targets.sdist]
 # Defense in depth alongside .gitignore: hatchling honors the package-local
@@ -150,6 +155,7 @@ exclude = ["**/CLAUDE.md", "**/AGENTS.md"]
 # monorepo-internal files must be excluded explicitly here too — they must
 # never ship in the published sdist or the public subtree-split mirror.
 exclude = [
+  "/CHANGELOG.md",
   "meta",
   "*.jsonl",
   "uv.lock",
@@ -277,7 +283,7 @@ unfixable = ["F841"]
 "src/trw_mcp/tools/learning.py" = ["C901"]
 # correlate_recalls and _get_last_active_run are algorithmic — complexity is inherent
 "src/trw_mcp/scoring/_correlation.py" = ["C901"]
-# rank_by_utility applies 10+ scoring boosts in sequence — structural complexity
+# rank_targeted_by_utility applies 10+ scoring boosts in sequence — structural complexity
 "src/trw_mcp/scoring/_recall.py" = ["C901"]
 # _populate_from_yaml parses multi-format YAML schemas — structural complexity
 "src/trw_mcp/state/artifact_scanner.py" = ["C901"]
@@ -345,6 +351,7 @@ markers = [
     "e2e: End-to-end workflow tests covering full phase sequences",
     "slow: Tests taking >5s individually (bootstrap, consolidation)",
     "smoke: Minimal sanity check tests",
+    "perf: asserts a wall-clock or CPU budget; result depends on machine load",
 ]
 timeout = 120
 

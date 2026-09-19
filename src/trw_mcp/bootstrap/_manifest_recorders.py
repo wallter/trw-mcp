@@ -150,3 +150,31 @@ def collect_manifest_content_hashes(
         except Exception:  # justified: a broken recorder must not abort the manifest write
             logger.warning("manifest_recorder_failed", recorder=recorder.name, exc_info=True)
     return content_hashes
+
+
+def dropped_manifest_keys(
+    target_dir: Path, prev_hashes: dict[str, str] | None, content_hashes: dict[str, str]
+) -> list[str]:
+    """One ``manifest_key_dropped`` warning per prior key whose file survives unrecorded (PRD-INFRA-190 FR07).
+
+    A recorder omits a key for exactly two reasons, and the bytes tell them
+    apart: content that moved off TRW's own last write is ``user_edited``;
+    content still equal to that write lost its framework baseline
+    (``baseline_unavailable``). Silence here is how eleven agent hashes vanished.
+    """
+    import hashlib
+
+    from ._version_manifest import _manifest_key_path
+
+    warnings: list[str] = []
+    for key, recorded in sorted((prev_hashes or {}).items()):
+        path = target_dir / _manifest_key_path(key)
+        if key in content_hashes or not path.is_file():
+            continue
+        try:
+            edited = hashlib.sha256(path.read_bytes()).hexdigest() != recorded
+        except OSError:  # an unreadable file cannot be hashed, so it has no baseline either
+            edited = False
+        reason = "user_edited" if edited else "baseline_unavailable"
+        warnings.append(f"manifest_key_dropped: {key} ({reason})")
+    return warnings

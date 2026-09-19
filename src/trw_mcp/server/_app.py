@@ -21,6 +21,7 @@ from trw_mcp.meta_tune.boot_checks import validate_defaults as validate_meta_tun
 from trw_mcp.middleware.ceremony import CeremonyMiddleware
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._boot_timeline import emit_boot_phase
+from trw_mcp.server._eof_cancel import install_eof_cancel
 
 logger = structlog.get_logger(__name__)
 
@@ -347,7 +348,7 @@ def create_app(
         ``BootDeferralMiddleware``, so the object this returns is the one the
         FR01/FR02 contract tests drive the ordering invariant through.
     """
-    return FastMCP(
+    app = FastMCP(
         "trw",
         # PRD-FIX-141-FR01: without this the handshake advertises FastMCP's own
         # version as ``serverInfo.version``, so every client-side trw-mcp version
@@ -357,6 +358,10 @@ def create_app(
         middleware=middleware if middleware is not None else _build_middleware(),  # type: ignore[arg-type]
         lifespan=_build_sync_lifespan,
     )
+    # PRD-CORE-274 Amendment 01 (FR11): on FastMCP 3.x a client disconnect must
+    # cancel in-flight handlers (a bounded inbox wait) instead of joining them.
+    install_eof_cancel(app)
+    return app
 
 
 # ── Module-level singletons ─────────────────────────────────────────

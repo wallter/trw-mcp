@@ -235,6 +235,7 @@ def test_maintain_verify_cli_is_registered_and_dispatches(
     assert entry.verification_status == "stale"
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 def test_bulk_sweep_1000_entries(backend: SQLiteBackend, project: Path) -> None:
     """NFR01: 1000 entries-with-assertions sweep in under 30s (measured)."""

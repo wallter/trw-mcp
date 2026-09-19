@@ -29,14 +29,23 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from trw_memory.storage.interface import EntryCursor
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
 
     from trw_mcp.state._embedding_repair import RepairResult
 
-__all__ = ["repair_embeddings"]
+__all__ = ["open_vector_backend", "repair_embeddings", "validated_memory_db"]
 
 
-def repair_embeddings(trw_dir: Path, *, max_entries: int = 100, after: EntryCursor | None = None) -> RepairResult:
-    """Explicit maintenance-only page; no migration, recovery or singleton DB reuse."""
+def validated_memory_db(trw_dir: Path) -> Path:
+    """Return the project's existing ``memory.db`` once it is safe to repair.
+
+    Checks, before any model or writer backend is touched: *trw_dir* is the
+    project this process resolves (so its model configuration applies), RBAC
+    grants read and write on ``default``, and the database already exists at the
+    current schema version. Opening it never creates or migrates anything.
+    Shared by the explicit command and the automatic background migration
+    (``_embedding_migration``), so both refuse the same stores.
+    """
     import sqlite3
     from contextlib import closing
 
@@ -44,12 +53,8 @@ def repair_embeddings(trw_dir: Path, *, max_entries: int = 100, after: EntryCurs
     from trw_memory.security.rbac import Permission, require_namespace_permission
     from trw_memory.storage._schema import SCHEMA_VERSION
 
-    from trw_mcp.state import _memory_connection as _conn
-    from trw_mcp.state._embedding_repair import repair_page
     from trw_mcp.state._paths import resolve_trw_dir
 
-    if type(max_entries) is not int or not 1 <= max_entries <= 1000:
-        raise ValueError("max_entries must be between 1 and 1000")
     target = trw_dir.resolve()
     if target != resolve_trw_dir().resolve():
         raise ValueError("Run embedding repair from the target project so its model configuration is used")
@@ -65,6 +70,24 @@ def repair_embeddings(trw_dir: Path, *, max_entries: int = 100, after: EntryCurs
         raise RuntimeError("Cannot read existing memory database for repair") from exc
     if version != SCHEMA_VERSION:
         raise ValueError("Update the memory schema separately before embedding repair")
+    return db_path
+
+
+def open_vector_backend(db_path: Path, dimensions: int) -> SQLiteBackend:
+    """A private writer backend on *db_path* -- never the process singleton."""
+    from trw_mcp.state import _memory_connection as _conn
+
+    return _conn.SQLiteBackend(db_path, dim=dimensions)
+
+
+def repair_embeddings(trw_dir: Path, *, max_entries: int = 100, after: EntryCursor | None = None) -> RepairResult:
+    """Explicit maintenance-only page; no migration, recovery or singleton DB reuse."""
+    from trw_mcp.state import _memory_connection as _conn
+    from trw_mcp.state._embedding_repair import repair_page
+
+    if type(max_entries) is not int or not 1 <= max_entries <= 1000:
+        raise ValueError("max_entries must be between 1 and 1000")
+    db_path = validated_memory_db(trw_dir)
     provider = _conn.get_embedder()
     space = provider_embedding_space(provider)
     if provider is None or space is None:
@@ -78,7 +101,7 @@ def repair_embeddings(trw_dir: Path, *, max_entries: int = 100, after: EntryCurs
             "failed": 0,
             "next_cursor": None,
         }
-    backend = _conn.SQLiteBackend(db_path, dim=space.dimensions)
+    backend = open_vector_backend(db_path, space.dimensions)
     try:
         return repair_page(backend, provider, max_entries=max_entries, after=after)
     finally:

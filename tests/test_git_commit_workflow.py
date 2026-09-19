@@ -176,6 +176,7 @@ def test_validation_receipt_must_bind_final_post_edit_bytes(tmp_path: Path) -> N
 
 def test_validation_binding_rejects_incorrect_final_file_size(tmp_path: Path) -> None:
     from trw_mcp.models._evidence_core import ContentBinding, ContentEntry, EntryState, compute_manifest_digest
+    from trw_mcp.state._evidence_identity import resolve_project_identity
     from trw_mcp.state.git_commit_workflow import _binding_matches_final_content
 
     repo = tmp_path / "repo"
@@ -187,7 +188,7 @@ def test_validation_binding_rejects_incorrect_final_file_size(tmp_path: Path) ->
     binding = ContentBinding(
         scope_id="scope",
         scope_digest="scope-digest",
-        project_identity="repo",
+        project_identity=resolve_project_identity(repo),
         entries=(entry,),
         manifest_digest=compute_manifest_digest((entry,)),
     )

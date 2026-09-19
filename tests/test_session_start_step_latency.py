@@ -161,6 +161,7 @@ def test_finalize_and_payload_trim_are_included_in_latency(
     assert float(durations["total"]) >= float(durations["finalize"]) + 25.0
 
 
+@pytest.mark.perf
 def test_session_start_warm_p95_under_5_seconds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -291,6 +292,7 @@ def _join_background(timeout: float = 120.0) -> None:
     steps._DRAIN_THREAD = None
 
 
+@pytest.mark.perf
 @pytest.mark.timeout(600)
 def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Path) -> None:
     """The bound holds at K in {0, 5, 50} and its spread does not grow with K.

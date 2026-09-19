@@ -25,7 +25,7 @@ from pathlib import Path
 
 from trw_mcp.models.requirements import ValidationResultV2
 
-VALIDATOR_VERSION = "prd-quality-v2-pure:2026-07-10"
+VALIDATOR_VERSION = "prd-quality-v2-pure:2026-09-18-requirement-kind"
 CACHE_SCHEMA_VERSION = 2
 DEFAULT_MAX_ENTRIES = 512
 DEFAULT_MAX_TOTAL_BYTES = 64 * 1024 * 1024

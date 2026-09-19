@@ -212,7 +212,9 @@ def _build_agent_content(
     Args:
         tier: Render tier (T1, T2, T3) — content depth, not the model tier.
         sidecar_data: Parsed sidecar or None for placeholder mode.
-        generated_at: ISO timestamp string (minute-truncated).
+        generated_at: ISO timestamp string (minute-truncated). Recorded in
+            channel state only: a wall clock in the file made every update
+            rewrite it (PRD-INFRA-190 FR03).
         sidecar_sha: SHA of the sidecar (or "none" if absent).
 
     Returns:
@@ -245,7 +247,6 @@ model: {_MODEL_CAPABILITY_TIER}
 generated_by: trw-mcp
 channel_id: {AG02_CHANNEL_ID}
 sha: {sidecar_sha}
-ts: {generated_at}
 tier: {tier}
 regenerate: trw-mcp init-project --client antigravity-cli
 -->

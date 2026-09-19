@@ -390,7 +390,7 @@ class TestOllamaLLMClient:
             status_code = 200
 
             def json(self):
-                return {"response": "Hello from local Ollama"}
+                return {"message": {"role": "assistant", "content": "Hello from local Ollama"}}
 
         call_args = []
 
@@ -406,9 +406,10 @@ class TestOllamaLLMClient:
         result = await client.ask("Who are you?")
         assert result == "Hello from local Ollama"
         assert len(call_args) == 1
-        assert "api/generate" in call_args[0][0]
+        assert "api/chat" in call_args[0][0]
         assert call_args[0][1]["model"] == "qwen2.5-coder"
-        assert call_args[0][1]["prompt"] == "Who are you?"
+        assert call_args[0][1]["messages"][-1] == {"role": "user", "content": "Who are you?"}
+        assert call_args[0][1]["stream"] is False
 
     @pytest.mark.asyncio
     async def test_ask_routes_to_ollama_via_env_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -419,7 +420,7 @@ class TestOllamaLLMClient:
             status_code = 200
 
             def json(self):
-                return {"response": "Fallback Ollama response"}
+                return {"message": {"role": "assistant", "content": "Fallback Ollama response"}}
 
         async def mock_post(self_client, url, json, **kwargs):
             return MockResponse()

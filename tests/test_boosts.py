@@ -1,4 +1,4 @@
-"""Tests for contextual boost dimensions in rank_by_utility() (PRD-CORE-116, RA2)."""
+"""Tests for contextual boost dimensions in rank_targeted_by_utility() (PRD-CORE-116, RA2)."""
 
 from __future__ import annotations
 
@@ -31,14 +31,14 @@ def _base_entry(
 
 def test_domain_match_1_4() -> None:
     """Entry with domain=['auth'], context active_domains=['auth'] gets ~1.4x preference, not manufactured relevance."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(domain=["auth"])
     ctx = RecallContext(active_domains=["auth"])
     no_ctx = RecallContext()
 
-    result_ctx = rank_by_utility([entry], ["auth"], 0.3, context=ctx)
-    result_no = rank_by_utility([entry], ["auth"], 0.3, context=no_ctx)
+    result_ctx = rank_targeted_by_utility([entry], ["auth"], 0.3, context=ctx)
+    result_no = rank_targeted_by_utility([entry], ["auth"], 0.3, context=no_ctx)
 
     assert result_ctx[0]["combined_score"] == result_no[0]["combined_score"] == 0.0
     score_ctx = result_ctx[0]["preference_score"]
@@ -52,14 +52,14 @@ def test_domain_match_1_4() -> None:
 
 def test_phase_match_1_3() -> None:
     """Entry with phase_affinity=['IMPLEMENT'], context current_phase='IMPLEMENT' gets ~1.3x preference, not manufactured relevance."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(phase_affinity=["IMPLEMENT"])
     ctx = RecallContext(current_phase="IMPLEMENT")
     no_ctx = RecallContext()
 
-    result_ctx = rank_by_utility([entry], ["implement"], 0.3, context=ctx)
-    result_no = rank_by_utility([entry], ["implement"], 0.3, context=no_ctx)
+    result_ctx = rank_targeted_by_utility([entry], ["implement"], 0.3, context=ctx)
+    result_no = rank_targeted_by_utility([entry], ["implement"], 0.3, context=no_ctx)
 
     assert result_ctx[0]["combined_score"] == result_no[0]["combined_score"] == 0.0
     score_ctx = float(str(result_ctx[0]["preference_score"]))
@@ -69,14 +69,14 @@ def test_phase_match_1_3() -> None:
 
 def test_team_match_1_2() -> None:
     """Entry team_origin='team-a', context team_id='team-a' gets ~1.2x boost."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(team_origin="team-a")
     ctx = RecallContext(team_id="team-a")
     no_ctx = RecallContext()
 
-    result_ctx = rank_by_utility([entry], [], 0.3, context=ctx)
-    result_no = rank_by_utility([entry], [], 0.3, context=no_ctx)
+    result_ctx = rank_targeted_by_utility([entry], [], 0.3, context=ctx)
+    result_no = rank_targeted_by_utility([entry], [], 0.3, context=no_ctx)
 
     score_ctx = float(str(result_ctx[0]["combined_score"]))
     score_no = float(str(result_no[0]["combined_score"]))
@@ -85,19 +85,19 @@ def test_team_match_1_2() -> None:
 
 def test_anchor_validity_zero_excludes() -> None:
     """anchor_validity=0.0 → combined_score=0.0 (excluded)."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(anchor_validity=0.0)
     ctx = RecallContext(current_phase="IMPLEMENT")
 
-    result = rank_by_utility([entry], ["test"], 0.3, context=ctx)
+    result = rank_targeted_by_utility([entry], ["test"], 0.3, context=ctx)
     score = float(str(result[0]["combined_score"]))
     assert score == 0.0
 
 
 def test_all_combined() -> None:
     """Multiple boosts multiply together."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(
         domain=["auth"],
@@ -111,8 +111,8 @@ def test_all_combined() -> None:
     )
     no_ctx = RecallContext()
 
-    result_ctx = rank_by_utility([entry], ["auth"], 0.3, context=ctx)
-    result_no = rank_by_utility([entry], ["auth"], 0.3, context=no_ctx)
+    result_ctx = rank_targeted_by_utility([entry], ["auth"], 0.3, context=ctx)
+    result_no = rank_targeted_by_utility([entry], ["auth"], 0.3, context=no_ctx)
 
     assert result_ctx[0]["combined_score"] == result_no[0]["combined_score"] == 0.0
     score_ctx = float(str(result_ctx[0]["preference_score"]))
@@ -123,14 +123,14 @@ def test_all_combined() -> None:
 
 def test_no_context_backward_compat() -> None:
     """Without context, same behavior as before (backward compat)."""
-    from trw_mcp.scoring._recall import rank_by_utility
+    from trw_mcp.scoring._recall import rank_targeted_by_utility
 
     entries = [
         _base_entry("L-a", impact=0.8),
         _base_entry("L-b", impact=0.3),
     ]
     # No context at all
-    result = rank_by_utility(entries, ["test"], 0.3)
+    result = rank_targeted_by_utility(entries, ["test"], 0.3)
     # Should still be sorted by score (L-a higher impact)
     assert result[0]["id"] == "L-a"
     # combined_score should be added
@@ -139,7 +139,7 @@ def test_no_context_backward_compat() -> None:
 
 def test_missing_fields_default_1_0() -> None:
     """Entry without domain/phase_affinity → boost=1.0 (no boost applied)."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry()  # No domain, phase_affinity, team_origin, etc.
     ctx = RecallContext(
@@ -154,8 +154,8 @@ def test_missing_fields_default_1_0() -> None:
     )
 
     # Same context but entry has no matching fields → boost should be 1.0
-    result = rank_by_utility([entry], [], 0.3, context=ctx)
-    result_no_ctx = rank_by_utility([entry], [], 0.3)
+    result = rank_targeted_by_utility([entry], [], 0.3, context=ctx)
+    result_no_ctx = rank_targeted_by_utility([entry], [], 0.3)
 
     score_with_ctx = float(str(result[0]["combined_score"]))
     score_no_ctx = float(str(result_no_ctx[0]["combined_score"]))
@@ -164,24 +164,24 @@ def test_missing_fields_default_1_0() -> None:
 
 
 def test_combined_score_field_added() -> None:
-    """rank_by_utility always adds combined_score to returned entries."""
-    from trw_mcp.scoring._recall import rank_by_utility
+    """rank_targeted_by_utility always adds combined_score to returned entries."""
+    from trw_mcp.scoring._recall import rank_targeted_by_utility
 
     entry = _base_entry()
-    result = rank_by_utility([entry], ["test"], 0.3)
+    result = rank_targeted_by_utility([entry], ["test"], 0.3)
     assert "combined_score" in result[0]
     assert isinstance(result[0]["combined_score"], float)
 
 
 def test_phase_match_case_insensitive() -> None:
     """Phase matching is case-insensitive."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(phase_affinity=["implement"])  # lowercase
     ctx = RecallContext(current_phase="IMPLEMENT")  # uppercase
 
-    result = rank_by_utility([entry], [], 0.3, context=ctx)
-    result_no = rank_by_utility([entry], [], 0.3)
+    result = rank_targeted_by_utility([entry], [], 0.3, context=ctx)
+    result_no = rank_targeted_by_utility([entry], [], 0.3)
 
     score_ctx = float(str(result[0]["combined_score"]))
     score_no = float(str(result_no[0]["combined_score"]))
@@ -190,13 +190,13 @@ def test_phase_match_case_insensitive() -> None:
 
 def test_team_no_match_no_boost() -> None:
     """Different team IDs don't trigger team boost."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry(team_origin="team-a")
     ctx = RecallContext(team_id="team-b")  # Different team
 
-    result = rank_by_utility([entry], [], 0.3, context=ctx)
-    result_no = rank_by_utility([entry], [], 0.3)
+    result = rank_targeted_by_utility([entry], [], 0.3, context=ctx)
+    result_no = rank_targeted_by_utility([entry], [], 0.3)
 
     score_ctx = float(str(result[0]["combined_score"]))
     score_no = float(str(result_no[0]["combined_score"]))
@@ -206,13 +206,13 @@ def test_team_no_match_no_boost() -> None:
 
 def test_assertion_penalties_still_work_with_context() -> None:
     """Assertion penalties continue to work alongside context boosts."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     entry = _base_entry("L-a", impact=0.9, domain=["auth"])
     ctx = RecallContext(active_domains=["auth"])
 
     # With penalty
-    result_penalty = rank_by_utility(
+    result_penalty = rank_targeted_by_utility(
         [entry],
         [],
         0.3,
@@ -220,7 +220,7 @@ def test_assertion_penalties_still_work_with_context() -> None:
         context=ctx,
     )
     # Without penalty
-    result_no_penalty = rank_by_utility([entry], [], 0.3, context=ctx)
+    result_no_penalty = rank_targeted_by_utility([entry], [], 0.3, context=ctx)
 
     score_penalty = float(str(result_penalty[0]["combined_score"]))
     score_no_penalty = float(str(result_no_penalty[0]["combined_score"]))
@@ -229,16 +229,16 @@ def test_assertion_penalties_still_work_with_context() -> None:
 
 def test_context_breaks_relevance_ties_but_cannot_displace_relevant_entry() -> None:
     """CORE-116 RA2: context orders ties, never outweighs query evidence."""
-    from trw_mcp.scoring._recall import RecallContext, rank_by_utility
+    from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
 
     ordinary = _base_entry("L-ordinary", summary="unrelated instruction")
     boosted = _base_entry("L-boosted", summary="unrelated instruction", domain=["auth"])
     relevant = _base_entry("L-relevant", summary="authentication", impact=0.1)
     context = RecallContext(active_domains=["auth"])
     for tied in ([ordinary, boosted], [boosted, ordinary]):
-        ranked = rank_by_utility(tied, ["authentication"], 0.3, context=context)
+        ranked = rank_targeted_by_utility(tied, ["authentication"], 0.3, context=context)
         assert [row["id"] for row in ranked] == ["L-boosted", "L-ordinary"]
         assert ranked[0]["combined_score"] == ranked[1]["combined_score"] == 0.0
-        ranked = rank_by_utility([*tied, relevant], ["authentication"], 1.0, context=context)
+        ranked = rank_targeted_by_utility([*tied, relevant], ["authentication"], 1.0, context=context)
         assert ranked[0]["id"] == "L-relevant"
         assert ranked[0]["combined_score"] > ranked[1]["combined_score"]

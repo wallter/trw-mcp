@@ -8,12 +8,14 @@ import selectors
 import subprocess
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tests._formation_test_support import formation_env  # noqa: F401
+from tests.comms._wait_transport_support import held_wait
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 
 _WORKER = """
@@ -119,10 +121,12 @@ def race(
 
 @pytest.mark.parametrize("scene", [{"comms_group_admission_limit": 5}], indirect=True)
 @pytest.mark.parametrize("disable_guard", [False, True])
+@pytest.mark.parametrize("waiter_present", [False, True])
 def test_sixteen_process_budget_race_and_process_local_guard_control(
-    scene: SendScene, tmp_path: Path, disable_guard: bool
+    scene: SendScene, tmp_path: Path, disable_guard: bool, waiter_present: bool
 ) -> None:
-    results = race(scene, tmp_path, disable_guard=disable_guard)
+    with held_wait(scene) if waiter_present else nullcontext():
+        results = race(scene, tmp_path, disable_guard=disable_guard)
     accepted = sum(result["status"] == "ok" for result in results)
     if disable_guard:
         # Only the admission guard is disabled. Integrity remains active and

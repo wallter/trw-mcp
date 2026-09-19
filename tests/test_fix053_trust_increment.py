@@ -460,7 +460,7 @@ def test_verification_receipt_only_route_for_docs(tmp_path: Path, config: TRWCon
     """docs task: a passing VerificationReceipt is eligible; a build receipt is not."""
     project, binding, _scope = project_with_binding(tmp_path, {"docs/x.md": "# hi\n"})
     run = project / "run"
-    write_receipt(run, "verification", "verify-1", verification_receipt(binding))
+    write_receipt(run, "verification", "verify-1", verification_receipt(binding, project_root=project))
 
     from trw_mcp.state.trust import evaluate_and_consume_trust_outcome
 

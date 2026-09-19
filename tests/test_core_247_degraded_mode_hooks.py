@@ -1070,6 +1070,7 @@ def test_degraded_output_is_sanitized(tmp_path: Path, hook_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 @pytest.mark.xdist_group(name="core_247_hook_latency")
 def test_hook_latency_budget(tmp_path: Path, hook_dir: Path) -> None:
@@ -1130,6 +1131,7 @@ def test_hook_latency_budget(tmp_path: Path, hook_dir: Path) -> None:
     )
 
 
+@pytest.mark.perf
 @pytest.mark.slow
 @pytest.mark.skipif(shutil.which("jq") is None, reason="jq unavailable — the fast path defers by design without it")
 @pytest.mark.xdist_group(name="core_247_hook_latency")

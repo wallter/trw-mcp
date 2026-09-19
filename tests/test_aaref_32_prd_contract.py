@@ -178,8 +178,8 @@ def test_prd_create_round_trips_typed_verification_mappings(tmp_path: Path) -> N
 
     mappings = [
         _mapping("PRD-CORE-001-FR01"),
-        _mapping("PRD-CORE-001-FR02", "inspection"),
-        _mapping("PRD-CORE-001-NFR01", "analysis"),
+        {**_mapping("PRD-CORE-001-FR02", "inspection"), "requirement_kind": "non_behavioral"},
+        {**_mapping("PRD-CORE-001-NFR01", "analysis"), "requirement_kind": "software_behavior"},
         _mapping("PRD-CORE-001-NFR02", "demonstration"),
         _mapping("PRD-CORE-001-NFR03", "inspection"),
     ]
@@ -194,6 +194,8 @@ def test_prd_create_round_trips_typed_verification_mappings(tmp_path: Path) -> N
     assert frontmatter["template_version"] == "3.2"
     round_tripped = frontmatter["verification"]["mappings"]
     assert [{key: item[key] for key in mappings[index]} for index, item in enumerate(round_tripped)] == mappings
+
+    assert round_tripped[0]["requirement_kind"] == "software_behavior"
 
     validated = _get_tools()["trw_prd_validate"].fn(prd_path=result["output_path"])
     assert validated["verification_mapping_coverage"] == 1.0
@@ -445,14 +447,18 @@ def test_normalized_mapping_ids_preserve_exact_coverage() -> None:
     assert "verification:PRD-CORE-901-NFR01" in missing
 
 
-def test_mapping_contract_never_claims_execution_or_pass(tmp_path: Path) -> None:
+@pytest.mark.parametrize("kind", ["software_behavior", "non_behavioral"])
+def test_mapping_contract_never_claims_execution_or_pass(tmp_path: Path, kind: str) -> None:
     """PRD-QUAL-114-FR04: mapping + static output remain plan-only."""
     from trw_mcp.models.requirements import VerificationMapping
 
-    mapping = VerificationMapping.model_validate(_mapping("PRD-CORE-001-FR01"), strict=False)
+    mapping = VerificationMapping.model_validate(
+        {**_mapping("PRD-CORE-001-FR01"), "requirement_kind": kind}, strict=False
+    )
     dumped = mapping.model_dump()
     assert set(dumped) == {
         "requirement_id",
+        "requirement_kind",
         "acceptance_criteria",
         "method",
         "evidence_artifact",
@@ -464,7 +470,9 @@ def test_mapping_contract_never_claims_execution_or_pass(tmp_path: Path) -> None
     assert not (forbidden & set(dumped))
 
     # Static validation of a fully-mapped PRD reports plan coverage only.
-    result = _validate(tmp_path, _contract_prd())
+    result = _validate(
+        tmp_path, _contract_prd().replace("      method: test", f"      requirement_kind: {kind}\n      method: test")
+    )
     assert result["verification_mapping_coverage"] == 1.0
     forbidden_keys = {
         "executed",
@@ -570,6 +578,57 @@ def test_packaged_prd_template_preserves_typed_contract() -> None:
     assert b"verification:" in expected
     assert b"aaref_components:" not in expected
     assert b"conflicts_with:" not in expected
+
+
+def test_template_classification_examples_round_trip_and_keep_review_boundary() -> None:
+    from ruamel.yaml import YAML
+
+    from trw_mcp.models.requirements import VerificationMapping
+    from trw_mcp.state.prd_utils import parse_frontmatter
+    from trw_mcp.state.validation._verification_mappings import validate_verification_mappings
+
+    lines = (PACKAGE_ROOT / "src/trw_mcp/data/prd_template.md").read_text().splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("  # - requirement_id:"))
+    end = next(i for i, line in enumerate(lines[start:], start) if line.startswith("  # requirement_kind accepts"))
+    examples = YAML(typ="safe").load("\n".join(line.removeprefix("  #") for line in lines[start:end]))
+    mappings = [VerificationMapping.model_validate(example, strict=False) for example in examples]
+    assert [(m.requirement_kind, m.method, m.automated) for m in mappings] == [
+        ("software_behavior", "test", True),
+        ("non_behavioral", "inspection", False),
+    ]
+    assert mappings[1].automation_infeasible_reason is None
+    created = _get_tools()["trw_prd_create"].fn(
+        input_text="Preserve template verification examples",
+        category="CORE",
+        title="Example contracts",
+        verification_mappings=examples,
+    )
+    persisted = parse_frontmatter(created["content"])["verification"]["mappings"]
+    assert persisted == [mapping.model_dump(mode="json") for mapping in mappings]
+    body = "\n".join(f"### {m.requirement_id}: Example" for m in mappings)
+    frontmatter = {"template_version": "3.2", "verification": {"mappings": persisted}}
+    for status in ("implemented", "done"):
+        assert validate_verification_mappings(
+            {**frontmatter, "status": status},
+            body,
+            effective_risk_level="high",
+        ) == ([], 1.0)
+
+    # The same HTTP-response example needs behavioral proof. A wrong method fails;
+    # a wrong subject label cannot be detected by the parser and MUST face human review.
+    behavior = {**examples[0], "method": "inspection", "automated": True}
+    for kind, expected in [("software_behavior", {"implemented_requirement_automation"}), ("non_behavioral", set())]:
+        failures, coverage = validate_verification_mappings(
+            {
+                "template_version": "3.2",
+                "status": "implemented",
+                "verification": {"mappings": [{**behavior, "requirement_kind": kind}, examples[1]]},
+            },
+            body,
+            effective_risk_level="high",
+        )
+        assert coverage == 1.0
+        assert {failure.rule for failure in failures} == expected
 
 
 @requires_monorepo
@@ -803,3 +862,165 @@ def test_low_completeness_retains_structural_failures_without_duplicate_warning(
     for failure in baseline.failures:
         assert failure.model_dump() in result["failures"]
     assert not any(call.args and call.args[0] == "prd_validate_below_threshold" for call in warning.call_args_list)
+
+
+# PRD-FIX-142: classify the requirement subject, not its verification machinery.
+def _kind_failures(
+    mapping: dict[str, object], *, status: str = "implemented", risk: str = "high", version: str = "3.2"
+):
+    from trw_mcp.state.validation._verification_mappings import validate_verification_mappings
+
+    return validate_verification_mappings(
+        {
+            "template_version": version,
+            "status": status,
+            "validation_profile": "content_docs",
+            "verification": {"mappings": [mapping]},
+        },
+        "### PRD-CORE-901-FR01: Behavior\n",
+        effective_risk_level=risk,
+    )
+
+
+@pytest.mark.parametrize("kind", ["software_behavior", "non_behavioral", None])
+def test_requirement_kind_round_trip_and_conservative_default(kind: str | None) -> None:
+    from trw_mcp.models.requirements import VerificationMapping
+
+    payload = _mapping("PRD-CORE-901-FR01")
+    if kind is not None:
+        payload["requirement_kind"] = kind
+    mapping = VerificationMapping.model_validate(payload, strict=False)
+    assert mapping.requirement_kind == (kind or "software_behavior")
+    assert type(mapping.requirement_kind) is str
+    assert mapping.model_dump()["requirement_kind"] == (kind or "software_behavior")
+    assert VerificationMapping.model_validate_json(mapping.model_dump_json()) == mapping
+
+
+@pytest.mark.parametrize("kind", [None, "", " ", "unknown", " non_behavioral ", 1, True, [], {}, b"non_behavioral"])
+def test_malformed_requirement_kind_is_not_coverage(kind: object) -> None:
+    from pydantic import ValidationError
+
+    from trw_mcp.models.requirements import VerificationMapping
+
+    payload = {**_mapping("PRD-CORE-901-FR01"), "requirement_kind": kind}
+    with pytest.raises(ValidationError, match="requirement_kind"):
+        VerificationMapping.model_validate(payload, strict=False)
+    failures, coverage = _kind_failures(payload)
+    assert coverage == 0.0
+    assert {f.rule for f in failures} == {"verification_mapping_schema", "verification_mapping_required"}
+    assert {f.severity for f in failures} == {"error"}
+
+
+def test_creator_rejects_malformed_requirement_kind(tmp_path: Path) -> None:
+    from trw_mcp.exceptions import ValidationError
+
+    with pytest.raises(ValidationError, match="requirement_kind"):
+        _get_tools()["trw_prd_create"].fn(
+            input_text="Add behavior",
+            category="CORE",
+            title="Invalid kind",
+            verification_mappings=[{**_mapping("PRD-CORE-001-FR01"), "requirement_kind": None}],
+        )
+    assert not list(tmp_path.rglob("PRD-*.md"))
+
+
+@pytest.mark.parametrize(
+    ("status", "method", "automated", "reason", "expected"),
+    [
+        ("implemented", "test", True, False, set()),
+        ("done", "test", None, False, set()),
+        ("implemented", "analysis", True, False, {"implemented_requirement_automation"}),
+        ("done", "inspection", True, False, {"implemented_requirement_automation"}),
+        ("implemented", "demonstration", True, False, {"implemented_requirement_automation"}),
+        ("implemented", "inspection", None, False, {"implemented_requirement_automation"}),
+        ("draft", "inspection", True, False, set()),
+        ("draft", "analysis", None, False, set()),
+        ("draft", "test", False, False, {"automation_exception_reason"}),
+        ("done", "test", False, False, {"automation_exception_reason"}),
+        ("done", "inspection", True, True, set()),
+        ("implemented", "analysis", False, True, set()),
+        ("draft", "demonstration", False, True, set()),
+    ],
+)
+def test_software_behavior_automation_boundary(status, method, automated, reason, expected) -> None:
+    payload = _mapping("PRD-CORE-901-FR01", method)
+    payload.pop("automated")
+    if automated is not None:
+        payload["automated"] = automated
+    if method == "test" and automated is True:
+        payload["evidence_artifact"] = "artifacts/behavior-result.json"
+    if reason:
+        payload["automation_infeasible_reason"] = "Independent review requires a physical device"
+    for kind in ({}, {"requirement_kind": "software_behavior"}):
+        failures, coverage = _kind_failures({**payload, **kind}, status=status)
+        assert coverage == 1.0
+        assert {f.rule for f in failures} == expected
+        assert all(f.severity == "error" for f in failures)
+
+
+@pytest.mark.parametrize(
+    ("risk", "version", "severity"),
+    [
+        ("critical", "3.2", "error"),
+        ("medium", "3.2", "warning"),
+        ("low", "3.2", "warning"),
+        ("high", "2.3", "warning"),
+    ],
+)
+def test_automation_and_kind_schema_preserve_risk_severity(risk, version, severity) -> None:
+    payload = _mapping("PRD-CORE-901-FR01", "inspection")
+    for updates, rule in [
+        ({}, "implemented_requirement_automation"),
+        ({"automated": False}, "automation_exception_reason"),
+        ({"requirement_kind": None}, "verification_mapping_schema"),
+    ]:
+        failures, _ = _kind_failures({**payload, **updates}, risk=risk, version=version)
+        assert rule in {f.rule for f in failures}
+        assert all(f.severity == severity for f in failures)
+
+
+@pytest.mark.parametrize("method", ["test", "analysis", "inspection", "demonstration"])
+def test_nonbehavioral_methods_exempt_only_automation(method: str) -> None:
+    payload = {**_mapping("PRD-CORE-901-FR01", method), "requirement_kind": "non_behavioral"}
+    for status, flag in [("draft", False), ("implemented", None), ("done", True)]:
+        failures, coverage = _kind_failures({**payload, "automated": flag}, status=status)
+        assert (failures, coverage) == ([], 1.0)
+    for field, value in [
+        ("evidence_artifact", " "),
+        ("pass_condition", " "),
+        ("acceptance_criteria", [" "]),
+        ("automation_infeasible_reason", " "),
+    ]:
+        failures, coverage = _kind_failures({**payload, field: value})
+        assert coverage == 0.0
+        assert {f.rule for f in failures} == {"verification_mapping_schema", "verification_mapping_required"}
+
+
+def test_nonbehavioral_does_not_cross_exempt_or_relax_id_integrity() -> None:
+    from trw_mcp.state.validation._verification_mappings import validate_verification_mappings
+
+    record = {**_mapping("PRD-CORE-901-NFR01", "inspection"), "requirement_kind": "non_behavioral", "automated": False}
+    failures, coverage = validate_verification_mappings(
+        {
+            "template_version": "3.2",
+            "status": "done",
+            "validation_profile": "content_docs",
+            "verification": {
+                "mappings": [
+                    _mapping("PRD-CORE-901-FR01", "inspection"),
+                    record,
+                    record,
+                    {**record, "requirement_id": "PRD-CORE-901-NFR99"},
+                ]
+            },
+        },
+        "### PRD-CORE-901-FR01: Behavior\n### PRD-CORE-901-NFR01: Record\n### PRD-CORE-901-NFR02: Missing\n",
+        effective_risk_level="high",
+    )
+    assert coverage == pytest.approx(2 / 3)
+    assert {(f.rule, f.field) for f in failures} == {
+        ("implemented_requirement_automation", "verification:PRD-CORE-901-FR01"),
+        ("verification_mapping_duplicate", "verification.mappings[2].requirement_id"),
+        ("verification_mapping_required", "verification:PRD-CORE-901-NFR02"),
+        ("verification_mapping_orphan", "verification:PRD-CORE-901-NFR99"),
+    }

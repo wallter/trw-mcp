@@ -316,6 +316,7 @@ def test_acceptable_failure_record_still_releases_a_fail_closed_block(
 # ── NFR01: cost bounds ──────────────────────────────────────────────────
 
 
+@pytest.mark.perf
 def test_gate_and_detection_cost_bounds() -> None:
     """NFR01: detection is pure string work over a bounded join, and the gate's
     addition is one integer over an already-materialised list.

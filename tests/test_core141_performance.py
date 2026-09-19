@@ -6,8 +6,12 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from trw_mcp.state._paths import TRWCallContext, resolve_pin_key, touch_heartbeat
 from trw_mcp.state._run_gc import sweep_stale_runs
+
+pytestmark = pytest.mark.perf
 
 
 def _p95(samples: list[float]) -> float:

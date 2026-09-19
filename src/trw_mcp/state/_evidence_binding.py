@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import stat
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,7 +28,6 @@ import structlog
 from trw_mcp.models._evidence_core import (
     ContentBinding,
     ContentEntry,
-    EntryState,
     EvidenceLimits,
     ReceiptState,
     RunOwnedScope,
@@ -36,19 +35,18 @@ from trw_mcp.models._evidence_core import (
     compute_manifest_digest,
     compute_scope_digest,
 )
+from trw_mcp.state._evidence_fs import StableReadError as StableReadError
+from trw_mcp.state._evidence_fs import read_entry
+from trw_mcp.state._evidence_identity import (
+    ProjectIdentityError,
+    project_identity_is_current,
+    resolve_project_identity,
+)
 
 logger = structlog.get_logger(__name__)
 
 _STABLE_READ_RETRIES = 2  # FR01: retry twice; a third change -> unstable_read.
 _READ_CHUNK = 1024 * 1024
-
-
-class StableReadError(RuntimeError):
-    """A path could not be stably/​safely read; carries a stable reason code."""
-
-    def __init__(self, reason_code: str) -> None:
-        super().__init__(reason_code)
-        self.reason_code = reason_code
 
 
 @dataclass(frozen=True)
@@ -60,131 +58,92 @@ class BindingOutcome:
     reason_code: str
 
 
-def _relativize(project_root: Path, raw: str) -> str | None:
-    """Return a normalized repository-relative path, or None when it escapes root."""
+def _normalize_scope_path(project_root: Path, raw: str) -> tuple[str | None, bool]:
+    """Preserve lexical ownership; return (path, instrumentation_well_formed).
+
+    Proven outside-root records are irrelevant, not incomplete instrumentation.
+    Never resolve the changed entry: a link's name, not its target, was changed.
+    """
+    if not raw or any(character in raw for character in ("\\", ":", "\x00")):
+        return None, False
+    components = raw.split("/")
+    if raw.startswith("/"):
+        components = components[1:]
+    if any(not part for part in components):
+        return None, False
     try:
-        candidate = Path(raw)
+        prefixes = (project_root.absolute(), project_root.resolve())
+        if ".." in components:
+            # Classify only: traversal is NEVER normalized into owned scope.
+            lexical = Path(os.path.abspath(raw if raw.startswith("/") else project_root / raw))
+            outside = all(not lexical.is_relative_to(prefix) for prefix in prefixes)
+            return None, outside
+        normalized = "/".join(part for part in components if part != ".")
+        if not normalized:
+            return None, False
+        normalized = "/" + normalized if raw.startswith("/") else normalized
+        candidate = Path(normalized)
         if candidate.is_absolute():
-            resolved = candidate.resolve()
+            matching_prefix = next((prefix for prefix in prefixes if candidate.is_relative_to(prefix)), None)
+            if matching_prefix is None:
+                return None, True
+            relative = candidate.relative_to(matching_prefix).as_posix()
         else:
-            resolved = (project_root / candidate).resolve()
-        rel = resolved.relative_to(project_root.resolve())
-    except (ValueError, OSError):
-        return None
-    normalized = rel.as_posix()
-    if not normalized or normalized == "." or normalized.startswith(".."):
-        return None
-    return normalized
+            relative = normalized
+        if relative == "." or len(relative.encode("utf-8")) > EvidenceLimits.MAX_PATH_BYTES:
+            return None, False
+    except (ValueError, OSError, RuntimeError, UnicodeError):
+        return None, False
+    return relative, True
+
+
+def _relativize(project_root: Path, raw: str) -> str | None:
+    """Return only a valid lexical in-root path for additive proposed scope."""
+    return _normalize_scope_path(project_root, raw)[0]
 
 
 def _read_file_digest(fd: int, size: int) -> str:
     """Stream raw bytes of an already-open fd and return their SHA-256 hex."""
     hasher = hashlib.sha256()
-    remaining = size
-    with os.fdopen(os.dup(fd), "rb", closefd=True) as handle:
-        handle.seek(0)
-        while remaining > 0:
-            chunk = handle.read(min(_READ_CHUNK, remaining))
-            if not chunk:
-                break
-            hasher.update(chunk)
-            remaining -= len(chunk)
-    return hasher.hexdigest()
+    total = 0
+    while total <= size:
+        chunk = os.read(fd, min(_READ_CHUNK, size + 1 - total))
+        if not chunk:
+            if total != size:
+                raise StableReadError("unstable_read")
+            return hasher.hexdigest()
+        hasher.update(chunk)
+        total += len(chunk)
+    raise StableReadError("unstable_read")
 
 
-def _stat_signature(st: os.stat_result) -> tuple[int, int, int, int]:
-    """Type/size/dev/inode + nanosecond mtime signature for stability comparison."""
-    return (st.st_size, getattr(st, "st_dev", 0), getattr(st, "st_ino", 0), st.st_mtime_ns)
+def read_content_entry(
+    project_root: Path,
+    rel_path: str,
+    *,
+    remaining_bytes: int | None = None,
+    charge_read: Callable[[int], None] | None = None,
+) -> ContentEntry:
+    """Read confined content; retry at most twice when an observation races.
 
-
-def _stable_read_file(abs_path: Path) -> ContentEntry:
-    """Read a regular file's raw bytes under the FR01 stable-read protocol.
-
-    lstat -> open (no-follow where supported) -> fstat before -> stream bytes ->
-    fstat after -> lstat again, requiring an unchanged type/size/dev/inode/mtime.
+    The remaining manifest budget is checked before each attempted payload read.
+    Aggregate callers also reserve attempted bytes through charge_read, across
+    retries and paths. Their read allowance is three times the manifest ceiling
+    plus bounded EOF probes; it never enlarges the accepted manifest budget.
     """
-    open_flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        open_flags |= os.O_NOFOLLOW
-    fd = os.open(str(abs_path), open_flags)
-    try:
-        before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode):
-            raise StableReadError("path_type_raced")
-        if before.st_size > EvidenceLimits.MAX_BOUND_FILE_BYTES:
-            raise StableReadError("bound_file_too_large")
-        digest = _read_file_digest(fd, before.st_size)
-        after = os.fstat(fd)
-    finally:
-        os.close(fd)
-    post = os.lstat(str(abs_path))
-    if _stat_signature(before) != _stat_signature(after) or not stat.S_ISREG(post.st_mode):
-        raise StableReadError("unstable_read")
-    return ContentEntry(
-        path="__placeholder__",  # replaced by caller with the repo-relative path
-        state=EntryState.FILE,
-        byte_digest=digest,
-        byte_size=before.st_size,
-    ).model_copy(update={})
-
-
-def _stable_read_symlink(project_root: Path, abs_path: Path) -> ContentEntry:
-    """Bind a symlink's raw target; reject broken/cyclic/escaping/re-targeted links."""
-    target = os.readlink(str(abs_path))
-    try:
-        resolved = abs_path.resolve(strict=True)
-    except (OSError, RuntimeError):
-        # Broken (missing target) or cyclic symlink -> fail.
-        raise StableReadError("symlink_broken_or_cyclic") from None
-    try:
-        resolved.relative_to(project_root.resolve())
-    except ValueError:
-        raise StableReadError("symlink_escapes_root") from None
-    # Re-target race: the link target must be unchanged after resolution.
-    if os.readlink(str(abs_path)) != target:
-        raise StableReadError("symlink_retargeted")
-    return ContentEntry(path="__placeholder__", state=EntryState.SYMLINK, link_target=target)
-
-
-def read_content_entry(project_root: Path, rel_path: str) -> ContentEntry:
-    """Stable-read one repository-relative path into a :class:`ContentEntry`.
-
-    Retries twice on an unstable read; a third instability raises
-    ``StableReadError('unstable_read')`` and never returns a digest.
-    """
-    root = project_root.resolve()
-    abs_path = (root / rel_path).resolve() if not Path(rel_path).is_absolute() else Path(rel_path)
-    # Confinement: the resolved target must live beneath the project root.
-    try:
-        abs_path.relative_to(root)
-    except ValueError:
-        raise StableReadError("path_escapes_root") from None
-
-    lst = _lstat_or_none(root / rel_path)
-    if lst is None:
-        return ContentEntry(path=rel_path, state=EntryState.DELETED)
-    if stat.S_ISLNK(lst.st_mode):
-        return _stable_read_symlink(root, root / rel_path).model_copy(update={"path": rel_path})
-
-    last_error = "unstable_read"
-    for _ in range(_STABLE_READ_RETRIES + 1):
+    for attempt in range(_STABLE_READ_RETRIES + 1):
         try:
-            entry = _stable_read_file(root / rel_path)
-            return entry.model_copy(update={"path": rel_path})
+            return read_entry(
+                project_root,
+                rel_path,
+                digest_reader=_read_file_digest,
+                remaining_bytes=remaining_bytes,
+                charge_read=charge_read,
+            )
         except StableReadError as exc:
-            last_error = exc.reason_code
-            if exc.reason_code != "unstable_read":
+            if exc.reason_code != "unstable_read" or attempt == _STABLE_READ_RETRIES:
                 raise
-        except FileNotFoundError:
-            return ContentEntry(path=rel_path, state=EntryState.DELETED)
-    raise StableReadError(last_error)
-
-
-def _lstat_or_none(path: Path) -> os.stat_result | None:
-    try:
-        return os.lstat(str(path))
-    except OSError:
-        return None
+    raise StableReadError("unstable_read")  # unreachable; explicit total contract
 
 
 def mint_run_owned_scope(
@@ -203,17 +162,26 @@ def mint_run_owned_scope(
     empty required set — the caller must NOT mint positive evidence from it and
     must never substitute a whole-tree scan.
     """
-    root = project_root.resolve()
-    journal_paths, journal_ok = _read_journal_paths(run_path, root)
-    required = tuple(sorted(set(journal_paths) | {p for p in operator_paths if _relativize(root, p)}))
-    confidence = ScopeConfidence.VERIFIED if journal_ok else ScopeConfidence.UNVERIFIABLE
-    project_identity = root.name
+    try:
+        project_identity = resolve_project_identity(project_root)
+    except ProjectIdentityError:
+        project_identity = ""
+    journal_paths, journal_ok = _read_journal_paths(run_path, project_root)
+    operator_entries = [_normalize_scope_path(project_root, path) for path in operator_paths]
+    required = tuple(sorted(set(journal_paths) | {rel for rel, _ in operator_entries if rel is not None}))
+    instrumentation_ok = (
+        bool(project_identity)
+        and journal_ok
+        and all(valid for _, valid in operator_entries)
+        and project_identity_is_current(project_identity, project_root)[0] is ReceiptState.VALID
+    )
+    confidence = ScopeConfidence.VERIFIED if instrumentation_ok else ScopeConfidence.UNVERIFIABLE
     return RunOwnedScope(
         scope_id=scope_id,
         scope_digest=compute_scope_digest(scope_id, project_identity, required),
         project_identity=project_identity,
         required_paths=required,
-        proposed_paths=tuple(sorted({rel for p in proposed_paths if (rel := _relativize(root, p))})),
+        proposed_paths=tuple(sorted({rel for p in proposed_paths if (rel := _relativize(project_root, p))})),
         provenance="run_journal" if not operator_paths else "mixed",
         confidence=confidence,
     )
@@ -227,6 +195,7 @@ def _read_journal_paths(run_path: Path | None, root: Path) -> tuple[list[str], b
     if not events_path.exists():
         return [], False
     paths: set[str] = set()
+    journal_ok = True
     try:
         for line in events_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -235,18 +204,44 @@ def _read_journal_paths(run_path: Path | None, root: Path) -> tuple[list[str], b
             try:
                 ev = json.loads(line)
             except json.JSONDecodeError:
+                journal_ok = False
                 continue
-            if not isinstance(ev, dict) or str(ev.get("event", "")) != "file_modified":
+            if not isinstance(ev, dict):
+                journal_ok = False
+                continue
+            if str(ev.get("event", "")) != "file_modified":
                 continue
             data = ev.get("data")
             raw: object = data.get("file") if isinstance(data, dict) and "file" in data else ev.get("file")
-            if isinstance(raw, str) and raw:
-                rel = _relativize(root, raw)
-                if rel is not None:
-                    paths.add(rel)
-    except OSError:
+            if not isinstance(raw, str) or not raw:
+                journal_ok = False
+                continue
+            rel, valid = _normalize_scope_path(root, raw)
+            journal_ok = journal_ok and valid
+            if rel is not None:
+                paths.add(rel)
+    except (OSError, UnicodeError):
         return [], False
-    return sorted(paths), True
+    return sorted(paths), journal_ok
+
+
+def _read_entries_with_budget(project_root: Path, paths: Iterable[str]) -> tuple[ContentEntry, ...]:
+    """Enforce aggregate accepted-byte bounds before each descriptor is hashed."""
+    remaining = EvidenceLimits.MAX_TOTAL_BOUND_BYTES
+    remaining_work = (_STABLE_READ_RETRIES + 1) * EvidenceLimits.MAX_TOTAL_BOUND_BYTES
+
+    def charge_read(size: int) -> None:
+        nonlocal remaining_work
+        if size > remaining_work:
+            raise StableReadError("bound_read_budget_exceeded")
+        remaining_work -= size
+
+    entries: list[ContentEntry] = []
+    for path in paths:
+        entry = read_content_entry(project_root, path, remaining_bytes=remaining, charge_read=charge_read)
+        remaining -= entry.byte_size or 0
+        entries.append(entry)
+    return tuple(entries)
 
 
 def build_content_binding(scope: RunOwnedScope, project_root: Path) -> BindingOutcome:
@@ -257,12 +252,17 @@ def build_content_binding(scope: RunOwnedScope, project_root: Path) -> BindingOu
     """
     if scope.confidence is ScopeConfidence.UNVERIFIABLE:
         return BindingOutcome(None, ReceiptState.SCOPE_UNVERIFIABLE, "scope_unverifiable")
-    root = project_root.resolve()
+    root = project_root
+    identity_state, identity_reason = project_identity_is_current(scope.project_identity, root)
+    if identity_state is not ReceiptState.VALID:
+        return BindingOutcome(None, identity_state, identity_reason)
     try:
-        entry_tuple = tuple(read_content_entry(root, rel) for rel in scope.effective_paths)
+        entry_tuple = _read_entries_with_budget(root, scope.effective_paths)
     except StableReadError as exc:
         state = ReceiptState.UNSTABLE_READ if exc.reason_code == "unstable_read" else ReceiptState.INVALID
         return BindingOutcome(None, state, exc.reason_code)
+    if project_identity_is_current(scope.project_identity, root)[0] is not ReceiptState.VALID:
+        return BindingOutcome(None, ReceiptState.UNSTABLE_READ, "project_identity_changed")
     try:
         binding = ContentBinding(
             scope_id=scope.scope_id,
@@ -283,12 +283,17 @@ def content_binding_is_current(binding: ContentBinding, project_root: Path) -> B
     entry changed, and the exact non-positive state for an unstable/​unsafe read.
     Unrelated out-of-scope changes are never read, so they cannot invalidate.
     """
-    root = project_root.resolve()
+    root = project_root
+    identity_state, identity_reason = project_identity_is_current(binding.project_identity, root)
+    if identity_state is not ReceiptState.VALID:
+        return BindingOutcome(None, identity_state, identity_reason)
     try:
-        current_entries = tuple(read_content_entry(root, entry.path) for entry in binding.entries)
+        current_entries = _read_entries_with_budget(root, (entry.path for entry in binding.entries))
     except StableReadError as exc:
         state = ReceiptState.UNSTABLE_READ if exc.reason_code == "unstable_read" else ReceiptState.INVALID
         return BindingOutcome(None, state, exc.reason_code)
+    if project_identity_is_current(binding.project_identity, root)[0] is not ReceiptState.VALID:
+        return BindingOutcome(None, ReceiptState.UNSTABLE_READ, "project_identity_changed")
     current_digest = compute_manifest_digest(current_entries)
     if current_digest != binding.manifest_digest:
         return BindingOutcome(None, ReceiptState.STALE_CONTENT, "bound_content_changed")

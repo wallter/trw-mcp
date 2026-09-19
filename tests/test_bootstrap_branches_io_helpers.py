@@ -155,7 +155,7 @@ class TestPipInstallPackage:
     """Cover _pip_install_package branches."""
 
     def test_pip_install_success(self, tmp_path: Path) -> None:
-        """Successful pip install adds 'updated' entry."""
+        """Successful pip install adds an 'info' note (it is not a changed file)."""
         result: dict[str, list[str]] = {"updated": [], "errors": []}
 
         mock_proc = MagicMock()
@@ -165,7 +165,7 @@ class TestPipInstallPackage:
         with patch("subprocess.run", return_value=mock_proc):
             _pip_install_package(tmp_path, result)
 
-        assert any("pip install" in u for u in result["updated"])
+        assert any("pip install" in u for u in result["info"])
 
     def test_pip_install_failure(self, tmp_path: Path) -> None:
         """Failed pip install adds error with exit code."""
@@ -218,7 +218,8 @@ class TestPipInstallPackage:
         with patch("subprocess.run", return_value=mock_proc):
             result = update_project(initialized_repo, pip_install=True)
 
-        assert any("pip install" in u for u in result["updated"])
+        assert any("pip install" in u for u in result["info"])
+        assert "pip_install" in result["ran"]
 
 
 @pytest.mark.unit

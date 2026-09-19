@@ -14,7 +14,6 @@ obligation, and no agent gained a ``trw_init`` grant in the process.
 from __future__ import annotations
 
 import importlib.util
-import re
 import sys
 from pathlib import Path
 
@@ -40,12 +39,13 @@ FRAGMENT = AGENTS_DIR / "_shared" / "delegated-run-precondition.md"
 
 CHECKPOINT_GRANT = "mcp__trw__trw_checkpoint"
 INIT_GRANT = "mcp__trw__trw_init"
-_TOOL_MARKER_RE = re.compile(r"\{tool:(trw_\w+)\}")
 
 
 def _expand(text: str) -> str:
-    """Mirror ``scripts/sync-agents.py``: ``{tool:trw_X}`` renders as ``trw_X``."""
-    return _TOOL_MARKER_RE.sub(lambda m: m.group(1), text)
+    """Render ``{tool:trw_X}`` exactly as the claude-code installer does (PRD-INFRA-190-FR01)."""
+    from trw_mcp.agents.tier_resolver import render_agent_tool_names
+
+    return render_agent_tool_names(text, client="claude-code")
 
 
 def _grants(path: Path) -> set[str]:
@@ -92,9 +92,7 @@ def test_mirror_projection_carries_the_precondition(agent_path: Path) -> None:
     mirror = MIRROR_DIR / agent_path.name
     assert mirror.is_file(), f"missing mirror projection: {mirror}"
     fragment = _expand(FRAGMENT.read_text(encoding="utf-8").strip("\n"))
-    assert fragment in mirror.read_text(encoding="utf-8"), (
-        f"{mirror.name} is stale — run python3 scripts/sync-agents.py"
-    )
+    assert fragment in mirror.read_text(encoding="utf-8"), f"{mirror.name} is stale — run make client-mirror-sync"
 
 
 def test_lead_states_the_pre_dispatch_run_obligation() -> None:

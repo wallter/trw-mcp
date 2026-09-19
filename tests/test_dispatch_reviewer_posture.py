@@ -28,6 +28,14 @@ from pathlib import Path
 import pytest
 import tomllib
 
+
+@pytest.fixture(autouse=True)
+def _stable_mcp_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("trw_mcp.dispatch._posture.uuid.uuid4", lambda: SimpleNamespace(hex="test"))
+
+
 from trw_mcp.dispatch import _run_job
 from trw_mcp.dispatch._client_spec_types import ClientSpec, ClientVerification
 from trw_mcp.dispatch._client_specs import _SPEC_BY_ID, client_spec_for
@@ -109,21 +117,21 @@ def test_codex_reviewer_argv_carries_each_reviewer_tool_exactly_once() -> None:
 
 def test_codex_reviewer_allowlist_is_the_rendered_ssot_and_parses_as_toml() -> None:
     argv = _codex_reviewer_argv()
-    allowlist = [tok for tok in argv if tok.startswith("mcp_servers.trw.enabled_tools=")]
+    allowlist = [tok for tok in argv if tok.startswith("mcp_servers.trw_dispatch_test.enabled_tools=")]
     assert len(allowlist) == 1
     # The token is byte-identical to the SSOT rendering, so the dispatch layer
     # and scripts/print_reviewer_tools.py cannot bound a child differently.
-    assert allowlist[0] == f"mcp_servers.trw.enabled_tools={reviewer_tools_toml_array()}"
-    parsed = tomllib.loads(allowlist[0].replace("mcp_servers.trw.enabled_tools=", "enabled_tools = ", 1))
+    assert allowlist[0] == f"mcp_servers.trw_dispatch_test.enabled_tools={reviewer_tools_toml_array()}"
+    parsed = tomllib.loads(allowlist[0].replace("mcp_servers.trw_dispatch_test.enabled_tools=", "enabled_tools = ", 1))
     assert parsed["enabled_tools"] == sorted(REVIEWER_TOOLS)
 
 
 def test_codex_reviewer_argv_supplies_the_mcp_transport_from_trw_not_the_repo() -> None:
     argv = _codex_reviewer_argv()
     command, args = mcp_server_launcher()
-    assert f'mcp_servers.trw.command="{command}"' in argv
-    assert f"mcp_servers.trw.args={json.dumps(list(args))}" in argv
-    assert 'mcp_servers.trw.env.TRW_SURFACE_ROLE="reviewer"' in argv
+    assert f'mcp_servers.trw_dispatch_test.command="{command}"' in argv
+    assert f"mcp_servers.trw_dispatch_test.args={json.dumps(list(args))}" in argv
+    assert 'mcp_servers.trw_dispatch_test.env.TRW_SURFACE_ROLE="reviewer"' in argv
     # OD-6: the interpreter is the dispatching process's own, never a path the
     # reviewed repository could plant.
     assert Path(command).is_absolute()
@@ -378,7 +386,7 @@ def test_the_sentinel_really_writes_when_it_is_spawned(
     result = dispatch(_req("codex", posture="reviewer", timeout_s=60))
     assert marker.exists()
     assert result.posture_enforced is True
-    assert 'mcp_servers.trw.env.TRW_SURFACE_ROLE="reviewer"' in marker.read_text(encoding="utf-8")
+    assert 'mcp_servers.trw_dispatch_test.env.TRW_SURFACE_ROLE="reviewer"' in marker.read_text(encoding="utf-8")
 
 
 def test_reviewer_plus_writes_is_refused_before_any_process_starts(

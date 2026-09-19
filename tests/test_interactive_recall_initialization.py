@@ -61,7 +61,7 @@ def test_ready_embedder_still_reaches_hybrid_search(monkeypatch: pytest.MonkeyPa
     from trw_mcp.state._memory_queries import _search_entries
 
     provider = MagicMock()
-    provider.embed.return_value = [0.5]
+    provider.embed_query.return_value = [0.5]
     space = EmbeddingSpace("a" * 64, "ready-fixture-v1", 1)
     provider.embedding_space.return_value = space
     monkeypatch.setattr(_memory_connection, "get_initialized_embedder", lambda: provider)

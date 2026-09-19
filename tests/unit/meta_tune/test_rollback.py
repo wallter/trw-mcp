@@ -154,6 +154,7 @@ def test_rollback_result_model_fields() -> None:
         )
 
 
+@pytest.mark.perf
 def test_rollback_completes_fast(tmp_path: Path) -> None:
     """NFR-3: rollback p95 ≤ 10s wall-clock (smoke threshold ≤1s)."""
     cfg = _cfg(True, str(tmp_path / "audit.jsonl"))

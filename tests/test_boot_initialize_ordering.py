@@ -329,9 +329,15 @@ def test_boot_deferral_middleware_is_in_the_production_chain() -> None:
     """Wiring assertion: the hook ships on the object create_app returns."""
     from trw_mcp.middleware.boot_deferral import BootDeferralMiddleware
     from trw_mcp.server._app import create_app
+    from trw_mcp.server._eof_cancel import _SessionCapture
 
-    chain = [type(m).__name__ for m in create_app().middleware]
-    assert BootDeferralMiddleware.__name__ in chain
-    assert chain[0] == BootDeferralMiddleware.__name__, (
-        "the deferral hook must wrap the whole chain, including the handshake"
+    chain = [type(m) for m in create_app().middleware]
+    assert chain.count(BootDeferralMiddleware) == 1
+    boot_index = chain.index(BootDeferralMiddleware)
+    # FR11's transport observer may capture the session first; it does not
+    # resolve boot configuration. No business/handshake middleware may precede
+    # boot deferral, and no duplicate or later capture wrapper is permitted.
+    assert chain[:boot_index] in ([], [_SessionCapture]), (
+        "only the EOF session-capture wrapper may precede boot deferral"
     )
+    assert chain.count(_SessionCapture) == boot_index

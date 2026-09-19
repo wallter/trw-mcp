@@ -208,5 +208,7 @@ class TestContextCleanupEdgeCases:
             assert (context / name).exists(), f"Allowlisted file deleted: {name}"
         for name in stale_files:
             assert not (context / name).exists(), f"Stale file not removed: {name}"
-        assert len(result["cleaned"]) == len(stale_files)
-        assert "cleaned" in result
+        # Context transients are live state outside the managed surface: named
+        # under ``ran`` and itemised under ``info``, never in the diff report.
+        assert "context_transient_cleanup" in result["ran"]
+        assert len([i for i in result["info"] if i.startswith("removed transient:")]) == len(stale_files)

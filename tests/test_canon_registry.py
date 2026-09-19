@@ -247,6 +247,7 @@ def test_registry_core_is_standard_library_only_and_deterministic() -> None:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.perf
 def test_registry_resolution_is_bounded_and_cache_key_is_content_bound() -> None:
     reg.clear_cache()
     raw = reg.bundled_manifest_bytes()

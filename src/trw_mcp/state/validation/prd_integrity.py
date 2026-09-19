@@ -9,6 +9,7 @@ import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.requirements import ValidationFailure
+from trw_mcp.state.validation._prd_integrity_artifacts import _check_mapping_artifacts
 from trw_mcp.state.validation._prd_integrity_contracts import (
     _check_compatibility_exceptions as _check_compatibility_exceptions,
 )
@@ -339,6 +340,7 @@ INTEGRITY_CHECK_GROUPS: tuple[str, ...] = (
     "integrity:compatibility_exceptions",
     "integrity:surface_delta",
     "integrity:repo_path_references",
+    "integrity:verification_artifacts",
     "integrity:functionality_level",
     "integrity:status_canonical",
     "integrity:implemented_alias",
@@ -396,6 +398,15 @@ def run_prd_integrity_checks(
     if _budget_ok("integrity:repo_path_references"):
         failures.extend(
             _check_repo_path_references(content, project_root, extra_roots=extra_roots, partial_report=partial_report)
+        )
+    if _budget_ok("integrity:verification_artifacts"):
+        failures.extend(
+            _check_mapping_artifacts(
+                frontmatter,
+                project_root,
+                status=normalize_status(str(frontmatter.get("status", "")))[0],
+                extra_roots=extra_roots,
+            )
         )
     if _budget_ok("integrity:functionality_level"):
         failures.extend(_check_functionality_level_matches_status(frontmatter))

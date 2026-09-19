@@ -788,7 +788,7 @@ def _ship_new_hooks(project: Path) -> dict[str, list[str]]:
         if (installed / source.name).exists()
     }
     result: dict[str, list[str]] = {"created": [], "updated": [], "skipped": [], "modified": [], "warnings": []}
-    _update_hooks(project, staged, result, dry_run=False, manifest_hashes=manifest)
+    _update_hooks(project, staged, result, manifest_hashes=manifest)
     return result
 
 
@@ -803,10 +803,15 @@ def test_vendor_hook_resync_rebless_keeps_an_enrolled_project_working(tmp_path: 
     project = _hook_project(tmp_path, "upgrade")
     assert check_enrollment_status(project, CONTRACT_REL) == "current"
 
-    result = _ship_new_hooks(project)
-    assert any(path.endswith("lib-trw.sh") for path in result["updated"]), "the update must actually land"
+    enrollment = project / ".trw" / "contracts" / "enrollment.yaml"
+    enrolled_before = enrollment.read_bytes()
+    _ship_new_hooks(project)
+    shipped = project.parent / f"{project.name}-vendor-data" / "hooks" / "lib-trw.sh"
+    installed = project / ".claude" / "hooks" / "lib-trw.sh"
+    assert installed.read_bytes() == shipped.read_bytes(), "the update must actually land"
     assert check_enrollment_status(project, CONTRACT_REL) == "current"
-    assert any("enrollment.yaml" in path for path in result["updated"])
+    # The re-bless rewrote the marker (update-project reports it from its surface diff).
+    assert enrollment.read_bytes() != enrolled_before
 
 
 def test_the_upgrade_hazard_is_real_without_the_rebless(tmp_path: Path) -> None:

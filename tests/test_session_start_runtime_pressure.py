@@ -1198,6 +1198,7 @@ def test_session_start_logs_writer_census_once_at_info(tmp_path: Path, monkeypat
         assert set(outcomes.values()) == {"deferred"}
 
 
+@pytest.mark.perf
 def test_census_and_ledger_overhead_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR01: census + ledger add <= 25 ms p95, and open no SQLite connection."""
     import sqlite3

@@ -92,7 +92,6 @@ def _render_rules(pairs: tuple[tuple[str, str], ...]) -> str:
 def _ensure_credentials_gitignored(
     target_dir: Path,
     result: dict[str, list[str]],
-    dry_run: bool,
     on_progress: ProgressCallback = None,
 ) -> None:
     """Merge-ensure ``.trw/.gitignore`` carries every required rule.
@@ -120,10 +119,6 @@ def _ensure_credentials_gitignored(
         missing = _missing_rules(existing)
         if not missing:
             return
-        names = ", ".join(rule for rule, _ in missing)
-        if dry_run:
-            result["updated"].append(f"would update: {gitignore} (add {names} ignore rule)")
-            return
         sep = "" if existing.endswith("\n") or existing == "" else "\n"
         appended = f"{existing}{sep}{_render_rules(missing)}"
         try:
@@ -131,21 +126,15 @@ def _ensure_credentials_gitignored(
         except OSError as exc:
             result.setdefault("errors", []).append(f"Failed to update {gitignore}: {exc}")
             return
-        result["updated"].append(str(gitignore))
         if on_progress:
             on_progress("Updated", str(gitignore))
         return
 
     # No .gitignore at all: create a minimal one carrying every required rule.
-    if dry_run:
-        names = ", ".join(rule for rule, _ in _REQUIRED_RULES)
-        result["created"].append(f"would create: {gitignore} ({names} ignore rule)")
-        return
     try:
         gitignore.write_text(_render_rules(_REQUIRED_RULES), encoding="utf-8")
     except OSError as exc:
         result.setdefault("errors", []).append(f"Failed to create {gitignore}: {exc}")
         return
-    result["created"].append(str(gitignore))
     if on_progress:
         on_progress("Created", str(gitignore))

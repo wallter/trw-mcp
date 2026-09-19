@@ -22,6 +22,7 @@ from __future__ import annotations
 import structlog
 from fastmcp import FastMCP
 
+from trw_mcp.dispatch._child_marker import dispatched_child_active
 from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_background
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
 from trw_mcp.dispatch._runner import dispatch
@@ -107,26 +108,39 @@ def register_dispatch_tools(server: FastMCP) -> None:
         isolate: bool = True,
         use_pty: bool = False,
         posture: str = "default",
+        with_trw: bool | None = None,
         wait: bool = False,
         verbose: bool = False,
     ) -> dict[str, object]:
         """Delegate a prompt to a sub-agent — another coding-agent CLI, client
         in {claude, codex, agy, opencode}. Use when you need an independent
-        agent's review. Async by default (job_id; poll
-        trw_dispatch_status), or wait=True (<=120s) for an inline result.
-        read_only defaults to the dispatch_default_read_only config (True);
-        allow_writes=True forces writes, confining cwd (if set) to the
-        project root and forbidding "..".
+        agent's review. Async by default (job_id; poll trw_dispatch_status),
+        or wait=True (<=120s) for an inline result. Read-only unless
+        allow_writes=True.
 
         Output: job_id + status to poll; inline result when wait=True; error + exit_code if rejected.
 
         Args:
             prompt: instruction for the child; never echoed back.
-            posture: "reviewer" bounds the child's own TRW tools to the nine
-                read-only reviewer tools via argv; refused for clients that
-                cannot carry it, and never with allow_writes.
+            posture: "reviewer" bounds the child's own TRW tools to nine
+                read-only ones; never with allow_writes.
+            with_trw: give the child a TRW session on this project (claude,
+                codex only); never with posture="reviewer".
             verbose: raw streams on success.
         """
+        # Nested-launch guard (PRD-CORE-281): FIRST, ahead of config, so a server
+        # started for a dispatched child does nothing at all on this path. Without
+        # it a read-only with_trw child could start a grandchild with writes on.
+        if dispatched_child_active():
+            logger.warning("dispatch_tool_nested_launch_refused", client=client)
+            return {
+                "error": (
+                    "nested dispatch is refused: this TRW server was started for a dispatched "
+                    "child. No process was launched."
+                ),
+                "exit_code": 2,
+            }
+
         dispatch_cfg = get_config().dispatch
 
         # F-07 (light cwd traversal guard): reject a '..' path COMPONENT before
@@ -154,6 +168,19 @@ def register_dispatch_tools(server: FastMCP) -> None:
                 "error": (
                     "allow_writes is refused under surface_role='reviewer': a reviewer lane may not "
                     "spawn a writable agent. No process was launched."
+                ),
+                "exit_code": 2,
+            }
+
+        # Same argument, second escape (PRD-CORE-281-FR02): a bounded reviewer
+        # that could hand a grandchild an UNBOUNDED TRW connection would have
+        # laundered its own read-only tool surface through a child process.
+        if with_trw and reviewer_role_active():
+            logger.warning("dispatch_tool_reviewer_with_trw_refused", client=client, surface_role="reviewer")
+            return {
+                "error": (
+                    "with_trw is refused under surface_role='reviewer': a reviewer lane may not give "
+                    "a child an unbounded TRW surface. No process was launched."
                 ),
                 "exit_code": 2,
             }
@@ -195,6 +222,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
                 isolate=isolate,
                 use_pty=use_pty,
                 posture=posture,
+                with_trw=with_trw,
                 dispatch_cfg=dispatch_cfg,
             )
         except DispatchResolutionError as err:

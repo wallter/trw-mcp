@@ -252,6 +252,7 @@ def test_antigravity_model_is_one_of_the_three_tokens_its_schema_admits() -> Non
         assert "timeout_mins" not in parsed
 
 
+@pytest.mark.perf
 @pytest.mark.unit
 def test_materialization_latency_budget() -> None:
     """NFR01: median wall time for one client's whole bundle, over 20 runs.

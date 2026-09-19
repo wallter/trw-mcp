@@ -20,7 +20,6 @@ Public API:
 
 The resolver is consumed by:
     - bootstrap/_init_project_skills.py::_install_agents (Claude Code)
-    - scripts/sync-agents.py (dev-repo sync)
 
 A future refactor may also have ``clients/llm.py::_resolve_model``
 delegate here; that is out of scope for PRD-INFRA-104 (see OQ-1).

@@ -61,11 +61,32 @@ def _allowed_names(client: DispatchClient) -> set[str]:
     return {*_BASE_ALLOWLIST, *credentials}
 
 
+def _trw_access_env(enabled: bool) -> dict[str, str]:
+    """``TRW_PROJECT_ROOT`` for a ``with_trw`` child, else nothing.
+
+    The child's trw-mcp server otherwise resolves the project from ITS OWN
+    working directory, which is the foreign CLI's cwd and not necessarily ours —
+    so "a TRW connection to the same project" would be a hope rather than a
+    guarantee. Resolved through the shared ``resolve_project_root`` (env, else
+    cwd) so this cannot become a second answer to that question.
+
+    It is a PATH, not a credential, and it is added only for the posture that
+    asked for a TRW connection; every other dispatch keeps the byte-identical
+    environment it had.
+    """
+    if not enabled:
+        return {}
+    from trw_mcp.state._paths import resolve_project_root
+
+    return {"TRW_PROJECT_ROOT": str(resolve_project_root())}
+
+
 def build_subprocess_env(
     client: DispatchClient,
     source_env: dict[str, str] | None = None,
     *,
     posture: DispatchPosture = "default",
+    with_trw: bool = False,
 ) -> dict[str, str]:
     """Build a sanitized env for launching *client*.
 
@@ -77,6 +98,10 @@ def build_subprocess_env(
             ``TRW_SURFACE_ROLE=reviewer``) AFTER filtering. The overlay is
             keyword-only and defaults to ``"default"``, so every existing caller
             keeps the exact environment it had.
+        with_trw: overlays ``TRW_PROJECT_ROOT`` so the child's own trw-mcp
+            server resolves THIS project rather than inferring one from the
+            foreign CLI's working directory. Same keyword-only, default-off
+            discipline as ``posture``.
 
     Returns:
         A new dict containing only allowlisted variables that are actually set
@@ -92,6 +117,11 @@ def build_subprocess_env(
     allowed = _allowed_names(client)
     env = {name: value for name, value in src.items() if name in allowed or name.startswith(_LOCALE_PREFIX)}
     env.update(reviewer_env_for(client, posture))
+    # Applied LAST and computed here, never inherited: TRW_PROJECT_ROOT is
+    # outside the allowlist, so a host value cannot reach a child that did not
+    # ask for a TRW connection, and a child that did gets OUR project rather
+    # than whatever the host environment happened to carry.
+    env.update(_trw_access_env(with_trw))
     return env
 
 
@@ -117,6 +147,7 @@ def build_runner_env(
     source_env: dict[str, str] | None = None,
     *,
     posture: DispatchPosture = "default",
+    with_trw: bool = False,
 ) -> dict[str, str]:
     """Build the env for the INTERMEDIATE ``_run_job`` child of a background job.
 
@@ -133,13 +164,14 @@ def build_runner_env(
     No host secret outside the client allowlist can reach the runner (and thus
     the foreign agent) through this env.
 
-    ``posture`` is forwarded so the detached intermediate carries the same
-    reviewer marking the synchronous path gives the foreign agent. Without it,
-    the two launch paths would produce different child environments for the same
-    request — the class of divergence the shared resolver exists to prevent.
+    ``posture`` and ``with_trw`` are forwarded so the detached intermediate
+    carries the same marking and the same project pointer the synchronous path
+    gives the foreign agent. Without them, the two launch paths would produce
+    different child environments for the same request — the class of divergence
+    the shared resolver exists to prevent.
     """
     src = dict(os.environ) if source_env is None else source_env
-    env = build_subprocess_env(client, source_env=src, posture=posture)
+    env = build_subprocess_env(client, source_env=src, posture=posture, with_trw=with_trw)
     for name in _RUNNER_PASSTHROUGH:
         value = src.get(name)
         if value is not None:

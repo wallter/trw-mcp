@@ -237,7 +237,11 @@ def eligible_tool_names() -> tuple[str, ...]:
 
 
 def resolve_tool_surface(
-    task_type: str | None, mode: str = "standard", *, comms_enabled: bool = False
+    task_type: str | None,
+    mode: str = "standard",
+    *,
+    comms_enabled: bool = False,
+    dispatch_enabled: bool = False,
 ) -> ToolResolution:
     """Resolve the tool surface for a task under a resolution mode (FR04).
 
@@ -252,6 +256,16 @@ def resolve_tool_surface(
     choice is visible. Any other mode value degrades to ``standard`` (never
     silently widens to full). Explicit ``comms_enabled`` adds only the peer
     comms pack to this bounded resolution; default task packs remain unchanged.
+
+    ``dispatch_enabled`` is the same shape of opt-in for the ``dispatch`` pack
+    (PRD-CORE-281). Like ``peer_comms`` that pack is named by NO entry of
+    :data:`STANDARD_TASK_PACKS` — deliberately, because it is a HIGH-RISK pack
+    (``models/config/_defaults.HIGH_RISK_PACKS``) whose tools launch another
+    agent process. The opt-in exists because before it the ONLY way to reach
+    ``trw_dispatch`` was ``tool_resolution_mode='all'`` (every tool) or a
+    single-use ``trw_request_tool_access`` grant PER CALL — unusable for the
+    launch-then-poll loop the bundled ``trw-delegate`` skill prescribes, which
+    is how a shipped skill came to name two tools no default session could see.
     """
     if mode == "all":
         tools = eligible_tool_names()
@@ -277,6 +291,8 @@ def resolve_tool_surface(
     packs = ("kernel", *(selected if selected is not None else fallback))
     if comms_enabled and "peer_comms" not in packs:
         packs = (*packs, "peer_comms")
+    if dispatch_enabled and "dispatch" not in packs:
+        packs = (*packs, "dispatch")
     tools_list = [tool for pack in packs for tool in PACK_TOOLS[pack]]
     if selected is None:
         decision = (
@@ -288,6 +304,8 @@ def resolve_tool_surface(
         decision = f"standard: task '{requested}' -> kernel only"
     if comms_enabled:
         decision += "; opt_in: comms_enabled -> peer_comms"
+    if dispatch_enabled:
+        decision += "; opt_in: dispatch_tools_exposed -> dispatch"
     return ToolResolution(
         mode="standard",
         task_type=task_type,

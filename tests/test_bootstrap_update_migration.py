@@ -9,6 +9,18 @@ from trw_mcp.bootstrap import update_project
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
 
+def _record(repo: Path, key: str, text: str) -> None:
+    """Record *text* as what TRW last wrote under *key* — the proof every sweep needs (PRD-INFRA-190-FR06)."""
+    import hashlib
+
+    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+    manifest_path = repo / ".trw" / "managed-artifacts.yaml"
+    manifest = FileStateReader().read_yaml(manifest_path)
+    manifest["content_hashes"][key] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    FileStateWriter().write_yaml(manifest_path, manifest)
+
+
 class TestUpdatePrefixScopedCleanup:
     """Test that _remove_stale_artifacts only removes trw- prefixed items."""
 
@@ -74,6 +86,7 @@ class TestUpdatePrefixScopedCleanup:
         stale_skill = initialized_repo / ".claude" / "skills" / "trw-deprecated-skill"
         stale_skill.mkdir(parents=True, exist_ok=True)
         (stale_skill / "SKILL.md").write_text("deprecated", encoding="utf-8")
+        _record(initialized_repo, "trw-deprecated-skill/SKILL.md", "deprecated")
 
         update_project(initialized_repo)
 
@@ -94,6 +107,7 @@ class TestUpdatePrefixScopedCleanup:
 
         stale_agent = initialized_repo / ".claude" / "agents" / "trw-deprecated-agent.md"
         stale_agent.write_text("deprecated agent", encoding="utf-8")
+        _record(initialized_repo, "trw-deprecated-agent.md", "deprecated agent")
 
         update_project(initialized_repo)
 
@@ -111,12 +125,12 @@ class TestPrefixMigration:
         (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
         (skills_dir / "trw-learn").mkdir(parents=True, exist_ok=True)
         (skills_dir / "trw-learn" / "SKILL.md").write_text("new", encoding="utf-8")
+        _record(initialized_repo, "learn/SKILL.md", "old")
 
         result = update_project(initialized_repo)
 
         assert not (skills_dir / "learn").exists()
-        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "learn" in e]
-        assert len(migrated_entries) >= 1
+        assert ".claude/skills/learn/SKILL.md" in result["cleaned"]
 
     def test_migrate_skips_predecessor_when_successor_absent(self, initialized_repo: Path) -> None:
         """Old skill dir remains when trw- successor is NOT installed."""
@@ -158,13 +172,13 @@ class TestPrefixMigration:
         agents_dir = initialized_repo / ".claude" / "agents"
         # Create predecessor and successor agent files
         (agents_dir / "implementer.md").write_text("old", encoding="utf-8")
+        _record(initialized_repo, "implementer.md", "old")
         # trw-implementer.md is already deployed by init_project
 
         result = update_project(initialized_repo)
 
         assert not (agents_dir / "implementer.md").exists()
-        migrated_entries = [e for e in result["updated"] if "migrated:" in e and "implementer.md" in e]
-        assert len(migrated_entries) >= 1
+        assert ".claude/agents/implementer.md" in result["cleaned"]
 
     def test_migrate_idempotent(self, initialized_repo: Path) -> None:
         """Second update_project run is a no-op on already-cleaned dirs."""
@@ -173,6 +187,7 @@ class TestPrefixMigration:
         (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
         (skills_dir / "trw-learn").mkdir(parents=True, exist_ok=True)
         (skills_dir / "trw-learn" / "SKILL.md").write_text("new", encoding="utf-8")
+        _record(initialized_repo, "learn/SKILL.md", "old")
 
         # First run removes predecessor
         result1 = update_project(initialized_repo)
@@ -180,8 +195,7 @@ class TestPrefixMigration:
 
         # Second run is a no-op — no migrated entries for learn
         result2 = update_project(initialized_repo)
-        migrated_learn = [e for e in result2["updated"] if "migrated:" in e and "learn" in e]
-        assert migrated_learn == []
+        assert not [e for e in result2["cleaned"] if "/learn/" in e]
 
     def test_genuine_custom_skill_not_removed(self, initialized_repo: Path) -> None:
         """A custom skill not in PREDECESSOR_MAP survives update_project."""
@@ -194,6 +208,5 @@ class TestPrefixMigration:
 
         assert custom_skill.exists()
         assert (custom_skill / "SKILL.md").read_text(encoding="utf-8") == "custom"
-        # Not in any migrated entries
-        migrated = [e for e in result["updated"] if "my-custom-tool" in e]
-        assert migrated == []
+        # Not in any removal
+        assert not [e for e in result["cleaned"] if "my-custom-tool" in e]

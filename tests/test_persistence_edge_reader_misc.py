@@ -93,24 +93,23 @@ class TestExistsEdgeCases:
         target.unlink()
         assert reader.exists(link) is False
 
-    def test_symlink_loop_is_reported_absent_not_raised(self, tmp_path: Path) -> None:
-        """A self-referential symlink resolves without error and simply is not there.
+    def test_symlink_loop_follows_the_resolver_contract(self, tmp_path: Path) -> None:
+        """A resolver refusal is typed; a tolerated cycle is reported absent.
 
-        This used to assert ``StateError(... RuntimeError)``. That expectation
-        described pathlib's own resolver, which raised
-        ``RuntimeError("Symlink loop from ...")``; CPython replaced it with
-        ``os.path.realpath(self, strict=strict)`` and ``strict=False`` returns
-        the path unchanged on a cycle instead of raising. Verified on Python
-        3.14.7: ``Path.resolve()`` returns the path, ``exists()`` is False, and
-        only ``stat()`` surfaces ``OSError(ELOOP)``. The typed content-free
-        mapping the old assertion existed for is covered directly below, so
-        nothing is lost by this test telling the truth about a loop.
+        Observe the runtime's pathlib behavior rather than assuming a Python
+        version: older resolvers raise on cycles; newer non-strict ones return
+        the unresolved path. Neither case may expose the raw resolver exception.
         """
         loop = tmp_path / "loop.yaml"
         loop.symlink_to(loop)
         reader = FileStateReader(base_dir=tmp_path)
-
-        assert reader.exists(loop) is False
+        try:
+            loop.resolve()
+        except (OSError, RuntimeError) as exc:
+            with pytest.raises(StateError, match=type(exc).__name__):
+                reader.exists(loop)
+        else:
+            assert reader.exists(loop) is False
 
     def test_path_resolution_failure_is_a_typed_content_free_state_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

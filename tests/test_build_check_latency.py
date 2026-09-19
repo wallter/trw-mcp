@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 
+@pytest.mark.perf
 def test_trw_build_check_returns_within_500ms(
     build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -52,6 +53,7 @@ def test_retired_q_learning_dispatch_has_no_fabricated_timing(build_check_invoke
     assert "q_learning_deferred" not in result
 
 
+@pytest.mark.perf
 def test_build_check_does_not_block_on_slow_correlation(
     build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,

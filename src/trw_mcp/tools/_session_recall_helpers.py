@@ -228,11 +228,13 @@ def perform_session_recalls(
                 # session; surface them before the high-impact baseline.
                 learnings = fresh_additions + learnings
 
-    from trw_mcp.scoring import rank_by_utility
+    from trw_mcp.scoring import rank_targeted_by_utility
     from trw_mcp.tools._recall_assertion_verification import _verify_assertions
 
     # Qualify every acquired candidate before the final startup result cap.
-    learnings = _verify_assertions(learnings, query.lower().split() if is_focused else [], config, rank_by_utility)
+    learnings = _verify_assertions(
+        learnings, query.lower().split() if is_focused else [], config, rank_targeted_by_utility
+    )
     # PRD-CORE-278 FR09: this project's own knowledge takes the slots first.
     # Ordering, not filtering — a repository whose store is thin still sees the
     # rest, just after what is actually about the checkout in front of it.

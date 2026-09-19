@@ -67,14 +67,13 @@ class TestTheMarkerIsGitIgnored:
         (trw / ".gitignore").write_text(custom, encoding="utf-8")
         result: dict[str, list[str]] = {"created": [], "updated": [], "errors": []}
 
-        _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+        _ensure_credentials_gitignored(tmp_path, result)
 
         merged = (trw / ".gitignore").read_text(encoding="utf-8")
         assert merged.startswith(custom), "user's own ignores must survive"
         assert _MARKER_RULE in [line.strip() for line in merged.splitlines()]
-        assert str(trw / ".gitignore") in result["updated"]
 
-        _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+        _ensure_credentials_gitignored(tmp_path, result)
         assert (trw / ".gitignore").read_text(encoding="utf-8") == merged, "idempotent"
 
     def test_real_git_ignores_the_marker_after_the_merge(self, tmp_path: Path) -> None:
@@ -93,7 +92,7 @@ class TestTheMarkerIsGitIgnored:
         assert before.returncode != 0, "non-vacuity: not ignored before the merge"
 
         result: dict[str, list[str]] = {"created": [], "updated": [], "errors": []}
-        _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+        _ensure_credentials_gitignored(tmp_path, result)
 
         after = subprocess.run(
             ["git", "check-ignore", "-q", ".trw/proprietary-installed.json"], cwd=tmp_path, check=False

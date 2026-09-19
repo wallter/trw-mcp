@@ -21,6 +21,12 @@ from trw_mcp.bootstrap import (
 from ._bootstrap_test_support import fake_git_repo, initialized_repo  # noqa: F401
 
 
+def _sha(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 @pytest.mark.unit
 class TestPrefixMigrationExtra:
     """Edge-case tests for _migrate_prefix_predecessors and manifest cleanup."""
@@ -49,23 +55,28 @@ class TestPrefixMigrationExtra:
             original_rmtree(path)
 
         with patch("trw_mcp.bootstrap.shutil.rmtree", side_effect=failing_rmtree):
-            _migrate_prefix_predecessors(target, result)
+            _migrate_prefix_predecessors(
+                target, result, manifest_hashes={"learn/SKILL.md": _sha("old"), "deliver/SKILL.md": _sha("old")}
+            )
 
         assert not result.get("errors")
 
-    def test_dry_run_migration_reports_would_migrate(self, initialized_repo: Path) -> None:
-        """dry_run=True appends 'would migrate:' without deleting."""
+    def test_dry_run_reports_the_migration_without_deleting(self, initialized_repo: Path) -> None:
+        """A TRW-recorded predecessor is listed under ``cleaned`` by a dry run and left on disk."""
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         skills_dir = initialized_repo / ".claude" / "skills"
         (skills_dir / "learn").mkdir(parents=True, exist_ok=True)
         (skills_dir / "learn" / "SKILL.md").write_text("old", encoding="utf-8")
-        (skills_dir / "trw-learn").mkdir(parents=True, exist_ok=True)
-        (skills_dir / "trw-learn" / "SKILL.md").write_text("new", encoding="utf-8")
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        manifest["content_hashes"]["learn/SKILL.md"] = _sha("old")
+        FileStateWriter().write_yaml(manifest_path, manifest)
 
         result = update_project(initialized_repo, dry_run=True)
 
         assert (skills_dir / "learn").exists()
-        would_migrate = [e for e in result["updated"] if "would migrate:" in e and "learn" in e]
-        assert len(would_migrate) >= 1
+        assert ".claude/skills/learn/SKILL.md" in result["cleaned"]
 
     def test_manifest_excludes_predecessor_names_from_custom(self, initialized_repo: Path) -> None:
         """Predecessor names are excluded from custom_skills in manifest."""
@@ -97,14 +108,27 @@ class TestPrefixMigrationExtra:
         (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
 
         result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _migrate_prefix_predecessors(target, result)
+        hashes = {"audit/SKILL.md": _sha("old"), "researcher.md": _sha("old")}
+        _migrate_prefix_predecessors(target, result, manifest_hashes=hashes)
 
         assert not (skills_dir / "audit").exists()
         assert not (agents_dir / "researcher.md").exists()
         assert (skills_dir / "trw-audit").exists()
         assert (agents_dir / "trw-researcher.md").exists()
-        migrated = [e for e in result["updated"] if "migrated:" in e]
-        assert len(migrated) == 2
+        assert not result.get("preserved")
+
+    def test_unrecorded_predecessor_is_kept_as_not_installer_owned(self, tmp_path: Path) -> None:
+        """PRD-INFRA-190-FR06: no manifest proof, no deletion — even with a successor present."""
+        agents_dir = tmp_path / ".claude" / "agents"
+        agents_dir.mkdir(parents=True)
+        (agents_dir / "researcher.md").write_text("mine", encoding="utf-8")
+        (agents_dir / "trw-researcher.md").write_text("new", encoding="utf-8")
+
+        result: dict[str, list[str]] = {"updated": [], "errors": []}
+        _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={"researcher.md": _sha("old")})
+
+        assert (agents_dir / "researcher.md").read_text(encoding="utf-8") == "mine"
+        assert result["preserved"] == [".claude/agents/researcher.md (not_installer_owned)"]
 
     def test_migrate_no_skills_dir_no_error(self, tmp_path: Path) -> None:
         """No error when .claude/skills/ directory does not exist."""
@@ -147,10 +171,10 @@ class TestPrefixMigrationExtra:
         (retired / "SKILL.md").write_text("retired", encoding="utf-8")
         result: dict[str, list[str]] = {"updated": [], "errors": []}
 
-        _migrate_prefix_predecessors(tmp_path, result)
+        _migrate_prefix_predecessors(tmp_path, result, manifest_hashes={f"{retired_name}/SKILL.md": _sha("retired")})
 
         assert not retired.exists()
-        assert result["updated"] == [f"migrated:{retired}"]
+        assert not result.get("preserved")
 
     def test_retirement_chains_collapse_to_direct_deletion(self) -> None:
         skill_map = PREDECESSOR_MAP["skills"]
@@ -324,28 +348,27 @@ class TestRemoveStaleArtifactsCustomPreservation:
 
 
 @pytest.mark.unit
-class TestStaleCleanupDryRun:
-    """FIX 5: stale-artifact cleanup under --dry-run must REPORT pending removals
-    (``would remove:<path>``) without deleting.
+class TestStaleCleanupOwnership:
+    """A stale bundled artifact is removed only with manifest proof (PRD-INFRA-190-FR06).
 
-    Previously ``_cleanup_stale_artifacts`` skipped ``_remove_stale_artifacts``
-    entirely when ``dry_run`` was set, so the preview under-reported what a real
-    run would delete. dry_run is now threaded down to the removal loops.
+    Removals are reported from the update's surface diff (``cleaned``), in both
+    the dry run and the real run.
     """
 
     @staticmethod
-    def _write_manifest_with_ghost(target_dir: Path) -> Path:
+    def _write_manifest_with_ghost(target_dir: Path, *, recorded: bool) -> Path:
         from trw_mcp.state.persistence import FileStateWriter
 
         bundled = _get_bundled_names()
         manifest = {
-            "version": 1,
+            "version": 2,
             "skills": bundled["skills"] + ["trw-ghost"],
             "agents": bundled["agents"],
             "hooks": bundled["hooks"],
             "custom_skills": [],
             "custom_agents": [],
             "custom_hooks": [],
+            "content_hashes": {"trw-ghost/SKILL.md": _sha("stale")} if recorded else {},
         }
         manifest_path = target_dir / ".trw" / "managed-artifacts.yaml"
         FileStateWriter().write_yaml(manifest_path, manifest)
@@ -354,47 +377,27 @@ class TestStaleCleanupDryRun:
         (ghost / "SKILL.md").write_text("stale", encoding="utf-8")
         return ghost
 
-    def test_remove_stale_set_dry_run_reports_without_deleting(self, tmp_path: Path) -> None:
-        """The leaf removal loop reports ``would remove:`` and deletes nothing."""
-        from trw_mcp.bootstrap._version_migration import _remove_stale_set
+    def test_dry_run_reports_the_removal_and_keeps_the_file(self, initialized_repo: Path) -> None:
+        ghost = self._write_manifest_with_ghost(initialized_repo, recorded=True)
 
-        skills = tmp_path / ".claude" / "skills"
-        ghost = skills / "trw-ghost"
-        ghost.mkdir(parents=True)
-        (ghost / "SKILL.md").write_text("stale", encoding="utf-8")
-
-        result: dict[str, list[str]] = {"updated": [], "errors": []}
-        _remove_stale_set(
-            {"trw-ghost"},
-            skills,
-            set(),
-            result,
-            is_dir_artifact=True,
-            log_event="stale_skill_removal_failed",
-            dry_run=True,
-        )
+        result = update_project(initialized_repo, dry_run=True)
 
         assert ghost.exists()
-        assert any("would remove:" in u and "trw-ghost" in u for u in result["updated"])
-        assert not any(u.startswith("removed:") for u in result["updated"])
+        assert ".claude/skills/trw-ghost/SKILL.md" in result["cleaned"]
 
-    def test_remove_stale_artifacts_dry_run_reports_and_preserves(self, initialized_repo: Path) -> None:
-        """A stale trw- skill is reported ``would remove:`` and left on disk in dry-run."""
-        ghost = self._write_manifest_with_ghost(initialized_repo)
+    def test_real_run_deletes_a_recorded_stale_artifact(self, initialized_repo: Path) -> None:
+        ghost = self._write_manifest_with_ghost(initialized_repo, recorded=True)
 
         result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-        _remove_stale_artifacts(initialized_repo, result, dry_run=True)
-
-        assert ghost.exists()
-        assert any("would remove:" in u and "trw-ghost" in u for u in result["updated"])
-        assert not any(u.startswith("removed:") for u in result["updated"])
-
-    def test_remove_stale_artifacts_real_run_still_deletes(self, initialized_repo: Path) -> None:
-        """Sanity: threading dry_run did not disable the real deletion path."""
-        ghost = self._write_manifest_with_ghost(initialized_repo)
-
-        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-        _remove_stale_artifacts(initialized_repo, result, dry_run=False)
+        _remove_stale_artifacts(initialized_repo, result)
 
         assert not ghost.exists()
-        assert any("removed:" in u and "trw-ghost" in u for u in result["updated"])
+
+    def test_unrecorded_stale_artifact_is_kept(self, initialized_repo: Path) -> None:
+        ghost = self._write_manifest_with_ghost(initialized_repo, recorded=False)
+
+        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
+        _remove_stale_artifacts(initialized_repo, result)
+
+        assert ghost.exists()
+        assert result["preserved"] == [".claude/skills/trw-ghost (not_installer_owned)"]

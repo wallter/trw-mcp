@@ -40,7 +40,6 @@ def _merge_settings_json(
     src: Path,
     dest: Path,
     result: dict[str, list[str]],
-    dry_run: bool = False,
 ) -> None:
     """Smart-merge bundled settings.json into existing user settings.
 
@@ -72,7 +71,7 @@ def _merge_settings_json(
         return
     if not dest.exists():
         # New install — copy bundled template directly
-        _parent._update_or_report(src, dest, result, dry_run)
+        _parent._update_or_report(src, dest, result)
         return
 
     bundled = read_json_object(src, context="settings_merge_bundled")
@@ -87,7 +86,7 @@ def _merge_settings_json(
         # Unreadable / corrupt / non-object existing file: recover by copying the
         # (valid) bundled template, mirroring the prior fallback semantics.
         logger.warning("settings_json_merge_fallback", path=str(dest), reason="unreadable_or_non_object")
-        _parent._update_or_report(src, dest, result, dry_run)
+        _parent._update_or_report(src, dest, result)
         return
 
     # Merge env block: add missing keys, preserve existing values. Guard the
@@ -127,24 +126,17 @@ def _merge_settings_json(
 
     # No-op detection (aligns with _update_or_report's _files_identical): when
     # the merge output is byte-identical to what is already on disk there is
-    # nothing to change — report ``preserved`` and skip, so both dry-run and
-    # real runs stop claiming "would merge"/"updated" on an unchanged file.
+    # nothing to write (PRD-INFRA-190 FR03).
     merged_text = json.dumps(existing, indent=2) + "\n"
     try:
         current_text: str | None = dest.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         current_text = None
     if current_text == merged_text:
-        result.setdefault("preserved", []).append(str(dest))
-        return
-
-    if dry_run:
-        result["updated"].append(f"would merge: {dest}")
         return
 
     try:
         dest.write_text(merged_text, encoding="utf-8")
-        result["updated"].append(str(dest))
     except OSError:
         # Structural reason only — never echo the raw exception text.
         result["errors"].append(f"Failed to write merged settings.json: {dest}")

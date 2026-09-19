@@ -268,6 +268,7 @@ def test_hook_stdlib_only_imports() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.perf
 def test_execution_under_50ms(tmp_path: Path) -> None:
     """NFR04: hook execution time < 50 ms for non-matching tool (no I/O)."""
     from trw_mcp.channels.codex._post_tool_use_telemetry import install_hook_script

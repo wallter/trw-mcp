@@ -174,7 +174,6 @@ def test_update_post_phases_dispatches_registry_before_distill_channels(tmp_path
     ):
         update_mod._run_post_update_phases(
             tmp_path,
-            False,
             "copilot",
             result,
             None,

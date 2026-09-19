@@ -300,7 +300,7 @@ def test_update_bytes_equal_a_fresh_materialization(tmp_path: Path) -> None:
     (stale / "trw-explorer.toml").write_text('name = "trw_explorer"\n', encoding="utf-8")
 
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-    _update_agents(tmp_path, _DATA_DIR, result, dry_run=False)
+    _update_agents(tmp_path, _DATA_DIR, result)
 
     fmt = agent_format_for("codex")
     for path in sorted(BUNDLED_AGENTS_DIR.glob("*.md")):
@@ -336,7 +336,7 @@ def test_a_user_edited_agent_survives_update(tmp_path: Path) -> None:
     edited.write_text("---\nname: trw-auditor\n---\n\nmy own body\n", encoding="utf-8")
     mine = edited.read_bytes()
     result: dict[str, list[str]] = {"created": [], "updated": [], "preserved": [], "errors": []}
-    _update_agents(tmp_path, _DATA_DIR, result, dry_run=False, manifest_hashes=manifest)
+    _update_agents(tmp_path, _DATA_DIR, result, manifest_hashes=manifest)
 
     assert edited.read_bytes() == mine, "a user-edited agent was overwritten"
     assert any(str(edited) in entry for entry in result.get("modified", [])), (

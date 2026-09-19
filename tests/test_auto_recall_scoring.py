@@ -308,6 +308,7 @@ def _hook_with_deadline(source_hook: Path, target: Path, timeout_ns: int) -> Pat
 _DEADLINE_SCAN_RETRY_ATTEMPTS = 3
 
 
+@pytest.mark.perf
 def test_deadline_emits_best_so_far(tmp_path: Path) -> None:
     """FR08: a mid-scan deadline emits what it already found instead of discarding it.
 
@@ -443,6 +444,7 @@ def test_read_model_contract_document_exists() -> None:
 _BUDGET_ATTEMPTS = 3
 
 
+@pytest.mark.perf
 def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
     """NFR01: a 10,000-entry store scores inside the 500ms deadline."""
     learnings = [

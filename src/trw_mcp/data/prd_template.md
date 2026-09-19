@@ -86,20 +86,55 @@ quality_gates:
 verification:
   mappings: []
   # - requirement_id: PRD-CORE-001-FR01
-  #   acceptance_criteria: ["Given ..., When ..., Then ..."]
+  #   requirement_kind: software_behavior
+  #   acceptance_criteria: ["An invalid request returns HTTP 400 with code invalid_request"]
   #   method: test  # test | analysis | inspection | demonstration
-  #   evidence_artifact: tests/test_feature.py::test_behavior
-  #   pass_condition: "The asserted observable value equals the requirement target"
+  #   evidence_artifact: tests/test_feature.py::test_invalid_request
+  #   pass_condition: "The real handler returns HTTP 400 and code invalid_request"
   #   automated: true
   #   automation_infeasible_reason: null
   #
-  # Required once status is implemented (rule
-  # `implemented_requirement_automation`): every mapping must carry EITHER
-  # automated behavioral evidence OR an automation_infeasible_reason naming why
-  # another method is required. `method: test` with a test-shaped
-  # evidence_artifact (`trw-mcp/tests/test_x.py::test_y`) already counts as
-  # automated behavioral evidence — the `automated:` flag is then optional.
-  # Set `automated: false` only with an automation_infeasible_reason.
+  # - requirement_id: PRD-CORE-001-NFR01
+  #   requirement_kind: non_behavioral
+  #   acceptance_criteria: ["The versioned release record names its approver and decision"]
+  #   method: inspection
+  #   evidence_artifact: docs/releases/approval-record.md
+  #   pass_condition: "The record identifies the release version, approver and approval decision"
+  #   automated: false
+  #
+  # requirement_kind accepts exactly software_behavior | non_behavioral.
+  # Omission defaults conservatively to software_behavior; null, blank and unknown
+  # values are invalid. Classify the requirement's subject, not its verification
+  # machinery. Do not infer kind from method, profile or FR/NFR prefix.
+  # For software_behavior at implemented/done, declare method: test plus
+  # automated: true, or omit automated with a test-shaped evidence_artifact
+  # (e.g. trw-mcp/tests/test_x.py::test_y), or supply a nonblank justified
+  # automation_infeasible_reason (`implemented_requirement_automation`).
+  # Explicit automated: false requires that reason at every lifecycle status
+  # for software_behavior (`automation_exception_reason`). Non-test methods with
+  # automated: true do not waive the implemented/done behavioral-test obligation.
+  # For non_behavioral, test/analysis/inspection/demonstration are legitimate
+  # method-matched verification without an automation excuse, including false.
+  # Required evidence, exact coverage and grounding still apply; a supplied blank
+  # reason is invalid. These mappings declare plans, not execution or completion.
+  # Draft/approved mappings may name future artifacts. At implemented status
+  # (including completion aliases), dynamic validation checks supported local
+  # artifact files under the project or configured repository roots. Missing
+  # files cannot be excused by a planned/new marker. Unsupported external or
+  # free-text locators remain explicitly unverified by this local check.
+  # Name one full repository-root-relative file per locator, including directories;
+  # no recursive basename lookup is performed. Prefix ./ for filenames with spaces.
+  # Supported selectors identify a file only (::test/::Class::test,
+  # :line[-line], #Lline[-Lline]); composites/prose are not silently truncated.
+  # File existence does not prove selector validity, execution or a passing result;
+  # retain method-matched verification evidence and independent review.
+  # Independent review checks each non_behavioral declaration against its subject
+  # and acceptance criteria; schema acceptance cannot prove the classification.
+  # Negative example: relabeling the HTTP 400 requirement above non_behavioral,
+  # using inspection and automated: true, is a semantic misclassification to reject.
+  # For affected existing mappings, assess each requirement: supply behavioral
+  # test evidence or a justified reason, or explicitly classify a genuinely
+  # nonbehavioral subject. Do not bulk-relabel mappings to silence validation.
 
 # Optional executable commands retained for project-native verification runners.
 verification_commands: []

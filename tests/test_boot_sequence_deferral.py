@@ -54,6 +54,7 @@ def test_start_boot_sequence_deferred_runs_in_named_daemon_thread(
     assert captured["thread_name"] == "trw-boot-gc"
 
 
+@pytest.mark.perf
 def test_start_boot_sequence_deferred_returns_before_slow_sweep_completes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

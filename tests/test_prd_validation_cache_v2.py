@@ -194,3 +194,65 @@ def test_readiness_base_score_is_verification_method_neutral(method: str) -> Non
     baseline_frontmatter, baseline_content = _method_prd("inspection")
     baseline = score_implementation_readiness(baseline_frontmatter, baseline_content, TRWConfig()).score
     assert score == baseline
+
+
+@pytest.mark.parametrize("kind", ["software_behavior", "non_behavioral"])
+def test_classification_cache_upgrade_and_dynamic_grounding(tmp_path: Path, monkeypatch, kind: str) -> None:
+    import trw_mcp.tools._prd_validation_cache as cache
+    from tests.test_aaref_32_prd_contract import _contract_prd, _validate
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.prd_utils import parse_frontmatter
+    from trw_mcp.state.validation._verification_mappings import validate_verification_mappings
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    (tmp_path / ".trw").mkdir()
+    artifact = tmp_path / "tests" / "test_behavior.py"
+    artifact.parent.mkdir()
+    artifact.write_text("def test_behavior(): pass\n")
+    content = (
+        _contract_prd(
+            risk_level="high",
+            fr_body="Evidence: `tests/test_behavior.py`",
+            extra_frontmatter="validation_profile: content_docs\n",
+        )
+        .replace("status: draft", "status: implemented")
+        .replace("      method: test", f"      requirement_kind: {kind}\n      method: inspection")
+    )
+    if kind == "non_behavioral":
+        content = content.replace("      automated: true\n", "")
+    current_version = cache.VALIDATOR_VERSION
+    old_version = "prd-quality-v2-pure:2026-07-10"
+    assert current_version != old_version
+    with monkeypatch.context() as old:
+        old.setattr(cache, "VALIDATOR_VERSION", old_version)
+        old_key = cache.cache_key(content, get_config())
+        cache.store_pure_result(
+            cache.cache_path(tmp_path), old_key, ValidationResultV2(valid=True, verification_mapping_coverage=0.25)
+        )
+    current_key = cache.cache_key(content, get_config())
+    assert current_key != old_key
+    assert cache.load_pure_result(cache.cache_path(tmp_path), current_key) is None
+    cold = _validate(tmp_path, content, verbose=True)
+    warm = _validate(tmp_path, content, verbose=True)
+    assert cold["cache"]["hit"] is False
+    assert warm["cache"]["hit"] is True
+    assert cold["cache"]["key"] == warm["cache"]["key"] == current_key
+    assert cold["failures"] == warm["failures"]
+    assert cold["verification_mapping_coverage"] == warm["verification_mapping_coverage"] == 1.0
+    automation_rules = {
+        f["rule"]
+        for f in cold["failures"]
+        if f["rule"] in {"implemented_requirement_automation", "automation_exception_reason"}
+    }
+    assert automation_rules == ({"implemented_requirement_automation"} if kind == "software_behavior" else set())
+    assert cold["validation_partial"] is False
+    assert not any(f["rule"] == "repo_path_exists" for f in cold["failures"])
+
+    # Pure classification is invariant under mutable repository state; grounding is not.
+    before = validate_verification_mappings(parse_frontmatter(content), content, effective_risk_level="high")
+    artifact.unlink()
+    after = validate_verification_mappings(parse_frontmatter(content), content, effective_risk_level="high")
+    assert before == after
+    deleted = _validate(tmp_path, content, verbose=True)
+    assert deleted["cache"]["hit"] is True
+    assert any(f["rule"] == "repo_path_exists" for f in deleted["failures"])

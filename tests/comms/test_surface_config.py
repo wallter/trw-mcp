@@ -102,6 +102,43 @@ def test_boundary_legal_bounds_are_accepted(overrides: dict[str, int], why: str)
     assert TRWConfig.model_validate(overrides).comms_enabled is False
 
 
+# --- PRD-CORE-274 Amendment 01 (FR11): wait field bounds ----------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("comms_wait_max_seconds", 0),
+        ("comms_wait_max_seconds", 300),
+        ("comms_wait_interval_ms", 100),
+        ("comms_wait_interval_ms", 15000),
+    ],
+    ids=["max_seconds_floor", "max_seconds_ceiling", "interval_ms_floor", "interval_ms_ceiling"],
+)
+def test_wait_field_bounds_are_accepted_at_the_edges(field: str, value: int) -> None:
+    assert getattr(TRWConfig.model_validate({field: value}), field) == value
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("comms_wait_max_seconds", -1),
+        ("comms_wait_max_seconds", 301),
+        ("comms_wait_interval_ms", 99),
+        ("comms_wait_interval_ms", 15001),
+    ],
+    ids=[
+        "max_seconds_below_floor",
+        "max_seconds_above_ceiling",
+        "interval_ms_below_floor",
+        "interval_ms_above_ceiling",
+    ],
+)
+def test_wait_field_bounds_refuse_outside_the_edges(field: str, value: int) -> None:
+    with pytest.raises(ValueError, match=field):
+        TRWConfig.model_validate({field: value})
+
+
 COMMS_TOOLS = ("trw_peers", "trw_send", "trw_inbox")
 
 

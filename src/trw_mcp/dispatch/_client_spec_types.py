@@ -20,6 +20,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from trw_mcp.dispatch._child_marker import CHILD_MARKER_ENV, template_marks_child
+
 __all__ = [
     "REVIEWER_ARGV_PLACEHOLDERS",
     "ClientSpec",
@@ -239,6 +241,15 @@ class ClientSpec(BaseModel):
             "flags it pairs with."
         ),
     )
+    fresh_mcp_server_table: bool = Field(
+        default=False,
+        description=(
+            "Internal transport capability: render dotted -c MCP overrides into a fresh "
+            "server table and disable the legacy entry because this client's config "
+            "recursively merges inherited transport/env/tool-filter leaves. The renderer "
+            "requires the controlled dotted transport contract when this flag is enabled."
+        ),
+    )
     reviewer_argv_template: tuple[str, ...] = Field(
         default=(),
         description=(
@@ -249,6 +260,30 @@ class ClientSpec(BaseModel):
             "EMPTY IS A REFUSAL, not a default: a client with no template has no argv "
             "channel able to carry the MCP transport, so a reviewer dispatch to it is "
             "rejected before spawn rather than downgraded to a prompt-only 'reviewer'."
+        ),
+    )
+    trw_access_argv_template: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "Argv fragment emitted INSTEAD of isolation_argv when the request carries "
+            "with_trw=True (PRD-CORE-281-FR02): the SAME mechanism the reviewer template "
+            "uses — TRW's own stdio trw-mcp server rendered into the child's argv — but "
+            "with no TRW_SURFACE_ROLE marking and no enabled_tools allowlist, so the "
+            "child gets an ORDINARY TRW session against this project. Tokens may "
+            "reference REVIEWER_ARGV_PLACEHOLDERS. EMPTY IS A REFUSAL, not a default: a "
+            "client with no argv channel for an MCP transport is rejected before spawn "
+            "rather than launched with the flag silently dropped."
+        ),
+    )
+    trw_access_config_residue: str = Field(
+        default="",
+        description=(
+            "What this client STILL reads of the host/project configuration once "
+            "``trw_access_argv_template`` has displaced ``isolation_argv`` — empty when the "
+            "template preserves the same isolation the default fragment gave (PRD-CORE-281-FR04). "
+            "DATA rather than a source comment, because a residue nobody can read at runtime is "
+            "a residue nobody weighs: the runner logs this string on every enforced with_trw "
+            "launch, so 'TRW's server is present' is never reported as 'the child is isolated'."
         ),
     )
     reviewer_env: Mapping[str, str] = Field(
@@ -327,6 +362,18 @@ class ClientSpec(BaseModel):
         return bool(self.reviewer_argv_template)
 
     @property
+    def supports_trw_access(self) -> bool:
+        """True iff this client can be launched with ``with_trw=True``.
+
+        DERIVED from the template's presence for the same reason
+        :attr:`supports_reviewer_posture` is: a hand-set boolean could claim a
+        TRW connection the argv never delivers, and the caller would then read
+        the child's "I have no TRW tools" as a server fault rather than as the
+        unsupported client it is.
+        """
+        return bool(self.trw_access_argv_template)
+
+    @property
     def headless_json(self) -> bool:
         """True iff this client can be asked for machine-readable output."""
         return bool(self.structured_output_argv)
@@ -364,13 +411,39 @@ class ClientSpec(BaseModel):
                 f"{self.client_id!r}: reviewer_env is set but reviewer_argv_template is empty; "
                 "the env alone marks the child without giving it a TRW-controlled MCP transport"
             )
-        for token in self.reviewer_argv_template:
-            for name in _placeholder_names(token):
-                if name not in REVIEWER_ARGV_PLACEHOLDERS:
-                    raise ValueError(
-                        f"{self.client_id!r}: reviewer_argv_template references unknown placeholder "
-                        f"{{{name}}}; known: {sorted(REVIEWER_ARGV_PLACEHOLDERS)}"
-                    )
+        for field_name in ("reviewer_argv_template", "trw_access_argv_template"):
+            for token in getattr(self, field_name):
+                for name in _placeholder_names(token):
+                    if name not in REVIEWER_ARGV_PLACEHOLDERS:
+                        raise ValueError(
+                            f"{self.client_id!r}: {field_name} references unknown placeholder "
+                            f"{{{name}}}; known: {sorted(REVIEWER_ARGV_PLACEHOLDERS)}"
+                        )
+        # A with_trw child is an ORDINARY peer, not a bounded reviewer. Naming
+        # the reviewer allowlist here would hand it the nine read-only tools
+        # while the result reported an unrestricted TRW connection — the exact
+        # "declared bound is not the delivered bound" inversion this module's
+        # derived properties exist to prevent.
+        for token in self.trw_access_argv_template:
+            if "reviewer" in token:
+                raise ValueError(
+                    f"{self.client_id!r}: trw_access_argv_template token {token!r} references the "
+                    "reviewer surface; use posture='reviewer' for a bounded lane"
+                )
+        # Nested-launch guard: the child's TRW server must be able to tell it
+        # is a child. Only the two known transports are recognised, so a
+        # template in any other shape is refused rather than assumed marked.
+        if self.trw_access_argv_template and not template_marks_child(self.trw_access_argv_template):
+            raise ValueError(
+                f"{self.client_id!r}: trw_access_argv_template does not set {CHILD_MARKER_ENV}=1 in the "
+                "rendered TRW server entry (known shapes: --mcp-config JSON env, codex -c dotted override)"
+            )
+        if self.trw_access_config_residue and not self.trw_access_argv_template:
+            raise ValueError(
+                f"{self.client_id!r}: trw_access_config_residue is set but trw_access_argv_template "
+                "is empty; a residue describes what survives a with_trw launch this client can never "
+                "have, so the two statements contradict each other"
+            )
         return self
 
     @model_validator(mode="after")

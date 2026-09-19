@@ -83,3 +83,25 @@ def test_marker_detection_is_load_bearing_in_both_validators(tmp_path: Path, mon
     penalty, hallucinated = compute_grounding_penalty(content, tmp_path)
     assert penalty == pytest.approx(0.9)
     assert hallucinated == ["src/planned_module.py"]
+
+
+@pytest.mark.parametrize("separator", [" `x` ", " prose ", "\n", "\r\n", " | ", "\v", "\f"])
+def test_unattached_marker_does_not_exempt_missing_path(tmp_path: Path, separator: str) -> None:
+    """A nearby annotation for another token, line or cell is not path evidence."""
+    content = f"Modify `src/missing.py`{separator}(new)."
+
+    failures = _check_repo_path_references(content, tmp_path)
+    penalty, hallucinated = compute_grounding_penalty(content, tmp_path)
+
+    assert [failure.rule for failure in failures] == ["repo_path_exists"]
+    assert penalty == pytest.approx(0.9)
+    assert hallucinated == ["src/missing.py"]
+
+
+@pytest.mark.parametrize("separator", ["", " ", "\t", " \t "])
+def test_attached_marker_accepts_horizontal_spacing(tmp_path: Path, separator: str) -> None:
+    """Valid adjacent annotations still exempt planned files in both consumers."""
+    content = f"Create `src/planned.py`{separator}(PLANNED)."
+
+    assert _check_repo_path_references(content, tmp_path) == []
+    assert compute_grounding_penalty(content, tmp_path) == (1.0, [])

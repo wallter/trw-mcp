@@ -105,7 +105,7 @@ from trw_mcp.scoring._recall import (
     infer_domains as infer_domains,
 )
 from trw_mcp.scoring._recall import (
-    rank_by_utility as rank_by_utility,
+    rank_targeted_by_utility as rank_targeted_by_utility,
 )
 from trw_mcp.scoring._recall import (
     utility_based_prune_candidates as utility_based_prune_candidates,
@@ -222,7 +222,7 @@ __all__ = [
     "infer_domains",
     "process_outcome",
     "process_outcome_for_event",
-    "rank_by_utility",
+    "rank_targeted_by_utility",
     "safe_float",
     "safe_int",
     "sigmoid_normalize",

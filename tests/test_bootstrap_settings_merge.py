@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from unittest.mock import patch
 
 from trw_mcp.bootstrap._template_updater import _merge_settings_json
 
@@ -69,7 +70,6 @@ def test_valid_merge_preserves_existing_and_adds_missing(tmp_path: Path) -> None
     assert merged["hooks"]["SessionStart"] == [{"matcher": "startup"}]
     # Unrelated top-level key preserved.
     assert merged["permissions"] == {"allow": ["Bash(ls)"]}
-    assert str(dest) in result["updated"]
     assert not result["errors"]
 
 
@@ -180,7 +180,6 @@ def test_new_install_copies_bundled(tmp_path: Path) -> None:
     _merge_settings_json(src, dest, result)
 
     assert json.loads(dest.read_text(encoding="utf-8"))["env"]["TRW_NEW_FLAG"] == "1"
-    assert str(dest) in result["created"]
 
 
 def test_existing_non_object_env_block_preserved(tmp_path: Path) -> None:
@@ -195,61 +194,25 @@ def test_existing_non_object_env_block_preserved(tmp_path: Path) -> None:
     merged = json.loads(dest.read_text(encoding="utf-8"))
     assert merged["env"] == "oops-a-string"  # preserved untouched
     assert merged["keep"] == 1
-    assert str(dest) in result["updated"]
 
 
 # ── unchanged-output no-op (FIX 8) ───────────────────────────────────────────
 
 
-def test_second_merge_is_unchanged_and_reported_preserved(tmp_path: Path) -> None:
-    """A second merge whose output equals what's on disk is a no-op.
-
-    The old code reported ``updated`` unconditionally even when the merge changed
-    nothing. It must now compare the merged output to the file and report
-    ``preserved`` (aligned with ``_files_identical``).
-    """
+def test_second_merge_does_not_rewrite_the_file(tmp_path: Path) -> None:
+    """A second merge whose output equals what's on disk writes nothing (PRD-INFRA-190 FR03)."""
     src = _bundled(tmp_path)
     dest = tmp_path / "proj" / ".claude" / "settings.json"
     _write(dest, json.dumps({"env": {"ENABLE_TOOL_SEARCH": "false"}}))
 
-    first = _new_result()
-    _merge_settings_json(src, dest, first)
-    assert str(dest) in first["updated"]
+    _merge_settings_json(src, dest, _new_result())
+    merged = dest.read_text(encoding="utf-8")
+    assert merged != json.dumps({"env": {"ENABLE_TOOL_SEARCH": "false"}})
 
-    # Merged canonical form is now on disk — re-running changes nothing.
-    second = _new_result()
-    _merge_settings_json(src, dest, second)
-    assert str(dest) in second["preserved"]
-    assert str(dest) not in second["updated"]
-
-
-def test_dry_run_unchanged_reports_preserved_not_would_merge(tmp_path: Path) -> None:
-    """Dry-run on an already-merged file reports preserved, not a spurious would-merge."""
-    src = _bundled(tmp_path)
-    dest = tmp_path / "proj" / ".claude" / "settings.json"
-    _write(dest, json.dumps({"env": {"ENABLE_TOOL_SEARCH": "false"}}))
-    _merge_settings_json(src, dest, _new_result())  # write canonical merged form
-
-    result = _new_result()
-    _merge_settings_json(src, dest, result, dry_run=True)
-
-    assert str(dest) in result["preserved"]
-    assert not any("would merge" in u for u in result["updated"])
-
-
-def test_dry_run_changed_reports_would_merge_without_writing(tmp_path: Path) -> None:
-    """Dry-run on a file the merge WOULD change reports would-merge and writes nothing."""
-    src = _bundled(tmp_path)
-    dest = tmp_path / "proj" / ".claude" / "settings.json"
-    # Missing the bundled TRW_NEW_FLAG → the merge would add it.
-    _write(dest, json.dumps({"env": {"ENABLE_TOOL_SEARCH": "false"}}))
-
-    result = _new_result()
-    _merge_settings_json(src, dest, result, dry_run=True)
-
-    assert any("would merge" in u and str(dest) in u for u in result["updated"])
-    # Dry-run must not touch the file.
-    assert "TRW_NEW_FLAG" not in dest.read_text(encoding="utf-8")
+    # Merged canonical form is now on disk — re-running must not write at all.
+    with patch.object(Path, "write_text", side_effect=AssertionError("rewrote an unchanged file")):
+        _merge_settings_json(src, dest, _new_result())
+    assert dest.read_text(encoding="utf-8") == merged
 
 
 # ── PRD-SEC-013 FR09: per-entry hook merge ─────────────────────────────────

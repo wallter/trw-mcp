@@ -241,7 +241,7 @@ class TestStaleArtifactsStillRefresh:
         # Bundle N+1: user never touched it -> must refresh, not freeze.
         result = update_project(repo)
         assert hook.read_text(encoding="utf-8") != "old hook\n"
-        assert str(hook) in result["updated"]
+        assert ".claude/hooks/session-start.sh" in result["updated"]
         assert str(hook) not in result.get("modified", [])
 
     def test_refresh_survives_a_second_run(
@@ -519,7 +519,7 @@ class TestDegradedManifest:
         if hook.is_file():
             try:
                 hook.read_bytes()
-            except OSError:
+            except OSError:  # trw-fail-silent-allow: probing that the chmod made the file unreadable; the else branch skips when it did not
                 pass
             else:  # running as root — the premise cannot be established
                 hook.chmod(0o755)
@@ -802,27 +802,18 @@ class TestDroppedBundleFileDoesNotFreeze:
         (codex_bundle / "trw-audit" / "audit-framework.md").unlink()
         result = update_project(repo)
 
-        # Must be the REMOVAL of the CODEX copy. A bare "…audit-framework.md"
-        # match was measured passing against the pre-fix source: the claude /
-        # copilot / cursor mirrors all install a file of that name and report it
-        # in ``updated``, so the loose form proved nothing.
-        assert any(
-            entry.startswith("removed:") and entry.endswith(_DROPPED_KEY) for entry in result.get("updated", [])
-        ), f"the removal was never reported — the sweep did not run: {result.get('updated', [])}"
+        # Must be the REMOVAL of the CODEX copy, named exactly: the claude /
+        # copilot / cursor mirrors all carry a file of that name.
+        assert _DROPPED_KEY in result["cleaned"], f"the sweep did not run: {result['cleaned']}"
 
     def test_dry_run_reports_the_removal_without_deleting(self, tmp_path: Path, codex_bundle: Path) -> None:
-        from trw_mcp.bootstrap._version_manifest import _manifest_content_hashes, _read_manifest
-        from trw_mcp.bootstrap._version_migration import _remove_stale_client_artifacts
-
         repo = _init_all_clients(tmp_path)
-        prev = _manifest_content_hashes(_read_manifest(repo))
         (codex_bundle / "trw-audit" / "audit-framework.md").unlink()
 
-        result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
-        _remove_stale_client_artifacts(repo, result, dry_run=True, manifest_hashes=prev)
+        result = update_project(repo, dry_run=True)
 
         assert (repo / _DROPPED_KEY).is_file()
-        assert any(e.startswith("would remove:") and e.endswith("audit-framework.md") for e in result["updated"])
+        assert _DROPPED_KEY in result["cleaned"]
 
     def test_sweep_is_disabled_without_a_prior_manifest(self, tmp_path: Path, codex_bundle: Path) -> None:
         """No baseline means no proof of authorship — degrade to leaving it alone."""
@@ -850,3 +841,102 @@ def test_every_directory_surface_declares_a_file_key_source() -> None:
     missing = [s.client_dir for s in _CLIENT_ARTIFACT_SURFACES if s.is_dir_artifact and s.bundled_files is None]
     assert not missing, f"directory surfaces with no file-key source cannot sweep dropped files: {missing}"
     assert any(s.is_dir_artifact for s in _CLIENT_ARTIFACT_SURFACES), "non-vacuity: no directory surface exists"
+
+
+# ---------------------------------------------------------------------------
+# PRD-INFRA-190 FR04: never overwrite uncommitted work the installer did not write
+# FR07: a dropped content_hashes key is reported
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t", *args], check=True, capture_output=True
+    )
+
+
+def _committed_install(root: Path, *, exclude: str | None = None) -> Path:
+    """A real git repo, installed and settled, committed except for *exclude*."""
+    root.mkdir(parents=True, exist_ok=True)
+    _git(root, "init", "-q")
+    assert not init_project(root, ide="claude-code")["errors"]
+    assert not update_project(root)["errors"]
+    _git(root, "add", "-A", "--", ".", *([f":!{exclude}"] if exclude else []))
+    _git(root, "commit", "-qm", "installed")
+    return root
+
+
+def _next_bundle(tmp_path: Path) -> Path:
+    """Bundle N+1: a new settings.json env key and a changed hook."""
+    import json
+
+    from trw_mcp.bootstrap import _DATA_DIR
+
+    bundle = tmp_path / "bundle"
+    shutil.copytree(_DATA_DIR, bundle)
+    settings = bundle / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data.setdefault("env", {})["TRW_BUNDLE_NEXT"] = "1"
+    settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    hook = bundle / "hooks" / "session-start.sh"
+    hook.write_text(hook.read_text(encoding="utf-8") + "\n# bundle N+1\n", encoding="utf-8")
+    return bundle
+
+
+class TestUncommittedChangesAreNeverOverwritten:
+    """FR04, for a modified, a staged and an untracked file."""
+
+    @pytest.mark.parametrize("state", ["modified", "staged", "untracked"])
+    def test_uncommitted_edit_the_installer_did_not_record_is_preserved(self, tmp_path: Path, state: str) -> None:
+        rel = ".claude/settings.json"
+        repo = _committed_install(tmp_path / "repo", exclude=rel if state == "untracked" else None)
+        settings = repo / rel
+        edited = settings.read_text(encoding="utf-8").replace('"env": {', '"env": {\n    "MY_OWN_FLAG": "1",', 1)
+        assert edited != settings.read_text(encoding="utf-8"), "fixture: the edit must change the file"
+        settings.write_text(edited, encoding="utf-8")
+        if state == "staged":
+            _git(repo, "add", rel)
+
+        result = update_project(repo, data_dir=_next_bundle(tmp_path))
+
+        assert not result["errors"], result["errors"]
+        assert settings.read_text(encoding="utf-8") == edited
+        assert f"{rel} (uncommitted_changes)" in result["preserved"]
+        assert rel not in result["updated"]
+
+    @pytest.mark.parametrize("state", ["modified", "staged", "untracked"])
+    def test_uncommitted_bytes_the_installer_recorded_are_refreshed(self, tmp_path: Path, state: str) -> None:
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        rel = ".claude/hooks/session-start.sh"
+        repo = _committed_install(tmp_path / "repo", exclude=rel if state == "untracked" else None)
+        hook = repo / rel
+        written = hook.read_text(encoding="utf-8") + "\n# what the installer wrote last time\n"
+        hook.write_text(written, encoding="utf-8")
+        if state == "staged":
+            _git(repo, "add", rel)
+        manifest_path = repo / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        manifest["content_hashes"]["session-start.sh"] = hashlib.sha256(written.encode("utf-8")).hexdigest()
+        FileStateWriter().write_yaml(manifest_path, manifest)
+        bundle = _next_bundle(tmp_path)
+
+        result = update_project(repo, data_dir=bundle)
+
+        assert not result["errors"], result["errors"]
+        assert hook.read_bytes() == (bundle / "hooks" / "session-start.sh").read_bytes()
+        assert rel in result["updated"]
+
+
+def test_a_user_edited_agent_produces_exactly_one_dropped_key_warning(tmp_path: Path) -> None:
+    """FR07: the recorder's omission is visible, named, and says why."""
+    repo = _committed_install(tmp_path / "repo")
+    agent = repo / ".claude" / "agents" / "trw-implementer.md"
+    agent.write_text(agent.read_text(encoding="utf-8") + "\n<!-- my note -->\n", encoding="utf-8")
+
+    result = update_project(repo)
+
+    dropped = [w for w in result["warnings"] if w.startswith("manifest_key_dropped:")]
+    assert dropped == ["manifest_key_dropped: trw-implementer.md (user_edited)"]

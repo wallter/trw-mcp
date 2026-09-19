@@ -253,9 +253,9 @@ class TestApplyTimeDecay:
 class TestStoredImpactImmutabilityAdditional:
     """NFR03: Additional tests verifying stored impact is never mutated at query time."""
 
-    def test_rank_by_utility_does_not_mutate_entry_dict(self) -> None:
-        """rank_by_utility must not mutate the entry dicts passed to it."""
-        from trw_mcp.scoring import rank_by_utility as rbu
+    def test_rank_targeted_by_utility_does_not_mutate_entry_dict(self) -> None:
+        """rank_targeted_by_utility must not mutate the entry dicts passed to it."""
+        from trw_mcp.scoring import rank_targeted_by_utility as rbu
 
         created_old = (datetime.now(timezone.utc) - timedelta(days=300)).date().isoformat()
         entry: dict[str, object] = {

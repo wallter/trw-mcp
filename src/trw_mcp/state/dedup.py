@@ -24,6 +24,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import BatchDedupResult
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
+from trw_mcp.state._embedding_space import admitted_hits, loaded_space_threshold
 from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.memory_adapter import embedding_available
@@ -94,7 +95,7 @@ def _merge_protection_fields(existing: dict[str, object], new_entry_data: dict[s
 def _distance_to_similarity(distance: float) -> float:
     """Convert sqlite-vec L2 distance to cosine similarity.
 
-    For unit-normalized vectors (which all-MiniLM-L6-v2 produces via
+    For unit-normalized vectors (which the local embedder produces via
     ``normalize_embeddings=True``), the relationship is:
     ``distance² = 2 * (1 - cosine_similarity)``
     so ``cosine_similarity = 1 - distance² / 2``.
@@ -131,6 +132,9 @@ def _check_duplicate_via_backend(
         hits = backend.search_vectors(new_vector, top_k=10, namespace=DEFAULT_NAMESPACE)
         if not hits:
             return None  # No vectors indexed yet — fall back to YAML
+        # Only neighbours encoded in new_vector's space are comparable; with none
+        # the fuzzy check is skipped (exact-content dedup already ran).
+        hits = admitted_hits(backend, hits, namespace=DEFAULT_NAMESPACE, surface="trw_learn_dedup")
 
         best_similarity = 0.0
         best_id: str | None = None
@@ -184,6 +188,19 @@ def _check_exact_content_duplicate(summary: str, detail: str, entries_dir: Path)
     except Exception:  # justified: fail-open, exact dedup must never block storage when backend is unavailable
         logger.debug("dedup_exact_content_unavailable", exc_info=True)
         return None
+
+
+def _thresholds(skip: float, merge: float) -> tuple[float, float]:
+    """FR06-valid (skip, merge), translated to the loaded embedder's cosine scale.
+
+    Merge must be strictly below skip, else both fall back to the defaults.
+    Configured values are on the reference-encoder scale (trw-memory's
+    ``calibrated_threshold``); the loaded embedder decides the translation.
+    """
+    if merge >= skip:
+        logger.warning("dedup_threshold_invalid", merge=merge, skip=skip)
+        skip, merge = 0.95, 0.85
+    return loaded_space_threshold(skip), loaded_space_threshold(merge)
 
 
 def check_duplicate(
@@ -240,19 +257,6 @@ def check_duplicate(
     if not cfg.embeddings_enabled:
         return DedupResult("store", None, 0.0)
 
-    skip_threshold = cfg.dedup_skip_threshold
-    merge_threshold = cfg.dedup_merge_threshold
-
-    # FR06: Validate thresholds — merge must be strictly less than skip
-    if merge_threshold >= skip_threshold:
-        logger.warning(
-            "dedup_threshold_invalid",
-            merge=merge_threshold,
-            skip=skip_threshold,
-        )
-        skip_threshold = 0.95
-        merge_threshold = 0.85
-
     # Generate embedding for the new learning
     new_text = summary + " " + detail
     new_vector = embed(new_text)
@@ -260,6 +264,8 @@ def check_duplicate(
     if new_vector is None:
         logger.debug("dedup_embed_unavailable", text_len=len(new_text))
         return DedupResult("store", None, 0.0)
+    # After embed(): the embedder that produced new_vector sets the cosine scale.
+    skip_threshold, merge_threshold = _thresholds(cfg.dedup_skip_threshold, cfg.dedup_merge_threshold)
 
     # --- Fast path: sqlite-vec KNN search ---
     # Resolve .trw dir from entries_dir (entries_dir = trw_dir / learnings / entries)
@@ -556,6 +562,7 @@ def batch_dedup(
 
     merged_count = 0
     skipped_ids: set[str] = set()
+    skip_threshold, merge_threshold = _thresholds(cfg.dedup_skip_threshold, cfg.dedup_merge_threshold)
 
     for i in range(len(active_entries)):
         path_i, data_i, vec_i = active_entries[i]
@@ -571,7 +578,7 @@ def batch_dedup(
 
             sim = cosine_similarity(vec_i, vec_j)
 
-            if sim >= cfg.dedup_skip_threshold:
+            if sim >= skip_threshold:
                 # Exact duplicate — mark newer as obsolete
                 data_j["status"] = "obsolete"
                 data_j["detail"] = (
@@ -580,7 +587,7 @@ def batch_dedup(
                 writer.write_yaml(path_j, data_j)
                 skipped_ids.add(id_j)
                 merged_count += 1
-            elif sim >= cfg.dedup_merge_threshold:
+            elif sim >= merge_threshold:
                 # Near-duplicate — merge j into i
                 merge_entries(path_i, data_j, reader, writer, max_merge_tags=cfg.max_consolidated_tags)
                 data_j["status"] = "obsolete"

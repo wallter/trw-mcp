@@ -1,9 +1,10 @@
 """PRD-FIX-123: instruction sync must never destroy user-authored content.
 
-Every test here exercises the REAL production writer against real files on
-disk. Nothing about the writer is mocked — the only patched objects are the
-project-root resolver (so a temp directory stands in for a repo) and, in two
-negative tests, the filesystem permissions used to inject a failure.
+Tests exercise the production writer against real files. Failure-path tests
+inject filesystem faults. The performance test alone has an explicit test-only
+unguarded baseline using the same atomic writer; its guarded arm remains real.
+A deterministic performance negative control advances an injected measurement
+clock inside a real guard-only operation, without replacing that operation.
 
 Baseline the fix inverts, measured on 2026-09-03 against trw-mcp 1.0.5:
 
@@ -495,7 +496,7 @@ class TestBackup:
         (trw_dir / ".gitignore").write_text(custom, encoding="utf-8")
         result: dict[str, list[str]] = {"created": [], "updated": [], "errors": []}
 
-        _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+        _ensure_credentials_gitignored(tmp_path, result)
         merged = (trw_dir / ".gitignore").read_text(encoding="utf-8")
 
         assert merged.startswith(custom)
@@ -504,7 +505,7 @@ class TestBackup:
         assert "credentials.yaml" in rules
 
         # Idempotent: a second run changes nothing.
-        _ensure_credentials_gitignored(tmp_path, result, dry_run=False)
+        _ensure_credentials_gitignored(tmp_path, result)
         assert (trw_dir / ".gitignore").read_text(encoding="utf-8") == merged
 
 
@@ -1052,18 +1053,43 @@ class TestSecurity:
 class TestPerformance:
     """NFR01: bounded overhead and at most one extra read."""
 
-    def test_guard_overhead_under_budget(self, tmp_path: Path) -> None:
-        target = tmp_path / "AGENTS.md"
-        body = "\n".join(f"# line {i}" for i in range(2000)) + "\n"
-        target.write_text(body, encoding="utf-8")
-        candidate = body + f"\n{TRW_MARKER_START}\nBLOCK\n{TRW_MARKER_END}\n"
+    @pytest.mark.parametrize("baseline_first", [False, True])
+    def test_guard_overhead_under_budget(self, tmp_path: Path, baseline_first: bool, record_property) -> None:
+        from tests._instruction_write_performance import assert_guard_budget, measure_sync
 
-        start = time.perf_counter()
-        verdict = guarded_instruction_write(target, candidate, markers=_MARKERS, project_root=tmp_path)
-        elapsed_ms = (time.perf_counter() - start) * 1000
+        measurements = {}
+        for bypass in (baseline_first, not baseline_first):
+            arm = "baseline" if bypass else "guarded"
+            measurements[arm] = measure_sync(tmp_path / arm, bypass_guard=bypass)
+        # Retain absolute cold costs diagnostically; they are not the delta budget.
+        record_property(
+            "instruction_sync_measurements",
+            {
+                arm: {"target_ms": value.target_ms, "cold_sync_ms": value.cold_sync_ms}
+                for arm, value in measurements.items()
+            },
+        )
+        assert_guard_budget(measurements["guarded"], measurements["baseline"])
 
-        assert verdict.written is True
-        assert elapsed_ms < 50.0, f"guard added {elapsed_ms:.1f} ms on a 2000-line file"
+    def test_guard_budget_detects_guard_only_config_cost(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tests._instruction_write_performance import assert_guard_budget, measure_sync
+        from trw_mcp.state.claude_md import _write_guard
+
+        elapsed = 0.0
+        real_get_config = _write_guard.get_config
+
+        def costly_get_config():
+            nonlocal elapsed
+            # CLAUDE's real carrier omits config; AGENTS supplies it. Keeping this
+            # work inside the timed seam prevents concealing a guard-only cost.
+            elapsed += 0.060
+            return real_get_config()
+
+        monkeypatch.setattr(_write_guard, "get_config", costly_get_config)
+        guarded = measure_sync(tmp_path / "guarded", bypass_guard=False, clock=lambda: elapsed)
+        baseline = measure_sync(tmp_path / "baseline", bypass_guard=True, clock=lambda: elapsed)
+        with pytest.raises(AssertionError, match=r"CLAUDE\.md guard added 60\.0 ms"):
+            assert_guard_budget(guarded, baseline)
 
     def test_guard_reads_the_target_at_most_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         target = tmp_path / "AGENTS.md"

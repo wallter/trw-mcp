@@ -37,26 +37,6 @@ def _config_strict_mode() -> bool:
 _singleton: TRWConfig | None = None
 
 
-def _normalize_meta_tune_overrides(overrides: dict[str, object]) -> dict[str, object]:
-    """Keep legacy flat + nested SAFE-001 config keys compatible."""
-    normalized = dict(overrides)
-    legacy_enabled = normalized.get("meta_tune_enabled")
-    nested = normalized.get("meta_tune")
-
-    if isinstance(nested, dict):
-        nested_meta_tune = {str(k): v for k, v in nested.items()}
-    else:
-        nested_meta_tune = {}
-
-    if "enabled" not in nested_meta_tune and isinstance(legacy_enabled, bool):
-        nested_meta_tune["enabled"] = legacy_enabled
-    if nested_meta_tune:
-        normalized["meta_tune"] = nested_meta_tune
-        if isinstance(nested_meta_tune.get("enabled"), bool):
-            normalized["meta_tune_enabled"] = nested_meta_tune["enabled"]
-    return normalized
-
-
 def get_config() -> TRWConfig:
     """Return the shared TRWConfig singleton.
 
@@ -131,7 +111,10 @@ def resolve_config_overrides(project_config_path: Path, *, apply_env_exclusion: 
        ``BaseSettings`` gives init kwargs the HIGHEST priority — passing them
        through would invert the documented ``env > file`` precedence.
        ``platform_api_key`` is exempt: its env precedence is applied in step 2.
-    4. Meta-tune keys are normalised.
+
+    Meta-tune key normalisation is NOT a step here — ``TRWConfig``'s own
+    ``_normalize_meta_tune_compat`` model validator runs on every construction
+    from this cascade's output, so a second copy here would only duplicate it.
 
     *apply_env_exclusion* exists for one caller: ``_build_config`` must warn about
     unrecognised keys against the merged-but-UNFILTERED set, because a key being
@@ -151,7 +134,7 @@ def resolve_config_overrides(project_config_path: Path, *, apply_env_exclusion: 
         merged["platform_api_key"] = resolved_key
     if not apply_env_exclusion:
         return merged
-    return _normalize_meta_tune_overrides(exclude_env_shadowed_keys(merged))
+    return exclude_env_shadowed_keys(merged)
 
 
 def exclude_env_shadowed_keys(merged: dict[str, object]) -> dict[str, object]:
@@ -211,7 +194,7 @@ def _build_config_unguarded() -> TRWConfig:
             # applied), so it is exempt from the generic TRW_* exclusion.
             filtered = exclude_env_shadowed_keys(merged)
             if filtered:
-                return TRWConfig(**_normalize_meta_tune_overrides(filtered))  # type: ignore[arg-type]
+                return TRWConfig(**filtered)  # type: ignore[arg-type]
     except Exception as exc:
         # PRD-QUAL-110-FR01: fail LOUD, not silent. A malformed or invalid
         # config.yaml here means every operator hardening override is about to

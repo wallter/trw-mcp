@@ -229,6 +229,83 @@ def test_reviewer_states_the_coverage_contract() -> None:
     )
 
 
+def _reviewer_canonical_body() -> str:
+    return " ".join(_agent_body(BUNDLED_AGENTS_DIR / "trw-reviewer.md").split())
+
+
+def _reviewer_schema_example() -> dict[str, Any]:
+    text = (BUNDLED_AGENTS_DIR / "trw-reviewer.md").read_text(encoding="utf-8")
+    block = re.search(r"## Review Output Schema\s*```yaml\n(.*?)```", text, re.DOTALL)
+    assert block, "trw-reviewer.md lost its Review Output Schema yaml block"
+    loaded = yaml.safe_load(block.group(1))
+    assert isinstance(loaded, dict)
+    return loaded
+
+
+def test_reviewer_has_no_numeric_confidence_adjustments() -> None:
+    """Board 544: confidence is evidential certainty. Arithmetic bumps and drops
+    for unchanged code, common patterns, linter territory or style changed the
+    number without changing whether the defect is real. A synthetic gate probe
+    demonstrated possible suppression, not observed model mis-scoring."""
+    body = _reviewer_canonical_body()
+    assert not re.search(r"\b(bump|drop)\s*[+-]\s*\d+", body, re.IGNORECASE), (
+        "numeric confidence bumps/drops reinstated in trw-reviewer.md"
+    )
+
+
+def test_reviewer_keeps_confidence_severity_and_scope_independent() -> None:
+    body = _reviewer_canonical_body().lower()
+    assert "confidence is how sure you are that the defect is real" in body
+    assert "severity is the impact if it is real" in body
+    assert "pre-existing status does not change confidence or severity" in body
+    # Board 547: the prompt must not invent its own verdict threshold; the review
+    # tooling applies the configured confidence gate (default 80) itself.
+    assert "applies its own configured confidence threshold" in body
+    assert not re.search(r"confidence (of )?7\d (or higher|\+)", body)
+
+
+def test_reviewer_suppression_omission_is_scoped_to_the_suppressed_diagnostic() -> None:
+    body = _reviewer_canonical_body().lower()
+    assert "only the specific diagnostic that the suppression names" in body
+    assert "does not exempt an unrelated defect on the same line" in body
+    assert "intentionally silenced code" not in body
+
+
+def test_reviewer_schema_example_is_accepted_by_the_review_normalizer() -> None:
+    """The prompt's own example must be a payload the consumer accepts as-is:
+    ``description`` present and a severity in ``SEVERITY_ALIASES`` (previously
+    ``issue`` + ``severity: unverified``, which the normalizer rejected)."""
+    from trw_mcp.tools._review_validation import normalize_review_findings
+
+    findings = _reviewer_schema_example()["findings"]
+    accepted, rejections = normalize_review_findings(findings)
+    assert rejections == []
+    assert len(accepted) == len(findings) >= 2
+
+
+def test_reviewer_schema_example_shows_confidence_independent_of_severity() -> None:
+    example = _reviewer_schema_example()
+    findings = example["findings"]
+    assert example["summary"] == {
+        severity: sum(f["severity"] == severity for f in findings) for severity in ("critical", "warning", "info")
+    }
+    assert any(f["confidence"] >= 90 and f["severity"] != "critical" for f in findings), (
+        "no example of a certain but low-impact finding"
+    )
+    assert any(f["confidence"] < 70 and f["severity"] == "critical" for f in findings), (
+        "no example of an uncertain but severe finding"
+    )
+
+
+def test_implementer_requires_the_lane_done_table() -> None:
+    """PRD-INFRA-187-FR04: a lane reports done on a public package with the
+    `make lane-done` table, and a red row is unfinished work."""
+    body = " ".join(_agent_body(BUNDLED_AGENTS_DIR / "trw-implementer.md").split())
+    assert "make lane-done PKG=<pkg>" in body
+    assert "paste its table into the report" in body
+    assert "treat any red row as unfinished work" in body
+
+
 def test_auditors_reference_shared_doc() -> None:
     """FR06: both auditor files cite ``audit-framework.md`` in the first 30 body lines.
 
@@ -262,5 +339,5 @@ def test_agents_dir_mirrors_the_bundled_set() -> None:
     mirrored = {p.name for p in _agent_files()} - _DEV_ONLY_AGENTS
     assert mirrored == bundled, (
         f"mirror drift: only in {AGENTS_DIR}: {sorted(mirrored - bundled)}; "
-        f"only in {BUNDLED_AGENTS_DIR}: {sorted(bundled - mirrored)} — run scripts/sync-agents.py"
+        f"only in {BUNDLED_AGENTS_DIR}: {sorted(bundled - mirrored)} — run make client-mirror-sync"
     )

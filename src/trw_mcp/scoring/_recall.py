@@ -51,12 +51,12 @@ _level_logger = logging.getLogger(__name__)
 __all__ = [
     "RecallContext",
     "infer_domains",
-    "rank_by_utility",
+    "rank_targeted_by_utility",
     "utility_based_prune_candidates",
 ]
 
 
-def rank_by_utility(
+def rank_targeted_by_utility(
     matches: list[dict[str, object]],
     query_tokens: list[str],
     lambda_weight: float,

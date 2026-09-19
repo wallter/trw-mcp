@@ -34,7 +34,9 @@ Schema (JSON root is a ``dict[str, dict]``):
             "created_ts": "<ISO8601>",
             "last_heartbeat_ts": "<ISO8601>",
             "client_hint": "<str | null>",
-            "pid": <int>
+            "pid": <int>,
+            "client_pid": <int>,  # the launching client process (PRD-INFRA-189 FR08)
+            "client_start": <str | null>  # its birth time, so a recycled pid never matches
         },
         ...
     }
@@ -57,6 +59,7 @@ import structlog
 from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.exceptions import StateError
 from trw_mcp.state._pin_ttl import pin_entry_is_expired, resolve_pin_ttl_hours
+from trw_mcp.state._process_identity import process_start_time
 
 logger = structlog.get_logger(__name__)
 
@@ -533,13 +536,7 @@ def transfer_pin_entry(
 
         existing = store.get(caller_pin_key)
         created_ts = existing.get("created_ts") if isinstance(existing, dict) else None
-        record: dict[str, Any] = {
-            "run_path": target,
-            "created_ts": created_ts if isinstance(created_ts, str) and created_ts else now,
-            "last_heartbeat_ts": now,
-            "client_hint": None,
-            "pid": os.getpid(),
-        }
+        record = pin_record(target, created_ts if isinstance(created_ts, str) and created_ts else now, now)
         if previous_pin_key is not None and previous_pin_key != caller_pin_key:
             store.pop(previous_pin_key, None)
         store[caller_pin_key] = record
@@ -553,6 +550,19 @@ def transfer_pin_entry(
 def _iso_now() -> str:
     """Return current UTC time as an ISO8601 string with ``Z`` suffix."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+def pin_record(run_path: str, created_ts: str, now: str, client_hint: str | None = None) -> dict[str, Any]:
+    """Build one pin record owned by this process and its launching client (``client_pid``)."""
+    return {
+        "run_path": run_path,
+        "created_ts": created_ts,
+        "last_heartbeat_ts": now,
+        "client_hint": client_hint,
+        "pid": os.getpid(),
+        "client_pid": os.getppid(),
+        "client_start": process_start_time(os.getppid()),
+    }
 
 
 def upsert_pin_entry(
@@ -579,13 +589,7 @@ def upsert_pin_entry(
             prior_created = existing.get("created_ts")
             if isinstance(prior_created, str) and prior_created:
                 created_ts = prior_created
-        record: dict[str, Any] = {
-            "run_path": str(run_path.resolve()),
-            "created_ts": created_ts,
-            "last_heartbeat_ts": now,
-            "client_hint": client_hint,
-            "pid": os.getpid(),
-        }
+        record = pin_record(str(run_path.resolve()), created_ts, now, client_hint)
         store[pin_key] = record
         _write_pin_store_locked(store)
     return record

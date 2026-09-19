@@ -91,6 +91,7 @@ def test_a_nested_id_is_not_mistaken_for_the_entry_id(tmp_path: Path) -> None:
     assert _read_learning_id(FileStateReader(), path) == "L-real"
 
 
+@pytest.mark.perf
 def test_reading_an_id_is_much_cheaper_than_composing_the_document(tmp_path: Path) -> None:
     """The fast reader must be decisively cheaper than the parser it replaces.
 

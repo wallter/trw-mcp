@@ -86,6 +86,7 @@ def _run(repo: Path, parent: str, *, timeout: float | None) -> None:
 
 @pytest.mark.integration
 class TestBlockingHookTimeout:
+    @pytest.mark.perf
     def test_hanging_hook_times_out_and_fails_closed(self, tmp_path: Path) -> None:
         """A pre-commit hook that sleeps past the timeout raises the transaction error fast."""
         repo, parent = _init_repo(tmp_path)
@@ -122,6 +123,7 @@ class TestBlockingHookTimeout:
         assert captured["stdin"] is subprocess.DEVNULL, "hook stdin must be DEVNULL, not inherited"
         assert captured["timeout"] == 7.0
 
+    @pytest.mark.perf
     def test_stdin_reading_hook_does_not_hang(self, tmp_path: Path) -> None:
         """A hook that drains stdin returns immediately (EOF from DEVNULL), never blocking."""
         repo, parent = _init_repo(tmp_path)

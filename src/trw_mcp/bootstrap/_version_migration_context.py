@@ -116,7 +116,6 @@ def _is_transient_context_artifact(name: str) -> bool:
 def _cleanup_context_transients(
     target_dir: Path,
     result: dict[str, list[str]],
-    dry_run: bool = False,
 ) -> None:
     """Remove retired artifacts from .trw/context/ during update-project.
 
@@ -127,7 +126,6 @@ def _cleanup_context_transients(
     Args:
         target_dir: Root of the target git repository.
         result: Mutable result dict -- cleaned paths appended to ``result["cleaned"]``.
-        dry_run: When ``True``, report what would be removed without deleting.
     """
     context_dir = target_dir / ".trw" / "context"
     if not _SUPPORTS_PINNED_CONTEXT_CLEANUP:
@@ -169,9 +167,6 @@ def _cleanup_context_transients(
             if not stat.S_ISREG(entry_stat.st_mode):
                 continue
             path = context_dir / name
-            if dry_run:
-                result["cleaned"].append(f"would remove: {path}")
-                continue
             try:
                 os.unlink(name, dir_fd=context_fd)
                 result["cleaned"].append(str(path))
@@ -183,5 +178,4 @@ def _cleanup_context_transients(
         "context_cleanup",
         target=str(target_dir),
         cleaned_count=len(cleaned),
-        dry_run=dry_run,
     )

@@ -58,7 +58,7 @@ class TestMcpJsonMerge:
         assert "trw" in data["mcpServers"]
         assert "command" in data["mcpServers"]["trw"]
         # Should be reported as an update
-        assert any("trw entry" in u for u in result["updated"])
+        assert ".mcp.json" in result["updated"]
 
     def test_merge_updates_trw_command(self, initialized_repo: Path) -> None:
         """Stale trw command path is refreshed."""
@@ -251,8 +251,8 @@ class TestDryRun:
 
         result = update_project(initialized_repo, dry_run=True)
 
-        # Should report would-update items
-        assert any("would" in u for u in result["updated"])
+        # Should report the file the real run would restore
+        assert ".trw/frameworks/FRAMEWORK.md" in result["updated"]
         # Should include dry-run warning
         assert any("DRY RUN" in w for w in result["warnings"])
 
@@ -271,7 +271,7 @@ class TestDryRun:
 
         result = update_project(initialized_repo, dry_run=True)
 
-        assert any("trw entry" in u for u in result["updated"])
+        assert ".mcp.json" in result["updated"]
 
     def test_dry_run_no_installer_metadata(self, initialized_repo: Path) -> None:
         """Dry run doesn't write installer metadata."""

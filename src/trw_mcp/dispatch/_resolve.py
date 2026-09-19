@@ -19,6 +19,12 @@ Precedence (highest wins):
 - posture: taken from the caller only; there is deliberately NO config default,
   because a config that could turn any dispatch into a "reviewer" would let a
   project's own file decide that a child is contained.
+- with_trw: an EXPLICIT value (True or False) is honored; ``None`` -> the
+  ``dispatch_child_trw_access`` config baseline. Unlike posture, a config
+  default here is safe in the one direction that matters: it can only CONNECT a
+  child to TRW's own server, never claim a bound the child does not have. An
+  explicit request for a client with no argv channel is REFUSED; the config
+  default degrades to False for that client instead of failing the dispatch.
 
 A resolved client absent from ``dispatch_enabled_clients`` is rejected, as is a
 client whose registry entry records its capabilities as UNVERIFIED
@@ -40,7 +46,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
-from trw_mcp.dispatch._posture import ReviewerPostureError, verify_reviewer_posture
+from trw_mcp.dispatch._posture import (
+    ReviewerPostureError,
+    TrwAccessError,
+    verify_reviewer_posture,
+    verify_trw_access,
+)
 from trw_mcp.dispatch._roles import apply_role
 from trw_mcp.dispatch._types import DispatchPosture, DispatchRequest
 
@@ -136,6 +147,7 @@ def resolve_dispatch_request(
     isolate: bool,
     use_pty: bool,
     posture: str = "default",
+    with_trw: bool | None = None,
     verify_sandbox: bool = False,
     dispatch_cfg: object,
 ) -> DispatchRequest:
@@ -168,6 +180,37 @@ def resolve_dispatch_request(
         effective_read_only = read_only
 
     resolved_posture = _resolve_posture(posture, client=resolved_client, read_only=effective_read_only)
+
+    # TRW access: an explicit caller value (True or False) is AUTHORITATIVE; only
+    # ``None`` falls back to the config default — the same precedence read_only
+    # uses, so a project that turns child access on cannot silently override a
+    # caller who asked for an isolated child.
+    effective_with_trw = (
+        bool(getattr(dispatch_cfg, "dispatch_child_trw_access", False)) if with_trw is None else with_trw
+    )
+    explicit = with_trw is not None
+    if effective_with_trw and resolved_posture == "reviewer":
+        if not explicit:
+            # A project default must not fight a posture the caller chose.
+            effective_with_trw = False
+        else:
+            raise DispatchResolutionError(
+                "with_trw cannot be combined with posture='reviewer': that posture already injects "
+                "TRW's MCP server, bounded to the read-only reviewer surface. Choose one.",
+                exit_code=2,
+            )
+    if effective_with_trw:
+        # Only an EXPLICIT request is refused for an unsupported client; a
+        # project-wide default degrades to "no TRW access for this client", and
+        # the result's ``trw_access_enforced=False`` states that truthfully
+        # rather than failing a dispatch the caller never asked to change.
+        try:
+            verify_trw_access(resolved_client, True)
+        except TrwAccessError as exc:
+            if explicit:
+                raise DispatchResolutionError(str(exc), exit_code=2) from exc
+            effective_with_trw = False
+
     resolved_prompt = apply_role(role, prompt)
     resolved_cwd = _resolve_cwd(cwd, client=resolved_client)
 
@@ -181,6 +224,7 @@ def resolve_dispatch_request(
         isolate=isolate,
         use_pty=use_pty,
         posture=resolved_posture,
+        with_trw=effective_with_trw,
         verify_sandbox=verify_sandbox,
     )
 

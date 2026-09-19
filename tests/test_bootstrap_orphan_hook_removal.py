@@ -15,6 +15,7 @@ alone while doing so.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from trw_mcp.bootstrap._version_migration import _remove_stale_artifacts
 pytestmark = pytest.mark.integration
 
 _DELETED = ("completion-gate.sh", "helper-idle.sh", "phase-cycle-stop.sh", "lib-ide-adapter.sh")
+_HOOK_SHA = hashlib.sha256(b"#!/bin/sh\nexit 0\n").hexdigest()
 
 
 def _enrolled_before_this_release(tmp_path: Path) -> Path:
@@ -52,7 +54,9 @@ def _enrolled_before_this_release(tmp_path: Path) -> Path:
         "hooks:\n" + "".join(f"- {name}\n" for name in (*_DELETED, *kept)) + "custom_skills: []\n"
         "custom_agents: []\n"
         "custom_hooks:\n- my-own-audit.sh\n"
-        "content_hashes: {}\n",
+        # What TRW last wrote: the proof of ownership every sweep requires
+        # (PRD-INFRA-190-FR06). A real pre-release manifest records it.
+        "content_hashes:\n" + "".join(f"  {name}: {_HOOK_SHA}\n" for name in (*_DELETED, *kept)),
         encoding="utf-8",
     )
     return root
@@ -73,18 +77,17 @@ def test_removed_bundled_hook_is_swept(tmp_path: Path) -> None:
 
 
 def test_the_sweep_is_idempotent(tmp_path: Path) -> None:
-    """A second update-project reports nothing to do."""
+    """A second sweep finds nothing left to do."""
     root = _enrolled_before_this_release(tmp_path)
-    first: dict[str, list[str]] = {"created": [], "updated": [], "skipped": []}
-    _remove_stale_artifacts(root, first)
+    hooks = root / ".claude" / "hooks"
+    _remove_stale_artifacts(root, {"created": [], "updated": [], "skipped": []})
+    after_first = sorted(p.name for p in hooks.iterdir())
     second: dict[str, list[str]] = {"created": [], "updated": [], "skipped": []}
     _remove_stale_artifacts(root, second)
 
-    # Removals are reported as `removed:<path>` entries under "updated".
-    removed_first = [entry for entry in first["updated"] if entry.startswith("removed:")]
-    removed_second = [entry for entry in second["updated"] if entry.startswith("removed:")]
-    assert len(removed_first) == len(_DELETED), f"the first sweep did not remove all four: {removed_first}"
-    assert removed_second == [], f"the second sweep removed something again: {removed_second}"
+    assert not set(_DELETED) & set(after_first), f"the first sweep did not remove all four: {after_first}"
+    assert sorted(p.name for p in hooks.iterdir()) == after_first, "the second sweep removed something again"
+    assert not second.get("preserved")
 
 
 def test_a_config_predating_the_new_fields_still_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

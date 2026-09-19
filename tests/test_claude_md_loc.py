@@ -1,8 +1,11 @@
-"""PRD-QUAL-075 FR07: LOC budget + profile-count lints for CLAUDE.md files.
+"""PRD-QUAL-075 FR07: LOC budget + profile-count lints for the canonical AGENTS.md instruction files.
+
+Each carrier's CLAUDE.md is a one-line ``@AGENTS.md`` pointer (repo-hygiene
+inversion, 2026-09-18); the prose these budgets guard now lives in AGENTS.md.
 
 Guards against the regressions that produced this PRD in the first place:
-  - root ``CLAUDE.md`` accreting past 200 effective lines.
-  - ``trw-mcp/CLAUDE.md`` re-growing past 40 lines (duplicated prose).
+  - root ``AGENTS.md`` accreting past 200 effective lines.
+  - ``trw-mcp/AGENTS.md`` re-growing past 40 lines (duplicated prose).
   - ``.opencode/INSTRUCTIONS.md`` (when present) exceeding 100 lines.
   - Stale "Five built-in profiles" phrasing lingering after the client-profile
     registry changed shape (the live count comes from the registry, never from
@@ -17,14 +20,14 @@ import pytest
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 
-# Integration tier: this module reads real repository files (CLAUDE.md,
-# trw-mcp/CLAUDE.md, docs/CLIENT-PROFILES.md) and uses tmp_path for the
+# Integration tier: this module reads real repository files (AGENTS.md,
+# trw-mcp/AGENTS.md, docs/CLIENT-PROFILES.md) and uses tmp_path for the
 # negative lint check. Per .claude/rules/testing.md, tmp_path and real-file
 # I/O mark tests as integration — no unit marker applied.
 
 _REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
-_ROOT_CLAUDE_MD = _REPO_ROOT / "CLAUDE.md"
-_TRW_MCP_CLAUDE_MD = PACKAGE_ROOT / "CLAUDE.md"
+_ROOT_AGENTS_MD = _REPO_ROOT / "AGENTS.md"
+_TRW_MCP_AGENTS_MD = PACKAGE_ROOT / "AGENTS.md"
 _OPENCODE_INSTRUCTIONS = _REPO_ROOT / ".opencode" / "INSTRUCTIONS.md"
 _CLIENT_PROFILES_DOC = _REPO_ROOT / "docs" / "CLIENT-PROFILES.md"
 
@@ -35,18 +38,20 @@ def _line_count(path: Path) -> int:
 
 @requires_monorepo
 def test_root_claude_md_loc_budget() -> None:
-    """FR07: the project-root CLAUDE.md must stay at or below 200 effective LOC."""
-    assert _ROOT_CLAUDE_MD.exists(), f"missing {_ROOT_CLAUDE_MD}"
-    loc = _line_count(_ROOT_CLAUDE_MD)
-    assert loc <= 200, f"root CLAUDE.md is {loc} LOC; budget is 200. Extract prose into docs/documentation/."
+    """FR07: the project-root AGENTS.md must stay at or below 200 effective LOC."""
+    assert _ROOT_AGENTS_MD.exists(), f"missing {_ROOT_AGENTS_MD}"
+    loc = _line_count(_ROOT_AGENTS_MD)
+    assert loc <= 200, f"root AGENTS.md is {loc} LOC; budget is 200. Extract prose into docs/documentation/."
 
 
+# Authored monorepo instructions are deliberately omitted from public exports.
+@requires_monorepo
 def test_trw_mcp_claude_md_loc_budget() -> None:
-    """FR07: the package-local trw-mcp/CLAUDE.md must stay at or below 40 LOC."""
-    assert _TRW_MCP_CLAUDE_MD.exists(), f"missing {_TRW_MCP_CLAUDE_MD}"
-    loc = _line_count(_TRW_MCP_CLAUDE_MD)
+    """FR07: the package-local trw-mcp/AGENTS.md must stay at or below 40 LOC."""
+    assert _TRW_MCP_AGENTS_MD.exists(), f"missing {_TRW_MCP_AGENTS_MD}"
+    loc = _line_count(_TRW_MCP_AGENTS_MD)
     assert loc <= 40, (
-        f"trw-mcp/CLAUDE.md is {loc} LOC; budget is 40. Point at "
+        f"trw-mcp/AGENTS.md is {loc} LOC; budget is 40. Point at "
         "docs/documentation/tool-lifecycle.md instead of re-embedding prose."
     )
 
@@ -62,10 +67,10 @@ def test_opencode_instructions_loc_budget() -> None:
 
 @requires_monorepo
 def test_profile_count_current() -> None:
-    """FR12: stale 'Five built-in profiles' phrase must not appear in CLAUDE.md."""
-    content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
+    """FR12: stale 'Five built-in profiles' phrase must not appear in AGENTS.md."""
+    content = _ROOT_AGENTS_MD.read_text(encoding="utf-8")
     assert "Five built-in profiles" not in content, (
-        "CLAUDE.md still says 'Five built-in profiles'. Update to match the current profile registry count."
+        "AGENTS.md still says 'Five built-in profiles'. Update to match the current profile registry count."
     )
 
 
@@ -75,7 +80,7 @@ def test_client_profiles_doc_no_stale_count() -> None:
 
     The FR12 acceptance criterion explicitly names CLIENT-PROFILES.md as the target
     surface — adding this test closes the gap where test_profile_count_current
-    only covered root CLAUDE.md.
+    only covered root AGENTS.md.
     """
     assert _CLIENT_PROFILES_DOC.exists(), f"missing {_CLIENT_PROFILES_DOC}"
     content = _CLIENT_PROFILES_DOC.read_text(encoding="utf-8")
@@ -101,14 +106,14 @@ _SPELLED_COUNTS: dict[int, str] = {
 
 @requires_monorepo
 def test_profile_count_matches_registry() -> None:
-    """FR12: every built-in-profile count in CLAUDE.md matches the live registry.
+    """FR12: every built-in-profile count in AGENTS.md matches the live registry.
 
     Two things this test used to get wrong, both fixed here:
 
     * It treated the presence of ``@.trw/INSTRUCTIONS.md`` as proof the whole
       file was a pointer and then FORBADE any profile-count prose. PRD-CORE-247
       collapsed the generated TRW block down to exactly that one import line, so
-      the marker now appears in a root CLAUDE.md whose hand-written project prose
+      the marker now appears in a root AGENTS.md whose hand-written project prose
       above it still documents the client surface. The heuristic fired on prose
       the instruction budget never claimed.
     * It counted ``.yaml`` files in ``trw-mcp/data/profiles``. Those are bundled
@@ -127,16 +132,16 @@ def test_profile_count_matches_registry() -> None:
 
     count = len(build_client_profile_rows())
     assert count > 0, "no built-in client profiles discovered"
-    content = _ROOT_CLAUDE_MD.read_text(encoding="utf-8")
+    content = _ROOT_AGENTS_MD.read_text(encoding="utf-8")
 
     accepted = {str(count), _SPELLED_COUNTS.get(count, str(count))}
     stated = re.findall(r"(\S+)\s+built-in profiles", content)
     assert stated, (
-        f"CLAUDE.md states no built-in-profile count; expected one of {sorted(accepted)} before 'built-in profiles'."
+        f"AGENTS.md states no built-in-profile count; expected one of {sorted(accepted)} before 'built-in profiles'."
     )
     for word in stated:
         assert word in accepted, (
-            f"CLAUDE.md says '{word} built-in profiles' but the registry has {count}. "
+            f"AGENTS.md says '{word} built-in profiles' but the registry has {count}. "
             f"Expected one of {sorted(accepted)}."
         )
 

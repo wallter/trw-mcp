@@ -102,7 +102,10 @@ back before the budget ends, rather than being cut off mid-edit.
    final edit. Evidence must postdate the code it covers. The final report
    requires the full package suite (all markers) to have run in this session,
    not just the tests touched by this change — a marker-filtered tier is a
-   dev-loop signal, not validation.
+   dev-loop signal, not validation. When the repository ships a package
+   definition-of-done target (the TRW monorepo's `make lane-done PKG=<pkg>`
+   for public packages), run it before reporting done on that package, paste
+   its table into the report, and treat any red row as unfinished work.
 3. Report only observed results with
    `{tool:trw_build_check}(tests_passed=<observed>, scope="<exact command>")`.
    That tool records checks; it does not execute them.
