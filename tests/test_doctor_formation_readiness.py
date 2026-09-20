@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
@@ -165,6 +166,7 @@ def test_binary_alias_is_reported_by_the_name_that_actually_answered(
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_a_hanging_probe_is_bounded_and_reports_not_measured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = tmp_path / "bin"
     # /bin/sleep by absolute path: PATH is pinned to the fixture dir, so a bare
@@ -282,6 +284,7 @@ def test_empty_enabled_list_skips_rather_than_passing_vacuously(
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_check_completes_quickly_when_no_binary_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # NFR01: a PATH lookup that fails costs no subprocess, so seven absent
     # clients must not cost seven timeouts.

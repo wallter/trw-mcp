@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
+from tests._layout import requires_local_timing
 from tests.comms.conftest import joined_member
 from trw_mcp.comms import _schema, _store, _upgrade
 from trw_mcp.formation import load
@@ -110,6 +111,7 @@ def _stop(process: Any) -> None:
     assert not process.is_alive(), "child survived bounded termination"
 
 
+@requires_local_timing
 def test_separate_process_exclusive_lock_respects_20ms(tmp_path: Path) -> None:
     manifest = tmp_path / "formation.yaml"
     with _store.connect(manifest, busy_timeout_ms=100):

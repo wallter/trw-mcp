@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.requirements import ValidationResultV2
 from trw_mcp.state.validation.prd_integrity import (
@@ -400,6 +401,7 @@ def test_tool_tiny_budget_flags_partial(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_fr5c_perf_smoke_largest_corpus_prd_full_path_under_budget(tmp_path: Path) -> None:
     """The largest real corpus PRD, validated through the FULL tool path with
     the default 60s budget, completes well under a generous 10s wall-clock

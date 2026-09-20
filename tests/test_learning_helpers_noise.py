@@ -8,6 +8,7 @@ from re import _parser as re_parser
 
 import pytest
 
+from tests._layout import requires_local_timing
 from tests._learning_helpers_test_support import set_project_root  # noqa: F401
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.analytics.core import _NOISE_PATTERNS
@@ -177,6 +178,7 @@ class TestNoiseFilter:
 
     @pytest.mark.perf
     @pytest.mark.unit
+    @requires_local_timing
     def test_is_noise_perf(self) -> None:
         """Expanded noise detection stays within the PRD budget for 10k 500-char inputs."""
         summary = ("OAuth callbacks require explicit state validation and replay guards. " * 8)[:500]

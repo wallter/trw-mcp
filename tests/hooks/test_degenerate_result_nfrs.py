@@ -184,6 +184,7 @@ def test_fail_open_matrix(tmp_path: Path, case: str) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 @pytest_skip_no_sh
 @pytest_skip_no_jq
 def test_payload_is_never_interpolated_and_is_byte_capped(tmp_path: Path) -> None:

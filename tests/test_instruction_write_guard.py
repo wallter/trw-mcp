@@ -33,6 +33,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from tests._structlog_capture import captured_structlog  # noqa: F401 -- pytest fixture
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
@@ -1054,6 +1055,7 @@ class TestPerformance:
     """NFR01: bounded overhead and at most one extra read."""
 
     @pytest.mark.parametrize("baseline_first", [False, True])
+    @requires_local_timing
     def test_guard_overhead_under_budget(self, tmp_path: Path, baseline_first: bool, record_property) -> None:
         from tests._instruction_write_performance import assert_guard_budget, measure_sync
 

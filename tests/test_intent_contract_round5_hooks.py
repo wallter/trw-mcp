@@ -43,6 +43,7 @@ from tests._intent_contract_hooks import (
     pytest_skip_no_sh,
     run_hook,
 )
+from tests._layout import requires_local_timing
 from trw_mcp.security.intent_contract.enrollment import check_enrollment_status
 
 _HOOK_SRC = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "hooks"
@@ -86,6 +87,7 @@ def _blocking_project(tmp_path: Path, name: str, hook: str) -> Path:
 @pytest.mark.parametrize(
     ("label", "body"), [("probe-site", _UNKILLABLE_LIB), ("telemetry-site", _UNKILLABLE_TELEMETRY)]
 )
+@requires_local_timing
 def test_fa_a_lib_that_refuses_to_return_cannot_stop_the_hook_blocking(
     tmp_path: Path, hook: str, label: str, body: str
 ) -> None:

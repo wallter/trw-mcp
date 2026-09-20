@@ -163,6 +163,7 @@ def test_finalize_and_payload_trim_are_included_in_latency(
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_session_start_warm_p95_under_5_seconds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

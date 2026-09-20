@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
 from trw_mcp.models.config import DispatchConfig, TRWConfig, get_config, reload_config
 
@@ -140,6 +141,7 @@ def test_config_yaml_override_reflected_in_dispatch(_project: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
+@requires_local_timing
 def test_version_probe_timeout_knob_bounds_the_readiness_row(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """An operator-set probe timeout actually bounds the doctor's live probe.
 

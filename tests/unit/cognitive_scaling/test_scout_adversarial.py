@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from ruamel.yaml import YAML
 
+from tests._layout import requires_local_timing
 from trw_mcp.cognitive_scaling import scout
 from trw_mcp.cognitive_scaling._scout_signals import _extract_symbols
 from trw_mcp.models.cognitive_scaling import (
@@ -41,6 +42,7 @@ _NUL = chr(0)
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_extract_symbols_is_bounded_and_fast() -> None:
     huge = "Symbol%d " % 0 + " ".join(f"Sym{i}" for i in range(500_000))
     start = time.monotonic()

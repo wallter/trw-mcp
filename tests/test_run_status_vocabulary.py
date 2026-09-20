@@ -26,6 +26,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.run import (
     _STATUS_ALIASES,
     _TERMINAL_RUN_STATUSES,
@@ -365,6 +366,7 @@ def test_gate_reports_the_live_tree(tmp_path: Path) -> None:
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 def test_gate_completes_within_budget() -> None:
     """NFR01: p95 wall time under 5 s over 5 runs on the measured corpus.
 

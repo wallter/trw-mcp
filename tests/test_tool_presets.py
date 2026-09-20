@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 def _registered_production_tools() -> set[str]:
     """Return the full set of tool names registered on a FRESH production server.
@@ -182,6 +184,7 @@ def test_prd_core_218_fr02() -> None:
 
 @pytest.mark.perf
 @pytest.mark.unit
+@requires_local_timing
 def test_prd_core_218_nfr01() -> None:
     """NFR01: manifest + pack resolution is local, deterministic, and completes
     within 50 ms p95 over a 30-run fixture."""

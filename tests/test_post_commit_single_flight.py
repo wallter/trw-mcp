@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.tools import _post_commit as pc
 
 
@@ -299,6 +300,7 @@ def unarmed_timer(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_the_sweep_stops_at_its_budget(repo: Path, monkeypatch: pytest.MonkeyPatch, unarmed_timer: None) -> None:
     monkeypatch.setenv(pc.BUDGET_ENV_VAR, "0.2")
     started: list[float] = []

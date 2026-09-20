@@ -15,6 +15,7 @@ import pytest
 from trw_memory.models.memory import Anchor, MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._maintain_verify import run_maintain_verify
 from trw_mcp.tools._recall_impl import _verify_assertions
@@ -32,6 +33,7 @@ def forbid_work(monkeypatch):
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 @pytest.mark.xdist_group(name="recall_verification_latency")
 def test_recall_verification_p95_within_budget(tmp_path: Path, monkeypatch):
     backend = SQLiteBackend(tmp_path / "memory.db")

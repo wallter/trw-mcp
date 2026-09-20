@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from tests._formation_test_support import formation_env  # noqa: F401
+from tests._layout import requires_local_timing
 from tests.comms._wait_transport_support import held_wait
 from tests.comms.test_policy import SendScene, scene
 
@@ -229,6 +230,7 @@ def test_refusal_counter_saturates_without_refused_body_retention(scene: SendSce
     assert scene.rows("SELECT body FROM admissions") == [("hello",)]
 
 
+@requires_local_timing
 def test_busy_refusal_is_bounded_retryable_and_does_not_count(scene: SendScene) -> None:
     import time
 
@@ -264,6 +266,7 @@ def test_invalid_binding_cannot_count_refusal_or_mutate_mailbox(scene: SendScene
 
 
 @pytest.mark.parametrize("worker", ["import time; time.sleep(60)", "raise SystemExit(2)"])
+@requires_local_timing
 def test_child_initialization_failure_is_bounded_and_reaps_children(
     scene: SendScene, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker: str
 ) -> None:
@@ -402,6 +405,7 @@ def _fill_to_envelope(scene: SendScene, rows: int, body_bytes: int) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope(
     scene: SendScene, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
 ) -> None:

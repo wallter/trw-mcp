@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tests._delivery_support import make_coordinator, make_uuid7, strong_capability
+from tests._layout import requires_local_timing
 from trw_mcp.tools._delivery_models import ClaimStatus, OperationState, QueueState, RecoverStatus
 from trw_mcp.tools._delivery_request import DeliveryRequestError
 
@@ -60,6 +61,7 @@ def test_multi_process_single_claim_and_bounded_status_latency(tmp_path: Path, m
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_status_read_p95_latency_under_50ms(tmp_path) -> None:
     """NFR03: 100 read-only status calls have p95 <= 50 ms on the repo fixture."""
     coord = make_coordinator(tmp_path)
@@ -77,6 +79,7 @@ def test_status_read_p95_latency_under_50ms(tmp_path) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_duplicate_claim_read_p95_latency_under_100ms(tmp_path) -> None:
     """NFR03: 100 duplicate-claim reads have p95 <= 100 ms."""
     coord = make_coordinator(tmp_path)

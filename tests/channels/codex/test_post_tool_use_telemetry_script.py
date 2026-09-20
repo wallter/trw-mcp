@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 # ---------------------------------------------------------------------------
 # FR07 — No {{ }} template tokens in installed script
 # ---------------------------------------------------------------------------
@@ -269,6 +271,7 @@ def test_hook_stdlib_only_imports() -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_execution_under_50ms(tmp_path: Path) -> None:
     """NFR04: hook execution time < 50 ms for non-matching tool (no I/O)."""
     from trw_mcp.channels.codex._post_tool_use_telemetry import install_hook_script

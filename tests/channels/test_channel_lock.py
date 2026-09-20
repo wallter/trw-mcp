@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 
 # ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ def test_channel_lock_sequential_reacquire(tmp_path: Path) -> None:
     sys.platform == "win32",
     reason="Windows advisory locking is a no-op — skip contention test",
 )
+@requires_local_timing
 def test_channel_lock_skip_on_timeout(tmp_path: Path) -> None:
     """Background thread holds lock; main thread sees ChannelLockSkip within 4100ms."""
     lock_file = tmp_path / "ch.lock"

@@ -17,8 +17,11 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 @pytest.mark.perf
+@requires_local_timing
 def test_trw_build_check_returns_within_500ms(
     build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -54,6 +57,7 @@ def test_retired_q_learning_dispatch_has_no_fabricated_timing(build_check_invoke
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_build_check_does_not_block_on_slow_correlation(
     build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,

@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.tools._ceremony_status import append_ceremony_status
 
 pytestmark = pytest.mark.perf
@@ -109,6 +110,7 @@ def _percentile(samples: list[float], pct: float) -> float:
     return ordered[idx]
 
 
+@requires_local_timing
 def test_append_ceremony_status_p95_under_5ms(warm_trw_dir: Path) -> None:
     """NFR01: append_ceremony_status p95 < 5ms (CI tolerance <10ms), p99 < 10ms (CI <25ms).
 

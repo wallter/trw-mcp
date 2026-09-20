@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import step_sync_health
 
@@ -197,6 +198,7 @@ def test_advisory_includes_remediation(tmp_path: Path) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_latency_under_budget(tmp_path: Path) -> None:
     """NFR01: step adds <= 5ms p95. Single file read is O(1)."""
     trw_dir = tmp_path / ".trw"

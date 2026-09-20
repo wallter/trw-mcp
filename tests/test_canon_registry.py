@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.canons import registry as reg
 from trw_mcp.canons._errors import CanonErrorCode, CanonRegistryError
 from trw_mcp.canons._loader import SUPPORTED_SCHEMA_VERSION, parse_registry
@@ -248,6 +249,7 @@ def test_registry_core_is_standard_library_only_and_deterministic() -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_registry_resolution_is_bounded_and_cache_key_is_content_bound() -> None:
     reg.clear_cache()
     raw = reg.bundled_manifest_bytes()

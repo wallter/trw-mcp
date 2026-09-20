@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.state._paths import TRWCallContext, resolve_pin_key, touch_heartbeat
 from trw_mcp.state._run_gc import sweep_stale_runs
 
@@ -18,6 +19,7 @@ def _p95(samples: list[float]) -> float:
     return sorted(samples)[round(0.95 * (len(samples) - 1))]
 
 
+@requires_local_timing
 def test_pin_resolution_and_heartbeat_meet_hot_path_slos(tmp_path: Path) -> None:
     context = TRWCallContext(
         session_id="performance-session",
@@ -44,6 +46,7 @@ def test_pin_resolution_and_heartbeat_meet_hot_path_slos(tmp_path: Path) -> None
     assert _p95(heartbeat_samples) <= 5.0
 
 
+@requires_local_timing
 def test_typical_dry_run_stale_sweep_completes_under_200ms(tmp_path: Path) -> None:
     runs_root = tmp_path / "runs"
     for index in range(50):

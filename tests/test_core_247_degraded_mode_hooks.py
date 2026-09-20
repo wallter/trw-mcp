@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 _ROOT = Path(__file__).resolve().parent.parent
 
 if not (_ROOT.parent / "scripts").is_dir():
@@ -1072,6 +1074,7 @@ def test_degraded_output_is_sanitized(tmp_path: Path, hook_dir: Path) -> None:
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 @pytest.mark.xdist_group(name="core_247_hook_latency")
 def test_hook_latency_budget(tmp_path: Path, hook_dir: Path) -> None:
     """NFR01 acceptance: SessionStart mean within budget; the detector adds <= 25 ms.
@@ -1133,6 +1136,7 @@ def test_hook_latency_budget(tmp_path: Path, hook_dir: Path) -> None:
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 @pytest.mark.skipif(shutil.which("jq") is None, reason="jq unavailable — the fast path defers by design without it")
 @pytest.mark.xdist_group(name="core_247_hook_latency")
 def test_hook_latency_budget_intent_guard_fast_path(tmp_path: Path, hook_dir: Path) -> None:

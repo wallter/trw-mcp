@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.plan_acceptance import AcceptanceDeclarationError, AcceptanceStatus, parse_status_token
 from trw_mcp.tools import _plan_acceptance_gate as gate
@@ -332,6 +333,7 @@ def test_failclosed_gate_failopen_write(project: Path, monkeypatch: pytest.Monke
 
 @pytest.mark.perf
 @pytest.mark.integration
+@requires_local_timing
 def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR01: gate <=150 ms p95 at 200 identifiers; handoff write <=100 ms p95."""
     from trw_mcp.state.persistence import FileStateReader

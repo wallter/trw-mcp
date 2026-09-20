@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.meta_tune.rollback import (
     RollbackResult,
     rollback_proposal,
@@ -155,6 +156,7 @@ def test_rollback_result_model_fields() -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_rollback_completes_fast(tmp_path: Path) -> None:
     """NFR-3: rollback p95 ≤ 10s wall-clock (smoke threshold ≤1s)."""
     cfg = _cfg(True, str(tmp_path / "audit.jsonl"))

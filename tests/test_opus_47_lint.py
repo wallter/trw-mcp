@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_local_timing, requires_monorepo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -137,6 +137,7 @@ def test_missing_required_scan_tree_fails(tmp_path: Path, monkeypatch) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_lint_runtime_under_2s() -> None:
     """NFR01: full frontmatter scan runs in under 2 seconds."""
     t0 = time.perf_counter()

@@ -23,6 +23,8 @@ from typing import Any
 import httpx
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 def _slow_then_concurrent_handler(delay: float) -> Any:
     """Build an async httpx.MockTransport handler that sleeps before responding.
@@ -54,6 +56,7 @@ async def _fast_coroutine_with_external_start(start: float) -> float:
 
 
 @pytest.mark.perf
+@requires_local_timing
 async def test_pull_does_not_block_concurrent_coroutine() -> None:
     """A 1s slow pull must not stall a parallel fast coroutine for the full 1s."""
     from trw_mcp.sync.pull import SyncPuller
@@ -104,6 +107,7 @@ async def test_pull_does_not_block_concurrent_coroutine() -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 async def test_push_does_not_block_concurrent_coroutine() -> None:
     """A 1s slow push must not stall a parallel fast coroutine for the full 1s."""
     from unittest.mock import MagicMock
@@ -171,6 +175,7 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 async def test_negative_control_sync_httpx_would_block_event_loop() -> None:
     """Negative control: prove the FR04 mechanic actually catches blocking.
 

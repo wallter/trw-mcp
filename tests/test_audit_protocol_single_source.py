@@ -28,7 +28,7 @@ from tests._audit_protocol_support import (
     strip_fragments,
     table_with_header,
 )
-from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_local_timing
 
 REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _SCRIPT = REPO_ROOT / "scripts" / "check_audit_protocol_single_source.py"
@@ -181,6 +181,7 @@ def test_linter_reports_a_planted_duplicate(tmp_path: Path) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_linter_runtime_is_bounded() -> None:
     """NFR01: both linters together add under 5s to make bundle-sync."""
     started = time.perf_counter()

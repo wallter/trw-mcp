@@ -10,6 +10,7 @@ import pytest
 import structlog
 
 import trw_mcp.tools.telemetry as telemetry
+from tests._layout import requires_local_timing
 from tests._tools_telemetry_support import _config_with, _read_jsonl, reset_telemetry_cache, run_dir  # noqa: F401
 from trw_mcp.tools.telemetry import log_tool_call
 
@@ -119,6 +120,7 @@ class TestLogToolCallDecorator:
         assert _read_jsonl(run_dir / "meta" / "events.jsonl") == []
 
     @pytest.mark.perf
+    @requires_local_timing
     def test_t04_p95_overhead_under_5ms(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """T-04: P95 overhead of the decorator on a no-op function is < 5 ms (100 iterations)."""
         # Production ``get_config()`` is cached. Constructing a fresh Pydantic

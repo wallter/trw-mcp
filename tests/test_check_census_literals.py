@@ -29,6 +29,8 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS = REPO_ROOT / "scripts"
 _CLI = _SCRIPTS / "check_census_literals.py"
@@ -837,6 +839,7 @@ def test_two_scans_over_identical_inputs_are_byte_identical(tmp_path: Path) -> N
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_full_repository_scan_stays_within_a_gate_sized_budget() -> None:
     """NFR01: the scan must fit the budget of the fastest existing gate targets."""
     started = time.monotonic()

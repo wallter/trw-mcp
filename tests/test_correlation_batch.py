@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 class _CountingBackend:
     """Minimal backend stub that counts transaction() and update() calls."""
@@ -181,6 +183,7 @@ def test_batch_sync_transaction_failure_falls_through_to_next_chunk(
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 def test_batch_sync_2000_rows_under_300ms(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -240,6 +243,7 @@ def test_chunk_size_constant_is_documented_value(tmp_path: Path) -> None:
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 def test_batch_sync_2000_rows_real_sqlite_under_1s(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

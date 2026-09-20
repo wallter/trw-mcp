@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 def _build_large_state() -> dict[str, object]:
     """Generate a payload large enough to exercise cache performance paths."""
@@ -212,6 +214,7 @@ def test_cache_read_logs_freshness_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_cache_update_p99_under_50ms_for_large_payload(tmp_path: Path) -> None:
     """Large cache writes stay within the PRD latency budget."""
     from trw_mcp.sync.cache import IntelligenceCache
@@ -230,6 +233,7 @@ def test_cache_update_p99_under_50ms_for_large_payload(tmp_path: Path) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_cache_read_p99_under_10ms_for_large_payload(tmp_path: Path) -> None:
     """Large cache reads stay within the PRD latency budget."""
     from trw_mcp.sync.cache import IntelligenceCache

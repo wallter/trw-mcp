@@ -21,6 +21,7 @@ from trw_memory.models.memory import MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from tests._embedding_space_support import NEW_SPACE, OLD_SPACE
+from tests._layout import requires_local_timing
 from trw_mcp.state import _embedding_migration as migration
 from trw_mcp.state import _embedding_migration_schedule as schedule
 from trw_mcp.state._embedding_migration import Budget, load_migration_state, run_migration
@@ -253,6 +254,7 @@ def test_session_plan_runs_offline_from_a_complete_cache(store: Path, monkeypatc
 
 
 @pytest.mark.usefixtures("two_dim_config")
+@requires_local_timing
 def test_session_start_is_not_blocked_by_the_model_load(store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The plan returns at once; the load and the work happen on the background thread."""
     from trw_mcp.state import _memory_connection as conn

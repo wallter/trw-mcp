@@ -20,6 +20,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 def test_boot_gc_deferred_config_default_is_true() -> None:
     from trw_mcp.models.config import TRWConfig
@@ -55,6 +57,7 @@ def test_start_boot_sequence_deferred_runs_in_named_daemon_thread(
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_start_boot_sequence_deferred_returns_before_slow_sweep_completes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

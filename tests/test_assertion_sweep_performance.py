@@ -17,6 +17,7 @@ import structlog
 from trw_memory.models.memory import Assertion, AssertionType, MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._maintain_verify import run_maintain_verify
 
@@ -237,6 +238,7 @@ def test_maintain_verify_cli_is_registered_and_dispatches(
 
 @pytest.mark.perf
 @pytest.mark.slow
+@requires_local_timing
 def test_bulk_sweep_1000_entries(backend: SQLiteBackend, project: Path) -> None:
     """NFR01: 1000 entries-with-assertions sweep in under 30s (measured)."""
     config = TRWConfig()

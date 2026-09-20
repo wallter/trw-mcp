@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
+
 
 def test_build_does_not_claim_deferred_attribution(build_check_invoke: Any) -> None:
     result = build_check_invoke()
@@ -25,6 +27,7 @@ def _dispatch_only() -> dict[str, object]:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_q_learning_runs_in_background_not_inline(
     build_check_invoke: Any,
     monkeypatch: pytest.MonkeyPatch,

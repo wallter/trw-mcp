@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.wiring.detector import DetectorResult, run_detector
 from trw_mcp.wiring.model import EdgeClass
 
@@ -144,6 +145,7 @@ def test_every_finding_is_actionable(live_result: DetectorResult) -> None:
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_full_scan_under_ten_seconds(live_result: DetectorResult, repo_root: Path) -> None:
     """NFR02: a check people are tempted to disable is a check that gets disabled.
 
