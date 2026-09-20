@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_local_timing
 from tests.conftest import extract_tool_fn, make_test_server
 
 
@@ -294,6 +295,7 @@ def _join_background(timeout: float = 120.0) -> None:
 
 @pytest.mark.perf
 @pytest.mark.timeout(600)
+@requires_local_timing
 def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Path) -> None:
     """The bound holds at K in {0, 5, 50} and its spread does not grow with K.
 

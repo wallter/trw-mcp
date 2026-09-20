@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
+from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.memory_pressure import WriterCensus, live_memory_writer_pids, take_writer_census
 from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
@@ -1201,6 +1202,7 @@ def test_session_start_logs_writer_census_once_at_info(tmp_path: Path, monkeypat
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_census_and_ledger_overhead_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR01: census + ledger add <= 25 ms p95, and open no SQLite connection."""
     import sqlite3

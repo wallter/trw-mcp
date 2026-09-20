@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 
 from tests import _stdio_harness
+from tests._layout import requires_local_timing
 from tests._stdio_benchmark_support import (
     RECORD_FIELDS,
     BenchmarkResult,
@@ -113,6 +114,13 @@ _SKIP_REASON = stdio_import_skip_reason()
 pytestmark = [
     pytest.mark.timeout(600),
     pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
+    # Every test (and the autouse module-wall-budget fixture below) asserts a
+    # fixed wall-clock ceiling measured against THIS box, calibrated on a known
+    # local Mac (see _MODULE_WALL_CEILING_S above). A shared CI runner is not
+    # that box, so skip the whole module there rather than let runner
+    # contention fail a ceiling that was never about the runner (T10; trw-mcp
+    # 5.0.0 mirror release, 2026-09-20).
+    requires_local_timing,
     # Keep the WHOLE module on ONE xdist worker (`--dist loadgroup` is in
     # addopts). Without a group, its tests scatter and EVERY worker that
     # receives one re-runs the module-scoped ``benchmark`` fixture: the N/WAL

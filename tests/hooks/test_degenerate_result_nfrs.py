@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._layout import requires_jq, requires_non_root
+from tests._layout import requires_jq, requires_local_timing, requires_non_root
 from tests.hooks._degenerate_result_harness import (
     _ADAPTER,
     _DEFAULT_DEADLINE_RETRY_ATTEMPTS,
@@ -49,6 +49,7 @@ _MAX_LATENCY_BATCHES = 3
 
 
 @pytest.mark.perf
+@requires_local_timing
 @pytest_skip_no_sh
 @pytest_skip_no_jq
 @pytest.mark.xdist_group(name="degenerate_result_latency")

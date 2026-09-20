@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
 from trw_mcp.wiring.detector import DetectorResult, run_detector
 
 BUDGET_SECONDS = 10.0
@@ -20,6 +21,7 @@ _MAX_SCAN_ATTEMPTS = 3
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_full_scan_under_ten_seconds(repo_root: Path) -> None:
     """A check people are tempted to disable is a check that gets disabled."""
     elapsed = None

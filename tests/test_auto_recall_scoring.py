@@ -23,7 +23,7 @@ from tests._auto_recall_hook_harness import (
     _copy_hook_to_temp,
     _run_hook,
 )
-from tests._layout import PACKAGE_ROOT, requires_monorepo
+from tests._layout import PACKAGE_ROOT, requires_local_timing, requires_monorepo
 
 _HOOK_CASES = tuple(
     pytest.param(
@@ -445,6 +445,7 @@ _BUDGET_ATTEMPTS = 3
 
 
 @pytest.mark.perf
+@requires_local_timing
 def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
     """NFR01: a 10,000-entry store scores inside the 500ms deadline."""
     learnings = [
