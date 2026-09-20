@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -61,7 +62,14 @@ Sabotage = Callable[[Path], None]
 
 
 def _dotgit_file_pointing_nowhere(root: Path) -> None:
-    shutil.rmtree(root / ".git")
+    # A fresh commit can leave git's background maintenance still writing inside
+    # .git (maintenance.lock on newer git); delete tolerantly until it is gone.
+    for _ in range(20):
+        shutil.rmtree(root / ".git", ignore_errors=True)
+        if not (root / ".git").exists():
+            break
+        time.sleep(0.05)
+    assert not (root / ".git").exists()
     (root / ".git").write_text("gitdir: /nonexistent/worktrees/gone\n", encoding="utf-8")
 
 
