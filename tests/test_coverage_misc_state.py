@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -124,32 +124,35 @@ class TestRecallTrackingExceptionPath:
 
         assert result is False
 
-    def test_record_outcome_file_not_exists_returns_false(self, tmp_path: Path) -> None:
-        """record_outcome returns False if tracking file doesn't exist (line 56)."""
+    def test_record_outcome_creates_the_missing_log(self, tmp_path: Path) -> None:
+        """PRD-FIX-144 FR03: explicit feedback creates the log when absent, so a
+        first-ever feedback call is recorded rather than dropped (it used to
+        return False here)."""
         from trw_mcp.state import recall_tracking
 
         with patch("trw_mcp.state.recall_tracking.resolve_trw_dir") as mock_resolve:
             mock_resolve.return_value = tmp_path / ".trw"
             result = recall_tracking.record_outcome("L-abc123", "positive")
 
-        assert result is False
+        assert result is True
+        rows = (tmp_path / ".trw" / "logs" / "recall_tracking.jsonl").read_text(encoding="utf-8")
+        assert '"outcome": "positive"' in rows
 
-    def test_record_outcome_writer_exception_returns_false(self, tmp_path: Path) -> None:
-        """Lines 66-68: FileStateWriter.append_jsonl raises exception."""
+    def test_record_outcome_append_failure_returns_false(self, tmp_path: Path) -> None:
+        """A failing append is fail-open: False, no raise. PRD-FIX-144 replaced
+        FileStateWriter here with the locked _append_rows helper, so the patch
+        target moved."""
         from trw_mcp.state import recall_tracking
 
         trw_dir = tmp_path / ".trw"
         logs_dir = trw_dir / "logs"
         logs_dir.mkdir(parents=True)
-        tracking_path = logs_dir / "recall_tracking.jsonl"
-        tracking_path.write_text("", encoding="utf-8")
+        (logs_dir / "recall_tracking.jsonl").write_text("", encoding="utf-8")
 
         with patch("trw_mcp.state.recall_tracking.resolve_trw_dir") as mock_resolve:
             mock_resolve.return_value = trw_dir
-            with patch("trw_mcp.state.recall_tracking.FileStateWriter") as mock_writer_cls:
-                mock_writer = MagicMock()
-                mock_writer.append_jsonl.side_effect = OSError("write failed")
-                mock_writer_cls.return_value = mock_writer
+            with patch("trw_mcp.state.recall_tracking._append_rows") as mock_append:
+                mock_append.side_effect = OSError("write failed")
                 result = recall_tracking.record_outcome("L-abc123", "neutral")
 
         assert result is False

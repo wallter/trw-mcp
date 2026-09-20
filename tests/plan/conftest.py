@@ -48,8 +48,8 @@ def scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Scene:
         {
             "formation_id": "plan-scene",
             "members": [
-                {"member_id": "alpha", "client": "claude-code", "owned_paths": ["src/a.py"]},
-                {"member_id": "beta", "client": "codex", "owned_paths": ["src/b/**"]},
+                {"member_id": "alpha", "client": "claude-code", "owned_paths": ["src/a.py"], "open_join": True},
+                {"member_id": "beta", "client": "codex", "owned_paths": ["src/b/**"], "open_join": True},
             ],
         },
         trw_dir=trw,

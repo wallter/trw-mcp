@@ -56,14 +56,104 @@ def _normalize_claude(raw: str) -> tuple[str, dict[str, object] | None]:
         return raw.strip(), None
     if isinstance(data, dict):
         result = data.get("result")
+        if not isinstance(result, str):
+            # grok -p --output-format json emits {.text}; claude emits {.result}.
+            result = data.get("text")
         text = result if isinstance(result, str) else raw.strip()
         return text.strip(), data
     return raw.strip(), None
 
 
+#: ``codex exec --json`` event types (codex-cli 0.155.0, measured 2026-09-19; fixture
+#: trw-mcp/tests/fixtures/codex_exec_json_ok.jsonl). A success run emits thread.started,
+#: turn.started, item.completed{item: agent_message} and turn.completed. The failure
+#: events turn.failed and error are named in the CLI's event schema but were NOT
+#: observed, so they are handled conservatively: any of them is a structured stop.
+_CODEX_STREAM_PREFIXES = ("thread.", "turn.", "item.")
+_CODEX_FAILURE_EVENTS = frozenset({"turn.failed", "error"})
+
+
+def _codex_event(line: str) -> dict[str, object] | None:
+    """*line* as a codex event object, or ``None`` when it is not one."""
+    try:
+        obj = json.loads(line)
+    except (
+        ValueError
+    ):  # trw-fail-silent-allow: a non-JSON line is counted as ignored by the caller, never dropped silently
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("type"), str):
+        return None
+    kind = str(obj["type"])
+    return obj if kind in _CODEX_FAILURE_EVENTS or kind.startswith(_CODEX_STREAM_PREFIXES) else None
+
+
+def _codex_event_stream(lines: list[str]) -> tuple[str, dict[str, object]] | None:
+    """Parse a ``codex exec --json`` stream, or ``None`` when NO line is a codex event.
+
+    Presence, not unanimity, decides (lane B review of X-19, M1): a banner or
+    warning line, or the runner's ``…[truncated N chars]`` marker, must not turn a
+    stream back into "raw text", because the raw text of a JSONL stream is a
+    non-empty answer and would read as success. Non-event lines are ignored and
+    counted in ``ignored_lines``.
+
+    The answer is the LAST agent_message; every one is kept in ``messages`` so a
+    split answer is never silently dropped. ``status`` is the turn's own verdict:
+    ``completed`` only when turn.completed arrived, no failure event did, the output
+    was not truncated and every line was an event; ``failed`` with the reported
+    ``error`` for turn.failed or error (conservatively, even when it arrives after
+    turn.completed); ``incomplete`` when truncated or turn.completed is missing;
+    ``malformed`` when a complete stream carried a non-event line.
+    """
+    events: list[dict[str, object]] = []
+    ignored = 0
+    truncated = False
+    for line in lines:
+        event = _codex_event(line)
+        if event is None:
+            ignored += 1
+            truncated = truncated or line.startswith("…[truncated ")
+            continue
+        events.append(event)
+    if not events:
+        return None
+    messages: list[str] = []
+    for event in events:
+        item = event.get("item")
+        if event["type"] == "item.completed" and isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text")
+            if isinstance(text, str):
+                messages.append(text)
+    failure = next((e for e in events if e["type"] in _CODEX_FAILURE_EVENTS), None)
+    structured: dict[str, object] = {"type": "codex_exec_json", "messages": messages, "ignored_lines": ignored}
+    # The key is ``stop_reason``, the same field claude reports and grok spells
+    # ``stopReason``, so one turn-outcome vocabulary serves every client and
+    # ``_STATUS_FIELDS`` reads it without a codex special case. It is deliberately
+    # NOT ``status``: that word belongs to the run-state vocabulary, whose writers
+    # must come from ``RunStatus`` (tests/test_run_status_vocabulary.py FR03 scans
+    # trw-mcp/src for a bare ``["status"] = "<run-status word>"`` and cannot tell a
+    # client payload from a run writer).
+    if failure is not None:
+        detail = failure.get("error", failure.get("message", str(failure["type"])))
+        structured["stop_reason"] = "failed"
+        structured["error"] = detail if isinstance(detail, (str, dict)) and detail else str(failure["type"])
+    elif truncated or not any(e["type"] == "turn.completed" for e in events):
+        structured["stop_reason"] = "incomplete"
+    elif ignored:
+        # Lead decision (X-19): under --json every stdout line must be an event, so a
+        # line that is not one is a parse failure reported as a stop, never an answer.
+        structured["stop_reason"] = "malformed"
+    else:
+        structured["stop_reason"] = "completed"
+    return (messages[-1].strip() if messages else ""), structured
+
+
 def _normalize_codex(raw: str) -> tuple[str, dict[str, object] | None]:
     """Extract supported legacy envelopes; preserve unknown/new stream schemas."""
     cleaned = _strip_ansi(raw)
+    stream_lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    parsed = _codex_event_stream(stream_lines) if stream_lines else None
+    if parsed is not None:
+        return parsed
     # Treat only a complete object-per-line stream as structured output.
     # A JSON example inside prose must not replace the surrounding findings.
     last_obj: dict[str, object] | None = None
@@ -192,8 +282,8 @@ def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None
     return "", terminal
 
 
-def _normalize_agy(raw: str) -> tuple[str, dict[str, object] | None]:
-    """agy → strip ANSI and preserve the complete text (PTY-friendly)."""
+def _normalize_trailing_text(raw: str) -> tuple[str, dict[str, object] | None]:
+    """``trailing_text`` shape (e.g. grok): strip ANSI and keep the complete text (PTY-friendly)."""
     cleaned = _strip_ansi(raw)
     return cleaned.strip(), None
 
@@ -208,7 +298,7 @@ _NORMALIZERS: dict[OutputShape, Callable[[str], tuple[str, dict[str, object] | N
     "json_lines": _normalize_codex,
     "ndjson_events": _normalize_opencode,
     "enveloped_ndjson_events": _normalize_enveloped_events,
-    "trailing_text": _normalize_agy,
+    "trailing_text": _normalize_trailing_text,
 }
 
 
@@ -273,7 +363,21 @@ _HARD_STOP_MARKERS: tuple[str, ...] = (
 # Structured fields that carry a client's OWN verdict on the turn. Read by name;
 # a blanket walk over structured VALUES is forbidden here because those values
 # include the answer (agy's ``response``, claude's ``result``).
-_STATUS_FIELDS: tuple[str, ...] = ("status", "subtype", "error", "error_type", "stop_reason", "finish_reason")
+# Both spellings of every field: a client that reports camelCase (grok's
+# ``stopReason``) would otherwise have its stop read as a normal completion, which
+# is the X-19 defect class -- W3's live probe 2026-09-19 saw a dontAsk-cancelled
+# grok turn return ok=True with text promising a write it never made.
+_STATUS_FIELDS: tuple[str, ...] = (
+    "status",
+    "subtype",
+    "error",
+    "error_type",
+    "errorType",
+    "stop_reason",
+    "stopReason",
+    "finish_reason",
+    "finishReason",
+)
 
 # Values of a status field that mean "the turn completed normally". Anything else
 # in a status field is treated as a stop.
@@ -284,7 +388,7 @@ def _structured_stop(structured: dict[str, object] | None) -> bool:
     """True if the client's own structured payload reports a stop."""
     if not structured:
         return False
-    if structured.get("is_error") is True:
+    if structured.get("is_error") is True or structured.get("isError") is True:
         return True
     for field in _STATUS_FIELDS:
         value = structured.get(field)
@@ -326,10 +430,12 @@ def classify_silence(
     KNOWN LIMIT (PRD-CORE-277-FR04): a client that exits 0, writes nothing to
     stderr and returns a prose refusal as its answer is NOT detectable here, and
     deliberately so — the alternative is scanning the answer for policy words,
-    which misfires on any review whose subject is authentication. codex is in
-    exactly that position today because TRW launches it without a structured
-    output flag. Closing it means adopting ``codex exec --json`` and a parser for
-    that schema.
+    which misfires on any review whose subject is authentication. What IS
+    detectable is a stop the client itself reports in structured output: codex runs
+    with ``exec --json`` (X-19), and its event stream's own verdict arrives as
+    ``structured["stop_reason"]`` (completed, failed, incomplete or malformed;
+    every value except completed is a stop). A model's prose refusal is still an
+    ``agent_message`` in every client and stays out of scope.
     """
     if timed_out:
         return "timed_out"

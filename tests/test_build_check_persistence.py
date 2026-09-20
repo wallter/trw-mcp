@@ -105,3 +105,65 @@ def test_atomic_write_produces_no_partial_file(tmp_project: Path) -> None:
         # File must parse at every step
         data = json.loads(state_path.read_text())
         assert data["build_check_result"] in ("passed", "failed")
+
+
+# --- PRD-FIX-144 FR04 / NFR06: session observation, never per-learning credit ---
+
+
+def _observations(tmp_project: Path) -> list[dict[str, Any]]:
+    path = tmp_project / ".trw" / "logs" / "session_outcomes.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def test_build_check_appends_session_observation_not_credit(tmp_project: Path, build_check_invoke: Any) -> None:
+    tracking = tmp_project / ".trw" / "logs" / "recall_tracking.jsonl"
+    tracking.parent.mkdir(parents=True, exist_ok=True)
+    tracking.write_text(json.dumps({"learning_id": "L-x", "query": "q", "timestamp": 1.0, "outcome": None}) + "\n")
+    tracking_before = tracking.read_bytes()
+
+    failed = build_check_invoke(tests_passed=False, test_count=4, failure_count=1, static_checks_clean=True)
+    passed = build_check_invoke(tests_passed=True, test_count=5, scope="quick", static_checks_clean=False)
+
+    rows = _observations(tmp_project)
+    assert [r["tests_passed"] for r in rows] == [False, True]
+    assert rows[0]["session_id"] == rows[1]["session_id"] != ""
+    assert rows[0]["process_session_id"] == rows[1]["process_session_id"] != ""
+    assert [r["test_count"] for r in rows] == [4, 5]
+    assert [r["static_checks_clean"] for r in rows] == [True, False]
+    assert [r["scope"] for r in rows] == ["full", "quick"]
+    assert all(r["event"] == "build_check" and r["timestamp"] for r in rows)
+    assert all("learning_id" not in r for r in rows)
+    assert tracking.read_bytes() == tracking_before  # R10: never the recall log
+    assert "session_observation" not in json.dumps([failed, passed])  # no response key
+
+
+def test_build_check_disabled_writes_no_observation(
+    tmp_project: Path, build_check_invoke: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from trw_mcp.models.config import get_config
+
+    monkeypatch.setattr(get_config(), "build_check_enabled", False)
+    result = build_check_invoke(tests_passed=True)
+    assert result["status"] == "skipped"
+    assert _observations(tmp_project) == []
+
+
+def test_build_check_reviewer_role_writes_no_observation(
+    tmp_project: Path, build_check_invoke: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
+    assert build_check_invoke(tests_passed=True)["tests_passed"] is True  # the build itself still recorded
+    assert _observations(tmp_project) == []
+
+
+def test_session_outcomes_log_has_no_production_reader() -> None:
+    """NFR06: only the build registration module names the observation log."""
+    import trw_mcp
+
+    src = Path(trw_mcp.__file__).parent
+    naming = sorted(
+        str(path.relative_to(src)) for path in src.rglob("*.py") if "session_outcomes" in path.read_text("utf-8")
+    )
+    assert naming == ["tools/build/_registration.py"]

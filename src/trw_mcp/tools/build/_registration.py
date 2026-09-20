@@ -17,6 +17,7 @@ PRD-FIX-084 precedent on ``trw_session_start``.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -205,6 +206,7 @@ def register_build_tools(server: FastMCP) -> None:
             scope=scope,
             session_id=resolve_pin_key(ctx=ctx, explicit=None),
         )
+        _record_session_observation(trw_dir, status)
         _record_step("persist", _persist_started)
 
         # Step: run_resolve + phase update
@@ -334,6 +336,43 @@ def register_build_tools(server: FastMCP) -> None:
 
 
 # --- Private helpers ---
+
+#: PRD-FIX-144 FR04 session observation log. This module is its ONLY writer and
+#: no production code reads it (NFR06): it is joinable context for offline
+#: analysis, never a scoring, Q-value, recall or sync input.
+_SESSION_OBSERVATION_LOG = "logs/session_outcomes.jsonl"
+
+
+def _record_session_observation(trw_dir: Path, status: BuildStatus) -> None:
+    """Append one session-level build observation; never per-learning credit.
+
+    The row carries no learning_id and never goes to the recall log, so R10
+    holds: a build result is not evidence that a shown learning helped.
+    """
+    try:
+        from trw_mcp.state._surface_role import reviewer_role_active
+
+        if reviewer_role_active():
+            return
+        from trw_mcp.state._helpers import rotate_jsonl
+        from trw_mcp.state.recall_tracking import session_keys
+
+        row: dict[str, object] = dict(session_keys(trw_dir))
+        row.update(
+            event="build_check",
+            tests_passed=status.tests_passed,
+            static_checks_clean=status.static_checks_clean,
+            test_count=status.test_count,
+            scope=status.scope,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        path = trw_dir / _SESSION_OBSERVATION_LOG
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rotate_jsonl(path)  # default 10 MB, the recall log's threshold
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:  # justified: fail-open, a telemetry write must not change the build_check result
+        logger.debug("session_observation_record_failed", exc_info=True)
 
 
 def _dual_write_build_receipt(

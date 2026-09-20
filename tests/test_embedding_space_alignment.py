@@ -108,9 +108,10 @@ def test_learn_dedup_never_matches_an_other_space_neighbour(tmp_path: Path) -> N
     with patch(_BACKEND, return_value=backend), patch(_LOADED, return_value=SpaceProvider(NEW_SPACE)):
         result = _check_duplicate_via_backend([1.0, 0.0], tmp_path, 0.95, 0.85)
 
-    # Unfiltered, the distance-0 old-space neighbour would have been a "skip".
-    assert result is not None
-    assert (result.action, result.existing_id) == ("merge", "L-new")
+    # Unfiltered, the distance-0 old-space neighbour would have been a "skip". A
+    # mixed window now defers to the exhaustive re-embedding fallback (X3-4): the
+    # old-space distance is never compared, and the old-space entry is not ruled out.
+    assert result is None
 
 
 def test_learn_dedup_compares_nothing_without_a_loaded_space(tmp_path: Path) -> None:

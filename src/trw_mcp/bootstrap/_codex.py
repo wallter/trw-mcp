@@ -183,19 +183,11 @@ def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry
     into once, portably, via ``.trw/config.yaml`` ``debug: true`` (or
     ``TRW_LOG_LEVEL``/``TRW_DEBUG``), which applies to every client alike.
     """
-    project_executable = target_dir / ".venv" / "bin" / "trw-mcp" if target_dir is not None else None
-    args: list[str] = []
-    if project_executable is not None and project_executable.exists():
-        command = ".venv/bin/trw-mcp"
-    elif shutil.which("trw-mcp"):
-        command = "trw-mcp"
-    else:
-        # PRD-SEC-006 / audit installer-client-12: a bare ``python3`` resolves
-        # per-machine via PATH. ``sys.executable`` would bake this machine's
-        # interpreter path into ``.codex/config.toml``, which is committed
-        # config — broken for every teammate, and a leaked host path.
-        command = "python3"
-        args = ["-m", "trw_mcp.server"]
+    from trw_mcp.bootstrap._utils import resolve_trw_mcp_launcher
+
+    # One resolver for every client (N17): project .venv, then PATH, then a
+    # portable python3 (never sys.executable: .codex/config.toml is committed).
+    command, args = resolve_trw_mcp_launcher(target_dir)
     return {"command": command, "args": args, "enabled": True}
 
 

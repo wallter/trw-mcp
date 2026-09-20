@@ -391,7 +391,7 @@ class TestSessionStartUpdateAdvisory:
                     "current": "0.4.0",
                     "latest": "0.5.0",
                     "channel": "latest",
-                    "advisory": "TRW v0.5.0 available (you have v0.4.0). ",
+                    "advisory": "trw-mcp 0.5.0 available (you have 0.4.0). ",
                 },
             ),
         ):

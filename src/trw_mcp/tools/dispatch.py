@@ -19,6 +19,8 @@ and job record only carry the prompt-redacted ``argv_redacted``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import structlog
 from fastmcp import FastMCP
 
@@ -95,7 +97,29 @@ def _result_payload_capped(
 def register_dispatch_tools(server: FastMCP) -> None:
     """Register the cross-client dispatch MCP tools."""
 
+    def _with_client_list(func: Callable[..., object]) -> Callable[..., object]:
+        """Fill ``{clients}`` in the docstring from the DispatchClient registry.
+
+        The list was restated in prose, and prose does not move when a registry
+        does: the description still advertised four clients after three more were
+        added (cursor-cli, copilot, grok), and that string is what a model reads
+        to choose one. Rendering it means adding a client cannot leave the
+        description stale, and the assertion lives in a test.
+
+        ``replace``, not ``format``: format would parse the WHOLE docstring, so
+        any other brace raises KeyError during registration -- i.e. the server
+        would not boot, a worse failure than the staleness this fixes.
+        """
+        from typing import get_args
+
+        from trw_mcp.dispatch._client_specs import DispatchClient
+
+        if func.__doc__:
+            func.__doc__ = func.__doc__.replace("{clients}", ", ".join(get_args(DispatchClient)))
+        return func
+
     @server.tool(output_schema=None)
+    @_with_client_list
     def trw_dispatch(
         prompt: str,
         client: str | None = None,
@@ -113,7 +137,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
         verbose: bool = False,
     ) -> dict[str, object]:
         """Delegate a prompt to a sub-agent — another coding-agent CLI, client
-        in {claude, codex, agy, opencode}. Use when you need an independent
+        in {clients}. Use when you need an independent
         agent's review. Async by default (job_id; poll trw_dispatch_status),
         or wait=True (<=120s) for an inline result. Read-only unless
         allow_writes=True.

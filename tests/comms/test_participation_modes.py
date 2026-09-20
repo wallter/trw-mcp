@@ -13,7 +13,8 @@ from tests.comms.test_fetch_ack import invoke, transport_scene  # noqa: F401
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 
 
-async def test_fetch_ack_never_renew_lapsed_lease_status_needs_no_endpoint(transport_scene: SendScene) -> None:
+async def test_fetch_ack_renew_a_lapsed_lease_status_needs_no_endpoint(transport_scene: SendScene) -> None:
+    """PRD-CORE-274 FR12: a lapsed lease is advisory; the member's own fetch renews it."""
     s = transport_scene
     async with Client(s.server) as client:
         sent = await invoke(client, "trw_send", recipient_member_id="impl-2", request_key="a", body="hi")
@@ -21,18 +22,19 @@ async def test_fetch_ack_never_renew_lapsed_lease_status_needs_no_endpoint(trans
         assert len((await invoke(client, "trw_inbox", action="status"))["items"]) == 1
         s.actor("impl-2")
         s.rows("UPDATE groups SET group_time=(SELECT lease_expires_at FROM endpoints LIMIT 1)")
-        before = s.rows("SELECT * FROM endpoints")
-        assert (await invoke(client, "trw_inbox"))["reason"] == "receiver_lease_expired"
-        assert (await invoke(client, "trw_inbox", action="ack", message_ids=[sent["receipt"]["message_id"]]))[
-            "reason"
-        ] == "receiver_lease_expired"
-        assert s.rows("SELECT * FROM endpoints") == before
-        assert (await invoke(client, "trw_peers", action="heartbeat"))["status"] == "ok"
+        lapsed = s.rows("SELECT lease_expires_at FROM endpoints WHERE member_id='impl-2'")[0][0]
         assert len((await invoke(client, "trw_inbox"))["items"]) == 1
+        assert s.rows("SELECT lease_expires_at FROM endpoints WHERE member_id='impl-2'")[0][0] > lapsed
+        acked = await invoke(client, "trw_inbox", action="ack", message_ids=[sent["receipt"]["message_id"]])
+        assert acked["status"] == "ok"
+        assert (await invoke(client, "trw_peers", action="heartbeat"))["status"] == "ok"
+        assert (await invoke(client, "trw_inbox"))["items"] == []
 
 
 @pytest.mark.parametrize("scene", [{"comms_fetch_max_items": 1}], indirect=True)
-async def test_old_incarnation_ack_and_cursors_refuse_after_replacement(transport_scene: SendScene) -> None:
+async def test_old_incarnation_cursors_refuse_and_the_queue_survives_replacement(transport_scene: SendScene) -> None:
+    """PRD-CORE-274 FR12/FR13: a replacement fences the old process and invalidates its cursors,
+    but the member's queue survives and the new generation may ACK the member's rows."""
     from trw_mcp.comms import _endpoints
 
     s = transport_scene
@@ -52,16 +54,18 @@ async def test_old_incarnation_ack_and_cursors_refuse_after_replacement(transpor
         _endpoints._reset_process_incarnations_for_test()
         assert (await invoke(client, "trw_peers", action="enroll"))["status"] == "ok"
         assert (await invoke(client, "trw_inbox", cursor=cursor))["reason"] == "invalid_cursor"
-        assert (await invoke(client, "trw_inbox", action="ack", message_ids=[sent[0]["message_id"]]))[
-            "reason"
-        ] == "ack_not_authorized"
-        assert (await invoke(client, "trw_inbox"))["items"] == []
+        acked_again = await invoke(client, "trw_inbox", action="ack", message_ids=[sent[0]["message_id"]])
+        assert acked_again["status"] == "ok", "a repeated ACK of the member's row is idempotent"
+        assert [item["message_id"] for item in (await invoke(client, "trw_inbox"))["items"]] == [sent[1]["message_id"]]
+        new = dict(_endpoints._PROCESS_INCARNATIONS)
         _endpoints._PROCESS_INCARNATIONS.clear()
         _endpoints._PROCESS_INCARNATIONS.update(old)
         assert (await invoke(client, "trw_inbox"))["reason"] == "endpoint_replaced_by_newer_incarnation"
-        assert (await invoke(client, "trw_inbox", action="status"))["status"] == "ok"
+        assert (await invoke(client, "trw_inbox", action="status"))["status"] == "ok", "status is not fenced"
+        _endpoints._reset_process_incarnations_for_test()
+        _endpoints._PROCESS_INCARNATIONS.update(new)
         assert s.rows("SELECT charge FROM groups") == [(3,)]
-        assert s.rows("SELECT state FROM admissions ORDER BY rowid") == [("acked",), ("expired",), ("expired",)]
+        assert s.rows("SELECT state FROM admissions ORDER BY rowid") == [("acked",), ("pending",), ("pending",)]
 
 
 async def test_terminal_closure_precedes_bad_args_and_status_only_after_eligibility_restored(
@@ -97,7 +101,7 @@ def three_scene(formation_env: FormationFixture, comms_server: FastMCP, monkeypa
     f = formation_env
     f.member_runs["impl-3"] = make_run_dir(f.trw_dir / "runs", "impl-3")
     payload = f.payload()
-    payload["members"].append({"member_id": "impl-3", "client": "codex"})
+    payload["members"].append({"member_id": "impl-3", "client": "codex", "open_join": True})
     formation.create(f.orchestrator_run, payload, trw_dir=f.trw_dir)
     config = enable_comms(monkeypatch)
     for member, pin in (("impl-1", "pin-a"), ("impl-2", "pin-b"), ("impl-3", "pin-c")):
@@ -196,5 +200,5 @@ asyncio.run(main())
     assert len(frames) == 1, child.stdout
     result = json.loads(frames[0])
     assert result["items"][0]["message_id"] == receipts[1]["message_id"]
-    assert result["next_cursor"] is None
+    assert "next_cursor" not in result
     assert s.rows("SELECT COUNT(*) FROM endpoints WHERE member_id='impl-1'") == [(0,)]

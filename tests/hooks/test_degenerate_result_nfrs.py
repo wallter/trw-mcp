@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_jq, requires_non_root
 from tests.hooks._degenerate_result_harness import (
     _ADAPTER,
     _DEFAULT_DEADLINE_RETRY_ATTEMPTS,
@@ -97,14 +98,14 @@ def test_p95_latency_under_budget(tmp_path: Path) -> None:
     "case",
     [
         "no-jq",
-        "no-python3",
-        "unreadable-config",
+        pytest.param("no-python3", marks=requires_jq),
+        pytest.param("unreadable-config", marks=requires_non_root),
         "truncated-stdin",
         "non-json",
         "no-trw-dir",
         "hooks-disabled",
         "lib-trw-absent",
-        "lib-trw-chmod-000",
+        pytest.param("lib-trw-chmod-000", marks=requires_non_root),
         "lib-trw-corrupt",
     ],
 )

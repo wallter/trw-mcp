@@ -1,7 +1,7 @@
 """Built-in client profile registry and resolution.
 
-Seven profiles (claude-code, opencode, cursor-ide, cursor-cli, codex, copilot,
-antigravity-cli) with eval-data-calibrated ceremony and scoring weights.
+Eight profiles (claude-code, opencode, cursor-ide, cursor-cli, codex, copilot,
+antigravity-cli, grok) with eval-data-calibrated ceremony and scoring weights.
 Unknown client IDs fall back to claude-code with a structured warning.
 
 Migration notes:
@@ -367,6 +367,42 @@ _PROFILES: dict[str, ClientProfile] = {
         mcp_instructions_enabled=True,
         skills_enabled=True,
     ),
+    "grok": ClientProfile(
+        client_id="grok",
+        display_name="Grok Build CLI",
+        # AGENTS.md is Grok's documented project-rules carrier (user-guide
+        # 12-project-rules.md). Native `.grok/rules/` is optional later; this
+        # profile writes the shared ceremony block, not a third copy of it.
+        write_targets=WriteTargets(
+            agents_md=True,
+            instruction_path="AGENTS.md",
+        ),
+        instruction_max_lines=400,
+        # TRW instruction budget, not grok-4.6's unpublished model window.
+        context_window_tokens=128_000,
+        ceremony_mode="full",
+        ceremony_weights=CeremonyWeights(),
+        nudge_pool_weights=NudgePoolWeights(),
+        scoring_weights=ScoringDimensionWeights(),
+        default_model_tier="balanced",
+        response_format="json",
+        # Hooks stay off until a live matcher probe (OQ-2) shows Claude
+        # mcp__trw__* matchers miss Grok trw__* / use_tool catalog names.
+        hooks_enabled=False,
+        include_framework_ref=True,
+        include_delegation=True,
+        nudge_enabled=True,
+        learning_recall_enabled=True,
+        mcp_instructions_enabled=True,
+        skills_enabled=True,
+        # Empty, like every non-Claude profile: grok renders the SHARED AGENTS.md
+        # block (generate_grok_agents_md), so a prefix here would put
+        # ``trw__``-qualified names in the file codex/opencode/cursor-cli read too.
+        # Grok's catalog keys are reportedly ``trw__<tool>``; open question to the
+        # grok session (board seq 981) before any per-client rendering.
+        tool_namespace_prefix="",
+        on_transition="silent",
+    ),
 }
 
 # Retired client identifiers (2026-07-11): aider never had a TRW adapter. It
@@ -395,6 +431,7 @@ _BUILTIN_CLIENT_FLOOR: tuple[str, ...] = (
     "codex",
     "copilot",
     "antigravity-cli",
+    "grok",
 )
 
 

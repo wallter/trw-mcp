@@ -48,6 +48,31 @@ def add_formation_subcommands(subparsers: argparse._SubParsersAction[argparse.Ar
     status_parser.add_argument("--run", dest="run_path", default=None, help="A run inside the formation")
     status_parser.add_argument("--json", dest="as_json", action="store_true", help="Emit JSON instead of a table")
 
+    # Ledger N2/N3: orchestrator slot changes after creation. --run is the authority check.
+    add_parser = verbs.add_parser("add-slot", help="Add pending slots (optionally admitting a candidate to each)")
+    add_parser.add_argument("--from", dest="from_file", required=True, help="YAML/JSON member or list of members")
+    add_parser.add_argument("--run", dest="run_path", default=None, help="The orchestrator run")
+    remove_parser = verbs.add_parser("remove-slot", help="Remove a slot that never joined")
+    remove_parser.add_argument("member_id", help="Pending member to remove")
+    remove_parser.add_argument("--run", dest="run_path", default=None, help="The orchestrator run")
+    admit_parser = verbs.add_parser("admit", help="Admit an announced candidate to a pending slot")
+    admit_parser.add_argument("member_id", help="Pending member slot")
+    admit_parser.add_argument("candidate_id", help="Handle the candidate got from trw_peers(action='announce')")
+    admit_parser.add_argument("--run", dest="run_path", default=None, help="The orchestrator run")
+
+    # PRD-CORE-274 FR16: the only way a comms mailbox changes schema version.
+    upgrade_parser = verbs.add_parser("comms-upgrade", help="Upgrade this formation's v3 comms mailbox to v4")
+    upgrade_parser.add_argument(
+        "--run", dest="run_path", default=None, help="The orchestrator run (a mis-invocation guard, not authority)"
+    )
+    upgrade_parser.add_argument(
+        "--ack", dest="acknowledged", action="append", default=[], help="Member whose live process may go dark"
+    )
+    rollback_parser = verbs.add_parser("comms-rollback", help="Restore the v3 backup if nothing was written since")
+    rollback_parser.add_argument(
+        "--run", dest="run_path", default=None, help="The orchestrator run (a mis-invocation guard, not authority)"
+    )
+
 
 def run_formation(args: argparse.Namespace) -> None:
     """Dispatch one formation verb. Exits non-zero on every refusal."""
@@ -61,8 +86,15 @@ def run_formation(args: argparse.Namespace) -> None:
             _run_brief(args)
         elif command == "status":
             _run_status(args)
+        elif command in ("comms-upgrade", "comms-rollback"):
+            _run_comms_schema(args, command)
+        elif command in ("add-slot", "remove-slot", "admit"):
+            _run_slots(args, command)
         else:
-            print("usage: trw-mcp formation {init|brief|status}", file=sys.stderr)
+            print(
+                "usage: trw-mcp formation {init|brief|status|add-slot|remove-slot|admit|comms-upgrade|comms-rollback}",
+                file=sys.stderr,
+            )
             sys.exit(2)
     except FormationError as exc:
         print(f"formation: {exc}", file=sys.stderr)
@@ -96,6 +128,27 @@ def _run_init(args: argparse.Namespace) -> None:
     manifest = create(_resolve_run(args), raw)
     print(f"formation {manifest.formation_id} created at revision {manifest.revision}")
     print(str(Path(manifest.orchestrator_run_path) / "formation.yaml"))
+
+
+def _run_slots(args: argparse.Namespace, command: str) -> None:
+    from trw_mcp.formation import FormationError, add_slots, load, remove_slot, revise
+
+    run = _resolve_run(args)
+    context = load(run)
+    if context is None:
+        raise FormationError(f"run {run} owns no formation")
+    formation_id = context.manifest.formation_id
+    if command == "add-slot":
+        raw = yaml.safe_load(Path(args.from_file).read_text(encoding="utf-8"))
+        members = raw if isinstance(raw, list) else [raw]
+        if not all(isinstance(m, dict) for m in members):
+            raise FormationError(f"{args.from_file} must hold a member mapping or a list of them")
+        manifest = add_slots(formation_id, run, members)
+    elif command == "remove-slot":
+        manifest = remove_slot(formation_id, run, args.member_id)
+    else:
+        manifest = revise(formation_id, run, {args.member_id: {"admitted_candidate": args.candidate_id}})
+    print(f"formation {formation_id} {command} applied at revision {manifest.revision}")
 
 
 def _run_brief(args: argparse.Namespace) -> None:
@@ -152,3 +205,43 @@ def _render_table(board: FormationStatus) -> str:
     lines.append("  ".join("-" * widths[i] for i in range(len(_HEADERS))))
     lines.extend("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)) for row in rows)
     return "\n".join(lines)
+
+
+def _run_comms_schema(args: argparse.Namespace, command: str) -> None:
+    """FR16 upgrade/rollback. Every refusal exits non-zero with a named reason.
+
+    "Orchestrator-only" is decided from the caller-supplied ``--run``: it stops a member
+    run from invoking this by mistake. It is not authority; a same-OS-user shell is
+    outside the comms boundary (PRD-CORE-274 FR08/FR17).
+    """
+    import sqlite3
+
+    from trw_mcp.comms import _upgrade
+    from trw_mcp.comms._store import StoreError
+    from trw_mcp.formation import FormationError, load
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    context = load(_resolve_run(args), trw_dir=resolve_trw_dir())
+    if context is None:
+        raise FormationError("no formation is active for this run")
+    if not context.is_orchestrator:
+        raise FormationError(f"{command} is orchestrator-only; pass --run with the formation's orchestrator run")
+    config = get_config()
+    try:
+        if command == "comms-upgrade":
+            result = _upgrade.upgrade(
+                context.manifest_path,
+                acknowledged=args.acknowledged,
+                ttl_seconds=config.comms_message_ttl_seconds,
+                busy_timeout_ms=config.comms_sqlite_busy_timeout_ms,
+            )
+        else:
+            result = _upgrade.rollback(context.manifest_path, busy_timeout_ms=config.comms_sqlite_busy_timeout_ms)
+    except StoreError as exc:
+        print(f"formation: {command} refused: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except (sqlite3.Error, OSError) as exc:
+        print(f"formation: {command} refused: storage_unavailable: {type(exc).__name__}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(result, sort_keys=True))

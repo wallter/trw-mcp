@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
 from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
+from trw_mcp.models.config._field_admission_decision import DECISION_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
 from trw_mcp.models.config._field_admission_dispatch_access import DISPATCH_ACCESS_ADMISSIONS
@@ -380,4 +381,6 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **TOOL_ACCESS_GRANT_ADMISSIONS,
     # PRD-CORE-281: dispatch pack exposure + child TRW access (own table).
     **DISPATCH_ACCESS_ADMISSIONS,
+    # trw-jev slice 1: decision_support pack exposure (own table).
+    **DECISION_ADMISSIONS,
 }

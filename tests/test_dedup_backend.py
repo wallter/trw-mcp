@@ -16,8 +16,9 @@ from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 @contextmanager
 def _in_loaded_space(backend: MagicMock) -> Iterator[None]:
-    """Every KNN hit's stored vector shares the loaded embedder's space."""
+    """Every stored vector of the namespace (so every KNN hit) shares the loaded embedder's space."""
     backend.get_vector_records.side_effect = lambda ids, namespace: {i: stored((1.0, 0.0), NEW_SPACE) for i in ids}
+    backend.vector_space_census.return_value = {NEW_SPACE: 1}
     with patch("trw_mcp.state._memory_connection.get_initialized_embedder", return_value=SpaceProvider(NEW_SPACE)):
         yield
 

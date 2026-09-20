@@ -100,6 +100,7 @@ _TOOL_OWNER: dict[str, str] = {
     "trw_peers": "tools.swarm_comms",
     "trw_send": "tools.swarm_comms",
     "trw_inbox": "tools.swarm_comms",
+    "trw_decision": "tools.decision",
     "trw_session_start": "tools.ceremony",
     "trw_deliver": "tools.ceremony",
     "trw_heartbeat": "tools.ceremony",
@@ -242,6 +243,7 @@ def resolve_tool_surface(
     *,
     comms_enabled: bool = False,
     dispatch_enabled: bool = False,
+    decision_enabled: bool = False,
 ) -> ToolResolution:
     """Resolve the tool surface for a task under a resolution mode (FR04).
 
@@ -266,6 +268,15 @@ def resolve_tool_surface(
     single-use ``trw_request_tool_access`` grant PER CALL — unusable for the
     launch-then-poll loop the bundled ``trw-delegate`` skill prescribes, which
     is how a shipped skill came to name two tools no default session could see.
+
+    ``decision_enabled`` is the same shape of opt-in for the ``decision_support``
+    pack (trw-jev slice 1, PRD-CORE-288). Named by NO entry
+    of :data:`STANDARD_TASK_PACKS` and excluded from ``REVIEWER_TOOLS`` for the
+    same reason ``peer_comms`` is: it can reach a third-party network backend
+    (the Jev judge) when an operator has ALSO set ``TRW_JEV_ENABLED`` and
+    ``OPENROUTER_API_KEY``, and admitting it into a task pack or the reviewer
+    surface would grant that reach to every session of that type rather than
+    the ones an operator explicitly opted in.
     """
     if mode == "all":
         tools = eligible_tool_names()
@@ -293,6 +304,8 @@ def resolve_tool_surface(
         packs = (*packs, "peer_comms")
     if dispatch_enabled and "dispatch" not in packs:
         packs = (*packs, "dispatch")
+    if decision_enabled and "decision_support" not in packs:
+        packs = (*packs, "decision_support")
     tools_list = [tool for pack in packs for tool in PACK_TOOLS[pack]]
     if selected is None:
         decision = (
@@ -306,6 +319,8 @@ def resolve_tool_surface(
         decision += "; opt_in: comms_enabled -> peer_comms"
     if dispatch_enabled:
         decision += "; opt_in: dispatch_tools_exposed -> dispatch"
+    if decision_enabled:
+        decision += "; opt_in: decision_enabled -> decision_support"
     return ToolResolution(
         mode="standard",
         task_type=task_type,

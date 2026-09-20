@@ -69,7 +69,8 @@
     "velocity_effective_q_threshold": "",
     "velocity_history_max_entries": "",
     "velocity_sign_test_alpha": "",
-    "velocity_stable_threshold": ""
+    "velocity_stable_threshold": "",
+    "comms_group_admission_limit": "comms_group_row_limit"
   },
   "_comment_owned_elsewhere": "Keys that live in .trw/config.yaml but are owned by a subsystem OTHER than TRWConfig, mapped to their owner. They are legitimate and must NOT be warned about: the warning compares against TRWConfig's field set, which is not the whole of what the file legitimately holds. Warning on a working key trains an operator to ignore the warning, which costs more than the silence it was built to fix. Add an entry when a subsystem starts reading or writing its own key here, and name the read site so the claim is checkable. The SHELL-HOOK entries below are derived, not trusted: tests/test_config_owned_key_derivation.py rescans the bundled hooks and fails if any config.yaml key they read is absent from this map, so a new hook knob cannot ship as a false 'typo' warning.",
   "owned_elsewhere": {

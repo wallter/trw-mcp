@@ -209,7 +209,7 @@ class TestUnifiedStatusTaxonomy:
         register_learning_tools(server)
         fp = freeze_fingerprint(
             trw_mcp_version="1.2.3",
-            framework_version="v27.1_TRW",
+            framework_version="v99.9_TRW",
             aaref_version="v3.2.0",
             template_version="3.2",
             registry_digest=registry.digest,

@@ -215,10 +215,10 @@ def logical(scene: SendScene) -> dict[str, Any]:
 
 def assert_transition(state: dict[str, Any], operation: str) -> None:
     assert len(state["admissions"]) == 1, "missing admitted message"
-    assert state["groups"][0][-1] == 1, "missing/excess lifetime charge"
+    assert state["groups"][0][10] == 1, "missing/excess lifetime charge (column 11: charge)"
     row = state["admissions"][0]
     facts = {fact[1] for fact in state["milestones"]}
-    assert row[-1] == ("acked" if operation == "ack" else "pending"), "wrong delivery state"
+    assert row[10] == ("acked" if operation == "ack" else "pending"), "wrong delivery state (column 11: state)"
     assert facts == (
         {"admitted", "fetch_prepared"}
         if operation == "fetch"

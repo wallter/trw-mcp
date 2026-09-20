@@ -54,6 +54,7 @@ def _all_profile_entries(*, on_path: bool) -> dict[str, Any]:
     from trw_mcp.bootstrap._antigravity_cli import _resolve_trw_mcp_command as antigravity_entry
     from trw_mcp.bootstrap._codex import _trw_mcp_server_entry as codex_entry
     from trw_mcp.bootstrap._cursor import _get_trw_mcp_entry_cursor as cursor_entry
+    from trw_mcp.bootstrap._grok import merge_grok_config
     from trw_mcp.bootstrap._opencode import _get_trw_mcp_entry as opencode_entry
     from trw_mcp.bootstrap._utils import _trw_mcp_server_entry as generic_entry
     from trw_mcp.channels.copilot._vscode_mcp import _TRW_MCP_SERVER_ENTRY as copilot_entry
@@ -76,6 +77,7 @@ def _all_profile_entries(*, on_path: bool) -> dict[str, Any]:
             # defects PRD-SEC-006 fixed everywhere else plus a non-importable
             # ``-m trw_mcp`` target. It is a member here now, not a special case.
             "antigravity-cli": {"command": ag_command, "args": ag_args},
+            "grok": merge_grok_config({}, target_dir=Path("/nonexistent"))["mcp_servers"]["trw"],
         }
     # copilot's entry is a module constant, not PATH-dependent.
     entries["copilot (.vscode/mcp.json)"] = copilot_entry

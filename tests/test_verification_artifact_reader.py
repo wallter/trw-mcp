@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,11 @@ def test_mutation_during_read(
         else:
             path = root / "proof/result"
             before = path.stat()
+            # Linux stamps inode times from a coarse clock (~1ms), so a rewrite in
+            # the same tick as the open leaves st_ctime_ns unmoved and the reader
+            # has nothing to compare. Cross the tick so the mutation is observable
+            # at all; macOS keeps true nanoseconds and never needed it.
+            time.sleep(0.01)
             path.write_bytes(b"FAIL")
             os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
         return digest

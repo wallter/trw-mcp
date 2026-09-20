@@ -135,6 +135,30 @@ def _leading_token(command: str) -> str | None:
     return None
 
 
+def _path_roots(repo_root: Path) -> tuple[Path, ...]:
+    """``repo_root``, plus the main checkout when ``repo_root`` is a linked worktree.
+
+    A linked worktree's ``.git`` is a file (``gitdir: <main>/.git/worktrees/<name>``),
+    and gitignored environment directories such as ``.venv`` exist only in the main
+    checkout. Commands a PRD writes as ``.venv/bin/python ...`` are runnable there,
+    so judging them against the worktree alone reported every such PRD as broken
+    when validated from a worktree.
+    """
+    marker = repo_root / ".git"
+    if not marker.is_file():
+        return (repo_root,)
+    first_line = marker.read_text(encoding="utf-8").splitlines()[:1]
+    if not first_line or not first_line[0].startswith("gitdir:"):
+        return (repo_root,)
+    gitdir = Path(first_line[0].removeprefix("gitdir:").strip())
+    if not gitdir.is_absolute():
+        gitdir = (repo_root / gitdir).resolve()
+    # <main>/.git/worktrees/<name>: the main checkout is three levels up.
+    if gitdir.parent.name != "worktrees" or gitdir.parent.parent.name != ".git":
+        return (repo_root,)
+    return (repo_root, gitdir.parent.parent.parent)
+
+
 def malformed_verification_command_reason(command: str, *, repo_root: Path | None = None) -> str | None:
     """Return why ``command`` is not runnable, or ``None`` when it is.
 
@@ -161,8 +185,10 @@ def malformed_verification_command_reason(command: str, *, repo_root: Path | Non
     if "/" in token:
         if repo_root is None:
             return None
-        candidate = Path(token) if Path(token).is_absolute() else repo_root / token
-        if candidate.exists():
+        if Path(token).is_absolute():
+            if Path(token).exists():
+                return None
+        elif any((root / token).exists() for root in _path_roots(repo_root)):
             return None
         return f"leading path `{token}` does not exist (resolved against the repository root)"
     if token in _SHELL_KEYWORDS or token in VERIFICATION_COMMAND_NAMES or token in _STANDARD_UTILITIES:

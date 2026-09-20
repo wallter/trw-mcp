@@ -86,7 +86,7 @@ def _merge_mcp_json(
     from ._utils import _trw_mcp_server_entry
 
     mcp_path = target_dir / ".mcp.json"
-    trw_entry = _trw_mcp_server_entry()
+    trw_entry = _trw_mcp_server_entry(target_dir)
 
     if mcp_path.exists():
         # Fail open to a fresh document on any structural read failure

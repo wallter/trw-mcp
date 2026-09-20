@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from tests._layout import requires_non_root
+
 # ---------------------------------------------------------------------------
 # W06 — the knowledge-graph relation probe
 # ---------------------------------------------------------------------------
@@ -122,6 +124,7 @@ def test_w06_the_fail_closed_gate_will_not_escalate_an_unmeasured_probe() -> Non
 # ---------------------------------------------------------------------------
 
 
+@requires_non_root
 def test_w07_a_marker_write_that_fails_is_reported(tmp_path: Path) -> None:
     """The marker write returns its outcome instead of swallowing OSError.
 

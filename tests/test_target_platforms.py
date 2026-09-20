@@ -102,6 +102,7 @@ class TestInitTargetPlatforms:
                 "opencode",
                 "codex",
                 "antigravity-cli",
+                "grok",
             ]
         )
 
@@ -248,6 +249,7 @@ class TestUpdateTargetPlatforms:
                 "opencode",
                 "codex",
                 "antigravity-cli",
+                "grok",
             ]
         )
 

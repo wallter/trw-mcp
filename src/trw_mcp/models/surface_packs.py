@@ -97,6 +97,12 @@ CAPABILITY_PACKS: dict[str, tuple[str, ...]] = {
     # additionally gated by default-off comms_enabled. All three registered
     # tools are listed; this table stays a bijection with the registrar.
     "peer_comms": ("trw_peers", "trw_send", "trw_inbox"),
+    # trw-jev slice 1 (PRD-CORE-288). Mirrors peer_comms exactly: deliberately
+    # NOT in STANDARD_TASK_PACKS, the kernel, or the reviewer profile — an
+    # opt-in pack additionally gated by
+    # default-off decision_enabled. A reviewer lane must never gain a network
+    # egress path the surface it is auditing did not already have.
+    "decision_support": ("trw_decision",),
 }
 
 #: pack -> tool IDs including the kernel modelled as a pack, so the manifest is

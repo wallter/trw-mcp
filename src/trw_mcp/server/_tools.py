@@ -63,6 +63,7 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     from trw_mcp.tools.code_search import register_code_search_tools
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
+    from trw_mcp.tools.decision import register_decision_tools
     from trw_mcp.tools.delivery_ops import register_delivery_tools
     from trw_mcp.tools.dispatch import register_dispatch_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
@@ -96,6 +97,9 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         # PRD-CORE-274 slice 1: cross-harness peer presence. Registered
         # unconditionally; execution is gated by comms_enabled=false.
         register_swarm_comms_tools,
+        # trw-jev slice 1: opt-in decision seam. Registered unconditionally;
+        # execution is gated by decision_enabled=false (PRD-CORE-288).
+        register_decision_tools,
         register_requirements_tools,
         register_replay_tools,
         register_review_tools,

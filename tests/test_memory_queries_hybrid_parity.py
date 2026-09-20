@@ -373,3 +373,72 @@ class TestHybridPoolCapBoundary:
 
         # The limit sent to list_entries must equal the configured pool cap (5).
         assert captured and captured[0] == 5, f"Pool cap 5 not respected; limit was {captured}"
+
+
+class TestRecallDoesNotRerank:
+    """PRD-CORE-284 FR05/NFR04: trw_recall and session_start auto-recall stay rerank-free.
+
+    trw-memory made cross-encoder re-ranking and its adaptive confidence floor
+    unconditional for ``MemoryClient.recall()``. ``_search_entries`` (shared by
+    ``trw_recall`` and the session-start auto-recall) calls ``hybrid_search``
+    directly and was never wired to either; wiring it needs its own PRD with a
+    token-cost measurement (PRD-CORE-284 OQ-5), so this fails if it happens silently.
+    """
+
+    # Captured by running this corpus through _search_entries on the pre-PRD-CORE-284
+    # trw-memory (HEAD 4e9666967). A rerank or floor would reorder or cut it.
+    BASELINE = ["L-gold", "L-near", "L-mid-2", "L-mid-0", "L-mid-1", "L-far-0", "L-far-1", "L-far-2"]
+
+    def test_search_entries_does_not_request_rerank(self, trw_dir: Path) -> None:
+        from trw_memory.embeddings.provenance import EmbeddingSpace, StoredVector, VectorProvenance
+        from trw_memory.retrieval import pipeline
+
+        space = EmbeddingSpace("c" * 64, "deterministic-test", 2)
+
+        class Provider:
+            def embedding_space(self) -> EmbeddingSpace:
+                return space
+
+            def embed(self, _text: str) -> list[float]:
+                return [1.0, 0.0]
+
+            def available(self) -> bool:
+                return True
+
+        backend = get_backend(trw_dir)
+        corpus = {
+            "L-gold": ("database corrupted with concurrent writers", [1.0, 0.0]),
+            "L-near": ("concurrent writers need a database lock", [0.8, 0.6]),
+            # distinct vectors so no rank depends on a tie-break
+            **{f"L-mid-{i}": (f"database backup rotation note {i}", [0.6 - 0.1 * i, 0.8]) for i in range(3)},
+            **{f"L-far-{i}": (f"unrelated gardening tip {i}", [0.1 - 0.03 * i, 1.0]) for i in range(3)},
+        }
+        records = {}
+        for eid, (content, vector) in corpus.items():
+            entry = _store(backend, eid, content)
+            proof = VectorProvenance.for_vector(space, f"{entry.content} {entry.detail}", vector)
+            records[eid] = StoredVector(tuple(vector), proof)
+
+        calls: list[dict[str, Any]] = []
+        real = pipeline.hybrid_search
+
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            return real(*args, **kwargs)
+
+        def never(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("trw-mcp recall invoked the cross-encoder")
+
+        with (
+            patch("trw_mcp.state._memory_connection.get_embedder", return_value=Provider()),
+            patch("trw_mcp.models.config.get_config", return_value=TRWConfig()),
+            patch.object(backend, "get_vector_records", return_value=records),
+            patch.object(pipeline, "hybrid_search", side_effect=spy),
+            patch("trw_memory.retrieval.reranker.cross_encode_scores", side_effect=never),
+        ):
+            ids = [e.id for e in _search_entries(backend, "database corrupted by concurrent writers", top_k=10)]
+
+        assert calls, "the hybrid path was not exercised"
+        for kwargs in calls:
+            assert not {k for k in kwargs if k.startswith("rerank")}, sorted(kwargs)
+        assert ids == self.BASELINE, " ".join(ids)

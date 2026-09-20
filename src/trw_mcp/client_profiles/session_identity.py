@@ -83,6 +83,8 @@ CLIENT_SESSION_ID_ENV_VARS: dict[str, tuple[str, ...]] = {
     "codex": (),
     "copilot": (),
     "antigravity-cli": (),
+    # No session variable is documented or was observed for Grok Build 1.0.34.
+    "grok": (),
 }
 
 # Shell/JSON-safe environment variable names only. These are in-repo constants

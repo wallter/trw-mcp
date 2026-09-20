@@ -233,18 +233,15 @@ def execute_recall(
         # that it was a bounded pre-cap match population (learning L-Rikf).
         candidate_count = len(matching_learnings)
 
-    # Move already-in-context learnings behind fresh results before truncation.
-    if deprioritized_ids:
-        prioritized = [entry for entry in ranked_learnings if str(entry.get("id", "")) not in deprioritized_ids]
-        deferred = [entry for entry in ranked_learnings if str(entry.get("id", "")) in deprioritized_ids]
-        ranked_learnings = prioritized + deferred
+    # Order for the response BEFORE dedup, budget and cap (PRD-CORE-282 FR01):
+    # temporal eligibility, then already-in-context, then the ranked score with
+    # rows synced from other projects penalized. An ineligible near-duplicate
+    # cannot evict its eligible replacement, and a cap filled by foreign rows
+    # cannot cut a local row the reorder promoted.
+    from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD
+    from trw_mcp.tools._recall_order import order_ranked_for_response
 
-    # Query-relative eligibility outranks utility and context deprioritization.
-    # Partition before dedup too, so an ineligible near-duplicate cannot evict
-    # its eligible replacement before the output budget is applied.
-    from trw_mcp.state.temporal_order import TEMPORAL_ELIGIBILITY_FIELD, prioritize_temporal_eligibility
-
-    ranked_learnings = prioritize_temporal_eligibility(ranked_learnings)
+    ranked_learnings = order_ranked_for_response(ranked_learnings, deprioritized_ids)
 
     # F-DEDUP-001: collapse near-duplicate entries on the ranked candidate set
     # BEFORE token budgeting and the max_results cap, so N near-identical copies

@@ -2,15 +2,35 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Literal
 
 InboxAction = Literal["fetch", "ack", "status"]
 MessageKind = Literal["request", "reply", "status"]
 DeliveryClass = Literal["on_demand", "interrupt", "on_idle"]
+
+
+class MessageState(str, Enum):
+    """An admission row's lifecycle (ledger RC-006): pending, then exactly one terminal state.
+
+    Every stored state and every SQL predicate over ``admissions.state`` comes
+    from here, so the verifier, expiry, ACK and the lean hint cannot disagree.
+    """
+
+    PENDING = "pending"
+    ACKED = "acked"
+    EXPIRED = "expired"
+
+
+MESSAGE_STATES = frozenset(state.value for state in MessageState)
+TERMINAL_MESSAGE_STATES = frozenset({MessageState.ACKED.value, MessageState.EXPIRED.value})
+#: Milestone facts, in lifecycle order; the terminal ones mirror the terminal states.
+MILESTONE_FACTS = ("admitted", "fetch_prepared", MessageState.ACKED.value, MessageState.EXPIRED.value)
 KINDS = frozenset({"request", "reply", "status"})
 DELIVERY_CLASSES = frozenset({"on_demand", "interrupt", "on_idle"})
 MEMBER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
@@ -54,13 +74,14 @@ class Envelope:
         if has_control_characters(self.request_key) and not is_shard_key(self.request_key):
             raise AdmissionError("invalid_request_key")
 
+    def canonical_sha256(self) -> str:
+        """Digest of the canonical payload FR02 compares; survives body tombstoning (FR15)."""
+        payload = [self.recipient_member_id, self.kind, self.delivery_class, self.body]
+        return hashlib.sha256(canonical_bytes(payload)).hexdigest()
+
     def matches(self, row: sqlite3.Row) -> bool:
-        return (self.recipient_member_id, self.kind, self.delivery_class, self.body) == (
-            row["recipient_member_id"],
-            row["kind"],
-            row["delivery_class"],
-            row["body"],
-        )
+        """FR02 exact retry, by canonical digest so it survives body tombstoning (FR15)."""
+        return bool(self.canonical_sha256() == str(row["canonical_sha256"]))
 
 
 def receipt(row: sqlite3.Row) -> dict[str, Any]:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -847,7 +848,8 @@ def test_ledger_contains_no_pids_or_user_content(tmp_path: Path) -> None:
     record_completion(trw_dir, "nudges")
 
     raw = _ledger_file(trw_dir).read_text(encoding="utf-8")
-    assert str(os.getpid()) not in raw
+    # Digit boundaries: a low pid (40 in a container) is a substring of most timestamps.
+    assert re.search(rf"(?<![0-9]){os.getpid()}(?![0-9])", raw) is None
     assert "L-" not in raw
     parsed = json.loads(raw)
     assert set(parsed) <= COVERED_STEPS

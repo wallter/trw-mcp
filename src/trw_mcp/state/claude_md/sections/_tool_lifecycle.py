@@ -71,7 +71,7 @@ Delegate only for work that is genuinely independent and parallelizable — a wi
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (a) `trw_build_check` reported `tests_passed=true` and `static_checks_clean=true` (or omitted), with a non-zero `test_count` and a non-empty `scope`, **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**

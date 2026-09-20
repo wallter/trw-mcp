@@ -19,7 +19,7 @@
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->48<!-- /inv --> tools, <!-- inv:skills -->25<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->49<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
 ## What it does
@@ -115,8 +115,8 @@ trw-mcp is **local-first**: with the default configuration it persists everythin
 
 | Surface | When | Default | Opt-out / control |
 |---------|------|---------|-------------------|
-| **Embedding model download** | Only when `all-MiniLM-L6-v2` is **not** already complete in your local Hugging Face cache. A complete cached snapshot makes **zero** huggingface.co requests — the loader probes the cache first and forces `local_files_only=True` (only relevant when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the fetch and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
-| **Re-ranker model download** | Only when `recall_rerank` is enabled (the default) **and** the `[vectors]`/`[embeddings]` extra is installed **and** `cross-encoder/ms-marco-MiniLM-L-6-v2` is not already in your local Hugging Face cache; without the extra no re-ranker path exists and nothing is fetched | `recall_rerank: true` | `recall_rerank: false` disables the second model; `TRW_OFFLINE=1` / `HF_HUB_OFFLINE=1` suppress the fetch and recall proceeds without re-ranking |
+| **Embedding model download** | Only when the configured embedding model (default `BAAI/bge-small-en-v1.5`) is **not** already complete in your local Hugging Face cache. A complete cached snapshot makes **zero** huggingface.co requests — the loader probes the cache first and forces `local_files_only=True` (only relevant when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the fetch and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
+| **Re-ranker model download** | Never from trw-mcp's own recall tools: `trw_recall` and `trw_session_start` rank by BM25 + dense vectors + Reciprocal Rank Fusion and do not load a cross-encoder. The re-ranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) belongs to trw-memory's `MemoryClient.recall()` and its own network rules apply there | — | — |
 | **Usage telemetry** | Only if explicitly enabled | **off** (gated by `platform_telemetry_enabled`, default `false`) | leave `platform_telemetry_enabled=false`; see PRD-SEC-004 |
 | **Learning-content publishing** | Only if explicitly enabled | **off** (gated by `learning_sharing_enabled`, default `false`) | leave `learning_sharing_enabled=false`; learning content is never published off-box by default |
 
@@ -126,26 +126,27 @@ With `TRW_OFFLINE=1` set, `session_start` makes **zero** huggingface.co calls �
 
 Loading a model that ships its own Python modules is refused unless you set trw-memory's `embedding_trust_remote_code: true`; the shipped default model does not need it.
 
-### Cross-client messaging and dispatch (opt-in)
+### Cross-client messaging and dispatch
 
-To enable the existing collaboration tools, merge these **top-level** keys into
-this project's `.trw/config.yaml` (do not replace your other settings):
+Peer messaging is on by default. To also enable dispatch, merge these
+**top-level** keys into this project's `.trw/config.yaml` (do not replace your
+other settings):
 
 ```yaml
-comms_enabled: true
 dispatch_tools_exposed: true
 dispatch_child_trw_access: true
 ```
 
-All three default to `false` and can be enabled independently:
-
-- `comms_enabled` enables peer enrollment, sending and inbox operations
-  (`trw_peers`, `trw_send`, `trw_inbox`). Messaging is pull-based: a message does
-  not wake an idle agent or guarantee when it will read the inbox.
-- `dispatch_tools_exposed` advertises the dispatch tool pack. Dispatch launches
+- `comms_enabled` (default `true`) exposes peer enrollment, sending and inbox
+  operations (`trw_peers`, `trw_send`, `trw_inbox`). Outside a formation they
+  refuse and create no state; only a formation member can enroll or exchange
+  messages. Messaging is pull-based: a message does not wake an idle agent or
+  guarantee when it will read the inbox. Set `comms_enabled: false` to hide the
+  three tools.
+- `dispatch_tools_exposed` (default `false`) advertises the dispatch tool pack. Dispatch launches
   another installed agent client; exposing the tools does not install that client
   or supply its credentials.
-- `dispatch_child_trw_access` gives supported dispatched children only TRW's own
+- `dispatch_child_trw_access` (default `false`) gives supported dispatched children only TRW's own
   stdio MCP connection. It does not import host hooks or other client configuration.
   For clients without an MCP argv channel, this config default falls back to no
   TRW access; an explicit per-call `--with-trw` / `with_trw=True` request is refused.
@@ -207,9 +208,9 @@ Then verify: `.trw/` dirs are `0700`, `memory.db` is `0600`, and no outbound con
 
 <a id="mcp-tools"></a>
 
-## MCP Tools (<!-- inv:tools -->48<!-- /inv -->)
+## MCP Tools (<!-- inv:tools -->49<!-- /inv -->)
 
-The table below covers the most-used tools out of the full <!-- inv:tools -->48<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
+The table below covers the most-used tools out of the full <!-- inv:tools -->49<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
@@ -220,7 +221,7 @@ The table below covers the most-used tools out of the full <!-- inv:tools -->48<
 | **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `before_edit_hint_batch`, `codebase_risk_report` | Repo-aware search, symbol lookup, and risk signals |
 | **Observability** | `query_events`, `surface_diff`, `mcp_security_status` | Event history, surface diffs, and security status |
 
-## Skills (<!-- inv:skills -->25<!-- /inv -->)
+## Skills (<!-- inv:skills -->26<!-- /inv -->)
 
 Slash-command workflows — zero tokens until triggered. Full skill reference at [trwframework.com/docs](https://trwframework.com/docs).
 

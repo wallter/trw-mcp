@@ -1,4 +1,5 @@
-"""PRD-CORE-274-FR07: leases, incarnation fencing, replacement and renewal.
+"""PRD-CORE-274 FR12 (Amendment 02; supersedes the FR07 lease gate): generation
+takeover, permanent fencing of a displaced process, and renewal.
 
 Elapsed time is simulated by advancing the PERSISTED group clock rather than by
 sleeping or by patching ``time.time``. That is the same clock the product reads
@@ -45,12 +46,16 @@ def advance_group_clock(fixture: FormationFixture, seconds: float) -> None:
 def other_process() -> Iterator[None]:
     """Run the body as a process that holds none of this one's incarnations."""
     saved = dict(_endpoints._PROCESS_INCARNATIONS)
+    saved_displaced = set(_endpoints._DISPLACED)
     _endpoints._PROCESS_INCARNATIONS.clear()
+    _endpoints._DISPLACED.clear()
     try:
         yield
     finally:
         _endpoints._PROCESS_INCARNATIONS.clear()
         _endpoints._PROCESS_INCARNATIONS.update(saved)
+        _endpoints._DISPLACED.clear()
+        _endpoints._DISPLACED.update(saved_displaced)
 
 
 @pytest.fixture
@@ -64,13 +69,25 @@ def enrolled(
     return formation_env
 
 
-def test_live_endpoint_refuses_a_different_incarnation(comms_server: FastMCP, enrolled: FormationFixture) -> None:
-    """Two live processes claiming one member is a conflict, not a race to win."""
+def _generation(fixture: FormationFixture) -> int:
+    conn = sqlite3.connect(_db(fixture))
+    try:
+        return int(conn.execute("SELECT generation FROM endpoints WHERE member_id='impl-1'").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_a_process_that_never_held_the_endpoint_takes_it_over_without_waiting(
+    comms_server: FastMCP, enrolled: FormationFixture
+) -> None:
+    """FR12: the binding (manifest run AND pin) is the authority, not the lease. A new
+    process for the same binding -- a /mcp reconnect -- takes over at once."""
+    assert _generation(enrolled) == 1
     with other_process():
         payload = call_peers(comms_server, "enroll")
 
-    assert payload["status"] == "refused"
-    assert payload["reason"] == "live_endpoint_held_by_other_incarnation"
+    assert payload["status"] == "ok"
+    assert _generation(enrolled) == 2
 
 
 def test_expired_endpoint_admits_a_replacement(comms_server: FastMCP, enrolled: FormationFixture) -> None:
@@ -82,6 +99,19 @@ def test_expired_endpoint_admits_a_replacement(comms_server: FastMCP, enrolled: 
 
     assert payload["status"] == "ok"
     assert payload["member_id"] == "impl-1"
+
+
+def test_a_displaced_process_is_fenced_permanently_so_there_is_no_ping_pong(
+    comms_server: FastMCP, enrolled: FormationFixture
+) -> None:
+    """FR12: once taken over, the old process is refused for enroll too, with the recovery named."""
+    with other_process():
+        assert call_peers(comms_server, "enroll")["status"] == "ok"
+    for action in ("heartbeat", "enroll", "enroll"):
+        payload = call_peers(comms_server, action)
+        assert payload["reason"] == "endpoint_replaced_by_newer_incarnation", (action, payload)
+        assert "reconnect" in payload["detail"]
+    assert _generation(enrolled) == 2, "the displaced process never took the endpoint back"
 
 
 def test_replaced_incarnation_is_fenced_out(comms_server: FastMCP, enrolled: FormationFixture) -> None:
@@ -158,37 +188,14 @@ def test_backwards_clock_cannot_revive_an_expired_lease(comms_server: FastMCP, e
     assert peers[0]["lease_expires_in_seconds"] < 0
 
 
-@pytest.mark.parametrize(
-    ("guard", "scenario", "reason"),
-    [
-        ("_assert_no_live_collision", "collision", "live_endpoint_held_by_other_incarnation"),
-        ("_assert_not_fenced", "fenced", "endpoint_replaced_by_newer_incarnation"),
-    ],
-)
-def test_fencing_guards_are_load_bearing(
-    comms_server: FastMCP,
-    enrolled: FormationFixture,
-    monkeypatch: pytest.MonkeyPatch,
-    guard: str,
-    scenario: str,
-    reason: str,
+def test_the_displacement_guard_is_load_bearing(
+    comms_server: FastMCP, enrolled: FormationFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """NEGATIVE CONTROL: each refusal above disappears without its own guard.
-
-    Disabled by monkeypatch in this process only — never by editing the shared
-    production file, which would leave a disarmed check on disk for every other
-    agent working in this checkout.
-    """
-    if scenario == "collision":
-        with other_process():
-            assert call_peers(comms_server, "enroll")["reason"] == reason  # guarded
-            monkeypatch.setattr(_endpoints, guard, lambda *a, **k: None)
-            assert call_peers(comms_server, "enroll")["status"] == "ok"  # unguarded
-        return
-
-    advance_group_clock(enrolled, 10_000)
+    """NEGATIVE CONTROL: without ``_assert_not_displaced`` the displaced process renews an
+    endpoint it no longer owns. Disabled by monkeypatch in this process only."""
     with other_process():
         assert call_peers(comms_server, "enroll")["status"] == "ok"
-    assert call_peers(comms_server, "heartbeat")["reason"] == reason  # guarded
-    monkeypatch.setattr(_endpoints, guard, lambda *a, **k: None)
-    assert call_peers(comms_server, "heartbeat")["status"] == "ok"  # unguarded
+    assert call_peers(comms_server, "heartbeat")["reason"] == "endpoint_replaced_by_newer_incarnation"  # guarded
+    monkeypatch.setattr(_endpoints, "_assert_not_displaced", lambda *a, **k: None)
+    _endpoints._DISPLACED.clear()
+    assert call_peers(comms_server, "heartbeat")["status"] == "ok"  # unguarded: the fence is gone

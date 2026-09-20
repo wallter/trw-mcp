@@ -15,6 +15,7 @@ from trw_mcp.models.requirements import (
     ValidationResultV2,
 )
 from trw_mcp.state.validation._prd_integrity_artifacts import has_completed_mapping_artifacts
+from trw_mcp.state.validation._prd_scoring_grounding import grounding_scope
 from trw_mcp.state.validation._prd_validation_findings import finalize_verdict, has_blocking_failure
 from trw_mcp.state.validation.prd_integrity import (
     build_path_index_partial_warning,
@@ -154,19 +155,20 @@ def refresh_dynamic_prd_validation(
             ),
         }
         dimensions = []
-        for dimension in result.dimensions:
-            scorer = dynamic_scorers.get(dimension.name)
-            if scorer is None:
-                dimensions.append(dimension)
-                continue
-            try:
-                dimensions.append(scorer())
-            except Exception:  # per-dimension fail-open behavior matches the base scorer
-                logger.warning("dynamic_dimension_scoring_failed", dimension=dimension.name, exc_info=True)
-                if "dynamic_dimensions" not in checks_skipped:
-                    checks_skipped.append("dynamic_dimensions")
-                    check_errors.append("dynamic_dimensions")
-                dimensions.append(DimensionScore(name=dimension.name, score=0.0, max_score=dimension.max_score))
+        with grounding_scope():  # REF-001: one grounding scan shared by both grounded dimensions
+            for dimension in result.dimensions:
+                scorer = dynamic_scorers.get(dimension.name)
+                if scorer is None:
+                    dimensions.append(dimension)
+                    continue
+                try:
+                    dimensions.append(scorer())
+                except Exception:  # per-dimension fail-open behavior matches the base scorer
+                    logger.warning("dynamic_dimension_scoring_failed", dimension=dimension.name, exc_info=True)
+                    if "dynamic_dimensions" not in checks_skipped:
+                        checks_skipped.append("dynamic_dimensions")
+                        check_errors.append("dynamic_dimensions")
+                    dimensions.append(DimensionScore(name=dimension.name, score=0.0, max_score=dimension.max_score))
     result.dimensions = dimensions
 
     max_possible = sum(dimension.max_score for dimension in dimensions)

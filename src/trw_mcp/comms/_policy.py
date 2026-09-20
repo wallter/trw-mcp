@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from trw_mcp.comms._envelope import AdmissionError
+from trw_mcp.comms._envelope import AdmissionError, MessageState
 from trw_mcp.comms._identity import CallerBinding
 
 if TYPE_CHECKING:
@@ -43,6 +43,7 @@ REFUSALS = frozenset(
         "ambiguous_addressing",
         "scope_too_broad",
         "scope_matches_no_peer",
+        "group_storage_budget",
     }
 )
 
@@ -53,21 +54,23 @@ class AdmissionPolicy:
     body_limit: int
     outstanding_limit: int
     rate_limit: int
+    body_budget: int = 16777216
 
     @classmethod
     def from_config(cls, config: TRWConfig) -> AdmissionPolicy:
         return cls(
-            config.comms_group_admission_limit,
+            config.comms_group_row_limit,
             config.comms_body_max_bytes,
             config.comms_recipient_outstanding_limit,
             config.comms_sender_admissions_per_minute,
+            config.comms_group_body_budget_bytes,
         )
 
 
 def ensure_group(conn: sqlite3.Connection, binding: CallerBinding, now: float, policy: AdmissionPolicy) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO groups(group_id,formation_id,manifest_path,created_at,group_time,closed,"
-        "group_limit,body_limit,outstanding_limit,rate_limit,charge) VALUES (?,?,?,?,?,0,?,?,?,?,0)",
+        "group_limit,body_limit,outstanding_limit,rate_limit,charge,body_budget) VALUES (?,?,?,?,?,0,?,?,?,?,0,?)",
         (
             binding.group_id,
             binding.formation_id,
@@ -78,6 +81,7 @@ def ensure_group(conn: sqlite3.Connection, binding: CallerBinding, now: float, p
             policy.body_limit,
             policy.outstanding_limit,
             policy.rate_limit,
+            policy.body_budget,
         ),
     )
     row = conn.execute("SELECT formation_id,manifest_path FROM groups WHERE group_id=?", (binding.group_id,)).fetchone()
@@ -100,6 +104,15 @@ def count_refusal(conn: sqlite3.Connection, group_id: str, reason: str) -> None:
     )
 
 
+def remaining_capacity(conn: sqlite3.Connection, group_id: str) -> dict[str, int]:
+    """FR15: what the group can still admit, so exhaustion is visible before it refuses."""
+    group = conn.execute("SELECT group_limit, charge, body_budget FROM groups WHERE group_id=?", (group_id,)).fetchone()
+    live = conn.execute(
+        "SELECT COALESCE(SUM(LENGTH(CAST(body AS BLOB))),0) FROM admissions WHERE group_id=?", (group_id,)
+    ).fetchone()[0]
+    return {"rows": int(group[0]) - int(group[1]), "body_bytes": int(group[2]) - int(live)}
+
+
 def check_limits(
     conn: sqlite3.Connection, group: sqlite3.Row, sender: str, recipient: str, body: str, now: float
 ) -> None:
@@ -107,9 +120,14 @@ def check_limits(
         raise AdmissionError("body_too_large")
     if group["charge"] >= group["group_limit"]:
         raise AdmissionError("group_admission_limit")
+    live_bytes = conn.execute(
+        "SELECT COALESCE(SUM(LENGTH(CAST(body AS BLOB))),0) FROM admissions WHERE group_id=?", (group["group_id"],)
+    ).fetchone()[0]
+    if live_bytes + len(body.encode("utf-8")) > group["body_budget"]:
+        raise AdmissionError("group_storage_budget")  # FR15: refuse, never evict
     outstanding = conn.execute(
-        "SELECT COUNT(*) FROM admissions WHERE group_id=? AND recipient_member_id=? AND state='pending'",
-        (group["group_id"], recipient),
+        "SELECT COUNT(*) FROM admissions WHERE group_id=? AND recipient_member_id=? AND state=?",
+        (group["group_id"], recipient, MessageState.PENDING.value),
     ).fetchone()[0]
     if outstanding >= group["outstanding_limit"]:
         raise AdmissionError("recipient_outstanding_limit")

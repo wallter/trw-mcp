@@ -19,8 +19,11 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import structlog
+
 from trw_mcp.formation import (
     TERMINAL_STATUSES,
+    CoordinationRoot,
     FormationContext,
     FormationError,
     FormationManifest,
@@ -28,6 +31,7 @@ from trw_mcp.formation import (
     load,
     manifest_path_for_run,
     resolve_manifest_path,
+    shared_authority_root,
     stamped_ids,
 )
 from trw_mcp.state._call_context import build_call_context
@@ -35,6 +39,8 @@ from trw_mcp.state._paths_pin_mgmt import get_pinned_run
 
 if TYPE_CHECKING:  # the annotation must match build_call_context's, without a runtime import
     from fastmcp import Context
+
+_logger = structlog.get_logger(__name__)
 
 #: Statuses that may use comms. Deliberately NOT "anything not terminal":
 #: ``pending`` is a declared-but-never-joined member, and FR01 refuses it.
@@ -58,6 +64,9 @@ class IdentityRefusal(str, Enum):
     UNCANONICAL = "uncanonical_formation_registration"
     NOT_ELIGIBLE = "member_not_eligible"
     UNAVAILABLE = "formation_unavailable"
+    #: FR17: this worktree has a membership record at the main root, but the caller
+    #: does not bind there as the recorded member.
+    WORKTREE_UNBOUND = "worktree_record_unbound"
 
 
 class IdentityError(RuntimeError):
@@ -99,6 +108,8 @@ class RecipientSnapshot:
     #: addressing (PRD-CORE-276) resolves against the SAME trusted load that
     #: authorizes a direct send, rather than re-reading the manifest later.
     owned_paths: tuple[str, ...] = ()
+    #: Terminal manifest status: its unacknowledged messages expire, never retarget (FR13).
+    terminal: bool = False
 
 
 @dataclass(frozen=True)
@@ -292,12 +303,41 @@ def resolve_snapshot(ctx: Context | None, *, trw_dir: Path, project_root: Path) 
             str(_canonical(Path(m.run_path))) if m.run_path is not None else None,
             m.pin_key,
             tuple(m.owned_paths),
+            m.status in TERMINAL_STATUSES,
         )
         for m in manifest.members
     )
     return CallerSnapshot(
         binding, member.status, all(m.status in TERMINAL_STATUSES for m in manifest.members), recipients
     )
+
+
+def resolve_authority_snapshot(ctx: Context | None, *, trw_dir: Path, project_root: Path) -> CallerSnapshot:
+    """Bind at the FR17 coordination root, or at the caller's own root when there is no record.
+
+    Without a membership record for this worktree the caller keeps its own root,
+    the pre-amendment behaviour. WITH a record, the main root is the only answer:
+    the caller must bind there under FR01 as the recorded member of the recorded
+    formation, or it is refused. Falling back would hide the real cause behind
+    the own root's no_formation and, if a stale index there resolved a formation,
+    silently bind a second group (lane C review of A6, D1). The record is the
+    caller's own checkout's, readable at the same uid, so refusing reveals nothing.
+    """
+    shared = shared_authority_root(CoordinationRoot(project_root, trw_dir))
+    if shared is not None:
+        coordination_root, record = shared
+        try:
+            snapshot = resolve_snapshot(
+                ctx, trw_dir=coordination_root.trw_dir, project_root=coordination_root.project_root
+            )
+        except IdentityError as exc:
+            _logger.info("comms_worktree_bind_refused", reason=exc.refusal.value, member=record.member_id)
+            raise
+        if (snapshot.binding.formation_id, snapshot.binding.member_id) != (record.formation_id, record.member_id):
+            _logger.info("comms_worktree_record_mismatch", member=record.member_id)
+            raise IdentityError(IdentityRefusal.WORKTREE_UNBOUND, "caller is not the recorded worktree member")
+        return snapshot
+    return resolve_snapshot(ctx, trw_dir=trw_dir, project_root=project_root)
 
 
 def resolve_caller(ctx: Context | None, *, trw_dir: Path, project_root: Path) -> CallerBinding:

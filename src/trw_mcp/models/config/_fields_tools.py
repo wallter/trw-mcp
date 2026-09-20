@@ -121,13 +121,14 @@ class _ToolsFields:
         """
         from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
-        # The comms and dispatch opt-ins belong to sibling mixins, and this
-        # method must pass BOTH through: without them the config resolver
-        # silently omits a pack that the manifest resolver includes, so the two
-        # authorities disagree about the surface a session may see.
+        # The comms, dispatch and decision opt-ins belong to sibling mixins,
+        # and this method must pass ALL THREE through: without them the config
+        # resolver silently omits a pack that the manifest resolver includes,
+        # so the two authorities disagree about the surface a session may see.
         return resolve_tool_surface(
             task_type,
             self.tool_resolution_mode,
             comms_enabled=getattr(self, "comms_enabled", False) is True,
             dispatch_enabled=getattr(self, "dispatch_tools_exposed", False) is True,
+            decision_enabled=getattr(self, "decision_enabled", False) is True,
         )

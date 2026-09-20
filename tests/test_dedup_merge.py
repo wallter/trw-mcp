@@ -153,10 +153,10 @@ class TestMergeEntriesEdgeCases:
         assert "this is new detail" in str(updated["detail"])
         assert "\n\n" not in str(updated["detail"])
 
-    def test_merge_same_length_detail_unchanged(
+    def test_merge_shorter_detail_is_appended(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:
-        """When new detail is not longer than existing, detail is unchanged."""
+        """A shorter incoming detail is appended, not dropped (PRD-CORE-042-FR03; migrated)."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
@@ -190,7 +190,9 @@ class TestMergeEntriesEdgeCases:
         merge_entries(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
-        assert str(updated["detail"]) == "existing detail is long enough already"
+        detail = str(updated["detail"])
+        assert detail.startswith("existing detail is long enough already\n---\nMerged from L-new-same on ")
+        assert detail.endswith(":\nshort")
 
     def test_merge_duplicate_merged_from_not_added_twice(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter

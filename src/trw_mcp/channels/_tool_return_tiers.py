@@ -15,6 +15,10 @@ Design contract
 - **T0** (copilot, free tier): presence beacon only — distill_status,
   distill_action, risk_score (scalar), tier.  No list fields.
 
+These three client tiers are NOT the manifest-quota ladder T0..T4 in
+``channels/_quota.py`` (``TIER_DOWN_LADDER``, consumed by meta-tune throttling): the
+labels collide but the concepts do not (RC-014). There is no T3 here.
+
 Enrichment is ADDITIVE: the base result fields are always present and
 unchanged.  Per-tier shaping appends an ``enrichment`` key to the response.
 

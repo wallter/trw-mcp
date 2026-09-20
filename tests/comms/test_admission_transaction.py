@@ -16,7 +16,7 @@ import pytest
 
 from tests._formation_test_support import formation_env  # noqa: F401
 from tests.comms._wait_transport_support import held_wait
-from tests.comms.test_policy import SendScene, scene  # noqa: F401
+from tests.comms.test_policy import SendScene, scene
 
 _WORKER = """
 import asyncio,json,sys
@@ -119,7 +119,7 @@ def race(
             child.wait(timeout=5)
 
 
-@pytest.mark.parametrize("scene", [{"comms_group_admission_limit": 5}], indirect=True)
+@pytest.mark.parametrize("scene", [{"comms_group_row_limit": 5}], indirect=True)
 @pytest.mark.parametrize("disable_guard", [False, True])
 @pytest.mark.parametrize("waiter_present", [False, True])
 def test_sixteen_process_budget_race_and_process_local_guard_control(
@@ -154,7 +154,8 @@ def test_sixteen_process_exact_retries_have_one_receipt(scene: SendScene, tmp_pa
         "UPDATE groups SET charge=charge+1",
         "DELETE FROM milestones WHERE fact='admitted'",
         "UPDATE milestones SET at=at+9999",
-        "UPDATE admissions SET recipient_incarnation='00000000000000000000000000000000'",
+        # v4 (FR13): all-zero now legitimately means "never prepared"; a non-hex value is still corrupt.
+        "UPDATE admissions SET recipient_incarnation='not-a-hex-incarnation-value-000'",
         "UPDATE groups SET rate_limit=1",
     ],
 )
@@ -336,3 +337,114 @@ def test_comms_never_reaches_for_an_advisory_file_lock() -> None:
         if any(token in line for token in ("fcntl", "flock", "lockf", "_locking"))
     }
     assert offenders == {}, offenders
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-274 NFR08: bounded per-operation cost at the supported envelope.
+# Perf-marked: the release gate invokes `-m perf` explicitly. The result is an
+# environment observation recorded with its machine, never a portable claim.
+# ---------------------------------------------------------------------------
+
+import contextlib
+import hashlib
+import platform
+import statistics
+import time
+
+from tests.comms.test_policy import SendScene, scene  # noqa: F401
+
+
+def _fill_to_envelope(scene: SendScene, rows: int, body_bytes: int) -> None:
+    """Retain *rows* consistent acked admissions (bodies of *body_bytes*) that the real verifier accepts."""
+    now = time.time()
+    base = now - 2 * rows - 600  # two seconds apart keeps the historical sender rate inside policy
+    body = "b" * body_bytes
+    values = []
+    for index in range(rows):
+        message_id = hashlib.sha256(f"perf-{index}".encode()).hexdigest()[:32]
+        digest = hashlib.sha256(f"digest-{index}".encode()).hexdigest()
+        at = base + 2 * index
+        values.append((message_id, f"perf-{index}", body, at, at + 86400, digest))
+    import sqlite3
+
+    from trw_mcp.comms import _store
+
+    conn = sqlite3.connect(_store.database_path(scene.formation.manifest_path()))
+    try:
+        group_id = conn.execute("SELECT group_id FROM groups").fetchone()[0]
+        conn.execute("UPDATE groups SET created_at=?, rate_limit=256", (base - 1,))
+        for message_id, key, text, at, expires, digest in values:
+            conn.execute(
+                "INSERT INTO admissions(group_id,sender_member_id,request_key,recipient_member_id,kind,delivery_class,"
+                "body,message_id,recipient_incarnation,admitted_at,state,expires_at,delivery_count,canonical_sha256) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,'acked',?,1,?)",
+                (
+                    group_id,
+                    "impl-1",
+                    key,
+                    "impl-2",
+                    "request",
+                    "on_demand",
+                    text,
+                    message_id,
+                    "0" * 32,
+                    at,
+                    expires,
+                    digest,
+                ),
+            )
+            for fact, offset in (("admitted", 0.0), ("fetch_prepared", 0.1), ("acked", 0.2)):
+                conn.execute("INSERT INTO milestones VALUES (?,?,?)", (message_id, fact, at + offset))
+        conn.execute("UPDATE groups SET charge=charge+?", (rows,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.mark.perf
+def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope(
+    scene: SendScene, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    import asyncio
+
+    if "perf" not in str(request.config.getoption("markexpr") or ""):
+        # A wall-clock budget under a loaded xdist run measures the machine, not the mailbox.
+        pytest.skip("NFR08 budget runs only under an explicit -m perf")
+
+    import trw_mcp.comms as comms
+
+    _fill_to_envelope(scene, rows=4000, body_bytes=4096)  # about 15.6 MiB of live bodies, 4000 of 4096 rows
+    holds: list[float] = []
+    real_immediate = comms.immediate
+
+    @contextlib.contextmanager
+    def timed_immediate(conn: Any) -> Any:
+        started = time.perf_counter()
+        with real_immediate(conn) as locked:
+            yield locked
+        holds.append(time.perf_counter() - started)
+
+    monkeypatch.setattr(comms, "immediate", timed_immediate)
+    operations: list[float] = []
+    for index in range(50):
+        started = time.perf_counter()
+        if index % 3 == 0:
+            scene.actor("impl-1")
+            assert scene.send(f"live-{index}", "x")["status"] == "ok"
+        else:
+            scene.actor("impl-2")
+            fetched = asyncio.run(scene.server.call_tool("trw_inbox", {})).structured_content
+            ids = [item["message_id"] for item in fetched["items"]]
+            if ids:
+                asyncio.run(scene.server.call_tool("trw_inbox", {"action": "ack", "message_ids": ids}))
+        operations.append(time.perf_counter() - started)
+
+    def p95(samples: list[float]) -> float:
+        return statistics.quantiles(samples, n=20)[-1] * 1000
+
+    print(
+        f"nfr08 machine={platform.machine()} {platform.platform()} rows=4000 body_bytes=4096 "
+        f"lock_p95_ms={p95(holds):.1f} op_p95_ms={p95(operations):.1f} ops={len(operations)} holds={len(holds)}"
+    )
+    assert p95(holds) <= 100.0
+    assert p95(operations) <= 250.0

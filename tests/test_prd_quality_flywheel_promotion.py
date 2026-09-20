@@ -61,7 +61,10 @@ def test_audit_pattern_promotion(tmp_path: Path) -> None:
     )
 
     cfg = TRWConfig(audit_pattern_promotion_threshold=3)
-    with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]):
+    with (
+        patch("trw_mcp.state.consolidation._cycle.semantic_clustering_ready", return_value=True),
+        patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]),
+    ):
         result = consolidate_cycle(trw_dir, config=cfg)
 
     assert result["status"] == "no_clusters"
@@ -105,7 +108,10 @@ def test_audit_pattern_promotion_respects_config_threshold(tmp_path: Path) -> No
         )
 
     cfg = TRWConfig(audit_pattern_promotion_threshold=4)
-    with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]):
+    with (
+        patch("trw_mcp.state.consolidation._cycle.semantic_clustering_ready", return_value=True),
+        patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]),
+    ):
         result = consolidate_cycle(trw_dir, config=cfg)
 
     assert result["status"] == "no_clusters"
@@ -136,7 +142,10 @@ def test_audit_pattern_promotion_supports_integration_and_traceability_categorie
         )
 
     cfg = TRWConfig(audit_pattern_promotion_threshold=3)
-    with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]):
+    with (
+        patch("trw_mcp.state.consolidation._cycle.semantic_clustering_ready", return_value=True),
+        patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]),
+    ):
         result = consolidate_cycle(trw_dir, config=cfg)
 
     promotions = {
@@ -175,7 +184,10 @@ def test_audit_pattern_promotion_does_not_promote_same_category_count_without_sh
         )
 
     cfg = TRWConfig(audit_pattern_promotion_threshold=3)
-    with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]):
+    with (
+        patch("trw_mcp.state.consolidation._cycle.semantic_clustering_ready", return_value=True),
+        patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[]),
+    ):
         result = consolidate_cycle(trw_dir, config=cfg)
 
     assert result["audit_pattern_promotions"] == []

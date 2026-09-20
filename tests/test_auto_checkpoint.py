@@ -218,6 +218,7 @@ class TestResetToolCallCounter:
 
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
+from tests._layout import requires_non_root
 
 
 class TestPreCompactCheckpoint:
@@ -273,6 +274,7 @@ class TestPreCompactCheckpoint:
         assert result["status"] == "skipped"
         assert "auto_checkpoint_pre_compact" in result["reason"]
 
+    @requires_non_root
     def test_handles_checkpoint_failure(
         self,
         tmp_path: Path,

@@ -160,7 +160,7 @@ class TestT4ClientsAreDeliberatelyExcluded:
     """FR06: the exclusion set is the mechanism, not a comment."""
 
     def test_t4_clients_are_deliberately_excluded(self) -> None:
-        assert INCLUDE_INCAPABLE_CLIENTS == ("copilot", "cursor-cli", "cursor-ide", "antigravity-cli")
+        assert INCLUDE_INCAPABLE_CLIENTS == ("copilot", "cursor-cli", "cursor-ide", "antigravity-cli", "grok")
 
     def test_every_excluded_client_is_a_real_profile(self) -> None:
         for client in INCLUDE_INCAPABLE_CLIENTS:

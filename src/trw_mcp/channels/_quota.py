@@ -28,4 +28,7 @@ from __future__ import annotations
 __all__ = ["TIER_DOWN_LADDER"]
 
 # Canonical tier ladder — highest fidelity to lowest.
+# NOT the same vocabulary as the tool-return enrichment tiers T0..T2 in
+# ``channels/_tool_return_tiers.py`` (client-capability response shaping): the labels
+# collide but the concepts do not (RC-014). A value from one is never valid in the other.
 TIER_DOWN_LADDER: tuple[str, ...] = ("T4", "T3", "T2", "T1", "T0")

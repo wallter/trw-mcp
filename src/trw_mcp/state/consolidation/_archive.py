@@ -7,11 +7,12 @@ rollback on failure.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import structlog
+from trw_memory.lifecycle.protection import is_removal_exempt
 
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.typed_dicts import LearningEntryDict
@@ -60,6 +61,12 @@ def _archive_originals(
     for entry in cluster:
         entry_id = str(entry.get("id", ""))
         if not entry_id:
+            continue
+
+        # PRD-CORE-244-FR10, defence in depth: clustering already excludes exempt
+        # entries; a cluster built elsewhere must still never archive one.
+        if is_removal_exempt(cast("Mapping[str, object]", entry)):
+            logger.warning("consolidation_archive_skipped_exempt", entry_id=entry_id)
             continue
 
         # Derive exact filename from entry_id (safe slugify, no glob injection)

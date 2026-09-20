@@ -102,13 +102,26 @@ def scene(
     runs["impl-3"] = make_run_dir(runs_root, "impl-3")
     payload = formation_env.payload(
         members=[
-            {"member_id": "impl-1", "client": "claude-code", "role": "implementer", "owned_paths": ["src/alpha/**"]},
-            {"member_id": "impl-2", "client": "codex", "role": "implementer", "owned_paths": [f"{COMMS}/**"]},
+            {
+                "member_id": "impl-1",
+                "client": "claude-code",
+                "role": "implementer",
+                "owned_paths": ["src/alpha/**"],
+                "open_join": True,
+            },
+            {
+                "member_id": "impl-2",
+                "client": "codex",
+                "role": "implementer",
+                "owned_paths": [f"{COMMS}/**"],
+                "open_join": True,
+            },
             {
                 "member_id": "impl-3",
                 "client": "antigravity-cli",
                 "role": "reviewer",
                 "owned_paths": ["trw-mcp/docs/**"],
+                "open_join": True,
             },
         ]
     )
@@ -210,7 +223,7 @@ def test_a_retry_whose_scope_no_longer_covers_the_original_recipient_refuses(sce
     assert narrowed["reason"] == "idempotency_conflict"
 
 
-@pytest.mark.parametrize("scene", [{"comms_group_admission_limit": 1}], indirect=True)
+@pytest.mark.parametrize("scene", [{"comms_group_row_limit": 1}], indirect=True)
 def test_one_saturated_recipient_rolls_the_whole_notify_back(scene: ScopeScene) -> None:
     """FR05. Partial fan-out is never committed.
 

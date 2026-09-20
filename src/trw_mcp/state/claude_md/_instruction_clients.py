@@ -45,6 +45,7 @@ INSTRUCTION_SYNC_EXCLUSIONS: dict[str, str] = {
     "claude-code": "CLAUDE.md is written by the carrier path in _profile_dispatcher",
     "cursor-cli": "declares instruction_path=AGENTS.md, refreshed by the AGENTS.md write",
     "cursor-ide": "writes .cursor/rules/*.mdc through the bootstrap IDE-target path",
+    "grok": "declares instruction_path=AGENTS.md, refreshed by the AGENTS.md write",
 }
 
 
@@ -182,6 +183,9 @@ _INSTRUCTION_SYNC_GENERATORS: dict[InstructionClientId, InstructionSyncGenerator
 #: - ``antigravity-cli`` — no import syntax found in any source; separately, the
 #:   ``ANTIGRAVITY.md`` filename TRW writes is itself unconfirmed against vendor
 #:   docs.
+#: - ``grok``            — AGENTS.md is its only carrier and no include syntax is
+#:   documented for it; project ``.grok/config.toml`` cannot name instruction
+#:   files either (only mcp_servers/plugins/permission), so it is not T2.
 #:
 #: This is a DECLARED EXCLUSION SET, not a comment: `tests/test_instruction_
 #: include_matrix.py` asserts it equals the set of profiles that resolve to
@@ -197,4 +201,4 @@ _INSTRUCTION_SYNC_GENERATORS: dict[InstructionClientId, InstructionSyncGenerator
 #: serves Copilot Chat in VS Code, whose docs describe no inclusion syntax
 #: for `.github/copilot-instructions.md`. Capability that varies per SURFACE
 #: must be declared at the weakest surface the profile serves.
-INCLUDE_INCAPABLE_CLIENTS: tuple[str, ...] = ("copilot", "cursor-cli", "cursor-ide", "antigravity-cli")
+INCLUDE_INCAPABLE_CLIENTS: tuple[str, ...] = ("copilot", "cursor-cli", "cursor-ide", "antigravity-cli", "grok")

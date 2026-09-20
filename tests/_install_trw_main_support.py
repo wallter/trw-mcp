@@ -54,7 +54,7 @@ def make_project(tmp_path: Path, *, targets: tuple[str, ...] = ("claude-code",))
     (target / ".git").mkdir(parents=True)
     trw = target / ".trw"
     trw.mkdir()
-    (trw / "installer-meta.yaml").write_text("framework_version: v27.1_TRW\n", encoding="utf-8")
+    (trw / "installer-meta.yaml").write_text("framework_version: v99.9_TRW\n", encoding="utf-8")
     (trw / "config.yaml").write_text(
         "installation_id: proj\ntarget_platforms:\n" + "".join(f"  - {t}\n" for t in targets),
         encoding="utf-8",

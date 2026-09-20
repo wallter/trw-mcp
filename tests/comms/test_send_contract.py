@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
+from tests.comms.conftest import core
 from trw_mcp import formation
 from trw_mcp.models import config as config_module
 from trw_mcp.models.config import TRWConfig
@@ -53,7 +54,7 @@ def send_scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SendScene:
     config = TRWConfig(
         comms_enabled=True,
         cleanup_on_boot=False,
-        comms_group_admission_limit=2,
+        comms_group_row_limit=2,
         comms_body_max_bytes=8,
         comms_recipient_outstanding_limit=2,
         comms_sender_admissions_per_minute=2,
@@ -67,7 +68,10 @@ def send_scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SendScene:
         (run / "meta" / "run.yaml").write_text("run_id: send-contract\nstatus: active\n")
     formation.create(
         runs["sender"],
-        {"formation_id": "send-contract", "members": [{"member_id": m, "client": "codex"} for m in members]},
+        {
+            "formation_id": "send-contract",
+            "members": [{"member_id": m, "client": "codex", "open_join": True} for m in members],
+        },
         trw_dir=root / ".trw",
         prds_dir=root / "prds",
     )
@@ -98,7 +102,7 @@ def test_unenrolled_sender_receipt_is_stable_after_recipient_binding_changes(sen
     }
     assert receipt["sender_member_id"] == "sender"
     assert receipt["recipient_member_id"] == "receiver"
-    assert first["delivery"] == "pull_only"
+    assert "delivery" not in first
     # Native authority changes while the old receiver endpoint is still leased.
     formation.revise(
         "send-contract",
@@ -106,16 +110,17 @@ def test_unenrolled_sender_receipt_is_stable_after_recipient_binding_changes(sen
         {"receiver": {"pin_key": "new-receiver-pin"}},
         trw_dir=send_scene.root / ".trw",
     )
-    assert send_scene.send("stable") == first
+    assert send_scene.send("stable")["receipt"] == receipt
     changed = send_scene.send("stable", "altered")
     assert changed["status"] == "refused"
-    assert send_scene.send("new-key")["status"] == "refused"
+    # PRD-CORE-274 FR13: the member is addressed, not its (now stale) endpoint binding.
+    assert send_scene.send("new-key")["status"] == "ok"
     peers = send_scene.call("sender", "trw_peers", action="list")
     assert {peer["member_id"] for peer in peers["peers"]} == {"receiver"}, "send implicitly enrolled sender"
 
 
 def test_enrollment_birth_policy_survives_all_admission_config_changes(send_scene: SendScene) -> None:
-    send_scene.config.comms_group_admission_limit = 1
+    send_scene.config.comms_group_row_limit = 1
     send_scene.config.comms_body_max_bytes = 1
     send_scene.config.comms_recipient_outstanding_limit = 1
     send_scene.config.comms_sender_admissions_per_minute = 1
@@ -124,7 +129,7 @@ def test_enrollment_birth_policy_survives_all_admission_config_changes(send_scen
     assert first["status"] == second["status"] == "ok"
     assert first["receipt"]["message_id"] != second["receipt"]["message_id"]
     assert send_scene.send("third", "z")["status"] == "refused"
-    assert send_scene.send("first", "12345678") == first
+    assert core(send_scene.send("first", "12345678")) == core(first)
 
 
 def test_terminal_send_observation_closes_before_byte_refusal_and_retains_receipt(send_scene: SendScene) -> None:
@@ -142,11 +147,15 @@ def test_terminal_send_observation_closes_before_byte_refusal_and_retains_receip
     formation.revise(
         "send-contract", send_scene.owner, {"sender": {"status": "active"}}, trw_dir=send_scene.root / ".trw"
     )
-    assert send_scene.send("retained") == first, "eligible sender cannot reconcile a retained closed-group receipt"
+    retried = send_scene.send("retained")
+    assert retried["receipt"] == first["receipt"], "eligible sender cannot reconcile a retained closed-group receipt"
+    assert retried["message_state"] == "expired", "FR15: the retry reports the message's current state"
     assert send_scene.send("new")["reason"] == "group_closed", "terminal observation was not committed"
 
 
-def test_rebound_pin_cannot_reuse_live_receiver_incarnation_in_same_process(send_scene: SendScene) -> None:
+def test_rebound_pin_takes_over_with_a_new_incarnation_never_the_old_one(send_scene: SendScene) -> None:
+    """PRD-CORE-274 FR12: an orchestrator-authorized rebind takes over at once, as a NEW
+    incarnation and generation -- never by borrowing the old process's token."""
     first = send_scene.send("before-rebind")
     assert first["status"] == "ok"
     receiver_run = send_scene.owner.parent / "receiver"
@@ -158,10 +167,13 @@ def test_rebound_pin_cannot_reuse_live_receiver_incarnation_in_same_process(send
     )
     send_scene.monkeypatch.setenv("TRW_SESSION_ID", "replacement-session")
     pin_active_run(receiver_run, context=build_call_context(None))
+    path = next(send_scene.root.rglob("comms.sqlite3"))
+    before = send_scene_rows(path, "SELECT incarnation, generation FROM endpoints WHERE member_id='receiver'")
     result = asyncio.run(send_scene.server.call_tool("trw_peers", {"action": "enroll"})).structured_content
     assert result is not None
-    assert result["status"] == "refused", "new trusted pin borrowed a still-live old receiver incarnation"
-    assert result["reason"] == "live_endpoint_held_by_other_incarnation"
+    assert result["status"] == "ok", result
+    after = send_scene_rows(path, "SELECT incarnation, generation FROM endpoints WHERE member_id='receiver'")
+    assert after[0][0] != before[0][0] and after[0][1] == before[0][1] + 1
 
 
 def test_large_finite_clock_does_not_empty_same_timestamp_rate_window(send_scene: SendScene) -> None:
@@ -174,7 +186,7 @@ def test_large_finite_clock_does_not_empty_same_timestamp_rate_window(send_scene
     # Coherent synthetic persisted history, not a claim about present UTC time.
     with _store.sqlite3.connect(path) as connection:
         connection.execute("UPDATE groups SET group_time=?, rate_limit=1", (now,))
-        connection.execute("UPDATE admissions SET admitted_at=?", (now,))
+        connection.execute("UPDATE admissions SET admitted_at=?, expires_at=?", (now, now + 86400))
         connection.execute("UPDATE milestones SET at=?", (now,))
         connection.execute("UPDATE endpoints SET last_seen_at=?, lease_expires_at=?", (now, now + 16384))
     with _store.connect(formation.manifest_path_for_run(send_scene.owner), busy_timeout_ms=20):
@@ -182,3 +194,13 @@ def test_large_finite_clock_does_not_empty_same_timestamp_rate_window(send_scene
     result = send_scene.send("second")
     assert result["status"] == "refused", "same-time prior admission vanished from the 60-second window"
     assert result["reason"] == "sender_rate_limit"
+
+
+def send_scene_rows(path: object, sql: str) -> list[tuple[object, ...]]:
+    import sqlite3
+
+    conn = sqlite3.connect(str(path))
+    try:
+        return [tuple(row) for row in conn.execute(sql)]
+    finally:
+        conn.close()

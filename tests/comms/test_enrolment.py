@@ -136,8 +136,20 @@ def test_orchestrator_with_an_explicit_joined_member_binds(
     manifest = _formation(
         formation_env,
         members=[
-            {"member_id": "lead", "client": "claude-code", "role": "lead", "owned_paths": ["src/lead"]},
-            {"member_id": "impl-1", "client": "codex", "role": "implementer", "owned_paths": ["src/alpha"]},
+            {
+                "member_id": "lead",
+                "client": "claude-code",
+                "role": "lead",
+                "owned_paths": ["src/lead"],
+                "open_join": True,
+            },
+            {
+                "member_id": "impl-1",
+                "client": "codex",
+                "role": "implementer",
+                "owned_paths": ["src/alpha"],
+                "open_join": True,
+            },
         ],
     )
     join(

@@ -1,16 +1,35 @@
 name: CI
 
-# A push to main is only ever a release sync from the monorepo, whose tree has
-# already passed this same workflow in `make release-check` (a faithful local
-# replay of these jobs) before it was cut; re-running it here doubled every
-# release's wall time (2026-09-17: two 20-minute reruns for test-only syncs).
-# Pull requests still run it, and it can be started by hand. The tag-triggered
-# release.yml keeps the multi-OS install smoke, which is the cross-platform
-# check that matters for a published wheel.
+# What runs where (PRD-INFRA-188 Amendment 01):
+# - Pull requests and manual dispatches run this workflow at the package baseline
+#   suite (unit); the full suite is too slow for every pull request. A dispatch can pick either suite.
+# - The tag-triggered release.yml calls this workflow with suite=full, and publish
+#   waits for it: the package's full pytest suite on Linux gates every release.
+# - A push to main (a release sync) does not run it; the monorepo's
+#   `release_public.py check` replays these steps locally before the cut, and its
+#   Linux leg runs the full suite in a container when Docker is available.
+# - release.yml also keeps the multi-OS installed-wheel smoke test.
 on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      suite:
+        description: "unit or full"
+        type: choice
+        options: [unit, full]
+        default: unit
+      correlation_id:
+        description: "set by release_public.py all so it can find this exact run"
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      suite:
+        type: string
+        default: unit
+
+run-name: ${{ inputs.correlation_id && format('CI {0}', inputs.correlation_id) || github.event.pull_request.title || 'CI' }}
 
 jobs:
   lint:
@@ -56,6 +75,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      TRW_SUITE: ${{ inputs.suite || 'unit' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -70,14 +91,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      # Unit tier only (no filesystem I/O) keeps CI fast; the full suite + the
-      # 80% --cov-fail-under gate run in the monorepo's mcp-ci workflow where the
-      # slower integration/e2e tiers are affordable. Coverage is reported here
-      # (unit-tier subset) for visibility but not hard-gated, since a unit-only
-      # run cannot reach the whole-package 80% threshold.
+      # The unit tier (no filesystem I/O) is the pull-request baseline. Coverage is
+      # reported for visibility but not gated: a unit-only run cannot reach the
+      # whole-package threshold. The suite marker is written only after pytest
+      # succeeds (&&, so a failing run never writes it, even under bash without -e).
       - name: Test (unit tier) with coverage
+        if: env.TRW_SUITE != 'full'
         run: >-
           pytest tests/ -m unit -q
           --cov=trw_mcp
           --cov-report=term-missing
           --cov-fail-under=0
+          --junitxml=junit.xml
+          && echo unit > suite-ran.txt
+      # Every marker, every test: what release.yml gates publication on.
+      - name: Test (full suite)
+        if: env.TRW_SUITE == 'full'
+        run: pytest tests/ -q -n auto --junitxml=junit.xml && echo full > suite-ran.txt
+      - name: Verify the requested suite ran
+        run: python .github/scripts/verify_suite.py --requested "$TRW_SUITE" --junit junit.xml --marker suite-ran.txt

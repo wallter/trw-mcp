@@ -9,6 +9,7 @@ import pytest
 from fastmcp import Client
 
 from tests._formation_test_support import formation_env  # noqa: F401
+from tests.comms.conftest import core
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 from trw_mcp.comms._envelope import canonical_bytes
 from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
@@ -40,8 +41,8 @@ async def test_native_request_reply_ack_and_sender_status(transport_scene: SendS
         fetched = await invoke(client, "trw_inbox")
         assert fetched["items"] == [{**sent["receipt"], "body": "question"}]
         ack = await invoke(client, "trw_inbox", action="ack", message_ids=[request_id, request_id])
-        assert ack == {"status": "ok", "delivery": "pull_only", "acknowledged_ids": [request_id]}
-        assert await invoke(client, "trw_inbox", action="ack", message_ids=[request_id]) == ack
+        assert core(ack) == {"status": "ok", "acknowledged_ids": [request_id]}
+        assert core(await invoke(client, "trw_inbox", action="ack", message_ids=[request_id])) == core(ack)
         reply = await invoke(
             client, "trw_send", recipient_member_id="impl-1", request_key="r", body="answer", kind="reply"
         )
@@ -92,7 +93,7 @@ async def test_count_before_duplicate_normalization_and_append_cursor(transport_
         assert second["items"][0]["message_id"] == receipts[1]["message_id"]
         third = await invoke(client, "trw_inbox", cursor=second["next_cursor"])
         assert third["items"][0]["message_id"] == receipts[2]["message_id"]
-        assert third["next_cursor"] is None
+        assert "next_cursor" not in third
         fresh = await invoke(client, "trw_inbox")
         assert fresh["items"] == second["items"]  # preparation is not consumption
         assert len(canonical_bytes(fresh)) <= s.config.comms_response_max_bytes
@@ -140,7 +141,7 @@ async def test_maximum_item_page_and_ack_fit_live_body_free_bound(transport_scen
         first = await invoke(client, "trw_inbox")
         assert len(first["items"]) == 64 and first["next_cursor"] is not None
         second = await invoke(client, "trw_inbox", cursor=first["next_cursor"])
-        assert len(second["items"]) == 1 and second["next_cursor"] is None
+        assert len(second["items"]) == 1 and "next_cursor" not in second
         ids = [item["message_id"] for item in reversed(first["items"])]
         assert (await invoke(client, "trw_inbox", action="ack", message_ids=[ids[0]] * 65))[
             "reason"

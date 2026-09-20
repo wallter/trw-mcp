@@ -85,12 +85,16 @@ def test_agent_surface_is_derived_not_restated() -> None:
 
 def test_entry_without_a_client_profile_reports_absence_not_false() -> None:
     # An entry absent from the client-profile registry must report "no profile"
-    # rather than False: "we have not established this" and "this client has no
-    # agent surface" are different facts (US-002).
+    # rather than False. After grok gained a profile, every current dispatch
+    # target has one; the property is still asserted for any future None.
+    for spec in CLIENT_SPECS.values():
+        if spec.profile_id is None:
+            assert spec.agent_surface is None
+            assert spec.agent_surface is not False
     grok = CLIENT_SPECS["grok"]
-    assert grok.profile_id is None
-    assert grok.agent_surface is None
-    assert grok.agent_surface is not False
+    assert grok.profile_id == "grok"
+    assert grok.agent_surface is True
+    assert grok.verification.method == "executable"
 
 
 def test_version_argv_is_per_entry_data_not_a_hardcoded_flag() -> None:
@@ -229,6 +233,9 @@ def test_recorded_credentials_still_reach_the_client_that_declares_them() -> Non
     env = build_subprocess_env("claude", source_env=planted)
     assert env["ANTHROPIC_API_KEY"] == "sk-secret"
     assert "AWS_SECRET_ACCESS_KEY" not in env
+    grok_env = build_subprocess_env("grok", source_env={**planted, "HOME": "/Users/me", "XAI_API_KEY": "xai-secret"})
+    assert grok_env["HOME"] == "/Users/me"
+    assert "XAI_API_KEY" not in grok_env
 
 
 # --------------------------------------------------------------------------- #
@@ -451,7 +458,7 @@ def test_sandbox_and_sub_agent_fields_are_typed_tri_states() -> None:
     # sandbox TRW does not turn on" — the exact conflation FR06 exists to stop.
     sandbox_values = set(get_args(SandboxPosture))
     sub_agent_values = set(get_args(SubAgentSupport))
-    assert sandbox_values == {"enforced", "available_default_off", "none"}
+    assert sandbox_values == {"enforced", "available_default_off", "unavailable_on_host", "none"}
     assert sub_agent_values == {"yes", "no", "unknown"}
     for spec in CLIENT_SPECS.values():
         assert spec.sandbox in sandbox_values
@@ -462,3 +469,40 @@ def test_sandbox_and_sub_agent_fields_are_typed_tri_states() -> None:
 
 def test_fresh_mcp_table_capability_is_declared_only_by_recursive_merge_transport() -> None:
     assert {name for name, spec in CLIENT_SPECS.items() if spec.fresh_mcp_server_table} == {"codex"}
+
+
+# --------------------------------------------------------------------------- #
+# W3 live probe 2026-09-19: grok refuses a repeated flag outright ("the argument
+# '--permission-mode <MODE>' cannot be used multiple times"), so every
+# --allow-writes dispatch exited 2 while dontAsk sat in always_argv AND
+# acceptEdits in allow_writes_argv. The rule is general: a command line that
+# names one flag twice is ambiguous for any client, whoever wins.
+# --------------------------------------------------------------------------- #
+
+
+def _argv_for(client: str, *, read_only: bool) -> list[str]:
+    from trw_mcp.dispatch._commands import build_command
+    from trw_mcp.dispatch._types import DispatchRequest
+
+    return build_command(DispatchRequest(client=client, prompt="probe", read_only=read_only))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+def test_no_client_emits_the_same_flag_twice(read_only: bool) -> None:
+    from collections import Counter
+
+    for client in CLIENT_SPECS:
+        argv = _argv_for(client, read_only=read_only)
+        repeated = [tok for tok, n in Counter(t for t in argv if t.startswith("--")).items() if n > 1]
+        assert repeated == [], f"{client} emits {repeated} twice under read_only={read_only}: {argv}"
+
+
+def test_grok_emits_exactly_one_permission_mode_per_posture() -> None:
+    read_only = _argv_for("grok", read_only=True)
+    writes = _argv_for("grok", read_only=False)
+    assert read_only.count("--permission-mode") == 1 and "dontAsk" in read_only
+    # `auto`, not acceptEdits: headless grok has nobody to approve an edit, so
+    # acceptEdits cancels the turn and writes nothing (measured live 2026-09-19).
+    assert writes.count("--permission-mode") == 1 and "auto" in writes
+    assert "dontAsk" not in writes, "the write path must not also carry the deny mode"
+    assert "--no-subagents" in read_only and "--no-subagents" in writes

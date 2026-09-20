@@ -72,7 +72,7 @@ Task arrives → Assess scope and harness
 Delegation is optional. The invariant is focused context, explicit file ownership, persisted findings, and final integration by the orchestrator. If the client has no safe delegation surface, execute the same shards sequentially in the current session.
 
 
-<!-- trw:lifecycle-sync:sha256-6d9c6a9cd3a7 -->
+<!-- trw:lifecycle-sync:sha256-ac9a7444faf4 -->
 
 ## TRW Governance (non-negotiable)
 
@@ -81,7 +81,7 @@ Call `trw_session_start()` first.
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (a) `trw_build_check` reported `tests_passed=true` and `static_checks_clean=true` (or omitted), with a non-zero `test_count` and a non-empty `scope`, **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**
@@ -188,7 +188,7 @@ Read `.trw/frameworks/FRAMEWORK.md` at session start — it defines phase gates,
 
 
 === closing_reminder ===
-<!-- trw:lifecycle-sync:sha256-6d9c6a9cd3a7 -->
+<!-- trw:lifecycle-sync:sha256-ac9a7444faf4 -->
 
 ## TRW Governance (non-negotiable)
 
@@ -197,7 +197,7 @@ Call `trw_session_start()` first.
 ## Deliver Gate (v26.2)
 
 Do NOT call `trw_deliver` unless at least one of:
-- (a) `trw_build_check` returned `build_check_result=pass`, **or**
+- (a) `trw_build_check` reported `tests_passed=true` and `static_checks_clean=true` (or omitted), with a non-zero `test_count` and a non-empty `scope`, **or**
 - (b) `allow_unverified=true` and `unverified_reason` contains a valid, unexpired
   acceptable-failure record with `failed_command`, `residual_risk`, `owner`, and
   `expiry_iso`, **or**

@@ -34,6 +34,7 @@ __all__ = [
     "admit_in_space",
     "admitted_hits",
     "admitted_vectors",
+    "comparable_hits",
     "loaded_embedding_space",
     "loaded_space_threshold",
     "space_gated_reader",
@@ -129,6 +130,44 @@ def admitted_hits(
         surface=surface,
     )
     return [hit for hit in hits if hit[0] in admitted]
+
+
+def comparable_hits(
+    backend: Any, hits: list[tuple[str, float]], *, namespace: str, surface: str
+) -> list[tuple[str, float]] | None:
+    """Admitted KNN *hits*, or ``None`` when a dense verdict over them would be incomplete.
+
+    With a space loaded, an excluded hit (other space or unknown provenance) has a
+    meaningless distance and may be a textual duplicate or hide loaded-space rows
+    past the window; and a single-space window proves nothing about the rows past
+    it unless the backend's census shows the WHOLE namespace in the loaded space
+    (full identity). The census reads provenance claims, not blob hashes; an
+    unsupported census (``None`` or not a mapping) is unproven. ``None`` tells the
+    caller to decide exhaustively. With no loaded space nothing is comparable and
+    the (empty) admitted list is returned, as before.
+    """
+    admitted = admitted_hits(backend, hits, namespace=namespace, surface=surface)
+    space = loaded_embedding_space()
+    if space is None:
+        return admitted
+    census_of = getattr(backend, "vector_space_census", None)
+    census = census_of(namespace=namespace) if callable(census_of) else None
+    if len(admitted) < len(hits) or not _census_proves(census, space, rows=len(hits)):
+        logger.debug("dense_window_incomplete", surface=surface, window=len(hits), admitted=len(admitted))
+        return None
+    return admitted
+
+
+def _census_proves(census: object, space: EmbeddingSpace, *, rows: int) -> bool:
+    """A census proves one space only if it is a mapping of positive int counts, all
+    keyed by *space*, that accounts for at least the *rows* the window returned. An
+    empty census beside a nonempty window, or any invalid count, proves nothing."""
+    if not isinstance(census, dict) or not census:
+        return False
+    counts = list(census.values())
+    if not all(type(count) is int and count > 0 for count in counts):
+        return False
+    return all(key == space for key in census) and sum(counts) >= rows
 
 
 def space_gated_reader(

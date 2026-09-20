@@ -1,4 +1,4 @@
-"""PRD-CORE-274-NFR06: bounded surface, default-off, refusing config bounds."""
+"""PRD-CORE-274-NFR06: bounded surface, explicit off switch, refusing config bounds."""
 
 from __future__ import annotations
 
@@ -17,18 +17,33 @@ from trw_mcp.server._tools import raw_registered_tool_names
 from trw_mcp.state.claude_md._tool_manifest import TOOL_DESCRIPTIONS
 
 
-def test_disabled_by_default_creates_no_comms_state(
+def test_default_on_outside_a_formation_creates_no_comms_state(
     comms_server: FastMCP, formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Default-off must create NOTHING, not an empty database.
+    """Default-on (Amendment 02 A5) must still create NOTHING for a session outside any formation.
 
-    Asserted by walking the tree for the database file: "returned disabled" and
-    "wrote no state" are different claims, and only the second is the one
-    NFR06 makes.
+    Asserted by walking the tree for the database file: "refused" and "wrote no
+    state" are different claims, and only the second is the one NFR06 makes.
     """
+    monkeypatch.setenv("TRW_SESSION_ID", "pin-a")
+    config = TRWConfig()
+    assert config.comms_enabled is True
+    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: config)
+
+    payload = call_peers(comms_server, "enroll")
+
+    assert payload["status"] == "refused"
+    assert list(formation_env.project_root.rglob(DATABASE_FILENAME)) == []
+
+
+def test_explicit_off_creates_no_comms_state_even_for_a_member(
+    comms_server: FastMCP, formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``comms_enabled: false`` is the kill switch: silent, and no database, for a real member."""
     joined_member(formation_env, "impl-1", "pin-a")
     monkeypatch.setenv("TRW_SESSION_ID", "pin-a")
-    assert TRWConfig().comms_enabled is False
+    config = TRWConfig(comms_enabled=False)
+    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: config)
 
     payload = call_peers(comms_server, "enroll")
 
@@ -49,7 +64,7 @@ def test_enabled_enroll_persists_an_endpoint(
 
     assert payload["status"] == "ok"
     assert payload["member_id"] == "impl-1"
-    assert payload["delivery"] == "pull_only"
+    assert "delivery" not in payload
     assert [peer["member_id"] for peer in payload["peers"]] == ["impl-1"]
     assert list(formation_env.project_root.rglob(DATABASE_FILENAME)) != []
 
@@ -99,7 +114,8 @@ def test_boundary_legal_bounds_are_accepted(overrides: dict[str, int], why: str)
 
     Without this a validator that refused everything would look correct.
     """
-    assert TRWConfig.model_validate(overrides).comms_enabled is False
+    config = TRWConfig.model_validate(overrides)
+    assert all(getattr(config, field) == value for field, value in overrides.items())
 
 
 # --- PRD-CORE-274 Amendment 01 (FR11): wait field bounds ----------------------
@@ -197,3 +213,17 @@ def test_comms_is_opt_in_and_not_kernel() -> None:
     assert PACK_TOOLS["peer_comms"] == COMMS_TOOLS
     assert not set(PACK_TOOLS["peer_comms"]) & set(KERNEL_TOOLS)
     assert "peer_comms" not in STANDARD_TASK_PACKS
+
+
+def test_the_formation_manifest_is_owner_only(formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default-on puts membership authority (pin keys, run paths) in the manifest: 0600, whatever the umask."""
+    import os
+    import stat
+
+    previous = os.umask(0o022)
+    try:
+        joined_member(formation_env, "impl-1", "pin-a")
+        joined_member(formation_env, "impl-2", "pin-b")  # a rewrite keeps the mode too
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(formation_env.manifest_path().stat().st_mode) == 0o600

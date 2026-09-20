@@ -311,3 +311,21 @@ def test_model_forbidden_token_uses_same_error_path_as_extra_args(token: str) ->
         _req("claude", extra_args=[token])
     assert "security flag" in str(model_exc.value)
     assert "security flag" in str(extra_exc.value)
+
+
+def test_grok_postures_use_the_two_measured_permission_modes() -> None:
+    """grok: read-only is dontAsk, writes are `auto`, and each posture emits ONE flag.
+
+    `acceptEdits` is NOT the write posture for grok, unlike claude: headless `-p` has
+    nobody to approve an edit, so acceptEdits denies exactly like dontAsk. Measured live
+    2026-09-19 — the same create-a-file prompt ends stopReason=cancelled with no file
+    under acceptEdits (through dispatch and running grok directly) and ends end_turn
+    with the file present under `auto`.
+    """
+    for read_only, expected in ((True, "dontAsk"), (False, "auto")):
+        argv = build_command(_req("grok", read_only=read_only))
+        assert argv.count("--permission-mode") == 1, argv
+        assert argv[argv.index("--permission-mode") + 1] == expected, argv
+    write_argv = build_command(_req("grok", read_only=False))
+    assert "acceptEdits" not in write_argv
+    assert "--always-approve" not in write_argv and "--yolo" not in write_argv

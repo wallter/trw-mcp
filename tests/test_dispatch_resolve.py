@@ -182,10 +182,30 @@ def test_cwd_isolate_pty_passthrough() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_unverified_client_refuses_and_names_the_verification_needed() -> None:
-    from trw_mcp.dispatch._client_specs import CLIENT_SPECS
+def _patch_unverified_grok(monkeypatch: Any) -> None:
+    """Keep the unverified-refusal tests after grok itself became executable."""
+    from datetime import date
 
-    assert CLIENT_SPECS["grok"].verification.method == "unverified"
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS, ClientVerification
+
+    fake = CLIENT_SPECS["grok"].model_copy(
+        update={
+            "verification": ClientVerification(
+                method="unverified",
+                evidence="synthetic unverified stand-in for the refusal path",
+                verified_at=date(2026, 9, 4),
+                outstanding="sandbox profile values and output-format values",
+            )
+        }
+    )
+    monkeypatch.setitem(CLIENT_SPECS, "grok", fake)
+    from trw_mcp.dispatch._client_specs import _SPEC_BY_ID
+
+    monkeypatch.setitem(_SPEC_BY_ID, "grok", fake)
+
+
+def test_unverified_client_refuses_and_names_the_verification_needed(monkeypatch: Any) -> None:
+    _patch_unverified_grok(monkeypatch)
     cfg = _Cfg(dispatch_enabled_clients=["codex", "grok"])
     with pytest.raises(DispatchResolutionError) as exc:
         _resolve(cfg, client="grok")
@@ -199,9 +219,10 @@ def test_unverified_client_refuses_and_names_the_verification_needed() -> None:
     assert "output-format" in message or "output_format" in message
 
 
-def test_unverified_refusal_does_not_substitute_the_default_client() -> None:
+def test_unverified_refusal_does_not_substitute_the_default_client(monkeypatch: Any) -> None:
     # A silent fallback would answer the operator's question with a different
     # agent's output. The refusal must not resolve to `codex` under any path.
+    _patch_unverified_grok(monkeypatch)
     cfg = _Cfg(dispatch_default_client="codex", dispatch_enabled_clients=["codex", "grok"])
     with pytest.raises(DispatchResolutionError) as exc:
         _resolve(cfg, client="grok")
@@ -213,6 +234,7 @@ def test_unverified_refusal_precedes_any_argv_construction(monkeypatch: Any) -> 
     # never reached, so provisional flag data cannot land on a command line.
     import trw_mcp.dispatch._commands as commands
 
+    _patch_unverified_grok(monkeypatch)
     calls: list[Any] = []
     monkeypatch.setattr(commands, "build_command", lambda req: calls.append(req))
     cfg = _Cfg(dispatch_enabled_clients=["grok"])
@@ -221,9 +243,10 @@ def test_unverified_refusal_precedes_any_argv_construction(monkeypatch: Any) -> 
     assert calls == []
 
 
-def test_a_role_mapping_cannot_route_around_the_unverified_refusal() -> None:
+def test_a_role_mapping_cannot_route_around_the_unverified_refusal(monkeypatch: Any) -> None:
     # The refusal sits after client PRECEDENCE resolution, so an unverified
     # client reached through a role mapping is refused identically.
+    _patch_unverified_grok(monkeypatch)
     cfg = _Cfg(
         dispatch_role_client={"adversarial-audit": "grok"},
         dispatch_enabled_clients=["codex", "grok"],
@@ -231,6 +254,14 @@ def test_a_role_mapping_cannot_route_around_the_unverified_refusal() -> None:
     with pytest.raises(DispatchResolutionError) as exc:
         _resolve(cfg, role="adversarial-audit")
     assert "UNVERIFIED" in str(exc.value)
+
+
+def test_verified_grok_resolves() -> None:
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS
+
+    assert CLIENT_SPECS["grok"].verification.method == "executable"
+    cfg = _Cfg(dispatch_enabled_clients=["grok"])
+    assert _resolve(cfg, client="grok").client == "grok"
 
 
 def test_a_verified_client_still_resolves_normally() -> None:

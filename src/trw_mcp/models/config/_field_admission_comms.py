@@ -15,6 +15,7 @@ survives long enough in a config table starts being cited as a benchmark.
 
 from __future__ import annotations
 
+from trw_mcp.models.config._field_admission_comms_a02 import AMENDMENT_02_ADMISSIONS
 from trw_mcp.models.config._field_admission_registry_types import ConfigAdmission
 
 _PRD = "docs/requirements-aare-f/prds/PRD-CORE-274-cross-harness-peer-messaging-slice-1.md"
@@ -23,13 +24,14 @@ _SURFACE_TEST = "trw-mcp/tests/comms/test_surface_config.py"
 COMMS_ADMISSIONS: dict[str, ConfigAdmission] = {
     "comms_enabled": ConfigAdmission(
         field_name="comms_enabled",
-        owner="PRD-CORE-274-NFR06",
+        owner="PRD-CORE-274-NFR07",
         consumer="trw_mcp.tools.swarm_comms -> trw_mcp.comms facade",
         default_rationale=(
-            "false. The tools register either way, but with this off NO communications state is "
-            "created — not an empty database, not a group row — so upgrading to this version "
-            "cannot alter any existing project. Enabling is an explicit operator act, which is "
-            "the required posture for a surface that lets agents send each other text."
+            "true (Amendment 02, NFR07). The tools are inert without a formation: identity "
+            "binding (FR01) refuses before any group row or database exists, so enabling creates "
+            "no state on a project that never forms a formation, and membership still needs the "
+            "orchestrator's explicit manifest. An explicit false at the highest-precedence layer "
+            "of the existing env > project > machine cascade hides the tools."
         ),
         interaction_analysis=(
             "Checked before any comms path touches disk, so it gates creation rather than use; "
@@ -45,14 +47,14 @@ COMMS_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer=f"{_SURFACE_TEST}::test_disabled_by_default_creates_no_comms_state",
         budget_decision="admitted",
     ),
-    "comms_group_admission_limit": ConfigAdmission(
-        field_name="comms_group_admission_limit",
-        owner="PRD-CORE-274-FR03",
+    "comms_group_row_limit": ConfigAdmission(
+        field_name="comms_group_row_limit",
+        owner="PRD-CORE-274-FR15",
         consumer="trw_mcp.comms._store admission transaction",
         default_rationale=(
-            "256, bounded 1..4096. A lifetime ceiling on one group's admissions, so a runaway "
-            "loop between two peers terminates by construction instead of growing the mailbox "
-            "without limit. Conservative policy, not a measured capacity."
+            "4096, bounded 1..4096. A lifetime ceiling on one group's retained rows (tombstones "
+            "included), so a runaway loop terminates by construction. The maximum is the NFR08 "
+            "envelope, measured on the development Mac (an environment observation)."
         ),
         interaction_analysis=(
             "Snapshotted per group at first use, so changing it affects new groups only — an "
@@ -315,5 +317,7 @@ COMMS_ADMISSIONS: dict[str, ConfigAdmission] = {
         budget_decision="admitted",
     ),
 }
+
+COMMS_ADMISSIONS.update(AMENDMENT_02_ADMISSIONS)
 
 __all__ = ["COMMS_ADMISSIONS"]

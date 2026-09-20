@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 # c749 (PRD-DIST-2002): LearningSummary extracted to shared
@@ -19,6 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from trw_mcp.tools import _sidecar_substrate
 from trw_mcp.tools._learnings_collector import LearningSummary
 from trw_mcp.tools._sidecar_substrate import CurrentSidecarStatus
+
+_logger = structlog.get_logger(__name__)
 
 # Derived from the substrate, never re-spelled: a hand-copied constant is how
 # the two drifted in the first place.
@@ -194,6 +197,70 @@ def _collect_learnings(file_path: str) -> list[LearningSummary]:
     return collect_learnings(build_file_queries(file_path))
 
 
+def _repo_relative_path(file_path: str) -> str | None:
+    """POSIX path of *file_path* relative to the project root, or None outside it.
+
+    Lexical (``normpath``) rather than ``resolve()``: the file may not exist
+    yet, and a symlink inside the repo is still the path the agent edits. The
+    root is tried as given and resolved, so /var vs /private/var still matches.
+    """
+    import os
+    from pathlib import Path
+
+    from trw_mcp.state._paths import resolve_project_root
+
+    root = resolve_project_root()
+    candidate = Path(file_path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    normalized = Path(os.path.normpath(candidate))
+    for base in (root, root.resolve()):
+        if normalized.is_relative_to(base):
+            relative = normalized.relative_to(base).as_posix()
+            return relative if relative not in ("", ".") else None
+    return None
+
+
+def _record_exposure(file_path: str, learnings: list[LearningSummary]) -> None:
+    """PRD-FIX-144 FR02: record which learnings this hint showed, for which file.
+
+    One receipt and one surface row per learning; nothing when no learning was
+    shown. Rows hold ids and the repo-relative path only (NFR04). Fail-open: a
+    write failure never changes the hint.
+
+    Deliberately NOT role-conditional: PRD-SEC-015 FR03/FR04 keeps this module's
+    appends unsuppressed, because telemetry that goes quiet under the reviewer
+    role blinds the measurement of the reviewer bound itself. These rows carry no
+    agent-authored content, so recording them under every role is safe.
+    """
+    if not learnings:
+        return
+    try:
+        from trw_mcp.state._paths import resolve_trw_dir
+        from trw_mcp.state._session_id import resolve_effective_session_id
+        from trw_mcp.state.recall_tracking import append_receipts
+        from trw_mcp.state.surface_tracking import log_surface_event
+
+        relative = _repo_relative_path(file_path)
+        if relative is None:
+            _logger.debug("before_edit_exposure_path_outside_root")
+        files_context = [relative] if relative else []
+        trw_dir = resolve_trw_dir()
+        ids = [item.id for item in learnings]
+        append_receipts(ids, relative or "", surface="before_edit_hint", files_context=files_context, trw_dir=trw_dir)
+        session_id = resolve_effective_session_id(trw_dir)
+        for learning_id in ids:
+            log_surface_event(
+                trw_dir,
+                learning_id=learning_id,
+                surface_type="before_edit_hint",
+                files_context=files_context,
+                session_id=session_id,
+            )
+    except Exception:  # justified: fail-open, exposure telemetry must not change the hint
+        _logger.debug("before_edit_exposure_record_failed", exc_info=True)
+
+
 def compute_before_edit_hint(
     *,
     file_path: str,
@@ -271,6 +338,8 @@ def compute_before_edit_hint(
             distill_status=distill_status,
             file_path=file_path,
         )
+
+    _record_exposure(file_path, learnings)
 
     return BeforeEditHintResult(
         file_path=file_path,

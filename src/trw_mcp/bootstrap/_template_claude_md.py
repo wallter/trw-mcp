@@ -153,6 +153,7 @@ _CLIENT_EVIDENCE_MARKERS: dict[str, tuple[str, ...]] = {
     "codex": (".codex",),
     "copilot": (".github/agents",),
     "antigravity-cli": ("ANTIGRAVITY.md",),
+    "grok": (".grok",),
 }
 
 

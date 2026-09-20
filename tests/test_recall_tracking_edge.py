@@ -8,17 +8,21 @@ Covers uncovered branches and boundary conditions NOT in test_recall_tracking.py
 - record_recall fail-open specifically on StateError
 - record_outcome timestamp field presence
 - get_recall_stats unique_learnings counting across recalls + outcomes
-- record_outcome fail-open when writer.append_jsonl raises non-OSError
+- record_outcome fail-open when the append raises non-OSError
+- PRD-FIX-144 NFR03: an unwritable logs directory leaves every tool response unchanged
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from tests._structlog_capture import captured_structlog  # noqa: F401  -- fixture, imported by name
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.recall_tracking import (
     _TRACKING_FILE,
@@ -98,8 +102,8 @@ class TestGetRecallStatsLearningIdEdgeCases:
 class TestGetRecallStatsOutcomeEdgeCases:
     """Outcomes not in {positive, negative, neutral} do not increment counters."""
 
-    def test_unknown_outcome_counted_in_total_not_buckets(self, trw_dir: Path) -> None:
-        """An outcome value like 'unknown' increments total but no bucket."""
+    def test_unknown_outcome_counted_nowhere(self, trw_dir: Path) -> None:
+        """An outcome value like 'unknown' is neither a recall nor a bucket (PRD-FIX-144 FR05)."""
         tracking_path = trw_dir / _TRACKING_FILE
         tracking_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -113,7 +117,7 @@ class TestGetRecallStatsOutcomeEdgeCases:
         )
 
         stats = get_recall_stats()
-        assert stats["total_recalls"] == 2
+        assert stats["total_recalls"] == 0
         assert stats["positive_outcomes"] == 1
         assert stats["negative_outcomes"] == 0
         assert stats["neutral_outcomes"] == 0
@@ -172,7 +176,7 @@ class TestGetRecallStatsUniqueLearnings:
 
         stats = get_recall_stats()
         assert stats["unique_learnings"] == 1
-        assert stats["total_recalls"] == 2  # 1 recall + 1 outcome
+        assert stats["total_recalls"] == 1  # the receipt only; the outcome row is not a recall
 
     def test_many_distinct_ids_all_counted(self, trw_dir: Path) -> None:
         """Each distinct learning_id is counted once."""
@@ -211,15 +215,13 @@ class TestGetRecallStatsEntriesDirParam:
 
 
 class TestRecordRecallStateError:
-    """record_recall catches (OSError, StateError) — verify StateError path."""
+    """record_recall is fail-open on any write failure, including StateError."""
 
     def test_state_error_returns_false(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """StateError during write returns False, not raised."""
-        mock_writer = MagicMock()
-        mock_writer.append_jsonl.side_effect = StateError("write failed")
         monkeypatch.setattr(
-            "trw_mcp.state.recall_tracking.FileStateWriter",
-            lambda: mock_writer,
+            "trw_mcp.state.recall_tracking._append_rows",
+            MagicMock(side_effect=StateError("write failed")),
         )
 
         result = record_recall("L-fail", "query")
@@ -255,17 +257,10 @@ class TestRecordOutcomeFailOpen:
     """record_outcome uses broad ``except Exception`` — verify coverage."""
 
     def test_type_error_during_write_returns_false(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A TypeError during append_jsonl returns False, not raised."""
-        # First create the file so the existence check passes
-        tracking_path = trw_dir / _TRACKING_FILE
-        tracking_path.parent.mkdir(parents=True, exist_ok=True)
-        tracking_path.write_text("", encoding="utf-8")
-
-        mock_writer = MagicMock()
-        mock_writer.append_jsonl.side_effect = TypeError("unexpected")
+        """A TypeError during the append returns False, not raised."""
         monkeypatch.setattr(
-            "trw_mcp.state.recall_tracking.FileStateWriter",
-            lambda: mock_writer,
+            "trw_mcp.state.recall_tracking._append_rows",
+            MagicMock(side_effect=TypeError("unexpected")),
         )
 
         result = record_outcome("L-001", "positive")
@@ -315,8 +310,9 @@ class TestGetRecallStatsReaderFailure:
         )
 
         stats = get_recall_stats()
-        # 3 valid rows counted; the torn row dropped (not a total wipe to 0).
-        assert stats["total_recalls"] == 3
+        # 3 valid rows survive; the torn row dropped (not a total wipe to 0).
+        # Only good_a is a receipt, so it is the one recall (PRD-FIX-144 FR05).
+        assert stats["total_recalls"] == 1
         assert stats["unique_learnings"] == 2
         assert stats["positive_outcomes"] == 1
         assert stats["negative_outcomes"] == 1
@@ -331,7 +327,8 @@ class TestGetRecallStatsReaderFailure:
         tracking_path.write_bytes(good + b"\n" + b"\xff\xfe garbage\n")
 
         stats = get_recall_stats()
-        assert stats["total_recalls"] == 1
+        assert stats["unique_learnings"] == 1  # the good row survived
+        assert stats["total_recalls"] == 0  # an outcome row is not a recall (PRD-FIX-144 FR05)
         assert stats["positive_outcomes"] == 1
 
 
@@ -355,5 +352,88 @@ class TestGetRecallStatsAllOutcomes:
         assert stats["positive_outcomes"] == 2
         assert stats["negative_outcomes"] == 1
         assert stats["neutral_outcomes"] == 1
-        # total = 1 recall + 4 outcomes = 5
-        assert stats["total_recalls"] == 5
+        # PRD-FIX-144 FR05: 1 receipt; the 4 outcome rows are not recalls.
+        assert stats["total_recalls"] == 1
+
+
+# ---------------------------------------------------------------------------
+# PRD-FIX-144 NFR03 — fail-open writes, diagnostics to structlog debug
+# ---------------------------------------------------------------------------
+
+#: Values that differ between two otherwise identical calls for reasons unrelated
+#: to the logs directory: timings, call-count-driven ceremony nudges, and the
+#: recall ranking score (and so tokens_used), which the first pass's access and
+#: feedback writes to memory.db legitimately move.
+_VOLATILE_KEYS = frozenset({"step_durations_ms", "ceremony_status", "nudge_content", "reversion_prompt", "tokens_used"})
+_VOLATILE_ENTRY_KEYS = frozenset({"preference_score"})
+
+
+def _drive_four_tools(server: Any, lid: str) -> dict[str, dict[str, Any]]:
+    from tests.conftest import extract_tool_fn
+
+    return {
+        "trw_recall": extract_tool_fn(server, "trw_recall")(query="app.py startup"),
+        "trw_before_edit_hint": extract_tool_fn(server, "trw_before_edit_hint")(file_path="app.py"),
+        "trw_build_check": extract_tool_fn(server, "trw_build_check")(tests_passed=True, test_count=2),
+        "trw_learn_update": extract_tool_fn(server, "trw_learn_update")(learning_id=lid, feedback="helpful"),
+    }
+
+
+def _stable(response: dict[str, Any]) -> dict[str, Any]:
+    stable = {k: v for k, v in response.items() if k not in _VOLATILE_KEYS}
+    if isinstance(stable.get("learnings"), list):
+        stable["learnings"] = [
+            {k: v for k, v in entry.items() if k not in _VOLATILE_ENTRY_KEYS} if isinstance(entry, dict) else entry
+            for entry in stable["learnings"]
+        ]
+    return stable
+
+
+@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0, reason="needs POSIX permissions and a non-root user")
+def test_unwritable_logs_leave_responses_unchanged(
+    trw_dir: Path, monkeypatch: pytest.MonkeyPatch, captured_structlog: list[dict[str, Any]]
+) -> None:
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(trw_dir.parent))
+    monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+    monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
+    (trw_dir / "learnings" / "entries").mkdir(parents=True)
+    server = make_test_server("learning", "before_edit_hint", "build")
+    lid = extract_tool_fn(server, "trw_learn")(
+        summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
+    )["learning_id"]
+
+    writable = _drive_four_tools(server, lid)
+    logs = trw_dir / "logs"
+    rows_before = {p.name: p.read_bytes() for p in logs.glob("*.jsonl")}
+    assert {"recall_tracking.jsonl", "session_outcomes.jsonl"} <= set(rows_before)
+    captured_structlog.clear()
+    # Unwritable = no new file can be created AND no existing log can be appended.
+    existing = [p for p in logs.iterdir() if p.is_file()]
+    for path in existing:
+        path.chmod(0o400)
+    logs.chmod(0o500)
+    try:
+        unwritable = _drive_four_tools(server, lid)
+    finally:
+        logs.chmod(0o700)
+        for path in existing:
+            path.chmod(0o600)
+
+    for tool, response in writable.items():
+        assert set(unwritable[tool]) == set(response), tool
+        assert _stable(unwritable[tool]) == _stable(response), tool
+    # The new writes really failed (nothing appended) ...
+    assert (logs / "recall_tracking.jsonl").read_bytes() == rows_before["recall_tracking.jsonl"]
+    assert (logs / "session_outcomes.jsonl").read_bytes() == rows_before["session_outcomes.jsonl"]
+    # ... and each was reported as its named debug event.
+    by_event = {e.get("event"): e.get("log_level") for e in captured_structlog}
+    for event in (
+        "recall_record_failed",
+        "before_edit_exposure_record_failed",
+        "session_observation_record_failed",
+        "outcome_record_failed",
+    ):
+        assert by_event.get(event) == "debug", (event, by_event.get(event))

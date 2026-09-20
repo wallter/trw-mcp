@@ -249,7 +249,9 @@ class TestConsolidateCycleEdgeCases:
         cfg = TRWConfig(memory_consolidation_min_cluster=3)
         monkeypatch.setattr("trw_mcp.state.consolidation.get_config", lambda: cfg)
 
-        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
+        # Migrated: a ready embedder (not an unavailable one, which now defers)
+        # makes an empty store the no-clusters case (FIX-052-FR03 as amended).
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
             result = consolidate_cycle(trw_dir, config=None)
 
         assert result["status"] == "no_clusters"
@@ -284,7 +286,10 @@ class TestConsolidateCycleEdgeCases:
         llm.available = True
         llm.ask_sync.return_value = '{"summary": "s", "detail": "d"}'
 
-        with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[cluster1, cluster2]):
+        with (
+            patch("trw_mcp.state.consolidation._cycle.semantic_clustering_ready", return_value=True),
+            patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[cluster1, cluster2]),
+        ):
             with patch("trw_mcp.state.consolidation._cycle.LLMClient", return_value=llm):
                 result = consolidate_cycle(trw_dir, config=cfg)
 
@@ -307,7 +312,10 @@ class TestConsolidateCycleEdgeCases:
         cfg = TRWConfig(memory_consolidation_min_cluster=3)
 
         # _summarize_cluster_llm returns None -> triggers fallback -> fallback raises
-        with patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[bad_cluster]):
+        with (
+            patch("trw_mcp.state.consolidation._cycle.semantic_clustering_ready", return_value=True),
+            patch("trw_mcp.state.consolidation._cycle.find_clusters", return_value=[bad_cluster]),
+        ):
             with patch("trw_mcp.state.consolidation._cycle.LLMClient", side_effect=RuntimeError("no llm")):
                 with patch(
                     "trw_mcp.state.consolidation._cycle._summarize_cluster_llm",

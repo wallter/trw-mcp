@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import argparse
 
+from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
+
 __all__ = ["add_dispatch_subcommand"]
 
 
@@ -23,15 +25,16 @@ def add_dispatch_subcommand(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
     """Register the ``dispatch`` subcommand (cross-client second-opinion audits)."""
+    clients = " | ".join(SUPPORTED_CLIENTS)
     dispatch_parser = subparsers.add_parser(
         "dispatch",
-        help="Run another coding-agent CLI (claude/codex/agy/opencode) headlessly for a second opinion",
+        help=f"Run another coding-agent CLI ({'/'.join(SUPPORTED_CLIENTS)}) headlessly for a second opinion",
     )
     dispatch_parser.add_argument(
         "--client",
         default=None,
         help=(
-            "Target CLI: claude | codex | agy | opencode. "
+            f"Target CLI: {clients}. "
             "Optional: defaults to dispatch.default_client (or a --role default) "
             "from .trw/config.yaml."
         ),

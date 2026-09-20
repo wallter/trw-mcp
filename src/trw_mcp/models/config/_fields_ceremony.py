@@ -50,7 +50,7 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v27.1_TRW"
+    framework_version: str = "v27.2_TRW"
     aaref_version: str = "v3.2.1"
 
     ambiguity_rate_max: float = 0.05

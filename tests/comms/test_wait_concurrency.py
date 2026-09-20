@@ -160,7 +160,9 @@ def test_sleep_releases_database_and_other_process_can_send_and_ack(pair: Any) -
     with closing(sqlite3.connect(path, timeout=0)) as conn:
         conn.execute("BEGIN IMMEDIATE")
         conn.rollback()
-    before_endpoints = rows(path, "SELECT * FROM endpoints")
+    # The WAITER's endpoint must not change while it waits (FR11). The other member's own
+    # ACK and send renew ITS lease by design (PRD-CORE-274 FR12), so it is not compared.
+    before_endpoints = rows(path, "SELECT * FROM endpoints WHERE member_id='impl-1'")
     ack = other.call("trw_inbox", action="ack", message_ids=[message])
     assert ack["acknowledged_ids"] == [message]
     assert other.call("trw_inbox", action="ack", message_ids=[message]) == ack
@@ -170,7 +172,7 @@ def test_sleep_releases_database_and_other_process_can_send_and_ack(pair: Any) -
     waiting.release()
     assert waiting.reply(request)["items"] == [{**sent["receipt"], "body": "reply"}]
     assert waiting.event("exit")["error"] is None
-    assert rows(path, "SELECT * FROM endpoints") == before_endpoints
+    assert rows(path, "SELECT * FROM endpoints WHERE member_id='impl-1'") == before_endpoints
     assert rows(path, "SELECT charge FROM groups") == [(2,)]
     assert rows(path, "SELECT COUNT(*) FROM milestones WHERE fact='acked'") == [(1,)]
     assert waiting.call("probe") == {"worker": False, "guard": False}
@@ -182,12 +184,16 @@ def test_real_cancel_notification_releases_worker_without_undoing_committed_atte
     before = stable_state(path)
     clock_before = rows(path, "SELECT group_time FROM groups")[0][0]
     request = begin_wait(waiting)
+    # PRD-CORE-274 FR12: the wait's first attempt is an ordinary fetch and renews the
+    # waiter's lease; FR11 forbids any further endpoint change by retries or cancellation.
+    before["endpoints"] = stable_state(path)["endpoints"]
     conn = sqlite3.connect(path, isolation_level=None)
     expected_groups = before["groups"]
     try:
         if phase == "sqlite":
             sent = other.call("trw_send", recipient_member_id="impl-1", request_key="before-cancel", body="preserved")
             expected_groups = stable_state(path)["groups"]
+            before["endpoints"] = stable_state(path)["endpoints"]  # the sender's own send renews ITS lease
             conn.execute("BEGIN IMMEDIATE")
             waiting.call("probe", trace=True)
             waiting.release()
@@ -227,6 +233,7 @@ def test_real_transport_eof_cancels_wait_and_reaps_worker_without_response(pair:
     before = stable_state(path)
     clock_before = rows(path, "SELECT group_time FROM groups")[0][0]
     request = begin_wait(waiting, native_sleep=native_sleep)
+    before["endpoints"] = stable_state(path)["endpoints"]  # FR12: the ordinary first attempt renews
     proc = waiting.server.proc
     assert proc.stdin is not None
     proc.stdin.close()  # Real stdio EOF, not client task.cancel or a fake callback.

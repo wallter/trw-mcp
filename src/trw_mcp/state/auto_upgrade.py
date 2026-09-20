@@ -119,7 +119,7 @@ def check_for_update() -> dict[str, object]:
                 data: dict[str, object] = response.json()
                 latest = str(data.get("version", current))
                 available = _compare_versions(current, latest)
-                advisory: str | None = f"TRW v{latest} available (you have v{current}). " if available else None
+                advisory: str | None = f"trw-mcp {latest} available (you have {current}). " if available else None
                 return {
                     "available": available,
                     "current": current,

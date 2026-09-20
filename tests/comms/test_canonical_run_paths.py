@@ -12,7 +12,7 @@ import pytest
 from fastmcp import FastMCP
 
 from tests._formation_test_support import FormationFixture, formation_env, write_pin  # noqa: F401
-from tests.comms.conftest import enable_comms, joined_member
+from tests.comms.conftest import core, enable_comms, joined_member
 from trw_mcp.comms import _identity
 from trw_mcp.comms._store import database_path
 
@@ -63,11 +63,16 @@ def test_alias_binding_routes_without_accepting_a_different_run(
         assert conn.execute("SELECT run_path FROM endpoints").fetchone()[0] == expected
         with conn:
             conn.execute("UPDATE endpoints SET run_path=?", (str(sender),))
-    refused = call("trw_send", recipient_member_id="impl-2", request_key="different-run", body="hello")
-    assert refused["reason"] == "recipient_binding_mismatch"
+    # PRD-CORE-274 FR13: a DIRECT send is member-addressed; the endpoint neither
+    # authorizes nor refuses it. CORE-276 scoped notify still validates the endpoint.
+    stored = call("trw_send", recipient_member_id="impl-2", request_key="different-run", body="hello")
+    assert stored["status"] == "ok", stored
+    refused = call("trw_send", scope="src/beta/x.py", request_key="different-run-notify", body="hello")
+    # CORE-276 aggregates an all-skipped fan-out as recipient_unavailable (the binding check skipped it).
+    assert refused["reason"] == "recipient_unavailable", refused
     with closing(sqlite3.connect(db)) as conn:
-        assert conn.execute("SELECT charge FROM groups").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM admissions").fetchone()[0] == 1
+        assert conn.execute("SELECT charge FROM groups").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM admissions").fetchone()[0] == 2
     # A previously resolvable alias can become a loop; refuse instead of
     # leaking a Path.resolve exception or charging an undeliverable message.
     loop = receiver.parent / "looped-endpoint"
@@ -75,10 +80,11 @@ def test_alias_binding_routes_without_accepting_a_different_run(
     with closing(sqlite3.connect(db)) as conn:
         with conn:
             conn.execute("UPDATE endpoints SET run_path=?", (str(loop),))
-    refused = call("trw_send", recipient_member_id="impl-2", request_key="loop", body="hello")
-    assert refused["reason"] == "recipient_binding_mismatch"
+    assert call("trw_send", recipient_member_id="impl-2", request_key="loop", body="hello")["status"] == "ok"
+    refused = call("trw_send", scope="src/beta/x.py", request_key="loop-notify", body="hello")
+    assert refused["reason"] == "recipient_unavailable", refused
     with closing(sqlite3.connect(db)) as conn:
-        assert conn.execute("SELECT charge FROM groups").fetchone()[0] == 1
+        assert conn.execute("SELECT charge FROM groups").fetchone()[0] == 3
 
 
 @pytest.mark.parametrize("error_type", [OSError, RuntimeError])
@@ -119,12 +125,13 @@ def test_endpoint_resolution_failure_refuses_without_charge(
         return original_resolve(path, strict=strict)
 
     monkeypatch.setattr(Path, "resolve", resolve)
-    refused = call("trw_send", recipient_member_id="impl-2", request_key="fault", body="hello")
+    # The endpoint path is resolved only on the live-delivery (CORE-276 notify) path.
+    refused = call("trw_send", scope="src/beta/f.py", request_key="fault", body="hello")
     assert attempted == [endpoint_alias]
     assert refused["status"] == "refused"
-    assert refused["reason"] == "recipient_binding_mismatch"
+    assert refused["reason"] == "recipient_unavailable"  # the fault was caught and the peer skipped
     with closing(sqlite3.connect(db)) as conn:
         assert conn.execute("SELECT charge FROM groups").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM admissions").fetchone()[0] == 1
         assert conn.execute("SELECT run_path FROM endpoints").fetchone()[0] == str(endpoint_alias)
-    assert call("trw_send", recipient_member_id="impl-2", request_key="seed", body="hello") == sent
+    assert core(call("trw_send", recipient_member_id="impl-2", request_key="seed", body="hello")) == core(sent)

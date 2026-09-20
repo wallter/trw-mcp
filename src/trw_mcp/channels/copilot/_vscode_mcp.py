@@ -38,6 +38,17 @@ _TRW_MCP_SERVER_ENTRY: dict[str, object] = {
     "command": "trw-mcp",
     "type": "stdio",
 }
+"""The PATH-launcher entry. Also the shape older installs wrote, so it stays TRW-managed."""
+
+
+def _trw_entry_for(target_dir: Path) -> dict[str, object]:
+    """The entry for THIS project (N17): its own ``.venv`` build first, via
+    ``${workspaceFolder}`` (VS Code expands predefined variables in server config)."""
+    from trw_mcp.bootstrap._utils import resolve_trw_mcp_launcher
+
+    command, args = resolve_trw_mcp_launcher(target_dir, root_prefix="${workspaceFolder}/")
+    return {"args": args, "command": command, "type": "stdio"}
+
 
 _VSCODE_MCP_CHANNEL_ID = "copilot-vscode-mcp-config"
 _CLIENT = "copilot"
@@ -143,10 +154,11 @@ def _generate_under_lock(
     existing_servers = existing_data.get("servers", {})
     servers: dict[str, object] = dict(existing_servers) if isinstance(existing_servers, dict) else {}
     current_trw = servers.get("trw")
+    wanted = _trw_entry_for(target_dir)
 
     # Check idempotency
     if current_trw is not None:
-        if current_trw == _TRW_MCP_SERVER_ENTRY:
+        if current_trw == wanted:
             if not force:
                 result["preserved"].append("servers.trw")
                 log.debug(
@@ -154,19 +166,18 @@ def _generate_under_lock(
                     outcome="preserved",
                 )
                 return result
-        else:
-            # User modified servers.trw
-            if not force:
-                log.warning(
-                    "copilot_vscode_mcp_user_modified",
-                    current_entry=str(current_trw),
-                    outcome="skip_user_modified",
-                )
-                result["preserved"].append("servers.trw (user-modified, use force=True to overwrite)")
-                return result
+        # User modified servers.trw (the old PATH default is TRW-managed and refreshed)
+        elif current_trw != _TRW_MCP_SERVER_ENTRY and not force:
+            log.warning(
+                "copilot_vscode_mcp_user_modified",
+                current_entry=str(current_trw),
+                outcome="skip_user_modified",
+            )
+            result["preserved"].append("servers.trw (user-modified, use force=True to overwrite)")
+            return result
 
     # Merge and write
-    servers["trw"] = _TRW_MCP_SERVER_ENTRY
+    servers["trw"] = wanted
     new_data = dict(existing_data)
     new_data["servers"] = servers
 

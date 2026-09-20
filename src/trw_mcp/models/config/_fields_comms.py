@@ -1,8 +1,9 @@
-"""Cross-harness comms config fields (PRD-CORE-274-NFR06).
+"""Cross-harness comms config fields (PRD-CORE-274 NFR06, NFR07).
 
 Typed, bounded knobs. ``comms_enabled`` is the execution kill switch and
-defaults to **false**: the tools register either way, but with it off no
-communications state is created at all — not an empty database, not a group row.
+defaults to **true** (Amendment 02, NFR07): with no formation the tools create no
+state -- identity binding refuses before any database or group row exists -- and
+an explicit false at the highest-precedence layer that sets it hides them.
 
 The numbers are conservative policy choices, NOT measured optima, and the PRD
 says so; nothing here should be cited as a benchmark. They live in config rather
@@ -41,15 +42,27 @@ _MIN_LEASE_POLL_PERIODS = 2
 class _CommsFields:
     """Comms domain mixin — mixed into _TRWConfigFields via MI."""
 
-    #: Execution kill switch. Default **false** (NFR06): the feature ships
-    #: registered but inert, so installing this version cannot create comms
-    #: state on any existing project. Enabling is an explicit operator act.
-    comms_enabled: bool = False
+    #: Execution kill switch. Default **true** (NFR07): inert without a formation,
+    #: because FR01 binding refuses before any comms state exists. An explicit
+    #: false in the effective config cascade (env > project > machine) wins.
+    comms_enabled: bool = True
 
-    #: Messages one group may admit over its lifetime. Bounds total durable
-    #: growth of a single formation's mailbox.
-    comms_group_admission_limit: int = Field(
-        default=256, ge=1, le=4096, description="Lifetime message admissions allowed for one comms group."
+    #: Rows one group may retain over its lifetime, tombstones included (PRD-CORE-274
+    #: FR15). The maximum is the NFR08 envelope: whole-mailbox verification under the
+    #: write lock was measured within the lock-hold target at 4096 rows and not beyond.
+    comms_group_row_limit: int = Field(
+        default=4096, ge=1, le=4096, description="Lifetime rows (messages incl. tombstones) one comms group may hold."
+    )
+
+    #: Live (non-tombstoned) body bytes one group may hold (FR15), capped by the NFR08
+    #: envelope measured at full body size.
+    comms_group_body_budget_bytes: int = Field(
+        default=16777216, ge=65536, le=16777216, description="Live message-body bytes one comms group may hold."
+    )
+
+    #: After a terminal row's deadline, how long its body stays before tombstoning (FR15).
+    comms_retry_grace_seconds: int = Field(
+        default=3600, ge=0, le=86400, description="Seconds a terminal message body is kept past its deadline."
     )
 
     #: Message body ceiling in UTF-8 BYTES, not characters — the limit exists to
@@ -130,6 +143,15 @@ class _CommsFields:
     #: still governs how often a CLIENT should call.
     comms_wait_interval_ms: int = Field(
         default=1000, ge=100, le=15000, description="Sleep between bounded inbox wait attempts, in milliseconds."
+    )
+
+    #: Durable-delivery horizon (PRD-CORE-274 FR13, Amendment 02): a row that is not
+    #: ACKed expires at ``admitted_at`` plus this, with an ``expired`` milestone.
+    comms_message_ttl_seconds: int = Field(
+        default=86400, ge=300, le=604800, description="Seconds an unacknowledged comms message stays deliverable."
+    )
+    comms_candidate_ttl_seconds: int = Field(
+        default=3600, ge=60, le=86400, description="Seconds an announced comms candidate stays admissible."
     )
 
     @model_validator(mode="after")

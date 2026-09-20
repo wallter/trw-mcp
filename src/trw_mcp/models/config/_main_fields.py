@@ -21,6 +21,7 @@ from trw_mcp.models.config._fields_boot_maintenance import _BootMaintenanceField
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
 from trw_mcp.models.config._fields_comms import _CommsFields
+from trw_mcp.models.config._fields_decision import _DecisionFields
 from trw_mcp.models.config._fields_degenerate_result import _DegenerateResultFields
 from trw_mcp.models.config._fields_degraded_mode import _DegradedModeFields
 from trw_mcp.models.config._fields_delivery import _DeliveryFields
@@ -60,6 +61,7 @@ class _TRWConfigFields(
     _DeliveryFields,
     _FormationFields,
     _CommsFields,
+    _DecisionFields,
     _InstructionSurfaceFields,
     _FeedbackFields,
     _NudgeFields,

@@ -7,11 +7,13 @@ clustering, and embedding-based complete-linkage clustering.
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import structlog
 from trw_memory.lifecycle.consolidation import complete_linkage_cluster
+from trw_memory.lifecycle.protection import is_removal_exempt
 
 from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state._helpers import iter_yaml_entry_files
@@ -33,6 +35,14 @@ def _is_clusterable(data: LearningEntryDict) -> bool:
     if str(data.get("source_type", "")) == "consolidated":
         return False
     return data.get("consolidated_into") is None
+
+
+def _removable(entries: list[LearningEntryDict]) -> list[LearningEntryDict]:
+    """PRD-CORE-244-FR10: consolidation archives every cluster member, so a
+    ``protected`` or ``permanent`` entry never joins a cluster. Applied where
+    clusters are built, not in the shared loader, whose other readers (the
+    read-only audit-pattern report) must still see exempt entries."""
+    return [e for e in entries if not is_removal_exempt(cast("Mapping[str, object]", e))]
 
 
 def _load_active_entries(
@@ -175,6 +185,21 @@ def _tag_overlap_clusters(
 # ---------------------------------------------------------------------------
 
 
+def semantic_clustering_ready(*, allow_cold_embedder_load: bool) -> bool:
+    """Whether clustering can verify similarity semantically right now.
+
+    With ``allow_cold_embedder_load=False`` only an already-initialized embedder
+    counts, so maintenance never cold-loads the embedding runtime (FIX-091).
+    """
+    from trw_mcp.state.memory_adapter import embedding_available
+
+    if allow_cold_embedder_load:
+        return embedding_available()
+    from trw_mcp.state._memory_connection import get_initialized_embedder
+
+    return get_initialized_embedder() is not None
+
+
 def find_clusters(
     entries_dir: Path,
     reader: FileStateReader,
@@ -183,6 +208,7 @@ def find_clusters(
     min_cluster_size: int = 3,
     max_entries: int = 50,
     allow_cold_embedder_load: bool = True,
+    semantic_only: bool = False,
 ) -> list[list[LearningEntryDict]]:
     """Detect clusters of semantically similar active learning entries.
 
@@ -202,6 +228,9 @@ def find_clusters(
         similarity_threshold: Minimum pairwise similarity to merge into cluster.
         min_cluster_size: Clusters smaller than this are discarded.
         max_entries: Cap on number of entries loaded for the embedding path.
+        semantic_only: Return no clusters rather than falling back to tag
+            overlap when embeddings are unavailable (FIX-052-FR03 as amended:
+            tag-overlap clusters are report-only, never archived).
         allow_cold_embedder_load: When False, use embeddings only if the
             provider is already initialized. Deferred delivery uses False so a
             background maintenance pass cannot cold-load sentence-transformers
@@ -211,22 +240,18 @@ def find_clusters(
         List of clusters; each cluster is a list of entry dicts.
     """
     from trw_mcp.state.memory_adapter import embed_text_batch as embed_batch
-    from trw_mcp.state.memory_adapter import embedding_available
 
     _t0 = time.monotonic()
 
-    if allow_cold_embedder_load:
-        embeddings_ready = embedding_available()
-    else:
-        from trw_mcp.state._memory_connection import get_initialized_embedder
+    embeddings_ready = semantic_clustering_ready(allow_cold_embedder_load=allow_cold_embedder_load)
 
-        embeddings_ready = get_initialized_embedder() is not None
-
+    if not embeddings_ready and semantic_only:
+        return []
     if not embeddings_ready:
         logger.debug("consolidation_embed_unavailable_using_tag_fallback")
         if not entries_dir.exists():
             return []
-        all_entries = _load_active_entries(entries_dir, reader, max_entries=max_entries)
+        all_entries = _removable(_load_active_entries(entries_dir, reader, max_entries=max_entries))
         # FIX-071-FR01/FR05: Load max_cluster_size from config
         from trw_mcp.models.config import get_config as _get_cfg
 
@@ -252,7 +277,7 @@ def find_clusters(
     if not entries_dir.exists():
         return []
 
-    entries = _load_active_entries(entries_dir, reader, max_entries)
+    entries = _removable(_load_active_entries(entries_dir, reader, max_entries))
     if len(entries) < min_cluster_size:
         return []
 

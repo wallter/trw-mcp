@@ -48,6 +48,7 @@ from tests._intent_contract_hooks import (
     run_hook,
     write_hook_env,
 )
+from tests._layout import requires_non_root
 from trw_mcp.security.intent_contract.enrollment import (
     check_enrollment_status,
     enrollment_evidence_path,
@@ -200,6 +201,7 @@ def test_f2_the_shell_preamble_still_blocks_an_enrolled_project_it_cannot_check(
     assert "no interpreter with trw_mcp installed" in result.stderr, "the block did not come from the shell-only branch"
 
 
+@requires_non_root
 @pytest_skip_no_git
 @pytest_skip_no_sh
 @pytest.mark.parametrize("hook", [PRE_HOOK, POST_HOOK])

@@ -54,7 +54,7 @@ async def test_initialized_clients_exchange_request_reply_and_explicit_ack(send_
         await call(receiver, send_scene, "receiver", "trw_inbox", action="fetch")
         fetched = await call(receiver, send_scene, "receiver", "trw_inbox", action="fetch")
         assert fetched["status"] == "ok"
-        assert fetched["next_cursor"] is None
+        assert "next_cursor" not in fetched
         assert len(fetched["items"]) == 1
         item = fetched["items"][0]
         assert item == {**sent["receipt"], "body": "done"}
@@ -234,7 +234,7 @@ async def test_page_limit_continuation_holds_through_a_waited_page(wait_scene: P
         # zero-wait fetch, exactly as it is for a non-waited first page.
         second = await _wait_invoke(client, action="fetch", cursor=first["next_cursor"])
         assert [item["message_id"] for item in second["items"]] == [second_receipt["message_id"]]
-        assert second["next_cursor"] is None
+        assert "next_cursor" not in second
 
 
 async def test_a_lost_waited_response_replays_the_same_pending_items_on_the_next_fetch(wait_scene: PolicyScene) -> None:

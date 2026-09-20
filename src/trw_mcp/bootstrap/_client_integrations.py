@@ -1,7 +1,5 @@
 """Registry-driven dispatch for client-specific bootstrap/update integrations."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -9,7 +7,8 @@ from pathlib import Path
 
 import structlog
 
-logger = structlog.get_logger(__name__)
+from ._grok import install_grok_artifacts as _install_grok
+from ._grok import update_grok_artifacts as _update_grok
 
 InstallFn = Callable[[Path, bool, dict[str, list[str]], list[str] | None], None]
 UpdateFn = Callable[[Path, dict[str, list[str]], str | None, dict[str, str] | None], None]
@@ -25,8 +24,7 @@ class ClientIntegration:
     update: UpdateFn
 
     def matches(self, ide_targets: Iterable[str]) -> bool:
-        target_set = set(ide_targets)
-        return any(platform_id in target_set for platform_id in self.platform_ids)
+        return any(platform_id in set(ide_targets) for platform_id in self.platform_ids)
 
 
 def _install_opencode(target_dir: Path, force: bool, result: dict[str, list[str]], _: list[str] | None) -> None:
@@ -125,6 +123,7 @@ CLIENT_INTEGRATIONS: tuple[ClientIntegration, ...] = (
     ClientIntegration("codex", ("codex",), _install_codex, _update_codex),
     ClientIntegration("copilot", ("copilot",), _install_copilot, _update_copilot),
     ClientIntegration("antigravity-cli", ("antigravity-cli",), _install_antigravity, _update_antigravity),
+    ClientIntegration("grok", ("grok",), _install_grok, _update_grok),
 )
 
 
@@ -173,7 +172,7 @@ def run_install_integrations(
         try:
             integration.install(target_dir, force, result, ide_targets)
         except Exception as exc:  # justified: per-IDE isolation, continue with remaining IDEs
-            logger.exception("client_install_failed", client=integration.name)
+            structlog.get_logger().exception("client_install_failed", client=integration.name)
             result.setdefault("errors", []).append(f"{integration.name} install failed: {type(exc).__name__}: {exc}")
 
 
@@ -195,7 +194,7 @@ def run_update_integrations(
         try:
             integration.update(target_dir, result, ide_override, manifest_hashes)
         except Exception as exc:  # justified: per-client isolation, continue with remaining clients
-            logger.exception("client_update_failed", client=integration.name)
+            structlog.get_logger().exception("client_update_failed", client=integration.name)
             result.setdefault("errors", []).append(f"{integration.name} update failed: {type(exc).__name__}: {exc}")
 
 

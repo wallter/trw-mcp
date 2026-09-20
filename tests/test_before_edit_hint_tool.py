@@ -6,6 +6,7 @@ import json
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -573,3 +574,183 @@ class TestBatchArtifactFallback:
 
         assert result.distill_status == "tier_required"
         assert result.distill_hint is None
+
+
+# --- PRD-FIX-144 FR02 / NFR01: the hint records exposure with the edited file ---
+
+
+def _jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+class TestExposureRecording:
+    @pytest.fixture
+    def project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+        monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+        monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+        monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
+        (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+        return tmp_path
+
+    @staticmethod
+    def _learn(count: int) -> list[str]:
+        from tests.conftest import extract_tool_fn, make_test_server
+
+        learn = extract_tool_fn(make_test_server("learning"), "trw_learn")
+        topics = ["config loading", "route wiring", "blocking IO", "error pages", "shutdown hooks"]
+        return [
+            learn(summary=f"app.py {topics[i]} gotcha", detail=f"app.py detail about {topics[i]}.", impact=0.7)[
+                "learning_id"
+            ]
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def _logs(project: Path) -> tuple[Path, Path]:
+        logs = project / ".trw" / "logs"
+        return logs / "recall_tracking.jsonl", logs / "surface_tracking.jsonl"
+
+    def test_hint_records_exposure_with_repo_relative_file(self, project: Path) -> None:
+        (lid,) = self._learn(1)
+        receipts_path, surface_path = self._logs(project)
+        receipts_before, surface_before = len(_jsonl(receipts_path)), len(_jsonl(surface_path))
+
+        result = compute_before_edit_hint(file_path="app.py")
+
+        assert [item.id for item in result.learnings] == [lid]
+        receipts = _jsonl(receipts_path)[receipts_before:]
+        surface = _jsonl(surface_path)[surface_before:]
+        assert len(receipts) == 1 and len(surface) == 1
+        receipt, row = receipts[0], surface[0]
+        assert receipt["learning_id"] == lid
+        assert receipt["surface"] == "before_edit_hint"
+        assert receipt["query"] == "app.py"
+        assert receipt["files_context"] == ["app.py"]
+        assert receipt["outcome"] is None
+        assert row["learning_id"] == lid
+        assert row["surface_type"] == "before_edit_hint"
+        assert row["files_context"] == ["app.py"]
+        assert row["session_id"] == receipt["session_id"] != ""
+
+    def test_absolute_in_repo_path_is_recorded_repo_relative(self, project: Path) -> None:
+        self._learn(1)
+        receipts_path, surface_path = self._logs(project)
+        compute_before_edit_hint(file_path=str(project / "pkg" / ".." / "app.py"))
+        assert _jsonl(receipts_path)[-1]["files_context"] == ["app.py"]
+        assert _jsonl(surface_path)[-1]["files_context"] == ["app.py"]
+
+    def test_path_outside_root_records_empty_files_context(self, project: Path, tmp_path_factory: Any) -> None:
+        self._learn(1)
+        outside = tmp_path_factory.mktemp("elsewhere") / "app.py"
+        receipts_path, surface_path = self._logs(project)
+        result = compute_before_edit_hint(file_path=str(outside))
+        assert result.learnings_count == 1
+        receipt, row = _jsonl(receipts_path)[-1], _jsonl(surface_path)[-1]
+        assert receipt["files_context"] == [] and receipt["query"] == ""
+        assert row["files_context"] == []
+        assert str(outside) not in receipts_path.read_text() + surface_path.read_text()
+
+    def test_zero_learnings_writes_nothing(self, project: Path) -> None:
+        receipts_path, surface_path = self._logs(project)
+        result = compute_before_edit_hint(file_path="app.py")
+        assert result.learnings_count == 0
+        assert _jsonl(receipts_path) == [] and _jsonl(surface_path) == []
+
+    def test_reviewer_role_still_records(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PRD-SEC-015 FR03/FR04: this module's appends are never role-suppressed
+        (test_reviewer_surface_enforcement.py asserts the branch does not exist),
+        so exposures are recorded under the reviewer role too."""
+        self._learn(1)
+        receipts_path, surface_path = self._logs(project)
+        before = (len(_jsonl(receipts_path)), len(_jsonl(surface_path)))
+        monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
+        compute_before_edit_hint(file_path="app.py")
+        after = (len(_jsonl(receipts_path)), len(_jsonl(surface_path)))
+        assert after == (before[0] + 1, before[1] + 1)
+
+    def test_hint_telemetry_appends_are_bounded_and_read_free(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """NFR01: <= 2 appends per surfaced learning, 0 reads of the three logs."""
+        import builtins
+
+        from trw_mcp.tools._learnings_collector import DEFAULT_TOP_N
+
+        self._learn(DEFAULT_TOP_N)
+        watched = {"recall_tracking.jsonl", "surface_tracking.jsonl", "session_outcomes.jsonl"}
+        opens: list[tuple[str, str]] = []
+        real_path_open, real_open = Path.open, builtins.open
+
+        def _note(target: object, mode: str) -> None:
+            name = Path(str(target)).name
+            if name in watched:
+                opens.append((name, mode))
+
+        def path_open(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            _note(self, mode)
+            return real_path_open(self, mode, *args, **kwargs)
+
+        def plain_open(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            if isinstance(file, (str, Path)):
+                _note(file, mode)
+            return real_open(file, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", path_open)
+        monkeypatch.setattr(builtins, "open", plain_open)
+        result = compute_before_edit_hint(file_path="app.py")
+        monkeypatch.undo()
+
+        assert result.learnings_count == DEFAULT_TOP_N
+        appends = [o for o in opens if "a" in o[1]]
+        reads = [o for o in opens if "a" not in o[1] and "w" not in o[1]]
+        assert reads == []
+        assert 0 < len(appends) <= 2 * DEFAULT_TOP_N
+        receipts_path, surface_path = self._logs(project)
+        assert len([r for r in _jsonl(receipts_path) if r.get("surface") == "before_edit_hint"]) == DEFAULT_TOP_N
+        assert len([r for r in _jsonl(surface_path) if r["surface_type"] == "before_edit_hint"]) == DEFAULT_TOP_N
+
+    def test_recording_adds_at_most_50ms_median(self, project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FR02 hook-latency ceiling: median added wall time over 20 runs <= 50 ms."""
+        import statistics
+        import time
+
+        import trw_mcp.tools._before_edit_hint_core as core
+        from trw_mcp.tools._learnings_collector import DEFAULT_TOP_N
+
+        self._learn(DEFAULT_TOP_N)
+        real_record = core._record_exposure
+        compute_before_edit_hint(file_path="app.py")  # warm caches and imports once
+
+        def timed(recording: bool) -> float:
+            monkeypatch.setattr(core, "_record_exposure", real_record if recording else lambda *_a: None)
+            started = time.perf_counter()
+            result = compute_before_edit_hint(file_path="app.py")
+            elapsed = time.perf_counter() - started
+            assert result.learnings_count == DEFAULT_TOP_N
+            return elapsed
+
+        on: list[float] = []
+        off: list[float] = []
+        for _ in range(20):  # interleaved so drift hits both arms alike
+            on.append(timed(True))
+            off.append(timed(False))
+        added = statistics.median(on) - statistics.median(off)
+        print(
+            f"before_edit_hint recording: median on={statistics.median(on) * 1000:.2f}ms "
+            f"off={statistics.median(off) * 1000:.2f}ms added={added * 1000:.2f}ms"
+        )
+        assert added <= 0.050
+
+    def test_registered_tool_is_logged_and_response_unchanged(self, project: Path) -> None:
+        """FR02: trw_before_edit_hint now reaches tool telemetry via log_tool_call."""
+        from tests.conftest import extract_tool_fn, make_test_server
+
+        fn = extract_tool_fn(make_test_server("before_edit_hint"), "trw_before_edit_hint")
+        assert getattr(fn, "__wrapped__", None) is not None, "tool is not wrapped by log_tool_call"
+        response = fn(file_path="app.py")
+        assert set(response) >= {"file_path", "learnings", "learnings_count", "distill_status", "tier"}
+        events = "".join(p.read_text() for p in (project / ".trw").rglob("*events*.jsonl"))
+        assert "trw_before_edit_hint" in events

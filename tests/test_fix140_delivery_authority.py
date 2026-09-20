@@ -30,6 +30,7 @@ import pytest
 # imports it has to precede.
 importlib.import_module("trw_mcp.tools._delivery_helpers")
 
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_jq, requires_monorepo
 from trw_mcp.tools._deliver_gate_dispatch import evaluate_delivery_gates
 from trw_mcp.tools._deliver_gate_mode import (
     resolve_deliver_gate_decision,
@@ -42,8 +43,8 @@ from trw_mcp.tools._delivery_event_checks import (
     unpinned_session_changed_files,
 )
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_HOOK = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "hooks" / "pre-tool-deliver-gate.sh"
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+_BUNDLED_HOOK = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks" / "pre-tool-deliver-gate.sh"
 _PROJECTED_HOOK = _REPO_ROOT / ".claude" / "hooks" / "pre-tool-deliver-gate.sh"
 _DELIVER_PAYLOAD = '{"tool_name":"mcp__trw__trw_deliver"}'
 
@@ -65,8 +66,14 @@ def _project(tmp_path: Path) -> Path:
     return root
 
 
+@requires_jq
 class TestBundledHookIsDiagnosticOnly:
-    """FR01 — the hook reports evidence and never decides."""
+    """FR01 — the hook reports evidence and never decides.
+
+    The hook reads ``tool_name`` with jq and has no fallback, so on a box without
+    jq it exits before it prints anything. That coupling is a hook defect, not a
+    property of these assertions.
+    """
 
     @pytest.mark.parametrize(
         ("label", "build_status", "ceremony_state"),
@@ -118,9 +125,11 @@ class TestBundledHookIsDiagnosticOnly:
     def test_a_missing_project_directory_is_survivable(self, tmp_path: Path) -> None:
         assert _run_hook(tmp_path / "does-not-exist").returncode == 0
 
+    @requires_monorepo
     def test_the_projection_is_byte_identical_to_the_bundle(self) -> None:
         assert _PROJECTED_HOOK.read_bytes() == _BUNDLED_HOOK.read_bytes()
 
+    @requires_monorepo
     def test_no_blocking_predicate_survives_in_either_copy(self) -> None:
         for copy in (_BUNDLED_HOOK, _PROJECTED_HOOK):
             body = copy.read_text(encoding="utf-8")
@@ -169,9 +178,7 @@ class TestEveryDeliverRouteReachesTheServerGate:
 
     def test_the_offline_route_declares_itself_ungated(self) -> None:
         """``trw-mcp local deliver`` is not gated and must keep saying so."""
-        source = (_REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "server" / "_subcommands_misc.py").read_text(
-            encoding="utf-8"
-        )
+        source = (PACKAGE_ROOT / "src" / "trw_mcp" / "server" / "_subcommands_misc.py").read_text(encoding="utf-8")
 
         assert "gate_evaluated: false" in source
 
@@ -337,7 +344,7 @@ class TestUnpinnedStartedSessionIsGated:
         from trw_mcp.tools import _delivery_event_checks
 
         assert _delivery_event_checks.PROCESS_STARTED_AT is trw_mcp.PROCESS_STARTED_AT
-        init_source = (_REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "__init__.py").read_text(encoding="utf-8")
+        init_source = (PACKAGE_ROOT / "src" / "trw_mcp" / "__init__.py").read_text(encoding="utf-8")
         assert "PROCESS_STARTED_AT = _datetime.now(_timezone.utc)" in init_source
 
     def test_a_non_claude_code_client_is_blocked_end_to_end(self, tmp_path: Path) -> None:
@@ -488,9 +495,9 @@ class TestUnpinnedStartedSessionIsGated:
 
         assert resolve_pin_key(None) == "env-session-9"
 
-        gate_source = (
-            _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "tools" / "_deliver_gate_selfcomputed.py"
-        ).read_text(encoding="utf-8")
+        gate_source = (PACKAGE_ROOT / "src" / "trw_mcp" / "tools" / "_deliver_gate_selfcomputed.py").read_text(
+            encoding="utf-8"
+        )
         assert "resolve_pin_key(None)" in gate_source
         # get_session_id() may appear only as the "is my key unshared?" comparison
         # (P1-2): the evidence readers themselves are keyed on resolve_pin_key.

@@ -50,6 +50,12 @@ VerificationMethod = Literal["executable", "primary_source", "unverified"]
 #:                             construction.
 #: ``available_default_off`` — the client HAS a sandbox that TRW does not turn
 #:                             on. An operator must not read this as protection.
+#: ``unavailable_on_host``   — the client HAS a sandbox flag, but it does not
+#:                             start on the verified host, so TRW forbids the
+#:                             flag. Distinct from ``available_default_off``,
+#:                             which invites an operator to turn something on
+#:                             that would not run, and from ``none``, which says
+#:                             the client never had one.
 #: ``none``                  — the client exposes no sandbox flag TRW can use;
 #:                             read-only rests on the client denying writes.
 #:
@@ -57,7 +63,7 @@ VerificationMethod = Literal["executable", "primary_source", "unverified"]
 #: protection TRW does not provide, or as indistinguishable from a client that
 #: has no sandbox at all. Both collapses are the failure this field exists to
 #: prevent.
-SandboxPosture = Literal["enforced", "available_default_off", "none"]
+SandboxPosture = Literal["enforced", "available_default_off", "unavailable_on_host", "none"]
 
 #: Whether the client can drive sub-agents. ``unknown`` is a RECORDED state, not
 #: a ``False`` — "we have not established this" and "this client cannot" are

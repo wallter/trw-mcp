@@ -222,3 +222,37 @@ def test_shipped_prd_infra_179_validates_clean() -> None:
     blocking = [f for f in result.failures if f.severity == "error"]
     assert blocking == [], [f.message for f in blocking]
     assert result.valid is True
+
+
+def _linked_worktree(tmp_path: Path, *, relative_gitdir: bool) -> Path:
+    """A main checkout holding .venv, plus a linked worktree without one."""
+    main = tmp_path / "main"
+    (main / ".git" / "worktrees" / "lane").mkdir(parents=True)
+    (main / ".venv" / "bin").mkdir(parents=True)
+    (main / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
+    worktree = tmp_path / "lane"
+    worktree.mkdir()
+    gitdir = main / ".git" / "worktrees" / "lane"
+    target = "../main/.git/worktrees/lane" if relative_gitdir else str(gitdir)
+    (worktree / ".git").write_text(f"gitdir: {target}\n", encoding="utf-8")
+    return worktree
+
+
+@pytest.mark.parametrize("relative_gitdir", [False, True])
+def test_venv_path_resolves_through_a_linked_worktree_to_the_main_checkout(
+    tmp_path: Path, relative_gitdir: bool
+) -> None:
+    worktree = _linked_worktree(tmp_path, relative_gitdir=relative_gitdir)
+    assert malformed_verification_command_reason(".venv/bin/python -m pytest tests -q", repo_root=worktree) is None
+
+
+def test_a_typo_path_is_still_refused_from_a_linked_worktree(tmp_path: Path) -> None:
+    worktree = _linked_worktree(tmp_path, relative_gitdir=False)
+    reason = malformed_verification_command_reason(".venv/bin/pythn -m pytest", repo_root=worktree)
+    assert reason is not None and "does not exist" in reason
+
+
+def test_a_plain_checkout_only_resolves_against_itself(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    reason = malformed_verification_command_reason(".venv/bin/python -m pytest", repo_root=tmp_path)
+    assert reason is not None and "does not exist" in reason

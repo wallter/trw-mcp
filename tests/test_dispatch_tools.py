@@ -530,3 +530,37 @@ def test_full_registration_includes_dispatch_and_preserves_core() -> None:
     }
     missing = core - names
     assert not missing, f"core tools dropped: {sorted(missing)}"
+
+
+# --------------------------------------------------------------------------- #
+# The description advertised four clients for months after three more were added
+# (cursor-cli, copilot, grok). Prose does not move when a registry does, and a
+# stale string is green by construction -- so the list is rendered, and this is
+# the assertion that keeps it honest.
+# --------------------------------------------------------------------------- #
+
+
+def _dispatch_description() -> str:
+    server = FastMCP("test")
+    register_dispatch_tools(server)
+    tool = _run_async(server.get_tool("trw_dispatch"))
+    return str(tool.description)
+
+
+def test_the_description_names_every_dispatch_client() -> None:
+    from typing import get_args
+
+    from trw_mcp.dispatch._client_specs import DispatchClient
+
+    description = _dispatch_description()
+    for client in get_args(DispatchClient):
+        assert client in description, f"{client} is dispatchable but the tool description never names it"
+
+
+def test_the_client_list_is_rendered_not_restated() -> None:
+    """Non-vacuity: the names must come from the registry, not a literal that happens to match."""
+    from trw_mcp.tools import dispatch as dispatch_module
+
+    source = Path(dispatch_module.__file__).read_text(encoding="utf-8")
+    assert "{clients}" in source, "the docstring must carry the placeholder, not a hand-written list"
+    assert "claude, codex, agy, opencode" not in source, "a restated list is what went stale before"

@@ -99,13 +99,9 @@ def build_compaction_block(tool_name: str, blocked_count: int, max_blocks: int) 
     # stranded every delegate — observed 2026-07-26, blocks arriving in exact
     # pairs against a MAX_BLOCKS of 2, one call short of the escape built for it.
     message = (
-        f"{when} Call trw_session_start() to complete post-compaction recovery:"
-        " it reloads your prior learnings and active run state and clears this gate,"
-        " so you don't repeat solved problems or miss known gotchas."
-        " If you do NOT hold trw_session_start (you are a delegated sub-agent"
-        f" sharing your dispatcher's session), retry this call — after {max_blocks}"
-        " blocks the gate passes you through, and post-compaction recovery is your"
-        " dispatcher's obligation, not yours."
+        f"{when} Call trw_session_start() to recover context and clear this gate."
+        " Delegates without that tool: retry; non-terminal calls pass after"
+        f" {max_blocks} blocks. A delegate's dispatcher must recover; terminal calls remain blocked."
     )
 
     payload: dict[str, object] = {

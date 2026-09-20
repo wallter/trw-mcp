@@ -95,9 +95,8 @@ def _run_uninstall(args: argparse.Namespace) -> None:
     """Handle the ``uninstall`` subcommand -- remove TRW files from a project.
 
     Registry-driven (PRD-SEC-006 FR07): the set of surfaces is derived from the
-    client-profile registry manifest (all 8 registry entries — the 7 active
-    profiles plus the retired ``aider``, whose uninstall support is kept — plus
-    framework core), so
+    client-profile registry manifest (active profiles plus the retired ``aider``,
+    whose uninstall support is kept — plus framework core), so
     every profile is cleaned, not just claude-code. Shared files (CLAUDE.md,
     AGENTS.md, ANTIGRAVITY.md, settings.json, copilot-instructions) have only their
     TRW-managed marker block removed; only artifacts TRW created are touched.

@@ -33,11 +33,10 @@ from __future__ import annotations
 
 from trw_mcp.models.config import builtin_client_ids, retired_client_ids
 
-#: Count of active profiles TRW has shipped: antigravity-cli, claude-code,
-#: codex, copilot, cursor-cli, cursor-ide, opencode. Raising this is part of
-#: adding a profile; lowering it is part of REMOVING one (as ``gemini`` was on
+#: Count of active profiles TRW has shipped. Raising this is part of adding a
+#: profile; lowering it is part of REMOVING one (as ``gemini`` was on
 #: 2026-07-24) and must be a deliberate edit, never a silent derivation result.
-MINIMUM_ACTIVE_CLIENTS = 7
+MINIMUM_ACTIVE_CLIENTS = 8
 
 #: Active (installable) profile ids, registry order.
 ACTIVE_CLIENT_IDS: tuple[str, ...] = tuple(builtin_client_ids())

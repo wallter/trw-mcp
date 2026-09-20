@@ -327,7 +327,8 @@ def test_dispatch_table_reports_sandbox_as_a_tri_state_not_on_off() -> None:
 def test_dispatch_table_distinguishes_an_absent_profile_from_a_false_agent_surface() -> None:
     grok_row = next(ln for ln in render_dispatch_targets_table().splitlines() if ln.startswith("| `grok` "))
     cursor_row = next(ln for ln in render_dispatch_targets_table().splitlines() if ln.startswith("| `cursor-cli` "))
-    assert "no client profile" in grok_row
+    assert "| on |" in grok_row
+    assert "| executable |" in grok_row
     assert "| off |" in cursor_row
 
 

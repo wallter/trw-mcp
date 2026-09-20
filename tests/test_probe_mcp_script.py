@@ -26,7 +26,11 @@ from types import ModuleType
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from tests._layout import MONOREPO_ROOT, requires_monorepo
+
+#: The probe is a monorepo development harness; it is not part of the published package.
+pytestmark = requires_monorepo
+REPO_ROOT = MONOREPO_ROOT if MONOREPO_ROOT is not None else Path(__file__).resolve().parents[2]
 PROBE_PATH = REPO_ROOT / "scripts" / "probe-mcp.py"
 
 

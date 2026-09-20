@@ -134,6 +134,11 @@ def correlate_recalls(
         record = _parse_receipt_line(stripped, path=receipt_path, line_number=line_number)
         if record is None:
             continue
+        # PRD-FIX-144 FR03/FR05: an outcome row (explicit feedback) is not an
+        # exposure; counting it here would inflate the learning's correlated
+        # recall count exactly as it used to inflate get_recall_stats.
+        if record.get("outcome") is not None:
+            continue
 
         # Extract timestamp (supports both ISO ``ts`` and epoch ``timestamp``).
         receipt_ts = _parse_receipt_timestamp(record, path=receipt_path, line_number=line_number)

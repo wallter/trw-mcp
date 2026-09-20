@@ -28,6 +28,7 @@ from trw_mcp.models.requirements import (
     ValidationResultV2,
 )
 from trw_mcp.state.validation import _prd_scoring_smells as _smells
+from trw_mcp.state.validation._prd_scoring_grounding import grounding_scope, with_grounding_scope
 from trw_mcp.state.validation._prd_validation_findings import (
     finalize_verdict,
     has_blocking_failure,
@@ -148,6 +149,7 @@ def _build_smell_suggestion(findings: list[SmellFinding]) -> ImprovementSuggesti
 # ---------------------------------------------------------------------------
 
 
+@with_grounding_scope  # REF-001: base scoring and the dynamic refresh share one grounding scan
 def validate_prd_quality_v2(
     content: str,
     config: TRWConfig | None = None,
@@ -237,12 +239,13 @@ def validate_prd_quality_v2(
         ),
     ]
     dimensions: list[DimensionScore] = []
-    for dim_name, scorer, max_score in _active_dims:
-        try:
-            dimensions.append(scorer())
-        except Exception:  # per-item error handling: one dimension failure must not block entire scoring
-            logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
-            dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
+    with grounding_scope():  # REF-001: one grounding scan shared by the two dimensions that use it
+        for dim_name, scorer, max_score in _active_dims:
+            try:
+                dimensions.append(scorer())
+            except Exception:  # per-item error handling: one dimension failure must not block entire scoring
+                logger.warning("dimension_scoring_failed", dimension=dim_name, exc_info=True)
+                dimensions.append(DimensionScore(name=dim_name, score=0.0, max_score=max_score))
 
     # Requirement-smell + EARS detection (AARE-F v3.0.0 §2.4/§2.1). Advisory only:
     # validation_smell_weight / validation_ears_weight stay 0, so total_score is

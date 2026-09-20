@@ -171,6 +171,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_peers": "Enroll, list or heartbeat this agent among its formation peers (pull-only)",
     "trw_send": "Send a bounded message to a formation peer or reconcile an exact retry (pull-only)",
     "trw_inbox": "Fetch pending messages, ACK receipt, or inspect body-free message facts (pull-only)",
+    "trw_decision": "Ask an opt-in calibrated judge a typed yes/no, choice or score question (advisory only)",
 }
 
 # Validate at import time: every eligible (public) manifest tool has a
@@ -183,9 +184,7 @@ if _ALL_TOOLS != _DESCRIBED_TOOLS:
     raise RuntimeError(f"TOOL_DESCRIPTIONS / eligible-manifest mismatch: missing={_missing}, extra={_extra}")
 
 
-# ---------------------------------------------------------------------------
-# FR01: Resolve effective exposed tools from config
-# ---------------------------------------------------------------------------
+# --- FR01: Resolve effective exposed tools from config ----------------------
 
 
 def resolve_exposed_tools(mode: str = "standard") -> frozenset[str]:

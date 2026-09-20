@@ -108,6 +108,11 @@ def register_formation(trw_dir: Path, formation_id: str, orchestrator_run_path: 
         os.replace(tmp, path)
 
 
+def registered_formations(trw_dir: Path) -> dict[str, Path]:
+    """Every indexed ``formation_id`` and its manifest path (FR18 discover); raises on an unreadable index."""
+    return {formation_id: manifest_path_for_run(Path(run)) for formation_id, run in _read_index(trw_dir).items()}
+
+
 def resolve_manifest_path(trw_dir: Path, formation_id: str) -> Path:
     """Manifest path for *formation_id*, or raise naming the known ids."""
     index = _read_index(trw_dir)
@@ -142,6 +147,9 @@ def read_manifest(manifest_path: Path) -> FormationManifest:
         raise FormationError(f"formation manifest {manifest_path} is invalid: {exc}") from exc
 
 
+_FR18_DEFAULTS: dict[str, object] = {"open_join": False, "admitted_candidate": None, "admitted_revision": None}
+
+
 def render_manifest(manifest: FormationManifest) -> str:
     """Serialize *manifest* to the exact YAML written to disk.
 
@@ -149,6 +157,14 @@ def render_manifest(manifest: FormationManifest) -> str:
     byte-identically (FR01) instead of being silently reordered on every join.
     """
     payload = manifest.model_dump(mode="json")
+    # PRD-CORE-274 FR18 fields are written only when set. Builds before FR18 load
+    # members with extra="forbid", so an unconditional `open_join: false` would make
+    # every manifest this build rewrites unreadable to them (a silent schema
+    # migration of a live formation). An unset field round-trips as its default.
+    for member in payload.get("members", []):
+        for key, default in _FR18_DEFAULTS.items():
+            if member.get(key, default) == default:
+                member.pop(key, None)
     return str(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True, default_flow_style=False))
 
 
@@ -159,8 +175,26 @@ def write_manifest_locked(manifest_path: Path, manifest: FormationManifest) -> N
     """
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = manifest_path.with_suffix(manifest_path.suffix + ".tmp")
-    tmp.write_text(render_manifest(manifest), encoding="utf-8")
+    # PRD-CORE-274 NFR07: owner-only. The manifest records members' pin keys and run
+    # paths, which other local users must not read (0644 was observed 2026-09-19).
+    write_owner_only(tmp, render_manifest(manifest).encode("utf-8"))
     os.replace(tmp, manifest_path)
+
+
+def write_owner_only(path: Path, data: bytes) -> None:
+    """Create or truncate *path* at mode 0600 regardless of the umask, and write all of *data*.
+
+    A file that already existed at a wider mode is narrowed too (fchmod). The file
+    object's write loops over short writes, which a bare ``os.write`` does not.
+    """
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)  # the mode argument alone is filtered by the umask
+    except OSError:
+        os.close(descriptor)
+        raise
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(data)
 
 
 @contextmanager

@@ -400,6 +400,7 @@ class TestSkills:
         "trw-ceremony-guide",
         "trw-code-search",
         "trw-commit",
+        "trw-decision",
         "trw-delegate",
         "trw-deliver",
         "trw-dry-check",

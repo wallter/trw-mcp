@@ -282,6 +282,10 @@ class SurfaceAuthorityMiddleware(Middleware):
                 # type (it is HIGH-RISK), so without this opt-in the bundled
                 # trw-delegate skill named two tools no session could list.
                 dispatch_enabled=getattr(config, "dispatch_tools_exposed", False) is True,
+                # trw-jev slice 1: the ``decision_support`` pack is named by no
+                # task type and excluded from REVIEWER_TOOLS — see
+                # PRD-CORE-288-trw-jev-feature-flag.
+                decision_enabled=getattr(config, "decision_enabled", False) is True,
             ).tools
         )
         surface |= _ALWAYS_EXPOSED

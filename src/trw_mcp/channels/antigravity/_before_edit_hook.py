@@ -85,7 +85,10 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
     from pathlib import Path
 
     _CHANNEL_ID = "ag-03-before-edit-hook"
+    # The canonical channel-event/v1 fields (trw_mcp.channels._telemetry
+    # CHANNEL_EVENT_V1_REQUIRED): schema_version, channel_id, client, ts, event_type.
     _EVENT_SCHEMA = "channel-event/v1"
+    _EVENT_TYPE = "pull_tool_call"
     _CONTINUE_RESPONSE = json.dumps({"continue": True})
 
 
@@ -113,7 +116,7 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
         try:
             raw = sys.stdin.read()
             data = json.loads(raw)
-        except Exception:
+        except Exception:  # trw-fail-silent-allow: fail-open, bad input never blocks agy
             print(_CONTINUE_RESPONSE)
             return
 
@@ -122,17 +125,18 @@ HOOK_SCRIPT_CONTENT = textwrap.dedent("""\
             file_path = str(data.get("file_path", data.get("path", "")))
 
             event: dict[str, object] = {
-                "schema": _EVENT_SCHEMA,
+                "schema_version": _EVENT_SCHEMA,
                 "ts": datetime.now(tz=timezone.utc).isoformat(),
                 "channel_id": _CHANNEL_ID,
                 "client": "antigravity-cli",
+                "event_type": _EVENT_TYPE,
                 "tool_name": tool_name,
                 "file_path": file_path,
             }
 
             telemetry_path = _resolve_telemetry_path()
             _write_event(telemetry_path, event)
-        except Exception:
+        except Exception:  # trw-fail-silent-allow: best-effort telemetry, never blocks agy
             pass
 
         print(_CONTINUE_RESPONSE)

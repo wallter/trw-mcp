@@ -262,14 +262,11 @@ def test_one_session_id_shared_by_two_children_collapses_to_one_identity(bench: 
     assert harness.call_ok(alpha, "trw_peers", {"action": "enroll"})["member_id"] == _MEMBER_B
 
     # And the collapse is not benign. Both processes resolve to ONE member, so
-    # the second enrolment collides with the first process's live endpoint
-    # instead of standing up a second peer.
-    assert harness.call_ok(beta, "trw_peers", {"action": "enroll"}) == {
-        "status": "refused",
-        "reason": "live_endpoint_held_by_other_incarnation",
-        "detail": "Peer operation refused.",
-        "delivery": "pull_only",
-    }
+    # the second enrolment TAKES OVER that member's endpoint (PRD-CORE-274 FR12)
+    # and alpha is displaced -- one identity, never two peers.
+    assert harness.call_ok(beta, "trw_peers", {"action": "enroll"})["member_id"] == _MEMBER_B
+    displaced = harness.call_ok(alpha, "trw_peers", {"action": "heartbeat"})
+    assert displaced["reason"] == "endpoint_replaced_by_newer_incarnation"
 
 
 def test_member_pointed_at_its_own_worktree_cannot_see_the_formation(bench: Bench) -> None:
@@ -389,4 +386,4 @@ def test_bounded_wait_on_one_real_process_observes_a_message_sent_by_another(ben
     assert [item["message_id"] for item in payload["items"]] == [receipt["message_id"]]
     assert payload["items"][0]["body"] == "arrived-during-wait"
     # Wait-free payload shape: identical keys to an ordinary zero-wait fetch page.
-    assert set(payload) == {"status", "delivery", "items", "next_cursor"}
+    assert set(payload) == {"status", "items"}

@@ -40,7 +40,7 @@ def _fixture(
 ) -> Path:
     (tmp_path / ".trw").mkdir()
     (tmp_path / ".trw/config.yaml").write_text(
-        "framework_version: v27.1_TRW\naaref_version: v3.2.0\n",
+        "framework_version: v99.9_TRW\naaref_version: v3.2.0\n",
         encoding="utf-8",
     )
     (tmp_path / "surface.md").write_text(body, encoding="utf-8")
@@ -86,7 +86,7 @@ def test_historical_record_rejects_blind_replacement(checker: ModuleType, tmp_pa
     manifest = _fixture(
         tmp_path,
         usage="historical_record",
-        body="released as v27.1_TRW",
+        body="released as v99.9_TRW",
         selector="framework_version",
         expected_value="v25_TRW",
         rationale="2026-06-10 release record",
@@ -109,7 +109,7 @@ def test_current_default_must_match_selected_config_value(checker: ModuleType, t
         body="Framework v25_TRW",
     )
     errors = checker.check(tmp_path, manifest)
-    assert "surface.md: current_default does not contain framework_version=v27.1_TRW" in errors
+    assert "surface.md: current_default does not contain framework_version=v99.9_TRW" in errors
     assert "surface.md: current_default contains stale versions v25_TRW" in errors
 
 
@@ -124,3 +124,21 @@ def test_install_snapshot_requires_explicit_v2_history_schema(checker: ModuleTyp
     assert any("record_kind" in error for error in errors)
     assert any("schema v2" in error for error in errors)
     assert any("framework_version_at_install" in error for error in errors)
+
+
+def test_an_absent_install_snapshot_is_not_an_error(checker: ModuleType, tmp_path: Path) -> None:
+    """The snapshot is gitignored and exists only after an install; a clean worktree has none."""
+    manifest = _fixture(
+        tmp_path,
+        usage="historical_install_snapshot",
+        selector="framework_version_at_install",
+        body="",
+    )
+    (tmp_path / "surface.md").unlink()
+    assert checker.check(tmp_path, manifest) == []
+
+
+def test_an_absent_current_default_surface_is_still_an_error(checker: ModuleType, tmp_path: Path) -> None:
+    manifest = _fixture(tmp_path, usage="current_default", selector="framework_version", body="")
+    (tmp_path / "surface.md").unlink()
+    assert checker.check(tmp_path, manifest) == ["surface.md: governed surface is missing"]

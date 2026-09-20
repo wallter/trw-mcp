@@ -155,7 +155,10 @@ def _make_scope(root: Path, formation_id: str, monkeypatch: pytest.MonkeyPatch) 
     scope = Scope(root, formation_id, runs[MEMBERS[0]] / "formation.yaml", runs)
     formation.create(
         runs[MEMBERS[0]],
-        {"formation_id": formation_id, "members": [{"member_id": m, "client": "codex"} for m in MEMBERS]},
+        {
+            "formation_id": formation_id,
+            "members": [{"member_id": m, "client": "codex", "open_join": True} for m in MEMBERS],
+        },
         trw_dir=trw_dir,
         prds_dir=root / "prds",
     )
@@ -182,7 +185,7 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Harness:
     config = TRWConfig(
         comms_enabled=True,
         cleanup_on_boot=False,
-        comms_group_admission_limit=ADMISSION_LIMIT,
+        comms_group_row_limit=ADMISSION_LIMIT,
         # One item per page so a real next_cursor exists to try against
         # another scope; the default page would swallow both messages.
         comms_fetch_max_items=1,

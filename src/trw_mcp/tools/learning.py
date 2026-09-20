@@ -366,6 +366,14 @@ def register_learning_tools(server: FastMCP) -> None:
                     "tags": tags,
                 },
             )
+            # PRD-FIX-144 FR03: explicit feedback is the one per-learning outcome
+            # signal left after R10. One row per call, written after the counter
+            # transaction committed; record_outcome is fail-open.
+            _outcome = {"helpful": "positive", "unhelpful": "negative"}.get(feedback or "")
+            if _outcome:
+                from trw_mcp.state.recall_tracking import record_outcome
+
+                record_outcome(str(result.get("learning_id") or learning_id), _outcome, source="explicit_feedback")
 
         return result
 

@@ -313,7 +313,10 @@ def test_formation_surface_is_client_neutral(
     profiles = sorted(_PROFILES)
     assert len(profiles) >= 7, f"expected the seven supported profiles, got {profiles}"
 
-    members = [{"member_id": f"m-{client}", "client": client, "owned_paths": [f"src/{client}"]} for client in profiles]
+    members = [
+        {"member_id": f"m-{client}", "client": client, "owned_paths": [f"src/{client}"], "open_join": True}
+        for client in profiles
+    ]
     create(formation_env.orchestrator_run, formation_env.payload(members=members), prds_dir=None)
 
     runs_root = formation_env.trw_dir / "runs"

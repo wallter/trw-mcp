@@ -16,6 +16,11 @@ from tests._install_trw_pip_target_contract_support import _INSTALLER_PATHS, _lo
 def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_target(
     installer_path: Path, tmp_path: Path, monkeypatch
 ) -> None:
+    # The installer keeps an inherited PYTHONPATH after the target (host overlays
+    # such as /trw-embeddings rely on it), so the exact-value assertions below hold
+    # only for a caller with none. Worktree test runs set PYTHONPATH to the
+    # checkout's src dirs, which made this test fail there and pass in main.
+    monkeypatch.delenv("PYTHONPATH", raising=False)
     module = _load_installer_module(installer_path)
     ui = MagicMock()
     pip_target = str(tmp_path / "trw-pip")
@@ -105,6 +110,28 @@ def test_phase_install_packages_writes_wrapper_and_verifies_imports_from_pip_tar
     assert all(call["env"]["PIP_NO_CACHE_DIR"] == "1" for call in install_calls)
     assert all(call["env"]["PIP_CACHE_DIR"] == f"{pip_target}/.cache/pip" for call in install_calls)
     assert all(call["env"]["XDG_DATA_HOME"] == f"{pip_target}/.local/share" for call in install_calls)
+
+
+@pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])
+def test_import_verification_puts_the_target_before_an_inherited_pythonpath(
+    installer_path: Path, tmp_path: Path, monkeypatch
+) -> None:
+    """With a caller PYTHONPATH (a host overlay), the target still comes first, so
+    the imports being verified resolve from the target, not from the overlay."""
+    monkeypatch.setenv("PYTHONPATH", "/host/overlay")
+    module = _load_installer_module(installer_path)
+    envs: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda cmd, env=None, **_kw: envs.append(dict(env or {})) or SimpleNamespace(returncode=0),
+    )
+    target = str(tmp_path / "trw-pip")
+
+    module._verify_package_imports(sys.executable, target, MagicMock())
+
+    assert envs, "no import verification ran"
+    assert all(env["PYTHONPATH"] == f"{target}:/host/overlay" for env in envs), envs
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])

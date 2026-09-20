@@ -37,6 +37,11 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 _sibling_adoption_done = False
+#: PRD-CORE-274 FR14 (R1): the pin THIS process adopted, keyed by the pin it adopted it
+#: under. In memory only -- the proof of client lineage is that this very process
+#: performed the adoption; the ``adopted_from`` field persisted in the pin store is an
+#: audit record and is never accepted as proof.
+_ADOPTED_FROM: dict[str, str] = {}
 _superseded_logged = False
 
 
@@ -161,7 +166,9 @@ def _adopt_client_sibling_pin(pin_key: str) -> dict[str, Any] | None:
         previous_key, previous = max(siblings, key=lambda item: str(item[1].get("last_heartbeat_ts", "")))
         now = _iso_now()
         record = pin_record(str(previous["run_path"]), now, now)
+        record["adopted_from"] = previous_key  # audit only; FR14 trusts _ADOPTED_FROM
         store[pin_key] = record
+        _ADOPTED_FROM[pin_key] = previous_key
         _write_pin_store_locked(store)
         # Once per process: a reconnect is a boot-time event, and a pin this
         # server later drops (adoption by another session) must stay dropped.
@@ -174,6 +181,11 @@ def _adopt_client_sibling_pin(pin_key: str) -> dict[str, Any] | None:
         run_path=record["run_path"],
     )
     return record
+
+
+def adopted_from(pin_key: str) -> str | None:
+    """The pin this process itself adopted under *pin_key* (FR14 client lineage), or None."""
+    return _ADOPTED_FROM.get(pin_key)
 
 
 def _from_client(entry: dict[str, Any], client_pid: int) -> bool:

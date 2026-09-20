@@ -61,7 +61,10 @@ def pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pages:
         (run / "meta" / "run.yaml").write_text("run_id: diagnostic\ntask: paging\nstatus: active\n")
     formation.create(
         runs[0],
-        {"formation_id": "paging", "members": [{"member_id": member, "client": "codex"} for member in ids]},
+        {
+            "formation_id": "paging",
+            "members": [{"member_id": member, "client": "codex", "open_join": True} for member in ids],
+        },
         trw_dir=root / ".trw",
         prds_dir=root / "prds",
     )
@@ -93,7 +96,7 @@ def collect(pages: Pages) -> tuple[list[str], int]:
         assert len(result["peers"]) <= pages.config.comms_fetch_max_items
         members.extend(peer["member_id"] for peer in result["peers"])
         count += 1
-        cursor = result["next_cursor"]
+        cursor = result.get("next_cursor")
         if cursor is None:
             return members, count
         assert result["peers"], "continuation made no progress"
@@ -191,7 +194,7 @@ def test_real_other_formation_cursor_refuses_before_first_database(pages: Pages)
     (other / "meta" / "run.yaml").write_text("run_id: other\ntask: paging\nstatus: active\n")
     formation.create(
         other,
-        {"formation_id": "other", "members": [{"member_id": "lead", "client": "codex"}]},
+        {"formation_id": "other", "members": [{"member_id": "lead", "client": "codex", "open_join": True}]},
         trw_dir=pages.root / ".trw",
         prds_dir=pages.root / "prds",
     )

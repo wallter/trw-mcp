@@ -29,12 +29,12 @@ def test_corrupt_existing_bytes_preserved_before_pragma_writes(tmp_path: Path, d
                 connection.execute("CREATE TRIGGER strange AFTER INSERT ON groups BEGIN SELECT 1; END")
             elif damage == "group_clock":
                 connection.execute(
-                    "INSERT INTO groups VALUES (?, 'f', ?, 100, 1, 0, 256, 8192, 64, 32, 0)",
+                    "INSERT INTO groups VALUES (?, 'f', ?, 100, 1, 0, 256, 8192, 64, 32, 0, 16777216)",
                     ("a" * 32, str(manifest)),
                 )
             else:
                 connection.execute(
-                    "INSERT INTO endpoints VALUES (?, 'm', ?, 's', ?, 1, 2, 3)",
+                    "INSERT INTO endpoints VALUES (?, 'm', ?, 's', ?, 1, 2, 3, 1, 4)",
                     ("b" * 32, "c" * 32, str(tmp_path / "run")),
                 )
     before = path.read_bytes()
@@ -196,11 +196,11 @@ def test_all_digit_incarnation_remains_exact_text(tmp_path: Path) -> None:
     with _store.connect(manifest, busy_timeout_ms=20) as connection:
         with _store.immediate(connection):
             connection.execute(
-                "INSERT INTO groups VALUES (?, 'f', ?, 1, 1, 0, 256, 8192, 64, 32, 0)",
+                "INSERT INTO groups VALUES (?, 'f', ?, 1, 1, 0, 256, 8192, 64, 32, 0, 16777216)",
                 ("a" * 32, str(manifest)),
             )
             connection.execute(
-                "INSERT INTO endpoints VALUES (?, 'm', ?, 's', ?, 1, 1, 121)",
+                "INSERT INTO endpoints VALUES (?, 'm', ?, 's', ?, 1, 1, 121, 1, 4)",
                 ("a" * 32, token, str(tmp_path / "run")),
             )
     with _store.connect(manifest, busy_timeout_ms=20) as connection:

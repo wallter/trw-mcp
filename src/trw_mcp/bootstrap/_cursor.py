@@ -63,7 +63,7 @@ from trw_mcp.bootstrap._cursor_models import (
 # ---------------------------------------------------------------------------
 
 
-def _get_trw_mcp_entry_cursor() -> CursorServerEntry:
+def _get_trw_mcp_entry_cursor(target_dir: Path | None = None) -> CursorServerEntry:
     """Return TRW MCP server entry for Cursor's mcp.json format.
 
     Uses the installed ``trw-mcp`` binary when available; falls back to a bare
@@ -79,10 +79,12 @@ def _get_trw_mcp_entry_cursor() -> CursorServerEntry:
     so every profile now generates the same args. Verbose logging is opted into
     portably via ``.trw/config.yaml`` ``debug: true``.
     """
-    if shutil.which("trw-mcp"):
-        command: str | list[str] = "trw-mcp"
-    else:
-        command = ["python3", "-m", "trw_mcp.server"]
+    from trw_mcp.bootstrap._utils import resolve_trw_mcp_launcher
+
+    # N17: the project's own .venv build first, via ${workspaceFolder} (Cursor
+    # expands it in command/args/env), then PATH, then a portable python3.
+    resolved, args = resolve_trw_mcp_launcher(target_dir, root_prefix="${workspaceFolder}/")
+    command: str | list[str] = [resolved, *args] if args else resolved
     return {"command": command, "args": []}
 
 
@@ -234,7 +236,7 @@ def generate_cursor_mcp_config(
     cursor_dir.mkdir(parents=True, exist_ok=True)
     mcp_file = cursor_dir / "mcp.json"
 
-    trw_entry = _get_trw_mcp_entry_cursor()
+    trw_entry = _get_trw_mcp_entry_cursor(target_dir)
 
     if mcp_file.exists() and not force:
         # Smart merge: update only the trw key, preserve everything else.

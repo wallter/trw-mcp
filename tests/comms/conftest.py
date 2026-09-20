@@ -31,15 +31,29 @@ def comms_server() -> FastMCP:
 
 @pytest.fixture(autouse=True)
 def _fresh_process_incarnations() -> Any:
-    """Each test starts as a process that has never enrolled anything.
+    """Each test starts as a process that has never enrolled anything, nor sent guidance.
 
     Incarnations live in module state by design (a caller must not be able to
     name one), so without this a later test inherits an earlier test's claim
     and silently skips the collision path it meant to exercise.
     """
+    from trw_mcp.comms import _guidance
+
     _endpoints._reset_process_incarnations_for_test()
+    _guidance._reset_for_test()
     yield
     _endpoints._reset_process_incarnations_for_test()
+    _guidance._reset_for_test()
+
+
+#: PRD-CORE-274-FR18 decoration every public response carries; stripped where a test
+#: pins the rest of a payload exactly (guidance itself is tested in test_guidance.py).
+FR18_DECORATION = ("state", "guidance_version", "guidance")
+
+
+def core(payload: dict[str, Any]) -> dict[str, Any]:
+    """*payload* without the FR18 state/guidance decoration."""
+    return {k: v for k, v in payload.items() if k not in FR18_DECORATION}
 
 
 def call_peers(server: FastMCP, action: str = "list") -> dict[str, Any]:

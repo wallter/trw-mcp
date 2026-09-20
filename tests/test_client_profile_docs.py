@@ -16,7 +16,7 @@ if not (Path(__file__).resolve().parents[2] / "scripts").is_dir():
     )
 
 from tests._client_registry import ACTIVE_CLIENT_IDS
-from trw_mcp.models.config import TRWConfig, resolve_client_profile
+from trw_mcp.models.config import TRWConfig, builtin_client_ids, resolve_client_profile
 from trw_mcp.models.config._client_profile import CeremonyWeights, WriteTargets
 
 _CLIENT_PROFILES_DOC = Path(__file__).resolve().parents[2] / "docs" / "CLIENT-PROFILES.md"
@@ -195,15 +195,7 @@ def test_default_capability_and_effort_posture_matches_runtime_profiles() -> Non
         "claude-code": "`claude-code-safe-2026-07-10`",
         "codex": "`codex-safe-2026-07-10`",
     }
-    for client_id in (
-        "claude-code",
-        "codex",
-        "cursor-ide",
-        "cursor-cli",
-        "copilot",
-        "antigravity-cli",
-        "opencode",
-    ):
+    for client_id in builtin_client_ids():
         profile = resolve_client_profile(client_id)
         matching_rows = [
             row
@@ -374,7 +366,7 @@ def _rendered_surface_for(client_id: str) -> str:
         from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 
         return ProtocolRenderer(client_profile=profile, ceremony_mode="FULL").render_behavioral_protocol()
-    if client_id in ("cursor-ide", "copilot"):
+    if client_id in ("cursor-ide", "copilot", "grok"):
         from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
         return render_agents_trw_section(client_profile=profile)

@@ -55,6 +55,7 @@ _EXPECTED_CORRECTION_FACTORS = {
     "cursor-ide": 0.75,
     "cursor-cli": 0.75,
     "copilot": 0.50,
+    "grok": 0.50,
 }
 
 
@@ -118,6 +119,7 @@ _EXPECTED_THROTTLE_THRESHOLDS = {
     "cursor-ide": (0.20, 3),
     "cursor-cli": (0.20, 3),
     "copilot": (0.15, 5),
+    "grok": (0.15, 5),
 }
 
 

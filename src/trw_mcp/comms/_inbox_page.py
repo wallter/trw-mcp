@@ -7,15 +7,13 @@ recovers still-pending rows even after preparation or a lost prior response.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
-import json
 import re
 import sqlite3
 from typing import Any
 
-from trw_mcp.comms._envelope import AdmissionError, InboxAction, canonical_bytes, receipt
+from trw_mcp.comms import _paging
+from trw_mcp.comms._envelope import AdmissionError, InboxAction, MessageState, canonical_bytes, receipt
 from trw_mcp.comms._identity import CallerBinding
 from trw_mcp.comms._messages import acknowledge, prepare_fetch, validate_ack
 
@@ -38,34 +36,16 @@ def _scope(binding: CallerBinding, action: InboxAction, incarnation: str | None)
 
 
 def _encode(scope: str, after: int) -> str:
-    return base64.urlsafe_b64encode(canonical_bytes([1, scope, after])).decode("ascii")
+    return _paging.encode_cursor(scope, after)
 
 
 def _decode(cursor: str | None, scope: str) -> int:
     if cursor is None:
         return 0
-    if not cursor or len(cursor) > 256:
+    fields = _paging.decode_cursor(cursor, max_chars=256, arity=2)
+    if fields is None or fields[0] != scope or type(fields[1]) is not int or not 1 <= fields[1] <= 9223372036854775807:
         raise AdmissionError("invalid_cursor")
-    try:
-        decoded = json.loads(base64.b64decode(cursor.encode("ascii"), altchars=b"-_", validate=True))
-    except (ValueError, UnicodeError, binascii.Error) as exc:
-        raise AdmissionError("invalid_cursor") from exc
-    if (
-        not isinstance(decoded, list)
-        or len(decoded) != 3
-        or type(decoded[0]) is not int
-        or decoded[0] != 1
-        or decoded[1] != scope
-        or type(decoded[2]) is not int
-        or not 1 <= decoded[2] <= 9223372036854775807
-        or _encode(scope, decoded[2]) != cursor
-    ):
-        raise AdmissionError("invalid_cursor")
-    return int(decoded[2])
-
-
-def _bounded(payload: dict[str, Any], max_bytes: int) -> bool:
-    return len(canonical_bytes(payload)) <= max_bytes
+    return int(fields[1])
 
 
 def _read_rows(
@@ -79,9 +59,10 @@ def _read_rows(
     if action == "fetch":
         return list(
             conn.execute(
+                # FR13: the member's rows, whichever generation they were admitted under.
                 "SELECT rowid AS append_id,* FROM admissions WHERE group_id=? AND recipient_member_id=? "
-                "AND recipient_incarnation=? AND state='pending' AND rowid>? ORDER BY rowid LIMIT ?",
-                (binding.group_id, binding.member_id, incarnation, after, limit + 1),
+                "AND state=? AND rowid>? ORDER BY rowid LIMIT ?",
+                (binding.group_id, binding.member_id, MessageState.PENDING.value, after, limit + 1),
             )
         )
     return list(
@@ -93,10 +74,16 @@ def _read_rows(
     )
 
 
-def _project(conn: sqlite3.Connection, row: sqlite3.Row, action: InboxAction) -> dict[str, Any]:
+def _project(
+    conn: sqlite3.Connection, row: sqlite3.Row, action: InboxAction, incarnation: str | None
+) -> dict[str, Any]:
     item = receipt(row)
     if action == "fetch":
         item["body"] = row["body"]
+        # FR13 at-least-once: flag only when true, so the common case costs nothing.
+        deliveries = int(row["delivery_count"]) + (row["recipient_incarnation"] != incarnation)
+        if deliveries > 1:
+            item["redelivered"] = True
     else:
         item["state"] = row["state"]
         item["milestones"] = dict(
@@ -124,9 +111,9 @@ def inbox_action(
         if not ids or len(ids) > limit or any(not re.fullmatch(r"[0-9a-f]{32}", value) for value in ids):
             raise AdmissionError("invalid_ack_ids")
         normalized = list(dict.fromkeys(ids))
-        rows = validate_ack(conn, binding, str(incarnation), normalized)
+        rows = validate_ack(conn, binding, normalized)
         result = {"status": "ok", "delivery": "pull_only", "acknowledged_ids": normalized}
-        if not _bounded(result, max_bytes):
+        if not _paging.fits(result, max_bytes):
             raise AdmissionError("response_too_small")
         acknowledge(conn, rows, now)
         return result
@@ -139,22 +126,17 @@ def inbox_action(
         if max_bytes < 6 * body_limit + 4096:
             raise AdmissionError("response_body_policy_incompatible")
     rows = _read_rows(conn, binding, action, incarnation, after, limit)
-    payload: dict[str, Any] = {"status": "ok", "delivery": "pull_only", "items": [], "next_cursor": None}
-    if not _bounded(payload, max_bytes):
-        raise AdmissionError("response_too_small")
-    included: list[sqlite3.Row] = []
-    for index, row in enumerate(rows[:limit]):
-        candidate = {
-            **payload,
-            "items": [*payload["items"], _project(conn, row, action)],
-            "next_cursor": _encode(scope, row["append_id"]) if index + 1 < len(rows) else None,
-        }
-        if not _bounded(candidate, max_bytes):
-            if not included:
-                raise AdmissionError("response_too_small")
-            break
-        payload = candidate
-        included.append(row)
+    entries = (
+        (
+            _project(conn, row, action, incarnation),
+            _encode(scope, row["append_id"]) if index + 1 < len(rows) else None,
+        )
+        for index, row in enumerate(rows[:limit])
+    )
+    payload, count = _paging.pack(
+        {"status": "ok", "delivery": "pull_only"}, "items", entries, max_bytes=max_bytes, refuse=AdmissionError
+    )
+    included = rows[:count]
     if action == "fetch":
-        prepare_fetch(conn, included, now)
+        prepare_fetch(conn, included, now, str(incarnation))
     return payload

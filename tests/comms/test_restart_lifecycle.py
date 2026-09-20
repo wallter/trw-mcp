@@ -39,7 +39,9 @@ def test_irreversible_closure_survives_reactivation_and_process_restart(
         trw_dir=s.formation.trw_dir,
     )
     restarted = driver_factory("pin-a")
-    assert restarted.call("trw_send", **args) == original
+    retried = restarted.call("trw_send", **args)
+    assert retried["receipt"] == original["receipt"]
+    assert retried["message_state"] == "expired", "closure expired it; the retry reports that (FR15)"
     # Every canonical field is still compared to retained admission after a
     # real restart, before fresh closed-group admission can mask the conflict.
     before_conflicts = s.rows("SELECT * FROM admissions"), s.rows("SELECT charge FROM groups")
@@ -61,9 +63,12 @@ def test_irreversible_closure_survives_reactivation_and_process_restart(
     assert restarted.receive("VERIFIED")["status"]["status"] == "ok"
 
 
-def test_live_collision_then_expired_replacement_and_old_process_fencing(
+def test_real_process_takeover_fences_the_old_process_and_the_queue_survives(
     crash_scene: SendScene, driver_factory: Any
 ) -> None:
+    """PRD-CORE-274 FR12/FR13 across real stdio server processes (supersedes the FR07
+    collision-then-expiry lifecycle): a new process for the same binding takes over at
+    once, the displaced one is refused, and the message admitted before is delivered."""
     s = crash_scene
     old_receiver = driver_factory("pin-b")
     assert old_receiver.call("trw_peers", action="enroll")["status"] == "ok"
@@ -73,25 +78,21 @@ def test_live_collision_then_expired_replacement_and_old_process_fencing(
     original = sender.call("trw_send", **args)
     message_id = original["receipt"]["message_id"]
     replacement = driver_factory("pin-b")
-    assert replacement.call("trw_peers", action="enroll")["reason"] == "live_endpoint_held_by_other_incarnation"
-    assert replacement.call("trw_inbox")["reason"] == "endpoint_replaced_by_newer_incarnation"
-    assert old_receiver.call("trw_peers", action="heartbeat")["status"] == "ok"
-    # Synthetic advancement of the durable monotonic clock, not a real wait or forged token.
-    s.rows("UPDATE groups SET group_time=(SELECT lease_expires_at FROM endpoints LIMIT 1)")
-    assert s.rows("SELECT state FROM admissions") == [("pending",)]
-    assert replacement.call("trw_peers", action="enroll")["status"] == "ok"
+    assert replacement.call("trw_peers", action="enroll")["status"] == "ok", "no lease wait"
     assert s.rows("SELECT incarnation FROM endpoints")[0][0] != old_incarnation
-    assert s.rows("SELECT state FROM admissions") == [("expired",)]
-    assert s.rows("SELECT fact FROM milestones ORDER BY fact") == [("admitted",), ("expired",)]
-    assert replacement.call("trw_inbox")["items"] == []
-    assert replacement.call("trw_inbox", action="ack", message_ids=[message_id])["reason"] == "ack_not_authorized"
+    assert s.rows("SELECT generation FROM endpoints") == [(2,)]
+    assert s.rows("SELECT state FROM admissions") == [("pending",)], "replacement expires nothing"
     assert old_receiver.call("trw_peers", action="heartbeat")["reason"] == "endpoint_replaced_by_newer_incarnation"
     assert old_receiver.call("trw_inbox")["reason"] == "endpoint_replaced_by_newer_incarnation"
     assert (
         old_receiver.call("trw_inbox", action="ack", message_ids=[message_id])["reason"]
         == "endpoint_replaced_by_newer_incarnation"
     )
-    assert sender.call("trw_send", **args) == original
+    assert old_receiver.call("trw_peers", action="enroll")["reason"] == "endpoint_replaced_by_newer_incarnation"
+    delivered = replacement.call("trw_inbox")["items"]
+    assert delivered == [{**original["receipt"], "body": "old traffic"}], "first preparation: no redelivery flag"
+    assert replacement.call("trw_inbox", action="ack", message_ids=[message_id])["status"] == "ok"
+    assert sender.call("trw_send", **args)["receipt"] == original["receipt"]
     assert s.rows("SELECT charge FROM groups") == [(1,)]
     fresh = sender.call("trw_send", **{**args, "request_key": "new", "body": "new traffic"})
     assert fresh["status"] == "ok"
@@ -105,4 +106,4 @@ def test_live_collision_then_expired_replacement_and_old_process_fencing(
     verifier.send(verify=True)
     state = verifier.receive("VERIFIED")
     assert state["status"]["status"] == "ok"
-    assert [item["state"] for item in state["status"]["items"]] == ["expired", "pending"]
+    assert [item["state"] for item in state["status"]["items"]] == ["acked", "pending"]

@@ -19,7 +19,7 @@ from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state.consolidation._archive import _archive_originals
 from trw_mcp.state.consolidation._audit_patterns import detect_audit_finding_recurrence
-from trw_mcp.state.consolidation._clustering import _load_active_entries, find_clusters
+from trw_mcp.state.consolidation._clustering import _load_active_entries, find_clusters, semantic_clustering_ready
 from trw_mcp.state.consolidation._summarize import (
     _summarize_cluster_fallback,
     _summarize_cluster_llm,
@@ -197,6 +197,19 @@ def consolidate_cycle(
         "audit_pattern_promotion_threshold": cfg.audit_pattern_promotion_threshold,
     }
 
+    # FIX-052-FR03 as amended: a tag-overlap cluster is a report, never grounds
+    # for archiving. Without semantic verification the cycle defers and writes
+    # nothing; the next cycle with a warm embedder retries.
+    if not dry_run and not semantic_clustering_ready(allow_cold_embedder_load=allow_cold_embedder_load):
+        logger.info("consolidation_deferred_no_semantic_check")
+        return {
+            **common_result,
+            "status": "deferred",
+            "reason": "no_semantic_check",
+            "clusters_found": 0,
+            "consolidated_count": 0,
+        }
+
     clusters = find_clusters(
         entries_dir,
         reader,
@@ -204,6 +217,7 @@ def consolidate_cycle(
         min_cluster_size=cfg.memory_consolidation_min_cluster,
         max_entries=max_entries,
         allow_cold_embedder_load=allow_cold_embedder_load,
+        semantic_only=not dry_run,
     )
 
     if dry_run:

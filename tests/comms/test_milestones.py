@@ -8,6 +8,7 @@ import pytest
 from fastmcp import Client
 
 from tests._formation_test_support import formation_env  # noqa: F401
+from tests.comms.conftest import core
 from tests.comms.test_fetch_ack import invoke, transport_scene  # noqa: F401
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 from trw_mcp.comms._envelope import canonical_bytes
@@ -49,7 +50,7 @@ async def test_escaped_byte_pages_prepare_only_included_and_lost_response_replay
         third = await invoke(client, "trw_inbox", cursor=second["next_cursor"])
         assert second["items"] == expected[1:2]
         assert third["items"] == expected[2:3]
-        assert third["next_cursor"] is None
+        assert "next_cursor" not in third
         assert (
             len(canonical_bytes(second)) <= s.config.comms_response_max_bytes
             and len(canonical_bytes(third)) <= s.config.comms_response_max_bytes
@@ -67,11 +68,9 @@ async def test_fetch_policy_compatibility_checked_even_when_empty(transport_scen
         assert (await invoke(client, "trw_inbox"))["reason"] == "response_body_policy_incompatible"
         assert (await invoke(client, "trw_inbox", action="status"))["items"] == []
         s.config.comms_response_max_bytes += 1
-        assert await invoke(client, "trw_inbox") == {
+        assert core(await invoke(client, "trw_inbox")) == {
             "status": "ok",
-            "delivery": "pull_only",
             "items": [],
-            "next_cursor": None,
         }
 
 
@@ -125,14 +124,14 @@ async def test_actual_small_response_bound_refuses_before_ack_mutation(transport
 
 @pytest.mark.parametrize("scene", [{"comms_body_max_bytes": 1024, "comms_response_max_bytes": 10240}], indirect=True)
 async def test_process_local_byte_guard_control_demonstrates_oversized_page(transport_scene: SendScene) -> None:
-    from trw_mcp.comms import _inbox_page
+    from trw_mcp.comms import _paging
 
     s = transport_scene
     async with Client(s.server) as client:
         for index in range(3):
             await invoke(client, "trw_send", recipient_member_id="impl-2", request_key=str(index), body="\x00" * 1024)
         s.actor("impl-2")
-        s.monkeypatch.setattr(_inbox_page, "_bounded", lambda payload, max_bytes: True)
+        s.monkeypatch.setattr(_paging, "fits", lambda payload, max_bytes: True)
         result = await invoke(client, "trw_inbox")
         assert len(result["items"]) == 3
         assert len(canonical_bytes(result)) > s.config.comms_response_max_bytes

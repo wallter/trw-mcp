@@ -27,13 +27,11 @@ from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 
-from trw_mcp.comms._schema import SCHEMA as _SCHEMA
-
 #: Bumped only for an incompatible on-disk change. A mismatch refuses; it never
 #: migrates silently, because a silent migration of a shared mailbox loses the
 #: evidence of what the other side thought it had written.
 from trw_mcp.comms._schema import SCHEMA_VERSION as SCHEMA_VERSION
-from trw_mcp.comms._schema import SchemaVersionError, verify
+from trw_mcp.comms._schema import SchemaVersionError, UpgradeRequiredError, ddl_statements, verify
 
 #: Beside the canonical formation manifest (FR10), so a group's mailbox is
 #: located by the same path that derives its group_id.
@@ -52,6 +50,10 @@ class StoreRefusal(str, Enum):
     CLOSED_GROUP = "group_closed"
     UNAVAILABLE = "storage_unavailable"
     PUBLISH_UNCERTAIN = "storage_publication_uncertain"
+    #: FR16: a v3 mailbox under a v4 build. Refused, file unchanged; the upgrade is explicit.
+    UPGRADE_REQUIRED = "mailbox_upgrade_required"
+    UPGRADE_NOT_QUIESCENT = "upgrade_not_quiescent"
+    ROLLBACK_WOULD_DROP_TRAFFIC = "rollback_would_drop_traffic"
 
 
 class StoreError(RuntimeError):
@@ -104,9 +106,8 @@ def _apply_and_verify_pragmas(conn: sqlite3.Connection, *, busy_timeout_ms: int)
 def _prepare_schema(conn: sqlite3.Connection) -> None:
     """Initialize only an exclusively owned staging file, in one transaction."""
     with immediate(conn):
-        for statement in _SCHEMA.split(";"):
-            if statement.strip():
-                conn.execute(statement)
+        for statement in ddl_statements(SCHEMA_VERSION):
+            conn.execute(statement)
         conn.execute("INSERT INTO schema_meta(key,value) VALUES ('schema_version',?)", (str(SCHEMA_VERSION),))
 
 
@@ -114,16 +115,37 @@ def _verify_schema(conn: sqlite3.Connection) -> None:
     """Read-only schema and accounting validation; never repair evidence."""
     try:
         verify(conn)
+    except UpgradeRequiredError as exc:
+        raise StoreError(
+            StoreRefusal.UPGRADE_REQUIRED,
+            "v3 mailbox: the orchestrator runs `trw-mcp formation comms-upgrade --run <orchestrator run>`",
+        ) from exc
     except SchemaVersionError as exc:
         raise StoreError(StoreRefusal.SCHEMA_MISMATCH, str(exc)) from exc
     except (ValueError, TypeError, OverflowError) as exc:
         raise StoreError(StoreRefusal.CORRUPT, "schema or accounting inconsistency") from exc
 
 
+#: ``PRAGMA data_version`` observed when ``connect`` fully verified each open connection.
+#: That pragma changes on a connection exactly when ANOTHER connection has committed
+#: since its last read (own pragma writes and commits leave it unchanged; verified on
+#: SQLite 3.53.4), so an unchanged value means no other connection has committed
+#: since verification. A raw byte write outside SQLite is not a commit and goes
+#: undetected either way (lane C probe). Keyed by id(): no weakrefs on Connection.
+_VERIFIED_DATA_VERSION: dict[int, int] = {}
+
+
 def validate_operation(conn: sqlite3.Connection) -> None:
-    """Repeat validation after obtaining the operation lock, not only on open."""
+    """Repeat validation after obtaining the operation lock, not only on open.
+
+    Skipped only when no other connection has committed since ``connect`` verified
+    this one (PRD-CORE-274 NFR08: one full verification per operation, never zero).
+    """
     if not conn.in_transaction:
         raise RuntimeError("operation validation requires transaction")
+    verified = _VERIFIED_DATA_VERSION.get(id(conn))
+    if verified is not None and verified == int(conn.execute("PRAGMA data_version").fetchone()[0]):
+        return
     _verify_schema(conn)
 
 
@@ -208,6 +230,7 @@ def connect(manifest_path: Path, *, busy_timeout_ms: int) -> Iterator[sqlite3.Co
         conn.execute("BEGIN")
         try:
             _verify_schema(conn)
+            _VERIFIED_DATA_VERSION[id(conn)] = int(conn.execute("PRAGMA data_version").fetchone()[0])
         finally:
             conn.rollback()
         _apply_and_verify_pragmas(conn, busy_timeout_ms=busy_timeout_ms)
@@ -220,6 +243,7 @@ def connect(manifest_path: Path, *, busy_timeout_ms: int) -> Iterator[sqlite3.Co
         raise StoreError(StoreRefusal.UNAVAILABLE, "storage primitive unavailable") from exc
     finally:
         if conn is not None:
+            _VERIFIED_DATA_VERSION.pop(id(conn), None)
             conn.close()
 
 

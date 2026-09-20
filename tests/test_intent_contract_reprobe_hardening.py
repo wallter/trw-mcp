@@ -49,6 +49,7 @@ from tests._intent_contract_hooks import (
     run_hook,
     write_hook_env,
 )
+from tests._layout import requires_non_root
 from trw_mcp.security.intent_contract._anchors import enforceable_claims
 from trw_mcp.security.intent_contract._control_plane import (
     EVIDENCE_VISIBILITY_PATH,
@@ -132,7 +133,7 @@ _run_hook = run_hook
 @pytest.mark.parametrize(
     ("sabotage", "label"),
     [
-        (lambda lib: lib.chmod(0o000), "chmod-000"),
+        pytest.param(lambda lib: lib.chmod(0o000), "chmod-000", marks=requires_non_root),
         (lambda lib: lib.write_text("if [ \n", encoding="utf-8"), "syntax-error"),
         (lambda lib: lib.write_text("exit 0\n", encoding="utf-8"), "self-exiting"),
     ],
@@ -168,6 +169,7 @@ def test_n6_unsourceable_lib_is_still_a_no_op_before_enrollment(tmp_path: Path, 
     assert _run_hook(project, hook).returncode == 0
 
 
+@requires_non_root
 def test_n6_enrollment_digest_covers_the_shared_hook_library(tmp_path: Path) -> None:
     """The digest half of N6: lib-trw.sh belongs to `expected_hook_digest`.
 
@@ -826,6 +828,7 @@ def test_the_upgrade_hazard_is_real_without_the_rebless(tmp_path: Path) -> None:
 
 
 @pytest_skip_no_sh
+@requires_non_root
 def test_hooks_still_enforce_after_a_vendor_resync_rebless(tmp_path: Path) -> None:
     """The re-bless must restore ENFORCEMENT, not merely a green status string."""
     project = _hook_project(tmp_path, "upgrade-enforce")

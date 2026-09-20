@@ -78,6 +78,9 @@ from trw_mcp.state.validation._prd_scoring_fr import (
 from trw_mcp.state.validation._prd_scoring_grounding import (
     compute_grounding_penalty as compute_grounding_penalty,
 )
+from trw_mcp.state.validation._prd_scoring_grounding import (
+    grounding_penalty_once as grounding_penalty_once,
+)
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _EXPECTED_SECTION_NAMES as _EXPECTED_SECTION_NAMES,
 )
@@ -357,7 +360,7 @@ def score_traceability_v2(
 
     # PRD-QUAL-063: Filesystem Grounding Penalty
     if project_root is not None:
-        penalty_mult, hallucinated = compute_grounding_penalty(content, project_root)
+        penalty_mult, hallucinated = grounding_penalty_once(content, project_root)
         if hallucinated:
             score *= penalty_mult
             details["grounding_penalty_mult"] = round(penalty_mult, 4)

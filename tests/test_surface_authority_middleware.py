@@ -103,7 +103,10 @@ async def test_standard_no_run_masks_non_kernel(
     out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
     names = {t.name for t in out}
 
-    assert names == (set(KERNEL_TOOLS) | _ALWAYS_EXPOSED) & set(eligible_tool_names())
+    # PRD-CORE-274 NFR07: comms is default-on, so peer_comms is visible before any
+    # formation exists (FR18 announce needs it); listing it creates no state.
+    comms = set(PACK_TOOLS["peer_comms"])
+    assert names == (set(KERNEL_TOOLS) | _ALWAYS_EXPOSED | comms) & set(eligible_tool_names())
     assert "trw_code_search" not in names  # code_navigation pack is masked
     assert "trw_session_start" in names  # kernel
     assert "trw_build_check" in names  # rigid (NOT kernel) — never locked out
@@ -127,7 +130,10 @@ async def test_coding_run_exposes_coding_packs(
     out = await middleware.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
     names = {t.name for t in out}
 
-    expected = (set(resolve_tool_surface("coding", "standard").tools) | _ALWAYS_EXPOSED) & set(eligible_tool_names())
+    comms = set(PACK_TOOLS["peer_comms"])  # PRD-CORE-274 NFR07 default-on
+    expected = (set(resolve_tool_surface("coding", "standard").tools) | _ALWAYS_EXPOSED | comms) & set(
+        eligible_tool_names()
+    )
     assert names == expected
     assert "trw_code_search" in names  # code_navigation pack (coding)
     assert "trw_build_check" in names  # verification pack
@@ -444,7 +450,7 @@ async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeyp
     (run_dir / "meta" / "run.yaml").write_text(
         "run_id: 20260101T000000Z-rca00001\n"
         "task: rca-task\n"
-        "framework: v27.1_TRW\n"
+        "framework: v99.9_TRW\n"
         "status: active\n"
         "phase: implement\n"
         "task_type: rca\n",
@@ -460,7 +466,10 @@ async def test_real_chain_entrypoint_masks_denies_grants(tmp_path: Path, monkeyp
         return _all_tools()
 
     listed = {t.name for t in await mw.on_list_tools(ctx, call_next_list)}  # type: ignore[arg-type]
-    rca_surface = (set(resolve_tool_surface("rca", "standard").tools) | _ALWAYS_EXPOSED) & set(eligible_tool_names())
+    comms = set(PACK_TOOLS["peer_comms"])  # PRD-CORE-274 NFR07: real config, comms default-on
+    rca_surface = (set(resolve_tool_surface("rca", "standard").tools) | _ALWAYS_EXPOSED | comms) & set(
+        eligible_tool_names()
+    )
     assert listed == rca_surface
     assert "trw_code_search" in listed  # code_navigation (rca) resolved via real pin+run.yaml
     assert "trw_build_check" in listed  # verification (rca)
@@ -530,7 +539,7 @@ def test_resolve_task_type_reads_a_swept_run(tmp_path: Path, monkeypatch: pytest
     (run_dir / "meta" / "run.yaml").write_text(
         f"run_id: {run_id}\n"
         "task: swept-task\n"
-        "framework: v27.1_TRW\n"
+        "framework: v99.9_TRW\n"
         f"status: {RunStatus.ABANDONED.value}\n"
         "phase: review\n"
         "task_type: coding\n"

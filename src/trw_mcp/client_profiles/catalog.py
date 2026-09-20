@@ -394,6 +394,10 @@ _PROFILE_DIR_SURFACES: dict[str, tuple[UninstallSurface, ...]] = {
             ".gemini/config/mcp_config.json", merged_config=True, config_shape="mcp-server-map", home_scoped=True
         ),
     ),
+    "grok": (
+        UninstallSurface(".grok/config.toml", merged_config=True, config_shape="codex-toml"),
+        UninstallSurface(".grok/agents"),
+    ),
 }
 
 

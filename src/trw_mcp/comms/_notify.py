@@ -106,6 +106,7 @@ def notify(
     now: float,
     *,
     max_recipients: int,
+    ttl_seconds: int,
 ) -> dict[str, Any]:
     """Admit one bounded fan-out, or refuse the whole of it."""
     if not conn.in_transaction:
@@ -151,7 +152,7 @@ def notify(
             continue
         envelope = Envelope(peer.member_id, shard_key(request_key, scope, peer.member_id), body, kind, delivery_class)
         try:
-            receipts[peer.member_id] = admit(conn, snapshot, envelope, now)
+            receipts[peer.member_id] = admit(conn, snapshot, envelope, now, ttl_seconds=ttl_seconds, require_live=True)
         except AdmissionError as exc:
             if exc.reason not in SKIPPABLE:
                 raise

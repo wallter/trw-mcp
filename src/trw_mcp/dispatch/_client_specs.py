@@ -197,6 +197,10 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         binary="codex",
         base_argv=("codex", "exec"),
         always_argv=("--skip-git-repo-check",),
+        # X-19: JSONL events carry the turn's own verdict (turn.completed / turn.failed /
+        # error), so an API-side stop is no longer indistinguishable from an answer.
+        # Schema measured on codex-cli 0.155.0 (tests/fixtures/codex_exec_json_ok.jsonl).
+        structured_output_argv=("--json",),
         isolation_argv=("--ignore-user-config",),
         # REVIEWER POSTURE (OD-6 / PRD-SEC-015-FR06/FR07). Two layers, rendered
         # from one source: the SERVER-side role (mcp_servers.trw.env.TRW_SURFACE_ROLE
@@ -560,49 +564,83 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
             verified_at=date(2026, 9, 5),
         ),
     ),
-    # xAI Grok Build CLI. method=unverified — REGISTERED SO IT CAN BE REFUSED,
-    # not so it can be run. Resolution raises before any argv is built, so the
-    # provisional fragments below can never reach a command line; they exist to
-    # document what is known and to make the gap concrete rather than absent.
+    # xAI Grok Build CLI. Headless is `-p` / `--single`; a trailing positional
+    # prompt starts the interactive TUI. JSON is one object with `.text`.
     #
-    # version_argv is the reason this field is per-entry data: the vendor exposes
-    # the version as the SUBCOMMAND `grok version`, not as a flag.
-    #
-    # profile_id is None — grok is absent from KNOWN_CLIENTS, so its agent
-    # surface is reported as "no client profile" rather than as False.
+    # `--sandbox read-only` REFUSED TO START on this macOS box (2026-09-19):
+    # docker.sock symlink broke Seatbelt apply. So read_only_argv is empty —
+    # headless default denies writes — rather than a flag that cannot boot.
+    # `--always-approve` / `--yolo` stay forbidden. Reviewer / with_trw stay
+    # refused: GROK_CONFIG overlay drops mcp_servers (OQ-1 closed).
     "grok": ClientSpec(
         client_id="grok",
         binary="grok",
         base_argv=("grok",),
+        # NO --permission-mode here: build_command emits always_argv BEFORE the
+        # posture fragment, so keeping dontAsk in both places put
+        # `--permission-mode dontAsk ... --permission-mode acceptEdits` on one
+        # write-path command line, and which one grok honours is unverified.
+        # The posture now sets exactly one (W1 audit MF2, 2026-09-19).
+        always_argv=("--no-subagents",),
+        structured_output_argv=("--output-format", "json"),
+        # dontAsk IS the read-only denial, proven live 2026-09-19 (W3 probe 3): a
+        # dontAsk turn asked to write ends stopReason=cancelled with nothing written.
+        read_only_argv=("--permission-mode", "dontAsk"),
+        # `auto`, NOT `acceptEdits`: headless `-p` has nobody to approve an edit, so
+        # acceptEdits denies exactly like dontAsk. Proven live 2026-09-19 (W3 probe): the
+        # same create-a-file prompt under acceptEdits ends stopReason=cancelled with no
+        # file, both through dispatch and running grok directly, while under
+        # `--permission-mode auto` it ends end_turn and the file exists. `--always-approve`
+        # and `--yolo` stay in forbidden_tokens, and bypassPermissions is unused.
+        #
+        # NOT equivalent to claude's write posture (W1 review condition): claude's
+        # acceptEdits approves EDITS, while grok's auto approves tool executions for the
+        # turn, shell included, and grok's write path is unsandboxed here because sandbox
+        # is unavailable_on_host and `--sandbox` is forbidden. An explicit --allow-writes
+        # grok child is therefore a broader grant than the same call to claude; the
+        # CHANGELOG row says so too.
+        allow_writes_argv=("--permission-mode", "auto"),
         model_flag="--model",
+        prompt_flag="-p",
+        cwd_flag="--cwd",
         version_argv=("version",),
-        forbidden_tokens=frozenset({"--tools", "--disallowed-tools"}),
-        # The reference documents --output-format but enumerates no values, so TRW
-        # passes none and there is no machine format to parse. trailing_text is
-        # the measured-absence answer here, not a guess.
-        output_shape="trailing_text",
+        forbidden_tokens=frozenset({"--tools", "--disallowed-tools", "--always-approve", "--yolo", "--sandbox"}),
+        output_shape="single_json_object",
+        # Subscription auth is ~/.grok/auth.json under HOME (grok login). HOME is
+        # already on the dispatch base allowlist. XAI_API_KEY is a CI fallback
+        # only and is not required; do not forward it (session token wins anyway).
         credential_env=(),
         instruction_files=("AGENTS.md",),
-        profile_id=None,
-        sub_agents="unknown",
-        # The vendor documents --sandbox <PROFILE> but enumerates no profile
-        # values (OQ-1), so TRW cannot name one to pass. The sandbox exists and
-        # TRW does not enable it — which is exactly available_default_off.
-        sandbox="available_default_off",
+        profile_id="grok",
+        # --no-subagents is on every dispatched command line, so TRW's own runs
+        # never have them, whatever the binary supports (W1 audit SF3).
+        sub_agents="no",
+        # The flag exists but does not start here (Seatbelt read-only refused on
+        # the verified box), so it is in forbidden_tokens above.
+        # `available_default_off` would invite an operator to turn on something
+        # that would not run; read-only rests on dontAsk's denial, not a sandbox.
+        sandbox="unavailable_on_host",
         verification=ClientVerification(
-            method="unverified",
+            method="executable",
             evidence=(
-                "https://docs.x.ai/build/cli/reference fetched 2026-09-04: binary grok, "
-                "-m/--model, --tools, --disallowed-tools, --sandbox <PROFILE> with profile "
-                "values NOT enumerated, --output-format with values NOT enumerated, version "
-                "as the subcommand `grok version`. The binary does not resolve on this box"
+                "grok 1.0.34 (3736acbc8658) [stable] on this box 2026-09-19: "
+                "`grok version`; `grok -p 'Reply with exactly the word PONG and nothing else.' "
+                "--output-format json --no-subagents --permission-mode dontAsk` exit 0, "
+                "stdout one JSON object with text='PONG', stopReason='end_turn'. "
+                "`--sandbox read-only` refused to start (docker.sock symlink / Seatbelt). "
+                "Output-format values: plain|json|streaming-json|streaming-messages-json. "
+                "Sandbox profiles (docs): off|workspace|devbox|read-only|strict. "
+                "W3 live probes 2026-09-19: `--permission-mode` twice is refused outright "
+                "('the argument --permission-mode <MODE> cannot be used multiple times'), so "
+                "every write dispatch exited 2 while both fragments carried it; and a dontAsk "
+                "turn asked to write ends stopReason=cancelled with no file created, which is "
+                "the measured read-only denial this spec now rests on. Write posture: "
+                "acceptEdits ALSO ends cancelled with no file written, headlessly and with "
+                "one flag, both through dispatch and direct; `--permission-mode auto` ends "
+                "stopReason='end_turn' and creates the file, so auto is the only verified "
+                "write posture."
             ),
-            verified_at=date(2026, 9, 4),
-            outstanding=(
-                "the --sandbox profile values and the --output-format values must be "
-                "established against the installed executable or a vendor page that "
-                "enumerates them, since neither is stated by the current reference"
-            ),
+            verified_at=date(2026, 9, 19),
         ),
     ),
 }

@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from trw_mcp.state.surface_tracking import (
     SurfaceEvent,
     _rotate_jsonl,
@@ -366,3 +368,38 @@ class TestSurfaceEventTypedDict:
         }
         assert event["learning_id"] == "L-test"
         assert event["surface_type"] == "nudge"
+
+
+def test_before_edit_rows_hold_no_content_or_absolute_paths(
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-FIX-144 NFR04: ids and repo-relative paths only -- no content, no absolute paths."""
+    from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+    monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
+    (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True)
+    summary = "zebra-summary-marker app.py must close the pool"
+    detail = "quokka-detail-marker app.py leaks sockets otherwise."
+    extract_tool_fn(make_test_server("learning"), "trw_learn")(summary=summary, detail=detail, impact=0.7)
+
+    inside = tmp_path / "src" / "app.py"
+    outside = tmp_path_factory.mktemp("outside") / "app.py"
+    assert compute_before_edit_hint(file_path=str(inside)).learnings_count == 1
+    assert compute_before_edit_hint(file_path=str(outside)).learnings_count == 1
+
+    logs = tmp_path / ".trw" / "logs"
+    receipts = [json.loads(line) for line in (logs / "recall_tracking.jsonl").read_text().splitlines()]
+    surface = [
+        row
+        for row in (json.loads(line) for line in (logs / "surface_tracking.jsonl").read_text().splitlines())
+        if row["surface_type"] == "before_edit_hint"
+    ]
+    assert [r["files_context"] for r in receipts] == [["src/app.py"], []]
+    assert [r["files_context"] for r in surface] == [["src/app.py"], []]
+    raw = json.dumps(receipts + surface)
+    for forbidden in ("zebra-summary-marker", "quokka-detail-marker", str(tmp_path), str(outside)):
+        assert forbidden not in raw, forbidden

@@ -10,8 +10,13 @@ Extracted as DIST-243 batch 54.
 
 from __future__ import annotations
 
+import functools
 import re
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import ParamSpec, TypeVar
 
 import structlog
 
@@ -26,11 +31,11 @@ from trw_mcp.state.validation._prd_scoring_traceability import (
 
 logger = structlog.get_logger(__name__)
 
-# Trailing ``:line`` or ``:line:col`` anchor on a path reference
-# (e.g. ``src/foo.py:42`` / ``src/foo.py:42:5``). Stripped before the
+# Trailing ``:line``, ``:line:col`` or ``:start-end`` anchor on a path reference
+# (e.g. ``src/foo.py:42`` / ``src/foo.py:42:5`` / ``src/foo.py:10-20``). Stripped before the
 # existence probe so a legitimately-existing file cited with a line anchor is
 # not misread as a hallucinated path.
-_LINE_SUFFIX_RE = re.compile(r":\d+(?::\d+)?$")
+_LINE_SUFFIX_RE = re.compile(r":\d+(?:-\d+)?(?::\d+)?$")
 
 # Module-level alias of the single shared exclude-dir constant. Retained under
 # the historical name as a patch seam; parity with the integrity walk is now
@@ -169,3 +174,58 @@ def compute_grounding_penalty(
         return penalty, sorted(hallucinated)
     except Exception:  # justified: fail-open, missing filesystem context should not zero traceability scoring
         return 1.0, []
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+#: One validation's grounding result per (content, root), so the traceability and
+#: implementation_readiness dimensions -- both penalised by PRD-QUAL-063-FR04 --
+#: share ONE filesystem scan instead of running it twice (REF-001: the dual
+#: application is specified behaviour; the duplicate scan was not). ``None`` outside
+#: a ``grounding_scope``, so nothing is cached across validations, where the
+#: filesystem may have changed.
+_SCOPE_MEMO: ContextVar[dict[tuple[str, str], tuple[float, list[str]]] | None] = ContextVar(
+    "prd_grounding_scope_memo", default=None
+)
+
+
+@contextmanager
+def grounding_scope() -> Iterator[None]:
+    """Share one grounding scan among the dimension scorers of a single validation.
+
+    Reentrant: an inner scope joins the outer one, so a validation that scores its
+    dimensions and then refreshes them dynamically still scans once.
+    """
+    if _SCOPE_MEMO.get() is not None:
+        yield
+        return
+    token = _SCOPE_MEMO.set({})
+    try:
+        yield
+    finally:
+        _SCOPE_MEMO.reset(token)
+
+
+def with_grounding_scope(func: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Run *func* inside one ``grounding_scope`` (a whole validation, refresh included)."""
+
+    @functools.wraps(func)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        with grounding_scope():
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+def grounding_penalty_once(content: str, project_root: Path | None) -> tuple[float, list[str]]:
+    """``compute_grounding_penalty``, computed at most once per ``grounding_scope``."""
+    memo = _SCOPE_MEMO.get()
+    key = (content, str(project_root))
+    if memo is not None and key in memo:
+        penalty, hallucinated = memo[key]
+        return penalty, list(hallucinated)
+    penalty, hallucinated = compute_grounding_penalty(content, project_root)
+    if memo is not None:
+        memo[key] = (penalty, list(hallucinated))
+    return penalty, hallucinated

@@ -54,6 +54,24 @@ def test_formation_readiness_row_never_reports_unverified_as_ready(
     # `unverified`. An available binary is evidence the CLI exists, never
     # evidence that TRW understands its sandbox semantics — so the verdict must
     # not be reachable by installing something.
+    from datetime import date
+
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS, ClientVerification
+
+    fake = CLIENT_SPECS["grok"].model_copy(
+        update={
+            "verification": ClientVerification(
+                method="unverified",
+                evidence="synthetic",
+                verified_at=date(2026, 9, 4),
+                outstanding="sandbox profile values",
+            )
+        }
+    )
+    monkeypatch.setitem(CLIENT_SPECS, "grok", fake)
+    from trw_mcp.dispatch._client_specs import _SPEC_BY_ID
+
+    monkeypatch.setitem(_SPEC_BY_ID, "grok", fake)
     bin_dir = tmp_path / "bin"
     _plant(bin_dir, "grok", "#!/bin/sh\necho 'grok 9.9.9'\n")
     _empty_path(monkeypatch, bin_dir)
@@ -205,7 +223,7 @@ def test_sandbox_is_a_typed_tri_state_not_a_boolean(tmp_path: Path, monkeypatch:
         _config(tmp_path, dispatch_enabled_clients=list(SUPPORTED_CLIENTS))
     )
     by_client = _rows_by_client(rows)
-    allowed = {"enforced", "available_default_off", "none"}
+    allowed = {"enforced", "available_default_off", "unavailable_on_host", "none"}
     for client, row in by_client.items():
         assert row["sandbox"] in allowed, f"{client} reported sandbox={row['sandbox']!r}"
         assert not isinstance(row["sandbox"], bool)
@@ -421,6 +439,24 @@ def test_absent_binary_and_probe_failure_never_produce_a_ready_verdict(
     assert row["verdict"] != "ready"
 
     # 4. an unverified client is never ready even with a working binary planted
+    from datetime import date
+
+    from trw_mcp.dispatch._client_specs import CLIENT_SPECS, ClientVerification
+
+    fake = CLIENT_SPECS["grok"].model_copy(
+        update={
+            "verification": ClientVerification(
+                method="unverified",
+                evidence="synthetic",
+                verified_at=date(2026, 9, 4),
+                outstanding="sandbox profile values",
+            )
+        }
+    )
+    monkeypatch.setitem(CLIENT_SPECS, "grok", fake)
+    from trw_mcp.dispatch._client_specs import _SPEC_BY_ID
+
+    monkeypatch.setitem(_SPEC_BY_ID, "grok", fake)
     _plant(bin_dir, "grok", "#!/bin/sh\necho 'grok 1.0'\n")
     row = formation_readiness_report(_enabled("grok"))[2][0]
     assert row["verdict"] == "unverified"

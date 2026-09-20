@@ -22,6 +22,7 @@ from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import AutoRecalledItemDict, RunStatusDict
 from trw_mcp.scoring import rank_targeted_by_utility
 from trw_mcp.scoring._recall import RecallContext
+from trw_mcp.state._origin_project import demote_unattributable
 from trw_mcp.state.propensity_log import log_ranked_selections
 
 logger = structlog.get_logger(__name__)
@@ -99,7 +100,10 @@ def _phase_contextual_recall(
         ranked = _verify_assertions(
             ar_entries, query_tokens, config, rank_targeted_by_utility, context=context, rank_always=True
         )
-    capped = ranked[: config.auto_recall_max_results]
+    # PRD-CORE-282 FR02: this project's rows first, THEN the cap. The pool is
+    # already over-fetched at three times the cap, so a local row ranked below
+    # foreign ones still reaches the payload; foreign rows fill what is left.
+    capped = demote_unattributable(ranked)[: config.auto_recall_max_results]
     try:
         log_ranked_selections(
             trw_dir,

@@ -435,7 +435,7 @@ class TestRunCurrentness:
         register_learning_tools(server)
         fp = freeze_fingerprint(
             trw_mcp_version="0.0.0",
-            framework_version="v27.1_TRW",
+            framework_version="v99.9_TRW",
             aaref_version="v3.2.0",
             template_version="3.2",
             registry_digest=registry.digest,
@@ -450,7 +450,7 @@ class TestRunCurrentness:
             stamp_path = run_root / "meta" / "canon_fingerprints.yaml"
             assert stamp_path.exists(), "trw_init must stamp canon fingerprints"
 
-            summary = summarize_run_currentness(run_root, run_framework="v27.1_TRW")
+            summary = summarize_run_currentness(run_root, run_framework="v99.9_TRW")
             assert summary["currentness"] == "current"
             assert summary["run_deployed_canon_fingerprint"] == registry.digest
             assert summary["run_live_process_fingerprint"] == fp.digest
@@ -467,7 +467,7 @@ class TestRunCurrentness:
 
         run_root = tmp_path / "legacy-run"
         (run_root / "meta").mkdir(parents=True)
-        summary = summarize_run_currentness(run_root, run_framework="v27.1_TRW")
+        summary = summarize_run_currentness(run_root, run_framework="v99.9_TRW")
         assert summary["currentness"] == "unknown"
 
 

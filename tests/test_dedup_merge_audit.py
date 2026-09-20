@@ -54,10 +54,14 @@ class TestMergeAuditTrail:
         assert "Merged from L-new-audit on" in detail
         assert "this is a much longer detail" in detail
 
-    def test_merge_detail_no_audit_marker_when_new_shorter(
+    def test_merge_detail_audit_marker_when_new_shorter(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
     ) -> None:
-        """No audit trail appended when new detail is not longer."""
+        """A shorter incoming detail is still appended (PRD-CORE-042-FR03).
+
+        Migrated: this test used to assert the opposite, pinning a length gate
+        the requirement never had, which dropped the incoming detail.
+        """
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
 
@@ -92,6 +96,6 @@ class TestMergeAuditTrail:
 
         updated = reader.read_yaml(existing_path)
         detail = str(updated["detail"])
-        # No audit trail added when new detail is shorter
-        assert "Merged from" not in detail
-        assert "---" not in detail
+        assert detail.startswith("much longer existing detail that is certainly long enough\n---\n")
+        assert "Merged from L-short-new on " in detail
+        assert detail.endswith(":\nshort")

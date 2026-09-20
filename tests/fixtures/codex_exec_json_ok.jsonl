@@ -1,0 +1,5 @@
+# codex-cli 0.155.0, measured 2026-09-19 (lane C, lead-approved single probe): codex exec --json --skip-git-repo-check --sandbox read-only "Reply with the single word OK."
+{"type":"thread.started","thread_id":"01a0badf-47ea-75a3-9316-30bd165e14a8"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"OK"}}
+{"type":"turn.completed","usage":{"input_tokens":15756,"cached_input_tokens":8064,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 import pytest
 import yaml
@@ -153,9 +154,9 @@ def test_every_endpoint_decision_refuses_a_connection_outside_the_write_lock(
     captured: list[_identity.CallerBinding] = []
     real = comms.receiver_incarnation
 
-    def capture(conn: _store.sqlite3.Connection, binding: _identity.CallerBinding, now: float) -> str:
+    def capture(conn: _store.sqlite3.Connection, binding: _identity.CallerBinding, now: float, **kwargs: Any) -> str:
         captured.append(binding)
-        return real(conn, binding, now)
+        return real(conn, binding, now, **kwargs)
 
     monkeypatch.setattr(comms, "receiver_incarnation", capture)
     assert scene.call("enroll")["status"] == "ok"
@@ -169,7 +170,8 @@ def test_every_endpoint_decision_refuses_a_connection_outside_the_write_lock(
     try:
         assert not conn.in_transaction
         for call in (
-            lambda: _endpoints.receiver_incarnation(conn, binding, 0.0),
+            lambda: _endpoints.receiver_incarnation(conn, binding, 0.0, lease_ttl_seconds=60),
+            lambda: _endpoints.touch(conn, binding, 0.0, lease_ttl_seconds=60),
             lambda: _endpoints.heartbeat(conn, binding, now=0.0, lease_ttl_seconds=60),
             lambda: _endpoints.enroll(conn, binding, now=0.0, lease_ttl_seconds=60),
         ):

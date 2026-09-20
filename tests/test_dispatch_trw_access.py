@@ -58,7 +58,7 @@ _INJECTABLE: dict[str, bool] = {
     "opencode": False,  # config comes from --dir / OPENCODE_CONFIG, not argv
     "cursor-cli": False,
     "copilot": False,
-    "grok": False,  # additionally refused upstream as unverified
+    "grok": False,  # no trw_access_argv_template (GROK_CONFIG drops mcp_servers)
 }
 
 

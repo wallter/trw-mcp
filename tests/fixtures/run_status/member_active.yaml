@@ -4,7 +4,7 @@
 # fixture fails the build rather than passing silently.
 run_id: 20260903T000000Z-fixture
 task: run-status-fixture
-framework: v27.1_TRW
+framework: v99.9_TRW
 status: active
 phase: review
 confidence: medium

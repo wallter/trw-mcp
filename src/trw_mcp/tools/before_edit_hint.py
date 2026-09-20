@@ -55,6 +55,7 @@ from trw_mcp.tools._before_edit_hint_core import (
     compute_before_edit_hint,
 )
 from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
+from trw_mcp.tools.telemetry import log_tool_call
 
 __all__ = [
     "_SCHEMA_VERSION_ACCEPTED",
@@ -72,7 +73,10 @@ __all__ = [
 def register_before_edit_hint_tools(server: FastMCP) -> None:
     """Register trw_before_edit_hint on the MCP server."""
 
+    # PRD-FIX-144 FR02: wrapped so its use reaches tool telemetry; the response
+    # is unchanged (log_tool_call never mutates the return value).
     @server.tool()
+    @log_tool_call
     def trw_before_edit_hint(
         file_path: str,
         repo_root: str | None = None,

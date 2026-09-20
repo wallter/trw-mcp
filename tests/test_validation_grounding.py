@@ -261,3 +261,17 @@ def test_greenfield_marker_of_next_token_does_not_exempt_previous(tmp_path: Path
     # src/d.py is greenfield-exempt; src/c.py is NOT (its window has no marker).
     assert hallucinated == ["src/c.py"]
     assert penalty == pytest.approx(0.9)
+
+
+def test_line_range_suffix_is_stripped_like_a_line_anchor(tmp_path: Path):
+    """Regression (PRD-QUAL-063-FR01, batch 2026-09-19 X3-1): a `:start-end`
+    range anchor — the citation style used throughout this repo's reports —
+    must be stripped like `:line`. Before the fix an EXISTING file cited as
+    `src/foo.py:10-20` was reported hallucinated (penalty 0.9), and a missing
+    one was reported under the anchored token rather than its path."""
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src/foo.py").write_text("")
+    assert compute_grounding_penalty("See `src/foo.py:10-20` and `src/foo.py:10-20:3`.", tmp_path) == (1.0, [])
+    penalty, hallucinated = compute_grounding_penalty("See `src/missing.py:10-20` for the change.", tmp_path)
+    assert hallucinated == ["src/missing.py"]
+    assert penalty == pytest.approx(0.9)

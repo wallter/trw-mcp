@@ -293,6 +293,8 @@ class TestExceptionIsNotTelemeteredAsATimeout:
         # sys.base_prefix's interpreter is the system Python: it runs the
         # stdlib-only provisional writer fine, and raises ImportError on
         # `from trw_mcp.tools.before_edit_hint import ...`.
+        if sys.base_prefix == sys.prefix:
+            pytest.skip("not running in a venv: the base interpreter imports trw_mcp, so nothing raises")
         system_python = str(Path(sys.base_prefix) / "bin" / "python3")
         if not Path(system_python).is_file():
             pytest.skip(f"no non-venv interpreter at {system_python} to force an ImportError")

@@ -26,14 +26,14 @@ from __future__ import annotations
 
 import importlib.util
 import re
-from pathlib import Path
 from types import ModuleType
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_TEMPLATE = _REPO_ROOT / "trw-mcp" / "scripts" / "install-trw.template.py"
-_MEMORY_CI = _REPO_ROOT / "trw-memory" / ".github" / "workflows" / "ci.yml"
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+_TEMPLATE = PACKAGE_ROOT / "scripts" / "install-trw.template.py"
+_MEMORY_CI = (MONOREPO_ROOT or PACKAGE_ROOT.parent) / "trw-memory" / ".github" / "workflows" / "ci.yml"
 
 
 @pytest.fixture(scope="module")
@@ -90,6 +90,7 @@ def test_probe_source_checks_both_libraries_and_never_hits_the_network(installer
     assert "local_files_only=True" in source
 
 
+@requires_monorepo
 def test_pinned_fixture_matches_the_trw_memory_ci_fixture(installer: ModuleType) -> None:
     """Do not invent a second pinned model: reuse trw-memory CI's snapshot.
 

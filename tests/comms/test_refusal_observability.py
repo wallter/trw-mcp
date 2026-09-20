@@ -10,9 +10,9 @@ from typing import Any
 import pytest
 
 from tests._structlog_capture import captured_structlog  # noqa: F401
+from tests.comms.conftest import core
 from tests.comms.test_identity_boundary import Scene, scene  # noqa: F401
 from trw_mcp import comms, formation
-from trw_mcp.models.config import TRWConfig
 
 TOOLS = ("trw_peers", "trw_send", "trw_inbox")
 EVENT = "comms_identity_refused"
@@ -84,18 +84,17 @@ def test_public_identity_refusal_logs_only_closed_reason_without_storage_writes(
 
 
 @pytest.mark.parametrize("tool", TOOLS)
-def test_default_off_is_silent_even_with_invalid_authority(
+def test_explicit_off_is_silent_even_with_invalid_authority(
     scene: Scene,
     monkeypatch: pytest.MonkeyPatch,
     captured_structlog: list[dict[str, Any]],
     tool: str,
 ) -> None:
-    assert TRWConfig.model_fields["comms_enabled"].default is False
     scene.config.comms_enabled = False
     malformed(scene, monkeypatch, "unpinned")
     before = snapshot(scene.root)
     captured_structlog.clear()
-    assert call(scene, tool) == {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
+    assert core(call(scene, tool)) == {"status": "disabled", "reason": "comms_disabled"}
     assert not [record for record in captured_structlog if record.get("event") == EVENT]
     assert snapshot(scene.root) == before
 

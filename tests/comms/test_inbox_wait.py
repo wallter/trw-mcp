@@ -23,7 +23,16 @@ import pytest
 
 import trw_mcp.comms as comms
 from tests._formation_test_support import formation_env  # noqa: F401
-from tests.comms.conftest import enable_comms  # noqa: F401
+
+#: NOTE: ``resolve_project_root``/``resolve_trw_dir`` are imported inside each
+#: test function that needs them, never at module scope: ``formation_env``
+#: monkeypatches the attributes on ``trw_mcp.state._paths`` per-test, and a
+#: module-level ``from ... import`` would bind the pre-patch originals.
+from tests._layout import MONOREPO_ROOT, requires_monorepo
+from tests.comms.conftest import (
+    core,
+    enable_comms,  # noqa: F401
+)
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 from trw_mcp import formation
 from trw_mcp.comms._admission import admit
@@ -34,15 +43,13 @@ from trw_mcp.comms._policy import MAX_COUNTER, count_refusal
 from trw_mcp.comms._store import connect, database_path, effective_time, immediate, touch_group_time
 from trw_mcp.models.config import TRWConfig
 
-#: NOTE: ``resolve_project_root``/``resolve_trw_dir`` are imported inside each
-#: test function that needs them, never at module scope: ``formation_env``
-#: monkeypatches the attributes on ``trw_mcp.state._paths`` per-test, and a
-#: module-level ``from ... import`` would bind the pre-patch originals.
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = MONOREPO_ROOT or Path(__file__).resolve().parents[3]
 #: Pinned SHA256 of the pre-amendment (git HEAD) readers, so a future edit to
 #: either file is caught here rather than silently validated against a moved
 #: target. Recomputed with ``git show HEAD:<path> | shasum -a 256``.
+#: Last commit whose comms schema is v3 (before PRD-CORE-274 Amendment 02). The v3
+#: reader is loaded from here, not HEAD, so it stays the genuine pre-upgrade reader.
+_V3_READER_REF = "016aed8dd"
 _FROZEN_SCHEMA_SHA256 = "78d8421a48d529d1708fd7eecf36f1d16ccc116359d7bb6f0a2a54bb08b71e72"
 _FROZEN_POLICY_SHA256 = "96cf21e3ecb9f4f920fe686959e262d29b2fbeace7bf2670b810699267a3d571"
 
@@ -87,11 +94,11 @@ def test_zero_wait_is_byte_identical_to_omitting_wait_seconds(scene: SendScene) 
 
 @pytest.mark.parametrize("scene", [{"comms_wait_max_seconds": 0}], indirect=True)
 def test_positive_wait_with_cap_zero_refuses_wait_disabled(scene: SendScene) -> None:
-    result = _inbox(scene, "impl-2", wait_seconds=1)
+    result = core(_inbox(scene, "impl-2", wait_seconds=1))
     assert result == {
         "status": "refused",
         "reason": "wait_disabled",
-        "detail": "Peer operation refused.",
+        "detail": "fetch without wait_seconds",
         "delivery": "pull_only",
     }
     assert _refusal_counts(scene) == {"invalid_inbox_arguments": 1}
@@ -184,7 +191,7 @@ def _owner_change_probe(
                 now = effective_time(conn, sender_snapshot.binding.group_id)
                 touch_group_time(conn, sender_snapshot.binding.group_id, now)
                 envelope = Envelope("impl-2", "after-replace", "should-not-be-seen", "request", "on_demand")
-                admit(conn, sender_snapshot, envelope, now)
+                admit(conn, sender_snapshot, envelope, now, ttl_seconds=86400)
         return result
 
     monkeypatch.setattr(comms_module, "_inbox_attempt", wrapped)
@@ -222,7 +229,10 @@ def test_owner_change_still_detected_when_the_first_attempt_is_artificially_slow
 
 
 @pytest.mark.parametrize("scene", [{"comms_wait_interval_ms": 100}], indirect=True)
-def test_lease_expiry_mid_wait_refuses_lease_expired_and_leaves_the_value_unchanged(scene: SendScene) -> None:
+def test_lease_expiry_mid_wait_neither_refuses_nor_is_renewed_by_retries(scene: SendScene) -> None:
+    """PRD-CORE-274 FR12 supersedes the FR07 lease gate: an expired lease is advisory and
+    refuses nothing. FR11 still holds: retries inside the wait never renew the lease, so
+    the lapsed value the retries observed is exactly what remains."""
     expiry: dict[str, float] = {}
 
     def expire_lease() -> None:
@@ -234,8 +244,7 @@ def test_lease_expiry_mid_wait_refuses_lease_expired_and_leaves_the_value_unchan
         scene.rows("UPDATE endpoints SET lease_expires_at=? WHERE member_id='impl-2'", (soon,))
 
     result = _mid_wait(scene, expire_lease)
-    assert result["status"] == "refused" and result["reason"] == "receiver_lease_expired"
-    # The refusal itself (a read-only lease check) must not further move the value.
+    assert result["status"] == "ok" and result["items"] == [], result
     assert scene.rows("SELECT lease_expires_at FROM endpoints WHERE member_id='impl-2'") == [(expiry["value"],)]
 
 
@@ -312,7 +321,7 @@ def test_reload_config_mid_wait_refuses_as_a_plain_call_would_at_that_moment(
     else:
         assert len(attempts) == 2, "the next ordinary attempt must observe the replacement"
         if reason == "comms_disabled":
-            assert result == {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
+            assert core(result) == {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
             assert _refusal_counts(scene) == {}
         else:
             assert result["status"] == "refused" and result["reason"] == reason
@@ -324,14 +333,16 @@ def test_empty_attempts_leave_admissions_milestones_endpoints_and_lease_unchange
     before = (
         scene.rows("SELECT * FROM admissions"),
         scene.rows("SELECT * FROM milestones"),
-        scene.rows("SELECT group_id,member_id,incarnation,lease_expires_at FROM endpoints"),
+        # The ordinary first attempt renews the lease (FR12); retries never do (proved by
+        # test_lease_expiry_mid_wait_neither_refuses_nor_is_renewed_by_retries).
+        scene.rows("SELECT group_id,member_id,incarnation FROM endpoints"),
     )
     result = _inbox(scene, "impl-2", wait_seconds=1)
     assert result["status"] == "ok" and result["items"] == []
     after = (
         scene.rows("SELECT * FROM admissions"),
         scene.rows("SELECT * FROM milestones"),
-        scene.rows("SELECT group_id,member_id,incarnation,lease_expires_at FROM endpoints"),
+        scene.rows("SELECT group_id,member_id,incarnation FROM endpoints"),
     )
     assert before == after
 
@@ -356,7 +367,7 @@ def test_a_message_admitted_during_the_wait_is_returned_before_the_deadline(scen
             now = effective_time(conn, sender_snapshot.binding.group_id)
             touch_group_time(conn, sender_snapshot.binding.group_id, now)
             envelope = Envelope("impl-2", "mid-wait", "arrived", "request", "on_demand")
-            admit(conn, sender_snapshot, envelope, now)
+            admit(conn, sender_snapshot, envelope, now, ttl_seconds=86400)
 
     result = _mid_wait(scene, admit_from_sender)
     assert result["status"] == "ok"
@@ -417,10 +428,10 @@ def test_count_refusal_fails_closed_for_an_unmapped_reason_with_no_row_written(s
 
 def _load_frozen_module(relative_path: str, expected_sha256: str) -> Any:
     blob = subprocess.run(
-        ["git", "show", f"HEAD:{relative_path}"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
+        ["git", "show", f"{_V3_READER_REF}:{relative_path}"], cwd=_REPO_ROOT, capture_output=True, text=True, check=True
     ).stdout
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
-    assert digest == expected_sha256, f"{relative_path} at HEAD drifted from the pinned frozen baseline"
+    assert digest == expected_sha256, f"{relative_path} at {_V3_READER_REF} drifted from the pinned frozen baseline"
     spec = importlib.util.spec_from_loader(f"frozen_{Path(relative_path).stem}", loader=None)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
@@ -435,10 +446,12 @@ def _load_frozen_module(relative_path: str, expected_sha256: str) -> Any:
     return module
 
 
-def test_old_reader_baseline_validates_a_mailbox_produced_by_fr11_wait_code(scene: SendScene) -> None:
-    """The pre-amendment schema/policy reader, loaded from git HEAD, must still accept
-    a mailbox that the NEW wait code produced: messages, receipts, and a few wait
-    refusals. FR11 adds no schema/migration, so an old reader must see nothing new.
+@requires_monorepo
+def test_v3_reader_refuses_a_v4_mailbox_explicitly_and_changes_nothing(scene: SendScene) -> None:
+    """PRD-CORE-274 FR16 (Amendment 02) supersedes the FR11-era guarantee that a
+    pre-amendment reader accepts a mailbox the new code produced. A v3 reader, loaded
+    from the last v3 commit, must now REFUSE a fresh v4 mailbox with an explicit schema
+    version error, and the refusal must leave every row intact (no silent migration).
     """
     scene.send("kept", "kept")
     assert _inbox(scene, "impl-2", action="fetch")["items"][0]["body"] == "kept"
@@ -454,7 +467,9 @@ def test_old_reader_baseline_validates_a_mailbox_produced_by_fr11_wait_code(scen
     conn = sqlite3.connect(database_path(scene.formation.manifest_path()))
     conn.row_factory = sqlite3.Row
     try:
-        frozen_schema.verify(conn)  # must not raise: old reader accepts the new mailbox
+        with pytest.raises(frozen_schema.SchemaVersionError):
+            frozen_schema.verify(conn)
+        assert conn.execute("SELECT value FROM schema_meta").fetchone()[0] == "4"
         assert conn.execute("SELECT COUNT(*) FROM admissions").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM refusal_counts").fetchone()[0] >= 1
     finally:

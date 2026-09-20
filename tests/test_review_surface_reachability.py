@@ -34,7 +34,7 @@ from trw_mcp.middleware.surface_authority import (
     reset_surface_authority_state,
 )
 from trw_mcp.models.phase_policy import DEFAULT_PHASE_POLICY, RIGID_TOOLS, PhaseToolPolicy
-from trw_mcp.models.surface_packs import KERNEL_TOOLS
+from trw_mcp.models.surface_packs import KERNEL_TOOLS, PACK_TOOLS
 from trw_mcp.server._surface_manifest_registry import eligible_tool_names, resolve_tool_surface
 from trw_mcp.tools import phase_overrides
 
@@ -169,7 +169,9 @@ async def test_review_visible_on_kernel_only_surface(monkeypatch: pytest.MonkeyP
     names = await _list_via(mw, _FakeMiddlewareContext(fastmcp_context=_FakeContext()))
 
     assert "trw_review" in names
-    assert names == set(KERNEL_TOOLS) | {
+    # PRD-CORE-274 NFR07: comms is default-on, so the three peer tools join the
+    # no-run surface (explicit comms_enabled: false removes them).
+    assert names == set(KERNEL_TOOLS) | set(PACK_TOOLS["peer_comms"]) | {
         "trw_build_check",
         "trw_init",
         "trw_review",

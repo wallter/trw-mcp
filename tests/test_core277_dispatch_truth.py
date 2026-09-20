@@ -12,6 +12,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -468,6 +469,11 @@ class TestVersionStatusNamesEveryMismatch:
 
 
 class TestPredatingWriters:
+    #: A registration epoch must postdate the process's own birth or the writer
+    #: census discards the lock as a recycled pid -- Linux reads the birth time
+    #: from ``/proc/<pid>/stat``, so a 1970 epoch is never classified there.
+    _NOW = time.time()
+
     @staticmethod
     def _registry(trw_dir: Path, pid: int, epoch: float) -> None:
         writers = trw_dir / "memory" / "memory.db.writers"
@@ -479,8 +485,8 @@ class TestPredatingWriters:
     ) -> None:
         from trw_mcp.server import _doctor_predating_writers as module
 
-        self._registry(tmp_path, os.getpid(), epoch=1000.0)
-        monkeypatch.setattr(module, "_install_epoch", lambda: (2000.0, "dist_info_mtime"))
+        self._registry(tmp_path, os.getpid(), epoch=self._NOW)
+        monkeypatch.setattr(module, "_install_epoch", lambda: (self._NOW + 1000.0, "dist_info_mtime"))
 
         status, message = module.predating_writers_row(tmp_path)
 
@@ -493,8 +499,8 @@ class TestPredatingWriters:
     def test_a_newer_registration_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from trw_mcp.server import _doctor_predating_writers as module
 
-        self._registry(tmp_path, os.getpid(), epoch=3000.0)
-        monkeypatch.setattr(module, "_install_epoch", lambda: (2000.0, "dist_info_mtime"))
+        self._registry(tmp_path, os.getpid(), epoch=self._NOW + 1000.0)
+        monkeypatch.setattr(module, "_install_epoch", lambda: (self._NOW, "dist_info_mtime"))
 
         status, _message = module.predating_writers_row(tmp_path)
 
@@ -505,7 +511,7 @@ class TestPredatingWriters:
     ) -> None:
         from trw_mcp.server import _doctor_predating_writers as module
 
-        self._registry(tmp_path, os.getpid(), epoch=1000.0)
+        self._registry(tmp_path, os.getpid(), epoch=self._NOW)
         monkeypatch.setattr(module, "_install_epoch", lambda: (None, "unavailable"))
 
         status, message = module.predating_writers_row(tmp_path)

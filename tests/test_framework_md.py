@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.models.config import TRWConfig
+
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -229,7 +231,7 @@ class TestFrameworkPortability:
 
     def test_header_declares_model_agnostic_policy(self) -> None:
         content = _framework_content()
-        assert "v27.1_TRW" in content
+        assert TRWConfig.model_fields["framework_version"].default in content
         assert "MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK" in content
         assert "Model policy: capability-based" in content
 

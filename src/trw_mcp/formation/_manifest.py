@@ -51,6 +51,14 @@ class FormationError(RuntimeError):
     """
 
 
+class AdmissionRefused(FormationError):
+    """A DEFINITIVE FR18 join refusal (not admitted, or the admission no longer matches).
+
+    Distinct from lock contention or I/O, which are retryable: only this may make a
+    pick-up revoke a candidate (lane C review of A7b, M4).
+    """
+
+
 class FormationMemberStatus(str, Enum):
     """Closed member lifecycle vocabulary.
 
@@ -139,6 +147,12 @@ class FormationMember(BaseModel):
     status: FormationMemberStatus = FormationMemberStatus.PENDING
     joined_utc: str | None = None
     note: str = ""
+    #: PRD-CORE-274-FR18: first-come join is allowed only on an explicitly open slot.
+    open_join: bool = False
+    #: The candidate handle the orchestrator admitted to this slot, and the manifest
+    #: revision that admitted it (server-set; a payload cannot supply the revision).
+    admitted_candidate: str | None = None
+    admitted_revision: int | None = None
 
     @field_validator("member_id")
     @classmethod

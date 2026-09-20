@@ -104,6 +104,7 @@ _SUPPORTED_IDES = [
     "codex",
     "copilot",
     "antigravity-cli",
+    "grok",
 ]
 
 # Legacy identifier migrations — old names that prior configs may still hold.
@@ -158,6 +159,10 @@ _IDE_META: dict[str, dict[str, str]] = {
     "antigravity-cli": {
         "label": "Antigravity CLI",
         "summary": "Antigravity (agy) native profile — ANTIGRAVITY.md, MCP config, and subagents.",
+    },
+    "grok": {
+        "label": "Grok Build CLI",
+        "summary": "Native .grok MCP config and AGENTS.md ceremony; agents in .grok/agents.",
     },
 }
 
@@ -4871,7 +4876,7 @@ def main() -> None:
         dest="pin_version",
         default="",
         metavar="VER",
-        help="Pin the TRW release version to install (or set TRW_VERSION). Bootstrap verifies its published checksum.",
+        help="Pin the trw-mcp release version to install (or set TRW_VERSION). Bootstrap verifies its published checksum.",
     )
     # PRD-SEC-006-FR09: offline / air-gapped install from embedded wheels.
     parser.add_argument(

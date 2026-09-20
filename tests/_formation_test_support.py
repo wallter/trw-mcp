@@ -43,6 +43,8 @@ class FormationFixture:
                     "owned_paths": ["src/alpha"],
                     "test_owned_paths": ["tests/test_alpha.py"],
                     "prd_ids": ["PRD-CORE-900"],
+                    # PRD-CORE-274-FR18: first-come join needs an explicitly open slot.
+                    "open_join": True,
                 },
                 {
                     "member_id": "impl-2",
@@ -51,6 +53,7 @@ class FormationFixture:
                     "owned_paths": ["src/beta"],
                     "test_owned_paths": ["tests/test_beta.py"],
                     "prd_ids": ["PRD-CORE-901"],
+                    "open_join": True,
                 },
             ],
         }

@@ -57,7 +57,8 @@ def test_manifest_path_resolution_stays_typed_and_nonmutating(
         result = call(tool, **arguments)
         assert result["status"] == "refused"
         assert result["reason"] == "formation_unavailable"
-        assert result["detail"] == "Peer operation refused."
+        # FR18: a refusal names its next action (static text, never the path or exception).
+        assert result["detail"] == "the formation store is unreadable; ask the operator to repair it"
         assert {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in files if p.is_file()} == before
     manifest.write_bytes(original)
     assert call("trw_peers", action="list")["status"] == "ok"

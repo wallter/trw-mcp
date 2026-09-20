@@ -74,8 +74,8 @@ async def test_hostile_body_does_not_change_real_authority(
         s.monkeypatch.setenv("TRW_REVIEW_SIGNOFF_KEY", "synthetic-test-only-signoff-key-900")
         original = _inbox_page.prepare_fetch
 
-        def grant_during_fetch(conn: Any, rows: Any, now: float) -> None:
-            original(conn, rows, now)
+        def grant_during_fetch(conn: Any, rows: Any, now: float, incarnation: str) -> None:
+            original(conn, rows, now, incarnation)
             if mutation == "permission":
                 phase_overrides.grant_override("pin-b", "trw_deliver", reason="synthetic authority mutation control")
             else:

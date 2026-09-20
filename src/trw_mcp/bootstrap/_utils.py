@@ -59,29 +59,48 @@ _DATA_DIR = Path(__file__).parent.parent / "data"
 # ---------------------------------------------------------------------------
 
 
-def _trw_mcp_server_entry() -> dict[str, object]:
-    """Build the ``trw`` MCP server entry for .mcp.json.
+#: Where a project-local venv puts the trw-mcp console script, relative to the project root.
+_PROJECT_VENV_LAUNCHERS: tuple[str, ...] = (".venv/bin/trw-mcp", ".venv/Scripts/trw-mcp.exe")
 
-    Prefers the ``trw-mcp`` console script when it is on PATH (the normal
-    install). Falls back to a PORTABLE ``python3 -m trw_mcp.server`` invocation
-    rather than the machine-absolute ``sys.executable`` (PRD-SEC-006, audit
-    installer-client-12): committing a build-machine interpreter path into a
-    project's ``.mcp.json`` breaks the config on every other machine and leaks
-    a host-specific path.
 
-    ``args`` is empty, and as of 2026-07-27 that is true of EVERY client
-    bootstrap profile — codex, cursor, and opencode used to bake in ``--debug``
-    while this generic entry did not, so the same install logged different
-    things depending on which client spawned the server. A client profile tunes
-    surface density, never protocol, and log verbosity is protocol. Verbose
-    logging is opted into portably via ``.trw/config.yaml`` ``debug: true``
-    (or ``TRW_LOG_LEVEL``) — see ``_logging.configure_logging``.
+def resolve_trw_mcp_launcher(target_dir: Path | None = None, *, root_prefix: str = "") -> tuple[str, list[str]]:
+    """The ``(command, args)`` every client config uses to start trw-mcp (N17).
+
+    One order for every client generator:
+
+    1. the PROJECT venv's ``trw-mcp`` (``.venv/bin/trw-mcp``), when *target_dir* has one:
+       a project that installs trw-mcp into its own venv must run THAT build, never
+       an older global install that happens to be first on PATH (observed: grok and
+       agy sessions in this repo ran a stale PyPI trw-mcp 3.1.0 from PATH);
+    2. ``trw-mcp`` on PATH;
+    3. a portable ``python3 -m trw_mcp.server``.
+
+    The project path is RELATIVE to the project root and carries *root_prefix*,
+    for clients that do not start servers in the project root but expand a
+    variable (Cursor and VS Code: ``"${workspaceFolder}/"``). It is never a
+    machine-absolute path (PRD-SEC-006, audit installer-client-12): these configs
+    are committed and shared.
     """
+    if target_dir is not None:
+        for rel in _PROJECT_VENV_LAUNCHERS:
+            if (target_dir / rel).is_file():
+                return f"{root_prefix}{rel}", []
     if shutil.which("trw-mcp"):
-        return {"command": "trw-mcp", "args": []}
-    # Portable fallback: a bare ``python3`` resolves per-machine via PATH and is
-    # not flagged as a user-customized entry (which would block refresh).
-    return {"command": "python3", "args": ["-m", "trw_mcp.server"]}
+        return "trw-mcp", []
+    return "python3", ["-m", "trw_mcp.server"]
+
+
+def _trw_mcp_server_entry(target_dir: Path | None = None) -> dict[str, object]:
+    """Build the ``trw`` MCP server entry for .mcp.json (``resolve_trw_mcp_launcher``).
+
+    ``args`` is empty for the console-script forms, and as of 2026-07-27 that is
+    true of EVERY client bootstrap profile. A client profile tunes surface
+    density, never protocol, and log verbosity is protocol. Verbose logging is
+    opted into portably via ``.trw/config.yaml`` ``debug: true`` (or
+    ``TRW_LOG_LEVEL``) — see ``_logging.configure_logging``.
+    """
+    command, args = resolve_trw_mcp_launcher(target_dir)
+    return {"command": command, "args": args}
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +479,10 @@ def detect_ide(target_dir: Path) -> list[str]:
         detected.append("copilot")
     if (target_dir / ".antigravitycli").is_dir() or (target_dir / "ANTIGRAVITY.md").is_file():
         detected.append("antigravity-cli")
+    from ._grok import grok_config_names_trw  # local: _grok imports this module
+
+    if grok_config_names_trw(target_dir):
+        detected.append("grok")
     return detected
 
 

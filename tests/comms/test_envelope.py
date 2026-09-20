@@ -26,7 +26,10 @@ def test_request_key_is_bounded(scene: SendScene, key: str) -> None:
 def test_all_delivery_classes_remain_pull_only(scene: SendScene, delivery: str) -> None:
     result = scene.send(delivery_class=delivery)
     assert result["status"] == "ok"
-    assert result["delivery"] == "pull_only"
+    if delivery == "on_demand":
+        assert "delivery" not in result
+    else:
+        assert result["delivery"] == "pull_only"
     assert result["receipt"]["delivery_class"] == delivery
 
 

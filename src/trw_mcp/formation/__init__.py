@@ -34,7 +34,27 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.formation._admission import revoke_run_stamp as revoke_run_stamp
 from trw_mcp.formation._brief import render_brief
+from trw_mcp.formation._candidates import CANDIDATE_CAP as CANDIDATE_CAP
+from trw_mcp.formation._candidates import LIVE_STATES as LIVE_CANDIDATE_STATES
+from trw_mcp.formation._candidates import Candidate as Candidate
+from trw_mcp.formation._candidates import CandidateError as CandidateError
+from trw_mcp.formation._candidates import CandidateState as CandidateState
+from trw_mcp.formation._candidates import announce as announce_candidate
+from trw_mcp.formation._candidates import candidate as candidate
+from trw_mcp.formation._candidates import candidate_for as candidate_for
+from trw_mcp.formation._candidates import live_candidates as live_candidates
+from trw_mcp.formation._candidates import set_state as set_candidate_state
+from trw_mcp.formation._coordination import CoordinationRoot as CoordinationRoot
+from trw_mcp.formation._coordination import WorktreeRecord as WorktreeRecord
+from trw_mcp.formation._coordination import authority_roots as authority_roots
+from trw_mcp.formation._coordination import bootstrap_root as bootstrap_root
+from trw_mcp.formation._coordination import linked_worktree as linked_worktree
+from trw_mcp.formation._coordination import own_root as own_root
+from trw_mcp.formation._coordination import record_worktree_member as record_worktree_member
+from trw_mcp.formation._coordination import shared_authority_root as shared_authority_root
+from trw_mcp.formation._coordination import worktree_record as worktree_record
 from trw_mcp.formation._join import create as _create
 from trw_mcp.formation._join import join as _join
 from trw_mcp.formation._join import mark_member_delivered as _mark_member_delivered
@@ -42,6 +62,7 @@ from trw_mcp.formation._join import revise as _revise
 from trw_mcp.formation._manifest import (
     TERMINAL_STATUSES as TERMINAL_STATUSES,
 )
+from trw_mcp.formation._manifest import AdmissionRefused as AdmissionRefused
 from trw_mcp.formation._manifest import (
     FormationError as FormationError,
 )
@@ -59,6 +80,8 @@ from trw_mcp.formation._ownership import declaration_covers as declaration_cover
 from trw_mcp.formation._ownership import owner_of as _owner_of
 from trw_mcp.formation._ownership import owner_of as owner_of_manifest
 from trw_mcp.formation._ownership import relative_to_root as relative_to_root
+from trw_mcp.formation._slots import add_slots as _add_slots
+from trw_mcp.formation._slots import remove_slot as _remove_slot
 from trw_mcp.formation._status import MemberRow as MemberRow
 from trw_mcp.formation._status import member_rows, non_terminal_members
 from trw_mcp.formation._store import (
@@ -68,6 +91,8 @@ from trw_mcp.formation._store import (
     FormationContext as FormationContext,
 )
 from trw_mcp.formation._store import manifest_path_for_run as manifest_path_for_run
+from trw_mcp.formation._store import read_manifest as read_manifest
+from trw_mcp.formation._store import registered_formations as registered_formations
 from trw_mcp.formation._store import resolve_active
 from trw_mcp.formation._store import resolve_manifest_path as resolve_manifest_path
 from trw_mcp.formation._store import stamped_ids as stamped_ids
@@ -75,8 +100,15 @@ from trw_mcp.formation._store import stamped_ids as stamped_ids
 logger = structlog.get_logger(__name__)
 
 __all__ = [
+    "CANDIDATE_CAP",
+    "LIVE_CANDIDATE_STATES",
     "MANIFEST_FILENAME",
     "TERMINAL_STATUSES",
+    "AdmissionRefused",
+    "Candidate",
+    "CandidateError",
+    "CandidateState",
+    "CoordinationRoot",
     "FormationContext",
     "FormationError",
     "FormationManifest",
@@ -86,22 +118,40 @@ __all__ = [
     "FormationStatus",
     "MemberRow",
     "Ownership",
+    "WorktreeRecord",
+    "add_slots",
+    "announce_candidate",
+    "authority_roots",
+    "bootstrap_root",
     "brief",
+    "candidate",
+    "candidate_for",
     "create",
     "declaration_covers",
     "join",
+    "linked_worktree",
+    "live_candidates",
     "load",
     "manifest_path_for_run",
     "mark_member_delivered",
+    "own_root",
     "owner_of",
     "owner_of_manifest",
+    "read_manifest",
+    "record_worktree_member",
+    "registered_formations",
     "relative_to_root",
+    "remove_slot",
     "resolve_manifest_path",
     "revise",
+    "revoke_run_stamp",
+    "set_candidate_state",
     "settings",
+    "shared_authority_root",
     "stamped_ids",
     "status",
     "validate",
+    "worktree_record",
 ]
 
 
@@ -216,8 +266,9 @@ def join(
     *,
     pin_key: str | None = None,
     trw_dir: Path | None = None,
+    candidate_id: str | None = None,
 ) -> FormationManifest:
-    """Record *member_id*'s run and pin atomically (FR04)."""
+    """Record *member_id*'s run and pin atomically (FR04); a pending slot needs admission (FR18)."""
     return _join(
         trw_dir=trw_dir or _trw_dir(),
         formation_id=formation_id,
@@ -225,6 +276,7 @@ def join(
         run_path=run_path,
         pin_key=pin_key,
         lock_timeout_seconds=settings().lock_timeout_seconds,
+        candidate_id=candidate_id,
     )
 
 
@@ -241,6 +293,40 @@ def revise(
         formation_id=formation_id,
         caller_run_path=caller_run_path,
         updates={k: dict(v) for k, v in updates.items()},
+        lock_timeout_seconds=settings().lock_timeout_seconds,
+    )
+
+
+def add_slots(
+    formation_id: str,
+    caller_run_path: Path | None,
+    members: list[dict[str, object]],
+    *,
+    trw_dir: Path | None = None,
+) -> FormationManifest:
+    """Append pending slots, optionally admitting a candidate to each (orchestrator only; ledger N3)."""
+    return _add_slots(
+        trw_dir=trw_dir or _trw_dir(),
+        formation_id=formation_id,
+        caller_run_path=caller_run_path,
+        members=[dict(m) for m in members],
+        lock_timeout_seconds=settings().lock_timeout_seconds,
+    )
+
+
+def remove_slot(
+    formation_id: str,
+    caller_run_path: Path | None,
+    member_id: str,
+    *,
+    trw_dir: Path | None = None,
+) -> FormationManifest:
+    """Remove a slot that never joined (orchestrator only; ledger N3)."""
+    return _remove_slot(
+        trw_dir=trw_dir or _trw_dir(),
+        formation_id=formation_id,
+        caller_run_path=caller_run_path,
+        member_id=member_id,
         lock_timeout_seconds=settings().lock_timeout_seconds,
     )
 

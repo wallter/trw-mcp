@@ -42,8 +42,8 @@ _TEMPLATE = Path(__file__).resolve().parents[1] / "scripts" / "install-trw.templ
 _CURRENT_STATUS: dict[str, object] = {
     "versions": {
         "packages": {"trw-mcp": "2.0.1"},
-        "framework_protocol_version": "v27.1_TRW",
-        "installed_asset_version": "v27.1_TRW",
+        "framework_protocol_version": "v99.9_TRW",
+        "installed_asset_version": "v99.9_TRW",
         "installed_asset_trw_mcp_version": "2.0.1",
         "installed_asset_present": True,
     },
@@ -67,7 +67,7 @@ def _prior_install(tmp_path: Path, targets: list[str]) -> Path:
     (target / ".git").mkdir(parents=True)
     trw = target / ".trw"
     trw.mkdir()
-    (trw / "installer-meta.yaml").write_text("framework_version: v27.1_TRW\n", encoding="utf-8")
+    (trw / "installer-meta.yaml").write_text("framework_version: v99.9_TRW\n", encoding="utf-8")
     (trw / "config.yaml").write_text(
         "installation_id: proj\ntarget_platforms:\n" + "".join(f"  - {t}\n" for t in targets),
         encoding="utf-8",

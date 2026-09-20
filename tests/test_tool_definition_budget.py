@@ -138,7 +138,32 @@ pytestmark = pytest.mark.unit
 # registered tools, 108 over. The ceiling is raised by 150 to 40,100 for that
 # measured growth and nothing else; the clause stays because the parameter is
 # unusable without it. Authorised by the program lead (board seq 145).
-FULL_SURFACE_CEILING_CHARS: Final[int] = 40_100
+#
+# 2026-09-19: trw-jev slice 1 (PRD-CORE-288 decision-backend design)
+# adds ONE new opt-in tool, trw_decision (2 required params: questions, state;
+# a Context param does not enter the schema), gated off by default via
+# decision_enabled. Measured at 662 chars (374 prose + 288 signature floor for
+# the two params) after trimming the docstring to the minimum "Use when"/
+# "Output:" pair the structural gate requires. Baseline on the shared working
+# tree (other sessions' uncommitted definitions, same caveat as 2026-09-18) was
+# already 40,134 -- 34 over -- before this addition; a new tool's own inherent
+# 2-parameter floor cannot close a pre-existing shared-tree deficit it did not
+# create. Re-measured 40,796 across 52 tools; the ceiling is raised by 700 to
+# 40,800 for that measured growth and nothing else. Flagged for the operator to
+# confirm alongside the next prose-tightening pass (no "program lead" sign-off
+# obtained for this specific bump -- see PR description).
+#
+# 2026-09-19: PRD-CORE-274 Amendment 02 (FR18) adds three values to the
+# trw_peers `action` enum (announce, withdraw, discover) and no prose: the
+# actions are taught by the once-per-change guidance block, not by the
+# definition. Measured after merging main: 40,170 across 51 tools, 70 over.
+# Raised by 100 to 40,200 for exactly that enum growth; the definition's prose
+# is owned by the root compact-wrapper change and is not lengthened here.
+#
+# 2026-09-19 (merge of the two entries above): trw_decision plus the three
+# trw_peers enum values measure 40,832 across 52 tools together. Set to 40,900:
+# exactly the two measured growths, nothing else.
+FULL_SURFACE_CEILING_CHARS: Final[int] = 40_900
 CORE_PRESET_CEILING_CHARS: Final[int] = 15_200
 
 # A tool definition has two independently-governed halves, and conflating them

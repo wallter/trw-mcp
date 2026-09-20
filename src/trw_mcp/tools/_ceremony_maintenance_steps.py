@@ -100,8 +100,8 @@ def _check_version_sentinel(
 
     if _compare_versions(running_version, installed_version) and "update_advisory" not in maintenance:
         maintenance["update_advisory"] = (
-            f"TRW v{installed_version} is installed on disk but this MCP server is still "
-            f"running v{running_version}. Run /mcp to reload."
+            f"trw-mcp {installed_version} is installed on disk but this MCP server is still "
+            f"running {running_version}. Run /mcp to reload."
         )
 
 

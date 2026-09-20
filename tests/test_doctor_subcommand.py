@@ -93,7 +93,7 @@ def test_config_absent_warn(tmp_path: Path) -> None:
 def test_config_valid_pass(tmp_path: Path) -> None:
     trw = tmp_path / ".trw"
     trw.mkdir()
-    (trw / "config.yaml").write_text("framework_version: v27.1_TRW\n", encoding="utf-8")
+    (trw / "config.yaml").write_text("framework_version: v99.9_TRW\n", encoding="utf-8")
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     cfg = _status_of(results, "config")
     assert cfg.status == "PASS"

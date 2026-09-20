@@ -713,6 +713,8 @@ class TestUninstallManifest:
         assert ".github/instructions/typescript-react.instructions.md" in relpaths
         # FIX 4: .cursor/mcp.json (distinct from the root .mcp.json).
         assert ".cursor/mcp.json" in relpaths
+        assert ".grok/config.toml" in relpaths
+        assert ".grok/agents" in relpaths
 
     def test_manifest_marks_shared_files_as_managed_blocks(self) -> None:
         """Shared root instruction files are managed-block surfaces."""
@@ -746,6 +748,7 @@ class TestUninstallManifest:
             # The root map, used by claude-code — same shape, same merge
             # semantics, and for a long time the only one not protected.
             ".mcp.json": "mcp-server-map",
+            ".grok/config.toml": "codex-toml",
         }
         for relpath, shape in expected.items():
             surface = by_path[relpath]

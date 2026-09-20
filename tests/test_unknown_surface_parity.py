@@ -109,9 +109,9 @@ def test_versioned_kernel_and_manifest_preserve_feedback_contract() -> None:
     and registered public inventory remain unchanged."""
     assert kernel_digest() == KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
     assert KERNEL_VERSION_DIGESTS[1] == "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7"
-    # 51 since PRD-CORE-274 T3 completed peers/send/inbox in peer_comms
+    # 52 since trw-jev slice 1 added trw_decision to the new decision_support
     # pack. The count is pinned so a surface addition is a visible diff here.
-    assert len(TOOL_MANIFEST) == 51
+    assert len(TOOL_MANIFEST) == 52
     assert CAPABILITY_PACKS["feedback"] == ("trw_submit_feedback",)
     # ``trw_submit_feedback`` belongs to EXACTLY the feedback pack (FR06 AC3).
     owning = [pack for pack, tools in PACK_TOOLS.items() if "trw_submit_feedback" in tools]

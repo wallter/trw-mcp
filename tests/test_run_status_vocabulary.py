@@ -63,7 +63,7 @@ def _run_yaml_text(status: str, *, run_id: str = "20260903T000000Z-aaaa1111") ->
     return (
         f"run_id: {run_id}\n"
         "task: vocabulary-probe\n"
-        "framework: v27.1_TRW\n"
+        "framework: v99.9_TRW\n"
         f"status: {status}\n"
         "phase: review\n"
         "task_type: coding\n"

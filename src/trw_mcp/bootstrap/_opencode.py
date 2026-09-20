@@ -61,7 +61,7 @@ _OPENCODE_SKILLS_INVENTORY = _OPENCODE_DATA_DIR / "skills_inventory.yaml"
 # ---------------------------------------------------------------------------
 
 
-def _get_trw_mcp_entry() -> OpencodeServerEntry:
+def _get_trw_mcp_entry(target_dir: Path | None = None) -> OpencodeServerEntry:
     """Return the TRW MCP server entry for opencode.json.
 
     Uses local stdio transport (one trw-mcp process per instance).
@@ -75,10 +75,12 @@ def _get_trw_mcp_entry() -> OpencodeServerEntry:
     so every profile now generates the same command. Verbose logging is opted
     into portably via ``.trw/config.yaml`` ``debug: true``.
     """
-    if shutil.which("trw-mcp"):
-        command: list[str] = ["trw-mcp"]
-    else:
-        command = ["python3", "-m", "trw_mcp.server"]
+    from trw_mcp.bootstrap._utils import resolve_trw_mcp_launcher
+
+    # N17: the project's own .venv build first (opencode runs servers from the
+    # project directory), then PATH, then a portable python3.
+    resolved, args = resolve_trw_mcp_launcher(target_dir)
+    command: list[str] = [resolved, *args]
 
     return {
         "type": "local",
@@ -269,7 +271,7 @@ def generate_opencode_config(
     """
     result = _new_result()
     config_path = target_dir / "opencode.json"
-    trw_entry = _get_trw_mcp_entry()
+    trw_entry = _get_trw_mcp_entry(target_dir)
 
     if config_path.exists() and not force:
         # Smart merge path (FR16). The read seam fails closed and content-free:

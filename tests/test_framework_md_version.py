@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.models.config import TRWConfig
+
 pytestmark = pytest.mark.unit
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +23,10 @@ if not (_REPO_ROOT / "scripts").is_dir():
     )
 
 _CANONICAL = _REPO_ROOT / ".trw" / "frameworks" / "FRAMEWORK.md"
+
+# The stamp the canon must carry is the config default (PRD-INFRA-191-FR06): read
+# it, never type it, so a framework bump edits no test.
+_FRAMEWORK_VERSION: str = TRWConfig.model_fields["framework_version"].default
 _BUNDLED = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "framework.md"
 _ROOT = _REPO_ROOT / "FRAMEWORK.md"
 _PACKAGE_ROOT = _REPO_ROOT / "trw-mcp" / "FRAMEWORK.md"
@@ -32,7 +38,7 @@ def _canonical_text() -> str:
 
 def test_framework_version() -> None:
     text = _canonical_text()
-    assert "v27.1_TRW" in text
+    assert _FRAMEWORK_VERSION in text
     # Assert the stamp is present and well-formed, not that it equals one past date.
     # A literal date here breaks on every legitimate version bump and teaches the next
     # editor to "fix" the test by pasting whatever the file now says -- which makes the
@@ -59,7 +65,7 @@ def test_provider_specific_cutover_removed() -> None:
 
 def test_callout_within_execution_summary() -> None:
     head = "\n".join(_canonical_text().splitlines()[:20])
-    assert "v27.1 mandate" in head
+    assert f"{_FRAMEWORK_VERSION.removesuffix('_TRW')} mandate" in head
     assert "model prompt" in head
 
 

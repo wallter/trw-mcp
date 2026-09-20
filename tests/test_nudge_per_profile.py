@@ -34,6 +34,7 @@ _ALL_PROFILES: tuple[str, ...] = (
     "codex",
     "copilot",
     "antigravity-cli",
+    "grok",
 )
 
 _EXPECTED_NUDGE_ENABLED: dict[str, bool] = {
@@ -44,6 +45,7 @@ _EXPECTED_NUDGE_ENABLED: dict[str, bool] = {
     "codex": True,
     "copilot": True,
     "antigravity-cli": True,
+    "grok": True,
 }
 
 _NUDGE_ON_PROFILES: tuple[str, ...] = tuple(p for p, enabled in _EXPECTED_NUDGE_ENABLED.items() if enabled)

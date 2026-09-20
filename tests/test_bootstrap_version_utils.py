@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 from datetime import datetime
 from pathlib import Path
 
@@ -82,7 +81,15 @@ class TestWriteVersionYaml:
         assert data["framework_version"] == TRWConfig().framework_version
 
     def test_trw_mcp_version_matches_metadata(self, fake_git_repo: Path) -> None:
-        """trw_mcp_version in VERSION.yaml matches installed package metadata."""
+        """trw_mcp_version in VERSION.yaml is the version trw_mcp resolves for itself.
+
+        That is ``trw_mcp.__version__``: the source ``pyproject.toml`` in a checkout,
+        installed metadata only for a wheel (see ``trw_mcp._resolve_version``).
+        Comparing against ``importlib.metadata`` directly failed whenever the
+        repo's editable install was older than the source tree.
+        """
+        from trw_mcp import __version__
+
         (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
         result = self._make_init_result()
         _write_version_yaml(fake_git_repo, result)
@@ -90,7 +97,7 @@ class TestWriteVersionYaml:
         version_path = fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml"
         data = FileStateReader().read_yaml(version_path)
         assert isinstance(data, dict)
-        assert data["trw_mcp_version"] == importlib.metadata.version("trw-mcp")
+        assert data["trw_mcp_version"] == __version__
 
     def test_deployed_at_is_valid_iso(self, fake_git_repo: Path) -> None:
         """deployed_at field parses as a valid ISO-8601 datetime without error."""

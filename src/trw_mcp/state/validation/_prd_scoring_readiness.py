@@ -29,7 +29,7 @@ from trw_mcp.state.validation._prd_scoring_fr import (
     _extract_fr_sections,
     _score_assertion_coverage,
 )
-from trw_mcp.state.validation._prd_scoring_grounding import compute_grounding_penalty
+from trw_mcp.state.validation._prd_scoring_grounding import grounding_penalty_once
 from trw_mcp.state.validation._prd_scoring_parsing import (
     _extract_subheadings,
     _validation_profile,
@@ -230,7 +230,7 @@ def score_implementation_readiness(
     score = composite * max_score
 
     if project_root is not None:
-        penalty_mult, hallucinated = compute_grounding_penalty(content, project_root)
+        penalty_mult, hallucinated = grounding_penalty_once(content, project_root)
         if hallucinated:
             score *= penalty_mult
             details["grounding_penalty_mult"] = round(penalty_mult, 4)

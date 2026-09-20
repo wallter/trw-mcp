@@ -121,6 +121,7 @@ def build_coordination(
                 "client": client,
                 "role": "implementer",
                 "owned_paths": [f"src/{member_id}"],
+                "open_join": True,  # PRD-CORE-274-FR18: first-come join needs an open slot
             }
             for member_id, client in members
         ],

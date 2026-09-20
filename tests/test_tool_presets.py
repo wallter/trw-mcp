@@ -219,7 +219,9 @@ def test_prd_core_218_fr04(config: object) -> None:
     # Wiring: the config field is a live production input to resolution.
     wired = config.resolve_tool_surface_for_task("coding")  # type: ignore[attr-defined]
     assert wired.mode == "standard"
-    assert len(wired.tools) == 16
+    # 16 plus the three peer_comms tools: PRD-CORE-274 NFR07 makes comms default-on.
+    assert len(wired.tools) == 19
+    assert wired.packs[-1] == "peer_comms"
 
     # PRD-CORE-246-FR05: an unmapped or missing task falls back to the
     # ``unknown`` packs (kernel + verification), NOT to kernel only — the

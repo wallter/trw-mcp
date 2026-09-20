@@ -39,14 +39,17 @@ async def test_all_classes_no_notifications_or_unrelated_response_injection(
             body="untrusted-peer-body",
             delivery_class=delivery_class,
         )
-        assert sent["delivery"] == "pull_only"
+        if delivery_class == "on_demand":
+            assert "delivery" not in sent
+        else:
+            assert sent["delivery"] == "pull_only"
         s.actor("impl-2")
         ordinary = await client.call_tool("unrelated_probe")
         assert ordinary.structured_content == {"ordinary": "unchanged"}
         assert "untrusted-peer-body" not in ordinary.content[0].text
         assert s.rows("SELECT COUNT(*) FROM milestones WHERE fact='fetch_prepared'") == [(0,)]
         fetched = await invoke(client, "trw_inbox")
-        assert fetched["delivery"] == "pull_only"
+        assert "delivery" not in fetched
         assert fetched["items"][0]["body"] == "untrusted-peer-body"
         assert fetched["items"][0]["delivery_class"] == delivery_class
         assert events == []
@@ -65,7 +68,7 @@ async def test_ack_recipient_guard_and_process_local_negative_control(
         message_id = sent["receipt"]["message_id"]
         if disable_ack_scope:
 
-            def unguarded(conn: Any, binding: Any, incarnation: Any, ids: Any) -> Any:
+            def unguarded(conn: Any, binding: Any, ids: Any) -> Any:
                 return [conn.execute("SELECT * FROM admissions WHERE message_id=?", (item,)).fetchone() for item in ids]
 
             s.monkeypatch.setattr(_inbox_page, "validate_ack", unguarded)

@@ -92,14 +92,19 @@ class TestConsolidateCycle:
             assert "mean_similarity" in preview
 
     def test_no_clusters_returns_no_clusters_status(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """When no clusters found, returns status='no_clusters'."""
+        """When no clusters found, returns status='no_clusters'.
+
+        Migrated: this used embeddings-unavailable to get an empty result, which
+        now defers instead (FIX-052-FR03 as amended); an empty store with a
+        ready embedder is the no-clusters case.
+        """
         trw_dir = tmp_path / ".trw"
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
 
         cfg = self._make_config()
 
-        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=False):
+        with patch("trw_mcp.state.memory_adapter.embedding_available", return_value=True):
             result = consolidate_cycle(trw_dir, dry_run=False, config=cfg)
 
         assert result["status"] == "no_clusters"

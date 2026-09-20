@@ -24,7 +24,8 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.typed_dicts import BatchDedupResult
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
-from trw_mcp.state._embedding_space import admitted_hits, loaded_space_threshold
+from trw_mcp.state._dedup_protection import _merge_protection_fields
+from trw_mcp.state._embedding_space import comparable_hits, loaded_space_threshold
 from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.memory_adapter import embed_text as embed
 from trw_mcp.state.memory_adapter import embedding_available
@@ -48,48 +49,6 @@ class DedupResult(NamedTuple):
     action: str  # "skip" | "merge" | "store"
     existing_id: str | None
     similarity: float
-
-
-# PRD-CORE-110: strength ordering for protection-preserving merges. Higher
-# index = stronger; merge keeps the stronger of (survivor, incoming).
-_PROTECTION_TIER_ORDER = ("low", "normal", "high", "critical", "protected", "permanent")
-_CONFIDENCE_ORDER = ("hypothesis", "unverified", "low", "medium", "high", "verified")
-
-
-def _stronger(existing_val: str, new_val: str, order: tuple[str, ...], default: str) -> str:
-    """Return whichever of *existing_val* / *new_val* ranks higher in *order*.
-
-    Unknown values fall back to *default*'s rank so an unrecognised string
-    never silently wins over a known stronger tier.
-    """
-
-    def rank(v: str) -> int:
-        return order.index(v) if v in order else order.index(default)
-
-    return new_val if rank(new_val) > rank(existing_val) else existing_val
-
-
-def _merge_protection_fields(existing: dict[str, object], new_entry_data: dict[str, object]) -> None:
-    """Fold typed protection fields from the new entry into the survivor.
-
-    - ``protection_tier``: keep the stronger tier.
-    - ``confidence``: keep the higher confidence.
-    - ``type``: upgrade ``pattern`` → ``incident`` when the incoming entry is
-      an incident (incidents carry operational weight worth retaining).
-    Mutates *existing* in place. Absent fields default to the survivor's value.
-    """
-    existing_tier = str(existing.get("protection_tier") or "normal")
-    new_tier = str(new_entry_data.get("protection_tier") or "normal")
-    existing["protection_tier"] = _stronger(existing_tier, new_tier, _PROTECTION_TIER_ORDER, "normal")
-
-    existing_conf = str(existing.get("confidence") or "unverified")
-    new_conf = str(new_entry_data.get("confidence") or "unverified")
-    existing["confidence"] = _stronger(existing_conf, new_conf, _CONFIDENCE_ORDER, "unverified")
-
-    existing_type = str(existing.get("type") or "pattern")
-    new_type = str(new_entry_data.get("type") or "pattern")
-    if new_type == "incident" and existing_type != "incident":
-        existing["type"] = "incident"
 
 
 def _distance_to_similarity(distance: float) -> float:
@@ -132,9 +91,12 @@ def _check_duplicate_via_backend(
         hits = backend.search_vectors(new_vector, top_k=10, namespace=DEFAULT_NAMESPACE)
         if not hits:
             return None  # No vectors indexed yet — fall back to YAML
-        # Only neighbours encoded in new_vector's space are comparable; with none
-        # the fuzzy check is skipped (exact-content dedup already ran).
-        hits = admitted_hits(backend, hits, namespace=DEFAULT_NAMESPACE, surface="trw_learn_dedup")
+        # Only neighbours encoded in new_vector's space are comparable. None: the
+        # dense verdict would be incomplete, so the exhaustive YAML scan decides.
+        admitted = comparable_hits(backend, hits, namespace=DEFAULT_NAMESPACE, surface="trw_learn_dedup")
+        if admitted is None:
+            return None
+        hits = admitted
 
         best_similarity = 0.0
         best_id: str | None = None
@@ -164,7 +126,7 @@ def _check_duplicate_via_backend(
 
         return DedupResult("store", None, best_similarity)
 
-    except Exception:  # justified: fail-open, dedup should fall back when backend access is unavailable
+    except Exception:  # trw-fail-silent-allow: fail-open to the YAML scan when the backend is unavailable
         logger.debug("dedup_backend_unavailable_fallback_to_yaml", exc_info=True)
         return None
 
@@ -356,7 +318,8 @@ def merge_entries(
     - Evidence: union of both sets
     - Impact: max(existing, new)
     - Recurrence: existing + 1
-    - Detail: if new detail is longer, append new detail to existing
+    - Detail: append the new detail under a "Merged from" audit header that also
+      carries a differing incoming summary (CORE-042-FR03)
     - merged_from: append new entry's ID
     - updated: today's date
 
@@ -406,12 +369,22 @@ def merge_entries(
     new_detail = str(new_entry_data.get("detail", ""))
     new_id = str(new_entry_data.get("id", "unknown"))
     today = datetime.now(tz=timezone.utc).date().isoformat()
-    if len(new_detail) > len(existing_detail):
-        audit_marker = f"\n---\nMerged from {new_id} on {today}:\n"
+    # PRD-CORE-042-FR03: the survivor keeps its summary; the incoming detail is
+    # always appended, whatever its length, and an incoming summary that differs
+    # rides on the audit header, so neither is lost to the merge.
+    new_summary = " ".join(str(new_entry_data.get("summary", "")).split())  # one header line
+    kept_summary = (
+        new_summary if new_summary and new_summary != " ".join(str(existing.get("summary", "")).split()) else ""
+    )
+    if new_detail and new_detail in existing_detail:
+        new_detail = ""  # already present verbatim: skipping it is lossless and stops recurrence growth
+    if new_detail or kept_summary:
+        header = f"Merged from {new_id} on {today}:" + (f" {kept_summary}" if kept_summary else "")
+        body = header + "\n" + new_detail if new_detail else header
         if existing_detail:
-            existing["detail"] = existing_detail + audit_marker + new_detail
+            existing["detail"] = existing_detail + "\n---\n" + body
         else:
-            existing["detail"] = new_detail
+            existing["detail"] = body if kept_summary else new_detail
 
     # Assertions: union by (type, pattern, target) tuple (PRD-CORE-086 FR05)
     raw_existing_assertions = existing.get("assertions") or []

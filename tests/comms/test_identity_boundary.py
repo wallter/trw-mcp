@@ -66,7 +66,7 @@ def scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Scene:
     context = build_call_context(None)
     formation.create(
         owner,
-        {"formation_id": "diagnostic", "members": [{"member_id": "lead", "client": "codex"}]},
+        {"formation_id": "diagnostic", "members": [{"member_id": "lead", "client": "codex", "open_join": True}]},
         trw_dir=root / ".trw",
         prds_dir=root / "prds",
     )

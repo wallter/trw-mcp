@@ -7,13 +7,13 @@
     "rationale": 1,
     "reference": 22
   },
-  "core_digest": "6cb0ec960a62d89ea02a70c8a603696f414d48b01c75f7b92952cc02925fd2e2",
+  "core_digest": "60996daadb2337464ba6637f61899c7dc2cb54a9875856436ef9ff98df9cdfb5",
   "obligations": [
     {
       "body_lines": 13,
       "class": "normative",
       "dest": "both",
-      "digest": "575882e86a81b231af7d451ca22653de0bb7dc2435ca2f4637c3fc11d17e4f8e",
+      "digest": "2177b87b9f80173a094d1c64a49ac113585a9ee6ab1576c289d5300aa91428a0",
       "id": "af-title",
       "nonblank_lines": 8,
       "start_line": 1
@@ -391,7 +391,7 @@
       "body_lines": 13,
       "class": "reference",
       "dest": "reference",
-      "digest": "f3fe2b0754c57a03bdd2129287bfc1b0f19d3ef81af7c65dc17f9f0e04953531",
+      "digest": "3f3541d7d7803caf002eaaa7ae4a46ebe59655a8542ebf13a77a580d385c3e7d",
       "id": "af-11-relationship-to-framework-md",
       "nonblank_lines": 9,
       "start_line": 464
@@ -451,8 +451,8 @@
       "start_line": 550
     }
   ],
-  "reference_digest": "6d08f3ebebb246c0f3d721ba25ad6aabb1c9eb25300c6b304669c197849151bf",
+  "reference_digest": "8183958bcc375ae2a04447a1ae0023c0c4a852e33d09600c0558a4149ebb65bc",
   "schema": 1,
-  "source_digest_combined": "dc6be3e37053b2c44b7364ab53c4adde447c32aec5e28d40c3105257df25bf91",
+  "source_digest_combined": "a462dba1098af1afc3c36644e12204514363e3ec17243a94487ac7b0f2e83e62",
   "span_count": 49
 }

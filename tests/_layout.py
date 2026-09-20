@@ -8,6 +8,8 @@ that need the monorepo (its git history, sibling packages, canon mirrors) use
 
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -39,4 +41,18 @@ MONOREPO_ROOT: Path | None = (
 )
 requires_monorepo = pytest.mark.skipif(
     MONOREPO_ROOT is None, reason="needs the monorepo checkout (public repo is the package alone)"
+)
+
+#: Some bundled hooks extract their JSON fields with ``jq`` and have no fallback,
+#: so their observable behaviour is absent on a box without it. That coupling is a
+#: defect in the hooks (tracked separately); until it is fixed the tests that pin
+#: the jq-dependent output must say so rather than fail on a jq-less machine.
+HAS_JQ: bool = shutil.which("jq") is not None
+requires_jq = pytest.mark.skipif(not HAS_JQ, reason="the bundled hook extracts its fields with jq and has no fallback")
+
+#: ``chmod 000``/read-only-directory assertions are vacuous for uid 0, which
+#: bypasses the permission bits entirely. CI runners are non-root, so these keep
+#: their meaning where it counts.
+requires_non_root = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root bypasses the permission bits this test asserts on"
 )

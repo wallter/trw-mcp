@@ -48,6 +48,8 @@ _UNKNOWN_CLIENT = "unknown"
 # Both entries carry the same value as ``default_tier``, so removing them would
 # be behaviour-preserving; they stay for explicitness about the raw-name space.
 _CLIENT_DEFAULT_TIER: dict[str, str] = {
+    # grok: T1 (compressed subset) until a live probe measures its response budget.
+    "grok": "T1",
     "codex": "T2",
     "opencode": "T2",
     "cursor-ide": "T2",

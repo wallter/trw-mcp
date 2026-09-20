@@ -15,8 +15,10 @@ from pathlib import Path
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLED_HOOKS = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "hooks"
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+_BUNDLED_HOOKS = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks"
 _GATE = _REPO_ROOT / "scripts" / "check-bundle-sync.sh"
 
 
@@ -56,6 +58,7 @@ class TestEveryBundledHookParses:
 
         assert result.returncode == 0, f"{script.name}: {result.stderr.strip()}"
 
+    @requires_monorepo
     def test_the_repaired_repo_local_self_review_hook_parses(self) -> None:
         """It was dead on arrival under bash 3.2 and no gate could see it."""
         script = _REPO_ROOT / ".claude" / "hooks" / "self-review.sh"
@@ -65,6 +68,7 @@ class TestEveryBundledHookParses:
             result = subprocess.run([shell, "-n", str(script)], capture_output=True, text=True, check=False)
             assert result.returncode == 0, f"{shell}: {result.stderr.strip()}"
 
+    @requires_monorepo
     def test_the_gate_runs_the_syntax_pass(self) -> None:
         body = _GATE.read_text(encoding="utf-8")
 
@@ -72,7 +76,17 @@ class TestEveryBundledHookParses:
         assert "$BUNDLED_BASE/hooks" in body
 
     def test_a_broken_script_is_rejected(self, tmp_path: Path) -> None:
-        """The exact shape that shipped: a nested case inside $( ) inside a case."""
+        """The exact shape that shipped: a nested case inside $( ) inside a case.
+
+        Only bash 3.2 — macOS's system shell, the one the defect shipped against —
+        misparses it; bash 4+ accepts it. Asserting rejection under a modern bash
+        would be asserting a bug the newer parser does not have.
+        """
+        version = subprocess.run(
+            ["bash", "-c", "echo $BASH_VERSINFO"], capture_output=True, text=True, check=False
+        ).stdout.strip()
+        if not version.isdigit() or int(version) >= 4:
+            pytest.skip(f"bash {version or '?'} parses the bash-3.2 defect shape; nothing to reject")
         broken = tmp_path / "broken.sh"
         broken.write_text(
             "#!/bin/sh\n"

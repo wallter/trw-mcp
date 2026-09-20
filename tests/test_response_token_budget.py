@@ -28,7 +28,10 @@ measurements), not byte-exact snapshots. If your change trips one:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import cast
+
+import pytest
 
 from tests._ceremony_helpers import payload_size_units
 from trw_mcp.models.config import get_config
@@ -250,3 +253,83 @@ def test_recall_internal_field_stripping_is_configured() -> None:
         "recall_internal_fields default is empty — internal scoring state "
         f"would ship on every recall entry again. {_BLOAT_GUIDANCE}"
     )
+
+
+# PRD-FIX-144 NFR02: key sets captured from the pre-change code (2026-09-18) by
+# driving this exact sequence. The telemetry it added (receipt keys, hint
+# exposure rows, feedback outcome rows, session observations) goes to logs only.
+_PRE_FIX144_RESPONSE_KEYS: dict[str, set[str]] = {
+    "trw_recall": {
+        "candidate_count",
+        "ceremony_status",
+        "compact",
+        "context",
+        "duplicates_collapsed",
+        "learnings",
+        "max_results",
+        "nudge_content",
+        "patterns",
+        "query",
+        "store_count",
+        "tokens_budget",
+        "tokens_truncated",
+        "tokens_used",
+        "total_available",
+        "total_matches",
+    },
+    "trw_before_edit_hint": {
+        "distill_action",
+        "distill_hint",
+        "distill_sidecar_path",
+        "distill_sidecar_sha",
+        "distill_status",
+        "enrichment",
+        "file_path",
+        "learnings",
+        "learnings_count",
+        "tier",
+    },
+    "trw_build_check": {
+        "build_receipt_id",
+        "cache_path",
+        "ceremony_status",
+        "coverage_pct",
+        "failure_count",
+        "failures",
+        "mypy_clean",
+        "nudge_content",
+        "reversion_prompt",
+        "scope",
+        "static_checks_clean",
+        "step_durations_ms",
+        "test_count",
+        "tests_passed",
+        "timed_out",
+        "typed_receipt_reason",
+        "typed_receipt_state",
+    },
+    "trw_learn_update": {"changes", "learning_id", "status"},
+}
+
+
+def test_feedback_telemetry_adds_no_response_keys(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.conftest import extract_tool_fn, make_test_server
+
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_project))
+    monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
+    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+    server = make_test_server("learning", "before_edit_hint", "build")
+    lid = extract_tool_fn(server, "trw_learn")(
+        summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
+    )["learning_id"]
+    observed = {
+        "trw_recall": set(extract_tool_fn(server, "trw_recall")(query="app.py startup")),
+        "trw_before_edit_hint": set(extract_tool_fn(server, "trw_before_edit_hint")(file_path="app.py")),
+        "trw_build_check": set(extract_tool_fn(server, "trw_build_check")(tests_passed=False, test_count=1)),
+        "trw_learn_update": set(extract_tool_fn(server, "trw_learn_update")(learning_id=lid, feedback="helpful")),
+    }
+    assert observed == _PRE_FIX144_RESPONSE_KEYS, _BLOAT_GUIDANCE
+    # Non-vacuity: the telemetry really was written, just not into the responses.
+    logs = tmp_project / ".trw" / "logs"
+    assert (logs / "session_outcomes.jsonl").exists()
+    assert '"explicit_feedback"' in (logs / "recall_tracking.jsonl").read_text()

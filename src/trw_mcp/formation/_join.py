@@ -30,6 +30,7 @@ from typing import Any
 
 import structlog
 
+from trw_mcp.formation._admission import admitted_members, commit_admissions, require_join_admitted
 from trw_mcp.formation._manifest import (
     FormationError,
     FormationManifest,
@@ -88,6 +89,12 @@ def create(
         raise FormationError(f"formation payload is invalid: {exc}") from exc
     if prds_dir is not None:
         _refuse_already_allocated_prd_ids(manifest, prds_dir)
+    supplied = {str(m.get("member_id")): m for m in data.get("members", []) if isinstance(m, dict)}
+    members, admitted, released = admitted_members(
+        trw_dir, None, list(manifest.members), revision=manifest.revision, supplied=supplied
+    )
+    manifest = manifest.model_copy(update={"members": members})
+    commit_admissions(trw_dir, manifest.formation_id, orchestrator_run_path, admitted, released)
     write_manifest_locked(manifest_path, manifest)
     register_formation(trw_dir, manifest.formation_id, orchestrator_run_path)
     logger.info(
@@ -125,8 +132,12 @@ def join(
     run_path: Path,
     pin_key: str | None,
     lock_timeout_seconds: float,
+    candidate_id: str | None = None,
 ) -> FormationManifest:
     """Record *member_id*'s run and pin, atomically (FR04).
+
+    A pending slot is joined only when it is ``open_join`` or admitted
+    *candidate_id*, whose recorded pin and run must be this caller's (FR18).
 
     Idempotent for the same run path: a repeated join writes nothing and does
     NOT bump the revision, so a member that re-initialises cannot inflate the
@@ -142,8 +153,35 @@ def join(
                 f"member {member_id!r} is already joined with run_path {recorded!r}; "
                 f"refusing to rebind it to {str(run_path)!r} — that would orphan the first run's evidence"
             )
-        if recorded:
+        if recorded and (pin_key is None or member.pin_key in (None, pin_key)):
             return manifest
+        if recorded:
+            # PRD-CORE-274 FR14: the same run under a NEW pin. Only client lineage proven
+            # by THIS process's own sibling adoption may rebind; lease expiry, knowing the
+            # run path, or a persisted marker never do. R2 is an orchestrator revise().
+            from trw_mcp.state._paths_pin_mgmt import adopted_from
+
+            if adopted_from(str(pin_key)) != member.pin_key:
+                raise FormationError(
+                    f"rebind_not_authorized: member {member_id!r} is bound to another pin; a new pin is "
+                    "accepted only through this process's client-lineage adoption or an orchestrator revise"
+                )
+            revised = manifest.model_copy(
+                update={
+                    "members": [
+                        m if m.member_id != member_id else m.model_copy(update={"pin_key": pin_key})
+                        for m in manifest.members
+                    ],
+                    "revision": manifest.revision + 1,
+                    "updated_utc": _now(),
+                }
+            )
+            box[0] = revised
+            logger.info(
+                "formation_member_rebound", formation_id=formation_id, member_id=member_id, path="client_lineage"
+            )
+            return revised
+        require_join_admitted(trw_dir, member, candidate_id=candidate_id, run_path=run_path, pin_key=pin_key)
         members = [
             m
             if m.member_id != member_id
@@ -206,6 +244,9 @@ def revise(
         for member_id, changes in updates.items():
             manifest.member(member_id)
             members = [m if m.member_id != member_id else _apply(m, changes) for m in members]
+        members, admitted, released = admitted_members(
+            trw_dir, manifest, members, revision=manifest.revision + 1, supplied=updates
+        )
         revised = manifest.model_copy(
             update={"members": members, "revision": manifest.revision + 1, "updated_utc": _now()}
         )
@@ -213,6 +254,7 @@ def revise(
             FormationManifest.model_validate(revised.model_dump(mode="json"))
         except Exception as exc:
             raise FormationError(f"revision would make the manifest invalid: {exc}") from exc
+        commit_admissions(trw_dir, formation_id, Path(revised.orchestrator_run_path), admitted, released)
         box[0] = revised
     logger.info("formation_revised", formation_id=formation_id, revision=revised.revision)
     return revised
@@ -260,6 +302,17 @@ def mark_member_delivered(
                 f"member {member_id!r} may report delivery only from its joined run {member.run_path!r}; "
                 f"got {str(run_path)!r}"
             )
+        # Checked only after the joined-run authentication above, so neither
+        # shortcut answers a foreign run. Retirement is the orchestrator's verdict
+        # (FR05) and a self-report must not overwrite it; a repeat report changes
+        # nothing, so it writes nothing (an unchanged box skips the rewrite).
+        if member.status in (FormationMemberStatus.ABANDONED.value, FormationMemberStatus.REASSIGNED.value):
+            raise FormationError(
+                f"member {member_id!r} is {member.status} by orchestrator revision; "
+                "its own delivery report cannot replace that verdict"
+            )
+        if member.status == FormationMemberStatus.DELIVERED.value:
+            return manifest
         members = [
             m if m.member_id != member_id else m.model_copy(update={"status": FormationMemberStatus.DELIVERED.value})
             for m in manifest.members

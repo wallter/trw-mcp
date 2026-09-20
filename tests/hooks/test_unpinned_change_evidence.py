@@ -22,10 +22,11 @@ from typing import Any, cast
 import pytest
 
 import trw_mcp.tools._delivery_helpers  # noqa: F401  (import-cycle order guard)
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.tools._delivery_event_checks import unpinned_session_changed_files
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_BUNDLED_HOOK = _REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "hooks" / "post-tool-event.sh"
+_REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+_BUNDLED_HOOK = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks" / "post-tool-event.sh"
 _PROJECTED_HOOK = _REPO_ROOT / ".claude" / "hooks" / "post-tool-event.sh"
 _SESSION = "sess-unpinned-1"
 
@@ -97,6 +98,7 @@ class TestUnpinnedEditsAreRecorded:
     def test_no_project_root_is_survivable(self, tmp_path: Path) -> None:
         assert _run_hook(tmp_path / "missing", "Edit", "src/a.py") == 0
 
+    @requires_monorepo
     def test_the_projection_is_byte_identical_to_the_bundle(self) -> None:
         assert _PROJECTED_HOOK.read_bytes() == _BUNDLED_HOOK.read_bytes()
 

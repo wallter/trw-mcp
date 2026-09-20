@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_non_root
+
 pytestmark = pytest.mark.unit
 
 _HOOKS = Path(__file__).resolve().parents[2] / "src" / "trw_mcp" / "data" / "hooks"
@@ -202,7 +204,7 @@ def test_the_library_is_covered_by_the_enrollment_digest() -> None:
 
 
 @pytest.mark.skipif(shutil.which("sh") is None, reason="sh unavailable")
-@pytest.mark.parametrize("break_it", ["absent", "chmod-000", "syntax-error"])
+@pytest.mark.parametrize("break_it", ["absent", pytest.param("chmod-000", marks=requires_non_root), "syntax-error"])
 @pytest.mark.parametrize("hook", ["pre-tool-intent-guard.sh", "post-tool-intent-check.sh"])
 def test_an_unusable_library_fails_closed_when_enrolled_and_inert_when_not(
     tmp_path: Path, hook: str, break_it: str

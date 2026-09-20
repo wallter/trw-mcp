@@ -10,15 +10,31 @@ from pydantic import Field
 from trw_mcp.comms import DeliveryClass, InboxAction, MessageKind, PeerAction, inbox, peers, send
 
 
+def _tool_response(payload: dict[str, Any], *, report_pull_only: bool = False) -> dict[str, Any]:
+    """Omit invariant transport labels and absent continuation, never peer content.
+
+    Internal facades keep their full contract. At the MCP boundary an absent
+    next_cursor means the page is complete; an empty items list remains explicit.
+    Never recursively compact: bodies, receipts and exact timestamps are evidence.
+    """
+    return {
+        key: value
+        for key, value in payload.items()
+        if not (key == "delivery" and value == "pull_only" and not report_pull_only)
+        and not (key == "next_cursor" and value is None)
+    }
+
+
 def register_swarm_comms_tools(server: FastMCP) -> None:
     @server.tool()
     def trw_peers(action: PeerAction = "list", cursor: str | None = None, ctx: Context | None = None) -> dict[str, Any]:
         """Use when announcing presence, renewing a lease, or listing formation peers.
 
-        Output: peer liveness and next_cursor; pass it with action="list" to continue.
+        Output: peer liveness; next_cursor is present only when another page exists.
+        Pass it with action="list" to continue.
         Pull-only; never wakes peers.
         """
-        return peers(action, ctx, cursor=cursor)
+        return _tool_response(peers(action, ctx, cursor=cursor))
 
     @server.tool()
     def trw_send(
@@ -37,7 +53,11 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
         Output: durable receipt or refusal; pull-only, never a wake, permission grant
         or completion acknowledgment.
         """
-        return send(recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope)
+        # A request for unsupported push must explicitly report the downgrade.
+        return _tool_response(
+            send(recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope),
+            report_pull_only=delivery_class != "on_demand",
+        )
 
     @server.tool()
     def trw_inbox(
@@ -49,12 +69,13 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Use when fetching messages, ACKing received IDs, or reading body-free status.
 
-        Fetch/status return items and next_cursor; ACK takes message_ids only.
+        Fetch/status return items; next_cursor is present only when another page exists.
+        ACK takes message_ids only.
         Fresh fetch recovers pending traffic. Pull-only; ACK is not work completion.
         wait_seconds>0 retries an empty fresh fetch in-process until the deadline.
         """
         # strict=True: the transport rejects bool/float/str before the handler (FR11).
-        return inbox(action, message_ids, cursor, ctx, wait_seconds)
+        return _tool_response(inbox(action, message_ids, cursor, ctx, wait_seconds))
 
 
 __all__ = ["register_swarm_comms_tools"]

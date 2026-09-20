@@ -1,10 +1,10 @@
-"""PRD-CORE-247-FR08/FR09: instruction budget, per profile, N=7.
+"""PRD-CORE-247-FR08/FR09: instruction budget, per profile.
 
 The two requirements pull against each other on purpose. FR08 cuts the block for
 clients that can enumerate the live surface; FR09 keeps a full gate statement in
 every carrier an agent reads. A test that only measured size would happily accept
 a block that got small by dropping the gate, so both are asserted over the same
-seven profiles.
+built-in profiles.
 """
 
 from __future__ import annotations
@@ -18,12 +18,14 @@ from trw_mcp.state.claude_md._catalogue import CEREMONY_POINTER
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
 
-#: Measured on the pre-change tree at trw-mcp 1.0.5, all seven built-in profiles.
+#: Measured on the pre-change tree at trw-mcp 1.0.5 for the original seven;
+#: grok (2026-09-19) shares the full+delegation block with claude-code.
 _BASELINE_BLOCK_CHARS = {
     "claude-code": 5244,
     "cursor-ide": 5244,
     "copilot": 5244,
     "antigravity-cli": 5244,
+    "grok": 5244,
     "codex": 5048,
     "cursor-cli": 5048,
     "opencode": 5048,
@@ -53,23 +55,33 @@ _BASELINE_BLOCK_CHARS = {
 #: CORE269: truthful unfinished/no-work/acceptance routing replaces loss claims.
 #: Full blocks grow 145 chars; light blocks grow 159 chars. This records
 #: descriptive snapshots, not a byte-saving claim or relaxation of hard budgets.
+# Re-recorded 2026-09-19, +92 chars for every profile. The deliver-gate clause
+# named `build_check_result=pass`, a field trw_build_check's response never
+# carries (it is ceremony state, read server-side by the gate and the hook). It
+# now names what _build_pass_rejection actually enforces: tests_passed=true,
+# static_checks_clean=true or omitted, a non-zero test_count and a non-empty
+# scope. The first rewrite named only the first two -- true but insufficient, so
+# an agent obeying it literally was still refused (worker-1's review). 92
+# characters per surface is the price of an instruction that is sufficient as
+# well as accurate.
 _MEASURED_BLOCK_CHARS = {
-    "claude-code": 6282,
-    "cursor-ide": 6282,
-    "copilot": 6282,
-    "antigravity-cli": 6282,
-    "codex": 8631,
-    "cursor-cli": 7544,
-    "opencode": 7544,
+    "claude-code": 6374,
+    "cursor-ide": 6374,
+    "copilot": 6374,
+    "antigravity-cli": 6374,
+    "grok": 6374,
+    "codex": 8723,
+    "cursor-cli": 7636,
+    "opencode": 7636,
 }
-_FULL_MODE = ("claude-code", "cursor-ide", "copilot", "antigravity-cli")
+_FULL_MODE = ("claude-code", "cursor-ide", "copilot", "antigravity-cli", "grok")
 _LIGHT_MODE = ("codex", "cursor-cli", "opencode")
 _MIN_REDUCTION = 0.40
 
 #: Full-mode profiles whose ``include_delegation`` is True (PRD-CORE-252 OQ-3
 #: fix, 2026-09-04) — their block legitimately grew past the pre-FR08
 #: baseline because a real content producer got wired to its gate.
-_DELEGATION_WIRED = frozenset({"claude-code", "cursor-ide", "copilot", "antigravity-cli"})
+_DELEGATION_WIRED = frozenset({"claude-code", "cursor-ide", "copilot", "antigravity-cli", "grok"})
 
 #: The substring that appears ONLY in a full three-path statement of the gate.
 _FULL_GATE_MARKER = DELIVER_GATE_PHRASE
@@ -80,9 +92,11 @@ def _block(client_id: str) -> str:
 
 
 def test_every_built_in_profile_is_covered() -> None:
-    """The measurement is N=7 or it is not the measurement the PRD records."""
+    """Every built-in profile is in the measurement tables."""
+    from trw_mcp.models.config import builtin_client_ids
+
     assert set(_BASELINE_BLOCK_CHARS) == set(_FULL_MODE) | set(_LIGHT_MODE)
-    assert len(_BASELINE_BLOCK_CHARS) == 7
+    assert set(_BASELINE_BLOCK_CHARS) == set(builtin_client_ids())
     for client_id in _FULL_MODE:
         assert resolve_client_profile(client_id).ceremony_mode == "full"
     for client_id in _LIGHT_MODE:

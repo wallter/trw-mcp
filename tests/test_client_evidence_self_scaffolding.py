@@ -81,6 +81,10 @@ def test_the_self_scaffolded_gap_is_recorded_rather_than_believed_closed() -> No
         "codex:.codex",
         "copilot:.github/agents",
         "cursor-cli:.cursor/cli.json",
+        # grok joins the recorded gap (2026-09-19): TRW's own init writes
+        # `.grok/config.toml`, and Grok keeps its real state in ~/.grok, so the
+        # project tree carries no marker the user's own use of grok creates.
+        "grok:.grok",
         "opencode:.opencode",
         "opencode:opencode.json",
     ], (

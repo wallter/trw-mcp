@@ -333,6 +333,17 @@ _REGISTRY: dict[str, AgentFormat] = {
             ".cursor/agents. A co-installed Cursor IDE may provide agents in the shared .cursor tree."
         ),
     ),
+    # Source: Grok user-guide 16-subagents.md (1.0.34). Native dir ``.grok/agents/``.
+    # OQ-3 2026-09-19: ``model: balanced`` and ``model: grok-4.6`` both spawn
+    # (exit 0). ``tools: Read`` DOES constrain (no shell). Claude ``mcp__trw__*``
+    # names therefore must not be copied — they would allowlist tools Grok does
+    # not have. Drop model/tools rather than mistranslate.
+    "grok": AgentFormat(
+        client_id="grok",
+        destination_dir=".grok/agents",
+        key_map={"name": "name", "description": "description"},
+        dropped_keys=frozenset({"effort", "maxTurns", "memory", "model", "tools", "disallowedTools"}),
+    ),
 }
 
 

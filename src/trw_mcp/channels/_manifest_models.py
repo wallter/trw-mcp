@@ -299,6 +299,9 @@ CLIENT_CORRECTION_FACTORS: dict[str, float] = {
     "cursor-ide": 0.75,
     "cursor-cli": 0.75,
     "copilot": 0.50,
+    # Unmeasured placeholder: grok is a new profile. 1.0 would make its rate
+    # incomparable (the default fall-through this table exists to prevent).
+    "grok": 0.50,
 }
 
 # Values are (threshold, window_count)
@@ -310,6 +313,8 @@ CLIENT_THROTTLE_THRESHOLDS: dict[str, tuple[float, int]] = {
     "cursor-ide": (0.20, 3),
     "cursor-cli": (0.20, 3),
     "copilot": (0.15, 5),
+    # Unmeasured placeholder, same band as other newly-added clients.
+    "grok": (0.15, 5),
 }
 
 # Copilot requires minimum N=50 before throttle applies (not the default 30)

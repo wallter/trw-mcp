@@ -249,9 +249,13 @@ def _aggregate_recall_outcomes(trw_dir: Path | None) -> dict[str, dict[str, obje
             bucket["negative"] += 1
         elif outcome == "neutral":
             bucket["neutral"] += 1
-        else:
-            # outcome is None/absent -> this is a fresh recall receipt
+        elif outcome is None or outcome == "":
+            # A receipt (outcome null/absent/empty) is the only row that counts
+            # as a recall. PRD-FIX-144 FR05: an unknown outcome value used to
+            # fall into this branch and inflate recall_count.
             bucket["recall_count"] += 1
+        else:
+            logger.debug("recall_outcome_unknown_value_ignored", learning_id=lid, outcome=str(outcome)[:32])
 
     out: dict[str, dict[str, object]] = {}
     for lid, bucket in agg.items():

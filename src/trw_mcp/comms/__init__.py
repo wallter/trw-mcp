@@ -9,45 +9,56 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
-from trw_mcp.comms._admission import admit
+from trw_mcp.comms._bootstrap import BOOTSTRAP_ACTIONS, bootstrap, caller_state
 from trw_mcp.comms._endpoints import (
     EndpointError,
     confirm_enrollment,
     enroll,
     heartbeat,
+    holds_endpoint,
     list_endpoints,
     receiver_incarnation,
+    touch,
 )
-from trw_mcp.comms._envelope import AdmissionError, Envelope
+from trw_mcp.comms._envelope import AdmissionError
 from trw_mcp.comms._envelope import DeliveryClass as DeliveryClass
 from trw_mcp.comms._envelope import InboxAction as InboxAction
 from trw_mcp.comms._envelope import MessageKind as MessageKind
+from trw_mcp.comms._guidance import finish as _finish_guidance
 from trw_mcp.comms._identity import CallerBinding as CallerBinding
-from trw_mcp.comms._identity import CallerSnapshot, resolve_snapshot
+from trw_mcp.comms._identity import CallerSnapshot, resolve_authority_snapshot
 from trw_mcp.comms._identity import IdentityError as IdentityError
 from trw_mcp.comms._identity import IdentityRefusal as IdentityRefusal
 from trw_mcp.comms._identity import derive_group_id as derive_group_id
 from trw_mcp.comms._identity import resolve_caller as resolve_caller
 from trw_mcp.comms._inbox_page import inbox_action
-from trw_mcp.comms._notify import notify
+from trw_mcp.comms._messages import expire_due, tombstone_due
 from trw_mcp.comms._peers_page import PageError, decode_cursor, pack_page
-from trw_mcp.comms._policy import AdmissionPolicy, count_refusal, ensure_group
-from trw_mcp.comms._scope import parse as parse_scope
+from trw_mcp.comms._pickup import ADMISSION_REVOKED, Pickup
+from trw_mcp.comms._pickup import advance as advance_pickup
+from trw_mcp.comms._pickup import complete as complete_pickup
+from trw_mcp.comms._policy import AdmissionPolicy, count_refusal, ensure_group, remaining_capacity
+from trw_mcp.comms._refusals import IDENTITY_REASONS, persisted_bucket
+from trw_mcp.comms._refusals import detail as refusal_detail
+from trw_mcp.comms._send_op import send_once
 from trw_mcp.comms._store import StoreError, connect, effective_time, immediate, touch_group_time, validate_operation
 from trw_mcp.comms._wait import check_cancelled_cooperatively, run_bounded_wait
+from trw_mcp.comms._worktree import record_own_worktree as record_own_worktree
+from trw_mcp.formation import FormationError
 
 if TYPE_CHECKING:
     from fastmcp import Context
 
     from trw_mcp.models.config import TRWConfig
 
-PeerAction = Literal["enroll", "list", "heartbeat"]
+PeerAction = Literal["enroll", "list", "heartbeat", "announce", "withdraw", "discover"]
 _logger = structlog.get_logger(__name__)
 
 #: One bounded wait per serving process (FR11). Non-blocking acquire; a second
@@ -55,18 +66,6 @@ _logger = structlog.get_logger(__name__)
 _WAIT_GUARD = threading.Lock()
 #: The identity a wait was admitted under; any later attempt must match it.
 _WaitOwner = tuple[str, str, str, str, str | None]
-#: FR11 refusals are counted in the LEGACY persisted bucket so the stored
-#: vocabulary (and every old-version reader of the mailbox) is unchanged; the
-#: public ``reason`` stays precise. Closed by design: an unknown reason must
-#: still fail closed in ``count_refusal``. Trade-off accepted by the lead
-#: (board seq 148): the bucket is a compatible aggregate, not a diagnosis that
-#: an owner change or a disabled policy was malformed input.
-_PERSISTED_REFUSAL_BUCKET: dict[str, str] = {
-    "wait_disabled": "invalid_inbox_arguments",
-    "invalid_wait_seconds": "invalid_inbox_arguments",
-    "wait_requires_fresh_fetch": "invalid_inbox_arguments",
-    "wait_owner_changed": "invalid_inbox_arguments",
-}
 
 
 def _refused(reason: str) -> dict[str, Any]:
@@ -74,7 +73,7 @@ def _refused(reason: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "status": "refused",
         "reason": reason,
-        "detail": "Peer operation refused.",
+        "detail": refusal_detail(reason),
         "delivery": "pull_only",
     }
     if reason == "storage_contended":
@@ -113,7 +112,7 @@ def _exception_refused(exc: IdentityError | EndpointError | StoreError) -> dict[
     return _refused(exc.refusal.value)
 
 
-def peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None) -> dict[str, Any]:
+def _peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
@@ -123,8 +122,23 @@ def peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None 
         return {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
     if not config.ctx_isolation_enabled:
         return _refused("context_isolation_disabled")
+    if action in BOOTSTRAP_ACTIONS:
+        # FR18: non-authoritative, so no membership is required and nothing is enrolled.
+        return {**bootstrap(action, ctx, config), "delivery": "pull_only"}
     try:
-        snapshot = resolve_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
+        pickup: Pickup | None = advance_pickup(ctx)
+    except FormationError:
+        _logger.info("comms_pickup_store_unreadable")
+        return _refused("formation_unavailable")
+    if pickup is not None and pickup.revoked:
+        return _refused(ADMISSION_REVOKED)
+    if pickup is not None and pickup.retry:
+        return _refused("storage_contended")  # transient: nothing revoked, the next call resumes
+    if pickup is not None and pickup.ready:
+        action = "enroll"  # FR18 stage 3: an admitted candidate's next trw_peers call enrolls it
+    try:
+        snapshot = resolve_authority_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
+        _CALL_BINDING.set(snapshot.binding)
         # Invalid binding never gets here. Pending/terminal callers have no read
         # privilege; only a validated all-terminal snapshot can record closure.
         if not snapshot.all_terminal:
@@ -152,11 +166,14 @@ def peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None 
                 poll_seconds=config.comms_poll_interval_seconds,
                 limit=config.comms_fetch_max_items,
                 max_bytes=config.comms_response_max_bytes,
+                idle_horizon_seconds=config.comms_message_ttl_seconds,
             )
         if rejection:
             return _refused(rejection["reason"])
         if incarnation is not None:
             confirm_enrollment(binding, incarnation)
+            if pickup is not None and pickup.ready:
+                complete_pickup(pickup)
     except PageError as exc:
         return _refused(exc.reason)
     except (IdentityError, EndpointError, StoreError) as exc:
@@ -174,6 +191,9 @@ def _operation(snapshot: CallerSnapshot, config: TRWConfig) -> Iterator[tuple[sq
         now = effective_time(conn, binding.group_id)
         ensure_group(conn, binding, now, AdmissionPolicy.from_config(config))
         touch_group_time(conn, binding.group_id, now)
+        # FR13: lazy, idempotent expiry of past-deadline and terminal-member rows.
+        expire_due(conn, binding.group_id, now, frozenset(r.member_id for r in snapshot.recipients if r.terminal))
+        tombstone_due(conn, binding.group_id, now, config.comms_retry_grace_seconds)
         if snapshot.all_terminal:
             conn.execute("UPDATE groups SET closed=1 WHERE group_id=?", (binding.group_id,))
         closed = bool(conn.execute("SELECT closed FROM groups WHERE group_id=?", (binding.group_id,)).fetchone()[0])
@@ -194,73 +214,10 @@ def _recorded_action(conn: sqlite3.Connection, group_id: str) -> Iterator[dict[s
     except (AdmissionError, EndpointError, PageError) as exc:
         conn.execute("ROLLBACK TO comms_action")
         reason = exc.refusal.value if isinstance(exc, EndpointError) else exc.reason
-        count_refusal(conn, group_id, _PERSISTED_REFUSAL_BUCKET.get(reason, reason))
+        count_refusal(conn, group_id, persisted_bucket(reason))
         rejection["reason"] = reason
     finally:
         conn.execute("RELEASE comms_action")
-
-
-def send(
-    recipient_member_id: str | None = None,
-    request_key: str = "",
-    body: str = "",
-    kind: MessageKind = "request",
-    delivery_class: DeliveryClass = "on_demand",
-    ctx: Context | None = None,
-    *,
-    scope: str | None = None,
-) -> dict[str, Any]:
-    """Admit one addressed message, or one bounded scoped notify, or refuse.
-
-    Addressing is exclusive: a message goes to a NAME or to declared GROUND,
-    never to both and never to neither. Supplying both is ambiguous rather than
-    additive, and resolving the ambiguity by preferring one would make the other
-    silently ignored.
-    """
-    from trw_mcp.models.config import get_config
-    from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
-
-    config = get_config()
-    if not config.comms_enabled:
-        return {"status": "disabled", "reason": "comms_disabled", "delivery": "pull_only"}
-    if not config.ctx_isolation_enabled:
-        return _refused("context_isolation_disabled")
-    try:
-        snapshot = resolve_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
-        if not snapshot.all_terminal:
-            snapshot.assert_eligible()
-        result: dict[str, Any] = {}
-        with (
-            _operation(snapshot, config) as (conn, now, _closed),
-            _recorded_action(conn, snapshot.binding.group_id) as rejection,
-        ):
-            # trw:intentional Closure precedes semantic argument validation.
-            # A terminal caller cannot use malformed bytes to avoid closure.
-            if snapshot.all_terminal:
-                raise AdmissionError("group_closed")
-            if (scope is None) == (recipient_member_id is None):
-                raise AdmissionError("ambiguous_addressing")
-            if scope is None:
-                assert recipient_member_id is not None  # noqa: S101 - narrowed by the check above
-                envelope = Envelope(recipient_member_id, request_key, body, kind, delivery_class)
-                result = {"receipt": admit(conn, snapshot, envelope, now)}
-            else:
-                result = notify(
-                    conn,
-                    snapshot,
-                    parse_scope(scope, max_bytes=config.comms_scope_max_bytes),
-                    request_key,
-                    body,
-                    kind,
-                    delivery_class,
-                    now,
-                    max_recipients=config.comms_scope_max_recipients,
-                )
-        if rejection:
-            return _refused(rejection["reason"])
-        return {"status": "ok", "delivery": "pull_only", **result}
-    except (IdentityError, StoreError) as exc:
-        return _exception_refused(exc)
 
 
 def _validate_wait(
@@ -299,7 +256,8 @@ def _inbox_attempt(
     if not config.ctx_isolation_enabled:
         return _refused("context_isolation_disabled"), False
     try:
-        snapshot = resolve_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
+        snapshot = resolve_authority_snapshot(ctx, trw_dir=resolve_trw_dir(), project_root=resolve_project_root())
+        _CALL_BINDING.set(snapshot.binding)
         if not snapshot.all_terminal:
             snapshot.assert_eligible()
         binding = snapshot.binding
@@ -310,7 +268,17 @@ def _inbox_attempt(
         ):
             if snapshot.all_terminal or (closed and action != "status"):
                 raise AdmissionError("group_closed")
-            incarnation = receiver_incarnation(conn, binding, now) if action in ("fetch", "ack") else None
+            ttl = config.comms_lease_ttl_seconds
+            # FR12 renews on an owning operation; FR11 forbids renewal by wait RETRIES,
+            # which are the attempts after the first (the owner tuple is set by the first).
+            ordinary = "tuple" not in owner
+            if action in ("fetch", "ack"):
+                incarnation: str | None = receiver_incarnation(
+                    conn, binding, now, lease_ttl_seconds=ttl, renew=ordinary
+                )
+            else:
+                incarnation = None
+                touch(conn, binding, now, lease_ttl_seconds=ttl, refuse_displaced=False)
             _validate_wait(wait_seconds, action, message_ids, cursor, config)
             if wait_seconds > 0:
                 # trw:intentional Owner is frozen by the FIRST attempt and compared BEFORE any message
@@ -335,6 +303,8 @@ def _inbox_attempt(
                 limit=config.comms_fetch_max_items,
                 max_bytes=config.comms_response_max_bytes,
             )
+            if action == "status":
+                result["capacity"] = remaining_capacity(conn, binding.group_id)
         if rejection:
             return _refused(rejection["reason"]), False
         return result, wait_seconds > 0 and not result["items"]
@@ -342,7 +312,7 @@ def _inbox_attempt(
         return _exception_refused(exc), False
 
 
-def inbox(
+def _inbox(
     action: InboxAction = "fetch",
     message_ids: list[str] | None = None,
     cursor: str | None = None,
@@ -384,6 +354,69 @@ def inbox(
         _WAIT_GUARD.release()
 
 
+#: The binding the current public call resolved, so the FR18 state reports what the
+#: call actually established (endpoint held or not), never what its status implies.
+_CALL_BINDING: ContextVar[CallerBinding | None] = ContextVar("comms_call_binding", default=None)
+
+
+def _finish(result: dict[str, Any], ctx: Context | None, action: str) -> dict[str, Any]:
+    """FR18: decorate a change, a refusal or a bootstrap action; a steady-state success is unchanged."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state._call_context import build_call_context
+
+    try:
+        key: str | None = build_call_context(ctx).session_id or None
+    except Exception:  # justified: fail-open, a missing identity only means no guidance memory
+        key = None
+    observed: str | None = None
+    if result.get("status") == "refused" and result.get("reason") in IDENTITY_REASONS:
+        observed = caller_state(ctx)
+    elif result.get("status") == "ok" and action not in BOOTSTRAP_ACTIONS:
+        binding = _CALL_BINDING.get()
+        observed = "enrolled" if binding is not None and holds_endpoint(binding) else "joined"
+    return _finish_guidance(result, key=key, action=action, config=get_config(), observed=observed)
+
+
+def _scoped(call: Callable[[], dict[str, Any]], ctx: Context | None, action: str) -> dict[str, Any]:
+    token = _CALL_BINDING.set(None)
+    try:
+        return _finish(call(), ctx, action)
+    finally:
+        _CALL_BINDING.reset(token)
+
+
+def peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None) -> dict[str, Any]:
+    """Perform one trusted peer operation, including irreversible closure."""
+    return _scoped(lambda: _peers(action, ctx, cursor=cursor), ctx, action)
+
+
+def send(
+    recipient_member_id: str | None = None,
+    request_key: str = "",
+    body: str = "",
+    kind: MessageKind = "request",
+    delivery_class: DeliveryClass = "on_demand",
+    ctx: Context | None = None,
+    *,
+    scope: str | None = None,
+) -> dict[str, Any]:
+    """Admit one addressed message, or one bounded scoped notify, or refuse."""
+    return _scoped(
+        lambda: send_once(recipient_member_id, request_key, body, kind, delivery_class, ctx, scope=scope), ctx, "send"
+    )
+
+
+def inbox(
+    action: InboxAction = "fetch",
+    message_ids: list[str] | None = None,
+    cursor: str | None = None,
+    ctx: Context | None = None,
+    wait_seconds: int = 0,
+) -> dict[str, Any]:
+    """Read pending traffic, acknowledge receipt, or inspect body-free facts."""
+    return _scoped(lambda: _inbox(action, message_ids, cursor, ctx, wait_seconds), ctx, action)
+
+
 __all__ = [
     "CallerBinding",
     "DeliveryClass",
@@ -395,6 +428,7 @@ __all__ = [
     "derive_group_id",
     "inbox",
     "peers",
+    "record_own_worktree",
     "resolve_caller",
     "send",
 ]
