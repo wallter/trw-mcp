@@ -48,6 +48,7 @@ from trw_mcp.state._learn_journal_disposition import (
     DEAD_LETTER_DIRNAME as DEAD_LETTER_DIRNAME,
 )
 from trw_mcp.state._learn_journal_disposition import (
+    RATE_LIMITED,
     classify_replay,
     dead_letter,
     record_attempt,
@@ -164,10 +165,9 @@ def consume_pending(trw_dir: Path, learning_id: str, *, learnings_dir: str = "le
 def _iter_pending_records(trw_dir: Path, learnings_dir: str) -> Iterator[tuple[Path, str, dict[str, object]]]:
     """Yield ``(path, learning_id, record)`` for each REPLAYABLE pending record.
 
-    Shared scan behind :func:`iter_pending` and :func:`aged_pending_count` so
-    "replayable" means exactly one thing: a poison record (unknown version,
-    corrupt body, malformed shape) is skipped by BOTH, which is what stops the
-    age escape hatch from spinning on a record replay can never consume.
+    Shared scan behind :func:`iter_pending` and the drain, so "replayable" means
+    exactly one thing: a poison record (unknown version, corrupt body, malformed
+    shape) is skipped by both.
 
     Yields the WHOLE record (not just its payload) because the drain rewrites it
     to persist the replay-attempt count that bounds the retry budget.
@@ -211,74 +211,6 @@ def iter_pending(trw_dir: Path, *, learnings_dir: str = "learnings") -> Iterator
     """
     for _path, learning_id, record in _iter_pending_records(trw_dir, learnings_dir):
         yield learning_id, _record_payload(record)
-
-
-def aged_pending_count(
-    trw_dir: Path,
-    *,
-    max_age_seconds: float,
-    learnings_dir: str = "learnings",
-    now: float | None = None,
-) -> int:
-    """Count replayable records whose mtime age has reached *max_age_seconds*.
-
-    PRD-INFRA-171-FR06 (a). The bound is measured from the record's mtime — the
-    field :func:`iter_pending` already sorts on — and is INCLUSIVE: a record
-    whose age exactly equals the bound is counted (and therefore drained), one
-    second younger is not.
-
-    ``max_age_seconds <= 0`` disables the escape hatch and returns 0. Fail-open:
-    a record whose mtime cannot be read is not counted rather than raising.
-    """
-    if max_age_seconds <= 0:
-        return 0
-    reference = time.time() if now is None else now
-    aged = 0
-    for path, _learning_id, _payload in _iter_pending_records(trw_dir, learnings_dir):
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:  # justified: fail-open, an unstattable record is simply not aged
-            continue
-        if reference - mtime >= max_age_seconds:
-            aged += 1
-    return aged
-
-
-def pressure_drain_budget(
-    trw_dir: Path,
-    *,
-    drain_limit: int,
-    min_batch: int,
-    max_age_seconds: float,
-    learnings_dir: str = "learnings",
-) -> int:
-    """Records the sweep may replay WHILE writer pressure is engaged.
-
-    PRD-INFRA-171-FR06 (a) + (b). The pre-FR06 answer was always zero, which is
-    why 42 records were journaled and none ever drained: with the pressure
-    threshold at 2, a single peer MCP instance deferred every sweep forever.
-
-    The deferral's intent — recovery must not fight a live writer for the memory
-    backend — is preserved by making the under-pressure sweep SMALLER, not
-    absent:
-
-    * ``min_batch`` is the minimum-progress floor, clamped to ``drain_limit - 1``
-      so it is always STRICTLY less than an unpressured sweep. ``0`` restores the
-      pre-FR06 defer-always behaviour (the config-only P0 rollback).
-    * the count of records at or past ``max_age_seconds`` raises the budget when
-      the floor alone would leave an aged record stranded — eventual drain is
-      then a guarantee rather than a wait for a quiet moment.
-
-    The result is capped at ``drain_limit`` so a large accumulated backlog cannot
-    turn one pressured sweep into an unbounded one.
-    """
-    floor = max(0, min(min_batch, drain_limit - 1))
-    aged = aged_pending_count(
-        trw_dir,
-        max_age_seconds=max_age_seconds,
-        learnings_dir=learnings_dir,
-    )
-    return min(drain_limit, max(floor, aged))
 
 
 def pending_count(trw_dir: Path, *, learnings_dir: str = "learnings") -> int:
@@ -438,8 +370,10 @@ def drain_pending(
                 dead_lettered += 1
                 continue
             # Still pending — either a deliberate retry or a dead-letter move that
-            # failed. Persist the attempt so the budget survives a restart.
-            record_attempt(path, record, attempt)
+            # failed. Persist the attempt so the budget survives a restart; a
+            # rate-limited attempt is not booked, since the window clears by itself.
+            if disposition.reason != RATE_LIMITED:
+                record_attempt(path, record, attempt)
             retained += 1
         finally:
             release_claim(claim)

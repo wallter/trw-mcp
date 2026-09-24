@@ -19,9 +19,30 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from tests.conftest import extract_tool_fn, get_tools_sync, make_test_server
 
 _LEARNING_ID_RE = re.compile(r"^L-[A-Za-z0-9]+$")
+
+
+@pytest.fixture
+def pinned_project(tmp_project: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """``tmp_project`` pinned to the session daemon: memory tool calls route through it, never ``memory.db``."""
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
+
+    def _no_autostart(_paths: object) -> None:
+        raise AssertionError("a test tried to start a second memory daemon")
+
+    monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _no_autostart)
+    attach_checkout(tmp_project / ".trw", memory_daemon)
+
+    from trw_mcp.models.config import reload_config
+
+    reload_config()
+    yield tmp_project
+    reload_config()
+
 
 # ── 1. Session & Delivery Lifecycle ─────────────────────────────────────────
 
@@ -29,7 +50,7 @@ _LEARNING_ID_RE = re.compile(r"^L-[A-Za-z0-9]+$")
 class TestSessionLifecycle:
     """E2E 1.1-1.6: session_start and deliver."""
 
-    def test_session_start_cold_start(self, tmp_project: Path) -> None:
+    def test_session_start_cold_start(self, pinned_project: Path) -> None:
         """1.1: Cold start with no prior learnings returns an empty corpus."""
         server = make_test_server("ceremony")
         fn = extract_tool_fn(server, "trw_session_start")
@@ -37,14 +58,14 @@ class TestSessionLifecycle:
         assert result.get("success") is True, f"session_start failed: {result}"
         assert result["learnings"] == [], f"cold start must recall nothing: {result['learnings']}"
         assert result["learnings_count"] == 0
-        assert result["total_available"] == 0
+        assert "learnings_omitted" not in result
         # No trw_init has run, so there is no run to recover — and session_start
         # must say so rather than silently adopting someone else's run.
         assert result["run"]["status"] == "no_active_run"
         assert result["run"]["active_run"] is None
         assert "session_started" in result["ceremony_status"]
 
-    def test_session_start_with_query(self, tmp_project: Path) -> None:
+    def test_session_start_with_query(self, pinned_project: Path) -> None:
         """1.2: Focused recall — the query filters the corpus, it is not ignored."""
         server = make_test_server("ceremony", "learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
@@ -53,7 +74,7 @@ class TestSessionLifecycle:
 
         result = extract_tool_fn(server, "trw_session_start")(query="authentication")
         assert result.get("success") is True, f"session_start failed: {result}"
-        summaries = [entry["summary"] for entry in result["learnings"]]
+        summaries = [entry["claim"] for entry in result["learnings"]]
         assert summaries, f"focused recall returned nothing: {result}"
         assert summaries[0] == "Authentication uses JWT tokens", (
             f"query did not rank the matching learning first: {summaries}"
@@ -155,7 +176,7 @@ class TestOrchestration:
 class TestLearningTools:
     """E2E 3.1-3.13: learn, learn_update, recall."""
 
-    def test_learn_stores_entry(self, tmp_project: Path) -> None:
+    def test_learn_stores_entry(self, pinned_project: Path) -> None:
         """3.1: Store a learning entry."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
@@ -173,7 +194,7 @@ class TestLearningTools:
         assert "Pydantic v2 requires model_config" in text
         assert "Use ConfigDict instead of class Config" in text
 
-    def test_learn_all_types(self, tmp_project: Path) -> None:
+    def test_learn_all_types(self, pinned_project: Path) -> None:
         """3.5: Create learnings of each type — and the type is persisted, not dropped."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
@@ -189,7 +210,7 @@ class TestLearningTools:
             text = Path(result["path"]).read_text(encoding="utf-8")
             assert f"type: {t}" in text, f"{t} learning did not persist its type: {text}"
 
-    def test_recall_keyword_search(self, tmp_project: Path) -> None:
+    def test_recall_keyword_search(self, pinned_project: Path) -> None:
         """3.9: Recall returns keyword-matched results."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
@@ -199,7 +220,7 @@ class TestLearningTools:
         learn_fn(summary="Database uses PostgreSQL", detail="PG detail", tags=["db"], impact=0.6)
 
         result = recall_fn(query="authentication")
-        summaries = [entry["summary"] for entry in result["learnings"]]
+        summaries = [entry["claim"] for entry in result["learnings"]]
         assert summaries, f"recall returned nothing: {result}"
         assert summaries[0] == "Authentication uses JWT tokens", (
             f"keyword search did not rank the match first: {summaries}"
@@ -207,7 +228,7 @@ class TestLearningTools:
         assert result["query"] == "authentication"
         assert result["total_matches"] == len(result["learnings"])
 
-    def test_recall_with_tags(self, tmp_project: Path) -> None:
+    def test_recall_with_tags(self, pinned_project: Path) -> None:
         """3.10: Recall with tag filtering excludes the non-matching tag."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
@@ -217,10 +238,10 @@ class TestLearningTools:
         learn_fn(summary="DB pattern B", detail="DB detail", tags=["database"], impact=0.6)
 
         result = recall_fn(query="*", tags=["security"])
-        summaries = [entry["summary"] for entry in result["learnings"]]
+        summaries = [entry["claim"] for entry in result["learnings"]]
         assert summaries == ["Auth pattern A"], f"tag filter leaked or dropped entries: {result}"
 
-    def test_recall_empty_results(self, tmp_project: Path) -> None:
+    def test_recall_empty_results(self, pinned_project: Path) -> None:
         """3.12: Recall with no matches returns an empty corpus, not an error."""
         server = make_test_server("learning")
         recall_fn = extract_tool_fn(server, "trw_recall")
@@ -229,8 +250,8 @@ class TestLearningTools:
         assert result["total_matches"] == 0
         assert result["query"] == "nonexistent_topic_xyz_12345"
 
-    def test_recall_wildcard_all(self, tmp_project: Path) -> None:
-        """3.13: Wildcard recall lists all learnings in the compact projection."""
+    def test_recall_wildcard_all(self, pinned_project: Path) -> None:
+        """3.13: Wildcard recall lists all learnings as stubs."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
         recall_fn = extract_tool_fn(server, "trw_recall")
@@ -250,23 +271,14 @@ class TestLearningTools:
             created.add(stored["learning_id"])
 
         result = recall_fn(query="*")
-        assert result["compact"] is True, f'"*" must auto-enable the compact projection: {result}'
         assert result["learnings"], f"wildcard recall returned nothing: {result}"
         assert result["total_matches"] == len(result["learnings"])
         for entry in result["learnings"]:
             assert entry["id"] in created, f"wildcard returned a foreign entry: {entry}"
-            # Compact projection drops the heavy fields; a regression that stops
-            # trimming would silently multiply every caller's token cost.
-            assert "detail" not in entry, f"compact projection leaked detail: {entry}"
-            assert set(entry) == {
-                "id",
-                "summary",
-                "tags",
-                "impact",
-                "status",
-                "verification_status",
-                "verification_evidence",
-            }, entry
+            # Stubs drop the heavy fields; a regression that stops trimming
+            # would silently multiply every caller's token cost.
+            assert set(entry) <= {"id", "claim", "anchor"}, f"stub leaked a full-row field: {entry}"
+        for entry in recall_fn(ids=sorted(created))["learnings"]:
             # Newly captured entries have no stored verification observation.
             assert entry["verification_status"] == "unknown"
             evidence = entry["verification_evidence"]
@@ -275,11 +287,12 @@ class TestLearningTools:
             assert evidence["aggregate"]["freshness"] == "unknown"
             assert evidence["current_tree_verified"] is False
 
-    def test_learn_update_status(self, tmp_project: Path) -> None:
+    def test_learn_update_status(self, pinned_project: Path) -> None:
         """3.7: Update learning status."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
-        update_fn = extract_tool_fn(server, "trw_learn_update")
+        # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode.
+        update_fn = extract_tool_fn(server, "trw_learn")
         recall_fn = extract_tool_fn(server, "trw_recall")
 
         created = learn_fn(summary="Update test", detail="Detail for update", tags=["e2e"], impact=0.5)
@@ -295,7 +308,7 @@ class TestLearningTools:
         assert [e["id"] for e in recall_fn(query="*", status="resolved")["learnings"]] == [learning_id]
         assert learning_id not in [e["id"] for e in recall_fn(query="*", status="active")["learnings"]]
 
-    def test_learn_unicode_content(self, tmp_project: Path) -> None:
+    def test_learn_unicode_content(self, pinned_project: Path) -> None:
         """13.3: Unicode content stored and retrieved correctly."""
         server = make_test_server("learning")
         learn_fn = extract_tool_fn(server, "trw_learn")
@@ -310,7 +323,7 @@ class TestLearningTools:
         # byte-for-byte, or mojibake passes silently.
         text = Path(result["path"]).read_text(encoding="utf-8")
         assert summary in text and detail in text, f"unicode mangled on disk: {text}"
-        recalled = recall_fn(query="*", compact=False)["learnings"]
+        recalled = recall_fn(ids=[result["learning_id"]])["learnings"]
         match = [e for e in recalled if e["id"] == result["learning_id"]]
         assert match, f"unicode entry not recallable: {recalled}"
         assert match[0]["summary"] == summary
@@ -335,7 +348,7 @@ class TestBuildQuality:
             test_count=150,
             failure_count=0,
             coverage_pct=85.0,
-            mypy_clean=True,
+            options={"mypy_clean": True},
         )
         assert result["tests_passed"] is True, f"pass not recorded: {result}"
         assert result["test_count"] == 150
@@ -359,7 +372,7 @@ class TestBuildQuality:
             test_count=150,
             failure_count=3,
             coverage_pct=75.0,
-            mypy_clean=False,
+            options={"mypy_clean": False},
         )
         assert result["tests_passed"] is False, f"failure was laundered into a pass: {result}"
         assert result["failure_count"] == 3
@@ -520,7 +533,7 @@ class TestKnowledgeTools:
 class TestCrossToolIntegration:
     """E2E 12.1: Full session lifecycle golden path."""
 
-    def test_golden_path_lifecycle(self, tmp_project: Path) -> None:
+    def test_golden_path_lifecycle(self, pinned_project: Path) -> None:
         """12.1: session_start → init → learn → checkpoint → build_check."""
         server = make_test_server("ceremony", "orchestration", "learning", "checkpoint", "build")
         session_fn = extract_tool_fn(server, "trw_session_start")

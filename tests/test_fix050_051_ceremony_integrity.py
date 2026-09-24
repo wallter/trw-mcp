@@ -289,14 +289,14 @@ class TestCeremonyScoreSessionEvents:
             session_events_path,
             {
                 "ts": "2026-03-13T12:00:00Z",
-                "event": "tool_invocation",
+                "event": "tool_call",
                 "tool_name": "trw_session_start",
             },
         )
 
         # events.jsonl (run-level) has NO session_start — just a checkpoint
         run_events: list[dict[str, object]] = [
-            {"ts": "2026-03-13T12:01:00Z", "event": "tool_invocation", "tool_name": "trw_checkpoint"},
+            {"ts": "2026-03-13T12:01:00Z", "event": "tool_call", "tool_name": "trw_checkpoint"},
         ]
 
         # Without trw_dir: should NOT get session_start points (25)
@@ -313,7 +313,7 @@ class TestCeremonyScoreSessionEvents:
         """compute_ceremony_score called without trw_dir must behave identically to old code."""
         events: list[dict[str, object]] = [
             {"ts": "2026-03-13T12:00:00Z", "event": "session_start"},
-            {"ts": "2026-03-13T12:01:00Z", "event": "tool_invocation", "tool_name": "trw_checkpoint"},
+            {"ts": "2026-03-13T12:01:00Z", "event": "tool_call", "tool_name": "trw_checkpoint"},
         ]
         result = compute_ceremony_score(events)
         assert result["session_start"] is True
@@ -340,15 +340,15 @@ class TestCeremonyScoreSessionEvents:
 
         session_events_path = trw_dir / "context" / "session-events.jsonl"
         for evt in [
-            {"ts": "2026-03-13T12:00:00Z", "event": "tool_invocation", "tool_name": "trw_session_start"},
-            {"ts": "2026-03-13T12:01:00Z", "event": "tool_invocation", "tool_name": "trw_checkpoint"},
-            {"ts": "2026-03-13T12:02:00Z", "event": "tool_invocation", "tool_name": "trw_learn"},
+            {"ts": "2026-03-13T12:00:00Z", "event": "tool_call", "tool_name": "trw_session_start"},
+            {"ts": "2026-03-13T12:01:00Z", "event": "tool_call", "tool_name": "trw_checkpoint"},
+            {"ts": "2026-03-13T12:02:00Z", "event": "tool_call", "tool_name": "trw_learn"},
         ]:
             writer.append_jsonl(session_events_path, evt)
 
         # Run-level events: just the deliver
         run_events: list[dict[str, object]] = [
-            {"ts": "2026-03-13T12:03:00Z", "event": "tool_invocation", "tool_name": "trw_deliver"},
+            {"ts": "2026-03-13T12:03:00Z", "event": "tool_call", "tool_name": "trw_deliver"},
         ]
 
         result = compute_ceremony_score(run_events, trw_dir=trw_dir)

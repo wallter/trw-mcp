@@ -20,11 +20,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import cast
 
 import structlog
 
-from trw_mcp.server._doctor_predating_writers import predating_writers
 from trw_mcp.server._version_status_layers import (
     historical_installer_layer,
     live_process_layer,
@@ -43,6 +41,7 @@ from trw_mcp.server._version_status_manifests import (
     _append_diagnostics,
     _extended_package_manifests,
     _read_installed_asset_versions,
+    _read_manifest_packages,
     _read_package_json_version_or_unknown,
     _read_pyproject_version_or_unknown,
 )
@@ -73,7 +72,7 @@ def _explain_mismatches(mismatches: list[str], *, warnings: list[str], errors: l
     ``compatible`` is derived from ``mismatches``, but ``errors``/``warnings``
     were appended only by the manifest readers, so two mismatch ids had no
     diagnostic writer at all. Measured in the field: ``{"compatible": false,
-    "errors": [], "warnings": [], "mismatches": ["trw_mcp_package_vs_installed_asset"]}``
+    "errors": [], "warnings": [], "mismatches": ["trw_mcp_installed_vs_manifest"]}``
     — a consumer reading the conventional fields saw nothing wrong
     (sub_ThQtB4q1pMKoHi4i, 2026-09-16).
 
@@ -133,38 +132,45 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
 
     framework_protocol_version = TRWConfig().framework_version
     installed_asset_version = str(asset.get("framework_version", ""))
-    asset_mcp_version = str(asset.get("trw_mcp_version", ""))
     if asset_result.present and not asset_result.error and not installed_asset_version:
         errors.append("installed asset manifest missing framework_version")
         mismatches.append("installed_asset_framework_version_missing")
-    if asset_result.present and not asset_result.error and not asset_mcp_version:
-        errors.append("installed asset manifest missing trw_mcp_version")
-        mismatches.append("installed_asset_trw_mcp_version_missing")
     if installed_asset_version and installed_asset_version != framework_protocol_version:
         mismatches.append("framework_protocol_vs_installed_asset")
     mcp_package_version = package_versions["trw-mcp"]
-    if asset_mcp_version and mcp_package_version != "unknown" and asset_mcp_version != mcp_package_version:
-        mismatches.append("trw_mcp_package_vs_installed_asset")
     if mcp_package_version != "unknown" and live_server_version != mcp_package_version:
         mismatches.append("trw_mcp_package_vs_live_server")
+
+    # PRD-INFRA-192 FR12: the manifest's ``packages`` is the one record of the
+    # versions init/update-project installed; compare it with what this
+    # interpreter actually has. A required entry missing on either side is a
+    # failure, never "nothing to compare".
+    from trw_mcp.bootstrap._version_manifest import resolved_package_versions
+
+    installed_packages = resolved_package_versions()
+    manifest_result = _read_manifest_packages(root)
+    manifest_packages = manifest_result.packages
+    if not manifest_result.present:
+        errors.append(manifest_result.error or "manifest packages missing")
+        mismatches.append("manifest_packages_missing")
+    for distribution in (PACKAGE_KEY_TRW_MCP, PACKAGE_KEY_TRW_MEMORY):
+        key = distribution.replace("-", "_")
+        installed = installed_packages.get(distribution)
+        recorded = manifest_packages.get(distribution)
+        if installed is None:
+            errors.append(f"{distribution} is not installed in this interpreter")
+            mismatches.append(f"{key}_not_installed")
+        if manifest_result.present and recorded is None:
+            errors.append(f"manifest packages has no {distribution} entry")
+            mismatches.append(f"{key}_manifest_entry_missing")
+        elif installed is not None and recorded is not None and installed != recorded:
+            mismatches.append(f"{key}_installed_vs_manifest")
     live_process = live_process_layer()
     live_currentness = str(live_process.get("currentness") or "unknown")
     if live_currentness != "current":
         mismatches.append(f"live_process_currentness_{live_currentness}")
         errors.append(f"live process currentness is {live_currentness}; release requires current")
     historical = historical_installer_layer(root)
-    predating = predating_writers(root / ".trw")
-    if predating["pids"]:
-        # A WARNING and never a mismatch: ``compatible`` is derived from
-        # ``mismatches`` and ``assert_version_status_compatible`` turns a false
-        # ``compatible`` into a SystemExit, so putting a timestamp heuristic there
-        # would block ``build-release`` whenever an older session happened to be
-        # running (PRD-CORE-277-FR09).
-        warnings.append(
-            f"{len(predating['pids'])} running server process(es) predate the installed version "
-            f"(pids {', '.join(str(pid) for pid in predating['pids'])}); their loaded versions are unknown. "
-            "Restart those sessions."
-        )
     _explain_mismatches(mismatches, warnings=warnings, errors=errors)
     status: VersionStatus = {
         "taxonomy": {
@@ -174,26 +180,29 @@ def collect_version_status(project_root: Path | None = None) -> VersionStatus:
             "live_server_version": "imported trw_mcp.__version__ for the running process",
             "live_process": "frozen connected-process fingerprint currentness (canon registry + realized surface)",
             "historical": "install-time snapshot; historical only, never a current authority",
+            "installed_packages": "importlib.metadata versions resolved in this interpreter",
+            "manifest_packages": ".trw/managed-artifacts.yaml packages (what init/update-project recorded)",
         },
         "versions": {
             "packages": package_versions,
             "framework_protocol_version": framework_protocol_version,
             "installed_asset_version": installed_asset_version,
-            "installed_asset_trw_mcp_version": asset_mcp_version,
             "installed_asset_present": asset_result.present,
             "live_server_version": live_server_version,
+            "installed_packages": installed_packages,
+            "manifest_packages": manifest_packages,
         },
         "compatibility_matrix": {
             "independent_packages": sorted(package for package in package_versions if package != PACKAGE_KEY_TRW_MCP),
             "must_match": [
-                ["packages.trw-mcp", "installed_asset_trw_mcp_version"],
                 ["packages.trw-mcp", "live_server_version"],
                 ["framework_protocol_version", "installed_asset_version"],
+                ["installed_packages.trw-mcp", "manifest_packages.trw-mcp"],
+                ["installed_packages.trw-memory", "manifest_packages.trw-memory"],
             ],
         },
         "live_process": live_process,
         "historical": historical,
-        "predating_writers": cast("dict[str, object]", predating),
         "compatible": not mismatches,
         "mismatches": mismatches,
         "warnings": warnings,

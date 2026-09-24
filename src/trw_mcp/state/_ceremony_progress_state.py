@@ -25,6 +25,7 @@ from trw_mcp.state._ceremony_state_model import (
 from trw_mcp.state._ceremony_state_model import (
     NudgeHistoryEntry as NudgeHistoryEntry,
 )
+from trw_mcp.state._ceremony_state_model import PoolCooldown
 from trw_mcp.state._ceremony_state_model import (
     ToolName as ToolName,
 )
@@ -36,6 +37,8 @@ from trw_mcp.state._ceremony_state_model import (
 )
 
 logger = structlog.get_logger(__name__)
+_schema_reset_warned: set[tuple[Path, str]] = set()
+_schema_reset_lock = threading.Lock()
 
 _STEPS: tuple[str, ...] = ("session_start", "checkpoint", "build_check", "review", "deliver")
 
@@ -96,6 +99,14 @@ def _state_path(trw_dir: Path) -> Path:
     return trw_dir / "context" / "ceremony-state.json"
 
 
+def _warn_reset_once(path: Path, reason: str) -> None:
+    key = (path, reason)
+    with _schema_reset_lock:
+        if key not in _schema_reset_warned:
+            logger.warning("ceremony_state_reset", reason=reason, path=str(path))
+            _schema_reset_warned.add(key)
+
+
 def read_ceremony_state(trw_dir: Path) -> CeremonyState:
     """Read ceremony state. Missing/corrupt state fails open to defaults."""
 
@@ -106,9 +117,17 @@ def read_ceremony_state(trw_dir: Path) -> CeremonyState:
         raw = path.read_text(encoding="utf-8")
         data: object = json.loads(raw)
         if not isinstance(data, dict):
+            _warn_reset_once(path, "not_object")
             return CeremonyState()
         return _from_dict(data)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+    except json.JSONDecodeError:
+        _warn_reset_once(path, "malformed_json")
+        return CeremonyState()
+    except (ValueError, TypeError):
+        _warn_reset_once(path, "schema_mismatch")
+        return CeremonyState()
+    except OSError:
+        logger.warning("ceremony_state_read_failed", path=str(path))
         return CeremonyState()
 
 
@@ -381,7 +400,8 @@ def record_pool_nudge(trw_dir: Path, pool: str) -> None:
 def record_pool_ignore(trw_dir: Path, pool: str) -> None:
     with _state_rmw(trw_dir):
         state = read_ceremony_state(trw_dir)
-        state.pool_ignore_counts[pool] = state.pool_ignore_counts.get(pool, 0) + 1
+        cooldown = state.pool_cooldowns.setdefault(pool, PoolCooldown())
+        cooldown.ignore_count += 1
         write_ceremony_state(trw_dir, state)
 
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 from pathlib import Path
 
 import pytest
@@ -204,24 +203,6 @@ def test_the_newer_server_does_not_log_superseded(tmp_path: Path) -> None:
         get_pinned_run(session_id=_NEW_KEY)
 
     assert not [e for e in logs if e["event"] == "superseded_by_newer_server"]
-
-
-def test_predating_writers_row_names_the_kill_remedy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from trw_mcp.server import _doctor_predating_writers as module
-
-    writers = tmp_path / "memory" / "memory.db.writers"
-    writers.mkdir(parents=True)
-    # Postdating this process's birth: the census discards a lock whose
-    # registration predates it as a recycled pid (Linux /proc/<pid>/stat).
-    registered = time.time()
-    (writers / f"{os.getpid()}.lock").write_text(f"{os.getpid()}\n{registered}\n", encoding="utf-8")
-    monkeypatch.setattr(module, "_install_epoch", lambda: (registered + 1000.0, "dist_info_mtime"))
-
-    status, message = module.predating_writers_row(tmp_path)
-
-    assert status == "WARN"
-    assert "`kill <pid>`" in message
-    assert "not the current connection" in message
 
 
 @pytest.mark.parametrize("own_pin_present", [True, False])

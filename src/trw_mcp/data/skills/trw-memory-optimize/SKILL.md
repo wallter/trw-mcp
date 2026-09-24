@@ -27,7 +27,7 @@ Interactive, evidence-backed maintenance of learning memory. Audit first, presen
 
 Optimize retrieval usefulness and domain coverage—not a fixed global count, entries-per-domain formula, impact threshold, or compendium size.
 
-The optional `trw-distill maintain optimize` workflow may generate a machine-readable plan when installed. Use it for planning only: verify its version/command, review the dry-run output under the same rules, and never treat optional LLM scoring as authoritative evidence. Do not invoke `trw-distill maintain optimize --apply`; the current CLI rebuilds an unbound plan instead of applying an immutable reviewed receipt. Apply confirmed IDs and fields narrowly through `trw_learn_update`.
+The optional `trw-distill maintain optimize` workflow may generate a machine-readable plan when installed. Use it for planning only: verify its version/command, review the dry-run output under the same rules, and never treat optional LLM scoring as authoritative evidence. Do not invoke `trw-distill maintain optimize --apply`; the current CLI rebuilds an unbound plan instead of applying an immutable reviewed receipt. Apply confirmed IDs and fields narrowly through `trw_learn(learning_id=...)`.
 
 ## 2. Confirm destructive/semantic changes
 
@@ -37,7 +37,7 @@ Checkpoint the accepted plan before mutation when a run is active.
 
 ## 3. Apply narrowly
 
-- Prefer `trw_learn_update` for explicit per-entry changes.
+- Prefer `trw_learn(learning_id=...)` for explicit per-entry changes.
 - Retire with `status="obsolete"`; do not hard-delete learning storage.
 - Apply consolidations in a recoverable order: update/create the survivor, verify it, then obsolete duplicates.
 - Re-read an entry immediately before mutation so a stale plan does not overwrite concurrent changes.

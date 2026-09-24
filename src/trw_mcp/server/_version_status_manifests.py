@@ -45,9 +45,14 @@ class VersionValues(TypedDict):
     packages: PackageVersions
     framework_protocol_version: str
     installed_asset_version: str
-    installed_asset_trw_mcp_version: str
     installed_asset_present: bool
     live_server_version: str
+    # PRD-INFRA-192 FR12: the manifest's ``packages`` map is the ONE
+    # record of resolved versions an install/update wrote; compared here
+    # against ``installed_packages`` (importlib, resolved live) rather than a
+    # VERSION.yaml stamp.
+    installed_packages: PackageVersions
+    manifest_packages: PackageVersions
 
 
 class VersionStatus(TypedDict):
@@ -58,10 +63,6 @@ class VersionStatus(TypedDict):
     compatibility_matrix: dict[str, object]
     live_process: dict[str, object]
     historical: dict[str, object]
-    # PRD-CORE-277-FR09. Its own layer, beside live_process rather than inside
-    # it: live_process answers "is THIS process current", this answers "is some
-    # OTHER process still writing the store with code that predates the install".
-    predating_writers: dict[str, object]
     compatible: bool
     mismatches: list[str]
     warnings: list[str]
@@ -262,6 +263,36 @@ def _read_installed_asset_versions(root: Path) -> InstalledAssetResult:
             data={},
             error=f"installed asset manifest unreadable at {framework_asset_path}: {exc}",
         )
+
+
+@dataclass(frozen=True)
+class ManifestPackagesResult:
+    """Parsed ``packages`` map from ``.trw/managed-artifacts.yaml``."""
+
+    present: bool
+    packages: PackageVersions
+    error: str | None = None
+
+
+def _read_manifest_packages(root: Path) -> ManifestPackagesResult:
+    """Read the ``packages`` map init-project/update-project recorded (PRD-INFRA-192 FR12).
+
+    Absent, unreadable, or without a ``packages`` mapping all report
+    ``present=False``: a manifest from before the field existed is the case
+    ``manifest_packages_missing`` surfaces, and update-project rewrites it.
+    """
+    manifest_path = root / ".trw" / "managed-artifacts.yaml"
+    try:
+        packages = FileStateReader(base_dir=root).read_yaml(manifest_path).get("packages")
+    except StateError as exc:
+        return ManifestPackagesResult(
+            present=False, packages={}, error=f"manifest unreadable at {manifest_path}: {exc}"
+        )
+    if not isinstance(packages, dict):
+        return ManifestPackagesResult(
+            present=False, packages={}, error=f"manifest at {manifest_path} has no 'packages' map"
+        )
+    return ManifestPackagesResult(present=True, packages={str(k): str(v) for k, v in packages.items()})
 
 
 def _append_diagnostics(

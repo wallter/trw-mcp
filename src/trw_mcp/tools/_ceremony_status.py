@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -47,7 +46,6 @@ _WORKSPACE_CONFIG_CACHE: dict[tuple[str, int, tuple[str | None, ...]], TRWConfig
 
 if TYPE_CHECKING:
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state.memory_pressure import WriterCensus
 
 
 def _load_config_for_trw_dir(trw_dir: Path) -> TRWConfig:
@@ -124,110 +122,16 @@ def build_ceremony_status_line(state: CeremonyState) -> str:
     return "; ".join(parts)
 
 
-def _close_stale_nudge_streak(effective_dir: Path) -> None:
-    """Close an open ``nudges`` deferral streak once pressure has cleared.
-
-    Reads the ledger unconditionally (cheap: a small local JSON read) but
-    only WRITES when there is actually an open streak to close, so a healthy
-    machine that never deferred nudges pays a read, never a write.
-    """
-    from trw_mcp.state.deferral_ledger import read_ledger, record_completion
-
-    entries, _state = read_ledger(effective_dir)
-    entry = entries.get("nudges")
-    if entry is not None and entry.deferred_since_ts is not None:
-        record_completion(effective_dir, "nudges")
-
-
-def _apply_nudge_pressure(
-    response: dict[str, object],
-    effective_dir: Path,
-    cfg: TRWConfig,
-    census: WriterCensus | None,
-) -> tuple[bool, Callable[[], None] | None]:
-    """Attach the nudge deferral advisory; return (suppressed, pending_completion).
-
-    ``nudges`` is a PRD-CORE-257-FR03 covered step, so a suppression streak that
-    reaches ``session_start_max_deferral_hours`` emits the nudge anyway. The
-    ledger is consulted only while pressure is actually detected, keeping the
-    per-tool-call hot path free of ledger I/O on a healthy machine.
-
-    Audit row 7: an expired streak used to call ``record_completion``
-    IMMEDIATELY here, before pool selection, content generation, phase dedup
-    or messenger dispatch had a chance to run — so bounded EVALUATION did not
-    guarantee bounded EMISSION; a streak could reset with no nudge ever
-    reaching the caller. The second return value is a callback the caller
-    invokes ONLY after confirming ``nudge_content`` actually landed on
-    *response*; the claim this decision already won (via
-    ``step_deferral_decision``/``claim_forced_run``) stays held until then, so
-    a losing race elsewhere cannot double-run this step in the meantime.
-    """
-    from trw_mcp.state.deferral_ledger import record_completion, step_deferral_decision
-    from trw_mcp.state.memory_pressure import take_writer_census, writer_pressure_details
-
-    measured = census or take_writer_census(
-        effective_dir,
-        threshold=cfg.session_start_writer_pressure_threshold,
-        pin_ttl_hours=cfg.pin_ttl_hours,
-    )
-    if not measured.under_pressure:
-        # Peer-review finding: a "nudges" streak OPENED while pressure was
-        # present is only ever closed by ``step_deferral_decision`` being
-        # called again under pressure (via the ``expired`` branch below) —
-        # but this function short-circuits BEFORE that call whenever pressure
-        # has cleared, so a streak that started under pressure and then saw a
-        # healthy call next would never close, and its stale
-        # ``deferred_since_ts`` would understate age forever. The deferral
-        # CAUSE (pressure) is gone here independent of whether a nudge fires
-        # this call, so the streak closes unconditionally — not gated on
-        # nudge emission, which is the row-7 rule for the EXPIRED-but-still-
-        # under-pressure branch only.
-        _close_stale_nudge_streak(effective_dir)
-        return False, None
-    decision = step_deferral_decision(
-        effective_dir,
-        "nudges",
-        under_pressure=True,
-        max_deferral_hours=cfg.session_start_max_deferral_hours,
-    )
-    if decision.expired:
-        logger.warning(
-            "ceremony_nudge_deferral_expired",
-            age_hours=decision.age_hours,
-            max_deferral_hours=cfg.session_start_max_deferral_hours,
-        )
-
-        def _finalize() -> None:
-            record_completion(effective_dir, "nudges")
-
-        return False, _finalize
-    response["nudge_deferred"] = writer_pressure_details(measured, decision)
-    logger.warning(
-        "ceremony_nudge_deferred",
-        reason="writer_pressure",
-        writer_count=measured.writer_count,
-        peer_writer_count=measured.peer_writer_count,
-        threshold=measured.threshold,
-        deferral_age_hours=decision.age_hours,
-    )
-    return True, None
-
-
 def append_ceremony_status(
     response: dict[str, object],
     trw_dir: Path | None = None,
     context: NudgeContext | None = None,
-    *,
-    census: WriterCensus | None = None,
 ) -> dict[str, object]:
     """Attach a live ceremony progress summary and nudge content to a tool response.
 
     Sets ``ceremony_status`` (always) and ``nudge_content`` (when a nudge pool
-    is selected and produces content).
-
-    ``census`` lets a caller that already measured writer pressure thread its
-    result in rather than taking a second census (FR01). This function runs for
-    EVERY tool, not only session_start, so it falls back to measuring its own.
+    is selected and produces content). This function runs for EVERY tool, not
+    only session_start.
 
     Fail-open: if the state cannot be read, the original response is returned.
     """
@@ -237,27 +141,11 @@ def append_ceremony_status(
         state = read_ceremony_state(effective_dir)
         response["ceremony_status"] = build_ceremony_status_line(state)
 
-        # Disabled nudges are a status-only path. Avoid process census,
-        # counter writes, and pool imports when no nudge can be emitted; this
-        # keeps the advertised hot-path latency bound under loaded worktrees.
+        # Disabled nudges are a status-only path. Avoid counter writes and pool
+        # imports when no nudge can be emitted; this keeps the advertised
+        # hot-path latency bound under loaded worktrees.
         if not cfg.effective_nudge_enabled:
             return response
-
-        # PRD-CORE-257-FR06: pressure sets a LOCAL FLAG. The early return that
-        # used to live here sat before increment_tool_call_counter and
-        # attach_reversion_prompt, so under the steady-state pressure measured on
-        # both reporting platforms the nudge cooldown counter never advanced and
-        # the phase-reversion prompt never reached a response — two ceremony
-        # mechanisms disabled by a check meant only to suppress nudge text.
-        nudge_suppressed = False
-        finalize_nudge_completion: Callable[[], None] | None = None
-        if cfg.session_start_defer_under_writer_pressure:
-            try:
-                nudge_suppressed, finalize_nudge_completion = _apply_nudge_pressure(
-                    response, effective_dir, cfg, census
-                )
-            except Exception:  # justified: pressure detection is advisory and fail-open
-                logger.debug("ceremony_nudge_pressure_check_failed", exc_info=True)
 
         from trw_mcp.state._ceremony_progress_state import increment_tool_call_counter
         from trw_mcp.tools._ceremony_nudge_emission import attach_reversion_prompt
@@ -274,24 +162,7 @@ def append_ceremony_status(
         # below return early — a per-branch write would be reachable on one path.
         attach_reversion_prompt(response, context=context, state=state)
 
-        # Only the pool selection, messenger dispatch and nudge_content emission
-        # below are skipped under pressure (FR06); everything above ran.
-        if nudge_suppressed:
-            return response
-
-        # Audit row 7: everything from here on is wrapped so the caller can
-        # confirm nudge_content ACTUALLY landed before completing an expired
-        # ``nudges`` streak. ``finalize_nudge_completion`` is only non-None when
-        # this call just won a forced-run claim on that streak (see
-        # ``_apply_nudge_pressure``); every code path below either sets
-        # ``nudge_content`` or returns without it, so a single check in
-        # ``finally`` covers every ``return response`` in this block.
-        try:
-            return _dispatch_nudge_content(response, state, cfg, context, effective_dir)
-        finally:
-            if finalize_nudge_completion is not None and "nudge_content" in response:
-                with suppress(Exception):  # justified: fail-open, completion bookkeeping must not break the response
-                    finalize_nudge_completion()
+        return _dispatch_nudge_content(response, state, cfg, context, effective_dir)
 
     except Exception:  # justified: status decoration must never break tool responses
         logger.debug("append_ceremony_status_failed", exc_info=True)

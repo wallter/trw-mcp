@@ -84,10 +84,6 @@ class TestCopilotProfile:
         profile = _PROFILES["copilot"]
         assert profile.nudge_enabled is True
 
-    def test_copilot_learning_recall_enabled(self) -> None:
-        profile = _PROFILES["copilot"]
-        assert profile.learning_recall_enabled is True
-
     def test_copilot_mcp_instructions_enabled(self) -> None:
         profile = _PROFILES["copilot"]
         assert profile.mcp_instructions_enabled is True

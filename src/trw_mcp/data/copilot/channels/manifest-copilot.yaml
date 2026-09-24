@@ -10,8 +10,6 @@ channels:
   lock_file: .trw/channels/copilot-vscode-mcp-config.lock
   status: active
   write_strategy: JSON_KEY_MERGE
-  tier_default: T2
-  tier_min: T0
   markers:
     start: ''
     end: ''
@@ -47,8 +45,6 @@ channels:
   lock_file:
   status: active
   write_strategy: EPHEMERAL_STDOUT
-  tier_default: T2
-  tier_min: T0
   markers:
     start: ''
     end: ''
@@ -84,8 +80,6 @@ channels:
   lock_file:
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T2
-  tier_min: T0
   markers:
     start: ''
     end: ''

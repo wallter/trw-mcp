@@ -83,22 +83,19 @@ def test_effective_skills_enabled_opencode_profile() -> None:
 
 @pytest.mark.unit
 def test_tools_sub_config_default() -> None:
-    """config.tools projects the CORE-218 resolution authority + variant defaults."""
+    """config.tools projects the CORE-218 resolution authority default."""
     cfg = TRWConfig()
     tools = cfg.tools
     assert isinstance(tools, ToolsConfig)
     assert tools.tool_resolution_mode == "standard"
-    assert tools.tool_descriptions_variant == "default"
-    assert tools.mcp_server_instructions_enabled is None
 
 
 @pytest.mark.unit
 def test_tools_sub_config_reflects_explicit_values() -> None:
     """config.tools reflects explicitly set values from TRWConfig."""
-    cfg = TRWConfig(tool_resolution_mode="all", tool_descriptions_variant="verbose")
+    cfg = TRWConfig(tool_resolution_mode="all")
     tools = cfg.tools
     assert tools.tool_resolution_mode == "all"
-    assert tools.tool_descriptions_variant == "verbose"
 
 
 @pytest.mark.unit

@@ -83,10 +83,19 @@ def _merge_settings_json(
 
     existing = read_json_object(dest, context="settings_merge_existing")
     if existing is None:
-        # Unreadable / corrupt / non-object existing file: recover by copying the
-        # (valid) bundled template, mirroring the prior fallback semantics.
-        logger.warning("settings_json_merge_fallback", path=str(dest), reason="unreadable_or_non_object")
-        _parent._update_or_report(src, dest, result)
+        # Unreadable / corrupt / non-object existing file: TRW cannot prove the
+        # bytes on disk are its own, so it must not replace them with the
+        # bundled template (that would discard whatever the user had there).
+        # Leave the file byte-identical and surface the problem loudly — an
+        # `errors` entry rolls the whole update-project transaction back
+        # (PRD-INFRA-192 FR10), which is the correct tradeoff: better to block
+        # an update than to silently destroy a user's settings.json.
+        logger.warning("settings_json_merge_unreadable", path=str(dest), reason="unreadable_or_non_object")
+        result["errors"].append(
+            f"{dest} could not be parsed as a JSON object; TRW left it unchanged "
+            "instead of replacing it with the bundled template. Fix or remove the "
+            "file, then re-run update-project."
+        )
         return
 
     # Merge env block: add missing keys, preserve existing values. Guard the
@@ -140,3 +149,28 @@ def _merge_settings_json(
     except OSError:
         # Structural reason only — never echo the raw exception text.
         result["errors"].append(f"Failed to write merged settings.json: {dest}")
+
+
+def _set_hook_registration(settings: Path, event: str, entry: dict[str, object], *, present: bool) -> bool:
+    """Add (``present``) or remove one hook entry in ``settings``; ``True`` when the file changed.
+
+    Identity is :func:`_hook_entry_identity`, the same key the merge uses, so the
+    entry is never duplicated and a user's other entries for the event are untouched.
+    An unreadable or non-object settings file is left alone.
+    """
+    data = read_json_object(settings, context="hook_registration")
+    hooks = data.get("hooks", {}) if data is not None else None
+    if data is None or not isinstance(hooks, dict) or not isinstance(hooks.get(event, []), list):
+        return False
+    entries: list[object] = hooks.get(event, [])
+    identity = _hook_entry_identity(entry)
+    wanted = [e for e in entries if _hook_entry_identity(e) != identity] + ([entry] if present else [])
+    if wanted == entries:
+        return False
+    if wanted:
+        hooks[event] = wanted
+    else:
+        hooks.pop(event, None)
+    data["hooks"] = hooks
+    settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return True

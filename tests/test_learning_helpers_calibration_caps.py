@@ -1,22 +1,9 @@
-"""Tests for learning helper calibration and soft-cap behavior."""
+"""Tests for learning helper soft-cap behavior."""
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from tests._learning_helpers_test_support import _CFG, set_project_root  # noqa: F401
-from trw_mcp.tools._learning_helpers import calibrate_impact, check_soft_cap
-
-
-class TestCalibrateImpact:
-    """Pooled exposure outcomes are not caller accuracy evidence."""
-
-    def test_preserves_raw_impact_without_reading_pooled_stats(self) -> None:
-        with patch("trw_mcp.state.recall_tracking.get_recall_stats") as stats:
-            stats.return_value = {"total_recalls": 100, "positive_outcomes": 80}
-            for impact in (0.0, 0.1, 0.5, 0.9, 1.0):
-                assert calibrate_impact(impact, _CFG) == impact
-            stats.assert_not_called()
+from trw_mcp.tools._learning_helpers import check_soft_cap
 
 
 class TestCheckSoftCap:

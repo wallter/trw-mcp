@@ -1,4 +1,4 @@
-"""Tests for check_duplicate threshold validation."""
+"""Tests for dedup_verdict threshold validation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from tests._dedup_test_support import mock_embed, write_entry
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.dedup import check_duplicate
+from trw_mcp.state.dedup import dedup_verdict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
@@ -28,7 +28,7 @@ class TestThresholdValidation:
         write_entry(entries_dir, writer, "L-thresh01", summary, detail)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate(summary, detail, entries_dir, reader, config=config)
+            result = dedup_verdict(summary, detail, entries_dir, reader, config=config)
 
         assert result.action in ("skip", "store", "merge")
 
@@ -40,6 +40,6 @@ class TestThresholdValidation:
         config = TRWConfig(embeddings_enabled=True, dedup_skip_threshold=0.90, dedup_merge_threshold=0.90)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate("any summary", "any detail", entries_dir, reader, config=config)
+            result = dedup_verdict("any summary", "any detail", entries_dir, reader, config=config)
 
         assert result is not None

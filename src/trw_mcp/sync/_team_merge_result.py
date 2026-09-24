@@ -30,6 +30,8 @@ class TeamMergeResult:
         attempted: Items handed to the merge, including ones never applied.
         inserted: New local rows written.
         merged: Existing local rows updated (conflict-resolved).
+        unchanged: Items whose revision (same vector clock) was already applied;
+            re-offering one is a no-op, neither applied nor rejected.
         skipped_no_id: Items carrying no ``source_learning_id`` to key on.
         invalid: Items whose payload could not be deserialised.
         quarantined: Items the security gate diverted rather than stored.
@@ -47,6 +49,7 @@ class TeamMergeResult:
     attempted: int = 0
     inserted: int = 0
     merged: int = 0
+    unchanged: int = 0
     skipped_no_id: int = 0
     invalid: int = 0
     quarantined: int = 0
@@ -77,6 +80,7 @@ class TeamMergeResult:
             "attempted": self.attempted,
             "inserted": self.inserted,
             "merged": self.merged,
+            "unchanged": self.unchanged,
             "applied": self.applied,
             "skipped_no_id": self.skipped_no_id,
             "invalid": self.invalid,

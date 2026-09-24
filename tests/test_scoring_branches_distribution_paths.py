@@ -128,11 +128,9 @@ class TestDoubleDecayFix:
         decayed_impact = apply_time_decay(0.8, created_dt)
         decayed_q = apply_time_decay(0.8, created_dt)
         double_decay_score = compute_utility_score(
-            q_value=decayed_q,
             days_since_last_access=30,
             recurrence_count=2,
             base_impact=decayed_impact,
-            q_observations=5,
             access_count=3,
             source_type="agent",
         )

@@ -12,6 +12,7 @@ lives in ``_ide_targets.py`` and is re-exported here for backward compatibility.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
@@ -30,6 +31,7 @@ from ._ide_targets import _update_config_target_platforms as _update_config_targ
 from ._ide_targets import _update_copilot_artifacts as _update_copilot_artifacts
 from ._ide_targets import _update_cursor_artifacts as _update_cursor_artifacts
 from ._ide_targets import _update_opencode_artifacts as _update_opencode_artifacts
+from ._safe_remove import path_refusal
 from ._settings_merge import _merge_settings_json as _merge_settings_json
 from ._template_claude_md import (
     _TRW_END_MARKER,
@@ -204,23 +206,76 @@ def _update_hooks(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
+    ide: str | None = None,
 ) -> None:
-    """Update hook ``.sh`` files (overwritten unless user-modified, made executable)."""
+    """Update hook ``.sh`` files (overwritten unless user-modified, made executable).
+
+    PRD-INFRA-192 FR09 §3: ``.claude/hooks`` is refreshed only when some
+    recorded/``--ide`` client for *target_dir* still owns it (claude-code,
+    codex, or copilot) — a project recorded as ``[opencode]`` must not have
+    a leftover ``.claude/hooks`` tree from an older install byte-refreshed.
+
+    PRD-INFRA-192 FR10: the deployed set is the registered-hook-plus-helper
+    closure for the *resolved* client set, not every bundled ``.sh`` file — a
+    codex-only or copilot-only project no longer receives claude-code-only
+    hooks (e.g. the intent-guard pair) it never registers.
+    """
+    from ._client_ownership import update_owns_surface, update_write_targets
+    from ._hook_closure import deployable_hook_files
+
+    if not update_owns_surface(".claude/hooks", target_dir, ide):
+        return
+    # A symlinked .claude or .claude/hooks would carry every read, copy and unlink below out of the project.
+    refusal = path_refusal(target_dir / ".claude" / "hooks", target_dir)
+    if refusal:
+        result.setdefault("warnings", []).append(f".claude/hooks: left untouched ({refusal})")
+        return
     hooks_source = effective_data / "hooks"
-    if hooks_source.is_dir():
-        for hook_file in sorted(hooks_source.iterdir()):
-            if hook_file.suffix == ".sh":
-                dest = target_dir / ".claude" / "hooks" / hook_file.name
-                _guarded_copy_update(
-                    hook_file,
-                    dest,
-                    hook_file.name,
-                    result,
-                    manifest_hashes,
-                    make_executable=True,
-                    on_progress=on_progress,
-                )
+    clients = update_write_targets(target_dir, ide)
+    shipped = deployable_hook_files(clients, hooks_source) if hooks_source.is_dir() else set()
+    _withdraw_retired_hooks(target_dir, shipped, manifest_hashes, result)
+    for name in sorted(shipped):
+        dest = target_dir / ".claude" / "hooks" / name
+        _guarded_copy_update(
+            hooks_source / name,
+            dest,
+            name,
+            result,
+            manifest_hashes,
+            make_executable=True,
+            on_progress=on_progress,
+        )
     _rebless_intent_hook_digest(target_dir, result)
+
+
+def _withdraw_retired_hooks(
+    target_dir: Path, shipped: set[str], manifest_hashes: dict[str, str] | None, result: dict[str, list[str]]
+) -> None:
+    """Remove a hook TRW recorded installing and no longer ships, so an update leaves no orphan.
+
+    Only an unedited copy goes: its bytes must equal what the manifest recorded TRW
+    writing. An edited copy is kept with a warning. The CC-03 pair is owned by its
+    channel installer, which ships or withdraws it by config, so it is skipped here.
+    """
+    from ._claude_code_distill_channels import _CC03_HOOKS
+
+    for name, recorded in sorted((manifest_hashes or {}).items()):
+        dest = target_dir / ".claude" / "hooks" / name
+        if "/" in name or not name.endswith(".sh") or name in shipped or name in _CC03_HOOKS:
+            continue
+        rel = f".claude/hooks/{name}"
+        # Rechecked per file, before the read and the unlink: the manifest key is data, not a trusted path.
+        refusal = path_refusal(dest, target_dir)
+        if refusal:
+            result.setdefault("warnings", []).append(f"{rel}: left untouched ({refusal})")
+            continue
+        if not dest.is_file():
+            continue
+        if hashlib.sha256(dest.read_bytes()).hexdigest() == recorded:
+            dest.unlink()
+            result.setdefault("removed", []).append(rel)
+        else:
+            result.setdefault("warnings", []).append(f"{rel}: no longer shipped by TRW; kept because it was edited")
 
 
 def _rebless_intent_hook_digest(target_dir: Path, result: dict[str, list[str]]) -> None:
@@ -255,8 +310,17 @@ def _update_skills(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
+    ide: str | None = None,
 ) -> None:
-    """Update skill directories (overwritten unless user-modified)."""
+    """Update skill directories (overwritten unless user-modified).
+
+    PRD-INFRA-192 FR09 §3: ``.claude/skills`` is claude-code's own surface —
+    refreshed only when claude-code is among the recorded/``--ide`` clients.
+    """
+    from ._client_ownership import update_owns_surface
+
+    if not update_owns_surface(".claude/skills", target_dir, ide):
+        return
     skills_source = effective_data / "skills"
     if skills_source.is_dir():
         for skill_dir in sorted(skills_source.iterdir()):
@@ -285,6 +349,7 @@ def _update_agents(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
+    ide: str | None = None,
 ) -> None:
     """Update agent ``.md`` files, resolving the capability-tier ``model:`` line.
 
@@ -306,6 +371,15 @@ def _update_agents(
     the same client and bundle — the property whose absence made the earlier
     install-versus-update asymmetry regress on every upgrade. A client with no
     agent surface is recorded once and creates no directory.
+
+    *ide* (G1, installer refinement 5.1.0): forwarded to
+    ``resolve_client_write_targets`` as ``ide_override``. Without it, a brand
+    new ``--ide <client>`` run only sees clients already RECORDED in
+    ``.trw/config.yaml`` — target_platforms registration
+    (``_update_config_target_platforms``) runs later in the same invocation,
+    in the post-update phase — so the new client's agents (and every other
+    per-client artifact resolved through this same read) were silently
+    skipped on the very first run and only materialized on the second.
     """
     from trw_mcp.agents.agent_formats import agent_format_for
     from trw_mcp.exceptions import AgentFormatError
@@ -316,7 +390,7 @@ def _update_agents(
     agents_source = effective_data / "agents"
     if not agents_source.is_dir():
         return
-    for client in dict.fromkeys(resolve_client_write_targets(target_dir)):
+    for client in dict.fromkeys(resolve_client_write_targets(target_dir, ide_override=ide)):
         try:
             fmt = agent_format_for(client)
         except AgentFormatError as exc:
@@ -350,6 +424,7 @@ def _update_framework_files(
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
     manifest_hashes: dict[str, str] | None = None,
+    ide: str | None = None,
 ) -> None:
     """Copy/update all framework-managed files from bundled data.
 
@@ -369,22 +444,27 @@ def _update_framework_files(
         on_progress: Optional callback for real-time progress reporting.
         manifest_hashes: SHA256 content hashes from prior manifest for
             user-modification detection (PRD-FIX-068-FR05).
+        ide: Target IDE override, forwarded to ``_update_agents`` (G1).
     """
+    from ._client_ownership import update_owns_surface
+
     _update_always_overwrite_files(target_dir, effective_data, result, on_progress)
     _report_preserved_files(target_dir, result)
-    # PRD-INFRA-044-FR04: Smart-merge settings.json (preserves user ENABLE_TOOL_SEARCH opt-out)
-    _merge_settings_json(
-        effective_data / "settings.json",
-        target_dir / ".claude" / "settings.json",
-        result,
-    )
+    # PRD-INFRA-044-FR04: Smart-merge settings.json (preserves user ENABLE_TOOL_SEARCH opt-out).
+    # PRD-INFRA-192 FR09 §3: only when claude-code still owns this project's settings.json.
+    if update_owns_surface(".claude/settings.json", target_dir, ide):
+        _merge_settings_json(
+            effective_data / "settings.json",
+            target_dir / ".claude" / "settings.json",
+            result,
+        )
     # PRD-SEC-005-FR02: merge-ensure the credentials.yaml ignore rule on every
     # existing install (gitignore.txt is only deployed on INIT, so update-project
     # would otherwise never refresh a custom .trw/.gitignore).
     _ensure_credentials_gitignored(target_dir, result, on_progress)
-    _update_hooks(target_dir, effective_data, result, on_progress, manifest_hashes)
-    _update_skills(target_dir, effective_data, result, on_progress, manifest_hashes)
-    _update_agents(target_dir, effective_data, result, on_progress, manifest_hashes)
+    _update_hooks(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
+    _update_skills(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
+    _update_agents(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +501,7 @@ def _update_mcp_config(
     target_dir: Path,
     result: dict[str, list[str]],
     on_progress: ProgressCallback = None,
+    ide: str | None = None,
 ) -> None:
     """Update ``.mcp.json`` and ``CLAUDE.md`` configuration files.
 
@@ -434,9 +515,17 @@ def _update_mcp_config(
         result: Mutable result dict accumulating ``updated``, ``created``,
             ``preserved``, and ``errors`` entries.
         on_progress: Optional callback for real-time progress reporting.
+        ide: ``--ide`` override, forwarded to the PRD-INFRA-192 FR09 §3
+            ownership check so ``.mcp.json`` is merged only for a project
+            whose recorded clients (plus *ide*) include claude-code.
     """
-    # Smart-merge .mcp.json (ensure trw entry, preserve user entries)
-    _merge_mcp_json(target_dir, result, on_progress)
+    from ._client_ownership import update_owns_surface
+
+    # Smart-merge .mcp.json (ensure trw entry, preserve user entries) — only
+    # for a project claude-code still owns; a `[opencode]` project's leftover
+    # `.mcp.json` from an older install must stay byte-identical.
+    if update_owns_surface(".mcp.json", target_dir, ide):
+        _merge_mcp_json(target_dir, result, on_progress)
 
     # Smart-update CLAUDE.md (preserve user sections, update trw block)
     claude_md_path = target_dir / "CLAUDE.md"

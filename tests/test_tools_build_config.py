@@ -21,11 +21,8 @@ class TestBuildConfig:
     def test_defaults(self) -> None:
         config = TRWConfig()
         assert config.build_check_enabled is True
-        assert config.build_check_timeout_secs == 300
         assert config.build_check_coverage_min == 85.0
         assert config.build_gate_enforcement == "lenient"
-        assert config.build_check_pytest_args == ""
-        assert config.build_check_mypy_args == "--strict"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TRW_BUILD_CHECK_ENABLED", "false")

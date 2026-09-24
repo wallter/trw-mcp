@@ -132,7 +132,7 @@ class TestFR02ServerInstructions:
 
         The original form asserted a literal ``"30%"`` — an acceptance criterion
         satisfied only by an unsourced number, which the root ``CLAUDE.md``
-        statistical-significance rule forbids and which FRAMEWORK-CORE says
+        statistical-significance rule forbids and which FRAMEWORK.md says
         belongs in the eval synthesis, never in prose. The instruction string
         carried it while the live ``messages.yaml`` primary did not, so the two
         made different empirical claims depending on which one loaded.

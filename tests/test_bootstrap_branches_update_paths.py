@@ -21,6 +21,9 @@ class TestDryRunReportsTheScratchDiff:
 
     def test_missing_artifacts_are_reported_created_and_not_written(self, fake_git_repo: Path) -> None:
         (fake_git_repo / ".trw").mkdir()
+        (fake_git_repo / ".trw" / "managed-artifacts.yaml").write_text(
+            "version: 2\ncontent_hashes: {}\n", encoding="utf-8"
+        )
 
         result = update_project(fake_git_repo, dry_run=True)
 
@@ -208,12 +211,20 @@ class TestUpdateCreatesMissingFrameworkFiles:
         assert fw_path.exists()
         assert any("FRAMEWORK.md" in c for c in result["created"])
 
-    def test_hook_file_created_when_missing(self, initialized_repo: Path) -> None:
-        """Hook file that doesn't exist is created."""
+    def test_hook_file_missing_since_last_manifest_stays_deleted(self, initialized_repo: Path) -> None:
+        """PRD-INFRA-192 FR10: a manifest-recorded hook that vanished stays deleted (tombstoned).
+
+        Superseded the old "always recreate a missing hook" contract, which was
+        the HOOK-RESURRECT defect: a hook the user deliberately deleted came
+        back on the next update-project. Coverage for the genuinely-never-
+        provisioned case (no manifest record at all) lives in
+        test_bootstrap_tombstones.py.
+        """
         hook_path = initialized_repo / ".claude" / "hooks" / "session-start.sh"
         hook_path.unlink()
 
         result = update_project(initialized_repo)
 
-        assert hook_path.exists()
-        assert any("session-start.sh" in c for c in result["created"])
+        assert not result["errors"], result["errors"]
+        assert not hook_path.exists()
+        assert not any("session-start.sh" in c for c in result["created"])

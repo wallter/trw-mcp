@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_jq
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import (  # noqa: F401
     _CFG,
     _get_tools,
@@ -24,6 +26,23 @@ from trw_mcp.state.claude_md import (
     render_memory_harmonization,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """No test here exercises real recall/dedup semantics -- the fake route suffices (PRD-CORE-280 e1)."""
+    return fake_memory_store
+
+
+def _unreachable_store(store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store cannot be measured: its inventory must render as not measured, never as zero."""
+    from trw_mcp.state._store_selection import StoreUnavailableError
+
+    def _unreachable(_namespace: str) -> None:
+        raise StoreUnavailableError("the memory daemon is unreachable")
+
+    monkeypatch.setattr(store, "health", _unreachable)
+
 
 # Project-root / trw-dir isolation is provided by the autouse conftest
 # ``_isolate_trw_dir`` fixture, which patches the source module
@@ -72,9 +91,6 @@ class TestProgressiveDisclosure:
 
     def test_auto_gen_contains_skill_reference(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRD-CORE-061-FR02: rendered output contains /trw-ceremony-guide."""
-        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
-        # so pin instruction_externalize="off" to keep exercising the inline path.
-        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         tools = _get_tools()
         tools["trw_learn"].fn(
             summary="Skill ref test",
@@ -176,8 +192,11 @@ class TestProgressiveDisclosure:
         assert "trw_deliver()" in result
         assert "/trw-ceremony-guide" in result
 
-    def test_render_memory_harmonization_uses_analytics_counts(self, tmp_path: Path) -> None:
+    def test_render_memory_harmonization_uses_analytics_counts(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """FR06: memory routing scale claim reflects tracked analytics."""
+        _unreachable_store(fake_memory_store, monkeypatch)
         _write_analytics(tmp_path, sessions_tracked=12, total_learnings=34)
         # The conftest _isolate_trw_dir fixture points resolve_project_root at
         # tmp_path (late-resolved by the renderer); clear the turn-scoped
@@ -189,14 +208,17 @@ class TestProgressiveDisclosure:
 
         result = render_memory_harmonization()
 
-        # PRD-FIX-141-FR04: the scale claim names its populations. With no store
-        # on disk the inventory is NOT MEASURED — never rendered as a zero.
+        # PRD-FIX-141-FR04: the scale claim names its populations. With the store
+        # unreachable the inventory is NOT MEASURED — never rendered as a zero.
         assert "could not be measured" in result
         assert "across 12 prior sessions" in result
         assert "0 learnings" not in result
 
-    def test_render_agents_trw_section_uses_analytics_counts(self, tmp_path: Path) -> None:
+    def test_render_agents_trw_section_uses_analytics_counts(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """FR06: AGENTS-facing TRW section uses analytics-backed counts."""
+        _unreachable_store(fake_memory_store, monkeypatch)
         _write_analytics(tmp_path, sessions_tracked=7, total_learnings=19)
         from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache, _store_counts_cache
 
@@ -208,7 +230,7 @@ class TestProgressiveDisclosure:
 
         # PRD-FIX-141-FR04: one population-naming claim, rendered once. The old
         # sentence printed the analytics counters twice and named neither
-        # population; with no store on disk the inventory is not measured.
+        # population; with the store unreachable the inventory is not measured.
         assert "could not be measured across 7 prior sessions" in result
         assert "and recovers any active run" in result
 
@@ -269,6 +291,7 @@ class TestProgressiveDisclosure:
         content = hook_path.read_text(encoding="utf-8")
         assert "## TRW Behavioral Protocol" in content
 
+    @requires_jq
     def test_session_start_rigid_line_count(self, tmp_path: Path) -> None:
         """PRD-CORE-062-FR04: the RIGID directive is EMITTED at most once per branch.
 

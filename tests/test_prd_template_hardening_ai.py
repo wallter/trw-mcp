@@ -256,3 +256,4 @@ def test_ai_prd_suggestions_reference_operational_gates() -> None:
             break
 
     assert len(result_missing.improvement_suggestions) >= 1, "Expected at least one suggestion for incomplete AI PRD"
+    assert ai_gate_suggestion_found, "Missing AI operational gates need a specific actionable suggestion"

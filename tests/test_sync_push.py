@@ -114,6 +114,15 @@ def test_serialize_entry_format() -> None:
     assert serialized["metadata"]["installation_id"] != "install-123"
 
 
+def test_serialize_entry_carries_the_entrys_own_counter() -> None:
+    """The backend judges a push by the entry's counter, not the batch max over other entries."""
+    from trw_mcp.sync.push import SyncPusher
+
+    pusher = SyncPusher(backend_url="http://localhost:5002", api_key="test", client_id="sync-test")
+
+    assert pusher._serialize_entry(_make_mock_entry("L-r", sync_seq=2))["sync_seq"] == 2
+
+
 # The server-side `LearningSync.sync_hash` (sync router, line 28) is validated
 # against this pattern under extra="forbid"; an entry that fails it 422-rejects
 # the whole batch. These tests guard the 2026-05-20 MCP-server snare fix.
@@ -472,3 +481,56 @@ def test_resolve_sync_client_id_anonymizes_installation_id() -> None:
 
     assert client_id.startswith("sync-claude-code-")
     assert "install-123" not in client_id
+
+
+async def test_push_body_carries_no_secret_from_any_learning_field() -> None:
+    """Cross-vendor R2-014 P1: tags, summary, detail and nested metadata keys all go through the one redactor."""
+    from trw_mcp.sync.push import SyncPusher
+
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.c2lnbmF0dXJlMTIzNDU2"
+    pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"
+    live_key = "sk_live_" + "ABCDEFGHIJKLMNOPQRSTUVWX"
+    entry = _make_mock_entry("L-secret", summary=f"token {jwt}")
+    entry.to_dict.return_value.update(
+        tags=["auth", jwt],
+        detail=f"key file:\n{pem}",
+        metadata={"source": "unit-test", "nested": {live_key: "x", "list": [{live_key: jwt}]}},
+    )
+    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="c", learning_sharing_enabled=True)
+    response = MagicMock()
+    response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
+    response.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock(response)
+
+    with patch("httpx.AsyncClient", mock_client_cls):
+        await pusher.push_learnings([entry])
+
+    body = json.dumps(mock_client_cls.return_value.__aenter__.return_value.post.call_args.kwargs["json"])
+    for secret in (jwt, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", live_key):
+        assert secret not in body
+    assert '"auth"' in body and "unit-test" in body
+
+
+async def test_push_body_redacts_a_json_authorization_header_and_tuple_metadata() -> None:
+    """Cross-vendor R2-014 round 3: a JSON Authorization value in detail, and secrets inside a tuple."""
+    from trw_mcp.sync.push import SyncPusher
+
+    basic = "dXNlcjpzM2NyZXQtcGFzc3dvcmQ="
+    live_key = "sk_live_" + "ABCDEFGHIJKLMNOPQRSTUVWX"
+    entry = _make_mock_entry("L-hdr", summary="request failed")
+    entry.to_dict.return_value.update(
+        detail=f'headers were {{"Authorization": "Basic {basic}"}}',
+        metadata={"source": "unit-test", "pair": (live_key, "ok")},
+    )
+    pusher = SyncPusher(backend_url="http://example.com", api_key="key", client_id="c", learning_sharing_enabled=True)
+    response = MagicMock()
+    response.json.return_value = {"inserted": 1, "updated": 0, "skipped": 0}
+    response.raise_for_status.return_value = None
+    mock_client_cls = _build_async_httpx_mock(response)
+
+    with patch("httpx.AsyncClient", mock_client_cls):
+        await pusher.push_learnings([entry])
+
+    body = json.dumps(mock_client_cls.return_value.__aenter__.return_value.post.call_args.kwargs["json"])
+    assert basic not in body and live_key not in body
+    assert "Authorization" in body and '"ok"' in body

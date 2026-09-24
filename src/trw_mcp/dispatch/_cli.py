@@ -5,20 +5,29 @@ Belongs to the ``trw_mcp.dispatch`` package. Lazy-imported from
 every CLI invocation.
 
 Behavior: build a :class:`DispatchRequest` (applying any audit role to the
-prompt), run it, then emit either the raw JSON result (``--json`` /
-``--output-file``) or the plain normalized answer. Exit 0 iff the result is
-``ok``, else 1. An unresolvable or disabled ``--client`` exits 2.
+prompt), run it, then emit either the raw JSON result plus its requested-vs-applied
+``policy`` (``--json`` / ``--output-file``) or the plain normalized answer. Exit 0 iff the result is
+``ok``, else 1. An unresolvable or disabled ``--client`` exits 2. ``--variant-of BASE`` also writes
+the answer as a named variant of BASE (PRD-CORE-299-FR04), a failed run too, marked ``ok: false``;
+a base that is missing or sits in a discovery directory exits 2 before anything is dispatched.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import uuid
 from pathlib import Path
 
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
+from trw_mcp.dispatch._roles import ROLE_TABLE
 from trw_mcp.dispatch._runner import dispatch
+from trw_mcp.dispatch._types import DispatchResult
+from trw_mcp.dispatch._usage import record_dispatch_policy
 from trw_mcp.models.config import get_config
+from trw_mcp.state._paths import resolve_project_root
+from trw_mcp.state.doc_variants import VariantLocationError, variant_dir, write_variant
 
 # Reject an oversized --prompt-file before reading it into memory: a 1 MB ceiling
 # is generous for an audit instruction and stops a runaway/hostile file from
@@ -57,6 +66,44 @@ def _read_prompt(args: argparse.Namespace) -> str:
     sys.exit(2)
 
 
+def _variant_base(args: argparse.Namespace) -> Path | None:
+    """The --variant-of base, checked before any model call; exits 2 when it cannot take a variant."""
+    variant_of = getattr(args, "variant_of", None)
+    if not variant_of:
+        return None
+    # Resolved once here and used for every check and for the write, so a symlink is judged by its target.
+    base = Path(str(variant_of)).resolve()
+    try:
+        if not base.is_file():
+            raise VariantLocationError(f"base {base} is not a file")
+        variant_dir(base, resolve_project_root())
+    except VariantLocationError as exc:
+        print(f"--variant-of refused: {exc}", file=sys.stderr)
+        sys.exit(2)
+    return base
+
+
+def _write_answer_variant(base: Path, role: str | None, result: DispatchResult, model: str | None) -> None:
+    """Write *result* as the next round of *base*'s variant; a failed run is written too, marked failed."""
+    spec = ROLE_TABLE.get(role or "")
+    body = result.text if result.ok else f"Dispatch failed: {result.silence_reason or 'not ok'}.\n\n{result.text}"
+    try:
+        path = write_variant(
+            base,
+            resolve_project_root(),
+            kind=spec.artifact_kind if spec else "notes",
+            producer=result.client,
+            body=body,
+            ok=result.ok,
+            role=role,
+            model=model,
+        )
+    except (ValueError, OSError) as exc:  # VariantLocationError is a ValueError
+        print(f"--variant-of write failed: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(f"variant: {path}", file=sys.stderr)
+
+
 def run_dispatch(args: argparse.Namespace) -> None:
     """Handle the ``dispatch`` subcommand.
 
@@ -71,6 +118,7 @@ def run_dispatch(args: argparse.Namespace) -> None:
     # The prompt is read here (CLI surface) but applied to the request inside the
     # shared resolver. _read_prompt exits 2 directly on its own input errors.
     prompt = _read_prompt(args)
+    base = _variant_base(args)
     cwd = Path(args.cwd) if getattr(args, "cwd", None) else None
 
     try:
@@ -79,6 +127,7 @@ def run_dispatch(args: argparse.Namespace) -> None:
             prompt=prompt,
             role=getattr(args, "role", None),
             model=getattr(args, "model", None),
+            effort=getattr(args, "effort", None),
             cwd=cwd,
             timeout_s=getattr(args, "timeout", None),
             # --allow-writes forces writes (read_only=False); otherwise leave
@@ -96,7 +145,9 @@ def run_dispatch(args: argparse.Namespace) -> None:
         print(str(err), file=sys.stderr)
         sys.exit(err.exit_code)
 
+    policy = record_dispatch_policy(req, f"cli-{uuid.uuid4().hex}")  # PRD-CORE-290-FR03
     result = dispatch(req)
+    payload = json.dumps({**result.model_dump(mode="json"), "policy": policy}, indent=2)
 
     output_file = getattr(args, "output_file", None)
     if output_file:
@@ -104,10 +155,12 @@ def run_dispatch(args: argparse.Namespace) -> None:
         # Create any missing parent dirs so a nested --output-file path does not
         # crash on write.
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        out_path.write_text(payload, encoding="utf-8")
     if getattr(args, "json", False):
-        print(result.model_dump_json(indent=2))
+        print(payload)
     elif not output_file:
         print(result.text)
+    if base is not None:
+        _write_answer_variant(base, getattr(args, "role", None), result, req.model)
 
     sys.exit(0 if result.ok else 1)

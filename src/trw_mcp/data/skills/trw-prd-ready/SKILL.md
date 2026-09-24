@@ -2,8 +2,8 @@
 name: trw-prd-ready
 description: >
   Prepare new requirements and execution plan together before review; preserve existing PRD routes.
-  Accepts a feature description ("Add rate limiting") or a PRD ID (PRD-CORE-020).
-  Use: /trw-prd-ready "Add rate limiting to the API" or /trw-prd-ready PRD-CORE-020
+  Accepts a feature description ("Add rate limiting") or a PRD ID (PRD-CORE-EXAMPLE).
+  Use: /trw-prd-ready "Add rate limiting to the API" or /trw-prd-ready PRD-CORE-EXAMPLE
 user-invocable: true
 argument-hint: "[feature description or PRD-ID]"
 ---
@@ -39,7 +39,7 @@ or `trw_prd_validate`, nor add a selected-mode parameter to their schemas.
 
 Mentioning an ID or path inside a feature description does not select existing input.
 For example, `Add validation to scripts/check_exec_plan_paths.py` and
-`Add export support compatible with PRD-CORE-020` are feature descriptions,
+`Add export support compatible with PRD-CORE-EXAMPLE` are feature descriptions,
 not document selections. If an explicitly selected existing path is missing, stop and report it;
 do not infer new-creation authority or silently switch routes.
 
@@ -55,7 +55,7 @@ converting it. Conflicting instructions or competing artifact authority stop for
 Resolve and retain the selected mode here, then forward it internally with the
 original input classification and successful creation provenance when available.
 Example: `/trw-prd-ready "Add rate limiting"` defaults to embedded;
-`/trw-prd-ready PRD-CORE-020` preserves existing-input routing.
+`/trw-prd-ready PRD-CORE-EXAMPLE` preserves existing-input routing.
 
 ## Pipeline Phases
 
@@ -138,7 +138,7 @@ A failed or uncertain creation, existing input, or missing plan grants no such a
 **Legacy skip if:** full validation returns `validation_partial: false`, `valid: true`,
 `quality_tier: approved`; `total_score` is diagnostic.
 
-Only for legacy or authorized embedded authoring, invoke the packaged internal `trw-prd-groom` contract (inline if unavailable).
+Only for legacy or authorized embedded authoring, invoke the packaged internal `trw-prd-groom` contract (the `trw-prd-groom` skill, or `trw-prd-groom-contract.md` beside this skill) (inline if unavailable).
 Forward creation provenance/repair scope; legacy uses approved target; embedded creation with successful Phase 1
 provenance uses initial-authoring target. The owner alone handles research
 and substantive assessment; never substitute a local loop.
@@ -160,7 +160,7 @@ on loop-back. Stop on owner blockers/exhaustion. Existing-input embedded repair 
 For newly created input only: Every revision invalidates prior review reuse; require full validation plus fresh author-independent review of exact revised bytes.
 Existing-input reconciliation retains its scoped reuse and renewal rules below.
 
-**Legacy review:** Invoke the packaged internal `trw-prd-review` contract;
+**Legacy review:** Invoke the packaged internal `trw-prd-review` contract (the `trw-prd-review` skill, or `trw-prd-review-contract.md` beside this skill);
 inline fallback discloses same-context review.
 
 **Embedded review routing:** do not invoke the legacy document-READY reviewer.
@@ -204,7 +204,7 @@ For invocation-created embedded work, this phase is read-only handoff: no postre
 planner rewrite, approval insertion or status edit. Recheck reviewed bytes and dependency
 digests; STOP if changed. Return the reviewed artifact unchanged.
 Existing-input embedded and legacy routes invoke the
-packaged internal `trw-exec-plan` contract (inline if unavailable); forward the resolved selected mode explicitly.
+packaged internal `trw-exec-plan` contract (the `trw-exec-plan` skill, or `trw-exec-plan-contract.md` beside this skill) (inline if unavailable); forward the resolved selected mode explicitly.
 The owner handles preservation and scoped mutation; no retrospective authority upgrade.
 
 Legacy output: configured separate plan. Embedded output: `{prd_path}#execution-plan`;

@@ -26,14 +26,14 @@ import hashlib
 import re
 import unicodedata
 
-from trw_mcp.comms._envelope import AdmissionError
+from trw_mcp.comms._envelope import MEMBER_ID_PATTERN, AdmissionError
 from trw_mcp.formation import declaration_covers
 
 #: Separator for derived per-recipient keys. A control character, because
 #: ordinary request keys refuse control characters (FR07), which keeps the
 #: derived namespace disjoint from anything a direct caller writes.
 SHARD = "\x1f"
-_SHARD_KEY = re.compile(rf"^{SHARD}n[0-9a-f]{{32}}{SHARD}[0-9a-f]{{16}}{SHARD}[A-Za-z0-9][A-Za-z0-9._-]{{0,63}}$")
+_SHARD_KEY = re.compile(rf"^{SHARD}n[0-9a-f]{{32}}{SHARD}[0-9a-f]{{16}}{SHARD}{MEMBER_ID_PATTERN}$")
 _WILDCARD = re.compile(r"[*?\[\]]")
 _DRIVE = re.compile(r"^[A-Za-z]:")
 

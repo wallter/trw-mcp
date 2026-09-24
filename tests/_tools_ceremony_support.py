@@ -93,14 +93,6 @@ def _stub_all_deferred_steps() -> dict[str, Any]:
             "trw_mcp.tools._deferred_delivery._step_publish_learnings",
             return_value=noop,
         ),
-        "_step_outcome_correlation": patch(
-            "trw_mcp.tools._deferred_delivery._step_outcome_correlation",
-            return_value=noop,
-        ),
-        "_step_recall_outcome": patch(
-            "trw_mcp.tools._deferred_delivery._step_recall_outcome",
-            return_value=noop,
-        ),
         "_step_telemetry": patch(
             "trw_mcp.tools._deferred_delivery._step_telemetry",
             return_value=noop,

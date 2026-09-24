@@ -30,4 +30,4 @@ def patch_scoring_runs_root(runs_root: str = "tasks"):
     cfg = TRWConfig()
     object.__setattr__(cfg, "runs_root", runs_root)
     object.__setattr__(cfg, "task_root", runs_root)
-    return patch("trw_mcp.scoring._correlation.get_config", return_value=cfg)
+    return patch("trw_mcp.scoring._utils.get_config", return_value=cfg)

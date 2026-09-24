@@ -109,6 +109,14 @@ REFUSALS: dict[str, _R] = {
         "use a wait within the bound", bound="comms_wait_max_seconds", persisted_as="invalid_inbox_arguments"
     ),
     "endpoint_replaced_by_newer_incarnation": _R(DISPLACED_RECOVERY, state="joined"),
+    # Pause (PAUSE-RESUME-DESIGN rev 2). Refused before any mailbox transaction, so never counted.
+    "formation_paused": _R(
+        "the formation is paused: ack with trw_peers(action='ack_pause', pause_id=...) and wait for RESUME; "
+        "status or reply to the orchestrator still sends",
+        state="paused",
+    ),
+    "not_paused": _R("the formation is not paused; carry on"),
+    "pause_id_mismatch": _R("ack the pause_id from your latest response; call trw_peers to see it"),
 }
 IDENTITY_REASONS = frozenset(reason for reason, spec in REFUSALS.items() if spec.identity)
 

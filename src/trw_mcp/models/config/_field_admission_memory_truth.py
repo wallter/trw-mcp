@@ -1,4 +1,4 @@
-"""Admission records for the PRD-CORE-244 memory-truth fields.
+"""Admission records for the PRD-CORE-244 memory-truth fields and PRD-CORE-280 store selection.
 
 Belongs to the ``_field_admission_registry.py`` data table, which merges this
 mapping into :data:`FIELD_ADMISSIONS`. Split out for the same reason the
@@ -15,77 +15,10 @@ from __future__ import annotations
 from trw_mcp.models.config._field_admission_registry_types import ConfigAdmission
 
 MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
-    "contradiction_penalty_reward": ConfigAdmission(
-        field_name="contradiction_penalty_reward",
-        owner="PRD-CORE-268 (explicit historical API compatibility)",
-        consumer=(
-            "trw_mcp.scoring._contradiction_penalty.apply_contradiction_penalty, called from "
-            "trw_mcp.tools._delivery_helpers.check_delivery_gates (PRD-CORE-244-FR04, restored "
-            "2026-09-11) and by explicit callers"
-        ),
-        default_rationale="Preserve the historical 0.4 API default; no measured usefulness claim.",
-        interaction_analysis=(
-            "Explicit invocation still updates historical Q observations. Default recall and "
-            "maintenance do not call it; stored-evidence ranking uses assertion_failure_penalty. "
-            "Historical Q is retained but excluded from default shared utility and tier scoring."
-        ),
-        deprecation_plan=(
-            "Retain the explicit historical API. An automatic caller was restored DELIBERATELY on "
-            "2026-09-11, not silently: PRD-CORE-268 removed FR04's recall call site over a LATENCY "
-            "budget, which does not apply at the delivery gate where the verdict is already durable "
-            "and nothing is on a hot path. The reward is additionally bounded to FRESH evidence "
-            "(verification_cache_ttl_seconds) so a stale observation cannot decay an entry daily. "
-            "Any FURTHER automatic caller still needs the same explicit justification."
-        ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-268.md",
-        test_pointer="trw-mcp/tests/test_memory_attribution_retirement.py",
-        budget_decision="legacy-admitted",
-    ),
-    "memory_decay_cutoff_days": ConfigAdmission(
-        field_name="memory_decay_cutoff_days",
-        owner="PRD-CORE-244-FR09 (importance decay acquires a caller and a matchable predicate)",
-        consumer="trw_mcp.tools._deferred_steps_memory._step_memory_decay -> trw_memory._graph_decay.memory_decay_pass",
-        default_rationale=(
-            "90 days preserves the literal parameter default memory_decay_pass has always carried, so "
-            "wiring it up is not also a silent retuning. It matches memory_cold_threshold_days, which is "
-            "the other 'this entry has gone quiet' threshold in the same lifecycle."
-        ),
-        interaction_analysis=(
-            "Compared against COALESCE(last_accessed_at, created_at), the same recency source the tier "
-            "sweep reads, so decay and demotion cannot disagree about what 'unused' means. It is the only "
-            "thing standing between apply_importance_boost (wired) and a one-directional ratchet: importance "
-            "feeds compute_utility_score and prune-candidate selection, so a longer cutoff makes pruning "
-            "strictly more conservative. Raising it to 3650 effectively disables decay without a flag."
-        ),
-        deprecation_plan=(
-            "Retain. Removing it restores the hard-coded 90 and re-hides an operator decision about how "
-            "long disuse must run before a record loses standing."
-        ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-244-memory-truth-invariants.md",
-        test_pointer="trw-mcp/tests/test_tools_ceremony_deferred.py::TestMemoryDecayStep::test_decay_step_runs_and_lowers_importance",
-        budget_decision="admitted",
-    ),
-    "memory_decay_batch_size": ConfigAdmission(
-        field_name="memory_decay_batch_size",
-        owner="PRD-CORE-244-FR09 (importance decay acquires a caller and a matchable predicate)",
-        consumer="trw_mcp.tools._deferred_steps_memory._step_memory_decay -> trw_memory._graph_decay.memory_decay_pass",
-        default_rationale=(
-            "1000 preserves memory_decay_pass's own literal default and its internal hard clamp, so the "
-            "wiring changes the caller and not the write volume. It bounds how long one pass holds the "
-            "SQLite writer lock — the same failure mode auto-prune's deadline budget exists for."
-        ),
-        interaction_analysis=(
-            "The pass returns 'remaining', so a store with more qualifying rows than the batch simply "
-            "decays across successive deliveries rather than stalling one. Runs beside consolidate_cycle "
-            "and TierManager.sweep in the same deferred step list and after them, so a row demoted this "
-            "delivery is not also decayed in the same pass. The upper bound of 10,000 is above the "
-            "function's own internal clamp, so raising it past that is a no-op rather than a foot-gun."
-        ),
-        deprecation_plan="Retain as the writer-lock bound; removal reinstates a hidden constant in a locked batch write.",
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-244-memory-truth-invariants.md",
-        test_pointer="trw-mcp/tests/test_tools_ceremony_deferred.py::TestMemoryDecayStep::test_decay_step_respects_configured_batch_size",
-        budget_decision="admitted",
-    ),
+    # memory_decay_cutoff_days / memory_decay_batch_size retired in batch 23b:
+    # PRD-CORE-280 slice e3 moved decay onto a daemon RPC (``maintain()``) that
+    # takes no per-call parameters, so trw-mcp has had no way to reach either
+    # knob since e3 landed. See config-retired-keys.json.
     "protection_tier_prune_discount": ConfigAdmission(
         field_name="protection_tier_prune_discount",
         owner="PRD-CORE-244-FR10 (protection_tier must protect on every destructive path)",
@@ -129,7 +62,7 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
         interaction_analysis=(
             "Feeds advisory text only. execute_learn does not modify the expires argument it forwards, so "
             "no configuration of this table can cause a window to be written; the author must call "
-            "trw_learn_update. A written expires is then honoured by BOTH ranking paths (scoring._decay's "
+            "trw_learn's update mode. A written expires is then honoured by BOTH ranking paths (scoring._decay's "
             "utility floor and trw_memory.retrieval.validity_prior._is_open_at), which FR05 made agree. "
             "Adding a key here offers a window for a new type; it never retroactively stamps one, because "
             "the classifier runs at write time only."
@@ -145,8 +78,8 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
     "anchor_validity_verified_floor": ConfigAdmission(
         field_name="anchor_validity_verified_floor",
         owner="PRD-CORE-244-FR03 (a verification verdict gains a positive value)",
-        consumer="trw_mcp.tools._verification_pass._apply_verdict (via run_verification_pass, called by "
-        "tools._recall_assertion_verification._verify_assertions and tools._maintain_verify.run_maintain_verify)",
+        consumer="trw_mcp.tools._maintain_verify.run_maintain_verify_for_project (passes it to "
+        "trw_memory.lifecycle.verification_pass.run_maintain_verify, whose _apply_verdict applies it)",
         default_rationale=(
             "1.0 is the strictest reading and the only one defensible without data: 'verified' is a claim "
             "the pass makes on the operator's behalf, so a single anchor that has drifted withholds it. "
@@ -195,31 +128,26 @@ MEMORY_TRUTH_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer="trw-mcp/tests/test_recall_verification_budget.py",
         budget_decision="legacy-admitted",
     ),
-    "anchor_shared_set_migration_threshold": ConfigAdmission(
-        field_name="anchor_shared_set_migration_threshold",
-        owner="PRD-CORE-267-FR03 (the one-off shared-anchor-set migration)",
-        consumer="trw_mcp.tools._anchor_migration.clear_shared_anchor_sets (via the maintain-verify CLI)",
+    # PRD-CORE-280 FR01: which store serves this checkout.
+    "project_namespace": ConfigAdmission(
+        field_name="project_namespace",
+        owner="PRD-CORE-280-FR01",
+        consumer="trw_mcp.state._store_selection.selected_store",
         default_rationale=(
-            "Measured on the development store: 2,006 anchored rows across 370 distinct anchor sets, of "
-            "which 344 hold seven members or fewer. The observed size distribution is empty at nine, so 10 "
-            "sits below every fabricated cluster (the largest holds 381 entries) and above every plausible "
-            "case of several learnings genuinely concerning the same symbols. Another store's distribution "
-            "will differ, which is exactly why this is a field rather than a literal."
+            "Defaults to empty, meaning the checkout is unmigrated and keeps its own .trw/memory store "
+            "(behaviour unchanged). ``memory migrate`` (PRD-CORE-298) writes the stable project namespace "
+            "here; a set value is the only signal that the rows moved to the daemon store."
         ),
         interaction_analysis=(
-            "Read once per migration invocation and only by an operator-run CLI — no server path consults "
-            "it, so no value here can change tool behaviour. Raising it narrows the selection; lowering it "
-            "widens it, and the dry-run default means the widened selection is reported before anything is "
-            "written. Independent of anchor_validity_verified_floor: the migration clears anchors outright "
-            "rather than scoring them, so a cleared entry is subsequently unscored (validity None) rather "
-            "than scored zero."
+            "Read only by selected_store, the one resolver every memory read and write goes through. "
+            "A set value never falls back to the project file: until the daemon store lands, memory "
+            "tools raise StoreUnavailableError, so a migrated checkout cannot silently fork its rows."
         ),
-        deprecation_plan=(
-            "Retire once every store predating PRD-CORE-267's derivation fix has been migrated. The "
-            "migration is idempotent, so leaving the field in place costs nothing."
+        deprecation_plan="Retained: it is the migration marker for the lifetime of the daemon store.",
+        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-280.md",
+        test_pointer=(
+            "trw-mcp/tests/test_store_selection.py::test_a_pinned_checkout_fails_closed_and_never_opens_the_project_file"
         ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-CORE-267-session-scoped-learning-anchors.md",
-        test_pointer="trw-mcp/tests/test_anchor_migration.py::test_apply_clears_and_is_idempotent",
         budget_decision="admitted",
     ),
 }

@@ -28,7 +28,7 @@ from trw_mcp.tools._ceremony_session_start_steps import (
 from trw_mcp.tools._ceremony_step_table import (
     SessionStartContext,
     Step,
-    _ss_embed_health,
+    _ss_counter,
     run_steps,
 )
 
@@ -185,7 +185,7 @@ class TestRunStepsRecordsDegradations:
         assert "degradations" not in results
         assert "degraded_steps" not in results
 
-    def test_embed_health_failure_is_degraded_and_later_steps_continue(self) -> None:
+    def test_a_noncritical_step_failure_is_degraded_and_later_steps_continue(self) -> None:
         sctx = self._make_ctx()
         sctx.config = TRWConfig()
 
@@ -193,15 +193,15 @@ class TestRunStepsRecordsDegradations:
             cast("dict[str, object]", _sctx.results)["later_step_ran"] = True
 
         class _Facade:
-            _ss_embed_health = staticmethod(_ss_embed_health)
+            _ss_counter = staticmethod(_ss_counter)
             _ss_after = staticmethod(_after)
 
         with patch(
-            "trw_mcp.state.memory_adapter.check_embeddings_status",
-            side_effect=RuntimeError("health failed"),
+            "trw_mcp.tools._ceremony_helpers.step_increment_session_counter",
+            side_effect=RuntimeError("counter failed"),
         ):
             run_steps(
-                (Step("embed_health", "_ss_embed_health"), Step("after", "_ss_after")),
+                (Step("counter", "_ss_counter"), Step("after", "_ss_after")),
                 sctx,
                 cast("object", _Facade),
             )
@@ -210,9 +210,8 @@ class TestRunStepsRecordsDegradations:
         results["success"] = not sctx.errors
         assert results["success"] is True
         assert results["later_step_ran"] is True
-        assert "embed_health" not in results
         degradations = cast("list[dict[str, object]]", results["degradations"])
-        assert [item["step"] for item in degradations] == ["embed_health"]
+        assert [item["step"] for item in degradations] == ["counter"]
 
 
 class TestStepFunctionsThreadCollector:

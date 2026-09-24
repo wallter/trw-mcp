@@ -123,6 +123,32 @@ class TestPublishFiltering:
         assert len(captured_payloads) == 1
         assert captured_payloads[0]["source_learning_id"] == "L-abc12345"
 
+    def test_publish_redacts_secret_bearing_tags(self, tmp_path: Path) -> None:
+        """codex-a R2-014 P1: tags are free text from trw_learn, so a pasted key must not reach the POST body."""
+        cfg = _make_config()
+        trw_dir = tmp_path / ".trw"
+        learning = _make_learning(impact=0.9)
+        secret = "sk_live_" + "A1b2C3d4E5f6G7h8I9j0K1l2"
+        learning["tags"] = ["telemetry", secret]
+        _write_learning(trw_dir / "learnings" / "entries", "secret-tag.yaml", learning)
+        captured_payloads: list[dict[str, object]] = []
+
+        def _fake_post(url: str, payload: dict[str, object], api_key: str = "") -> bool:
+            captured_payloads.append(payload)
+            return True
+
+        with (
+            patch("trw_mcp.telemetry.publisher.get_config", return_value=cfg),
+            patch("trw_mcp.telemetry.publisher.resolve_trw_dir", return_value=trw_dir),
+            patch("trw_mcp.telemetry.publisher._post_learning", side_effect=_fake_post),
+        ):
+            publish_learnings()
+
+        [payload] = captured_payloads
+        tags = payload["tags"]
+        assert isinstance(tags, list) and tags[0] == "telemetry"
+        assert secret not in str(payload)
+
     def test_publish_sends_status_in_payload(self, tmp_path: Path) -> None:
         """Status field is included in the payload for active learnings."""
         cfg = _make_config()

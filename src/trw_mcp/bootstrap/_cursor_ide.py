@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from importlib.resources import files as _pkg_files
 from pathlib import Path
+from typing import cast
 
 import structlog
 
@@ -58,6 +59,7 @@ _IDE_CURATED_SKILLS: list[str] = [
     "trw-memory-audit",
     "trw-reflect",
     "trw-delegate",
+    "trw-assess",  # installed only while assess_enabled is on (_optional_skills)
     # "trw-release" — skill directory does not exist yet (PRD-CORE-137)
 ]
 
@@ -289,8 +291,9 @@ def cursor_ide_skill_contents(source_skills_dir: Path | None = None) -> dict[str
     ``generate_cursor_skills_mirror``) and the managed-artifact manifest sweep.
     """
     from ._cursor import cursor_skill_mirror_contents
+    from ._optional_skills import skill_enabled
 
-    return cursor_skill_mirror_contents(_IDE_CURATED_SKILLS, source_skills_dir)
+    return cursor_skill_mirror_contents([n for n in _IDE_CURATED_SKILLS if skill_enabled(n)], source_skills_dir)
 
 
 def generate_cursor_ide_skills(
@@ -316,15 +319,24 @@ def generate_cursor_ide_skills(
     Returns:
         Dict with 'created'/'updated'/'preserved' lists.
     """
+    from ._cursor import _DATA_DIR as _CURSOR_DATA_DIR
     from ._cursor import generate_cursor_skills_mirror
+    from ._optional_skills import retire_disabled_skills, skill_enabled
 
-    return generate_cursor_skills_mirror(
+    result = generate_cursor_skills_mirror(
         target_dir,
-        _IDE_CURATED_SKILLS,
+        [name for name in _IDE_CURATED_SKILLS if skill_enabled(name)],
         source_skills_dir,
         force=force,
         manifest_hashes=manifest_hashes,
     )
+    retire_disabled_skills(
+        target_dir / ".cursor" / "skills",
+        source_skills_dir or (_CURSOR_DATA_DIR / "skills"),
+        cast("dict[str, list[str]]", result),
+        ".cursor/skills",
+    )
+    return result
 
 
 def generate_cursor_ide_hooks(

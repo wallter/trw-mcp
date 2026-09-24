@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
+import re
+
 _GREENFIELD_MARKERS: tuple[str, ...] = ("(new)", "(planned)", "(future)")
 _GREENFIELD_WINDOW_CHARS = 16
+_YAML_PLANNED_PATH_RE = re.compile(
+    r"^\s*[\w.-]*(?:path|artifact|source|file):\s*['\"]?(?P<path>[\w./-]+\.[A-Za-z][\w]*)['\"]?\s*"
+    r"\((?:new|planned|future)\)['\"]?(?:\s|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def yaml_planned_paths(content: str) -> set[str]:
+    """Find explicit planned-path annotations in YAML path/artifact fields."""
+    return {match.group("path") for match in _YAML_PLANNED_PATH_RE.finditer(content)}
 
 
 def has_trailing_planned_marker(content: str, token_end: int) -> bool:

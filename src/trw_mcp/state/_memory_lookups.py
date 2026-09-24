@@ -12,20 +12,18 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import structlog
-from trw_memory.exceptions import StorageError
 from trw_memory.models.memory import MemoryStatus
 from trw_memory.storage import CheckpointResult
 
 from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import WalCheckpointResultDict
-from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
-from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
+from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
 from trw_mcp.state._memory_transforms import _memory_to_learning_dict
+from trw_mcp.state._recall_gate import passive_learnings_allowed
 
 
 def get_backend(trw_dir: Path) -> Any:
@@ -44,9 +42,6 @@ def _warn(event: str, **kwargs: Any) -> None:
 
 logger = structlog.get_logger(__name__)
 
-_NAMESPACE = DEFAULT_NAMESPACE
-_LEARNING_ID_RE = re.compile(r"^L-[0-9a-zA-Z]{4,}$")
-
 
 def find_entry_by_id(trw_dir: Path, learning_id: str) -> dict[str, object] | None:
     """Look up a single learning entry by ID.
@@ -55,10 +50,9 @@ def find_entry_by_id(trw_dir: Path, learning_id: str) -> dict[str, object] | Non
     widened to ``dict[str, object]`` at the boundary to match the existing
     public signature consumed across scoring/tools.
     """
-    backend = get_backend(trw_dir)
-    # namespace= is required since the schema-5 namespace boundary; _NAMESPACE
-    # is the same constant every sibling list_entries call in this module uses.
-    entry = backend.get(learning_id, namespace=_NAMESPACE)
+    from trw_mcp.state._store_selection import selected_store
+
+    entry = selected_store(trw_dir)[0].get(learning_id)
     return cast("dict[str, object]", _memory_to_learning_dict(entry)) if entry is not None else None
 
 
@@ -67,10 +61,24 @@ def list_active_learnings(
     *,
     min_impact: float = 0.0,
     limit: int = DEFAULT_LIST_LIMIT,
+    purpose: Literal["delivery", "maintenance"] = "delivery",
 ) -> list[dict[str, object]]:
-    """List active entries used by claude_md.py for promotion + analytics."""
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(status=MemoryStatus.ACTIVE, namespace=_NAMESPACE, limit=limit)
+    """List active entries for promotion, analytics and maintenance.
+
+    Every read obeys the master recall switch except one that names
+    ``purpose="maintenance"`` because its result never reaches the agent; an
+    unknown purpose is gated (fail closed).
+    """
+    if purpose != "maintenance" and not passive_learnings_allowed():
+        return []
+    return _listed(trw_dir, MemoryStatus.ACTIVE.value, min_impact, limit)
+
+
+def _listed(trw_dir: Path, status: str | None, min_impact: float, limit: int) -> list[dict[str, object]]:
+    from trw_mcp.state._store_selection import selected_store
+
+    store, namespace = selected_store(trw_dir)
+    entries = store.list_entries(namespace, status=status, limit=limit)
     return [
         cast("dict[str, object]", _memory_to_learning_dict(entry))
         for entry in entries
@@ -90,13 +98,7 @@ def list_entries_by_status(
         mem_status = MemoryStatus(status)
     except ValueError:
         return []
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(status=mem_status, namespace=_NAMESPACE, limit=limit)
-    return [
-        cast("dict[str, object]", _memory_to_learning_dict(entry))
-        for entry in entries
-        if entry.importance >= min_impact and entry.metadata.get("system_canary") != "true"
-    ]
+    return _listed(trw_dir, mem_status.value, min_impact, limit)
 
 
 def find_yaml_path_for_entry(trw_dir: Path, entry_id: str) -> Path | None:
@@ -119,113 +121,31 @@ def find_yaml_path_for_entry(trw_dir: Path, entry_id: str) -> Path | None:
 
 def count_entries(trw_dir: Path) -> int:
     """Return total entry count (excluding system canaries)."""
-    backend = get_backend(trw_dir)
-    return len(
-        [
-            entry
-            for entry in backend.list_entries(namespace=_NAMESPACE, limit=100_000)
-            if entry.metadata.get("system_canary") != "true"
-        ]
-    )
+    from trw_mcp.state._store_selection import selected_store
+
+    store, namespace = selected_store(trw_dir)
+    entries = store.list_entries(namespace, limit=100_000)
+    return sum(entry.metadata.get("system_canary") != "true" for entry in entries)
 
 
-def _increment_backend_access(backend: Any, learning_ids: list[str], now: datetime) -> None:
-    """Best-effort access tracking against one owning backend."""
-    if not learning_ids:
-        return
+def record_surfaced(trw_dir: Path, learning_ids: list[str], *, session_start: bool = False) -> None:
+    """Count the learnings a caller showed as accessed, and as surfaced when *session_start*.
 
-    increment_recall_access = getattr(backend, "increment_recall_access", None)
-    if callable(increment_recall_access):
-        try:
-            increment_recall_access(learning_ids, accessed_at=now)
-            return
-        except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
-            _warn("access_tracking_batch_update_failed", exc_info=True, entry_ids=learning_ids)
-
-    # PRD-CORE-245 FR03: the per-entry fallback resolves the row through the
-    # namespace-aware helper and then qualifies the write with the namespace it
-    # found. Reading by bare id here used to raise a TypeError that the broad
-    # ``except`` swallowed, so the fallback silently tracked nothing.
-    for lid in learning_ids:
-        try:
-            entry = resolve_entry_in_backend(backend, lid)
-            if entry is not None:
-                backend.update(
-                    lid,
-                    namespace=entry.namespace,
-                    access_count=entry.access_count + 1,
-                    recall_count=entry.recall_count + 1,
-                    last_accessed_at=now,
-                )
-        except Exception:  # per-item: telemetry must not break recall
-            _warn("access_tracking_update_failed", exc_info=True, entry_id=lid)
-
-
-def update_access_tracking(trw_dir: Path, learning_ids: list[str], *, federated: bool = False) -> None:
-    """Increment access_count, recall_count, and last_accessed_at for recalled entries.
-
-    PRD-FIX-104-FR01: calls increment_recall_access (not increment_access_counts)
-    so that both access_count AND recall_count are incremented in a single batch
-    UPDATE, enabling feedback_decay_score in trw-memory lifecycle scoring.
-    PRD-FIX-104-FR02: per-entry fallback also increments recall_count.
+    PRD-FIX-104: one store call bumps access_count and recall_count together, so
+    feedback-decay scoring sees every recall. Only the rows actually shown are
+    counted, never the over-fetched candidates. The store resolves which
+    namespace owns each id, so a federated recall needs no ownership walk here.
+    Telemetry: an unreachable or refusing store is logged, never raised.
     """
+    from trw_mcp.state._store_selection import selected_store
+
     unique_ids = list(dict.fromkeys(lid for lid in learning_ids if lid))
     if not unique_ids:
         return
-    now = datetime.now(timezone.utc)
-    project_backend = get_backend(trw_dir)
-    if not federated:
-        _increment_backend_access(project_backend, unique_ids, now)
-        return
-
-    # Federated recalls can contain project-, user-, and external-store IDs.
-    # Resolve ownership before incrementing so user hits are not silently sent
-    # to the project DB and duplicate IDs are never counted in both stores.
-    project_ids: list[str] = []
-    unresolved_ids: list[str] = []
-    for lid in unique_ids:
-        try:
-            (project_ids if resolve_entry_in_backend(project_backend, lid) is not None else unresolved_ids).append(lid)
-        except Exception:  # per-item: ownership telemetry must not break recall
-            _warn("access_tracking_owner_lookup_failed", exc_info=True, entry_id=lid, tier="project")
-            unresolved_ids.append(lid)
-    _increment_backend_access(project_backend, project_ids, now)
-
-    from trw_mcp.state._user_tier import peek_user_backend
-
-    user_backend = peek_user_backend()
-    if user_backend is None:
-        return
-    user_ids: list[str] = []
-    for lid in unresolved_ids:
-        try:
-            if resolve_entry_in_backend(user_backend, lid) is not None:
-                user_ids.append(lid)
-        except Exception:  # per-item: ownership telemetry must not break recall
-            _warn("access_tracking_owner_lookup_failed", exc_info=True, entry_id=lid, tier="user")
-    _increment_backend_access(user_backend, user_ids, now)
-
-
-def increment_session_counts(trw_dir: Path, learning_ids: list[str]) -> None:
-    """Increment session_count once for each learning surfaced at session start."""
-    backend = get_backend(trw_dir)
-    seen_ids: set[str] = set()
-    valid_ids: list[str] = []
-    for lid in learning_ids:
-        if lid in seen_ids:
-            continue
-        seen_ids.add(lid)
-        if _LEARNING_ID_RE.fullmatch(lid) is None:
-            _warn("session_count_update_skipped_invalid_id", entry_id=lid)
-            continue
-        valid_ids.append(lid)
-    if not valid_ids:
-        return
     try:
-        backend.increment_session_counts(valid_ids, updated_at=datetime.now(timezone.utc))
-    except (StorageError, OSError, RuntimeError, sqlite3.Error, ValueError, TypeError):
-        # Best-effort telemetry only: session start must not fail if tracking cannot be persisted.
-        _warn("session_count_update_failed", exc_info=True, entry_ids=valid_ids)
+        selected_store(trw_dir)[0].record_surfaced(unique_ids, session_start=session_start)
+    except (RuntimeError, ValueError, OSError):  # trw-fail-silent-allow: access telemetry must not break recall; logged
+        _warn("access_tracking_failed", exc_info=True, entry_ids=unique_ids, session_start=session_start)
 
 
 def _same_db_path(a: Path, b: Path) -> bool:
@@ -270,26 +190,9 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
       successful checkpoint older than ``wal_checkpoint_max_age_seconds``. An
       evaluation where nothing is due costs one ``stat`` and opens no
       connection (NFR01).
-    - **Mode**: decided by the live-writer set alone. Two or more live writers
-      still checkpoint — in ``PASSIVE``, which never resets the WAL — because
-      the concurrency this used to abort on is exactly the condition that makes
-      the checkpoint necessary. ``TRUNCATE`` is *requested* only when this
-      process is the sole live writer, and trw-memory's ``normalize_mode`` then
-      downgrades it to ``PASSIVE`` anyway on any engine below SQLite 3.51.3,
-      with no caller escape. Those two gates are the whole defence.
-
-      There is deliberately NO third one. An earlier revision of this docstring
-      promised that trw-memory "re-proves [sole-writer status] with a bounded
-      ``BEGIN EXCLUSIVE`` probe before it resets anything". That probe was
-      implemented and then deleted by PRD-CORE-248 OQ-1 ("CLOSED BY REFUSAL",
-      ``aad7bb2e26`` reversing ``eeaeb2e8d7``): SQLite refuses
-      ``PRAGMA wal_checkpoint`` inside a transaction, so the probe can prove
-      exclusivity at acquisition but must COMMIT before the PRAGMA runs, and a
-      connection opened in that gap reproduces exactly the two-connection
-      precondition the WAL-reset corruption bug needs. The docstring outlived
-      the code. Naming a safety mechanism that does not exist is worse than
-      naming none, because it is exactly what a future reader consults before
-      deciding a reset is safe here.
+    - **Mode**: always ``PASSIVE``, which never resets the WAL. ``TRUNCATE``
+      was requested only when this process was the certified sole live writer;
+      PRD-CORE-298 FR01 deleted the writer locks that certified it.
 
     PRD-QUAL-050-FR05 + PRD-FIX-081 (retained): the checkpoint runs on the
     backend's single owning connection when one exists. When no backend owns
@@ -307,7 +210,6 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
             record_effective_checkpoint,
             record_reset_checkpoint,
             resolve_wal_paths,
-            sole_live_writer,
         )
 
         config = get_config()
@@ -316,13 +218,11 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
         if not trigger.due:
             return {"skipped": True, "reason": trigger.reason}
         wal_size_mb = round(trigger.wal_size_bytes / (1024 * 1024), 1)
-        is_sole_writer = sole_live_writer(trw_dir, db_path)
         logger.info(
             "wal_checkpoint_starting",
             wal_size_mb=wal_size_mb,
             threshold_mb=config.wal_checkpoint_threshold_mb,
             trigger=trigger.reason,
-            sole_writer=is_sole_writer,
         )
         # Prefer the LIVE backend's single connection. Opening a competing bare
         # connection while the backend writer is active is exactly the
@@ -336,16 +236,14 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
         from trw_mcp.state._memory_connection import peek_backend
 
         backend = peek_backend()
-        # FR04 clause 3/4: pressure picks the MODE, never whether we run. Only a
-        # certified sole writer may ask for a resetting checkpoint.
-        if backend is not None and _same_db_path(backend.db_path, db_path) and is_sole_writer:
-            requested_truncate = True
-            result: CheckpointResult = backend.checkpoint_wal("TRUNCATE")
-        elif backend is not None and _same_db_path(backend.db_path, db_path):
-            requested_truncate = False
-            result = backend.checkpoint_wal("PASSIVE")
+        # Always PASSIVE: only a certified sole writer could ask for a resetting
+        # checkpoint, and PRD-CORE-298 FR01 deleted the writer locks that
+        # certified it (the daemon is the one writer; this whole path goes with
+        # get_backend in FR01 phase two).
+        requested_truncate = False
+        if backend is not None and _same_db_path(backend.db_path, db_path):
+            result: CheckpointResult = backend.checkpoint_wal("PASSIVE")
         else:
-            requested_truncate = False
             result = _bare_passive_checkpoint(db_path)
         busy = result["busy"]
         checkpointed = result["checkpointed"]
@@ -369,7 +267,7 @@ def maybe_checkpoint_wal(trw_dir: Path) -> WalCheckpointResultDict:
         # REQUESTED), which a consumer reads as "attempted and not blocked";
         # and when it did fire it could not say whether readers held pages or
         # the engine refused outright. Absence of an attempt is not a clear
-        # attempt — see FRAMEWORK-CORE, "absence of a measurement is not a
+        # attempt — see FRAMEWORK.md, "absence of a measurement is not a
         # measurement of absence".
         truncate_state = _truncate_state(requested_truncate, mode)
         if truncate_state != "not_attempted" and truncate_state != "reset":

@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
+from tests._formation_test_support import open_slot
 from tests.comms.conftest import core
 from trw_mcp import formation
 from trw_mcp.models import config as config_module
@@ -70,7 +71,7 @@ def send_scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SendScene:
         runs["sender"],
         {
             "formation_id": "send-contract",
-            "members": [{"member_id": m, "client": "codex", "open_join": True} for m in members],
+            "members": [open_slot(m) for m in members],
         },
         trw_dir=root / ".trw",
         prds_dir=root / "prds",

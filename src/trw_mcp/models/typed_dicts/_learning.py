@@ -45,11 +45,7 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     access_count: int
     # PRD-FIX-104: recall tracking fields — feed feedback_decay_score in entry_utility
     recall_count: int
-    helpful_count: int
-    unhelpful_count: int
     last_accessed_at: str | None
-    q_value: float
-    q_observations: int
     recurrence: int
     outcome_history: list[str]
     shard_id: str | None
@@ -74,6 +70,11 @@ class LearningEntryDict(LearningEntryCompactDict, total=False):
     # record. Present only when the entry's validity window is closed.
     superseded: bool
     invalidated_by: str | None
+    # PRD-CORE-280 FR05: present only on a store-backed export (trw-mcp export
+    # --scope learnings), never on the recall-layer shape this TypedDict also serves.
+    namespace: str
+    origin_project: str
+    remote_id: str | None
 
 
 class PruneCandidateDict(TypedDict):

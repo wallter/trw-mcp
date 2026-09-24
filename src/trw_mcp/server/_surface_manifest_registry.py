@@ -100,7 +100,7 @@ _TOOL_OWNER: dict[str, str] = {
     "trw_peers": "tools.swarm_comms",
     "trw_send": "tools.swarm_comms",
     "trw_inbox": "tools.swarm_comms",
-    "trw_decision": "tools.decision",
+    "trw_assess": "tools.decision",
     "trw_session_start": "tools.ceremony",
     "trw_deliver": "tools.ceremony",
     "trw_heartbeat": "tools.ceremony",
@@ -110,7 +110,6 @@ _TOOL_OWNER: dict[str, str] = {
     "trw_checkpoint": "tools.orchestration",
     "trw_recall": "tools.learning",
     "trw_learn": "tools.learning",
-    "trw_learn_update": "tools.learning",
     "trw_instructions_sync": "tools.learning",
     "trw_claude_md_sync": "tools.learning",
     "trw_skill_discovery": "tools.skill_discovery",
@@ -195,7 +194,7 @@ MANIFEST_BY_NAME: dict[str, SurfaceManifestEntry] = {e.name: e for e in TOOL_MAN
 #: here plus a new pinned digest in ``KERNEL_VERSION_DIGESTS`` — otherwise the
 #: FR02 acceptance test fails, forcing the versioned manifest diff the PRD
 #: mandates (task-corpus regression + security review happen out of band).
-KERNEL_VERSION: int = 2
+KERNEL_VERSION: int = 3
 
 
 def kernel_digest() -> str:
@@ -209,6 +208,9 @@ def kernel_digest() -> str:
 KERNEL_VERSION_DIGESTS: dict[int, str] = {
     1: "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7",
     2: "769ed2c0b3e39adfd6776781b5ad4d8a850bfa6f090b8d89f955fa0ce08bab23",
+    # PRD-CORE-291-FR02: trw_learn_update merged into trw_learn, so the kernel is
+    # back to version 1's membership (same digest, new version).
+    3: "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7",
 }
 
 # =====================================================================
@@ -243,7 +245,7 @@ def resolve_tool_surface(
     *,
     comms_enabled: bool = False,
     dispatch_enabled: bool = False,
-    decision_enabled: bool = False,
+    assess_enabled: bool = False,
 ) -> ToolResolution:
     """Resolve the tool surface for a task under a resolution mode (FR04).
 
@@ -269,7 +271,7 @@ def resolve_tool_surface(
     launch-then-poll loop the bundled ``trw-delegate`` skill prescribes, which
     is how a shipped skill came to name two tools no default session could see.
 
-    ``decision_enabled`` is the same shape of opt-in for the ``decision_support``
+    ``assess_enabled`` is the same shape of opt-in for the ``assess_support``
     pack (trw-jev slice 1, PRD-CORE-288). Named by NO entry
     of :data:`STANDARD_TASK_PACKS` and excluded from ``REVIEWER_TOOLS`` for the
     same reason ``peer_comms`` is: it can reach a third-party network backend
@@ -304,8 +306,8 @@ def resolve_tool_surface(
         packs = (*packs, "peer_comms")
     if dispatch_enabled and "dispatch" not in packs:
         packs = (*packs, "dispatch")
-    if decision_enabled and "decision_support" not in packs:
-        packs = (*packs, "decision_support")
+    if assess_enabled and "assess_support" not in packs:
+        packs = (*packs, "assess_support")
     tools_list = [tool for pack in packs for tool in PACK_TOOLS[pack]]
     if selected is None:
         decision = (
@@ -319,8 +321,8 @@ def resolve_tool_surface(
         decision += "; opt_in: comms_enabled -> peer_comms"
     if dispatch_enabled:
         decision += "; opt_in: dispatch_tools_exposed -> dispatch"
-    if decision_enabled:
-        decision += "; opt_in: decision_enabled -> decision_support"
+    if assess_enabled:
+        decision += "; opt_in: assess_enabled -> assess_support"
     return ToolResolution(
         mode="standard",
         task_type=task_type,

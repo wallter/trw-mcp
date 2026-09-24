@@ -1,10 +1,10 @@
 """PRD-INTENT-002 FR08 — middleware chain ordering.
 
 The re-groomed FR08 asserts RELATIVE ordering on the HEAD chain
-(``MCPSecurity → Ceremony → ContextBudget → ResponseOptimizer``), NOT a fixed
+(``MCPSecurity → Ceremony → PhaseExposure → ResponseOptimizer``), NOT a fixed
 absolute index: PhaseExposureMiddleware MUST sit AFTER CeremonyMiddleware
-(session state resolved first) and BEFORE ContextBudgetMiddleware (phase
-filtering precedes context/observation masking). If ContractMiddleware ever
+(session state resolved first) and BEFORE ResponseOptimizerMiddleware (phase
+filtering precedes response shaping). If ContractMiddleware ever
 lands it inserts between Ceremony and PhaseExposure; the relative assertion
 absorbs that without edit.
 """
@@ -24,7 +24,7 @@ def _index_of(chain: list[object], cls: type) -> int:
 
 
 def test_phase_exposure_middleware_position() -> None:
-    """FR08: Ceremony < PhaseExposure < ContextBudget (relative order)."""
+    """FR08: Ceremony < PhaseExposure < ResponseOptimizer (relative order)."""
     chain = _build_middleware()
 
     ceremony_idx = _index_of(chain, CeremonyMiddleware)
@@ -35,15 +35,14 @@ def test_phase_exposure_middleware_position() -> None:
     # PhaseExposure must come AFTER Ceremony (session state first).
     assert ceremony_idx < phase_idx, "PhaseExposure must follow Ceremony"
 
-    # If ContextBudget is present, PhaseExposure must precede it.
-    from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
+    from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
 
-    ctx_idx = _index_of(chain, ContextBudgetMiddleware)
-    if ctx_idx != -1:
-        assert phase_idx < ctx_idx, "PhaseExposure must precede ContextBudget"
+    optimizer_idx = _index_of(chain, ResponseOptimizerMiddleware)
+    assert optimizer_idx != -1, "ResponseOptimizerMiddleware missing from chain"
+    assert phase_idx < optimizer_idx, "PhaseExposure must precede ResponseOptimizer"
 
 
-def test_phase_exposure_present_when_observation_masking_off(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_phase_exposure_present_regardless_of_optional_middleware(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """FR08: PhaseExposure is appended regardless of optional-middleware toggles."""
     chain = _build_middleware()
     assert _index_of(chain, PhaseExposureMiddleware) != -1

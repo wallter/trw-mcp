@@ -1,7 +1,11 @@
-"""trw_channel_stats MCP tool — channel correlation + throttle health.
+"""trw_channel_stats MCP tool — channel correlation health.
 
-Returns per-channel correlation rate and throttle status so an agent or
-operator can query channel telemetry health via MCP.
+Returns per-channel correlation rate so an agent or operator can query
+channel telemetry health via MCP.
+
+The throttle evaluation this tool used to surface was removed 2026-09-22
+(RC-014): it fed a manifest field (``tier_default``) nothing read to change
+behavior.
 
 NEVER raises — all error paths return a partial or empty result dict.
 Zero trw_distill imports.
@@ -28,7 +32,6 @@ __all__ = [
 ]
 
 _DEFAULT_LOG_SUBPATH = ".trw/telemetry/channel-events.jsonl"
-_DEFAULT_MANIFEST_SUBPATH = ".trw/channels/manifest.yaml"
 
 
 def _resolve_repo_root(repo_root: str | None) -> Path | None:
@@ -59,7 +62,7 @@ def compute_channel_stats_result(
     window_hours: int = 1,
     repo_root: str | None = None,
 ) -> dict[str, Any]:
-    """Compute correlation/throttle stats; return as plain dict.
+    """Compute correlation stats; return as plain dict.
 
     Never raises.
     """
@@ -75,7 +78,6 @@ def compute_channel_stats_result(
             }
 
         log_path = root / _DEFAULT_LOG_SUBPATH
-        manifest_path = root / _DEFAULT_MANIFEST_SUBPATH
         window_seconds = max(1, window_hours) * 3600
 
         from trw_mcp.channels.meta_tune._stats import compute_channel_stats
@@ -83,12 +85,11 @@ def compute_channel_stats_result(
         report = compute_channel_stats(
             log_path,
             window_seconds=window_seconds,
-            manifest_path=manifest_path if manifest_path.exists() else None,
         )
 
         channels_out: list[dict[str, Any]] = [e.model_dump() for e in report.channels]
 
-        # "ok" with an empty list reads as "healthy, nothing to throttle". For a
+        # "ok" with an empty list reads as "healthy, nothing to report". For a
         # subsystem that has never fired, that is the wrong claim: no channel
         # emitted anything, so there is nothing to be healthy ABOUT. Same
         # distinction the correlator now draws between an unmeasured rate and a
@@ -122,19 +123,18 @@ def register_channel_stats_tools(mcp: FastMCP) -> None:
     """Register trw_channel_stats on the MCP server."""
 
     # Reads channel-events.jsonl, computes push->outcome correlation rates per
-    # (channel_id, client), applies CLIENT_CORRECTION_FACTORS, and evaluates
-    # CLIENT_THROTTLE_THRESHOLDS to produce throttle decisions.
+    # (channel_id, client), and applies CLIENT_CORRECTION_FACTORS.
     @mcp.tool()
     def trw_channel_stats(
         window_hours: int = 1,
         repo_root: str | None = None,
     ) -> dict[str, Any]:
-        """Return per-channel correlation rate and throttle status.
+        """Return per-channel push->outcome correlation rate.
 
-        Use when: inspecting channel health or debugging throttle decisions.
+        Use when: inspecting channel health.
 
-        Output: status ok|no_activity|error, per-channel correlation + throttle
-        rows, total_events. no_activity means the log held no channel events at
+        Output: status ok|no_activity|error, per-channel correlation rows,
+        total_events. no_activity means the log held no channel events at
         all, which is distinct from ok with an empty list.
 
         Args:

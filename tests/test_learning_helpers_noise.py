@@ -10,6 +10,7 @@ import pytest
 
 from tests._layout import requires_local_timing
 from tests._learning_helpers_test_support import set_project_root  # noqa: F401
+from tests._timing import assert_budget
 from trw_mcp.exceptions import StateError
 from trw_mcp.state.analytics.core import _NOISE_PATTERNS
 from trw_mcp.state.persistence import FileStateReader
@@ -176,7 +177,6 @@ class TestNoiseFilter:
         assert is_noise_summary("I read the file successfully") is True
         assert is_noise_summary("OAuth callbacks need explicit state validation") is False
 
-    @pytest.mark.perf
     @pytest.mark.unit
     @requires_local_timing
     def test_is_noise_perf(self) -> None:
@@ -188,7 +188,7 @@ class TestNoiseFilter:
             is_noise_summary(summary)
         elapsed = time.perf_counter() - start
 
-        assert elapsed < 10.0
+        assert_budget("noise_filter_10k_calls", elapsed, 10.0, "s")
 
     @pytest.mark.unit
     def test_noise_patterns_avoid_nested_repeat_redos_shapes(self) -> None:

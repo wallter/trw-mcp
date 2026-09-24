@@ -18,11 +18,8 @@ refuses, unchanged.
 
 Why sub scope only: at root the block IS the protocol carrier, and
 PRD-CORE-247-FR09 requires the deliver gate to be stated there exactly once and
-never zero times, so root may not degrade to a pointer. Root already has its own
-size lever — PRD-CORE-203 externalization reduces the marker region to a single
-``@.trw/INSTRUCTIONS.md`` import — and it is enabled by default
-(``instruction_externalize="auto"``), so an over-budget root file is user content
-by construction and refusal is the truthful outcome.
+never zero times, so root may not degrade to a pointer. An over-budget root
+file is therefore refused rather than shrunk; refusal is the truthful outcome.
 """
 
 from __future__ import annotations

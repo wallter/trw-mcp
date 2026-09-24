@@ -1,7 +1,7 @@
 """Unified telemetry pipeline with periodic background flush.
 
-Thread-safe singleton. Accepts events from @log_tool_call, sanitizes via
-strip_pii/redact_paths, queues in bounded deque, flushes to local JSONL +
+Thread-safe singleton. Accepts one event per tool call from the tool-call wrapper, sanitizes via
+redact_secrets/redact_paths, queues in bounded deque, flushes to local JSONL +
 backend POST on a timer thread. Fail-open throughout.
 """
 
@@ -23,7 +23,7 @@ from typing_extensions import TypedDict
 from trw_mcp._locking import _lock_ex, _lock_un
 from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
 from trw_mcp.state.persistence import FileStateWriter
-from trw_mcp.telemetry.anonymizer import redact_paths, strip_pii
+from trw_mcp.telemetry.anonymizer import redact_paths, redact_secrets
 
 logger = structlog.get_logger(__name__)
 
@@ -40,8 +40,8 @@ class PipelineFlushResult(TypedDict):
 class TelemetryPipeline:
     """Unified telemetry pipeline with periodic background flush.
 
-    Thread-safe singleton. Accepts events from @log_tool_call, sanitizes via
-    strip_pii/redact_paths, queues in bounded deque, flushes to local JSONL +
+    Thread-safe singleton. Accepts one event per tool call from the tool-call wrapper, sanitizes via
+    redact_secrets/redact_paths, queues in bounded deque, flushes to local JSONL +
     backend POST on a timer thread. Fail-open throughout.
     """
 
@@ -136,7 +136,7 @@ class TelemetryPipeline:
         """Scrub PII and redact paths from every string field in-place.
 
         Previously only the ``error`` field was PII-scrubbed, leaking PII in
-        other string fields (messages, args, paths). Now ``strip_pii`` is
+        other string fields (messages, args, paths). Now ``redact_secrets`` is
         applied to all string values except an explicit safe-key allowlist.
 
         Scrubbing is RECURSIVE: nested dicts and lists are walked so PII
@@ -150,21 +150,24 @@ class TelemetryPipeline:
         except Exception:  # justified: fail-open, path resolution failure non-fatal
             project_root = None
 
-        for key, value in event.items():
+        # Keys are scrubbed too (a producer can key an event by user text); rebuilt in place for the caller.
+        for key in list(event):
             if key in self._PII_SAFE_KEYS:
                 continue
-            event[key] = self._scrub_value(value, project_root)
+            value = event.pop(key)
+            event[str(self._scrub_value(key, project_root))] = self._scrub_value(value, project_root)
 
     def _scrub_value(self, value: object, project_root: Path | None) -> object:
         """Recursively scrub a single value (string/dict/list); other types pass through."""
         if isinstance(value, str):
-            scrubbed = strip_pii(value)
+            scrubbed = redact_secrets(value)
             if project_root is not None:
                 scrubbed = redact_paths(scrubbed, project_root)
             return scrubbed
         if isinstance(value, dict):
-            return {k: self._scrub_value(v, project_root) for k, v in value.items()}
-        if isinstance(value, list):
+            # Nested keys can be user-defined, so they are scrubbed like values (redact_metadata's collision note).
+            return {self._scrub_value(k, project_root): self._scrub_value(v, project_root) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
             return [self._scrub_value(item, project_root) for item in value]
         return value
 

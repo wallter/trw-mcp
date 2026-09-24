@@ -13,6 +13,7 @@ from typing import cast
 from uuid import uuid4
 
 import structlog
+from trw_memory.retrieval.dense import cosine_similarity
 
 from trw_mcp.clients.llm import LLMClient
 from trw_mcp.models.config import TRWConfig, get_config
@@ -24,7 +25,6 @@ from trw_mcp.state.consolidation._summarize import (
     _summarize_cluster_fallback,
     _summarize_cluster_llm,
 )
-from trw_mcp.state.dedup import cosine_similarity
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
@@ -51,7 +51,6 @@ def _create_consolidated_entry(
     - tags: top-N most frequent tags across cluster (FIX-071-FR02)
     - evidence: union of all evidence (deduplicated)
     - recurrence: len(cluster) — count, not sum (FIX-071-FR06)
-    - q_value: max of cluster q_values
 
     Writes the entry atomically via FileStateWriter.write_yaml.
 
@@ -86,7 +85,6 @@ def _create_consolidated_entry(
 
     # FIX-071-FR06: Use cluster size, not sum — sum compounds exponentially
     recurrence = len(cluster)
-    q_value = max(float(str(e.get("q_value", 0.0))) for e in cluster)
 
     consolidated_from = [str(e["id"]) for e in cluster if "id" in e]
 
@@ -100,7 +98,6 @@ def _create_consolidated_entry(
         "tags": tags,
         "evidence": all_evidence,
         "recurrence": recurrence,
-        "q_value": q_value,
         "status": "active",
         "created": datetime.now(tz=timezone.utc).date().isoformat(),
         "updated": datetime.now(tz=timezone.utc).date().isoformat(),

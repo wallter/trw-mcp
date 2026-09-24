@@ -4,13 +4,36 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from tests._memory_fixtures import DaemonCheckout
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import (
     _CFG,
     _entries_dir,
     _get_tools,
     set_project_root,  # noqa: F401 -- autouse fixture disables dedup (f4ca661c9 flipped embeddings_enabled default True)
 )
+from trw_mcp.state._store_selection import selected_store as _real_selected_store
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+pytestmark = pytest.mark.usefixtures("fake_memory_store")
+
+
+@pytest.fixture
+def fake_memory_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeMemoryStore:
+    """Override of ``tests._memory_fixtures.fake_memory_store`` pinned to "default".
+
+    See ``tests/test_tools_learning_recall_modes.py`` for the same workaround:
+    ``store_learning`` writes under the shared fixture's ``FAKE_NAMESPACE``,
+    which ``FakeMemoryStore.recall()`` (only searches "default") never sees.
+    """
+    from trw_mcp.state import _store_selection
+
+    store = FakeMemoryStore()
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, "default"))
+    return store
 
 
 class TestTrwRecall:
@@ -32,7 +55,7 @@ class TestTrwRecall:
         assert result["total_matches"] >= 1
         assert len(result["learnings"]) >= 1
 
-    def test_no_matches(self, tmp_path: Path) -> None:
+    def test_no_matches(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         tools = _get_tools()
         result = tools["trw_recall"].fn(query="nonexistent-query-xyz")
         assert result["total_matches"] == 0
@@ -54,10 +77,14 @@ class TestTrwRecall:
         )
 
         result = tools["trw_recall"].fn(query="tagged", tags=["python"])
-        # Should only find the python-tagged one
+        # Should only find the python-tagged one. PRD-CORE-294 FR01: default
+        # rows are stubs without a tags field, so fetch full rows to check it.
+        ids = [str(row["id"]) for row in result["learnings"]]
+        assert ids
+        full = tools["trw_recall"].fn(ids=ids)
         python_results = [
             entry
-            for entry in result["learnings"]
+            for entry in full["learnings"]
             if "python" in (entry.get("tags", []) if isinstance(entry.get("tags"), list) else [])
         ]
         assert len(python_results) >= 1
@@ -76,35 +103,54 @@ class TestTrwRecall:
             impact=0.9,
         )
 
-        result = tools["trw_recall"].fn(query="impact learning filter", min_impact=0.5)
-        assert all(float(entry.get("impact", 0)) >= 0.5 for entry in result["learnings"])
+        result = tools["trw_recall"].fn(query="impact learning filter", options={"min_impact": 0.5})
+        # PRD-CORE-294 FR01: default rows are stubs without an impact field,
+        # so fetch full rows to check it.
+        ids = [str(row["id"]) for row in result["learnings"]]
+        assert ids
+        full = tools["trw_recall"].fn(ids=ids)
+        assert all(float(entry.get("impact", 0)) >= 0.5 for entry in full["learnings"])
 
-    def test_multi_word_query_matches_tokens(self, tmp_path: Path) -> None:
-        tools = _get_tools()
 
-        tools["trw_learn"].fn(
-            summary="Database connection pooling",
-            detail="Use pool for PostgreSQL connections",
-            tags=["database"],
-            impact=0.8,
-        )
+def test_multi_word_query_matches_tokens(daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real keyword search does per-token OR matching across fields.
 
-        # Multi-word query where words appear in different fields
-        result = tools["trw_recall"].fn(query="database postgresql")
-        assert result["total_matches"] >= 1
+    ``FakeMemoryStore._page`` matches the *whole* query as one substring, so it
+    cannot carry this case (needs a real store): a daemon-backed checkout
+    instead of the module's fake_memory_store override.
+    """
+    from tests import _path_isolation
+    from trw_mcp.state import _store_selection
 
-        # Multi-word query where both words exist but separately
-        result = tools["trw_recall"].fn(query="pooling connections")
-        assert result["total_matches"] >= 1
+    # Undo the module's fake_memory_store override: this test needs the real
+    # (daemon-backed) selected_store.
+    monkeypatch.setattr(_store_selection, "selected_store", _real_selected_store)
+    _path_isolation.set_current_root(daemon_checkout.trw_dir.parent)
+    tools = _get_tools()
 
-        # Query with one matching and one missing word — union semantics
-        # still matches on "database" even though "redis" matches nothing
-        result = tools["trw_recall"].fn(query="database redis")
-        assert result["total_matches"] >= 1
+    tools["trw_learn"].fn(
+        summary="Database connection pooling",
+        detail="Use pool for PostgreSQL connections",
+        tags=["database"],
+        impact=0.8,
+    )
 
-        # Query where NO words appear at all
-        result = tools["trw_recall"].fn(query="kubernetes helm")
-        assert result["total_matches"] == 0
+    # Multi-word query where words appear in different fields
+    result = tools["trw_recall"].fn(query="database postgresql")
+    assert result["total_matches"] >= 1
+
+    # Multi-word query where both words exist but separately
+    result = tools["trw_recall"].fn(query="pooling connections")
+    assert result["total_matches"] >= 1
+
+    # Query with one matching and one missing word — union semantics
+    # still matches on "database" even though "redis" matches nothing
+    result = tools["trw_recall"].fn(query="database redis")
+    assert result["total_matches"] >= 1
+
+    # Query where NO words appear at all
+    result = tools["trw_recall"].fn(query="kubernetes helm")
+    assert result["total_matches"] == 0
 
 
 class TestTrwRecallAccessTracking:
@@ -196,7 +242,7 @@ class TestTrwRecallAccessTracking:
         # access-tracking isolation as verified without ever looking at it.
         assert checked, f"unmatched entry {r2['learning_id']} not found under {entries_dir}"
 
-    def test_recall_no_match_no_access_update(self, tmp_path: Path) -> None:
+    def test_recall_no_match_no_access_update(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """A query that matches nothing leaves every entry's access tracking alone.
 
         This used to end in ``if receipt_path.exists():`` guarding its only

@@ -12,7 +12,7 @@ of the block and can drift from what the server actually exposes; a pointer
 cannot. A light-ceremony client keeps the VERBATIM table unconditionally,
 whatever ``instruction_catalogue_mode`` says, because for those clients the
 generated instruction file IS the protocol carrier
-(``.trw/frameworks/FRAMEWORK-CORE.md``, RIGID / FLEXIBLE TOOL CLASSIFICATION) and
+(``.trw/frameworks/FRAMEWORK.md``, RIGID / FLEXIBLE TOOL CLASSIFICATION) and
 such a client may not be able to make the discovery call at all. The profile
 wins; the config field decides only the full-ceremony case.
 """

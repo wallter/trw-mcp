@@ -71,6 +71,7 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
     disabled_tools = existing.get("disabled_tools")
     tools = existing.get("tools")
     env = existing.get("env")
+    env_vars = existing.get("env_vars")
 
     if isinstance(command, str):
         entry["command"] = command
@@ -94,6 +95,9 @@ def _normalize_mcp_server_entry(existing: object) -> CodexMcpServerEntry | None:
     # (PRD-CORE-277-FR07).
     if isinstance(env, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         entry["env"] = cast("dict[str, str]", env)
+    # `env_vars` (names Codex passes through from its own environment) is the user's as well.
+    if isinstance(env_vars, list) and all(isinstance(name, str) for name in env_vars):
+        entry["env_vars"] = cast("list[str]", env_vars)
 
     # `tools` carries BOTH an enable signal and an approval mode. The enable
     # signal is still mirrored into enabled_tools/disabled_tools below (that

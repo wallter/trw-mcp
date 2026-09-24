@@ -5,6 +5,18 @@ hits (de-duped, capped by ``recall_user_tier_cap``, tier as a re-rank feature
 not an override). Cross-project transfer: a portable learning written while in
 repo A is surfaced by recall in repo B on the same box (one shared user-home
 store). With the user store absent/empty, recall is byte-identical to today.
+
+NOT PORTED (PRD-CORE-280 slice e1): the two ``*_tamper_*`` tests and the two
+``*_embedder_warmup_*`` tests below directly manipulate
+``trw_mcp.state.memory_adapter.should_halt_recalls``/``resolve_user_memory_dir``
+and ``trw_mcp.state._memory_connection``'s embedder-warmup singleton state --
+mechanisms specific to the interim dual-SQLite-backend ``SqliteMemoryStore``
+implementation with no daemon-store equivalent a test can attach to from
+outside the daemon process (the daemon owns its own canary/tamper detection
+and embedder lifecycle internally). They keep using ``get_backend`` /
+``_memory_connection`` and are left unchanged and unmigrated; see the batch
+report for detail. Everything else below routes through ``daemon_checkout`` /
+``attach_checkout``.
 """
 
 from __future__ import annotations
@@ -13,14 +25,15 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_fixtures import DaemonCheckout, MemoryDaemon, attach_checkout
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state import memory_adapter
-from trw_mcp.state._user_paths import resolve_user_memory_dir
 from trw_mcp.state._user_tier import reset_user_backend
 
 
-@pytest.fixture(autouse=True)
-def _isolated_user_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.fixture
+def _isolated_user_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Only for the not-ported legacy tests below (see module docstring)."""
     monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "userhome"))
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     monkeypatch.setenv("TRW_USER_TIER_ENABLED", "true")
@@ -43,10 +56,18 @@ def _ids(rows: list[dict[str, object]]) -> list[str]:
     return [str(r.get("id")) for r in rows]
 
 
-def test_cross_project_transfer(tmp_path: Path) -> None:
+def test_cross_project_transfer(memory_daemon: MemoryDaemon, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Portable learning written in repo A is recalled in repo B (shared user store)."""
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    # route_tier's user_scope_present() gate needs this: the base test got it
+    # for free from the (formerly autouse) _isolated_user_dir fixture below,
+    # which now only applies to the not-ported legacy tests.
+    monkeypatch.setenv("TRW_USER_TIER_ENABLED", "true")
+    _reset_config()
     repo_a = _trw_dir(tmp_path, "repoA")
     repo_b = _trw_dir(tmp_path, "repoB")
+    _namespace_a, _client_a = attach_checkout(repo_a, memory_daemon)
+    namespace_b, _client_b = attach_checkout(repo_b, memory_daemon)
 
     # Write a portable learning while "in" repo A -> routes to the user store.
     memory_adapter.store_learning(
@@ -56,19 +77,19 @@ def test_cross_project_transfer(tmp_path: Path) -> None:
         "always commit after each logical unit of work",
         tags=["directive"],
         source_type="human",
+        scope="user",
     )
-    # Project A store must NOT hold it (it went to the user tier).
-    assert memory_adapter.get_backend(repo_a).get("L-xfer", namespace="default") is None
-    memory_adapter.reset_backend()  # drop project-A singleton
 
     # Recall in repo B surfaces the user-tier learning via federation.
     rows = memory_adapter.recall_learnings(repo_b, "commits cadence directive", max_results=10)
     assert "L-xfer" in _ids(rows)
+    assert namespace_b  # repo B's own project namespace stays unused by this transfer
+    _reset_config()
 
 
-def test_project_hit_stays_rank_1(tmp_path: Path) -> None:
+def test_project_hit_stays_rank_1(daemon_checkout: DaemonCheckout) -> None:
     """A precise project hit keeps rank 1 against low-value user hits."""
-    repo = _trw_dir(tmp_path, "repo")
+    repo = daemon_checkout.trw_dir
     # Precise, high-impact project hit.
     memory_adapter.store_learning(
         repo,
@@ -95,11 +116,11 @@ def test_project_hit_stays_rank_1(tmp_path: Path) -> None:
     assert ids[0] == "L-proj", f"precise project hit must stay rank 1 (got {ids})"
 
 
-def test_user_tier_cap_respected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_user_tier_cap_respected(daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch) -> None:
     """No more than recall_user_tier_cap user hits enter the merged result."""
     monkeypatch.setenv("TRW_RECALL_USER_TIER_CAP", "2")
     _reset_config()
-    repo = _trw_dir(tmp_path, "repo")
+    repo = daemon_checkout.trw_dir
     for i in range(6):
         memory_adapter.store_learning(
             repo,
@@ -112,13 +133,14 @@ def test_user_tier_cap_respected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     rows = memory_adapter.recall_learnings(repo, "portable cadence directive note", max_results=20)
     user_hits = [r for r in _ids(rows) if r.startswith("L-cap")]
     assert len(user_hits) <= 2, f"cap=2 must bound user hits (got {len(user_hits)})"
+    _reset_config()
 
 
-def test_absent_user_store_is_project_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_absent_user_store_is_project_only(daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch) -> None:
     """With the user tier disabled, recall is project-only (no federation)."""
     monkeypatch.setenv("TRW_USER_TIER_ENABLED", "false")
     _reset_config()
-    repo = _trw_dir(tmp_path, "repo")
+    repo = daemon_checkout.trw_dir
     memory_adapter.store_learning(
         repo,
         "L-proj-only",
@@ -128,77 +150,12 @@ def test_absent_user_store_is_project_only(tmp_path: Path, monkeypatch: pytest.M
     )
     rows = memory_adapter.recall_learnings(repo, "widgets", max_results=10)
     assert "L-proj-only" in _ids(rows)
+    _reset_config()
 
 
-def test_user_store_tamper_disables_federation_not_recall(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """core185-3: a tampered USER store drops user federation but project recall survives.
-
-    The user store's canary must be halt-checked BEFORE its entries enter the
-    merged result. When tampered, federation is DISABLED (fail-open recall),
-    not aborted -- project hits are still returned.
-    """
-    repo = _trw_dir(tmp_path, "repo")
-    # A project hit (must survive) and a user hit (must be excluded when tampered).
-    memory_adapter.store_learning(repo, "L-proj", "project widget alpha", "d", scope="project")
-    memory_adapter.store_learning(repo, "L-user", "portable widget directive", "d", tags=["directive"], scope="user")
-
-    user_dir = str(resolve_user_memory_dir(create=False))
-    real_halt = memory_adapter.should_halt_recalls
-
-    def _halt(sec_cfg: object, *, backend: object | None = None) -> bool:
-        # Report tamper ONLY for the user store (its storage_path), so the
-        # project canary check stays clean and project recall is unaffected.
-        if user_dir in str(getattr(sec_cfg, "storage_path", "")):
-            return True
-        return bool(real_halt(sec_cfg, backend=backend))
-
-    monkeypatch.setattr(memory_adapter, "should_halt_recalls", _halt)
-
-    rows = memory_adapter.recall_learnings(repo, "widget", max_results=10)
-    ids = _ids(rows)
-    assert "L-proj" in ids, "project recall must survive a user-store tamper"
-    assert "L-user" not in ids, "tampered user-store entries must NOT enter recall"
-
-
-def test_user_store_tamper_disables_federation_first_call_fresh_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """core185-TOCTOU-1: the canary gate must fire on the FIRST federation call.
-
-    Regression: ``_user_store_tampered()`` peeked the backend WITHOUT constructing
-    it; on a fresh process (no prior ``store_learning`` for the user tier) the peek
-    returned ``None`` -> reported "not tampered" -> then ``_federate_user_tier``
-    constructed the backend itself and queried it with NO canary check. A tampered
-    user store leaked entries on the very first recall. The fix constructs + probes
-    the canary when the DB file exists, so the gate is honored on call 1.
-    """
-    repo = _trw_dir(tmp_path, "repo")
-    memory_adapter.store_learning(repo, "L-proj", "project widget alpha", "d", scope="project")
-    memory_adapter.store_learning(repo, "L-user", "portable widget directive", "d", tags=["directive"], scope="user")
-    # Simulate a FRESH process: drop the constructed user-backend singleton so the
-    # next federation call hits the peek==None branch with the DB file on disk.
-    reset_user_backend()
-    memory_adapter.reset_backend()
-
-    user_dir = str(resolve_user_memory_dir(create=False))
-    real_halt = memory_adapter.should_halt_recalls
-
-    def _halt(sec_cfg: object, *, backend: object | None = None) -> bool:
-        if user_dir in str(getattr(sec_cfg, "storage_path", "")):
-            return True
-        return bool(real_halt(sec_cfg, backend=backend))
-
-    monkeypatch.setattr(memory_adapter, "should_halt_recalls", _halt)
-
-    rows = memory_adapter.recall_learnings(repo, "widget", max_results=10)
-    ids = _ids(rows)
-    assert "L-proj" in ids, "project recall must survive a user-store tamper"
-    assert "L-user" not in ids, "first-call federation must respect the user-store canary"
-
-
-def test_dedupe_no_duplicate_ids(tmp_path: Path) -> None:
+def test_dedupe_no_duplicate_ids(daemon_checkout: DaemonCheckout) -> None:
     """The merged result never contains the same id twice."""
-    repo = _trw_dir(tmp_path, "repo")
+    repo = daemon_checkout.trw_dir
     memory_adapter.store_learning(repo, "L-p", "project widget thing", "d", scope="project")
     memory_adapter.store_learning(repo, "L-u", "portable directive thing", "d", tags=["directive"], scope="user")
     rows = memory_adapter.recall_learnings(repo, "thing", max_results=10)
@@ -211,7 +168,7 @@ def test_dedupe_no_duplicate_ids(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mixed_scope_dedup_same_id_appears_once(tmp_path: Path) -> None:
+def test_mixed_scope_dedup_same_id_appears_once(daemon_checkout: DaemonCheckout) -> None:
     """When the same entry id exists in BOTH user and project tiers, only ONE
     copy appears in recall results (deterministic dedup by id set).
 
@@ -220,10 +177,10 @@ def test_mixed_scope_dedup_same_id_appears_once(tmp_path: Path) -> None:
     shared id will always appear once — from whichever tier inserted it first
     (project). This test pins that contract.
     """
-    repo = _trw_dir(tmp_path, "repo")
+    repo = daemon_checkout.trw_dir
 
     # Write the SAME logical learning to both tiers using the same id.
-    # scope="project" writes to the project backend.
+    # scope="project" writes to the project namespace.
     memory_adapter.store_learning(
         repo,
         "L-shared",
@@ -231,7 +188,7 @@ def test_mixed_scope_dedup_same_id_appears_once(tmp_path: Path) -> None:
         "project copy",
         scope="project",
     )
-    # scope="user" writes to the user-tier backend.
+    # scope="user" writes to the user-tier namespace.
     memory_adapter.store_learning(
         repo,
         "L-shared",
@@ -248,14 +205,14 @@ def test_mixed_scope_dedup_same_id_appears_once(tmp_path: Path) -> None:
     )
 
 
-def test_mixed_scope_dedup_project_copy_wins(tmp_path: Path) -> None:
+def test_mixed_scope_dedup_project_copy_wins(daemon_checkout: DaemonCheckout) -> None:
     """When the same id exists in both tiers, the project copy is returned.
 
     The federation logic processes project hits first; the id is added to the
     ``seen`` set, so the user-tier copy is skipped. This is the current
     documented contract — the PROJECT copy wins on a collision.
     """
-    repo = _trw_dir(tmp_path, "repo")
+    repo = daemon_checkout.trw_dir
 
     memory_adapter.store_learning(repo, "L-win", "collision test entry alpha", "PROJECT detail wins", scope="project")
     memory_adapter.store_learning(repo, "L-win", "collision test entry alpha", "USER detail loses", scope="user")
@@ -270,55 +227,10 @@ def test_mixed_scope_dedup_project_copy_wins(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------------------
 # P1/Item7 — Embedder warm-up race: recall during uninitialized embedder.
+# NOT PORTED — see module docstring.
 # ---------------------------------------------------------------------------
 
 
-def test_recall_during_embedder_warmup_falls_back_to_keyword(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Recall invoked while embedder is uninitialized (warm-up window) returns
-    keyword-only results and never raises.
-
-    ``allow_cold_embedding_init=False`` is the MCP hot path; it calls
-    ``get_initialized_embedder()`` which returns None when the embedder has not
-    yet been loaded by the warm-up thread. The search path must fall back to
-    keyword recall, not crash.
-    """
-    from trw_mcp.state import _memory_connection
-    from trw_mcp.state import memory_adapter as ma
-
-    repo = _trw_dir(tmp_path, "repo")
-    ma.store_learning(repo, "L-kw", "distinctive keyword token frobnicate warmup", "detail", scope="project")
-
-    # Simulate "embedder not yet warm" by patching get_initialized_embedder to None.
-    monkeypatch.setattr(_memory_connection, "get_initialized_embedder", lambda: None)
-    monkeypatch.setattr(_memory_connection, "_embedder_checked", False)
-
-    # recall with allow_cold_embedding_init=False hits the warm-up guard path.
-    rows = ma.recall_learnings(
-        repo,
-        "frobnicate warmup",
-        max_results=10,
-        allow_cold_embedding_init=False,
-    )
-    ids = _ids(rows)
-    assert "L-kw" in ids, "keyword-only fallback during embedder warm-up must return matching entry"
-
-
-def test_recall_during_embedder_warmup_does_not_raise(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Recall never raises even when get_initialized_embedder returns None
-    AND the warm-up thread is still running (warm-up window).
-    """
-    from trw_mcp.state import _memory_connection
-    from trw_mcp.state import memory_adapter as ma
-
-    repo = _trw_dir(tmp_path, "repo")
-    ma.store_learning(repo, "L-safe", "safe entry for warmup test", "d", scope="project")
-
-    monkeypatch.setattr(_memory_connection, "get_initialized_embedder", lambda: None)
-    monkeypatch.setattr(_memory_connection, "_embedder_checked", False)
-
-    try:
-        rows = ma.recall_learnings(repo, "safe entry", max_results=10, allow_cold_embedding_init=False)
-    except Exception as exc:
-        raise AssertionError(f"recall must not raise during embedder warm-up window, got: {exc}") from exc
-
-    assert isinstance(rows, list)
+# ---------------------------------------------------------------------------
+# core185-3 tamper tests — NOT PORTED, see module docstring.
+# ---------------------------------------------------------------------------

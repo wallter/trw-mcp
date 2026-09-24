@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from tests._test_export_support import _make_entry, _setup_project, _writer
+import pytest
+
+from tests._memory_store_fake import FakeMemoryStore
+from tests._test_export_support import _setup_project, _store_entry, _writer
 from trw_mcp.export import (
     _collect_analytics,
     _collect_learnings,
@@ -13,6 +16,12 @@ from trw_mcp.export import (
     temp_project_root,
 )
 from trw_mcp.models.config import TRWConfig
+
+
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """Export reads ``selected_store``; the fake is this checkout's store (PRD-CORE-280 e1)."""
+    return fake_memory_store
 
 
 class TestTempProjectRoot:
@@ -39,54 +48,40 @@ class TestTempProjectRoot:
 
 
 class TestCollectLearnings:
-    """Edge cases for _collect_learnings internal function."""
+    """Edge cases for _collect_learnings (PRD-CORE-280 FR05: reads the store, not YAML)."""
 
-    def test_returns_empty_when_entries_dir_missing(self, tmp_path: Path) -> None:
-        """No entries dir => empty list, no error."""
+    def test_returns_empty_when_store_is_empty(self, tmp_path: Path) -> None:
+        """No rows in this checkout's store => empty list, no error."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         config = TRWConfig()
         result = _collect_learnings(trw_dir, config)
         assert result == []
 
-    def test_skips_index_yaml(self, tmp_path: Path) -> None:
-        """index.yaml in entries dir is skipped."""
+    def test_a_row_with_no_yaml_file_is_still_exported(self, tmp_path: Path) -> None:
+        """A store-only row (never written to the retired YAML mirror) is exported."""
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Real entry")
-        _writer.write_yaml(entries_dir / "index.yaml", {"entries": []})
+        _store_entry(project / ".trw", summary="Store-only entry")
         config = TRWConfig()
         result = _collect_learnings(project / ".trw", config)
         assert len(result) == 1
+        assert result[0]["summary"] == "Store-only entry"
 
-    def test_since_filter(self, tmp_path: Path) -> None:
-        """Entries created before 'since' date are excluded."""
+    def test_since_filter_excludes_everything_before_the_far_future(self, tmp_path: Path) -> None:
+        """A row created just now is excluded once 'since' is set past its creation date."""
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Old entry")
+        _store_entry(project / ".trw", summary="Old entry")
         config = TRWConfig()
-        result = _collect_learnings(project / ".trw", config, since="2026-03-01")
+        result = _collect_learnings(project / ".trw", config, since="2999-01-01")
         assert len(result) == 0
 
     def test_since_filter_includes_recent(self, tmp_path: Path) -> None:
-        """Entries created on or after 'since' date are included."""
+        """A row created just now is included once 'since' is set well before its creation date."""
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Recent entry")
+        _store_entry(project / ".trw", summary="Recent entry")
         config = TRWConfig()
-        result = _collect_learnings(project / ".trw", config, since="2026-01-01")
+        result = _collect_learnings(project / ".trw", config, since="2000-01-01")
         assert len(result) == 1
-
-    def test_corrupt_yaml_is_skipped(self, tmp_path: Path) -> None:
-        """Entry files that fail to parse are silently skipped."""
-        project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Good entry")
-        bad_file = entries_dir / "2026-02-21-corrupt.yaml"
-        bad_file.write_text(": :\n  bad: [unclosed", encoding="utf-8")
-        config = TRWConfig()
-        result = _collect_learnings(project / ".trw", config)
-        assert len(result) >= 1
 
 
 class TestLearningsToCsv:

@@ -39,7 +39,6 @@ from trw_mcp.tools._review_helpers import (
 from trw_mcp.tools._review_helpers import (
     _run_multi_reviewer_analysis as _run_multi_reviewer_analysis,
 )
-from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
@@ -53,43 +52,47 @@ def _register_review_tool(server: FastMCP) -> None:
     """Register the structured review tool."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_review(
         ctx: Context | None = None,
         findings: list[dict[str, str]] | None = None,
-        run_path: str | None = None,
         mode: str | None = None,
         reviewer_findings: list[dict[str, object]] | None = None,
-        prd_ids: list[str] | None = None,
         reviewer_identity: dict[str, object] | str = "",
         review_completed: bool = False,
-        external_receipt_path: str | None = None,
-        adversarial_pass: bool = False,
+        options: dict[str, object] | str = "",
     ) -> dict[str, object]:
         """Compute a pass/warn/block review verdict and persist review.yaml.
 
         Use when gating a PR/delivery for a verdict with receipts.
 
-        Modes: manual (default, findings=[...]; empty is non-substantive
-        unless review_completed=True), auto (reviewer_findings), cross_model,
-        reconcile (prd_ids vs diff; not code-quality). severity accepts
-        critical|error|high|P0|P1|warning|medium|P2|info|low|P3. Invalid findings
-        return in rejected_findings, low-confidence ones in suppressed_findings —
-        never dropped.
+        Modes: manual (default; empty findings need review_completed=True),
+        auto (reviewer_findings), cross_model, reconcile (options.prd_ids vs
+        diff, not code-quality). Invalid/low-confidence findings return in
+        rejected_findings/suppressed_findings — never dropped.
 
         Output: verdict, findings_count, review_path, substantive.
 
         Args:
-            findings: list of {category, severity, description}; passing this selects manual mode.
-            reviewer_identity: ONLY reviewer_source (self|subagent|cross_model|
-                operator), reviewer_receipt_id, reviewer_run_id,
-                reviewer_session_id. run/session ids are verified, never mintable.
-            external_receipt_path: the auditor's own output file, under the project
-                root. reviewer_family=cross_model needs reviewer_receipt_id == its
-                SHA-256; otherwise family_downgraded_reason says why not.
-            adversarial_pass: audit found nothing blocking; honored only on a
-                verified cross_model or receipted operator review.
+            findings: list of {category, severity, description}; selects manual mode.
+            reviewer_identity: reviewer_source (self|subagent|cross_model|
+                operator) plus reviewer_receipt_id; run/session ids are verified.
+            options: run_path; prd_ids (reconcile); external_receipt_path
+                (auditor output under the project root; cross_model needs
+                reviewer_receipt_id == its SHA-256); adversarial_pass (audit
+                found nothing blocking; cross_model or receipted operator only).
         """
+        # Maintainer note: severity accepts
+        # critical|error|high|P0|P1|warning|medium|P2|info|low|P3 (see
+        # _review_helpers._normalize_severity / SEVERITY_ALIASES); unknown values
+        # fail open to "info" rather than rejecting the call. reviewer_identity
+        # also accepts reviewer_run_id/reviewer_session_id (verified identity).
+        # external_receipt_path's SHA-256 mismatch downgrades via
+        # reviewer_family_downgraded_reason on the response.
+        from trw_mcp.tools._tool_options import ReviewOptions, parse_options
+
+        opts = parse_options(ReviewOptions, options)
+        run_path, prd_ids = opts.run_path, opts.prd_ids
+        external_receipt_path, adversarial_pass = opts.external_receipt_path, opts.adversarial_pass
         from trw_mcp.models.config import get_config
         from trw_mcp.tools._review_auto import handle_auto_mode, handle_cross_model_mode
         from trw_mcp.tools._review_manual import handle_manual_mode, handle_reconcile_mode

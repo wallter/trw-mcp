@@ -40,9 +40,15 @@ class CursorCliPermissions(TypedDict):
 
 
 class CursorCliConfig(TypedDict, total=False):
-    """Shape of a parsed .cursor/cli.json document."""
+    """Shape of a parsed .cursor/cli.json document.
 
-    _note: str
+    Only ``permissions`` is emitted. cursor-agent validates this file against a closed schema
+    and rejects unknown top-level keys -- an earlier ``_note`` documentation key made every
+    ``cursor-agent`` invocation fail with ``Unrecognized key(s) in object: '_note'`` (found
+    2026-09-19 when a review dispatch lost its cursor-cli lane). Documentation lives in
+    docs/CLIENT-PROFILES.md, not in the JSON.
+    """
+
     permissions: CursorCliPermissions
 
 
@@ -198,8 +204,8 @@ def generate_cursor_cli_config(
 ) -> BootstrapFileResult:
     """Generate or smart-merge .cursor/cli.json with TRW baseline permissions.
 
-    Fresh write: creates ``{"_note": ..., "permissions": {"allow": [...], "deny": [...]}}``
-    with the full TRW baseline.
+    Fresh write: creates ``{"permissions": {"allow": [...], "deny": [...]}}`` with the full
+    TRW baseline and nothing else -- cursor-agent rejects unknown top-level keys.
 
     Smart merge: reads the existing file, appends TRW defaults that are not
     already present in either allow OR deny (to avoid duplicate tokens), and
@@ -208,8 +214,8 @@ def generate_cursor_cli_config(
     On malformed JSON: overwrites with defaults and records a warning.
 
     Threat model note: ``Read(**/*)`` is appropriate for trusted-repo CI.
-    See the ``_note`` field in the generated file and docs/CLIENT-PROFILES.md
-    for the full security posture discussion (PRD-CORE-137-FR03).
+    See docs/CLIENT-PROFILES.md for the full security posture discussion
+    (PRD-CORE-137-FR03).
 
     Args:
         target_dir: Root of the target repository.
@@ -223,19 +229,11 @@ def generate_cursor_cli_config(
     cursor_dir.mkdir(parents=True, exist_ok=True)
     cli_file = cursor_dir / "cli.json"
 
-    _note = (
-        "TRW baseline permissions for cursor-agent CI. "
-        "Read(**/*) is appropriate for trusted-repo CI; tighten for untrusted content. "
-        "See docs/CLIENT-PROFILES.md for the security posture discussion."
-    )
     default_permissions: CursorCliPermissions = {
         "allow": list(_DEFAULT_ALLOW),
         "deny": list(_DEFAULT_DENY),
     }
-    default_config: CursorCliConfig = {
-        "_note": _note,
-        "permissions": default_permissions,
-    }
+    default_config: CursorCliConfig = {"permissions": default_permissions}
 
     if cli_file.exists() and not force:
         # Read through the shared structural seam: absent / unreadable (OSError) /
@@ -258,6 +256,11 @@ def generate_cursor_cli_config(
             for token in _DEFAULT_DENY:
                 if token not in deny and token not in allow:
                     deny.append(token)
+            # Repair files written by earlier installers: the key breaks cursor-agent outright.
+            if raw.pop("_note", None) is not None:
+                result.setdefault("info", []).append(
+                    ".cursor/cli.json: removed the legacy '_note' key that cursor-agent's schema rejects."
+                )
             if _write_cli_json(cli_file, raw, result):
                 result["updated"].append(".cursor/cli.json")
         else:
@@ -365,7 +368,11 @@ def generate_cursor_cli_agents_md(
         merge_trw_section,
     )
 
-    body = f"# TRW Ceremony Protocol (cursor-cli)\n\n{trw_section}"
+    # Client-neutral header: this writer merges into the SAME shared
+    # ``<!-- trw:start -->`` block every other AGENTS.md/CLAUDE.md writer
+    # uses (see docstring above), so AGENTS.md is read by every client that
+    # resolves an AGENTS.md/CLAUDE.md include -- not just cursor-cli.
+    body = f"# TRW Ceremony Protocol\n\n{trw_section}"
     trw_block = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{body}\n{TRW_MARKER_END}\n"
 
     config = get_config()

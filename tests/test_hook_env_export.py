@@ -31,7 +31,7 @@ def test_bootstrap_writes_hook_env_file(tmp_path: Path) -> None:
     content = _read(written)
     # Values are shell-quoted via shlex.quote: metachar-free tokens are emitted
     # bare, values with spaces are single-quoted.
-    assert "export HOOKS_ENABLED=true" in content
+    assert "HOOKS_ENABLED" not in content, "hooks_enabled lives in .trw/config.yaml now"
     assert "export NUDGE_ENABLED=true" in content
     assert "export TRW_CLIENT_DISPLAY_NAME='Claude Code'" in content
     assert "export TRW_CLIENT_CONFIG_DIR=.claude" in content
@@ -41,8 +41,8 @@ def test_opencode_profile_writes_false_flags(tmp_path: Path) -> None:
     profile = resolve_client_profile("opencode")
     written = _write_hook_env_file(tmp_path / ".trw", profile)
     content = _read(written)
-    # opencode is a light-mode profile: hooks_enabled=False, nudge_enabled=False
-    assert "export HOOKS_ENABLED=false" in content
+    # opencode is a light-mode profile: hooks_enabled=False seeds the config key, nudge_enabled=False
+    assert "hooks_enabled: false" in _read(tmp_path / ".trw" / "config.yaml")
     assert "export NUDGE_ENABLED=false" in content
     assert "export TRW_CLIENT_DISPLAY_NAME=OpenCode" in content
     assert "export TRW_CLIENT_CONFIG_DIR=.opencode" in content
@@ -63,7 +63,7 @@ def test_rewrite_after_profile_change_reflects_new_values(tmp_path: Path) -> Non
     _write_hook_env_file(trw_dir, resolve_client_profile("claude-code"))
     _write_hook_env_file(trw_dir, resolve_client_profile("opencode"))
     content = _read(trw_dir / "runtime" / "hook-env.sh")
-    assert "HOOKS_ENABLED=false" in content
+    assert "NUDGE_ENABLED=false" in content
     assert "OpenCode" in content
     assert "Claude Code" not in content
 

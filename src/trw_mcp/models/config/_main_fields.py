@@ -16,17 +16,16 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from trw_mcp.models.config._fields_assess import _AssessFields
 from trw_mcp.models.config._fields_bandit import _BanditFields
 from trw_mcp.models.config._fields_boot_maintenance import _BootMaintenanceFields
 from trw_mcp.models.config._fields_build import _BuildFields
 from trw_mcp.models.config._fields_ceremony import _CeremonyFields
 from trw_mcp.models.config._fields_comms import _CommsFields
-from trw_mcp.models.config._fields_decision import _DecisionFields
 from trw_mcp.models.config._fields_degenerate_result import _DegenerateResultFields
 from trw_mcp.models.config._fields_degraded_mode import _DegradedModeFields
 from trw_mcp.models.config._fields_delivery import _DeliveryFields
 from trw_mcp.models.config._fields_dispatch import _DispatchFields
-from trw_mcp.models.config._fields_doctor_thread_hotspots import _DoctorThreadHotspotFields
 from trw_mcp.models.config._fields_feedback import _FeedbackFields
 from trw_mcp.models.config._fields_formation import _FormationFields
 from trw_mcp.models.config._fields_instruction_surfaces import _InstructionSurfaceFields
@@ -61,7 +60,7 @@ class _TRWConfigFields(
     _DeliveryFields,
     _FormationFields,
     _CommsFields,
-    _DecisionFields,
+    _AssessFields,
     _InstructionSurfaceFields,
     _FeedbackFields,
     _NudgeFields,
@@ -78,7 +77,6 @@ class _TRWConfigFields(
     _ScoutFields,
     _VerificationFields,
     _BootMaintenanceFields,
-    _DoctorThreadHotspotFields,
     BaseSettings,
 ):
     """All TRW configuration fields.

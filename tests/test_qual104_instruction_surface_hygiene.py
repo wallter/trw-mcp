@@ -542,38 +542,12 @@ class TestLintInstructionSurfaces:
         proc = _run_lint("--strict", cwd=tmp_path)
         assert proc.returncode == 0, proc.stdout
 
-    def test_externalized_claude_carrier_lints_imported_gate(self, tmp_path: Path) -> None:
-        """An @.trw carrier is compliant when its imported protocol has the gate."""
-        good_prefix = _bundled_lifecycle_hash_prefix()
+    def test_import_only_block_fails_closed(self, tmp_path: Path) -> None:
+        """PRD-QUAL-143-FR01: the gate must be inline; an ``@`` import is not followed."""
         (tmp_path / ".trw").mkdir()
-        (tmp_path / ".trw" / "INSTRUCTIONS.md").write_text(
-            f"<!-- trw:lifecycle-sync:sha256-{good_prefix} -->\n{_DELIVER_GATE_PHRASE} at least one of (a)/(b)/(c).\n",
-            encoding="utf-8",
-        )
+        (tmp_path / ".trw" / "INSTRUCTIONS.md").write_text(f"{_DELIVER_GATE_PHRASE}\n", encoding="utf-8")
         (tmp_path / "CLAUDE.md").write_text(
             "<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
-            encoding="utf-8",
-        )
-
-        proc = _run_lint("--strict", cwd=tmp_path)
-
-        assert proc.returncode == 0, proc.stdout
-
-    def test_standard_externalized_carrier_lints_in_clean_clone(self, tmp_path: Path) -> None:
-        """The canonical runtime sidecar may be absent before the first sync."""
-        (tmp_path / "CLAUDE.md").write_text(
-            "<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
-            encoding="utf-8",
-        )
-
-        proc = _run_lint("--strict", cwd=tmp_path)
-
-        assert proc.returncode == 0, proc.stdout
-
-    def test_arbitrary_missing_import_still_fails_closed(self, tmp_path: Path) -> None:
-        """Only the standard generated sidecar receives canonical fallback."""
-        (tmp_path / "CLAUDE.md").write_text(
-            "<!-- trw:start -->\n@missing-instructions.md\n<!-- trw:end -->\n",
             encoding="utf-8",
         )
 

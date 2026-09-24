@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._dispatch_host import unconfined_off_darwin
 from trw_mcp.dispatch import _jobs
 from trw_mcp.dispatch import _process_identity as identity
 
@@ -126,6 +127,7 @@ def test_runner_refused_timeout_has_bounded_drain(monkeypatch, sender):
     # next such addition, but it would also stop this stub from catching a
     # genuine signature drift, which is why the keywords stay explicit.)
     monkeypatch.setattr(_runner, "build_subprocess_env", lambda client, *, posture="default", with_trw=False: {})
+    unconfined_off_darwin(monkeypatch)
     result = _runner.dispatch(DispatchRequest(client="agy", prompt="x", timeout_s=1))
     assert result.timed_out
     assert process.communicate.call_args_list[0].kwargs == {"timeout": 1}

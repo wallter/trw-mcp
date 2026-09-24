@@ -27,14 +27,15 @@ def _tool_response(payload: dict[str, Any], *, report_pull_only: bool = False) -
 
 def register_swarm_comms_tools(server: FastMCP) -> None:
     @server.tool()
-    def trw_peers(action: PeerAction = "list", cursor: str | None = None, ctx: Context | None = None) -> dict[str, Any]:
-        """Use when announcing presence, renewing a lease, or listing formation peers.
+    def trw_peers(
+        action: PeerAction = "list", cursor: str | None = None, pause_id: str | None = None, ctx: Context | None = None
+    ) -> dict[str, Any]:
+        """Use when announcing presence, renewing a lease, listing peers, or acking a pause.
 
-        Output: peer liveness; next_cursor is present only when another page exists.
-        Pass it with action="list" to continue.
+        Output: peer liveness; next_cursor pages with action="list".
         Pull-only; never wakes peers.
         """
-        return _tool_response(peers(action, ctx, cursor=cursor))
+        return _tool_response(peers(action, ctx, cursor=cursor, pause_id=pause_id))
 
     @server.tool()
     def trw_send(
@@ -48,10 +49,10 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Use when sending a request, reply or status to a formation peer.
 
-        Address exactly one of recipient_member_id, or scope: a repo-relative path,
-        reaching the peers that declared it. Reuse request_key only for an exact retry.
-        Output: durable receipt or refusal; pull-only, never a wake, permission grant
-        or completion acknowledgment.
+        Address exactly one of recipient_member_id or scope (repo-relative
+        path to declared peers). Reuse request_key only for exact retries.
+        Output: durable receipt/refusal; pull-only — never a wake, grant, or
+        completion ack.
         """
         # A request for unsupported push must explicitly report the downgrade.
         return _tool_response(
@@ -69,10 +70,10 @@ def register_swarm_comms_tools(server: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Use when fetching messages, ACKing received IDs, or reading body-free status.
 
-        Fetch/status return items; next_cursor is present only when another page exists.
-        ACK takes message_ids only.
-        Fresh fetch recovers pending traffic. Pull-only; ACK is not work completion.
-        wait_seconds>0 retries an empty fresh fetch in-process until the deadline.
+        Fetch/status return items; next_cursor appears only when another page
+        exists. ACK takes message_ids only. Fresh fetch recovers pending
+        traffic (pull-only; ACK is not completion). wait_seconds>0 retries an
+        empty fetch in-process until the deadline.
         """
         # strict=True: the transport rejects bool/float/str before the handler (FR11).
         return _tool_response(inbox(action, message_ids, cursor, ctx, wait_seconds))

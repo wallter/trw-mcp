@@ -16,25 +16,14 @@ class _MemoryTruthFields:
     """PRD-CORE-244 memory-truth mixin — mixed into _TRWConfigFields via MI."""
 
     # -- Importance decay (PRD-CORE-244 FR09) --
-    # ``memory_decay_pass`` was a hardened, locked, batched sweep with ZERO
-    # production callers, so importance could rise (via apply_importance_boost)
-    # and structurally never fell — a one-directional ratchet on the field both
-    # compute_utility_score and prune-candidate selection key on. It now runs as
-    # a deferred-delivery step, over these typed knobs instead of the literal
-    # parameter defaults it used to carry.
-    memory_decay_cutoff_days: int = Field(
-        default=90,
-        ge=1,
-        le=3650,
-        description="Days an entry must go unused before importance decay may lower its importance.",
-    )
-    memory_decay_batch_size: int = Field(
-        default=1000,
-        ge=1,
-        le=10_000,
-        description="Maximum rows one importance-decay pass rewrites, bounding the writer-lock hold.",
-    )
-
+    # ``memory_decay_pass`` runs as a deferred-delivery step, but PRD-CORE-280
+    # slice e3 moved the step onto ``selected_store(...).maintain()``, a daemon
+    # RPC with no per-call parameters -- the daemon runs ``memory_decay_pass``
+    # with its own literal defaults (90 days / 1000 rows). trw-mcp has had no
+    # way to reach those knobs since e3 landed, so
+    # ``memory_decay_cutoff_days`` / ``memory_decay_batch_size`` were retired
+    # here (batch 23b) rather than left admitted-but-unread; see
+    # ``config-retired-keys.json``.
     # -- Automatic-removal protection (PRD-CORE-244 FR10) --
     # ``protection_tier`` was advertised by trw_learn, validated, stamped and
     # updatable, and every DESTRUCTIVE path ignored it: a learning marked

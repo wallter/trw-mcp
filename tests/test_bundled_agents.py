@@ -66,29 +66,8 @@ class TestAgentDefinitions:
         assert "LSP" in meta["tools"]
         assert "Bash" in meta["disallowedTools"]
 
-    @pytest.mark.parametrize(
-        ("agent_name", "expected_model"),
-        [
-            ("trw-auditor.md", "balanced"),
-            ("trw-reviewer.md", "balanced"),
-            ("trw-researcher.md", "balanced"),
-            # Restored 2026-05-05 by PRD-INFRA-104 FR-05/FR-06 once the
-            # capability-tier resolver translates frontier -> opus at
-            # install time. Prior to that fix these were dropped in
-            # commit 20fb923e7 because the harness rejected the raw
-            # tier value.
-            ("trw-implementer.md", "frontier"),
-            ("trw-prd-groomer.md", "frontier"),
-        ],
-    )
-    def test_agent_model_assignment(self, agents_dir: Path, agent_name: str, expected_model: str) -> None:
-        """Agent definition specifies correct model shortname."""
-        import yaml
-
-        content = (agents_dir / agent_name).read_text(encoding="utf-8")
-        _, frontmatter, _ = content.split("---", 2)
-        meta = yaml.safe_load(frontmatter)
-        assert meta["model"] == expected_model
+    # Per-agent tier/effort assignment lives in ONE place, the task-class table;
+    # tests/test_task_class_policy.py checks every agent against it (PRD-CORE-290-FR02).
 
     @pytest.mark.parametrize("agent_name", ["trw-auditor.md", "trw-reviewer.md", "trw-researcher.md"])
     def test_readonly_agents_no_write(self, agents_dir: Path, agent_name: str) -> None:

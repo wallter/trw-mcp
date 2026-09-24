@@ -45,7 +45,6 @@ from trw_mcp.tools._prd_validation_cache import (
     retire_legacy_cache,
     store_pure_result,
 )
-from trw_mcp.tools.telemetry import log_tool_call
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -61,7 +60,6 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
     """Register the PRD validation tool."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_prd_validate(
         ctx: Context | None = None,
         prd_path: str = "",
@@ -73,18 +71,18 @@ def _register_prd_validate_tool(server: FastMCP) -> None:
         Use when a PRD just landed and you need ambiguity/completeness/
         traceability gates checked before coding.
 
-        A time budget bounds every call; exceeding it flags validation_partial
+        A time budget bounds every call; exceeding it sets validation_partial
         (never a silent pass). quality_tier: skeleton|draft|review|approved.
 
         Output: total_score, quality_tier, grade, valid, failures, dimensions.
 
         Args:
             prd_path: path to the PRD markdown file (required).
-            fast: text-only score, skipping repo-grounded checks; flagged
-                validation_partial=true with checks_skipped naming what was
-                omitted. Re-run without it for a full verdict.
-            verbose: full diagnostic payload instead of the compact,
-                token-capped default; scores and verdicts are identical.
+            fast: text-only score (skips repo-grounded checks); sets
+                validation_partial=true and checks_skipped. Re-run without it
+                for a full verdict.
+            verbose: full diagnostic payload instead of the compact default;
+                scores/verdicts unchanged.
         """
         # prd_path has an empty default so FastMCP can inject ctx as the first
         # typed kwarg (PRD-CORE-141 FR03); an empty path is still rejected.

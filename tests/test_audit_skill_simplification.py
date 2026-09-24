@@ -12,20 +12,34 @@ DATA = ROOT / "trw-mcp" / "src" / "trw_mcp" / "data"
 if not (ROOT / "scripts").is_dir():
     pytest.skip("monorepo-only audit skill projection invariant", allow_module_level=True)
 
-AUDIT_SKILLS = (
+#: File-based projections (repo mirrors + the canonical source).
+AUDIT_SKILL_PATHS = (
     ROOT / ".agents" / "skills" / "trw-audit" / "SKILL.md",
     ROOT / ".claude" / "skills" / "trw-audit" / "SKILL.md",
     ROOT / ".github" / "skills" / "trw-audit" / "SKILL.md",
     ROOT / ".cursor" / "skills" / "trw-audit" / "SKILL.md",
     DATA / "skills" / "trw-audit" / "SKILL.md",
-    DATA / "codex" / "skills" / "trw-audit" / "SKILL.md",
-    DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md",
 )
 
 
+def _audit_skill_texts() -> list[str]:
+    """Every projection's text: the file-based ones, plus codex/copilot renderings.
+
+    Codex and copilot no longer fork ``trw-audit`` on disk (PRD-CORE-291-FR04)
+    -- they render the canonical body -- so their text is derived rather than
+    read from a deleted path.
+    """
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical = (DATA / "skills" / "trw-audit" / "SKILL.md").read_text(encoding="utf-8")
+    return [p.read_text(encoding="utf-8") for p in AUDIT_SKILL_PATHS] + [
+        render_skill_md(canonical, "codex"),
+        render_skill_md(canonical, "copilot"),
+    ]
+
+
 def test_audit_skill_keeps_operational_rules_not_motivational_duplicates() -> None:
-    for path in AUDIT_SKILLS:
-        content = path.read_text(encoding="utf-8")
+    for content in _audit_skill_texts():
         assert "## Why This Exists" not in content
         assert "## Rationalization Watchlist" not in content
         # The audit is read-only and runs as trw-auditor, which has no Write tool:
@@ -58,8 +72,7 @@ def test_audit_skill_keeps_operational_rules_not_motivational_duplicates() -> No
 
 
 def test_audit_uses_behavioral_evidence_not_naming_or_test_reachability() -> None:
-    for path in AUDIT_SKILLS:
-        content = path.read_text(encoding="utf-8")
+    for content in _audit_skill_texts():
         for required in (
             "Naming overlap is not behavioral",
             "declared verification method",

@@ -1,10 +1,12 @@
 """CD1–4: actual registered capture is independent of corpus score quotas."""
 
+import asyncio
 from unittest.mock import Mock
 
 import pytest
 from fastmcp import FastMCP
 
+from tests._memory_fixtures import DaemonCheckout
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
@@ -14,15 +16,12 @@ from trw_mcp.models.config import TRWConfig
 @pytest.mark.parametrize("corpus_impact", [0.2, 0.95])
 @pytest.mark.parametrize("impact", [0.95, -0.1, 1.1])
 def test_registered_capture_preserves_clamped_impact_and_existing_rows(
-    tmp_path, monkeypatch, forced, corpus_impact, impact, replay
+    daemon_checkout: DaemonCheckout, monkeypatch, forced, corpus_impact, impact, replay
 ):
-    from trw_memory.models.memory import MemoryEntry
-
     from trw_mcp import scoring
     from trw_mcp.state import memory_adapter
-    from trw_mcp.tools import _learning_helpers, learning, telemetry
+    from trw_mcp.tools import _learning_helpers, learning
 
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     config = TRWConfig(
@@ -32,15 +31,22 @@ def test_registered_capture_preserves_clamped_impact_and_existing_rows(
         impact_forced_distribution_enabled=forced,
     )
     monkeypatch.setattr(learning, "get_config", lambda: config)
-    monkeypatch.setattr(telemetry, "get_config", lambda: config)
-    trw_dir = tmp_path / ".trw"
-    backend = memory_adapter.get_backend(trw_dir)
+    trw_dir = daemon_checkout.trw_dir
+    namespace = daemon_checkout.namespace
+    client = daemon_checkout.client
+    # The suite's ``_isolate_trw_dir`` autouse fixture pins ``resolve_trw_dir()``
+    # to ``tmp_path / ".trw"`` for every test regardless of ``TRW_PROJECT_ROOT``,
+    # but ``daemon_checkout``'s pinned config lives one level deeper, at
+    # ``tmp_path / "repo" / ".trw"``. The registered ``trw_learn`` tool exercised
+    # below resolves its own trw_dir through that (isolated) resolver with no
+    # override, so it must be pointed at the checkout directly.
+    monkeypatch.setattr(learning, "resolve_trw_dir", lambda: trw_dir)
     ids = [f"L-existing-{i}" for i in range(10)]
     for key in ids:
-        backend.store(
-            MemoryEntry(id=key, namespace="default", content=f"Existing unrelated fact {key}", importance=corpus_impact)
+        asyncio.run(
+            client.store(f"Existing unrelated fact {key}", namespace=namespace, entry_id=key, importance=corpus_impact)
         )
-    before = {key: backend.get(key, namespace="default").model_dump(mode="json") for key in ids}
+    before = {key: asyncio.run(client.get(key, namespace))["entry"] for key in ids}
     forbidden = Mock(side_effect=AssertionError("capture invoked distribution-only work"))
     for module, name in [
         (learning, "list_active_learnings"),
@@ -78,8 +84,8 @@ def test_registered_capture_preserves_clamped_impact_and_existing_rows(
             metadata={"client_profile": "", "model_id": ""},
         )
     assert result["status"] == "recorded"
-    entry = backend.get(result["learning_id"], namespace="default")
-    assert entry.importance == max(0, min(1, impact))
-    assert {key: backend.get(key, namespace="default").model_dump(mode="json") for key in ids} == before
+    entry = asyncio.run(client.get(result["learning_id"], namespace))["entry"]
+    assert entry["importance"] == max(0, min(1, impact))
+    assert {key: asyncio.run(client.get(key, namespace))["entry"] for key in ids} == before
     forbidden.assert_not_called()
     assert not result.get("distribution_warning")

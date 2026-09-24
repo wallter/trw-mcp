@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -80,7 +81,12 @@ def test_supported_profiles_generate_primary_bootstrap_surface(
     for expected_path in expected_paths:
         instruction_path = initialized_repo / expected_path
         assert instruction_path.is_file()
-        assert "TRW" in instruction_path.read_text(encoding="utf-8")
+        if expected_path.endswith(".json"):
+            # cursor-agent validates .cursor/cli.json against a closed schema, so it carries no
+            # TRW marker text -- only the permissions object. Check the shape instead.
+            assert set(json.loads(instruction_path.read_text(encoding="utf-8"))) == {"permissions"}
+        else:
+            assert "TRW" in instruction_path.read_text(encoding="utf-8")
 
 
 def test_update_project_rolls_back_directories_after_mid_write_failure(initialized_repo: Path) -> None:

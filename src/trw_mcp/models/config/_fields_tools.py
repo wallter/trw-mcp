@@ -27,9 +27,10 @@ if TYPE_CHECKING:
 class _ToolsFields:
     """Tool exposure domain mixin -- mixed into _TRWConfigFields via MI."""
 
-    # -- Tool description + instruction toggles (surface control) --
-    tool_descriptions_variant: Literal["default", "minimal", "verbose"] = "default"
-    mcp_server_instructions_enabled: bool | None = None
+    # tool_descriptions_variant and mcp_server_instructions_enabled were
+    # removed under PRD-CORE-291 (slice 2): both fed only the SurfaceConfig
+    # projection / resolve_surface() consumer removed in 2.0.0 (WD-02), so
+    # neither reached a live gate.
 
     # -- Tool resolution mode (PRD-CORE-218 FR04) --
     # 'standard' is the DEFAULT (bounded kernel + task packs). 'all' is an
@@ -67,7 +68,8 @@ class _ToolsFields:
                 return normalized
         return value
 
-    code_index_enabled: bool = False
+    # code_index_enabled removed under PRD-CORE-291 (slice 2): the code-index
+    # feature has no reader that gates on it -- only a test pinned the default.
     tool_access_grant_max_ttl_seconds: int = Field(  # PRD-FIX-119: was a hardcoded 300
         default=300,
         ge=30,
@@ -130,5 +132,5 @@ class _ToolsFields:
             self.tool_resolution_mode,
             comms_enabled=getattr(self, "comms_enabled", False) is True,
             dispatch_enabled=getattr(self, "dispatch_tools_exposed", False) is True,
-            decision_enabled=getattr(self, "decision_enabled", False) is True,
+            assess_enabled=getattr(self, "assess_enabled", False) is True,
         )

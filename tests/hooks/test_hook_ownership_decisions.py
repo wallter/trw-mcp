@@ -45,12 +45,13 @@ from _ownership_harness import (
     FOREIGN_RUN_ID,
     MIRROR_HOOKS,
     OWN_RUN_ID,
+    SESSION_ID,
     build_project,
     run_hook,
     write_hook_env,
 )
 
-from tests._layout import HAS_JQ, requires_monorepo
+from tests._layout import HAS_JQ, requires_jq, requires_monorepo
 
 _HOOK_COPIES = pytest.mark.parametrize(
     "hook_dir",
@@ -62,8 +63,15 @@ _HOOK_COPIES = pytest.mark.parametrize(
 # pre-compact.sh
 #   unowned == snapshot IS written, with run fields empty.
 # =========================================================================== #
-def _snapshot(root: Path) -> dict[str, object]:
-    raw = (root / ".trw" / "context" / "pre_compact_state.json").read_text(encoding="utf-8")
+def _snapshot(root: Path, *, identified: bool = True) -> dict[str, object]:
+    """Read the marker the hook wrote: the session's own file, or the shared one without identity."""
+    context = root / ".trw" / "context"
+    marker = (
+        context / "pre_compact" / f"{SESSION_ID.encode().hex()}.json"
+        if identified
+        else context / "pre_compact_state.json"
+    )
+    raw = marker.read_text(encoding="utf-8")
     parsed: dict[str, object] = json.loads(raw)
     return parsed
 
@@ -126,7 +134,14 @@ def test_pre_compact_writes_an_empty_snapshot_when_unowned(hook_dir: Path, tmp_p
 
 
 @_HOOK_COPIES
-def test_pre_compact_keeps_legacy_behaviour_with_no_identity(hook_dir: Path, tmp_path: Path) -> None:
+def test_pre_compact_writes_an_empty_snapshot_with_no_identity(hook_dir: Path, tmp_path: Path) -> None:
+    """PRD-FIX-149 review R4: no identity at all is NOT "correct for a single-
+    instance install" -- it is indistinguishable from N instances live and none
+    identified, so it must resolve exactly like the ordinary unowned case above
+    (empty run fields, ``ownership: unowned``), never by adopting the newest run
+    on disk. The removed "legacy" branch this test used to pin did exactly that
+    adoption and is the PRD-FIX-118 cross-instance resume bug reintroduced.
+    """
     root, _own, _foreign = build_project(
         tmp_path,
         own_pin=False,
@@ -137,9 +152,10 @@ def test_pre_compact_keeps_legacy_behaviour_with_no_identity(hook_dir: Path, tmp
 
     run_hook(hook_dir / "pre-compact.sh", root, payload={"source": "manual"}, identified=False)
 
-    state = _snapshot(root)
-    assert FOREIGN_RUN_ID in str(state["run_path"]), "single-instance recovery lost its snapshot"
-    assert state["ownership"] == "identity-unknown"
+    state = _snapshot(root, identified=False)
+    assert state["run_path"] == "", "unresolvable identity must never adopt the newest run on disk"
+    assert state["ownership"] == "unowned"
+    assert FOREIGN_RUN_ID not in json.dumps(state), "foreign run leaked into the recovery snapshot"
 
 
 # =========================================================================== #
@@ -277,6 +293,7 @@ def test_subagent_start_omits_run_state_but_keeps_the_protocol_when_unowned(hook
 
 
 @_HOOK_COPIES
+@requires_jq
 def test_subagent_start_keeps_legacy_context_with_no_identity(hook_dir: Path, tmp_path: Path) -> None:
     root, _own, _foreign = build_project(
         tmp_path,

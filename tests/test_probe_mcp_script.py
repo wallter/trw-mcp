@@ -530,6 +530,11 @@ def _repo_store_rows_matching(pattern: str) -> int:
 
 
 @pytest.mark.slow
+@pytest.mark.xfail(
+    strict=True,
+    reason="scripts/probe-mcp.py seeds an unpinned fixture that the 6.0.0 daemon-only store refuses; "
+    "fixture-daemon port in 6.0.1",
+)
 def test_live_probe_reports_every_contract_and_stays_inside_its_fixture(tmp_path: Path) -> None:
     """End-to-end: the probe spawns the real server, reports, and contaminates nothing.
 

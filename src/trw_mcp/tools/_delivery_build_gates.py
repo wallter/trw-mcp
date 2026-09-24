@@ -237,7 +237,7 @@ def _check_build_and_work_events(
             # WD-03: the log EXISTS but could not be read. That is not evidence
             # of a passing build, and it is not the honest-empty case below.
             return (
-                "The run's event log could not be read (meta/events.jsonl), so no build check can be "
+                "The run's event log could not be read or holds a malformed row (meta/events.jsonl), so no build check can be "
                 "verified for this delivery. Repair or remove the event log, then run project-native "
                 "validation and record it with trw_build_check().",
                 None,

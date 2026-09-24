@@ -35,7 +35,6 @@ def test_cursor_ide_profile_ceremony_mode_full() -> None:
     profile = resolve_client_profile("cursor-ide")
     assert profile.ceremony_mode == "full"
     assert profile.nudge_enabled is True
-    assert profile.learning_recall_enabled is True
     assert profile.mcp_instructions_enabled is True
     assert profile.skills_enabled is True
 

@@ -68,8 +68,14 @@ def test_coercion_emits_debug_log() -> None:
     assert events[0]["resolved"] == _LEARN_TYPE_ALIASES["gotcha"]
 
 
-def test_trw_learn_tool_accepts_gotcha_end_to_end() -> None:
-    """The MCP tool persists a type='gotcha' learning instead of rejecting it."""
+def test_trw_learn_tool_accepts_gotcha_end_to_end(fake_memory_store: object) -> None:
+    """The MCP tool persists a type='gotcha' learning instead of rejecting it.
+
+    PRD-CORE-280 slice e1: ``fake_memory_store`` stands in for the store
+    seam (``selected_store``) so this argument-plumbing assertion never
+    opens an in-process ``memory.db`` -- the point of the test is that the
+    tool accepts the alias, not any store behaviour.
+    """
     from tests.conftest import extract_tool_fn, make_test_server
 
     learn_fn = extract_tool_fn(make_test_server("learning"), "trw_learn")
@@ -140,7 +146,7 @@ def test_project_alias_coercion_emits_debug_log() -> None:
     assert events[0]["resolved"] == "convention"
 
 
-def test_trw_learn_tool_accepts_project_alias_end_to_end() -> None:
+def test_trw_learn_tool_accepts_project_alias_end_to_end(fake_memory_store: object) -> None:
     """The MCP tool persists a type='project' learning via the alias map.
 
     Retains the end-to-end coverage of the sub_5qbmT6WPNoP58rlv item-8 case
@@ -148,6 +154,10 @@ def test_trw_learn_tool_accepts_project_alias_end_to_end() -> None:
     of that accommodation was retired 2026-07-28 — see
     ``test_run_path_removal_fails_loudly_rather_than_silently`` for the
     behaviour that replaced it.
+
+    PRD-CORE-280 slice e1: ``fake_memory_store`` stands in for the store
+    seam so this argument-plumbing assertion never opens an in-process
+    ``memory.db``.
     """
     from tests.conftest import extract_tool_fn, make_test_server
 

@@ -38,11 +38,18 @@ class TestBootstrapDryRunBranches:
     """Cover dry_run branches in update_project that require specific file states."""
 
     def _make_trw_target(self, tmp_path: Path) -> Path:
-        """Create a minimal target dir with .trw/ so update_project doesn't error."""
+        """Create a minimal target dir with .trw/ so update_project doesn't error.
+
+        PRD-INFRA-192-NFR02: update_project refuses before touching artifacts
+        when the manifest is missing/corrupt/unsupported-schema, so this
+        fixture writes a valid ``version: 2`` manifest — these tests exercise
+        dry-run branches, not the refusal path.
+        """
         target = tmp_path / "target"
         target.mkdir()
         (target / ".git").mkdir()  # update_project now requires a real git repo
         (target / ".trw").mkdir()
+        (target / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         (target / ".claude" / "hooks").mkdir(parents=True)
         (target / ".claude" / "skills").mkdir(parents=True)
         (target / ".claude" / "agents").mkdir(parents=True)

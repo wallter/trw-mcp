@@ -1,17 +1,10 @@
 """Per-client include matrix — PRD-CORE-240 FR04, FR05, FR06.
 
-TRW writes into files it does not own. The goal of PRD-CORE-240 is that a client
-instruction file *references* framework text instead of embedding it — but only
-where the client can actually resolve a reference. Getting that wrong in either
-direction is a defect:
-
-- Embedding where an include works is the injection this PRD removes.
-- Referencing where an include does NOT work ships an instruction file that
-  exists, parses, reports success, and carries nothing — a P5 success-shaped
-  failure, and strictly worse than the injection it replaced.
-
-So the matrix itself is the contract, and it is asserted here rather than
-described in prose.
+TRW writes into files it does not own, so each client gets the TRW block in the
+file that client actually loads, and nowhere else. PRD-QUAL-143-FR01 retired the
+``@.trw/INSTRUCTIONS.md`` include: the block is inline for every client, and an
+instruction file that names an include the client cannot resolve exists,
+parses, reports success, and carries nothing.
 """
 
 from __future__ import annotations
@@ -21,19 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from trw_mcp.models.config._profiles import _PROFILES, resolve_client_profile
-from trw_mcp.state.claude_md._instruction_carrier import INCLUDE_INCAPABLE_CLIENTS
+from trw_mcp.models.config._profiles import resolve_client_profile
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
 
 # T2: no in-file include syntax, but the client's own config names which files to
 # load — so the TRW artifact is registered there and the shared AGENTS.md is left
 # entirely alone.
 _T2_CLIENTS = ("opencode", "codex")
-
-# T1: resolves an in-file include eagerly. copilot was here until its capability
-# was re-verified against the IDE docs — see
-# TestCopilotCannotUseAnInclude.
-_T1_CLIENTS = ("claude-code",)
 
 
 def _commit_all(root: Path) -> None:
@@ -156,130 +143,6 @@ class TestOpencodeInstructionsArrayRegistration:
         assert ".opencode/INSTRUCTIONS.md" in seeded["instructions"]
 
 
-class TestT4ClientsAreDeliberatelyExcluded:
-    """FR06: the exclusion set is the mechanism, not a comment."""
-
-    def test_t4_clients_are_deliberately_excluded(self) -> None:
-        assert INCLUDE_INCAPABLE_CLIENTS == ("copilot", "cursor-cli", "cursor-ide", "antigravity-cli", "grok")
-
-    def test_every_excluded_client_is_a_real_profile(self) -> None:
-        for client in INCLUDE_INCAPABLE_CLIENTS:
-            assert client in _PROFILES, f"{client} is excluded but is not a real client profile"
-
-    def test_excluded_clients_declare_no_import_syntax(self) -> None:
-        """The declared set must match what the profiles actually say.
-
-        If a profile later gains ``at_path`` while still listed here, the two
-        sources disagree and one of them is silently wrong.
-        """
-        for client in INCLUDE_INCAPABLE_CLIENTS:
-            assert resolve_client_profile(client).instruction_import_syntax == "none", (
-                f"{client} is in the exclusion set but its profile claims an import syntax"
-            )
-
-    def test_exclusion_set_is_exactly_the_import_incapable_profiles(self) -> None:
-        """Totality: no client may be import-incapable without being declared.
-
-        This is the assertion that makes the set a mechanism. A new client added
-        with the default ``instruction_import_syntax="none"`` fails here until
-        someone decides — explicitly — which tier it belongs to.
-        """
-        incapable = {
-            client_id
-            for client_id in _PROFILES
-            if resolve_client_profile(client_id).instruction_import_syntax == "none"
-        }
-        declared = set(INCLUDE_INCAPABLE_CLIENTS) | set(_T2_CLIENTS)
-
-        assert incapable == declared, (
-            f"undeclared import-incapable client(s): {sorted(incapable - declared)}; "
-            f"declared-but-capable: {sorted(declared - incapable)}"
-        )
-
-    @pytest.mark.parametrize("client", INCLUDE_INCAPABLE_CLIENTS)
-    def test_excluded_client_resolves_to_inline(self, client: str) -> None:
-        """An excluded client must never be handed an import it cannot resolve."""
-        from trw_mcp.state.claude_md._carrier_classify import (
-            InstructionFileClass,
-            InstructionFileClassification,
-        )
-        from trw_mcp.state.claude_md._instruction_carrier import CarrierMode, resolve_carrier_mode
-
-        mode = resolve_carrier_mode(
-            InstructionFileClassification(InstructionFileClass.CONTENT),
-            import_syntax=resolve_client_profile(client).instruction_import_syntax,
-            externalize="auto",
-            scope="root",
-        )
-
-        assert mode is CarrierMode.INLINE
-
-    def test_inline_block_still_carries_the_protocol(self) -> None:
-        """FRAMEWORK-CORE: for a light client the instruction file IS the carrier.
-
-        Minimising the block must not drop what makes it a protocol carrier —
-        the deliver gate and the rigid tool set. An excluded client has no
-        sidecar to fall back on.
-        """
-        from trw_mcp.state.claude_md.sections._tool_lifecycle import (
-            DELIVER_GATE_PHRASE,
-            render_deliver_gate_statement,
-        )
-
-        rendered = render_deliver_gate_statement()
-
-        assert DELIVER_GATE_PHRASE in rendered
-        assert "trw_deliver" in rendered
-
-
-class TestT1ClientsResolveToImport:
-    """FR03: a client that CAN resolve an include must actually be given one."""
-
-    @pytest.mark.parametrize("client", _T1_CLIENTS)
-    def test_import_capable_client_resolves_to_import(self, client: str) -> None:
-        from trw_mcp.state.claude_md._carrier_classify import (
-            InstructionFileClass,
-            InstructionFileClassification,
-        )
-        from trw_mcp.state.claude_md._instruction_carrier import CarrierMode, resolve_carrier_mode
-
-        mode = resolve_carrier_mode(
-            InstructionFileClassification(InstructionFileClass.CONTENT),
-            import_syntax=resolve_client_profile(client).instruction_import_syntax,
-            externalize="auto",
-            scope="root",
-        )
-
-        assert mode is CarrierMode.IMPORT, f"{client} declares an include syntax but the carrier still inlines for it"
-
-    def test_copilot_declares_no_include_because_its_ide_surface_has_none(self) -> None:
-        """Capability is per-SURFACE here, and the profile is per-CLIENT.
-
-        The Copilot CLI docs do document `@relpath`. The repository-instructions
-        docs and VS Code's custom-instructions docs document no inclusion syntax
-        at all for `.github/copilot-instructions.md` — only inline Markdown, with
-        links being references a human follows. Since one profile serves both
-        surfaces, the weaker surface governs: an include the IDE cannot resolve
-        ships a file that exists, parses, reports success and carries nothing.
-
-        The include-free path is `.github/instructions/*.instructions.md` with
-        `applyTo: "**"`, which Copilot loads itself.
-        """
-        assert resolve_client_profile("copilot").instruction_import_syntax == "none"
-
-    def test_the_emitted_import_is_repo_relative(self) -> None:
-        """Whatever the sidecar is named, the directive TRW writes must stay in-repo."""
-        from trw_mcp.state.claude_md._instruction_carrier import render_import_region
-
-        region = render_import_region(".trw/INSTRUCTIONS.md")
-        directive = next(ln.strip() for ln in region.splitlines() if ln.strip().startswith("@"))
-        target = directive[1:]
-
-        assert not target.startswith("/"), "absolute import is rejected by Copilot"
-        assert not target.startswith("~"), "home-rooted import is rejected by Copilot"
-        assert not target.startswith(".."), "an escaping relative path leaves the repo"
-
-
 class TestCopilotCannotUseAnInclude:
     """The include was shipped, then withdrawn when the docs were actually read.
 
@@ -348,7 +211,7 @@ class TestT4BlockIsMinimised:
     light client carried the heavy body while the sync path (which picks by
     ceremony mode) would have given it the compact one.
 
-    FRAMEWORK-CORE sets the floor this cannot cross: for a light client the
+    FRAMEWORK.md sets the floor this cannot cross: for a light client the
     generated instruction file IS the protocol carrier, so the deliver gate and
     the rigid tool set stay in it verbatim. Minimise down to that, not past it.
     """
@@ -450,10 +313,11 @@ class TestClaudeMdWrittenOnlyWhereRead:
         assert text is not None
         assert "# Project Instructions" in text
 
-    def test_claude_code_still_gets_the_import(self, tmp_path: Path) -> None:
+    def test_claude_code_still_gets_the_block(self, tmp_path: Path) -> None:
         text = self._install(tmp_path, "claude-code")
 
-        assert "@.trw/INSTRUCTIONS.md" in text
+        assert text is not None
+        assert "trw_session_start" in text
 
     def test_cursor_ide_carries_its_protocol_in_the_always_applied_rule(self, tmp_path: Path) -> None:
         """cursor-ide's CLAUDE.md fallback is gone — but only because the rule replaced it.
@@ -553,7 +417,7 @@ class TestTheDecisionSurvivesReinstall:
         self._init(tmp_path, "claude-code")
         update_project(tmp_path, ide="claude-code")
 
-        assert "@.trw/INSTRUCTIONS.md" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        assert "trw_session_start" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
 
     def test_install_records_the_chosen_clients(self, tmp_path: Path) -> None:
         """Without the record there is nothing to prefer over poisoned detection."""
@@ -567,19 +431,18 @@ class TestTheDecisionSurvivesReinstall:
     def test_recorded_targets_beat_detection(self, tmp_path: Path) -> None:
         """The whole point: our own install artifacts must not outvote the record.
 
-        Uses opencode, not codex: PRD-CORE-262-FR05 made codex-only the one
-        selection that no longer scaffolds `.claude/`, so a codex-only install
-        can no longer manufacture the false-positive claude-code detection
-        this test needs to prove the record wins over it. opencode is
-        unaffected by FR05 and still gets the full `.claude/` scaffold, so the
-        same false-positive-detection setup still applies.
+        Since PRD-INFRA-192 FR09 an explicit non-claude install no longer
+        scaffolds `.claude/`, so the false-positive claude-code detection this
+        test needs now comes from the case that still produces it: a `.claude/`
+        tree an OLDER install left in the project.
         """
         from trw_mcp.bootstrap._template_claude_md import _recorded_or_detected_targets
         from trw_mcp.bootstrap._utils import detect_ide
 
         self._init(tmp_path, "opencode")
+        (tmp_path / ".claude" / "skills").mkdir(parents=True)
 
-        # Detection sees claude-code because installing created `.claude/`.
+        # Detection sees claude-code because of the leftover `.claude/`.
         assert "claude-code" in detect_ide(tmp_path)
         assert _recorded_or_detected_targets(tmp_path) == ["opencode"]
 

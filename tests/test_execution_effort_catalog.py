@@ -24,6 +24,8 @@ class TestCatalogLookup:
         [
             "claude-fable-5",
             "claude-mythos-5",
+            "claude-opus-5-5",
+            "anthropic.claude-opus-5-5",
             "claude-opus-5",
             "claude-opus-4-8",
             "claude-opus-4-7",
@@ -246,3 +248,10 @@ class TestAdapterWithActiveModel:
         assert decision.status == "clamped"
         assert decision.harness_value == "high"
         assert decision.adapter_id == "claude-code-safe-2026-07-10"
+
+
+def test_opus_5_5_is_declared_explicitly_not_inherited() -> None:
+    """Point releases are declared deliberately; see the trw:intentional block."""
+    from trw_mcp.models.config._model_capabilities import _ANTHROPIC_EFFORT_CAPABILITIES, match_model_family
+
+    assert match_model_family("claude-opus-5-5", _ANTHROPIC_EFFORT_CAPABILITIES) == "claude-opus-5-5"

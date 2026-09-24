@@ -98,19 +98,22 @@ def _install_skills(
     Each skill directory is validated via :func:`_validate_skill` before
     installation.  Invalid skills are skipped with a warning.
 
-    *clients* is the resolved install selection (PRD-CORE-262-FR05). A
-    codex-only install used to end up with 29 duplicate skill files under a
-    directory codex never reads -- codex gets its skills from its own
+    *clients* is the resolved install selection (PRD-CORE-262-FR05/INFRA-192
+    FR09). A codex-only install used to end up with 29 duplicate skill files
+    under a directory codex never reads -- codex gets its skills from its own
     installer (``install_codex_skills``). Every other selection (default,
     claude-code, cursor-ide, a mixed set, ...) still gets ``.claude/skills``
-    exactly as HEAD did; only an EXPLICIT codex-only selection drops it
-    (CORE262-13: *explicit* distinguishes a user ``--ide codex`` from
-    ``detect_ide`` resolving to ``["codex"]`` off a pre-existing ``.codex/``
-    marker on a bare install).
+    exactly as HEAD did; only an EXPLICIT selection with no claude-code-skills
+    owner drops it (CORE262-13: *explicit* distinguishes a user ``--ide
+    codex`` from ``detect_ide`` resolving to ``["codex"]`` off a pre-existing
+    ``.codex/`` marker on a bare install). Gated on ``.claude/skills``
+    specifically -- not the broader ``_wants_claude_scaffold`` OR, which would
+    also fire for a codex-only selection on the strength of ``.claude/hooks``
+    alone and reintroduce the duplicate-skills defect.
     """
-    from . import _wants_claude_scaffold
+    from ._client_ownership import writes_surface
 
-    if not _wants_claude_scaffold(clients, explicit=explicit):
+    if not writes_surface(".claude/skills", clients, explicit=explicit):
         logger.debug("skills_install_skipped_for_clients", clients=list(clients))
         return
 
@@ -120,16 +123,28 @@ def _install_skills(
         from trw_mcp.models.config import get_config
 
         config = get_config()
-        if not config.effective_skills_enabled:
+        # This installs the CLAUDE CODE skill surface, so an unset
+        # skills_enabled defers to claude-code's profile. The config's own
+        # client_profile is the FIRST target_platforms entry: with opencode
+        # listed first it gated .claude/skills off for a claude-code project.
+        from trw_mcp.models.config._profiles import resolve_client_profile
+
+        enabled = config.skills_enabled
+        if enabled is None:
+            enabled = resolve_client_profile("claude-code").skills_enabled
+        if not enabled:
             logger.debug("skills_install_gated", reason="skills_enabled=False")
             return
     except Exception:  # justified: fail-open, config failure installs skills normally
         logger.debug("skills_install_gate_unavailable", exc_info=True)
 
+    from ._optional_skills import retire_disabled_skills, skill_enabled
+
     skills_source = _data_dir() / "skills"
     if skills_source.is_dir():
+        retire_disabled_skills(target_dir / ".claude" / "skills", skills_source, result, ".claude/skills")
         for skill_dir in sorted(skills_source.iterdir()):
-            if skill_dir.is_dir():
+            if skill_dir.is_dir() and skill_enabled(skill_dir.name):
                 is_valid, reason = _validate_skill(skill_dir)
                 if not is_valid:
                     logger.warning(

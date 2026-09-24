@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import _get_tools, no_machine_wide_ide_detection  # noqa: F401
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config
@@ -18,10 +19,25 @@ from trw_mcp.state.persistence import FileStateWriter
 # module at call time, so no claude_md-specific binding patch is required here.
 
 
+@pytest.fixture
+def fake_memory_store_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeMemoryStore:
+    """Override of ``tests._memory_fixtures.fake_memory_store`` pinned to "default".
+
+    Only the two ``trw_recall`` wildcard tests need this: ``FakeMemoryStore.recall()``
+    only searches "default", not the shared fixture's ``FAKE_NAMESPACE`` --
+    see ``tests/test_tools_learning_recall_modes.py`` for the same workaround.
+    """
+    from trw_mcp.state import _store_selection
+
+    store = FakeMemoryStore()
+    monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, "default"))
+    return store
+
+
 class TestTrwClaudeMdSync:
     """Tests for trw_claude_md_sync tool."""
 
-    def test_generates_claude_md(self, tmp_path: Path) -> None:
+    def test_generates_claude_md(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         tools = _get_tools()
 
         # Record a high-impact learning
@@ -45,7 +61,7 @@ class TestTrwClaudeMdSync:
         assert "trw:start" in content, content[:800]
         assert "trw:end" in content
 
-    def test_preserves_existing_content(self, tmp_path: Path) -> None:
+    def test_preserves_existing_content(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         # Create existing CLAUDE.md
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text("# My Project\n\nExisting content.\n", encoding="utf-8")
@@ -63,7 +79,7 @@ class TestTrwClaudeMdSync:
         assert "Existing content" in content  # Preserved
         assert "trw:start" in content  # Added
 
-    def test_replaces_existing_trw_section(self, tmp_path: Path) -> None:
+    def test_replaces_existing_trw_section(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         claude_md = tmp_path / "CLAUDE.md"
         claude_md.write_text(
             "# Project\n\n<!-- trw:start -->\nOld content\n<!-- trw:end -->\n\n# Other section\n",
@@ -84,7 +100,7 @@ class TestTrwClaudeMdSync:
         assert "trw:start" in content, content[:800]
         assert "Other section" in content  # Preserved
 
-    def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path) -> None:
+    def test_sub_scope_creates_sub_claude_md(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Sub-scope sync writes to target_dir/CLAUDE.md."""
         tools = _get_tools()
 
@@ -113,7 +129,7 @@ class TestTrwClaudeMdSync:
         limit = get_config().sub_claude_md_max_lines
         assert len(content.split("\n")) <= limit, content
 
-    def test_enforces_line_limit(self, tmp_path: Path) -> None:
+    def test_enforces_line_limit(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """An oversized merge is REFUSED, never truncated (PRD-FIX-123 FR01)."""
 
         tools = _get_tools()
@@ -133,7 +149,7 @@ class TestTrwClaudeMdSync:
         # The user's content is byte-identical after the refusal.
         assert claude_md.read_text(encoding="utf-8") == long_content
 
-    def test_wildcard_returns_all_learnings(self, tmp_path: Path) -> None:
+    def test_wildcard_returns_all_learnings(self, tmp_path: Path, fake_memory_store_default: FakeMemoryStore) -> None:
         """Query '*' or empty returns all learnings (filtered by other params)."""
         tools = _get_tools()
 
@@ -142,28 +158,30 @@ class TestTrwClaudeMdSync:
         tools["trw_learn"].fn(summary="Gamma learning", detail="Third", impact=0.9, scope="project")
 
         # Wildcard query should return all
-        result = tools["trw_recall"].fn(query="*", include_tiers=["project"])
+        result = tools["trw_recall"].fn(query="*", options={"include_tiers": ["project"]})
         assert len(result["learnings"]) == 3
 
         # Wildcard with min_impact filter
-        result = tools["trw_recall"].fn(query="*", min_impact=0.5, include_tiers=["project"])
+        result = tools["trw_recall"].fn(query="*", options={"min_impact": 0.5, "include_tiers": ["project"]})
         assert len(result["learnings"]) == 2
 
-    def test_empty_query_returns_all_learnings(self, tmp_path: Path) -> None:
+    def test_empty_query_returns_all_learnings(
+        self, tmp_path: Path, fake_memory_store_default: FakeMemoryStore
+    ) -> None:
         """Empty string query returns all learnings."""
         tools = _get_tools()
 
         tools["trw_learn"].fn(summary="One", detail="Detail", impact=0.5, scope="project")
         tools["trw_learn"].fn(summary="Two", detail="Detail", impact=0.5, scope="project")
 
-        result = tools["trw_recall"].fn(query="", include_tiers=["project"])
+        result = tools["trw_recall"].fn(query="", options={"include_tiers": ["project"]})
         assert len(result["learnings"]) == 2
 
 
 class TestTrwClaudeMdSyncLLM:
     """Tests for LLM-augmented trw_claude_md_sync."""
 
-    def test_sync_without_llm_unchanged(self, tmp_path: Path) -> None:
+    def test_sync_without_llm_unchanged(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Verify sync still works with LLM unavailable."""
         tools = _get_tools()
 
@@ -183,7 +201,7 @@ class TestTrwClaudeMdSyncLLM:
         content = claude_md.read_text(encoding="utf-8")
         assert "trw:start" in content, content[:800]
 
-    def test_sync_llm_flag_present(self, tmp_path: Path) -> None:
+    def test_sync_llm_flag_present(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Verify llm_used field is in return value."""
         tools = _get_tools()
         tools["trw_learn"].fn(
@@ -198,7 +216,7 @@ class TestTrwClaudeMdSyncLLM:
 class TestClaudeMdSyncAtomicWrite:
     """PRD-CORE-014: merge_trw_section uses atomic writes via _writer."""
 
-    def test_claude_md_sync_uses_atomic_write(self, tmp_path: Path) -> None:
+    def test_claude_md_sync_uses_atomic_write(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """trw_claude_md_sync uses _writer.write_text for CLAUDE.md."""
         tools = _get_tools()
 
@@ -229,7 +247,9 @@ class TestClaudeMdSyncLateResolve:
     redirect the write and a sync would pollute the real repo CLAUDE.md.
     """
 
-    def test_sync_honours_paths_source_patch_only(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_sync_honours_paths_source_patch_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """Patching ONLY ``_paths`` (the source module) redirects the write.
 
         This deliberately does NOT patch the legacy claude_md ``__init__`` /

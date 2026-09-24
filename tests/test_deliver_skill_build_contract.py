@@ -9,7 +9,7 @@ skip asserting nothing, and its assertion strings appear nowhere in the canonica
 skills, so it could not simply be repointed.
 
 The invariant itself is framework-level, not eval-local:
-`.trw/frameworks/FRAMEWORK-CORE.md` states `trw_build_check` "records observed
+`.trw/frameworks/FRAMEWORK.md` states `trw_build_check` "records observed
 project-native validation at VALIDATE and before DELIVER after code/test
 changes; **it does not run checks**". A delivery skill that tells an agent the
 tool runs validation produces exactly the failure the deliver gate exists to
@@ -21,24 +21,27 @@ So the guard is restored here, against the surfaces that actually ship.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 
 from tests._layout import PACKAGE_ROOT as _ROOT
 
-#: Every bundled projection of the delivery skill. Unlike the module this
-#: replaces, these are NOT existence-guarded: they ship in the public wheel, so
-#: an absent one is a packaging defect, not an environment difference.
-#: All four were found by `test_every_bundled_deliver_projection_is_covered` on
-#: its first run: the module this replaces named only two paths, and both were
-#: vendored. The live surface is twice as wide as the retired guard implied.
-DELIVER_SKILLS = (
-    _ROOT / "src/trw_mcp/data/skills/trw-deliver/SKILL.md",
-    _ROOT / "src/trw_mcp/data/codex/skills/trw-deliver/SKILL.md",
-    _ROOT / "src/trw_mcp/data/copilot/skills/trw-deliver/SKILL.md",
-    _ROOT / "src/trw_mcp/data/opencode/skills/trw-deliver/SKILL.md",
-)
+#: Every projection of the delivery skill. Codex, copilot and opencode no
+#: longer carry their own fork on disk (PRD-CORE-291-FR04) -- they render the
+#: one canonical body, so the parametrized surfaces are the canonical text
+#: plus each client's rendering of it.
+_CANONICAL_TEXT = (_ROOT / "src/trw_mcp/data/skills/trw-deliver/SKILL.md").read_text(encoding="utf-8")
+
+
+def _rendered(client: str | None) -> str:
+    if client is None:
+        return _CANONICAL_TEXT
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    return render_skill_md(_CANONICAL_TEXT, client)
+
+
+DELIVER_SURFACES = (None, "codex", "copilot", "opencode")
 
 #: Phrasings that would tell an agent the tool executes validation itself.
 #: Matched case-insensitively against the whole document.
@@ -50,22 +53,21 @@ _EXECUTOR_CLAIMS = (
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("skill_path", DELIVER_SKILLS, ids=lambda p: p.parent.parent.name)
-def test_deliver_skill_does_not_claim_build_check_runs_validation(skill_path: Path) -> None:
+@pytest.mark.parametrize("client", DELIVER_SURFACES, ids=lambda c: c or "canonical")
+def test_deliver_skill_does_not_claim_build_check_runs_validation(client: str | None) -> None:
     """No projection may describe `trw_build_check` as executing the checks."""
-    assert skill_path.is_file(), f"bundled delivery skill missing: {skill_path}"
-    content = skill_path.read_text(encoding="utf-8")
+    content = _rendered(client)
     for pattern in _EXECUTOR_CLAIMS:
         match = re.search(pattern, content, re.IGNORECASE)
         assert match is None, (
-            f"{skill_path} implies trw_build_check executes validation "
+            f"{client or 'canonical'} implies trw_build_check executes validation "
             f"(matched {match.group(0)!r}); the tool only RECORDS a result"
         )
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("skill_path", DELIVER_SKILLS, ids=lambda p: p.parent.parent.name)
-def test_deliver_skill_runs_validation_before_recording_it(skill_path: Path) -> None:
+@pytest.mark.parametrize("client", DELIVER_SURFACES, ids=lambda c: c or "canonical")
+def test_deliver_skill_runs_validation_before_recording_it(client: str | None) -> None:
     """Running the validation must be its own step, ordered before the record.
 
     Asserts ORDER, not layout. The projections legitimately differ in shape:
@@ -80,28 +82,14 @@ def test_deliver_skill_runs_validation_before_recording_it(skill_path: Path) -> 
     above every step, so searching the raw document would find the tool before
     any instruction and report a false inversion.
     """
-    body = re.sub(r"\A---\n.*?\n---\n", "", skill_path.read_text(encoding="utf-8"), flags=re.DOTALL)
+    body = re.sub(r"\A---\n.*?\n---\n", "", _rendered(client), flags=re.DOTALL)
     run_step = re.search(r"\bRun\b[^.\n]{0,60}\bvalidation\b", body, re.IGNORECASE)
     record_step = re.search(r"trw_build_check", body)
 
-    assert run_step is not None, f"{skill_path} never instructs the agent to RUN validation"
-    assert record_step is not None, f"{skill_path} never instructs the agent to record via trw_build_check"
+    label = client or "canonical"
+    assert run_step is not None, f"{label} never instructs the agent to RUN validation"
+    assert record_step is not None, f"{label} never instructs the agent to record via trw_build_check"
     assert run_step.start() < record_step.start(), (
-        f"{skill_path} records the build result before running validation; "
+        f"{label} records the build result before running validation; "
         "build evidence must postdate the check it claims to cover"
     )
-
-
-@pytest.mark.unit
-def test_every_bundled_deliver_projection_is_covered() -> None:
-    """Fails when a new trw-deliver projection ships without joining this guard.
-
-    The module this replaces went stale precisely because its path list stopped
-    matching what was on disk, and nothing said so.
-    """
-    discovered = {
-        path for path in (_ROOT / "src/trw_mcp/data").rglob("skills/trw-deliver/SKILL.md") if "plugin" not in path.parts
-    }
-    assert discovered, "no bundled trw-deliver skill found — has the layout changed?"
-    missing = sorted(str(p.relative_to(_ROOT)) for p in discovered - set(DELIVER_SKILLS))
-    assert not missing, f"bundled trw-deliver projections not covered by DELIVER_SKILLS: {missing}"

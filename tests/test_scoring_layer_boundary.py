@@ -96,24 +96,6 @@ class TestIoBoundaryModule:
 
         assert callable(_load_entries_from_dir)
 
-    def test_sync_to_sqlite_importable(self) -> None:
-        """_sync_to_sqlite is importable from _io_boundary."""
-        from trw_mcp.scoring._io_boundary import _sync_to_sqlite
-
-        assert callable(_sync_to_sqlite)
-
-    def test_batch_sync_to_sqlite_importable(self) -> None:
-        """_batch_sync_to_sqlite is importable from _io_boundary."""
-        from trw_mcp.scoring._io_boundary import _batch_sync_to_sqlite
-
-        assert callable(_batch_sync_to_sqlite)
-
-    def test_write_pending_entries_importable(self) -> None:
-        """_write_pending_entries is importable from _io_boundary."""
-        from trw_mcp.scoring._io_boundary import _write_pending_entries
-
-        assert callable(_write_pending_entries)
-
 
 # ---------------------------------------------------------------------------
 # Backward-compat: re-exports from _correlation still work
@@ -139,27 +121,6 @@ class TestBackwardCompatReExports:
 
         assert _find_session_start_ts is _defining
 
-    def test_default_lookup_entry_from_correlation(self) -> None:
-        """_default_lookup_entry re-exported from _correlation."""
-        from trw_mcp.scoring._correlation import _default_lookup_entry
-        from trw_mcp.scoring._io_boundary import _default_lookup_entry as _defining
-
-        assert _default_lookup_entry is _defining
-
-    def test_batch_sync_from_correlation(self) -> None:
-        """_batch_sync_to_sqlite re-exported from _correlation."""
-        from trw_mcp.scoring._correlation import _batch_sync_to_sqlite
-        from trw_mcp.scoring._io_boundary import _batch_sync_to_sqlite as _defining
-
-        assert _batch_sync_to_sqlite is _defining
-
-    def test_sync_from_correlation(self) -> None:
-        """_sync_to_sqlite re-exported from _correlation."""
-        from trw_mcp.scoring._correlation import _sync_to_sqlite
-        from trw_mcp.scoring._io_boundary import _sync_to_sqlite as _defining
-
-        assert _sync_to_sqlite is _defining
-
     def test_load_entries_from_distribution(self) -> None:
         """_load_entries_from_dir re-exported from _distribution."""
         from trw_mcp.scoring._distribution import _load_entries_from_dir
@@ -167,17 +128,9 @@ class TestBackwardCompatReExports:
 
         assert _load_entries_from_dir is _defining
 
-    def test_lookup_alias_from_correlation(self) -> None:
-        """_lookup_learning_entry backward-compat alias still works."""
-        from trw_mcp.scoring._correlation import _lookup_learning_entry
-        from trw_mcp.scoring._io_boundary import _default_lookup_entry
-
-        # The alias must resolve to the same implementation, not a second copy.
-        assert _lookup_learning_entry is _default_lookup_entry
-
 
 # ---------------------------------------------------------------------------
-# Integration: process_outcome and compute_impact_distribution still work
+# Integration: compute_impact_distribution still works
 # ---------------------------------------------------------------------------
 
 
@@ -185,23 +138,11 @@ class TestBackwardCompatReExports:
 class TestScoringPublicApi:
     """Public scoring API continues to work after the refactor."""
 
-    def test_process_outcome_importable(self) -> None:
-        """process_outcome is importable from scoring package."""
-        from trw_mcp.scoring import process_outcome
-
-        assert callable(process_outcome)
-
     def test_compute_impact_distribution_importable(self) -> None:
         """compute_impact_distribution is importable from scoring package."""
         from trw_mcp.scoring import compute_impact_distribution
 
         assert callable(compute_impact_distribution)
-
-    def test_process_outcome_for_event_importable(self) -> None:
-        """process_outcome_for_event is importable from scoring package."""
-        from trw_mcp.scoring import process_outcome_for_event
-
-        assert callable(process_outcome_for_event)
 
     def test_correlate_recalls_importable(self) -> None:
         """correlate_recalls is importable from scoring package."""

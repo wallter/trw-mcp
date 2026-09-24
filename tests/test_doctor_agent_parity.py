@@ -118,3 +118,46 @@ def test_an_unregistered_recorded_client_is_reported_not_dropped(tmp_path: Path)
     assert status == "SKIP"
     assert rows[0]["client"] == "aider"
     assert rows[0]["supported"] is False
+
+
+@pytest.mark.integration
+def test_an_agent_the_user_deleted_on_purpose_is_not_damage(tmp_path: Path) -> None:
+    """PRD-INFRA-192 FR09: doctor reports configured damage, not an intentional removal.
+
+    A deleted, manifest-recorded agent is tombstoned by update-project and stays
+    deleted; telling the user to run update-project to "reinstall" it is wrong
+    advice for a file TRW will deliberately keep absent.
+    """
+    from trw_mcp.bootstrap import init_project, update_project
+
+    (tmp_path / ".git").mkdir()
+    assert not init_project(tmp_path, ide="claude-code")["errors"]
+    agent = tmp_path / ".claude" / "agents" / "trw-auditor.md"
+    agent.unlink()
+    assert not update_project(tmp_path)["errors"]
+    assert not agent.exists(), "precondition: the deleted agent is tombstoned, not restored"
+
+    status, message, rows = agent_parity_report(tmp_path)
+
+    assert status == "PASS", message
+    row = next(r for r in rows if r["client"] == "claude-code")
+    assert row["missing"] == []
+    assert row["removed"] == ["trw-auditor"]
+    assert "--reprovision" in message
+
+
+@pytest.mark.unit
+def test_removing_the_last_client_does_not_measure_the_default_client(tmp_path: Path) -> None:
+    """PRD-INFRA-192 FR09: an explicitly empty target_platforms is "no client", not the default.
+
+    ``uninstall --ide claude-code`` on a claude-code-only project leaves
+    ``target_platforms: []``; substituting the packaged default re-measured the
+    client the user just removed and warned that its agents were missing.
+    """
+    (tmp_path / ".trw").mkdir()
+    (tmp_path / ".trw" / "config.yaml").write_text("target_platforms: []\n", encoding="utf-8")
+
+    status, message, _rows = agent_parity_report(tmp_path)
+
+    assert status == "SKIP", message
+    assert "claude-code" not in message

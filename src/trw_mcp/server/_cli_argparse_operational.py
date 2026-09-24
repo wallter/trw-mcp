@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 
+from trw_mcp.server._cli_argparse_memory import add_memory_subcommands
 from trw_mcp.server._cli_argparse_prd import add_prd_subcommands
 from trw_mcp.tools._formation_cli import add_formation_subcommands
 from trw_mcp.tools._plan_cli import add_plan_subcommands
@@ -43,7 +44,7 @@ def add_operational_subcommands(
         help="API key for backend authentication (required with --push)",
     )
 
-    # prepare-candidate + commit-candidate (PRD-CORE-219 production callers)
+    # prepare-/commit-/recover-candidate (PRD-CORE-219 production callers)
     prepare_parser = subparsers.add_parser(
         "prepare-candidate",
         help="Persist a verified pre-edit ownership claim for an isolated candidate commit",
@@ -91,6 +92,13 @@ def add_operational_subcommands(
         action="store_true",
         help="Require a verifiable commit signature before publication",
     )
+
+    recover_parser = subparsers.add_parser(
+        "recover-candidate",
+        help="Reconcile an interrupted candidate transaction's journal against Git state",
+    )
+    recover_parser.add_argument("--transaction-id", required=True, help="Transaction id to recover")
+    recover_parser.add_argument("--repo-root", default=".", help="Repository root (default: current directory)")
 
     add_prd_subcommands(subparsers)
 
@@ -178,30 +186,8 @@ def add_operational_subcommands(
         help="Output stats as JSON instead of a human table",
     )
 
-    # channel-doctor throttle (meta-tune consumer)
-    cd_throttle = cd_sub.add_parser(
-        "throttle",
-        help="Evaluate (and optionally apply) throttle decisions for all channels",
-    )
-    cd_throttle.add_argument(
-        "--window-hours",
-        type=int,
-        default=1,
-        dest="window_hours",
-        help="Correlation time window in hours (default: 1)",
-    )
-    cd_throttle.add_argument(
-        "--apply",
-        action="store_true",
-        dest="apply",
-        help="Execute tier changes (default: dry-run)",
-    )
-    cd_throttle.add_argument(
-        "--dry-run",
-        action="store_true",
-        dest="dry_run",
-        help="Preview throttle decisions without applying (default mode)",
-    )
+    # channel-doctor throttle was removed 2026-09-22 (RC-014): it rewrote
+    # ChannelEntry.tier_default, but nothing read that field to change behavior.
 
     # session-changelog (PRD-LOCAL-049 FR04) — regenerate/print a run's changelog
     changelog_parser = subparsers.add_parser(
@@ -261,23 +247,17 @@ def add_operational_subcommands(
         action="store_true",
         help="Emit the sweep summary as JSON instead of a human-readable line.",
     )
-    # PRD-CORE-267-FR03 — one-off migration for anchors fabricated by the
-    # pre-FR01 derivation. Dry-run by default because clearing is irreversible.
-    maintain_verify_parser.add_argument(
-        "--clear-shared-anchors",
-        dest="clear_shared_anchors",
-        action="store_true",
-        help=(
-            "Run the shared-anchor-set migration instead of the sweep: report entries whose exact "
-            "anchor set is shared by at least anchor_shared_set_migration_threshold entries. "
-            "Reports only unless --apply is given."
-        ),
+
+    # sync pull --full (PRD-CORE-280 FR02): resumable replay of every team learning
+    sync_parser = subparsers.add_parser("sync", help="Team-sync operations run on demand")
+    sync_pull = sync_parser.add_subparsers(dest="sync_command").add_parser(
+        "pull", help="Replay every team learning from sequence 0; exits 1 if the run stopped early"
     )
-    maintain_verify_parser.add_argument(
-        "--apply",
-        dest="apply",
-        action="store_true",
-        help="With --clear-shared-anchors, actually clear the selected entries' anchors (irreversible).",
+    sync_pull.add_argument("--full", action="store_true", required=True, help="Replay from the first page")
+    sync_pull.add_argument("--resume", action="store_true", help="Continue an unfinished replay")
+    sync_pull.add_argument("--max-pages", type=int, default=1000, help="Pages to pull in this run (default: 1000)")
+    sync_pull.add_argument(
+        "--wait-seconds", type=float, default=0.0, help="How long to wait for a running sync cycle (default: 0)"
     )
 
     # learn-drain (PRD-INFRA-171-FR06) — on-demand learn-journal flush
@@ -300,6 +280,11 @@ def add_operational_subcommands(
         dest="as_json",
         action="store_true",
         help="Emit the drain summary as JSON instead of a human-readable line.",
+    )
+
+    subparsers.add_parser(
+        "hook-flags",
+        help="Publish the resolved hooks_enabled / learning_recall_enabled for the shell hooks.",
     )
 
     # version-status
@@ -376,3 +361,5 @@ def add_operational_subcommands(
         default=".trw",
         help="Target .trw/ directory (default: ./.trw)",
     )
+
+    add_memory_subcommands(subparsers)

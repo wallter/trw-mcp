@@ -109,7 +109,13 @@ def availability(endpoint: sqlite3.Row | None, now: float, *, idle_horizon_secon
 
 
 def availability_of(lease_expires_at: float, last_seen_at: float, now: float, idle_horizon_seconds: int) -> str:
-    """One definition shared by send observations and peers rows, so they cannot disagree."""
+    """One definition shared by send observations and peers rows, so they cannot disagree.
+
+    Liveness here is the endpoint LEASE (an absolute expiry, seconds). Formation
+    status asks a different question -- is the member's PIN stale (heartbeat age
+    past ``pin_ttl_hours``, ``formation._status._staleness``) -- and the two stay
+    distinct on purpose (ledger RC-008): a member can be pin-fresh and lease-expired.
+    """
     if now < lease_expires_at:
         return "live"
     if now - last_seen_at < idle_horizon_seconds:

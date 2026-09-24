@@ -18,7 +18,7 @@ from typing import Any
 
 from trw_mcp.comms._admission import admit
 from trw_mcp.comms._envelope import AdmissionError, DeliveryClass, Envelope, MessageKind
-from trw_mcp.comms._identity import CallerSnapshot, RecipientSnapshot
+from trw_mcp.comms._identity import CallerBinding, CallerSnapshot, RecipientSnapshot
 from trw_mcp.comms._scope import (
     has_control_characters,
     intersects,
@@ -53,6 +53,15 @@ def candidates(snapshot: CallerSnapshot, scope: str) -> list[RecipientSnapshot]:
     Ordered by member id so a fan-out is deterministic: the same notify admits
     the same recipients in the same order, which is what lets the retry path
     compare sets rather than guess.
+
+    Deliberately does NOT consult ``peer.eligible`` (ledger RC-009). Ownership
+    and eligibility are orthogonal — a terminal member keeps its declaration —
+    and eligibility is decided once, in ``admit``. Filtering here as well would
+    be a second decision procedure that could drift from the first; instead an
+    ineligible owner reaches ``admit``, is refused ``recipient_not_eligible``,
+    and the loop records that refusal as SKIPPABLE. The sender therefore learns
+    the owner exists and could not receive, which a pre-filter would hide.
+    Pinned by tests/comms/test_notify_eligibility_single_source.py.
     """
     sender = snapshot.binding.member_id
     matched = [
@@ -95,6 +104,43 @@ def _raw_key_taken(conn: sqlite3.Connection, group_id: str, sender: str, request
     return row is not None
 
 
+def reconcile_retry(
+    conn: sqlite3.Connection,
+    binding: CallerBinding,
+    request_key: str,
+    scope: str,
+    reachable: list[RecipientSnapshot],
+) -> set[str]:
+    """Decide whether this key is a fresh fan-out or an exact retry (ledger RC-007).
+
+    Returns the member ids an EARLIER notify under this key reached — empty for a
+    first send — or refuses ``idempotency_conflict``. Pure retry semantics, split
+    out of :func:`notify` so they can be tested without delivering anything: the
+    three questions below were inlined among the reachability and fan-out code,
+    which mixed "who does this scope reach" with "is this the same message".
+
+    The three ways one key can name two different messages:
+
+    1. the key is already taken by a DIRECT send (raw key, not a derived shard);
+    2. the retained shards were written for a different SCOPE. Even when that
+       scope happens to resolve to the same recipients, returning the first
+       call's receipts would report success for a scope nothing was sent about;
+    3. the key no longer reaches everyone it reached before. A contracted set is
+       a different message, not a retry. (Growth is allowed and is reported as
+       ``not_delivered_to``: the frozen fan-out excludes the newcomer.)
+    """
+    if _raw_key_taken(conn, binding.group_id, binding.member_id, request_key):
+        raise AdmissionError("idempotency_conflict")
+    rows = _retained(conn, binding.group_id, binding.member_id, request_key)
+    retained = {str(row["recipient_member_id"]) for row in rows}
+    wanted = scope_digest(scope)
+    if any(scope_digest_of(str(row["request_key"])) != wanted for row in rows):
+        raise AdmissionError("idempotency_conflict")
+    if retained and not retained <= {peer.member_id for peer in reachable}:
+        raise AdmissionError("idempotency_conflict")
+    return retained
+
+
 def notify(
     conn: sqlite3.Connection,
     snapshot: CallerSnapshot,
@@ -122,20 +168,7 @@ def notify(
         # refusal, never a partial fan-out that the sender then has to reason about.
         raise AdmissionError("scope_too_broad")
 
-    if _raw_key_taken(conn, binding.group_id, binding.member_id, request_key):
-        raise AdmissionError("idempotency_conflict")
-    rows = _retained(conn, binding.group_id, binding.member_id, request_key)
-    retained = {str(row["recipient_member_id"]) for row in rows}
-    wanted = scope_digest(scope)
-    if any(scope_digest_of(str(row["request_key"])) != wanted for row in rows):
-        # Same key, different scope. Even when it happens to resolve to the same
-        # recipients, handing back the first call's receipts would report success
-        # for a scope nothing was ever sent about.
-        raise AdmissionError("idempotency_conflict")
-    if retained and not retained <= {peer.member_id for peer in reachable}:
-        # The same key now reaches a set that does not contain everyone it
-        # reached before. That is a different message, not a retry.
-        raise AdmissionError("idempotency_conflict")
+    retained = reconcile_retry(conn, binding, request_key, scope, reachable)
 
     # Computed once, before anything is admitted, because it is the answer to a
     # question the sender must be able to ask of the RESPONSE: which members

@@ -1,13 +1,15 @@
 ---
 name: trw-auditor
-effort: high
+effort: medium
 description: >
   Spec-vs-code auditor with bidirectional traceability verification. Use when
   you need to verify a PRD has been implemented as specified — every FR traced
-  to source and tests, every NFR checked, wiring confirmed end-to-end. Runs a
-  read-only 7-phase audit with wave pauses. Not for code-style review (use
-  trw-reviewer) or for adversarial red-team audits (use trw-adversarial-auditor).
-model: balanced
+  to source and tests, every NFR checked, wiring confirmed end-to-end — or when
+  you need a standalone link-status report (verified/missing/stale/orphan) for
+  a set of requirements. Runs a read-only 7-phase audit with wave pauses. Not
+  for code-style review (use trw-reviewer) or for adversarial red-team audits
+  (use trw-adversarial-auditor).
+model: frontier
 maxTurns: 200
 memory: project
 tools:
@@ -78,7 +80,7 @@ in, as part of that wave's work.
 - What does the vision say the feature should achieve?
 - What do the user stories say the user should experience?
 
-**Check for prior domain learnings (PRD-QUAL-056-FR08):**
+**Check for prior domain learnings:**
 - Call `{tool:trw_recall}(query='<prd-domain> audit-finding')` to find learnings from prior audits of similar PRDs
 - If relevant learnings are found:
   1. Note them in audit context as "known patterns to watch for"
@@ -122,6 +124,15 @@ self-review artifact.
 - Check for untraced requirements (FRs with no implementation reference)
 - Check for orphan implementations (code referencing non-existent FRs)
 - Check for stale traces (traceability matrix entries referencing deleted files)
+- Classify each requirement's source and test evidence independently with one
+  of: VERIFIED, MISSING, STALE (matrix path renamed or deleted), ambiguous
+  (more than one candidate match, none clearly authoritative), or UNKNOWN
+  (uncertain match — record the search scope and the missing proof; never
+  count UNKNOWN as traced or untraced in a summary)
+- Apply a configured coverage/traceability gate only when the project or the
+  governing requirement defines one, and report its source; when none exists,
+  report the finding as `REPORT_ONLY` rather than inventing a universal
+  percentage or PASS/FAIL claim
 
 ### Phase 3: Functional Correctness Audit (Wave 3)
 
@@ -133,7 +144,7 @@ For each FR, answer three questions:
 
 Assign verdict per FR: PASS | PARTIAL | FAIL | MISSING.
 
-**Respect the `trw:intentional` marker.** Code carrying a `# trw:intentional <reason>` (or `// trw:intentional <reason>`) comment on or just above a line is a settled, deliberate decision — counterintuitive-by-design code prior reviewers already litigated (e.g. a scorer that treats no-data as a fail by design, a truthfulness gate, a redaction that skips empty values). Treat the marker as strong evidence the code is correct and do NOT raise a finding against it on "this looks wrong" grounds; raise one ONLY with concrete evidence the marker's cited reason no longer holds, and state that evidence.
+**Respect the `trw:intentional` marker** — see `audit-framework.md` Section H1 for the bar; do not raise a finding against marked code on "this looks wrong" grounds.
 
 ### Phase 4: Code Quality and Type Safety Audit (Wave 4)
 

@@ -61,37 +61,46 @@ def temp_project_root(target_dir: Path) -> Generator[None, None, None]:
 
 def _collect_learnings(
     trw_dir: Path,
-    config: TRWConfig,
+    _config: TRWConfig,
     *,
     min_impact: float = 0.0,
     since: str | None = None,
 ) -> list[LearningEntryDict]:
-    """Read all learning entries from a project, with optional filters."""
-    entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-    if not entries_dir.is_dir():
-        return []
+    """Read this checkout's learning entries through its store (PRD-CORE-280 FR05).
 
-    reader = FileStateReader()
+    Replaces the pre-280 ``learnings/entries/*.yaml`` reader: ``selected_store``
+    is the one place trw-mcp reaches memory, so a row synced in from another
+    project (never written to this checkout's YAML mirror) is exported too. Each
+    row carries ``namespace``, ``origin_project`` and ``remote_id`` alongside the
+    existing learning fields.
+    """
+    from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
+    from trw_mcp.state._memory_transforms import _memory_to_learning_dict, is_system_canary
+    from trw_mcp.state._origin_project import ORIGIN_PROJECT_KEY
+    from trw_mcp.state._store_selection import selected_store
+    from trw_mcp.state._tier_routing import USER_NAMESPACE
+
+    store, project_namespace = selected_store(trw_dir)
     results: list[LearningEntryDict] = []
-    for f in sorted(entries_dir.glob("*.yaml")):
-        if f.name == "index.yaml":
-            continue
-        try:
-            data = reader.read_yaml(f)
-        except (OSError, StateError):
-            continue
-
-        impact = float(str(data.get("impact", 0)))
-        if impact < min_impact:
-            continue
-
-        if since:
-            created = str(data.get("created", ""))
-            if created < since:
+    for namespace in (project_namespace, USER_NAMESPACE):
+        # Every status, as the YAML export had: a row carries its own status. The store
+        # has no offset, so the limit grows until a call comes back short.
+        limit = DEFAULT_LIST_LIMIT
+        while len(entries := store.list_entries(namespace, limit=limit)) == limit:
+            limit *= 2
+        for entry in entries:
+            if is_system_canary(entry):  # tamper-detection decoys never leave in an export
                 continue
-
-        results.append(cast("LearningEntryDict", data))
-
+            if entry.importance < min_impact:
+                continue
+            created = entry.created_at.date().isoformat() if entry.created_at else ""
+            if since and created < since:
+                continue
+            row = cast("dict[str, object]", _memory_to_learning_dict(entry))
+            row["namespace"] = entry.namespace
+            row["origin_project"] = entry.metadata.get(ORIGIN_PROJECT_KEY, "")
+            row["remote_id"] = entry.remote_id
+            results.append(cast("LearningEntryDict", row))
     return results
 
 
@@ -104,13 +113,15 @@ def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
         "impact",
         "status",
         "tags",
-        "q_value",
         "access_count",
         "source_type",
         "client_profile",
         "model_id",
         "created",
         "updated",
+        "namespace",
+        "origin_project",
+        "remote_id",
     ]
     writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
@@ -122,13 +133,13 @@ def _learnings_to_csv(entries: list[LearningEntryDict]) -> str:
             "impact": str(entry.get("impact", "")),
             "status": str(entry.get("status", "")),
             "tags": ";".join(str(t) for t in tags) if isinstance(tags, list) else "",
-            "q_value": str(entry.get("q_value", "")),
             "access_count": str(entry.get("access_count", "")),
             "source_type": str(entry.get("source_type", "")),
             "client_profile": str(entry.get("client_profile", "")),
             "model_id": str(entry.get("model_id", "")),
             "created": str(entry.get("created", "")),
             "updated": str(entry.get("updated", "")),
+            **{key: str(entry.get(key) or "") for key in ("namespace", "origin_project", "remote_id")},
         }
         writer.writerow(row)
     return output.getvalue()

@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
-from tests._formation_test_support import make_run_dir, write_pin
+from tests._formation_test_support import make_run_dir, open_slot, write_pin
 from tests.comms.conftest import FormationFixture, call_peers, enable_comms
 from trw_mcp.comms._identity import derive_group_id
 from trw_mcp.formation import (
@@ -128,6 +128,39 @@ def test_a_recorded_worktree_member_shares_the_group_and_mailbox(wt: WorktreeSce
     loaded = load(wt.worktree_run, trw_dir=wt.fixture.trw_dir)
     assert loaded is not None
     assert derive_group_id(wt.main, loaded.manifest_path) == derive_group_id(wt.main, wt.fixture.manifest_path())
+
+
+def test_stall_status_uses_shared_authority_root_from_linked_worktree(
+    wt: WorktreeScene, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The worktree's own root must not hide main-root pending mail."""
+    import sqlite3
+
+    from trw_mcp import formation
+    from trw_mcp.comms._store import database_path
+
+    wt.record()
+    wt.at(wt.main, "pin-a")
+    assert call_peers(wt.server, "enroll")["status"] == "ok"
+    wt.at(wt.worktree, "pin-b")
+    assert call_peers(wt.server, "enroll")["status"] == "ok"
+    wt.at(wt.main, "pin-a")
+    assert wt.call("trw_send", recipient_member_id="impl-2", request_key="stall", body="body")["status"] == "ok"
+    db = database_path(wt.fixture.manifest_path())
+    with sqlite3.connect(db) as conn:
+        admitted = float(conn.execute("SELECT admitted_at FROM admissions WHERE request_key='stall'").fetchone()[0])
+        conn.execute("UPDATE endpoints SET last_seen_at=? WHERE member_id='impl-2'", (admitted + 601,))
+    wt.at(wt.worktree, "pin-b")
+    monkeypatch.setattr("trw_mcp.formation._views.time.time", lambda: admitted + 601)
+    board = formation.status(run_path=wt.worktree_run, trw_dir=wt.fixture.trw_dir)
+    assert board is not None and board.stall_measurement == "measured"
+    assert any(item.member_id == "impl-2" and item.pending == 1 for item in board.stalls)
+    shared = formation.shared_authority_root()
+    assert shared is not None
+    assert formation.stamped_ids(wt.worktree_run) == (shared[1].formation_id, shared[1].member_id)
+    default_board = formation.status(run_path=wt.worktree_run)
+    assert default_board is not None and default_board.stall_measurement == "measured"
+    assert any(item.member_id == "impl-2" and item.pending == 1 for item in default_board.stalls)
 
 
 def test_an_unrecorded_worktree_keeps_its_own_root(wt: WorktreeScene) -> None:
@@ -312,7 +345,7 @@ def test_a_worktree_client_announces_first_is_admitted_and_exchanges_messages(
         {
             **fixture.payload(),
             "members": [
-                {"member_id": "lead", "client": "claude-code", "open_join": True},
+                open_slot("lead", "claude-code"),
                 {"member_id": "impl-2", "client": "codex"},
             ],
         },

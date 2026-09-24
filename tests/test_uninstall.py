@@ -58,8 +58,18 @@ class TestUninstall:
 
         assert not (tmp_path / ".trw").exists()
 
-    def test_removes_claude_subdirs(self, tmp_path: Path) -> None:
-        """Removes .claude/skills, .claude/agents, .claude/hooks but preserves .claude/ itself."""
+    def test_claude_subdirs_kept_without_a_manifest_recording_them(self, tmp_path: Path) -> None:
+        """PRD-INFRA-192 FR09 C3: with no manifest, nothing under .claude is guessed at.
+
+        This project has ``.claude/skills``, ``.claude/agents`` and
+        ``.claude/hooks`` on disk but never went through ``init_project`` --
+        there is no ``.trw/managed-artifacts.yaml`` recording any of it as
+        TRW's own unedited write. Rule 3 keeps every such directory whole
+        rather than wholesale-deleting it on the assumption that a
+        ``.claude/`` client surface must be TRW's; the positive
+        "removed when the manifest actually covers it" path is
+        ``tests/test_uninstall_ide_manifest.py``.
+        """
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
         (claude_dir / "skills").mkdir()
@@ -77,9 +87,9 @@ class TestUninstall:
         args = argparse.Namespace(target_dir=str(tmp_path), dry_run=False, yes=True)
         _run_uninstall(args)
 
-        assert not (claude_dir / "skills").exists()
-        assert not (claude_dir / "agents").exists()
-        assert not (claude_dir / "hooks").exists()
+        assert (claude_dir / "skills").exists()
+        assert (claude_dir / "agents").exists()
+        assert (claude_dir / "hooks").exists()
         # .claude/ itself and user files preserved
         assert claude_dir.exists()
         assert (claude_dir / "notes.md").exists()
@@ -109,13 +119,29 @@ class TestUninstall:
         assert "--dry-run" in out
 
 
+def _trw_server(root: Path) -> dict[str, object]:
+    """The ``trw`` server entry TRW's .mcp.json writer generates for *root*."""
+    from trw_mcp.bootstrap._utils import _trw_mcp_server_entry
+
+    return _trw_mcp_server_entry(root)
+
+
+def _trw_codex_table(root: Path) -> str:
+    """The ``[mcp_servers.trw]`` table (nested tool tables included) TRW generates for *root*."""
+    from trw_mcp.bootstrap._codex import merge_codex_config
+    from trw_mcp.bootstrap._codex_toml import _toml_dumps
+
+    table = merge_codex_config({}, target_dir=root)["mcp_servers"]["trw"]
+    return _toml_dumps({"mcp_servers": {"trw": table}}).removeprefix("[mcp_servers]\n\n")
+
+
 def _ns(tmp_path: Path, **overrides: object) -> argparse.Namespace:
     """Build an uninstall argparse Namespace with sensible defaults."""
     base: dict[str, object] = {
         "target_dir": str(tmp_path),
         "dry_run": False,
         "yes": True,
-        "user_tier": False,
+        "delete_memory": False,
         "keep_memory": False,
     }
     base.update(overrides)
@@ -126,8 +152,12 @@ def _ns(tmp_path: Path, **overrides: object) -> argparse.Namespace:
 class TestUninstallRegistryProfiles:
     """PRD-SEC-006 FR07: uninstall is registry-driven across all 8 profiles."""
 
-    def test_removes_all_profile_config_dirs(self, tmp_path: Path) -> None:
-        """Each client profile's config-dir surfaces are removed.
+    def test_profile_config_dirs_without_a_manifest_are_kept(self, tmp_path: Path) -> None:
+        """Registry-driven discovery still finds every profile's surface (PRD-SEC-006 FR07),
+        but PRD-INFRA-192 FR09 C3 keeps each one: none of this project's surfaces are
+        recorded in a manifest, so TRW cannot prove any of it is its own unedited
+        write and never guesses. Positive removal-when-covered path:
+        ``tests/test_uninstall_ide_manifest.py``.
 
         Merged config files (.codex/config.toml, .cursor/mcp.json) are
         EXCLUDED here — they are key-stripped, not wholesale-deleted (sec-006);
@@ -153,7 +183,7 @@ class TestUninstallRegistryProfiles:
         _run_uninstall(_ns(tmp_path))
 
         for s in surfaces:
-            assert not s.exists(), f"{s} should have been removed"
+            assert s.exists(), f"{s} has no manifest record and must be kept, not guessed at"
 
     def test_merged_config_files_not_wholesale_deleted(self, tmp_path: Path) -> None:
         """sec-006: merged config files (settings.json/config.toml) are NOT deleted.
@@ -188,11 +218,13 @@ class TestUninstallRegistryProfiles:
                 {
                     "theme": "dark",
                     "mcpServers": {
-                        "trw": {"command": "trw-mcp"},
+                        "trw": _trw_server(tmp_path),
                         "other": {"command": "other-server"},
                     },
-                }
+                },
+                indent=2,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -209,7 +241,7 @@ class TestUninstallRegistryProfiles:
         codex = tmp_path / ".codex" / "config.toml"
         codex.parent.mkdir(parents=True)
         codex.write_text(
-            'model = "gpt-5"\n\n[mcp_servers.trw]\ncommand = "trw-mcp"\n\n[mcp_servers.other]\ncommand = "other"\n'
+            'model = "gpt-5"\n\n' + _trw_codex_table(tmp_path) + '\n[mcp_servers.other]\ncommand = "other"\n'
         )
         (tmp_path / ".trw").mkdir()
 
@@ -300,8 +332,21 @@ class TestUninstallHookGroupAndMergedSurfaces:
     """FIX 1-4: hook-group merged files, antigravity, missing dirs, cursor mcp."""
 
     def test_codex_hooks_json_strips_trw_group_keeps_user(self, tmp_path: Path) -> None:
-        """FIX 1: a TRW group + a user group leaves only the user group; file kept."""
+        """FIX 1 / PRD-INFRA-192 FR09 P0: a TRW COMMAND inside a group survives
+        alongside a user command in the SAME group; only the verified TRW
+        command is removed, never the whole group by its description tag.
+
+        Built from the real codex payload (:func:`_codex_hooks_payload`) so the
+        TRW command is one the verified predicate actually recognizes -- a
+        fabricated placeholder command (the old fixture used ``"trw"``) can
+        never be identified as TRW's own under the new per-command rule.
+        """
         import json
+
+        from trw_mcp.bootstrap._codex_hooks import _codex_hooks_payload
+
+        real_group = _codex_hooks_payload()["hooks"]["SessionStart"][0]
+        real_command = real_group["hooks"][0]["command"]
 
         hooks = tmp_path / ".codex" / "hooks.json"
         hooks.parent.mkdir(parents=True)
@@ -310,18 +355,18 @@ class TestUninstallHookGroupAndMergedSurfaces:
                 {
                     "hooks": {
                         "SessionStart": [
-                            {
-                                "description": "TRW managed: SessionStart",
-                                "hooks": [{"type": "command", "command": "trw"}],
-                            },
+                            dict(real_group),
                             {
                                 "description": "My custom hook",
                                 "hooks": [{"type": "command", "command": "mine"}],
                             },
                         ]
                     }
-                }
+                },
+                indent=2,
+                sort_keys=True,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -332,22 +377,25 @@ class TestUninstallHookGroupAndMergedSurfaces:
         groups = data["hooks"]["SessionStart"]
         assert len(groups) == 1
         assert groups[0]["description"] == "My custom hook"
+        commands = [h["command"] for g in groups for h in g["hooks"]]
+        assert real_command not in commands
 
     def test_codex_hooks_json_all_trw_deleted(self, tmp_path: Path) -> None:
-        """FIX 1: a hooks.json containing only TRW groups is deleted."""
+        """FIX 1: a hooks.json containing only real TRW commands is deleted."""
         import json
 
+        from trw_mcp.bootstrap._codex_hooks import _codex_hooks_payload
+
+        payload = _codex_hooks_payload()
         hooks = tmp_path / ".codex" / "hooks.json"
         hooks.parent.mkdir(parents=True)
         hooks.write_text(
             json.dumps(
-                {
-                    "hooks": {
-                        "SessionStart": [{"description": "TRW managed: SessionStart", "hooks": []}],
-                        "Stop": [{"description": "TRW managed: Stop", "hooks": []}],
-                    }
-                }
+                {"hooks": {k: payload["hooks"][k] for k in ("SessionStart", "Stop")}},
+                indent=2,
+                sort_keys=True,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -356,28 +404,38 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert not hooks.exists()
 
     def test_copilot_hooks_json_all_trw_deleted_with_version(self, tmp_path: Path) -> None:
-        """FIX 3: copilot hooks.json (version + only TRW groups) is deleted."""
+        """FIX 3: copilot hooks.json (version + only real TRW commands) is deleted."""
         import json
 
+        from trw_mcp.bootstrap._copilot import _copilot_hooks_payload
+
+        payload = _copilot_hooks_payload()
+        session_key = next(iter(payload["hooks"]))
         hooks = tmp_path / ".github" / "hooks" / "hooks.json"
         hooks.parent.mkdir(parents=True)
         hooks.write_text(
             json.dumps(
-                {
-                    "version": 1,
-                    "hooks": {"sessionStart": [{"description": "TRW managed: session", "hooks": []}]},
-                }
+                {"version": 1, "hooks": {session_key: payload["hooks"][session_key]}},
+                indent=2,
+                sort_keys=True,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
-        assert not hooks.exists(), "version-only + empty hooks is not user content"
+        assert not hooks.exists(), "version-only + only-TRW-commands is not user content"
 
     def test_copilot_hooks_json_preserves_user_group_and_unknown_keys(self, tmp_path: Path) -> None:
-        """FIX 3: user groups and unknown top-level keys survive TRW-group stripping."""
+        """FIX 3: user groups and unknown top-level keys survive TRW-command stripping."""
         import json
+
+        from trw_mcp.bootstrap._copilot import _copilot_hooks_payload
+
+        payload = _copilot_hooks_payload()
+        session_key = next(iter(payload["hooks"]))
+        real_group = payload["hooks"][session_key][0]
 
         hooks = tmp_path / ".github" / "hooks" / "hooks.json"
         hooks.parent.mkdir(parents=True)
@@ -387,13 +445,16 @@ class TestUninstallHookGroupAndMergedSurfaces:
                     "version": 1,
                     "customTop": {"keep": True},
                     "hooks": {
-                        "sessionStart": [
-                            {"description": "TRW managed: session", "hooks": []},
+                        session_key: [
+                            dict(real_group),
                             {"description": "user group", "hooks": [{"type": "command", "command": "u"}]},
                         ]
                     },
-                }
+                },
+                indent=2,
+                sort_keys=True,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -402,12 +463,19 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert hooks.exists()
         data = json.loads(hooks.read_text())
         assert data["customTop"] == {"keep": True}
-        groups = data["hooks"]["sessionStart"]
+        groups = data["hooks"][session_key]
         assert len(groups) == 1
         assert groups[0]["description"] == "user group"
 
     def test_antigravity_preserves_user_files_strips_trw(self, tmp_path: Path) -> None:
-        """FIX 2: user files under .antigravitycli survive; TRW entry + subdirs removed."""
+        """FIX 2 + PRD-INFRA-192 FR09 C3: user files under .antigravitycli survive.
+
+        ``.antigravitycli/agents`` has no manifest record in this hand-built
+        project (it is also a legacy surface no writer produces any more --
+        see ``_PLAIN_SURFACES_WITHOUT_A_CURRENT_PRODUCER``), so rule 3 keeps it
+        whole rather than guessing; ``settings.json`` is a merged config and is
+        stripped, never wholesale-deleted, whether or not a manifest exists.
+        """
         import json
 
         ag = tmp_path / ".antigravitycli"
@@ -415,15 +483,17 @@ class TestUninstallHookGroupAndMergedSurfaces:
         agents.mkdir(parents=True)
         (agents / "trw-explorer.md").write_text("trw")
         settings = ag / "settings.json"
-        settings.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}, "mine": {"command": "m"}}}))
+        settings.write_text(
+            json.dumps({"mcpServers": {"trw": _trw_server(tmp_path), "mine": {"command": "m"}}}, indent=2) + "\n"
+        )
         user_file = ag / "my-notes.md"
         user_file.write_text("keep me")
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
-        # TRW agents subdir removed
-        assert not agents.exists()
+        # No manifest record for this legacy surface: kept, not guessed at.
+        assert agents.exists()
         # settings.json preserved with only the trw server entry stripped
         assert settings.exists()
         data = json.loads(settings.read_text())
@@ -434,25 +504,28 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert ag.exists()
 
     def test_antigravity_uninstall_removes_live_ag03_hook(self, tmp_path: Path) -> None:
-        """P1: install the real AG-03 hook, then uninstall must leave no live hook.
+        """P1: install the real AG-03 hook via a real init, then uninstall must leave no live hook.
 
         Regression for the narrowed antigravity surface that dropped
         hooks.json + hooks/ cleanup while install_before_edit_hook still wrote
         (and registered) a PreToolUse hook -- uninstall left the hook live.
-        """
-        from trw_mcp.channels.antigravity._before_edit_hook import (
-            _AG03_HOOK_SCRIPT_PATH,
-            AG03_HOOKS_PATH,
-            install_before_edit_hook,
-        )
 
-        result = install_before_edit_hook(tmp_path)
-        assert result["installed"] is True
+        Goes through ``init_project`` (rather than calling
+        ``install_before_edit_hook`` directly against a bare ``.trw`` mkdir)
+        so the manifest actually records the hook script's content hash --
+        PRD-INFRA-192 FR09 C3 keeps an unrecorded plain surface whole, so
+        without a real manifest this hook would now (correctly) survive.
+        """
+        from trw_mcp.bootstrap import init_project
+        from trw_mcp.channels.antigravity._before_edit_hook import _AG03_HOOK_SCRIPT_PATH, AG03_HOOKS_PATH
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="antigravity-cli")
+        assert not result["errors"], result["errors"]
         hooks_json = tmp_path / AG03_HOOKS_PATH
         hook_script = tmp_path / _AG03_HOOK_SCRIPT_PATH
         assert hooks_json.exists()
         assert hook_script.exists()
-        (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
@@ -462,25 +535,40 @@ class TestUninstallHookGroupAndMergedSurfaces:
         assert not (tmp_path / ".antigravitycli" / "hooks").exists()
 
     def test_github_skills_removed(self, tmp_path: Path) -> None:
-        """FIX 3: .github/skills TRW artifacts are removed."""
-        gh_skill = tmp_path / ".github" / "skills" / "trw-review-pr"
-        gh_skill.mkdir(parents=True)
-        (gh_skill / "SKILL.md").write_text("# skill")
-        (tmp_path / ".trw").mkdir()
+        """FIX 3: .github/skills TRW artifacts are removed.
+
+        Goes through a real ``init_project`` (PRD-INFRA-192 FR09 C3): a hand-
+        built ``.github/skills`` fixture with no manifest record is now kept,
+        not guessed at, so the removal path needs a real manifest to exercise.
+        """
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="copilot")
+        assert not result["errors"], result["errors"]
+        assert (tmp_path / ".github" / "skills").is_dir(), "precondition: copilot skills installed"
 
         _run_uninstall(_ns(tmp_path))
 
         assert not (tmp_path / ".github" / "skills").exists()
 
     def test_github_instructions_only_trw_files_removed(self, tmp_path: Path) -> None:
-        """FIX 3: only the specific TRW instruction files are removed; user file kept."""
+        """FIX 3: only the specific TRW instruction files are removed; user file kept.
+
+        Goes through a real ``init_project`` so the instruction files' content
+        matches the manifest's recorded hashes (PRD-INFRA-192 FR09 C3) --
+        placeholder ``"trw"`` fixture bytes have no bundled source to match.
+        """
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="copilot")
+        assert not result["errors"], result["errors"]
         instr = tmp_path / ".github" / "instructions"
-        instr.mkdir(parents=True)
-        (instr / "python-testing.instructions.md").write_text("trw")
-        (instr / "typescript-react.instructions.md").write_text("trw")
+        assert (instr / "python-testing.instructions.md").is_file(), "precondition"
+        assert (instr / "typescript-react.instructions.md").is_file(), "precondition"
         user = instr / "my-own.instructions.md"
         user.write_text("mine")
-        (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
@@ -496,7 +584,9 @@ class TestUninstallHookGroupAndMergedSurfaces:
 
         mcp = tmp_path / ".cursor" / "mcp.json"
         mcp.parent.mkdir(parents=True)
-        mcp.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}, "other": {"command": "o"}}}))
+        mcp.write_text(
+            json.dumps({"mcpServers": {"trw": _trw_server(tmp_path), "other": {"command": "o"}}}, indent=2) + "\n"
+        )
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
@@ -523,12 +613,14 @@ class TestUninstallHookGroupAndMergedSurfaces:
             json.dumps(
                 {
                     "mcpServers": {
-                        "trw": {"command": "trw-mcp"},
+                        "trw": _trw_server(tmp_path),
                         "github": {"command": "gh-mcp"},
                         "postgres": {"command": "pg-mcp", "args": ["--dsn", "x"]},
                     }
-                }
+                },
+                indent=2,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -551,7 +643,7 @@ class TestUninstallHookGroupAndMergedSurfaces:
         import json
 
         mcp = tmp_path / ".mcp.json"
-        mcp.write_text(json.dumps({"mcpServers": {"trw": {"command": "trw-mcp"}}}))
+        mcp.write_text(json.dumps({"mcpServers": {"trw": _trw_server(tmp_path)}}, indent=2) + "\n")
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
@@ -597,7 +689,14 @@ class TestStripManagedBlocks:
         assert _strip_managed_blocks(text) == text
 
     def test_missing_end_marker_warns(self, tmp_path: Path) -> None:
-        """Uninstall over a missing-end-marker file warns + preserves content."""
+        """Uninstall over a missing-end-marker file warns + preserves content.
+
+        CHANGED (PRD-INFRA-192 FR09/FR10 P0): signature gained a *root*
+        parameter (the symlink-safety guard needs it), and an orphan marker is
+        now reported via ``uninstall_marker_orphan`` (one warning per orphan
+        marker, from the shared ``strip_managed_block`` primitive) rather than
+        the old whole-file ``uninstall_marker_unbalanced`` event.
+        """
         from structlog.testing import capture_logs
 
         from trw_mcp.server._subcommands_lifecycle import _remove_managed_block_file
@@ -606,66 +705,235 @@ class TestStripManagedBlocks:
         original = "user\n<!-- trw:start -->\norphan\nmore user\n"
         f.write_text(original)
         with capture_logs() as logs:
-            status = _remove_managed_block_file(f, dry_run=False)
+            status = _remove_managed_block_file(f, tmp_path, dry_run=False)
         assert status is None
         assert f.read_text() == original
         events = {e.get("event") for e in logs}
-        assert "uninstall_marker_unbalanced" in events
+        assert "uninstall_marker_orphan" in events
 
 
 @pytest.mark.integration
-class TestUninstallUserTier:
-    """PRD-SEC-006 FR07: --user-tier removes ~/.trw."""
+class TestUninstallSharedMemoryStore:
+    """PRD-CORE-280 FR06: ~/.trw is the daemon's one store; uninstall never removes it.
 
-    def test_user_tier_removes_home_trw(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """With --user-tier, ~/.trw is removed."""
-        fake_home = tmp_path / "home"
-        fake_home.mkdir()
-        user_trw = fake_home / ".trw"
-        user_trw.mkdir()
-        (user_trw / "memory.db").write_text("db")
-        monkeypatch.setenv("HOME", str(fake_home))
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    ``--delete-memory`` forgets only this checkout's own namespace, through its grant.
+    """
 
-        project = tmp_path / "proj"
-        project.mkdir()
-        (project / ".trw").mkdir()
-
-        _run_uninstall(_ns(project, user_tier=True))
-
-        assert not user_trw.exists()
-
-    def test_default_preserves_home_trw(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Without --user-tier, ~/.trw is preserved (default project-only)."""
-        fake_home = tmp_path / "home"
-        fake_home.mkdir()
-        user_trw = fake_home / ".trw"
-        user_trw.mkdir()
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
-
-        project = tmp_path / "proj"
-        project.mkdir()
-        (project / ".trw").mkdir()
-
-        _run_uninstall(_ns(project, user_tier=False))
-
-        assert user_trw.exists()
-
-    def test_user_tier_does_not_remove_project_home_collision(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_default_keeps_home_trw_and_says_where_the_store_is(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """~/.trw removal is skipped when project root IS the home dir."""
-        fake_home = tmp_path / "home"
-        fake_home.mkdir()
-        user_trw = fake_home / ".trw"
-        user_trw.mkdir()
-        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+        user_dir = tmp_path / "home" / ".trw"
+        (user_dir / "memory").mkdir(parents=True)
+        (user_dir / "memory" / "memory.db").write_text("db")
+        monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
+        project = tmp_path / "proj"
+        (project / ".trw").mkdir(parents=True)
 
-        # Project target == home: the project .trw and the user-tier .trw are
-        # the same dir; it is removed once as a project surface, not twice.
-        _run_uninstall(_ns(fake_home, user_tier=True))
+        _run_uninstall(_ns(project))
 
-        assert not user_trw.exists()
+        assert (user_dir / "memory" / "memory.db").read_text() == "db"
+        assert "--delete-memory" in capsys.readouterr().out
+
+    @staticmethod
+    def _checkout(root: Path, daemon: object, rows: int) -> tuple[str, object]:
+        import asyncio
+
+        from tests._memory_fixtures import attach_checkout
+
+        namespace, client = attach_checkout(root / ".trw", daemon)  # type: ignore[arg-type]
+        for index in range(rows):
+            asyncio.run(client.store(f"row {index} of {root.name}", namespace))
+        return namespace, client
+
+    @staticmethod
+    def _count(client: object, namespace: str) -> int:
+        import asyncio
+
+        return len(asyncio.run(client.list_page(namespace, 100, None))["entries"])  # type: ignore[attr-defined]
+
+    def test_delete_memory_forgets_only_this_checkouts_namespace(
+        self, tmp_path: Path, memory_daemon: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        mine_ns, mine = self._checkout(tmp_path / "mine", memory_daemon, rows=3)
+        other_ns, other = self._checkout(tmp_path / "other", memory_daemon, rows=2)
+
+        _run_uninstall(_ns(tmp_path / "mine", delete_memory=True))
+
+        assert self._count(other, other_ns) == 2, "another checkout's namespace survives"
+        assert self._count(mine, mine_ns) == 0, "this checkout's namespace is gone"
+        assert memory_daemon.paths.store.is_file(), "the shared store itself stays"  # type: ignore[attr-defined]
+        assert not (tmp_path / "mine" / ".trw").exists()
+
+    def test_delete_memory_refuses_a_namespace_the_grant_does_not_cover(
+        self, tmp_path: Path, memory_daemon: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.state._store_migration import _set_pin
+
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        other_ns, other = self._checkout(tmp_path / "other", memory_daemon, rows=2)
+        self._checkout(tmp_path / "mine", memory_daemon, rows=0)
+        _set_pin(tmp_path / "mine" / ".trw", other_ns)  # a pin edited to name another checkout's namespace
+
+        with pytest.raises(SystemExit):
+            _run_uninstall(_ns(tmp_path / "mine", delete_memory=True))
+
+        assert self._count(other, other_ns) == 2
+        assert (tmp_path / "mine" / ".trw").is_dir(), "a refusal removes no files"
+
+    @pytest.mark.parametrize("inherits", ["nothing", "the_pin", "the_pin_and_token"])
+    def test_a_nested_checkout_never_deletes_its_parents_namespace(
+        self, tmp_path: Path, memory_daemon: object, monkeypatch: pytest.MonkeyPatch, inherits: str
+    ) -> None:
+        from trw_memory.daemon._grants import CHECKOUT_TOKEN_RELPATH
+
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        parent = tmp_path / "parent"
+        parent_ns, parent_client = self._checkout(parent, memory_daemon, rows=2)
+        nested = parent / "vendor" / "nested"
+        (nested / ".trw").mkdir(parents=True)
+        if inherits != "nothing":
+            (nested / ".trw" / "config.yaml").write_text(f"project_namespace: {parent_ns}\n", encoding="utf-8")
+        if inherits == "the_pin_and_token":
+            (nested / CHECKOUT_TOKEN_RELPATH).parent.mkdir(parents=True)
+            (nested / CHECKOUT_TOKEN_RELPATH).write_bytes((parent / CHECKOUT_TOKEN_RELPATH).read_bytes())
+
+        with pytest.raises(SystemExit):
+            _run_uninstall(_ns(nested, delete_memory=True))
+
+        assert self._count(parent_client, parent_ns) == 2, "the parent's rows survive"
+        assert (nested / ".trw").is_dir(), "a refusal removes no files"
+
+    def test_delete_memory_pages_past_one_page(
+        self, tmp_path: Path, memory_daemon: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        monkeypatch.setattr("trw_mcp.server._uninstall_memory._PAGE", 2)
+        mine_ns, mine = self._checkout(tmp_path / "mine", memory_daemon, rows=5)
+
+        _run_uninstall(_ns(tmp_path / "mine", delete_memory=True))
+
+        assert self._count(mine, mine_ns) == 0
+
+    def test_a_failure_part_way_names_the_count_and_removes_no_files(
+        self,
+        tmp_path: Path,
+        memory_daemon: object,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from trw_memory.daemon.client import DaemonClient
+
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        mine_ns, mine = self._checkout(tmp_path / "mine", memory_daemon, rows=3)
+        real_forget, calls = DaemonClient.forget, []
+
+        async def _third_call_fails(self: DaemonClient, memory_id: str, namespace: str) -> object:
+            calls.append(memory_id)
+            if len(calls) == 3:
+                return {"status": "error", "error": "daemon went away"}
+            return await real_forget(self, memory_id, namespace)
+
+        monkeypatch.setattr(DaemonClient, "forget", _third_call_fails)
+
+        with pytest.raises(SystemExit) as exited:
+            _run_uninstall(_ns(tmp_path / "mine", delete_memory=True))
+
+        monkeypatch.undo()
+        err = capsys.readouterr().err
+        assert exited.value.code == 1
+        assert f"deleted 2 of 3 row(s) of {mine_ns}" in err and "daemon went away" in err
+        assert "no files were removed" in err and "re-run" in err
+        assert (tmp_path / "mine" / ".trw").is_dir()
+        assert self._count(mine, mine_ns) == 1
+
+    def test_delete_memory_refuses_user_local(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from trw_mcp.state._store_migration import _set_pin
+
+        monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "home" / ".trw"))
+        project = tmp_path / "proj"
+        (project / ".trw").mkdir(parents=True)
+        _set_pin(project / ".trw", "user:local")
+
+        with pytest.raises(SystemExit):
+            _run_uninstall(_ns(project, delete_memory=True))
+
+        assert (project / ".trw").is_dir()
+
+
+@pytest.mark.integration
+class TestUninstallSymlinkSafety:
+    """PRD-INFRA-192 FR09 P0: TRW never removes a byte through a symlink it doesn't own."""
+
+    def test_symlinked_trw_leaves_outside_content_intact(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A symlinked ``.trw`` is refused; whole-project uninstall reports it, never deletes through it."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("do not delete me")
+        (project / ".trw").symlink_to(outside, target_is_directory=True)
+
+        with pytest.raises(SystemExit) as exc:
+            _run_uninstall(_ns(project))
+        assert exc.value.code == 1
+
+        assert (outside / "sentinel.txt").exists(), "P0: symlinked .trw must not destroy outside content"
+        out = capsys.readouterr().out
+        assert "symlink" in out.lower(), "the refusal must be reported, not silent"
+
+    def test_symlinked_claude_skills_scoped_and_whole_project(self, tmp_path: Path) -> None:
+        """A symlinked ``.claude/skills`` is refused for BOTH ``--ide`` and whole-project uninstall."""
+        import shutil
+
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="claude-code")
+        assert not result["errors"], result["errors"]
+
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-skills"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("do not delete me")
+        skills_dir = tmp_path / ".claude" / "skills"
+        shutil.rmtree(skills_dir)
+        skills_dir.symlink_to(outside, target_is_directory=True)
+        try:
+            with pytest.raises(SystemExit):
+                _run_uninstall(_ns(tmp_path, ide="claude-code"))
+            assert (outside / "sentinel.txt").exists(), "scoped --ide removal must not follow the symlink"
+            assert skills_dir.is_symlink()
+
+            with pytest.raises(SystemExit):
+                _run_uninstall(_ns(tmp_path))
+            assert (outside / "sentinel.txt").exists(), "whole-project uninstall must not follow the symlink"
+        finally:
+            shutil.rmtree(outside, ignore_errors=True)
+
+    def test_recorded_key_under_symlinked_parent_dir_is_refused(self, tmp_path: Path) -> None:
+        """A manifest-recorded file whose PARENT dir is a symlink is refused, not deleted."""
+        import shutil
+
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="claude-code")
+        assert not result["errors"], result["errors"]
+
+        outside = tmp_path.parent / f"{tmp_path.name}-outside-hooks"
+        outside.mkdir()
+        (outside / "sentinel.txt").write_text("do not delete me")
+        hooks_dir = tmp_path / ".claude" / "hooks"
+        shutil.rmtree(hooks_dir)
+        hooks_dir.symlink_to(outside, target_is_directory=True)
+        try:
+            with pytest.raises(SystemExit):
+                _run_uninstall(_ns(tmp_path))
+            assert (outside / "sentinel.txt").exists(), "a recorded key under a symlinked parent must be refused"
+        finally:
+            shutil.rmtree(outside, ignore_errors=True)
 
 
 @pytest.mark.unit
@@ -741,8 +1009,8 @@ class TestUninstallManifest:
         by_path = {s.relpath: s for s in uninstall_surfaces()}
         expected = {
             ".codex/config.toml": "codex-toml",
-            ".codex/hooks.json": "hook-group-list",
-            ".github/hooks/hooks.json": "hook-group-list",
+            ".codex/hooks.json": "codex-hook-group-list",
+            ".github/hooks/hooks.json": "copilot-hook-group-list",
             ".cursor/mcp.json": "mcp-server-map",
             ".antigravitycli/settings.json": "mcp-server-map",
             # The root map, used by claude-code — same shape, same merge
@@ -851,28 +1119,36 @@ class TestUninstallInstructionSurfaces:
     def test_generated_codex_instructions_file_is_removed(self, tmp_path: Path) -> None:
         """The real generated ``.codex/INSTRUCTIONS.md`` is actually removed.
 
-        Generated through the production writer (not a fixture string) so the
-        test tracks whatever markers that writer does or does not emit.
+        Goes through a real ``init_project`` (PRD-INFRA-192 FR09 C3) so the
+        manifest records its content hash -- calling the writer directly
+        against a bare ``.trw`` mkdir leaves it unrecorded, and rule 3 now
+        keeps an unrecorded file rather than guessing.
         """
-        from trw_mcp.bootstrap._opencode_instructions import generate_codex_instructions
+        from trw_mcp.bootstrap import init_project
 
-        generate_codex_instructions(tmp_path)
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="codex")
+        assert not result["errors"], result["errors"]
         target = tmp_path / ".codex" / "INSTRUCTIONS.md"
         assert target.is_file(), "precondition: writer produced the file"
-        (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
         assert not target.exists(), "TRW-generated codex instructions survived uninstall"
 
     def test_generated_opencode_instructions_file_is_removed(self, tmp_path: Path) -> None:
-        """The real generated ``.opencode/INSTRUCTIONS.md`` is actually removed."""
-        from trw_mcp.bootstrap._opencode_instructions import generate_opencode_instructions
+        """The real generated ``.opencode/INSTRUCTIONS.md`` is actually removed.
 
-        generate_opencode_instructions(tmp_path, "generic")
+        Goes through a real ``init_project`` for the same reason as the codex
+        case above.
+        """
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="opencode")
+        assert not result["errors"], result["errors"]
         target = tmp_path / ".opencode" / "INSTRUCTIONS.md"
         assert target.is_file(), "precondition: writer produced the file"
-        (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
@@ -969,35 +1245,19 @@ class TestUninstallClaudeSettings:
     """``.claude/settings.json`` is a merged config TRW writes hook entries into."""
 
     def _settings_with_trw_and_user_hooks(self) -> dict[str, object]:
+        """TRW's own SessionStart groups, plus TRW's deliver-gate group with a user hook appended."""
+        import copy
+        import json
+
+        from trw_mcp.bootstrap._utils import _DATA_DIR
+
+        bundled = json.loads((_DATA_DIR / "settings.json").read_text(encoding="utf-8"))["hooks"]
+        gate = copy.deepcopy(bundled["PreToolUse"][0])
+        gate["hooks"].insert(0, {"type": "command", "command": 'sh "$CLAUDE_PROJECT_DIR/scripts/my-guard.sh"'})
         return {
             "env": {"ENABLE_TOOL_SEARCH": "true"},
             "permissions": {"allow": ["Bash(ls:*)"]},
-            "hooks": {
-                "SessionStart": [
-                    {
-                        "matcher": "startup",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"',
-                                "timeout": 5000,
-                            }
-                        ],
-                    }
-                ],
-                "PreToolUse": [
-                    {
-                        "matcher": "Bash",
-                        "hooks": [
-                            {"type": "command", "command": 'sh "$CLAUDE_PROJECT_DIR/scripts/my-guard.sh"'},
-                            {
-                                "type": "command",
-                                "command": 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-deliver-gate.sh"',
-                            },
-                        ],
-                    }
-                ],
-            },
+            "hooks": {"SessionStart": bundled["SessionStart"], "PreToolUse": [gate]},
         }
 
     def _write_settings(self, tmp_path: Path, data: dict[str, object]) -> Path:
@@ -1043,10 +1303,51 @@ class TestUninstallClaudeSettings:
         # The mixed PreToolUse entry keeps its matcher and its user hook.
         pre_tool = data["hooks"]["PreToolUse"]
         assert len(pre_tool) == 1
-        assert pre_tool[0]["matcher"] == "Bash"
-        assert len(pre_tool[0]["hooks"]) == 1
+        assert pre_tool[0]["matcher"] == "mcp__trw__trw_deliver"
+        assert pre_tool[0]["hooks"] == [{"type": "command", "command": 'sh "$CLAUDE_PROJECT_DIR/scripts/my-guard.sh"'}]
         # SessionStart held only TRW hooks -> the event key is dropped entirely.
         assert "SessionStart" not in data["hooks"]
+
+    def test_user_own_script_in_claude_hooks_dir_survives(self, tmp_path: Path) -> None:
+        """PRD-INFRA-192 FR09 P1-d: a user's own script in ``.claude/hooks/`` is NOT TRW's.
+
+        The prior identity check matched ANY command referencing the
+        ``.claude/hooks/`` directory, so a user's own script placed there was
+        stripped from settings.json on whole-project uninstall even though
+        TRW never wrote that registration.
+        """
+        import json
+
+        hooks_dir = tmp_path / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "my-own.sh").write_text("#!/bin/sh\necho hi\n")
+        path = self._write_settings(
+            tmp_path,
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "*",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/my-own.sh"',
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        data = json.loads(path.read_text())
+        assert data.get("hooks"), "user's own hook registration must survive whole-project uninstall"
+        assert (
+            data["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/my-own.sh"'
+        )
 
     def test_settings_without_trw_hooks_untouched(self, tmp_path: Path) -> None:
         """A settings.json with no TRW hook command is preserved byte-for-byte."""
@@ -1255,6 +1556,20 @@ class TestInstallUninstallParity:
         assert (tmp_path / "src" / "app.py").read_text() == "print('user code')\n"
 
 
+def _cursor_entry(event: str) -> dict[str, object]:
+    """The first hook entry cursor-ide generates for *event*."""
+    from trw_mcp.bootstrap._cursor_ide import _IDE_HOOK_EVENTS
+
+    return dict(_IDE_HOOK_EVENTS[event][0])
+
+
+def _antigravity_entry() -> dict[str, object]:
+    """The one PreToolUse entry AG-03 generates."""
+    from trw_mcp.bootstrap._generated_entries import flat_hook_entries
+
+    return dict(flat_hook_entries("antigravity-hook-map")["PreToolUse"][0])  # type: ignore[arg-type]
+
+
 @pytest.mark.integration
 class TestUninstallHookIdentityByCommand:
     """Two clients identify their TRW hook entries by command path, not tag."""
@@ -1271,19 +1586,24 @@ class TestUninstallHookIdentityByCommand:
         cursor = tmp_path / ".cursor"
         cursor.mkdir()
         hooks = cursor / "hooks.json"
+        # Trailing newline matches the byte-preserving canonical-or-untouched
+        # rule the strip now enforces (PRD-INFRA-192 FR09/FR10 P0): TRW's own
+        # writers append one, so a fixture that omits it reads as
+        # hand-formatted and the strip correctly leaves it alone.
         hooks.write_text(
             json.dumps(
                 {
                     "version": 1,
                     "hooks": {
-                        "beforeShellExecution": [
-                            {"command": ".cursor/hooks/trw-ceremony.sh"},
+                        "sessionStart": [
+                            _cursor_entry("sessionStart"),
                             {"command": "./scripts/my-own-hook.sh"},
                         ]
                     },
                 },
                 indent=2,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -1291,7 +1611,7 @@ class TestUninstallHookIdentityByCommand:
 
         assert hooks.exists(), "user cursor hooks.json wholesale-deleted"
         data = json.loads(hooks.read_text())
-        commands = [h["command"] for h in data["hooks"]["beforeShellExecution"]]
+        commands = [h["command"] for h in data["hooks"]["sessionStart"]]
         assert commands == ["./scripts/my-own-hook.sh"]
 
     def test_cursor_hooks_json_all_trw_is_deleted(self, tmp_path: Path) -> None:
@@ -1302,13 +1622,44 @@ class TestUninstallHookIdentityByCommand:
         cursor.mkdir()
         hooks = cursor / "hooks.json"
         hooks.write_text(
-            json.dumps({"version": 1, "hooks": {"afterFileEdit": [{"command": ".cursor/hooks/trw-post.sh"}]}})
+            json.dumps(
+                {"version": 1, "hooks": {"afterFileEdit": [_cursor_entry("afterFileEdit")]}},
+                indent=2,
+            )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
         assert not hooks.exists()
+
+    def test_cursor_user_own_trw_prefixed_script_survives(self, tmp_path: Path) -> None:
+        """PRD-INFRA-192 FR09 P1-d (round 2): a NON-bundled ``trw-``-named script survives.
+
+        A user script matching the ``trw-`` naming convention TRW itself uses,
+        but never bundled/generated by TRW, must survive. The prior identity
+        check was a directory+prefix substring (``.cursor/hooks/trw-``), which
+        matched this too.
+        """
+        import json
+
+        cursor = tmp_path / ".cursor"
+        cursor.mkdir()
+        hooks = cursor / "hooks.json"
+        hooks.write_text(
+            json.dumps(
+                {"version": 1, "hooks": {"beforeShellExecution": [{"command": ".cursor/hooks/trw-my-own-thing.sh"}]}}
+            )
+        )
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert hooks.exists(), "a non-bundled trw-prefixed user script must not cause wholesale deletion"
+        data = json.loads(hooks.read_text())
+        commands = [h["command"] for h in data["hooks"]["beforeShellExecution"]]
+        assert commands == [".cursor/hooks/trw-my-own-thing.sh"]
 
     def test_antigravity_hooks_json_preserves_user_events(self, tmp_path: Path) -> None:
         """The flat antigravity map keeps user entries and drops the TRW hook."""
@@ -1317,17 +1668,20 @@ class TestUninstallHookIdentityByCommand:
         ag = tmp_path / ".antigravitycli"
         ag.mkdir()
         hooks = ag / "hooks.json"
+        # Trailing newline required by the byte-preserving canonical-or-untouched
+        # rule (PRD-INFRA-192 FR09/FR10 P0) -- see the cursor test above.
         hooks.write_text(
             json.dumps(
                 {
                     "PreToolUse": [
-                        {"matcher": "Edit", "command": "python3 .antigravitycli/hooks/trw_before_edit_telemetry.py"},
+                        _antigravity_entry(),
                         {"matcher": "Bash", "command": "python3 tools/audit.py"},
                     ],
                     "PostToolUse": [{"matcher": "*", "command": "echo done"}],
                 },
                 indent=2,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
@@ -1347,14 +1701,42 @@ class TestUninstallHookIdentityByCommand:
         hooks = ag / "hooks.json"
         hooks.write_text(
             json.dumps(
-                {"PreToolUse": [{"matcher": "Edit", "command": "python3 .antigravitycli/hooks/trw_before_edit.py"}]}
+                {"PreToolUse": [_antigravity_entry()]},
+                indent=2,
             )
+            + "\n"
         )
         (tmp_path / ".trw").mkdir()
 
         _run_uninstall(_ns(tmp_path))
 
         assert not hooks.exists()
+
+    def test_antigravity_user_own_hook_registration_survives(self, tmp_path: Path) -> None:
+        """PRD-INFRA-192 FR09 P1-d (round 2): a user's own antigravity hook is not TRW's.
+
+        The prior identity check matched ANY command referencing the
+        ``.antigravitycli/hooks/`` directory, so a user's own script placed
+        there was stripped on whole-project uninstall even though TRW never
+        registered it.
+        """
+        import json
+
+        ag = tmp_path / ".antigravitycli"
+        ag.mkdir()
+        hooks = ag / "hooks.json"
+        hooks.write_text(
+            json.dumps({"PreToolUse": [{"matcher": "Edit", "command": "python3 .antigravitycli/hooks/my-own.py"}]})
+        )
+        (tmp_path / ".trw").mkdir()
+
+        _run_uninstall(_ns(tmp_path))
+
+        assert hooks.exists(), "user antigravity hooks.json wholesale-deleted"
+        data = json.loads(hooks.read_text())
+        assert data.get("PreToolUse") == [{"matcher": "Edit", "command": "python3 .antigravitycli/hooks/my-own.py"}], (
+            "user's own hook registration must survive whole-project uninstall"
+        )
 
 
 @pytest.mark.unit
@@ -1523,6 +1905,30 @@ class TestUninstallCorpusBlastRadius:
         # .trw itself preserved (still holds the corpus)
         assert trw.exists()
 
+    def test_keep_memory_keeps_the_nested_store_when_there_are_no_learning_files(self, tmp_path: Path) -> None:
+        """The store lives at .trw/memory/memory.db; with no YAML entries it is still the corpus."""
+        memory = tmp_path / ".trw" / "memory"
+        memory.mkdir(parents=True)
+        (memory / "memory.db").write_bytes(b"SQLite format 3\x00" + bytes(range(256)))
+        (memory / "memory.db-wal").write_bytes(b"wal")
+        before = {p.name: p.read_bytes() for p in memory.iterdir()}
+        (tmp_path / ".trw" / "config.yaml").write_text("x: 1\n", encoding="utf-8")
+
+        _run_uninstall(_ns(tmp_path, keep_memory=True))
+
+        assert {p.name: p.read_bytes() for p in memory.iterdir()} == before
+        assert not (tmp_path / ".trw" / "config.yaml").exists()
+
+    def test_the_nested_store_alone_triggers_the_corpus_warning(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        (tmp_path / ".trw" / "memory").mkdir(parents=True)
+        (tmp_path / ".trw" / "memory" / "memory.db").write_bytes(b"SQLite format 3\x00")
+
+        _run_uninstall(_ns(tmp_path, dry_run=True))
+
+        assert "permanently deletes your learning corpus" in capsys.readouterr().out
+
     def test_keep_memory_no_destructive_warning(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """--keep-memory suppresses the destructive warning (corpus is safe)."""
         _seed_corpus(tmp_path / ".trw", db=True, learnings=2)
@@ -1580,3 +1986,251 @@ class TestUninstallExitCode:
         _run_uninstall(_ns(project))  # must not raise
 
         assert not (project / ".trw").exists()
+
+
+@pytest.mark.integration
+class TestUninstallRemoveIde:
+    """CLIENT-REMOVE (installer refinement 5.1.0): ``uninstall --ide <client>``.
+
+    ``uninstall --dry-run`` already computed the per-project manifest at
+    client-owned granularity; this exercises the CLI surface that filters it
+    to ONE client, deletes exactly what that client owns, and drops the
+    client from ``target_platforms`` — leaving every other client and the
+    shared framework-core surfaces untouched.
+    """
+
+    def _seed_project_venv(self, target: Path) -> None:
+        launcher = target / ".venv" / "bin" / "trw-mcp"
+        launcher.parent.mkdir(parents=True)
+        launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        launcher.chmod(0o755)
+
+    def _two_client_project(self, tmp_path: Path) -> Path:
+        from trw_mcp.bootstrap import init_project, update_project
+
+        (tmp_path / ".git").mkdir()
+        self._seed_project_venv(tmp_path)
+        result = init_project(tmp_path, ide="claude-code")
+        assert not result["errors"], result["errors"]
+        update_result = update_project(tmp_path, ide="grok")
+        assert not update_result["errors"], update_result["errors"]
+        return tmp_path
+
+    def test_uninstall_ide_deletes_only_that_clients_surfaces(self, tmp_path: Path) -> None:
+        import tomllib
+
+        project = self._two_client_project(tmp_path)
+
+        _run_uninstall(_ns(project, ide="grok"))
+
+        assert not (project / ".grok" / "agents").exists(), "grok's agent surface must be removed"
+        # .grok/config.toml is a MERGED config (sec-006): only the TRW entry is
+        # stripped, never wholesale-deleted, since it may hold user content.
+        grok_config = project / ".grok" / "config.toml"
+        if grok_config.is_file():
+            assert "trw" not in tomllib.loads(grok_config.read_text(encoding="utf-8")).get("mcp_servers", {})
+        assert (project / ".claude" / "agents").is_dir(), "claude-code's surfaces must survive"
+        assert (project / ".trw").exists(), "framework-core .trw must survive a scoped removal"
+        assert (project / ".mcp.json").exists(), "shared core .mcp.json must survive a scoped removal"
+
+    def test_uninstall_ide_drops_the_platform_even_when_no_client_files_remain(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Review follow-up: a listed client with no surfaces left must still leave target_platforms."""
+        import yaml
+
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".trw").mkdir()
+        config_path = tmp_path / ".trw" / "config.yaml"
+        config_path.write_text("target_platforms:\n- claude-code\n- grok\n", encoding="utf-8")
+        # PRD-INFRA-192 FR09 NFR02: a scoped `--ide` uninstall refuses first
+        # without a readable current-schema manifest, so this needs a minimal
+        # valid one even though it has nothing recorded under it.
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+            "version: 2\ncontent_hashes: {}\nowners: {}\n", encoding="utf-8"
+        )
+
+        _run_uninstall(_ns(tmp_path, ide="grok"))
+        assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["target_platforms"] == ["claude-code"]
+
+        capsys.readouterr()
+        _run_uninstall(_ns(tmp_path, ide="grok"))  # idempotent: nothing left to do, no error
+        assert "No grok files found" in capsys.readouterr().out
+        assert yaml.safe_load(config_path.read_text(encoding="utf-8"))["target_platforms"] == ["claude-code"]
+
+    def _agents_md_project(self, tmp_path: Path, *clients: str) -> Path:
+        """claude-code plus *clients*, all installed; AGENTS.md carries TRW's managed block."""
+        from trw_mcp.bootstrap import update_project
+
+        project = self._two_client_project(tmp_path)  # claude-code + grok
+        for client in clients:
+            assert not update_project(project, ide=client)["errors"]
+        assert "trw:start" in (project / "AGENTS.md").read_text(encoding="utf-8")
+        return project
+
+    def test_uninstall_ide_keeps_a_managed_block_another_recorded_client_declares(self, tmp_path: Path) -> None:
+        """Repro: removing grok stripped AGENTS.md's TRW block although cursor-cli still declares it."""
+        project = self._agents_md_project(tmp_path, "cursor-cli")
+
+        _run_uninstall(_ns(project, ide="grok"))
+
+        assert "trw:start" in (project / "AGENTS.md").read_text(encoding="utf-8"), (
+            "cursor-cli is still recorded and declares AGENTS.md: its block must survive grok's removal"
+        )
+
+    def test_uninstall_ide_removes_the_block_when_no_remaining_client_declares_it(self, tmp_path: Path) -> None:
+        """Inverse: grok is the last recorded client declaring AGENTS.md, so its block goes."""
+        project = self._agents_md_project(tmp_path)
+
+        _run_uninstall(_ns(project, ide="grok"))
+
+        agents_md = project / "AGENTS.md"
+        assert not agents_md.exists() or "trw:start" not in agents_md.read_text(encoding="utf-8")
+
+    def test_uninstall_ide_drops_client_from_target_platforms(self, tmp_path: Path) -> None:
+        import yaml
+
+        project = self._two_client_project(tmp_path)
+        config_path = project / ".trw" / "config.yaml"
+        before = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert "grok" in before.get("target_platforms", [])
+        assert "claude-code" in before.get("target_platforms", [])
+
+        _run_uninstall(_ns(project, ide="grok"))
+
+        after = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        assert "grok" not in after.get("target_platforms", []), "grok must be dropped from target_platforms"
+        assert "claude-code" in after.get("target_platforms", []), "claude-code must be preserved"
+
+    def test_uninstall_ide_dry_run_does_not_delete_or_mutate_config(self, tmp_path: Path) -> None:
+        project = self._two_client_project(tmp_path)
+        config_path = project / ".trw" / "config.yaml"
+        before_text = config_path.read_text(encoding="utf-8")
+
+        _run_uninstall(_ns(project, dry_run=True, ide="grok"))
+
+        assert (project / ".grok").exists(), "dry-run must not delete anything"
+        assert config_path.read_text(encoding="utf-8") == before_text, "dry-run must not mutate config.yaml"
+
+    def test_uninstall_ide_is_idempotent(self, tmp_path: Path) -> None:
+        """A second removal of an already-removed client is a clean no-op."""
+        project = self._two_client_project(tmp_path)
+        _run_uninstall(_ns(project, ide="grok"))
+
+        _run_uninstall(_ns(project, ide="grok"))  # must not raise
+
+        assert not (project / ".grok" / "agents").exists()
+
+
+@pytest.mark.integration
+class TestUninstallClaudeSurfaceOwnership:
+    """PRD-INFRA-192 FR09 (C7): ``.claude/**`` and ``.mcp.json`` are claude-code's
+    own uninstall surfaces (moved out of ``_CORE_SURFACES``), except
+    ``.claude/hooks`` -- shared with codex and copilot, whose own hook commands
+    also run scripts from there. Before the fix, ``uninstall --ide claude-code``
+    left the ``trw`` server registered in ``.mcp.json`` and every TRW file under
+    ``.claude/`` on disk, because the catalog classified them as core (written
+    for, and removed for, every client alike).
+    """
+
+    def test_claude_code_only_uninstall_strips_mcp_entry_and_removes_claude_files(self, tmp_path: Path) -> None:
+        """(a) init --ide claude-code, then uninstall --ide claude-code."""
+        import json
+
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="claude-code")
+        assert not result["errors"], result["errors"]
+
+        mcp_json = tmp_path / ".mcp.json"
+        data = json.loads(mcp_json.read_text(encoding="utf-8"))
+        assert "trw" in data.get("mcpServers", {}), "precondition: init wrote the trw server entry"
+        data["mcpServers"]["other"] = {"command": "other-server"}  # a pre-seeded user server
+        mcp_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+        _run_uninstall(_ns(tmp_path, ide="claude-code"))
+
+        after = json.loads(mcp_json.read_text(encoding="utf-8"))
+        assert "trw" not in after.get("mcpServers", {}), "the trw server entry must be stripped"
+        assert "other" in after.get("mcpServers", {}), "a pre-seeded user server must survive"
+        assert not (tmp_path / ".claude" / "skills").exists(), "claude-code's skills surface must be removed"
+        assert not (tmp_path / ".claude" / "agents").exists(), "claude-code's agents surface must be removed"
+        assert not (tmp_path / ".claude" / "hooks").exists(), "no other client owns .claude/hooks here"
+        assert not (tmp_path / ".claude" / "loop.md").exists()
+        settings = tmp_path / ".claude" / "settings.json"
+        if settings.is_file():
+            assert ".claude/hooks/" not in settings.read_text(encoding="utf-8"), (
+                "no dangling TRW hook command may remain registered"
+            )
+
+    def test_uninstall_codex_keeps_claude_hooks_when_claude_code_still_recorded(self, tmp_path: Path) -> None:
+        """(f) [claude-code, codex]: uninstalling codex keeps .claude/hooks (claude-code owns it),
+        and removes claude-code's exclusive skills/agents surfaces only if codex asked for them
+        (it never installed them) -- this exercises the inverse of (a): the SHARED surface
+        survives a scoped removal of one of its two owners.
+        """
+        from trw_mcp.bootstrap import init_project, update_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="claude-code")
+        assert not result["errors"], result["errors"]
+        update_result = update_project(tmp_path, ide="codex")
+        assert not update_result["errors"], update_result["errors"]
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "precondition: hooks installed"
+
+        _run_uninstall(_ns(tmp_path, ide="codex"))
+
+        assert (tmp_path / ".claude" / "hooks").is_dir(), "claude-code still owns .claude/hooks"
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "the hook scripts themselves must survive"
+        assert (tmp_path / ".claude" / "skills").is_dir(), "claude-code's own surfaces are untouched"
+        assert (tmp_path / ".claude" / "agents").is_dir()
+        assert not (tmp_path / ".codex" / "agents").exists(), "codex's own exclusive surfaces are removed"
+
+    def test_uninstall_codex_removes_claude_hooks_when_claude_code_not_recorded(self, tmp_path: Path) -> None:
+        """(coordinator addition) codex-only project: uninstalling codex removes
+        .claude/hooks' TRW scripts, since no owner remains."""
+        from trw_mcp.bootstrap import init_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="codex")
+        assert not result["errors"], result["errors"]
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "precondition: codex-only still gets hooks"
+
+        _run_uninstall(_ns(tmp_path, ide="codex"))
+
+        assert not (tmp_path / ".claude" / "hooks").exists(), "no remaining recorded client owns .claude/hooks"
+
+    def test_uninstall_codex_keeps_claude_hooks_when_copilot_still_recorded(self, tmp_path: Path) -> None:
+        """(coordinator addition) [codex, copilot]: uninstalling codex keeps
+        .claude/hooks, because copilot still owns it."""
+        from trw_mcp.bootstrap import init_project, update_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="codex")
+        assert not result["errors"], result["errors"]
+        update_result = update_project(tmp_path, ide="copilot")
+        assert not update_result["errors"], update_result["errors"]
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "precondition: hooks installed"
+
+        _run_uninstall(_ns(tmp_path, ide="codex"))
+
+        assert (tmp_path / ".claude" / "hooks").is_dir(), "copilot still owns .claude/hooks"
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "the hook scripts themselves must survive"
+
+    def test_uninstall_copilot_keeps_claude_hooks_when_codex_still_recorded(self, tmp_path: Path) -> None:
+        """(coordinator addition) [codex, copilot]: uninstalling copilot keeps
+        .claude/hooks, because codex still owns it."""
+        from trw_mcp.bootstrap import init_project, update_project
+
+        (tmp_path / ".git").mkdir()
+        result = init_project(tmp_path, ide="codex")
+        assert not result["errors"], result["errors"]
+        update_result = update_project(tmp_path, ide="copilot")
+        assert not update_result["errors"], update_result["errors"]
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "precondition: hooks installed"
+
+        _run_uninstall(_ns(tmp_path, ide="copilot"))
+
+        assert (tmp_path / ".claude" / "hooks").is_dir(), "codex still owns .claude/hooks"
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "the hook scripts themselves must survive"

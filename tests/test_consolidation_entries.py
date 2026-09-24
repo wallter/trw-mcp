@@ -77,19 +77,6 @@ class TestCreateConsolidatedEntry:
         entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
         assert entry["recurrence"] == 3  # len(cluster), not sum(2+3+1)
 
-    def test_q_value_is_max(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """q_value = max of cluster q_values."""
-        cluster = [
-            {"id": "e1", "q_value": 0.2},
-            {"id": "e2", "q_value": 0.8},
-            {"id": "e3", "q_value": 0.5},
-        ]
-        entries_dir = tmp_path / "entries"
-        entries_dir.mkdir()
-
-        entry = _create_consolidated_entry(cluster, "s", "d", entries_dir, writer)
-        assert entry["q_value"] == pytest.approx(0.8)
-
     def test_source_type_is_consolidated(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """source_type = 'consolidated'."""
         cluster = make_cluster(3)
@@ -129,7 +116,7 @@ class TestCreateConsolidatedEntry:
     def test_missing_fields_use_defaults(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """Cluster entries missing fields fall back to defaults."""
         cluster = [
-            {"id": "e1"},  # no impact, tags, evidence, recurrence, q_value
+            {"id": "e1"},  # no impact, tags, evidence, recurrence
             {"id": "e2"},
             {"id": "e3"},
         ]
@@ -219,7 +206,6 @@ class TestCreateConsolidatedEntryEdgeCases:
                 "tags": ["solo"],
                 "evidence": ["proof"],
                 "recurrence": 5,
-                "q_value": 0.7,
             }
         ]
         entries_dir = tmp_path / "entries"
@@ -230,7 +216,7 @@ class TestCreateConsolidatedEntryEdgeCases:
         assert entry["tags"] == ["solo"]
         assert list(entry["evidence"]) == ["proof"]
         assert entry["recurrence"] == 1  # FIX-071-FR06: len(cluster), not original recurrence
-        assert entry["q_value"] == pytest.approx(0.7)
+        assert "q_value" not in entry
 
     def test_date_fields_set_to_today(self, tmp_path: Path, writer: FileStateWriter) -> None:
         """created, updated, last_accessed_at are set to today's date."""

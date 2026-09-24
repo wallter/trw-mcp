@@ -258,3 +258,40 @@ def test_detection_needs_the_trw_server_not_just_a_grok_directory(tmp_path: Path
 
     config.write_text('[mcp_servers.trw]\ncommand = "oops\n', encoding="utf-8")
     assert "grok" not in detect_ide(tmp_path), "unparseable TOML is not evidence"
+
+
+# --------------------------------------------------------------------------- #
+# G1 (installer refinement 5.1.0): update-project --ide <new-client>
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.unit
+def test_update_project_ide_grok_provisions_full_surface_in_one_run(tmp_path: Path) -> None:
+    """G1: a brand-new ``--ide grok`` run must materialize the full client
+    surface on the FIRST run, not require a second identical run.
+
+    Root cause: ``_update_agents`` read ``resolve_client_write_targets(target_dir)``
+    without ``ide_override``, so it only saw clients already RECORDED in
+    ``.trw/config.yaml`` — target_platforms registration for the new client
+    runs LATER in the same invocation (``_run_post_update_phases``). A first
+    run wrote only the grok config file; agents needed a second run to appear
+    (reproduced live: ``Changes: 0 updated, 2 created, 7 preserved`` on run 1,
+    the full agent set only on run 2).
+    """
+    from trw_mcp.bootstrap import update_project
+
+    (tmp_path / ".git").mkdir()
+    _seed_project_venv(tmp_path)
+    result = init_project(tmp_path, ide="claude-code")
+    assert not result["errors"], result["errors"]
+
+    update_result = update_project(tmp_path, ide="grok")
+    assert not update_result["errors"], update_result["errors"]
+
+    grok_agents = tmp_path / ".grok" / "agents"
+    assert grok_agents.is_dir(), "grok's agent surface must exist after ONE update-project --ide grok run"
+    agent_files = sorted(p.name for p in grok_agents.glob("trw-*.md"))
+    assert agent_files, "grok's agents must be materialized on the first --ide grok run, not the second"
+
+    config_yaml = (tmp_path / ".trw" / "config.yaml").read_text(encoding="utf-8")
+    assert "grok" in config_yaml

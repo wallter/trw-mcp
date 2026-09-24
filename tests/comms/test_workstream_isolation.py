@@ -33,6 +33,7 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
+from tests._formation_test_support import open_slot
 from trw_mcp import formation
 from trw_mcp.comms import _inbox_page, derive_group_id
 from trw_mcp.comms._schema import verify
@@ -157,7 +158,7 @@ def _make_scope(root: Path, formation_id: str, monkeypatch: pytest.MonkeyPatch) 
         runs[MEMBERS[0]],
         {
             "formation_id": formation_id,
-            "members": [{"member_id": m, "client": "codex", "open_join": True} for m in MEMBERS],
+            "members": [open_slot(m) for m in MEMBERS],
         },
         trw_dir=trw_dir,
         prds_dir=root / "prds",

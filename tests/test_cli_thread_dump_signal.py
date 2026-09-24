@@ -1,4 +1,9 @@
-"""``trw-mcp`` registers a SIGUSR1 all-thread stack dump at boot (no ptrace needed)."""
+"""``trw-mcp serve`` answers SIGUSR1 with an all-thread stack dump (no ptrace needed).
+
+The handler is registered on the serve path only and opens its file only when
+the signal arrives, so no other command -- ``--help``, ``local recall``, every
+hook that shells out -- leaves a ``thread-dump-<pid>.txt`` or a stderr line.
+"""
 
 from __future__ import annotations
 
@@ -6,112 +11,91 @@ import os
 import signal
 import subprocess
 import sys
-import textwrap
+import time
+from pathlib import Path
 
 import pytest
 
-from trw_mcp.server._cli import _register_thread_dump_signal
+_NO_SIGUSR1 = pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="platform has no SIGUSR1")
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="platform has no SIGUSR1")
-def test_register_thread_dump_signal_reports_true_on_posix() -> None:
-    assert _register_thread_dump_signal() is True
+def _project(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    root = tmp_path / "proj"
+    (root / ".trw").mkdir(parents=True)
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "TRW_USER_DIR": str(tmp_path / "userhome")}
+    return root, env
 
 
-@pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="platform has no SIGUSR1")
-def test_sigusr1_dumps_every_thread_without_killing_the_process(tmp_path: Path) -> None:
-    """No resolvable .trw in cwd -> the dump falls back to stderr (run from an empty dir)."""
-    """The default SIGUSR1 action terminates the process; after registration it dumps and keeps serving."""
-    script = textwrap.dedent(
-        """
-        import os, signal, sys, threading, time
-        from trw_mcp.server._cli import _register_thread_dump_signal
-        assert _register_thread_dump_signal()
-        stop = threading.Event()
-        threading.Thread(target=stop.wait, name="probe-worker", daemon=True).start()
-        os.kill(os.getpid(), signal.SIGUSR1)
-        time.sleep(0.5)
-        print("still-alive", flush=True)
-        """
+def _dumps(root: Path) -> list[Path]:
+    return sorted((root / ".trw" / "logs").glob("thread-dump-*.txt"))
+
+
+@_NO_SIGUSR1
+@pytest.mark.parametrize("argv", [["--help"], ["local", "recall", "--query", "anything"]])
+def test_a_command_other_than_serve_leaves_no_thread_dump_file_or_line(tmp_path: Path, argv: list[str]) -> None:
+    root, env = _project(tmp_path)
+
+    done = subprocess.run(
+        [sys.executable, "-m", "trw_mcp.server", *argv], cwd=root, env=env, capture_output=True, text=True, timeout=120
     )
-    proc = subprocess.run(
-        [sys.executable, "-c", script], cwd=tmp_path, capture_output=True, text=True, timeout=60, env={**os.environ}
+
+    assert _dumps(root) == [], done.stderr
+    assert "SIGUSR1" not in done.stderr and "thread dump" not in done.stderr
+
+
+@_NO_SIGUSR1
+def test_serve_writes_a_dump_only_when_signalled_and_keeps_serving(tmp_path: Path) -> None:
+    from trw_mcp.state._hook_flags import hook_flags_path
+
+    root, env = _project(tmp_path)
+    server = subprocess.Popen(
+        [sys.executable, "-m", "trw_mcp.server", "serve"],
+        cwd=root,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
-    assert proc.returncode == 0, proc.stderr
-    assert "still-alive" in proc.stdout
-    assert proc.stderr.count("hread 0x") >= 2, proc.stderr  # "Current thread" (main) + "Thread" (probe-worker)
-    assert "stop.wait" in proc.stderr or "wait" in proc.stderr
+    try:
+        # The handler is registered just before the hook flags are published.
+        deadline = time.monotonic() + 60
+        while not hook_flags_path(root / ".trw").is_file():
+            assert server.poll() is None and time.monotonic() < deadline, "serve did not boot"
+            time.sleep(0.1)
+        assert _dumps(root) == [], "a server that is never signalled leaves no file"
+
+        server.send_signal(signal.SIGUSR1)
+        while not (_dumps(root) and _dumps(root)[0].stat().st_size):
+            assert server.poll() is None, "SIGUSR1 killed the server"
+            assert time.monotonic() < deadline, "no dump was written"
+            time.sleep(0.1)
+
+        (dump,) = _dumps(root)
+        assert dump.name == f"thread-dump-{server.pid}.txt"
+        assert "hread 0x" in dump.read_text(encoding="utf-8")
+        assert server.poll() is None, "the server keeps serving after the dump"
+    finally:
+        server.kill()
+        _, err = server.communicate(timeout=30)
+    assert "SIGUSR1" not in err
 
 
-@pytest.mark.unit
-def test_sigusr1_dump_lands_in_the_project_log_file(tmp_path: Path) -> None:
-    """With a resolvable dump dir the stacks go to a file an operator can read later."""
-    dump_dir = tmp_path / ".trw" / "logs"
+@_NO_SIGUSR1
+def test_the_dump_falls_back_to_stderr_without_a_project(tmp_path: Path) -> None:
     script = (
-        "import os, signal, sys, threading, time\n"
-        "from pathlib import Path\n"
+        "import os, signal, threading, time\n"
         "from trw_mcp.server._cli import _register_thread_dump_signal\n"
-        f"assert _register_thread_dump_signal(Path({str(dump_dir)!r}))\n"
+        "assert _register_thread_dump_signal()\n"
         "stop = threading.Event()\n"
         "threading.Thread(target=stop.wait, name='probe-worker', daemon=True).start()\n"
         "os.kill(os.getpid(), signal.SIGUSR1)\n"
         "time.sleep(0.5)\n"
-        "stop.set()\n"
         "print('alive')\n"
     )
-    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
-    assert proc.returncode == 0, proc.stderr
-    assert "alive" in proc.stdout
-    files = list(dump_dir.glob("thread-dump-*.txt"))
-    assert len(files) == 1, proc.stderr
-    body = files[0].read_text(encoding="utf-8")
-    assert body.count("hread 0x") >= 2, body
-    assert "thread dumps ->" in proc.stderr @ pytest.mark.unit
 
+    done = subprocess.run([sys.executable, "-c", script], cwd=tmp_path, capture_output=True, text=True, timeout=60)
 
-def test_sigusr1_dumps_every_thread_without_killing_the_process(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
-) -> None:
-    """With no resolvable ``.trw`` in cwd the dump falls back to stderr and the process survives."""
-    import os
-    import signal
-    import threading
-    import time
-
-    monkeypatch.chdir(tmp_path)  # a fresh, empty cwd: no .trw here
-    assert _register_thread_dump_signal() is True
-    stop = threading.Event()
-    threading.Thread(target=stop.wait, name="probe-worker", daemon=True).start()
-    os.kill(os.getpid(), signal.SIGUSR1)
-    time.sleep(0.5)
-    stop.set()
-    err = capfd.readouterr().err
-    assert err.count("hread 0x") >= 2, err  # "Current thread" (main) + "Thread" (probe-worker)
-    assert "wait" in err, err
+    assert done.returncode == 0 and "alive" in done.stdout, done.stderr
+    assert done.stderr.count("hread 0x") >= 2, done.stderr  # the main thread and probe-worker
     assert not (tmp_path / ".trw").exists()
-
-
-@pytest.mark.unit
-def test_sigusr1_dump_lands_in_the_project_log_file(tmp_path: Path) -> None:
-    """With a resolvable dump dir the stacks go to a file an operator can read later."""
-    dump_dir = tmp_path / ".trw" / "logs"
-    script = (
-        "import os, signal, sys, threading, time\n"
-        "from pathlib import Path\n"
-        "from trw_mcp.server._cli import _register_thread_dump_signal\n"
-        f"assert _register_thread_dump_signal(Path({str(dump_dir)!r}))\n"
-        "stop = threading.Event()\n"
-        "threading.Thread(target=stop.wait, name='probe-worker', daemon=True).start()\n"
-        "os.kill(os.getpid(), signal.SIGUSR1)\n"
-        "time.sleep(0.5)\n"
-        "stop.set()\n"
-        "print('alive')\n"
-    )
-    proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
-    assert proc.returncode == 0, proc.stderr
-    assert "alive" in proc.stdout
-    files = list(dump_dir.glob("thread-dump-*.txt"))
-    assert len(files) == 1, proc.stderr
-    body = files[0].read_text(encoding="utf-8")
-    assert body.count("hread 0x") >= 2, body
-    assert "thread dumps ->" in proc.stderr

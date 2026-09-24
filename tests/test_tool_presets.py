@@ -4,8 +4,10 @@ The PRD-CORE-125 ``TOOL_PRESETS`` vocabulary was removed when the CORE-218
 kernel/pack resolver became the sole tool-exposure authority (enforced by
 ``SurfaceAuthorityMiddleware``). These tests exercise the manifest SSOT: the
 first-party security bridge covers the eligible public surface, every registered
-tool resolves to exactly one manifest entry, the ten-tool kernel is stable and
-digest-pinned, and standard/all resolution is bounded + explainable.
+tool resolves to exactly one manifest entry, the nine-tool kernel (PRD-CORE-291
+dropped trw_learn_update, merged into trw_learn's update mode; kernel shrank
+from ten members to nine) is stable and digest-pinned, and standard/all
+resolution is bounded + explainable.
 """
 
 from __future__ import annotations
@@ -13,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 
 def _registered_production_tools() -> set[str]:
@@ -64,15 +67,16 @@ def test_first_party_bridge_parity_over_manifest() -> None:
 # PRD-CORE-218: authoritative surface manifest, minimal kernel, resolution
 # =====================================================================
 
-# Exact FR02 kernel membership — the ten tool IDs. Hardcoded here (not imported
-# from the manifest) so a silent membership drift is caught by THIS test.
+# Exact FR02 kernel membership — the nine tool IDs (PRD-CORE-291 merged
+# trw_learn_update into trw_learn's update mode, shrinking the kernel from
+# ten to nine). Hardcoded here (not imported from the manifest) so a silent
+# membership drift is caught by THIS test.
 _EXPECTED_KERNEL: frozenset[str] = frozenset(
     {
         "trw_session_start",
         "trw_status",
         "trw_recall",
         "trw_learn",
-        "trw_learn_update",
         "trw_checkpoint",
         "trw_deliver",
         "trw_skill_discovery",
@@ -136,7 +140,7 @@ def test_prd_core_218_fr01() -> None:
 
 @pytest.mark.unit
 def test_prd_core_218_fr02() -> None:
-    """FR02: exactly ten kernel tools appear once in every profile resolution,
+    """FR02: exactly nine kernel tools appear once in every profile resolution,
     no other tool is kernel, pack tools need explicit selection, and a
     kernel-membership mutation without a version bump fails the pinned digest."""
     import hashlib
@@ -150,9 +154,9 @@ def test_prd_core_218_fr02() -> None:
         resolve_tool_surface,
     )
 
-    # Kernel is EXACTLY the ten tool IDs — as a pack and in the manifest.
+    # Kernel is EXACTLY the nine tool IDs — as a pack and in the manifest.
     assert set(PACK_TOOLS["kernel"]) == _EXPECTED_KERNEL
-    assert len(PACK_TOOLS["kernel"]) == 10
+    assert len(PACK_TOOLS["kernel"]) == 9
     kernel_pack_members = {n for n, e in MANIFEST_BY_NAME.items() if e.pack == "kernel"}
     assert kernel_pack_members == _EXPECTED_KERNEL  # no other tool is kernel
 
@@ -182,18 +186,22 @@ def test_prd_core_218_fr02() -> None:
     assert mutated_digest != KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
 
 
-@pytest.mark.perf
 @pytest.mark.unit
-@requires_local_timing
 def test_prd_core_218_nfr01() -> None:
-    """NFR01: manifest + pack resolution is local, deterministic, and completes
-    within 50 ms p95 over a 30-run fixture."""
-    import time
-
+    """NFR01: manifest + pack resolution is local and deterministic."""
     from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
     # Determinism: identical inputs yield identical resolutions.
     assert resolve_tool_surface("coding", "standard") == resolve_tool_surface("coding", "standard")
+
+
+@pytest.mark.unit
+@requires_local_timing
+def test_prd_core_218_nfr01_budget() -> None:
+    """NFR01: manifest + pack resolution completes within 50 ms p95 over a 30-run fixture."""
+    import time
+
+    from trw_mcp.server._surface_manifest_registry import resolve_tool_surface
 
     samples: list[float] = []
     for _ in range(30):
@@ -204,7 +212,7 @@ def test_prd_core_218_nfr01() -> None:
         samples.append((time.perf_counter() - start) * 1000)
     samples.sort()
     p95 = samples[int(0.95 * (len(samples) - 1))]
-    assert p95 <= 50.0, f"resolution p95={p95:.3f}ms"
+    assert_budget("tool_surface_resolution_p95", p95, 50.0, "ms")
 
 
 @pytest.mark.unit
@@ -222,8 +230,10 @@ def test_prd_core_218_fr04(config: object) -> None:
     # Wiring: the config field is a live production input to resolution.
     wired = config.resolve_tool_surface_for_task("coding")  # type: ignore[attr-defined]
     assert wired.mode == "standard"
-    # 16 plus the three peer_comms tools: PRD-CORE-274 NFR07 makes comms default-on.
-    assert len(wired.tools) == 19
+    # 15 plus the three peer_comms tools: PRD-CORE-274 NFR07 makes comms default-on.
+    # PRD-CORE-291 shrank the kernel from ten to nine (trw_learn_update merged
+    # into trw_learn's update mode), so every count below dropped by one.
+    assert len(wired.tools) == 18
     assert wired.packs[-1] == "peer_comms"
 
     # PRD-CORE-246-FR05: an unmapped or missing task falls back to the
@@ -231,22 +241,23 @@ def test_prd_core_218_fr04(config: object) -> None:
     # declared authority must state what the runtime actually exposes.
     unknown = resolve_tool_surface("totally-unknown", "standard")
     assert unknown.packs == ("kernel", "verification")
-    assert len(unknown.tools) == 12
+    assert len(unknown.tools) == 11
     assert "unknown fallback" in unknown.decision
-    assert len(resolve_tool_surface(None, "standard").tools) == 12
-    assert len(resolve_tool_surface("unknown", "standard").tools) == 12
+    assert len(resolve_tool_surface(None, "standard").tools) == 11
+    assert len(resolve_tool_surface("unknown", "standard").tools) == 11
 
     # Standard -> exact task mapping over the REAL TaskType vocabulary (F2).
-    assert len(resolve_tool_surface("coding", "standard").tools) == 16
-    assert len(resolve_tool_surface("research", "standard").tools) == 15
-    assert len(resolve_tool_surface("docs", "standard").tools) == 15
-    assert len(resolve_tool_surface("eval", "standard").tools) == 12
-    assert len(resolve_tool_surface("rca", "standard").tools) == 16
-    assert len(resolve_tool_surface("planning", "standard").tools) == 13
+    assert len(resolve_tool_surface("coding", "standard").tools) == 15
+    assert len(resolve_tool_surface("research", "standard").tools) == 14
+    assert len(resolve_tool_surface("docs", "standard").tools) == 14
+    assert len(resolve_tool_surface("eval", "standard").tools) == 11
+    assert len(resolve_tool_surface("rca", "standard").tools) == 15
+    assert len(resolve_tool_surface("planning", "standard").tools) == 12
     # F2 tombstone: 'audit' is NOT a TaskType. Since PRD-CORE-246-FR05 it
-    # resolves to the verification-bearing ``unknown`` fallback (12 with kernel v2) rather than
-    # silently to kernel only (9), which was the shape the tombstone recorded.
-    assert len(resolve_tool_surface("audit", "standard").tools) == 12
+    # resolves to the verification-bearing ``unknown`` fallback (11 with the
+    # nine-tool kernel) rather than silently to kernel only (9), which was the
+    # shape the tombstone recorded.
+    assert len(resolve_tool_surface("audit", "standard").tools) == 11
 
     # Explicit all -> full eligible set WITH a visible recorded decision.
     full = set(eligible_tool_names())

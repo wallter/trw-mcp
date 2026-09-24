@@ -91,7 +91,7 @@ def test_user_modified_command_file_preserved(tmp_path: Path) -> None:
     )
 
     # First install
-    results1 = install_custom_commands(tmp_path, existing_hashes=None)
+    results1 = install_custom_commands(tmp_path, manifest_hashes=None)
     original_sha = str(results1["trw-before-edit.md"]["sha256"])
 
     # Simulate user edit
@@ -100,26 +100,41 @@ def test_user_modified_command_file_preserved(tmp_path: Path) -> None:
     target.write_text(user_content, encoding="utf-8")
 
     # Re-install with original hash
-    results2 = install_custom_commands(tmp_path, existing_hashes={"trw-before-edit.md": original_sha})
+    results2 = install_custom_commands(tmp_path, manifest_hashes={f"{COMMANDS_DIR}/trw-before-edit.md": original_sha})
     assert results2["trw-before-edit.md"]["status"] == "preserved"
     assert target.read_text(encoding="utf-8") == user_content
 
 
 def test_unmodified_command_file_overwritten(tmp_path: Path) -> None:
     """FR14: Unmodified command file (hash unchanged) is not flagged as preserved."""
-    from trw_mcp.channels.opencode._custom_commands import install_custom_commands
+    from trw_mcp.channels.opencode._custom_commands import COMMANDS_DIR, install_custom_commands
 
-    # First install
-    results1 = install_custom_commands(tmp_path, existing_hashes=None)
+    results1 = install_custom_commands(tmp_path, manifest_hashes=None)
 
     # Re-install with matching hashes (file was NOT user-modified)
-    hashes = {k: str(v["sha256"]) for k, v in results1.items()}
-    results2 = install_custom_commands(tmp_path, existing_hashes=hashes)
+    hashes = {f"{COMMANDS_DIR}/{k}": str(v["sha256"]) for k, v in results1.items()}
+    results2 = install_custom_commands(tmp_path, manifest_hashes=hashes)
 
-    # When hash matches, file is NOT user-modified — should be "written" (idempotent)
-    for _fname, res in results2.items():
-        # status can be written (idempotent) since hash match means TRW-installed version
-        assert res["status"] in ("written", "preserved")
+    assert {res["status"] for res in results2.values()} == {"written"}
+
+
+def test_stale_command_refreshed_only_when_recorded_as_trw_write(tmp_path: Path) -> None:
+    """PRD-INFRA-192 FR12: content TRW recorded is refreshed; unrecorded foreign content is preserved."""
+    import hashlib
+
+    from trw_mcp.channels.opencode._custom_commands import COMMANDS_DIR, install_custom_commands
+
+    key = f"{COMMANDS_DIR}/trw-before-edit.md"
+    target = tmp_path / key
+    target.parent.mkdir(parents=True)
+    target.write_text("older TRW body\n", encoding="utf-8")
+
+    assert install_custom_commands(tmp_path, manifest_hashes=None)["trw-before-edit.md"]["status"] == "preserved"
+    assert target.read_text(encoding="utf-8") == "older TRW body\n"
+
+    recorded = {key: hashlib.sha256(b"older TRW body\n").hexdigest()}
+    assert install_custom_commands(tmp_path, manifest_hashes=recorded)["trw-before-edit.md"]["status"] == "written"
+    assert target.read_text(encoding="utf-8") != "older TRW body\n"
 
 
 # ---------------------------------------------------------------------------

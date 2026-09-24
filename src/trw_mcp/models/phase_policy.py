@@ -53,7 +53,6 @@ _DEFAULT_SAFE_SET: frozenset[str] = frozenset(
         "trw_status",
         "trw_recall",
         "trw_learn",
-        "trw_learn_update",
         "trw_heartbeat",
         "trw_pre_compact_checkpoint",
         "trw_skill_discovery",
@@ -61,8 +60,8 @@ _DEFAULT_SAFE_SET: frozenset[str] = frozenset(
         "trw_mcp_security_status",
         "trw_pipeline_health",
         # Advisory decision support (trw-jev): phase-agnostic; its exposure is
-        # still gated by decision_enabled on the surface layer.
-        "trw_decision",
+        # still gated by assess_enabled on the surface layer.
+        "trw_assess",
         # Read-only profile / probe-budget introspection (phase-agnostic)
         "trw_profile_explain",
         "trw_probe_budget_status",

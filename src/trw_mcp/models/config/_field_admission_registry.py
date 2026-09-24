@@ -13,13 +13,12 @@ module nor its parent can create an import cycle with ``TRWConfig``.
 
 from __future__ import annotations
 
+from trw_mcp.models.config._field_admission_assess import ASSESS_ADMISSIONS
 from trw_mcp.models.config._field_admission_auto_recall import AUTO_RECALL_ADMISSIONS
 from trw_mcp.models.config._field_admission_comms import COMMS_ADMISSIONS
-from trw_mcp.models.config._field_admission_decision import DECISION_ADMISSIONS
 from trw_mcp.models.config._field_admission_degenerate_result import DEGENERATE_RESULT_ADMISSIONS
 from trw_mcp.models.config._field_admission_degraded_mode import DEGRADED_MODE_ADMISSIONS
 from trw_mcp.models.config._field_admission_dispatch_access import DISPATCH_ACCESS_ADMISSIONS
-from trw_mcp.models.config._field_admission_doctor_thread_hotspots import DOCTOR_THREAD_HOTSPOT_ADMISSIONS
 from trw_mcp.models.config._field_admission_drain_budget import DRAIN_BUDGET_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation import FORMATION_ADMISSIONS
 from trw_mcp.models.config._field_admission_formation_readiness import FORMATION_READINESS_ADMISSIONS
@@ -36,7 +35,6 @@ from trw_mcp.models.config._field_admission_review_verdict import REVIEW_VERDICT
 from trw_mcp.models.config._field_admission_surface_role import SURFACE_ROLE_ADMISSIONS
 from trw_mcp.models.config._field_admission_tool_access_grant import TOOL_ACCESS_GRANT_ADMISSIONS
 from trw_mcp.models.config._field_admission_wal_checkpoint import WAL_CHECKPOINT_ADMISSIONS
-from trw_mcp.models.config._field_admission_writer_pressure import WRITER_PRESSURE_ADMISSIONS
 
 #: Explicit full-metadata admissions for public fields added by PRD-CORE-218
 #: itself (or later). Every current field outside the frozen legacy baseline
@@ -114,7 +112,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     "maintain_verify_batch_limit": ConfigAdmission(
         field_name="maintain_verify_batch_limit",
         owner="PRD-CORE-231-FR02",
-        consumer="trw_mcp.tools._maintain_verify.run_maintain_verify",
+        consumer="trw_mcp.tools._maintain_verify.run_maintain_verify_for_project",
         default_rationale=(
             "Defaults to 1000, the entry count PRD-CORE-231-NFR01 budgets at <30s for the bulk "
             "assertion sweep; the cap keeps a single scheduled run bounded on a large store."
@@ -228,62 +226,6 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer="trw-mcp/tests/test_learn_journal.py::TestJournalModule::test_drain_respects_limit_and_defers_remainder",
         budget_decision="admitted",
     ),
-    "learn_journal_drain_min_batch": ConfigAdmission(
-        field_name="learn_journal_drain_min_batch",
-        owner="PRD-INFRA-171-FR06 (journal-drain liveness)",
-        consumer="trw_mcp.state.learn_journal.pressure_drain_budget (via _ceremony_maintenance_steps._run_learn_journal_drain)",
-        default_rationale=(
-            "Defaults to 2 records replayed per sweep EVEN under writer pressure. Measured across 122 "
-            "trw-mcp log files: 42 records journaled, 0 sweeps ever, because a single peer MCP writer "
-            "deferred the drain permanently. A small floor makes progress inevitable while keeping the "
-            "pressured sweep far below learn_journal_drain_limit (50), so the deferral's intent — do not "
-            "fight a live writer for the backend — survives. 0 restores the pre-FR06 defer-always path."
-        ),
-        interaction_analysis=(
-            "Clamped to learn_journal_drain_limit - 1, so it can never become a full sweep; raised only by "
-            "learn_journal_pending_max_age_hours when an aged record would otherwise be stranded. Gated "
-            "behind learn_journal_enabled and consulted ONLY on the pressured branch — with no peer writers "
-            "the full-limit sweep runs exactly as before."
-        ),
-        deprecation_plan=(
-            "Retain as the liveness floor; removal reinstates the measured 42-in/0-drained defect unless the "
-            "pressure gate itself is re-based on a real-contention signal (PRD-INFRA-171 OQ-8)."
-        ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-INFRA-171.md",
-        test_pointer=(
-            "trw-mcp/tests/test_learn_journal_drain_liveness.py::TestMinimumProgressBatch::"
-            "test_pending_drains_under_sustained_writer_pressure"
-        ),
-        budget_decision="admitted",
-    ),
-    "learn_journal_pending_max_age_hours": ConfigAdmission(
-        field_name="learn_journal_pending_max_age_hours",
-        owner="PRD-INFRA-171-FR06 (journal-drain liveness)",
-        consumer="trw_mcp.state.learn_journal.aged_pending_count / pressure_drain_budget (via _ceremony_maintenance_steps._run_learn_journal_drain)",
-        default_rationale=(
-            "Defaults to 6 hours: a record at or past that age drains regardless of writer pressure, so a "
-            "journaled learning always reaches the store within a bounded time instead of waiting for a "
-            "quiet session_start that a busy fleet never produces. Typed in hours because the right bound "
-            "is an operator durability decision (how long a learning may stay un-recallable), not a constant."
-        ),
-        interaction_analysis=(
-            "Measured from the pending file's mtime and INCLUSIVE at the bound. Raises the pressured sweep "
-            "budget above learn_journal_drain_min_batch only when aged records exist, and the result is still "
-            "capped by learn_journal_drain_limit so a large backlog cannot make one sweep unbounded. Poison "
-            "records (unknown version / corrupt) are excluded, so the hatch cannot spin on an unreplayable "
-            "record. 0 disables the hatch, leaving only the minimum-progress floor."
-        ),
-        deprecation_plan=(
-            "Retain as the eventual-drain guarantee; removal would make drain liveness depend on the fleet "
-            "happening to go quiet."
-        ),
-        docs_pointer="docs/requirements-aare-f/prds/PRD-INFRA-171.md",
-        test_pointer=(
-            "trw-mcp/tests/test_learn_journal_drain_liveness.py::TestAgeEscapeHatch::"
-            "test_aged_record_drains_under_pressure_with_zero_min_batch"
-        ),
-        budget_decision="admitted",
-    ),
     "learn_journal_max_replay_attempts": ConfigAdmission(
         field_name="learn_journal_max_replay_attempts",
         owner="learn-journal drain accounting fix (adversarial audit I-2, 2026-07-25)",
@@ -303,7 +245,7 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
             "regardless of this value, so setting it to 0 cannot restore the infinite-retry defect for "
             "content the gates will always refuse. The attempt count is persisted onto the pending record "
             "with its ORIGINAL mtime preserved, so the budget survives restarts without disturbing "
-            "learn_journal_pending_max_age_hours (the age hatch) or the FIFO replay order. Gated behind "
+            "the FIFO replay order. Gated behind "
             "learn_journal_enabled like the rest of the journal."
         ),
         deprecation_plan=(
@@ -365,8 +307,6 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     **WAL_CHECKPOINT_ADMISSIONS,
     # PRD-CORE-255: review-verdict TTL (own table, see module docstring).
     **REVIEW_VERDICT_ADMISSIONS,
-    # PRD-CORE-257: bounded writer-pressure deferral (own table).
-    **WRITER_PRESSURE_ADMISSIONS,
     # PRD-CORE-265: formation manifest + enforcement tunables (own table).
     **FORMATION_ADMISSIONS,
     **COMMS_ADMISSIONS,
@@ -377,10 +317,9 @@ FIELD_ADMISSIONS: dict[str, ConfigAdmission] = {
     # PRD-SEC-015: reviewer-role selector (own table, see module docstring).
     **SURFACE_ROLE_ADMISSIONS,
     # PRD-FIX-131 follow-up: doctor thread-hotspot WARN threshold (own table).
-    **DOCTOR_THREAD_HOTSPOT_ADMISSIONS,
     **TOOL_ACCESS_GRANT_ADMISSIONS,
     # PRD-CORE-281: dispatch pack exposure + child TRW access (own table).
     **DISPATCH_ACCESS_ADMISSIONS,
-    # trw-jev slice 1: decision_support pack exposure (own table).
-    **DECISION_ADMISSIONS,
+    # trw-jev slice 1: assess_support pack exposure (own table).
+    **ASSESS_ADMISSIONS,
 }

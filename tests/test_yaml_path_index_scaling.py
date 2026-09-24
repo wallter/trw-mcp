@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.scoring import _io_boundary
 from trw_mcp.scoring._io_boundary import (
     _YAML_INDEX_TTL,
@@ -91,20 +93,8 @@ def test_a_nested_id_is_not_mistaken_for_the_entry_id(tmp_path: Path) -> None:
     assert _read_learning_id(FileStateReader(), path) == "L-real"
 
 
-@pytest.mark.perf
-def test_reading_an_id_is_much_cheaper_than_composing_the_document(tmp_path: Path) -> None:
-    """The fast reader must be decisively cheaper than the parser it replaces.
-
-    Stated as a RATIO between the two readers over the same corpus, not as a
-    stopwatch against a fixed budget. An absolute budget is a measurement of
-    machine load -- the same mistake this repo fixed in its daemon tests the same
-    day -- and it also failed to discriminate: 1200 realistic entries compose in
-    about 2s, comfortably inside any sane budget, while the real 6,805-entry
-    store took 32s and blocked a server for tens of minutes.
-
-    A ratio cannot be passed by a slow machine and cannot be passed at all if the
-    two readers are the same code.
-    """
+def _index_vs_parse(tmp_path: Path) -> tuple[dict[str, Path], dict[str, Path], float, float]:
+    """Build the fast id index and the full-parse equivalent over the same 400-entry corpus."""
     for index in range(400):
         _write_entry(tmp_path, f"L-{index:06d}")
 
@@ -122,11 +112,32 @@ def test_reading_an_id_is_much_cheaper_than_composing_the_document(tmp_path: Pat
             parsed[lid] = yaml_file
     parse_seconds = time.monotonic() - started
 
+    return fast, parsed, fast_seconds, parse_seconds
+
+
+def test_reading_an_id_matches_the_full_parser(tmp_path: Path) -> None:
+    """The fast reader must index exactly what the full-parse reader does."""
+    fast, parsed, _fast_seconds, _parse_seconds = _index_vs_parse(tmp_path)
     assert fast == parsed, "the fast reader must index exactly what the parser does"
-    assert fast_seconds * 5 < parse_seconds, (
-        f"reading ids took {fast_seconds:.2f}s against {parse_seconds:.2f}s to compose the same "
-        "corpus; the index is paying full YAML parsing for one top-level scalar"
-    )
+
+
+@requires_local_timing
+def test_reading_an_id_is_much_cheaper_than_composing_the_document(tmp_path: Path) -> None:
+    """The fast reader must be decisively cheaper than the parser it replaces.
+
+    Stated as a RATIO between the two readers over the same corpus, not as a
+    stopwatch against a fixed budget. An absolute budget is a measurement of
+    machine load -- the same mistake this repo fixed in its daemon tests the same
+    day -- and it also failed to discriminate: 1200 realistic entries compose in
+    about 2s, comfortably inside any sane budget, while the real 6,805-entry
+    store took 32s and blocked a server for tens of minutes.
+
+    A ratio cannot be passed by a slow machine and cannot be passed at all if the
+    two readers are the same code.
+    """
+    _fast, _parsed, fast_seconds, parse_seconds = _index_vs_parse(tmp_path)
+    ratio = fast_seconds / parse_seconds
+    assert_budget("fast_reader_vs_parser_ratio", ratio, 0.2, "ratio")
 
 
 def test_repeated_lookups_build_the_index_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

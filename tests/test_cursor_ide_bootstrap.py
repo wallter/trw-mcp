@@ -186,6 +186,7 @@ class TestGenerateCursorIdeSkills:
     def test_skills_mirror(self, tmp_path: Path) -> None:
         """All curated skills that exist in source are mirrored."""
         from trw_mcp.bootstrap._cursor_ide import _IDE_CURATED_SKILLS, generate_cursor_ide_skills
+        from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
 
         # Use a fake source dir with all curated skills present
         fake_skills = tmp_path / "source_skills"
@@ -195,11 +196,11 @@ class TestGenerateCursorIdeSkills:
         result = generate_cursor_ide_skills(tmp_path, source_skills_dir=fake_skills)
 
         skills_dir = tmp_path / ".cursor" / "skills"
-        for skill_name in _IDE_CURATED_SKILLS:
+        for skill_name in (n for n in _IDE_CURATED_SKILLS if n not in CONDITIONAL_SKILLS):
             assert (skills_dir / skill_name).is_dir(), f"Missing skill dir: {skill_name}"
             assert (skills_dir / skill_name / "SKILL.md").is_file()
 
-        assert len(result["created"]) == len(_IDE_CURATED_SKILLS)
+        assert len(result["created"]) == len([n for n in _IDE_CURATED_SKILLS if n not in CONDITIONAL_SKILLS])
 
     def test_skills_preserve_user_skills(self, tmp_path: Path) -> None:
         """User-authored skills not in the curated list are preserved."""
@@ -226,6 +227,7 @@ class TestGenerateCursorIdeSkills:
     def test_skills_frontmatter_valid(self, tmp_path: Path) -> None:
         """Each mirrored SKILL.md has parseable frontmatter with name and description."""
         from trw_mcp.bootstrap._cursor_ide import _IDE_CURATED_SKILLS, generate_cursor_ide_skills
+        from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
 
         fake_skills = tmp_path / "source_skills"
         for skill_name in _IDE_CURATED_SKILLS:
@@ -234,7 +236,7 @@ class TestGenerateCursorIdeSkills:
         generate_cursor_ide_skills(tmp_path, source_skills_dir=fake_skills)
 
         skills_dir = tmp_path / ".cursor" / "skills"
-        for skill_name in _IDE_CURATED_SKILLS:
+        for skill_name in (n for n in _IDE_CURATED_SKILLS if n not in CONDITIONAL_SKILLS):
             skill_md = skills_dir / skill_name / "SKILL.md"
             content = skill_md.read_text(encoding="utf-8")
             parsed, _ = _parse_frontmatter(content)

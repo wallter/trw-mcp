@@ -21,8 +21,8 @@ from trw_memory.models.memory import MemoryEntry, MemoryStatus
 from typing_extensions import TypedDict
 
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE
-from trw_mcp.state.memory_adapter import count_entries, get_backend
+from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
+from trw_mcp.state.memory_adapter import count_entries
 from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger(__name__)
@@ -458,12 +458,10 @@ def execute_knowledge_sync(
         return _base_result(total_count, config, trw_dir, threshold_met=True, dry_run=True)
 
     # Step 2: list active entries
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(
-        status=MemoryStatus.ACTIVE,
-        namespace=DEFAULT_NAMESPACE,
-        limit=DEFAULT_LIST_LIMIT,
-    )
+    from trw_mcp.state._store_selection import selected_store
+
+    store, namespace = selected_store(trw_dir)
+    entries = store.list_entries(namespace, status=MemoryStatus.ACTIVE.value, limit=DEFAULT_LIST_LIMIT)
 
     # Step 3: form Jaccard clusters
     clusters = form_jaccard_clusters(

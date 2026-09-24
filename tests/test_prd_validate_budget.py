@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.models.requirements import ValidationResultV2
 from trw_mcp.state.validation.prd_integrity import (
@@ -166,7 +167,6 @@ def test_refresh_default_not_partial_and_score_identical_to_prechange(tmp_path: 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.perf
 def test_refresh_tiny_budget_returns_partial_shape_no_hang(tmp_path: Path, config: TRWConfig) -> None:
     """An already-expired deadline skips every dynamic group and returns a
     visibly-partial result promptly (never raises, never hangs)."""
@@ -400,12 +400,8 @@ def test_tool_tiny_budget_flags_partial(tmp_path: Path, monkeypatch: pytest.Monk
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.perf
-@requires_local_timing
-def test_fr5c_perf_smoke_largest_corpus_prd_full_path_under_budget(tmp_path: Path) -> None:
-    """The largest real corpus PRD, validated through the FULL tool path with
-    the default 60s budget, completes well under a generous 10s wall-clock
-    ceiling and is NOT partial (validation_partial False, checks_skipped [])."""
+def _fr5c_largest_corpus_prd(tmp_path: Path) -> Path | None:
+    """Copy the largest real corpus PRD into *tmp_path*; None if unavailable in this checkout."""
     # Repo root: tests -> trw-mcp -> trw-framework.
     repo_root = Path(__file__).resolve().parents[2]
     corpus_candidates = [
@@ -414,19 +410,41 @@ def test_fr5c_perf_smoke_largest_corpus_prd_full_path_under_budget(tmp_path: Pat
     ]
     corpus = next((p for p in corpus_candidates if p.exists()), None)
     if corpus is None:
+        return None
+    prd = tmp_path / corpus.name
+    prd.write_text(corpus.read_text(encoding="utf-8"), encoding="utf-8")
+    return prd
+
+
+def test_fr5c_perf_smoke_largest_corpus_prd_full_path_under_budget(tmp_path: Path) -> None:
+    """The largest real corpus PRD, validated through the FULL tool path with
+    the default 60s budget, is NOT partial (validation_partial False,
+    checks_skipped [])."""
+    prd = _fr5c_largest_corpus_prd(tmp_path)
+    if prd is None:
         pytest.skip("no large corpus PRD available in this checkout")
 
     fn = _validate_tool()
-    prd = tmp_path / corpus.name
-    prd.write_text(corpus.read_text(encoding="utf-8"), encoding="utf-8")
-
-    started = time.monotonic()
     result = fn(prd_path=str(prd))
-    elapsed = time.monotonic() - started
 
-    assert elapsed < 10.0, f"validate took {elapsed:.2f}s — regression vs the 60s budget"
     assert result["validation_partial"] is False
     assert result["checks_skipped"] == []
+
+
+@requires_local_timing
+def test_fr5c_perf_smoke_largest_corpus_prd_full_path_under_budget_budget(tmp_path: Path) -> None:
+    """Same full-tool-path validate, but as a host-resource budget: it completes
+    well under a generous 10s wall-clock ceiling (never a portable claim)."""
+    prd = _fr5c_largest_corpus_prd(tmp_path)
+    if prd is None:
+        pytest.skip("no large corpus PRD available in this checkout")
+
+    fn = _validate_tool()
+    started = time.monotonic()
+    fn(prd_path=str(prd))
+    elapsed = time.monotonic() - started
+
+    assert_budget("fr5c_largest_corpus_validate", elapsed, 10.0, "s")
 
 
 # ---------------------------------------------------------------------------

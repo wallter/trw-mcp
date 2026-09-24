@@ -151,6 +151,36 @@ DEGENERATE_RESULT_ADMISSIONS: dict[str, ConfigAdmission] = {
         test_pointer=_TEST,
         budget_decision="admitted",
     ),
+    "tool_output_size_warning_bytes": ConfigAdmission(
+        field_name="tool_output_size_warning_bytes",
+        owner="PRD-INFRA-194-FR04",
+        consumer=(
+            "trw_mcp.data.hooks.post-tool-degenerate-result.sh via "
+            "lib-trw.sh::trw_degenerate_result_setting(size_warning_bytes)"
+        ),
+        default_rationale=(
+            "Defaults to 8192 bytes: large enough that ordinary tool results never cross it, small "
+            "enough to catch a result the caller should summarise rather than reuse whole. Bounded "
+            "gt=0 (0 would be a disable switch, which this deliberately is not) and le=10 MiB as a "
+            "sanity ceiling matching the scale of the adapter's own byte-capped read."
+        ),
+        interaction_analysis=(
+            "A fourth, independent signal on the same PostToolUse adapter as the three "
+            "degenerate-shape rules (empty/truncated/undated); it shares the accessor and the "
+            "cooldown_calls value but keeps its OWN per-session cooldown state file "
+            "(.trw/context/tool-output-size-<key>.state), so suppressing one advisory family never "
+            "suppresses the other. When the stdin read itself hits degenerate_result_max_read_bytes "
+            "the payload cannot be parsed as JSON, so this field's threshold is not consulted -- "
+            "hitting the read cap is treated as oversized in its own right."
+        ),
+        deprecation_plan=(
+            "Retain; it is the only signal the caller gets that a tool result was too large to "
+            "reuse without narrowing the next query."
+        ),
+        docs_pointer="docs/requirements-aare-f/prds/PRD-INFRA-194-swarm-efficiency-tooling.md#prd-infra-194-fr04",
+        test_pointer="trw-mcp/tests/hooks/test_tool_output_size_warning.py::test_oversized_valid_json_emits_one_advisory",
+        budget_decision="admitted",
+    ),
 }
 
 __all__ = ["DEGENERATE_RESULT_ADMISSIONS"]

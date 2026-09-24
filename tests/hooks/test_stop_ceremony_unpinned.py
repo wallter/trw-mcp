@@ -4,7 +4,7 @@ Regression target (verified live 2026-07-24): an unpinned session that calls
 ``trw_deliver`` successfully was told, on every stop, that it had not. The
 telemetry fallback path writes an unpinned delivery as::
 
-    {"event":"tool_invocation","tool_name":"trw_deliver","success":true, ...}
+    {"event":"tool_call","tool_name":"trw_deliver","success":true, ...}
 
 while the hook grepped ``.trw/context/session-events.jsonl`` for the event *type*
 ``trw_deliver_complete``. ``has_event`` matches the ``"event"`` field only, so
@@ -42,6 +42,7 @@ _MIRROR_LIB = _MIRROR_HOOK.parent / "lib-trw.sh"
 # Rows 120-192 of the live log on 2026-07-24, verbatim. Contains real successful
 # AND real failed trw_deliver invocations, and zero trw_deliver_complete rows —
 # which is precisely the state the old predicate could not read.
+# Captured 2026-07-24; its tool rows were renamed tool_invocation -> tool_call by PRD-FIX-150.
 _FIXTURE = Path(__file__).resolve().parent / "fixtures" / "session-events-2026-07-24.jsonl"
 
 _DEFAULT_WINDOW_MIN = 240
@@ -115,7 +116,7 @@ def _deliver_rows(*, success: bool) -> list[str]:
     out = []
     for row in _rows():
         obj = json.loads(row)
-        if obj.get("event") == "tool_invocation" and obj.get("tool_name") == "trw_deliver":
+        if obj.get("event") == "tool_call" and obj.get("tool_name") == "trw_deliver":
             if bool(obj.get("success")) is success:
                 out.append(row)
     return out

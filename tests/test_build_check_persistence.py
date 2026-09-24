@@ -16,6 +16,7 @@ from trw_mcp.state._ceremony_progress_state import (
     mark_build_check,
     read_ceremony_state,
 )
+from trw_mcp.state._ceremony_state_model import CeremonyState
 
 
 def test_mark_build_check_writes_passed(tmp_project: Path) -> None:
@@ -69,14 +70,18 @@ def test_trw_build_check_failing_persists_result(
 
 
 def test_ceremony_state_backward_compat_no_ts_field(tmp_project: Path) -> None:
-    """Loading pre-FR02 JSON (no last_build_check_ts) must default to None."""
+    """Pre-FR02 JSON predates pool_cooldowns (PRD-CORE-296 R2-010), so it now
+    fails the schema check and fails open to defaults rather than being
+    partially parsed — last_build_check_ts is None because the whole state
+    resets, not because the field was individually defaulted."""
     state_path = tmp_project / ".trw" / "context" / "ceremony-state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     legacy = {"session_started": True, "build_check_result": "passed"}
     state_path.write_text(json.dumps(legacy))
     state = read_ceremony_state(tmp_project / ".trw")
-    assert state.build_check_result == "passed"
+    assert state.build_check_result is None
     assert state.last_build_check_ts is None
+    assert state == CeremonyState()
 
 
 def test_build_check_persist_failure_does_not_raise(

@@ -20,22 +20,44 @@ if not (_REPO_ROOT / "scripts").is_dir():
 
 _PKG_DATA = _TESTS_DIR.parent / "src" / "trw_mcp" / "data"
 
+#: codex/copilot/opencode no longer fork these skills on disk
+#: (PRD-CORE-291-FR04) -- they render the canonical body -- so their entries
+#: are (client, skill_name) pairs checked against the RENDERED text below,
+#: instead of a path into a deleted fork.
+_RENDERED_GUIDANCE_EXPECTATIONS: dict[tuple[str, str], list[str]] = {
+    ("codex", "trw-prd-ready"): [
+        "implementation-readiness",
+        "control points",
+        "testability",
+        "migration",
+        "score-gaming",
+    ],
+    ("opencode", "trw-prd-ready"): [
+        "implementation-readiness",
+        "control points",
+        "testability",
+        "migration",
+        "score-gaming",
+    ],
+    ("codex", "trw-exec-plan"): [
+        "implementation-readiness",
+        "control points",
+        "testability",
+        "migration",
+        "score-gaming",
+    ],
+    ("codex", "trw-audit"): ["implementation-readiness", "control points", "testability", "migration", "score-gaming"],
+    ("copilot", "trw-audit"): [
+        "implementation-readiness",
+        "control points",
+        "testability",
+        "migration",
+        "score-gaming",
+    ],
+}
+
 _GUIDANCE_EXPECTATIONS = {
     _PKG_DATA / "skills" / "trw-prd-ready" / "SKILL.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
-    _PKG_DATA / "codex" / "skills" / "trw-prd-ready" / "SKILL.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
-    _PKG_DATA / "opencode" / "skills" / "trw-prd-ready" / "SKILL.md": [
         "implementation-readiness",
         "control points",
         "testability",
@@ -49,28 +71,7 @@ _GUIDANCE_EXPECTATIONS = {
         "migration",
         "score-gaming",
     ],
-    _PKG_DATA / "codex" / "skills" / "trw-exec-plan" / "SKILL.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
     _PKG_DATA / "skills" / "trw-audit" / "SKILL.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
-    _PKG_DATA / "codex" / "skills" / "trw-audit" / "SKILL.md": [
-        "implementation-readiness",
-        "control points",
-        "testability",
-        "migration",
-        "score-gaming",
-    ],
-    _PKG_DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md": [
         "implementation-readiness",
         "control points",
         "testability",
@@ -141,16 +142,26 @@ _GUIDANCE_EXPECTATIONS = {
 def test_prd_workflow_guidance_mentions_hardened_readiness_semantics(
     path: Path,
     required_snippets: list[str],
-    tmp_path: Path,
 ) -> None:
-    if path == _PKG_DATA / "opencode/skills/trw-prd-ready/SKILL.md":
-        from trw_mcp.bootstrap._opencode import install_opencode_skills
-
-        assert not install_opencode_skills(tmp_path)["errors"]
-        installed = tmp_path / ".opencode/skills/trw-prd-ready"
-        assert "trw-prd-ready-contract.md" in (installed / "SKILL.md").read_text()
-        path = installed / "trw-prd-ready-contract.md"
-        assert path.read_bytes() == (_PKG_DATA / "skills/trw-prd-ready/SKILL.md").read_bytes()
     content = path.read_text(encoding="utf-8").lower()
     for snippet in required_snippets:
         assert snippet in content, f"{path} is missing '{snippet}'"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("client", "skill_name", "required_snippets"),
+    [(c, n, s) for (c, n), s in _RENDERED_GUIDANCE_EXPECTATIONS.items()],
+    ids=lambda v: str(v) if isinstance(v, str) else None,
+)
+def test_rendered_client_guidance_mentions_hardened_readiness_semantics(
+    client: str,
+    skill_name: str,
+    required_snippets: list[str],
+) -> None:
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical = (_PKG_DATA / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    content = render_skill_md(canonical, client).lower()
+    for snippet in required_snippets:
+        assert snippet in content, f"{client}/{skill_name} (rendered) is missing '{snippet}'"

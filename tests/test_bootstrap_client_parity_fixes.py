@@ -18,10 +18,8 @@ from trw_mcp.bootstrap._client_integrations import (
     _INTEGRATION_EXCLUDED_IDES,
     CLIENT_INTEGRATIONS,
 )
-from trw_mcp.bootstrap._codex import (
-    _codex_skills_source_dir,
-    install_codex_skills,
-)
+from trw_mcp.bootstrap._client_skills import canonical_skills_dir, render_skill_md, skill_names
+from trw_mcp.bootstrap._codex import install_codex_skills
 from trw_mcp.bootstrap._utils import SUPPORTED_IDES
 from trw_mcp.bootstrap._version_migration_clients import (
     _codex_manifest_hashes,
@@ -158,12 +156,18 @@ def test_stale_cleanup_never_removes_dir_as_file_or_vice_versa(tmp_path: Path) -
 
 
 def test_codex_skill_unmodified_refreshed_and_edited_preserved(tmp_path: Path) -> None:
-    source = _codex_skills_source_dir()
-    skill_dirs = [d for d in sorted(source.iterdir()) if d.is_dir()]
-    assert skill_dirs, "expected bundled codex skills"
-    skill = skill_dirs[0]
+    # Codex no longer forks the skill tree on disk (PRD-CORE-291-FR04); it
+    # renders the canonical corpus, so the "bundled" bytes for a skill are the
+    # rendered content, not a raw file read.
+    canonical_root = canonical_skills_dir()
+    names = skill_names("codex")
+    assert names, "expected bundled codex skills"
+    skill = canonical_root / names[0]
     skill_file = next(f for f in sorted(skill.iterdir()) if f.is_file())
-    bundled = skill_file.read_bytes()
+    if skill_file.name == "SKILL.md":
+        bundled = render_skill_md(skill_file.read_text(encoding="utf-8"), "codex").encode("utf-8")
+    else:
+        bundled = skill_file.read_bytes()
     rel = f".agents/skills/{skill.name}/{skill_file.name}"
 
     dest_root = tmp_path / ".agents" / "skills" / skill.name

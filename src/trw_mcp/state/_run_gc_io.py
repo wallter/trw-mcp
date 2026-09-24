@@ -3,7 +3,7 @@
 Belongs to the ``_run_gc.py`` facade. Re-exported there for back-compat.
 
 Holds the YAML prefilter regexes, header-only YAML reader, full
-ruamel round-trip loader, atomic YAML writer, append-only events helper,
+ruamel round-trip loader, append-only events helper,
 and UTC-now formatter that the staleness sweep uses on every run.yaml.
 
 Extracted as DIST-243 batch 28 to keep the parent ``_run_gc.py`` module
@@ -13,9 +13,7 @@ under the 350 effective-LOC ceiling.
 from __future__ import annotations
 
 import json
-import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -105,44 +103,6 @@ def _load_run_yaml(run_yaml_path: Path) -> dict[str, Any] | None:
     # Copy into a plain dict[str, Any] for type-checker happiness while
     # preserving the ruamel mapping so downstream dump preserves ordering.
     return data
-
-
-def _dump_run_yaml_atomic(run_yaml_path: Path, data: dict[str, Any]) -> None:
-    """Atomically write *data* back to *run_yaml_path* using ruamel round-trip.
-
-    Pattern mirrors :class:`trw_mcp.state.persistence.FileStateWriter`:
-    write to a ``.tmp`` sibling, fsync, ``os.replace``.
-    """
-    yaml = YAML(typ="rt")
-    run_yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_str = tempfile.mkstemp(
-        dir=str(run_yaml_path.parent),
-        suffix=".yaml.tmp",
-    )
-    tmp_path = Path(tmp_str)
-    try:
-        fh = os.fdopen(fd, "w", encoding="utf-8")
-    except Exception:
-        # os.fdopen did not take ownership of the raw fd from mkstemp (it
-        # raised before wrapping it), so close it ourselves here. Once
-        # fdopen succeeds below, the returned file object is the SOLE
-        # owner of fd — closing it a second time via a blanket `finally:
-        # os.close(fd)` would (a) suppress a harmless EBADF single-threaded,
-        # or (b) under concurrent threads close a fd number the OS has
-        # already recycled to an unrelated open file, corrupting that
-        # thread's writes. See PRD-FIX-126 P1 finding.
-        os.close(fd)
-        tmp_path.unlink(missing_ok=True)
-        raise
-    try:
-        with fh:
-            yaml.dump(data, fh)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_path, run_yaml_path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
 
 
 def _iso_utc_now() -> str:

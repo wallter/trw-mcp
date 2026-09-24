@@ -9,6 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests._memory_store_fake import FakeMemoryStore
+
 
 def _make_sync_args(tmp_path: Path) -> dict:
     """Build minimal args for execute_claude_md_sync using tmp_path as root."""
@@ -78,7 +80,7 @@ class TestClaudeMdHashDetection:
         content = hash_file.read_text(encoding="utf-8").strip()
         assert len(content) == 64, "SHA-256 hex digest should be 64 chars"
 
-    def test_new_learning_invalidates_cache(self, tmp_path: Path) -> None:
+    def test_new_learning_invalidates_cache(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Adding a learning causes second sync to re-render (status='synced')."""
         import trw_mcp.state.claude_md as _pkg
         from trw_mcp.state.claude_md._sync import execute_claude_md_sync

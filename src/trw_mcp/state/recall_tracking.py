@@ -1,13 +1,11 @@
-"""Recall tracking -- append-only exposure receipts and outcome rows.
+"""Recall tracking -- append-only exposure receipts.
 
-Supports PRD-CORE-034 outcome-based impact calibration. The log holds two
-kinds of row and no row is ever rewritten:
-
-- a **receipt** (``outcome: null``) says a learning was surfaced, and carries
-  the session join keys and the surface that showed it (PRD-FIX-144 FR01);
-- an **outcome row** (``outcome`` set) records what is known about a
-  learning's usefulness. Since R10 the only producer is explicit feedback
-  (FR03); build and delivery results never become per-learning outcomes.
+Each **receipt** (``outcome: null``) says a learning was surfaced, and carries
+the session join keys and the surface that showed it (PRD-FIX-144 FR01). No
+row is ever rewritten. Logs from older versions may also hold **outcome rows**
+(``outcome`` set); PRD-CORE-293 deleted their only writer, which had no caller,
+along with the calibration reader, so readers must tolerate them but nothing
+new produces them.
 
 Rows carry ids, repo-relative paths, labels and timestamps only -- never
 learning content (NFR04).
@@ -23,8 +21,7 @@ from pathlib import Path
 import structlog
 
 from trw_mcp._locking import _lock_ex, _lock_un
-from trw_mcp.models.typed_dicts import RecallStats
-from trw_mcp.state._helpers import read_jsonl_resilient, rotate_jsonl
+from trw_mcp.state._helpers import rotate_jsonl
 from trw_mcp.state._paths import resolve_trw_dir
 
 logger = structlog.get_logger(__name__)
@@ -114,97 +111,3 @@ def record_recall(learning_id: str, query: str, *, surface: str = "recall") -> b
     except Exception:  # trw-fail-silent-allow: exposure telemetry is fail-open (NFR03)
         logger.debug("recall_record_failed", learning_id=learning_id, exc_info=True)
         return False
-
-
-def record_outcome(learning_id: str, outcome: str, *, source: str = "") -> bool:
-    """Append an outcome row for *learning_id*, creating the log when absent.
-
-    outcome: "positive", "negative" or "neutral". *source* names the signal,
-    e.g. ``explicit_feedback`` from trw_learn_update. No matching receipt is
-    looked up: the row does not claim the learning was exposed in this session.
-    Returns True on success.
-    """
-    try:
-        trw_dir = resolve_trw_dir()
-        entry: dict[str, object] = {
-            "learning_id": learning_id,
-            "outcome": outcome,
-            "timestamp": time.time(),
-        }
-        entry.update(session_keys(trw_dir))
-        if source:
-            entry["source"] = source
-        _append_rows(trw_dir, [entry])
-        return True
-    except Exception:  # trw-fail-silent-allow: outcome telemetry is fail-open (NFR03)
-        logger.debug("outcome_record_failed", learning_id=learning_id, exc_info=True)
-        return False
-
-
-def get_recall_stats(entries_dir: Path | None = None) -> RecallStats:
-    """Get recall statistics for outcome-based calibration.
-
-    ``total_recalls`` counts receipts only (``outcome`` null or empty); outcome
-    rows feed the positive/negative/neutral tallies and never count as recalls
-    (PRD-FIX-144 FR05).
-
-    Returns:
-        RecallStats with total_recalls, unique_learnings, positive_outcomes,
-        negative_outcomes, and neutral_outcomes.
-    """
-    try:
-        trw_dir = resolve_trw_dir()
-        tracking_path = trw_dir / _TRACKING_FILE
-        if not tracking_path.exists():
-            return RecallStats(
-                total_recalls=0,
-                unique_learnings=0,
-                positive_outcomes=0,
-                negative_outcomes=0,
-                neutral_outcomes=0,
-            )
-
-        # recall_tracking.jsonl is an append-only log written on every recall
-        # and outcome, often by concurrent agents. A torn concurrent append (a
-        # partial final line, or a row split mid multi-byte sequence) must drop
-        # only that one row, not collapse the whole calibration aggregate to the
-        # zeroed fallback via StateError. Use the resilient full-scan reader,
-        # matching the precedent for events.jsonl in agent_work_evidence.py.
-        records = read_jsonl_resilient(tracking_path)
-
-        learning_ids: set[str] = set()
-        positive = 0
-        negative = 0
-        neutral = 0
-        total = 0
-
-        for record in records:
-            lid = str(record.get("learning_id", ""))
-            if lid:
-                learning_ids.add(lid)
-            outcome = record.get("outcome")
-            if outcome == "positive":
-                positive += 1
-            elif outcome == "negative":
-                negative += 1
-            elif outcome == "neutral":
-                neutral += 1
-            elif outcome is None or outcome == "":
-                total += 1
-
-        return RecallStats(
-            total_recalls=total,
-            unique_learnings=len(learning_ids),
-            positive_outcomes=positive,
-            negative_outcomes=negative,
-            neutral_outcomes=neutral,
-        )
-    except Exception:  # justified: fail-open, stats computation failure returns zeroed defaults
-        logger.warning("recall_stats_failed", exc_info=True)
-        return RecallStats(
-            total_recalls=0,
-            unique_learnings=0,
-            positive_outcomes=0,
-            negative_outcomes=0,
-            neutral_outcomes=0,
-        )

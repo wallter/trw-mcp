@@ -484,3 +484,27 @@ def test_load_pin_store_concurrent_deletion_after_load_does_not_crash(
     # The store contains no valid pin entries (eviction removes keys without
     # proper schema), so the result may be empty — what matters is no crash.
     assert isinstance(result, dict)
+
+
+def test_load_pin_store_cache_is_keyed_on_path_not_mtime_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """T17: two project roots whose pins.json share an mtime (overlayfs quantizes
+    timestamps) must not serve each other's snapshot inside the cache TTL."""
+    from trw_mcp.state import _paths
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, load_pin_store
+
+    def _root(name: str) -> Path:
+        trw_dir = tmp_path / name / ".trw"
+        pins = trw_dir / "runtime" / "pins.json"
+        pins.parent.mkdir(parents=True)
+        entry = {"run_path": str(tmp_path), "created_ts": "t", "last_heartbeat_ts": "t", "client_hint": None}
+        pins.write_text(json.dumps({f"pin-{name}": {**entry, "pid": os.getpid()}}), encoding="utf-8")
+        os.utime(pins, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
+        return trw_dir
+
+    root_a, root_b = _root("a"), _root("b")
+    invalidate_pin_store_cache()
+    monkeypatch.setattr(_paths, "resolve_trw_dir", lambda: root_a)
+    assert set(load_pin_store()) == {"pin-a"}
+
+    monkeypatch.setattr(_paths, "resolve_trw_dir", lambda: root_b)
+    assert set(load_pin_store()) == {"pin-b"}

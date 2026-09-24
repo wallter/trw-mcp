@@ -54,7 +54,7 @@ DELIVERY_EVENT = "trw_deliver_complete"
 _BUILD_EVENT = "build_check_complete"
 _REVIEW_EVENT = "review_complete"
 #: Bound on the events tail scanned per member. A run accumulates thousands of
-#: ``tool_invocation`` rows; the roll-up needs only the most recent build and
+#: ``tool_call`` rows; the roll-up needs only the most recent build and
 #: review, and the 2-second SLO for 16 members is what makes the bound explicit
 #: rather than a full file read.
 _EVENT_TAIL_LINES = 400
@@ -274,6 +274,11 @@ def _raw_pin_store() -> dict[str, Any]:
 
 
 def _staleness(member: Any, *, raw_pins: dict[str, Any], pin_ttl_hours: int) -> tuple[bool, str]:
+    """Pin staleness (heartbeat age), NOT comms availability (endpoint lease expiry).
+
+    ``comms._admission.availability_of`` answers "can this member receive now"; this
+    answers "has its session gone quiet". Distinct clocks by design (ledger RC-008).
+    """
     from trw_mcp.state._pin_ttl import pin_entry_is_expired
 
     if str(member.status) in TERMINAL_STATUSES or not member.run_path:

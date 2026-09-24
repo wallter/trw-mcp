@@ -31,7 +31,6 @@ KERNEL_TOOLS: tuple[str, ...] = (
     "trw_status",
     "trw_recall",
     "trw_learn",
-    "trw_learn_update",
     "trw_checkpoint",
     "trw_deliver",
     "trw_skill_discovery",
@@ -100,9 +99,9 @@ CAPABILITY_PACKS: dict[str, tuple[str, ...]] = {
     # trw-jev slice 1 (PRD-CORE-288). Mirrors peer_comms exactly: deliberately
     # NOT in STANDARD_TASK_PACKS, the kernel, or the reviewer profile — an
     # opt-in pack additionally gated by
-    # default-off decision_enabled. A reviewer lane must never gain a network
+    # default-off assess_enabled. A reviewer lane must never gain a network
     # egress path the surface it is auditing did not already have.
-    "decision_support": ("trw_decision",),
+    "assess_support": ("trw_assess",),
 }
 
 #: pack -> tool IDs including the kernel modelled as a pack, so the manifest is
@@ -136,7 +135,7 @@ OPERATOR_ONLY_TOOLS: frozenset[str] = frozenset(
 #: reviewer surface on the next such addition.
 #:
 #: Excluded, with the reason that settles each class:
-#:   * ``trw_session_start`` / ``trw_learn`` / ``trw_learn_update`` /
+#:   * ``trw_session_start`` / ``trw_learn`` /
 #:     ``trw_checkpoint`` / ``trw_init`` / ``trw_adopt_run`` — write the shared
 #:     learnings store or run state a stateless reviewer does not own (the
 #:     measured pollution path: 24 ``trw_deliver`` + 12 ``trw_build_check`` +

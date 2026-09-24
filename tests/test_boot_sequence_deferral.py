@@ -20,8 +20,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tests._layout import requires_local_timing
-
 
 def test_boot_gc_deferred_config_default_is_true() -> None:
     from trw_mcp.models.config import TRWConfig
@@ -56,8 +54,6 @@ def test_start_boot_sequence_deferred_runs_in_named_daemon_thread(
     assert captured["thread_name"] == "trw-boot-gc"
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_start_boot_sequence_deferred_returns_before_slow_sweep_completes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -88,7 +84,8 @@ def test_start_boot_sequence_deferred_returns_before_slow_sweep_completes(
 
     try:
         # Caller returned promptly even though the sweep is still blocked.
-        assert elapsed < 0.5, f"caller blocked on the sweep for {elapsed:.3f}s"
+        # Half the 5 s the stub would block: proves non-blocking without measuring host speed (PRD-QUAL-141).
+        assert elapsed < 2.5, f"caller blocked on the sweep for {elapsed:.3f}s"
         assert thread is not None
         # The sweep genuinely started on the background thread and is still running.
         assert entered.wait(timeout=5.0), "background sweep never started"

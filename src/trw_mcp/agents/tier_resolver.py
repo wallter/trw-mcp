@@ -30,7 +30,18 @@ rule 2026-07-07, recorded in ``CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md``
 
 - ``frontier`` resolves to ``opus`` for claude-code subagents. This is
   deliberate: the strongest *subagent* tier is Opus, not the mythos-class
-  Fable tier.
+  Fable tier. Since 2026-09-22 the ``opus`` alias is Opus 5.5 — also Claude
+  Code's DEFAULT main-loop model — on the Anthropic API, Claude Platform on
+  AWS, Bedrock and Vertex. Caveat: on Microsoft Foundry the same alias still
+  resolves to Opus 4.6 (Claude Code model-configuration docs, 2026-09-22).
+  The alias is kept anyway: a full id would pin a snapshot and break the
+  per-provider spellings (Bedrock uses ``anthropic.claude-opus-5-5``).
+- Opus 5.5 defaults to ``medium`` effort (Opus 5 defaulted to ``high``), so
+  the bundled agents' ``effort:`` frontmatter now carries more weight. Note
+  that Claude Code ignores the top-level ``effortLevel`` setting for Opus 5.5
+  (``modelSettings.opus.effort`` / ``--effort`` apply instead); whether it
+  honours agent-frontmatter ``effort:`` for Opus 5.5 is NOT established by the
+  facts file — verify before relying on it.
 - ``fable`` is INTENTIONALLY ABSENT from :data:`_CLAUDE_CODE_MAP`. The
   operator rule "no Fable-class subagents" (worded per-generation as
   "no Fable-5 subagents" on 2026-07-07; Fable 5.1 shipped 2026-09-01 and is
@@ -39,6 +50,12 @@ rule 2026-07-07, recorded in ``CLAUDE-5-INTEGRATION-PLAN-2026-07-09.md``
   subagent target (the sole exception, initial PRD drafts, happens at the
   main-loop level, not through this resolver). The missing ``fable`` key is
   therefore policy, not a gap: do NOT "fix" it by adding a ``fable`` mapping.
+  Re-checked against the Opus 5.5 release (2026-09-22): the facts reinforce the
+  rule rather than argue against it. Opus 5.5 is Anthropic's default
+  recommendation; Fable 5.1 is the explicit ESCALATION tier, recommended only
+  for demanding reasoning / long-horizon agentic work or "when your evals on
+  Opus 5.5 at higher effort still fall short". So the first escalation lever
+  for a subagent is effort, not a Fable model.
 - Mythos-class main-loop models INHERIT. TRW never rewrites the parent
   (main-loop) model, so a Fable/Mythos main loop is unaffected by tier
   resolution — this resolver only ever rewrites subagent ``model:`` lines,
@@ -252,7 +269,7 @@ def render_agent_tool_names(text: str, *, client: str) -> str:
     return _TOOL_PLACEHOLDER_RE.sub(lambda m: render_tool_name(m.group(1), profile), text)
 
 
-def materialize_agent(text: str, *, client: str) -> str:
+def materialize_agent(text: str, *, client: str, report_max_chars: int | None = None) -> str:
     """Apply every bundle→installed transform for *client*, in order.
 
     The single definition of "what an installed agent looks like". Both the
@@ -280,9 +297,14 @@ def materialize_agent(text: str, *, client: str) -> str:
             registered client id, or the bundled frontmatter cannot be
             translated for it.
     """
+    from trw_mcp.agents._report_cap import report_block
     from trw_mcp.agents.agent_formats import agent_format_for
     from trw_mcp.agents.agent_frontmatter import translate_agent_document
 
+    # PRD-CORE-290-FR04: the final-report cap joins the body before any transform,
+    # so every client format carries it (None: the project's configured cap;
+    # review/security agents carry none).
+    text = text.rstrip("\n") + "\n" + report_block(report_max_chars, agent_text=text)
     resolved = rewrite_model_line(render_agent_tool_names(text, client=client), client=client)
     return translate_agent_document(resolved, agent_format_for(client))
 

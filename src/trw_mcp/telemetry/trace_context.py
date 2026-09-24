@@ -53,8 +53,11 @@ def stable_payload_hash(value: object) -> str:
     """Return a short stable hash without exposing raw input or output data."""
     try:
         payload = json.dumps(value, sort_keys=True, default=repr, separators=(",", ":"))
-    except (TypeError, ValueError):
-        payload = repr(value)
+    except Exception:  # justified: fail-open, a value whose repr raises still gets a stable hash
+        try:
+            payload = repr(value)
+        except Exception:  # justified: fail-open, as above
+            payload = f"<unrepresentable {type(value).__qualname__}>"
     return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()[:_HASH_PREFIX_LEN]
 
 

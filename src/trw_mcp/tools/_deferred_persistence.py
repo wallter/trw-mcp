@@ -30,16 +30,10 @@ def _persist_session_metrics(
     if not isinstance(metrics_result, dict) or metrics_result.get("status") != "success":
         return
     try:
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+        from trw_mcp.state._run_yaml_update import run_yaml_path, update_run_yaml
 
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        run_yaml_path = resolved_run / "meta" / "run.yaml"
-        if run_yaml_path.exists():
-            run_data = reader.read_yaml(run_yaml_path)
-            run_data["session_metrics"] = metrics_result
-            writer.write_yaml(run_yaml_path, run_data)
-            logger.info("session_metrics_persisted", path=str(run_yaml_path))
+        if update_run_yaml(resolved_run, lambda data: data.update(session_metrics=metrics_result)):
+            logger.info("session_metrics_persisted", path=str(run_yaml_path(resolved_run)))
     except Exception:  # justified: fail-open, session metrics persistence is best-effort
         logger.warning("session_metrics_persist_failed", exc_info=True)
 
@@ -52,16 +46,7 @@ def _persist_deferred_results(
     if resolved_run is None:
         return
     try:
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
-        reader = FileStateReader()
-        writer = FileStateWriter()
-        run_yaml_path = resolved_run / "meta" / "run.yaml"
-        if not run_yaml_path.exists():
-            return
-
-        run_data = reader.read_yaml(run_yaml_path)
-        run_data["deferred_results"] = dict(results)
+        from trw_mcp.state._run_yaml_update import run_yaml_path, update_run_yaml
 
         # F19 (2026-06-04): the audit-pattern "promotion candidates" used to be
         # mirrored into dedicated ``audit_pattern_promotions`` /
@@ -77,8 +62,8 @@ def _persist_deferred_results(
         # the honest fix is to stop persisting the dead signal. The consolidation
         # step's status still flows through ``deferred_results`` above for audit.
 
-        writer.write_yaml(run_yaml_path, run_data)
-        logger.info("deferred_results_persisted", path=str(run_yaml_path))
+        if update_run_yaml(resolved_run, lambda data: data.update(deferred_results=dict(results))):
+            logger.info("deferred_results_persisted", path=str(run_yaml_path(resolved_run)))
     except Exception:  # justified: fail-open, deferred state persistence is best-effort
         logger.warning("deferred_results_persist_failed", exc_info=True)
 

@@ -7,13 +7,21 @@ from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_resources_sync
 from trw_mcp.state.persistence import FileStateWriter
 
 
 @pytest.fixture(autouse=True)
-def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Set TRW_PROJECT_ROOT to temp directory."""
+def set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_memory_store: FakeMemoryStore) -> Path:
+    """Set TRW_PROJECT_ROOT to temp directory.
+
+    ``fake_memory_store`` is pulled in autouse: the config/learnings-summary
+    resources call ``memory_adapter.list_active_learnings``, which resolves
+    through ``selected_store`` -- an unpinned checkout would otherwise open a
+    real ``memory.db``.
+    """
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     return tmp_path
 
@@ -125,21 +133,19 @@ class TestLearningsSummaryResource:
         result = resources["trw://learnings/summary"].fn()
         assert "TRW Learnings Summary" in result
 
-    def test_with_learnings(self, tmp_path: Path) -> None:
-        # Create some learnings
-        trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
-        writer.write_yaml(
-            entries_dir / "test-learning.yaml",
-            {
-                "id": "L-001",
-                "summary": "Test learning summary",
-                "detail": "Test detail",
-                "impact": 0.9,
-            },
+    def test_with_learnings(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
+        """PRD-CORE-280 slice e1: seeds the row the resource reads straight into
+        fake_memory_store.rows instead of writing a YAML entry file for the
+        interim store's YAML-to-SQLite backfill to pick up -- neither
+        fake_memory_store nor daemon_checkout backfills YAML, so the row must
+        reach the store directly. list_active_learnings queries the namespace
+        selected_store resolves (FAKE_NAMESPACE, the fake fixture's pin), not
+        "default" -- store.list_entries filters on it exactly, unlike
+        store.recall's hardcoded ["default", USER_NAMESPACE] scan."""
+        fake_memory_store.put(
+            "Test learning summary",
+            FAKE_NAMESPACE,
+            {"entry_id": "L-001", "detail": "Test detail", "importance": 0.9},
         )
 
         resources = _get_resources()

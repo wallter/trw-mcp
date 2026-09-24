@@ -6,11 +6,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from trw_memory.models.memory import MemoryEntry
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.scoring import apply_time_decay
 from trw_mcp.state.claude_md import collect_promotable_learnings
-from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+from trw_mcp.state.persistence import FileStateReader
 
 
 class TestPromotableLearnungsTimeDecay:
@@ -18,42 +21,40 @@ class TestPromotableLearnungsTimeDecay:
 
     def _write_learning(
         self,
-        entries_dir: Path,
-        writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
         filename: str,
         impact: float,
         created_at: datetime,
         q_obs: int = 0,
     ) -> None:
-        data = {
-            "id": f"L-{filename}",
-            "summary": f"Learning {filename}",
-            "detail": "Detail",
-            "impact": impact,
-            "q_value": impact,
-            "q_observations": q_obs,
-            "status": "active",
-            "created_at": created_at.isoformat(),
-            "tags": [],
-        }
-        writer.write_yaml(entries_dir / f"{filename}.yaml", data)
+        # collect_promotable_learnings reads through the store (list_entries), not
+        # the YAML sidecar, so the row is seeded directly with the created_at the
+        # decay math needs — store.put() has no such parameter.
+        entry_id = f"L-{filename}"
+        fake_memory_store.rows[(FAKE_NAMESPACE, entry_id)] = MemoryEntry(
+            id=entry_id,
+            content=f"Learning {filename}",
+            detail="Detail",
+            importance=impact,
+            recurrence=max(q_obs, 1),
+            namespace=FAKE_NAMESPACE,
+            created_at=created_at,
+        )
 
-    def test_old_learning_with_high_impact_filtered_by_decay(self, tmp_path: Path) -> None:
+    def test_old_learning_with_high_impact_filtered_by_decay(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """An entry created 1 year ago with impact=0.8 should be filtered out.
 
         Without decay: 0.8 >= 0.7 threshold → promoted
         With decay: 0.8 * max(0.3, 1.0 - (365/365)*0.3) = 0.8 * 0.7 = 0.56 < 0.7 → not promoted
         """
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
         reader = FileStateReader()
         config = TRWConfig(trw_dir=str(trw_dir))
 
         one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
-        self._write_learning(entries_dir, writer, "old-entry", 0.8, one_year_ago)
+        self._write_learning(fake_memory_store, "old-entry", 0.8, one_year_ago)
 
         with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
             result = collect_promotable_learnings(trw_dir, config, reader)
@@ -63,18 +64,16 @@ class TestPromotableLearnungsTimeDecay:
             "time decay was not applied before threshold comparison"
         )
 
-    def test_new_learning_with_high_impact_is_promoted(self, tmp_path: Path) -> None:
+    def test_new_learning_with_high_impact_is_promoted(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """An entry created today with impact=0.8 should still pass the threshold."""
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
         reader = FileStateReader()
         config = TRWConfig(trw_dir=str(trw_dir))
 
         now = datetime.now(timezone.utc)
-        self._write_learning(entries_dir, writer, "new-entry", 0.8, now)
+        self._write_learning(fake_memory_store, "new-entry", 0.8, now)
 
         with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
             result = collect_promotable_learnings(trw_dir, config, reader)
@@ -83,46 +82,45 @@ class TestPromotableLearnungsTimeDecay:
 
     def test_decay_not_applied_when_no_created_at(self, tmp_path: Path) -> None:
         """Entries without created_at fall back to raw impact (no crash)."""
-        trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
+        from unittest.mock import patch
 
-        writer = FileStateWriter()
+        trw_dir = tmp_path / ".trw"
         reader = FileStateReader()
         config = TRWConfig(trw_dir=str(trw_dir))
 
-        data = {
+        # A MemoryEntry always carries a created_at, so the "missing created"
+        # fallback is exercised the same way test_malformed_created_at_falls_back_to_raw_score
+        # does: at the list_active_learnings seam, with a dict shaped like the
+        # store's own output but omitting "created" entirely.
+        no_date_entry = {
             "id": "L-no-date",
             "summary": "No date entry",
             "detail": "Detail",
             "impact": 0.9,
-            "q_value": 0.9,
-            "q_observations": 0,
             "status": "active",
             "tags": [],
         }
-        writer.write_yaml(entries_dir / "no-date.yaml", data)
 
-        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
-            result = collect_promotable_learnings(trw_dir, config, reader)
+        with patch(
+            "trw_mcp.state.memory_adapter.list_active_learnings",
+            return_value=[no_date_entry],
+        ):
+            with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
+                result = collect_promotable_learnings(trw_dir, config, reader)
         ids = [str(d.get("id", "")) for d in result]
         assert "L-no-date" in ids
 
-    def test_old_high_impact_vs_new_same_impact(self, tmp_path: Path) -> None:
+    def test_old_high_impact_vs_new_same_impact(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Two entries with same impact=0.8 — old one filtered, new one promoted."""
         trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
         reader = FileStateReader()
         config = TRWConfig(trw_dir=str(trw_dir))
 
         now = datetime.now(timezone.utc)
         one_year_ago = now - timedelta(days=365)
 
-        self._write_learning(entries_dir, writer, "aaa-old", 0.8, one_year_ago)
-        self._write_learning(entries_dir, writer, "bbb-new", 0.8, now)
+        self._write_learning(fake_memory_store, "aaa-old", 0.8, one_year_ago)
+        self._write_learning(fake_memory_store, "bbb-new", 0.8, now)
 
         with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
             result = collect_promotable_learnings(trw_dir, config, reader)
@@ -175,36 +173,9 @@ class TestPromotableLearnungsTimeDecay:
         decayed_6m = apply_time_decay(0.7, six_months_ago)
         assert decayed_6m < 0.7
 
-    def test_q_cold_start_uses_q_value_when_mature(self, tmp_path: Path) -> None:
-        """When q_observations >= threshold, q_value is used instead of impact."""
-        trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / "learnings" / "entries"
-        entries_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
-        reader = FileStateReader()
-        config = TRWConfig(trw_dir=str(trw_dir))
-
-        now = datetime.now(timezone.utc)
-        data = {
-            "id": "L-mature",
-            "summary": "Mature entry with high q_value",
-            "detail": "Detail",
-            "impact": 0.3,
-            "q_value": 0.9,
-            "q_observations": 5,
-            "status": "active",
-            "created_at": now.isoformat(),
-            "tags": [],
-        }
-        writer.write_yaml(entries_dir / "mature.yaml", data)
-
-        with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
-            result = collect_promotable_learnings(trw_dir, config, reader)
-        ids = [str(d.get("id", "")) for d in result]
-        assert "L-mature" in ids
-
-    def test_collect_promotable_returns_empty_when_no_entries_dir(self, tmp_path: Path) -> None:
+    def test_collect_promotable_returns_empty_when_no_entries_dir(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """collect_promotable_learnings returns [] when entries_dir doesn't exist."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()

@@ -157,20 +157,48 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
     Returns True if phase was updated, False if skipped (already at or past target).
     Logs a ``phase_enter`` event to the run's events.jsonl on success.
     """
-    reader = FileStateReader()
+    from trw_mcp.state._run_yaml_update import run_yaml_path, update_run_yaml
+
     writer = FileStateWriter()
     event_logger = FileEventLogger(writer)
+    seen: dict[str, str] = {}
+    # N1, optimistic: the exit gate can shell out to git for seconds, so it runs on a
+    # snapshot OUTSIDE the run.yaml lock. The locked write then commits only if the
+    # phase is still the one the gate judged; otherwise it writes nothing and, once,
+    # re-reads and re-judges. The lock is held for the compare-and-set only.
+    for _attempt in range(2):
+        if not run_yaml_path(run_path).is_file():
+            return False
+        snapshot = FileStateReader().read_yaml(run_yaml_path(run_path))
+        judged = str(snapshot.get("phase", "research"))
+        seen.clear()
+        seen["current"] = judged
+        if PHASE_ORDER.get(new_phase.value, 0) <= PHASE_ORDER.get(judged, 0):
+            break  # forward-only: nothing to write
+        # Enforce exit criteria for the phase being LEFT before committing the
+        # write. In strict mode an unmet gate raises StateError (blocks the
+        # transition, nothing written); in lenient (default) it only warns.
+        _enforce_exit_gate(run_path, judged, snapshot)
 
-    run_yaml = run_path / "meta" / "run.yaml"
-    if not reader.exists(run_yaml):
+        def _advance(data: dict[str, object], judged: str = judged) -> None:
+            if str(data.get("phase", "research")) != judged:
+                seen["raced"] = "yes"  # another writer moved the phase: the gate judged a stale one
+                return
+            data["phase"] = new_phase.value
+            seen["advanced"] = "yes"
+
+        if not update_run_yaml(run_path, _advance):
+            return False
+        if "raced" not in seen:
+            break
+    if "raced" in seen:
+        logger.warning("phase_transition_raced", run_path=str(run_path), to_phase=new_phase.value)
         return False
-
-    data = reader.read_yaml(run_yaml)
-    current = str(data.get("phase", "research"))
+    current = seen["current"]
     current_order = PHASE_ORDER.get(current, 0)
     new_order = PHASE_ORDER.get(new_phase.value, 0)
 
-    if new_order <= current_order:
+    if "advanced" not in seen:
         logger.warning(
             "phase_transition_invalid",
             run_path=str(run_path),
@@ -188,14 +216,6 @@ def update_run_phase(run_path: Path, new_phase: Phase) -> bool:
             _mirror_ceremony_phase(new_phase)
         return False  # Forward-only: don't revert
 
-    # Enforce exit criteria for the phase being LEFT before committing the
-    # write. In strict mode an unmet gate raises StateError (blocks the
-    # transition); in lenient (default) it only warns. Tier-skipped phases
-    # are not enforced. (Activates the previously-inert phase gate.)
-    _enforce_exit_gate(run_path, current, data)
-
-    data["phase"] = new_phase.value
-    writer.write_yaml(run_yaml, data)
     logger.info("phase_updated", run_path=str(run_path), old=current, new=new_phase.value)
 
     # F13: Mirror the committed phase into CeremonyState.phase so the status

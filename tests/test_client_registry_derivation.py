@@ -213,9 +213,7 @@ class TestConvertedConsumers:
     def test_meta_tune_tables_cover_every_active_client(self) -> None:
         from trw_mcp.channels._manifest_models import (
             CLIENT_CORRECTION_FACTORS,
-            CLIENT_THROTTLE_THRESHOLDS,
         )
 
         for client_id in ACTIVE_CLIENT_IDS:
             assert client_id in CLIENT_CORRECTION_FACTORS
-            assert client_id in CLIENT_THROTTLE_THRESHOLDS

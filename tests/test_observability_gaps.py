@@ -1,7 +1,7 @@
 """Tests for PRD-CORE-082: Observability Gaps — Correlation IDs, Event Names & Log Levels.
 
 Covers:
-- FR01: Correlation ID binding in log_tool_call decorator
+- FR01: Correlation ID binding in the tool-call wrapper
 - FR02: Distinct event names in _ceremony_helpers.py
 - FR04: Log level downgrade for event_logged
 - FR05: Stale count error indicator in orchestration.py
@@ -23,135 +23,90 @@ from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStat
 pytestmark = pytest.mark.unit
 
 
-# --- FR01: Correlation ID in log_tool_call decorator ---
+# --- FR01: Correlation ID bound by the tool-call wrapper (PRD-FIX-150: it replaced log_tool_call) ---
+
+
+def _wrapped(fn: object) -> object:
+    """The production per-call wrapper, with no disk or pipeline side effects."""
+    from trw_mcp.telemetry.tool_call_timing import wrap_tool
+
+    return wrap_tool(
+        fn,  # type: ignore[arg-type]
+        session_id_resolver=lambda: "s",
+        run_dir_resolver=lambda: None,
+        fallback_dir_resolver=lambda: None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _no_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trw_mcp.telemetry.tool_call_timing._enqueue_to_pipeline", lambda event: None)
 
 
 class TestCorrelationID:
-    """FR01: log_tool_call binds a correlation ID for the duration of a tool call."""
+    """FR01: the wrapper binds a correlation ID for the duration of a tool call."""
 
     def test_correlation_id_bound_during_tool_call(self) -> None:
-        """Correlation ID is present in structlog context while tool runs."""
         captured_ctx: dict[str, object] = {}
 
         def mock_tool() -> str:
-            ctx = structlog.contextvars.get_contextvars()
-            captured_ctx.update(ctx)
+            captured_ctx.update(structlog.contextvars.get_contextvars())
             return "ok"
 
-        from trw_mcp.tools.telemetry import log_tool_call
+        _wrapped(mock_tool)()  # type: ignore[operator]
 
-        wrapped = log_tool_call(mock_tool)
-
-        mock_cfg = MagicMock()
-        mock_cfg.telemetry_enabled = True
-        mock_cfg.telemetry = False
-        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
-            with patch("trw_mcp.tools.telemetry._write_tool_event"):
-                wrapped()
-
-        assert "tool_call_id" in captured_ctx
         assert isinstance(captured_ctx["tool_call_id"], str)
         assert len(captured_ctx["tool_call_id"]) == 8
 
     def test_correlation_id_unbound_after_tool_call(self) -> None:
-        """Correlation ID is cleaned up after tool call completes."""
         structlog.contextvars.unbind_contextvars("tool_call_id")
 
-        def mock_tool() -> str:
-            return "ok"
+        _wrapped(lambda: "ok")()  # type: ignore[operator]
 
-        from trw_mcp.tools.telemetry import log_tool_call
-
-        wrapped = log_tool_call(mock_tool)
-
-        mock_cfg = MagicMock()
-        mock_cfg.telemetry_enabled = True
-        mock_cfg.telemetry = False
-        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
-            with patch("trw_mcp.tools.telemetry._write_tool_event"):
-                wrapped()
-
-        ctx = structlog.contextvars.get_contextvars()
-        assert "tool_call_id" not in ctx
+        assert "tool_call_id" not in structlog.contextvars.get_contextvars()
 
     def test_correlation_id_unbound_on_exception(self) -> None:
-        """Correlation ID is cleaned up even if tool raises."""
         structlog.contextvars.unbind_contextvars("tool_call_id")
 
         def mock_tool() -> str:
             raise ValueError("boom")
 
-        from trw_mcp.tools.telemetry import log_tool_call
+        with pytest.raises(ValueError, match="boom"):
+            _wrapped(mock_tool)()  # type: ignore[operator]
 
-        wrapped = log_tool_call(mock_tool)
-
-        mock_cfg = MagicMock()
-        mock_cfg.telemetry_enabled = True
-        mock_cfg.telemetry = False
-        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
-            with (
-                patch("trw_mcp.tools.telemetry._write_tool_event"),
-                pytest.raises(ValueError, match="boom"),
-            ):
-                wrapped()
-
-        ctx = structlog.contextvars.get_contextvars()
-        assert "tool_call_id" not in ctx
+        assert "tool_call_id" not in structlog.contextvars.get_contextvars()
 
     def test_nested_tool_call_preserves_parent_id(self) -> None:
-        """Nested tool calls preserve the outer correlation ID."""
         parent_id = "abcd1234"
         structlog.contextvars.bind_contextvars(tool_call_id=parent_id)
-
         captured_id: list[str] = []
 
         def mock_tool() -> str:
-            ctx = structlog.contextvars.get_contextvars()
-            captured_id.append(str(ctx.get("tool_call_id", "")))
+            captured_id.append(str(structlog.contextvars.get_contextvars().get("tool_call_id", "")))
             return "ok"
 
-        from trw_mcp.tools.telemetry import log_tool_call
+        try:
+            _wrapped(mock_tool)()  # type: ignore[operator]
 
-        wrapped = log_tool_call(mock_tool)
+            # The inner call sees the parent's id, and the parent's id survives it.
+            assert captured_id == [parent_id]
+            assert structlog.contextvars.get_contextvars().get("tool_call_id") == parent_id
+        finally:
+            structlog.contextvars.unbind_contextvars("tool_call_id")
 
-        mock_cfg = MagicMock()
-        mock_cfg.telemetry_enabled = True
-        mock_cfg.telemetry = False
-        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
-            with patch("trw_mcp.tools.telemetry._write_tool_event"):
-                wrapped()
+    def test_telemetry_disabled_writes_no_run_log_row(self, tmp_path: Path) -> None:
+        from trw_mcp.models.config import TRWConfig, reload_config
+        from trw_mcp.telemetry.tool_call_timing import wrap_tool
 
-        # Inner call should see the parent's ID, not a new one
-        assert captured_id[0] == parent_id
+        reload_config(TRWConfig(telemetry_enabled=False))
+        try:
+            wrap_tool(
+                lambda: "ok", tool_name="t", run_dir_resolver=lambda: None, fallback_dir_resolver=lambda: tmp_path
+            )()
+        finally:
+            reload_config(None)
 
-        # Parent ID should still be in context after inner call returns
-        ctx = structlog.contextvars.get_contextvars()
-        assert ctx.get("tool_call_id") == parent_id
-
-        # Clean up
-        structlog.contextvars.unbind_contextvars("tool_call_id")
-
-    def test_telemetry_disabled_skips_correlation_id(self) -> None:
-        """When telemetry is disabled, no correlation ID is bound."""
-        structlog.contextvars.unbind_contextvars("tool_call_id")
-
-        captured_ctx: dict[str, object] = {}
-
-        def mock_tool() -> str:
-            ctx = structlog.contextvars.get_contextvars()
-            captured_ctx.update(ctx)
-            return "ok"
-
-        from trw_mcp.tools.telemetry import log_tool_call
-
-        wrapped = log_tool_call(mock_tool)
-
-        mock_cfg = MagicMock()
-        mock_cfg.telemetry_enabled = False
-        with patch("trw_mcp.tools.telemetry.get_config", return_value=mock_cfg):
-            wrapped()
-
-        assert "tool_call_id" not in captured_ctx
+        assert not (tmp_path / "session-events.jsonl").exists()
 
 
 # --- FR02: Distinct Event Names in _ceremony_helpers.py ---
@@ -172,10 +127,6 @@ class TestDistinctEventNames:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 side_effect=Exception("upgrade error"),
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
             patch("trw_mcp.tools._ceremony_helpers.logger") as mock_logger,
         ):
@@ -205,10 +156,6 @@ class TestDistinctEventNames:
                 "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
                 side_effect=Exception("stale runs error"),
             ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
             patch("trw_mcp.tools._ceremony_helpers.logger") as mock_logger,
         ):
             run_auto_maintenance(trw_dir, config)
@@ -218,33 +165,6 @@ class TestDistinctEventNames:
         event_name = warning_calls[0][0][0]
         assert event_name != "maintenance_step_failed"
         assert "stale_runs" in event_name
-
-    def test_embeddings_failure_uses_distinct_event_name(self) -> None:
-        """Embeddings check block logs a distinct event name."""
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
-
-        config = TRWConfig()
-        trw_dir = Path("/tmp/test-trw")
-
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                side_effect=Exception("embeddings error"),
-            ),
-            patch("trw_mcp.tools._ceremony_embeddings_maintenance.logger") as mock_logger,
-        ):
-            run_auto_maintenance(trw_dir, config)
-
-        warning_calls = mock_logger.warning.call_args_list
-        assert len(warning_calls) >= 1
-        event_name = warning_calls[0][0][0]
-        assert event_name != "maintenance_step_failed"
-        assert "embeddings" in event_name
 
     def test_review_gate_failure_uses_distinct_event_name(self, tmp_path: Path) -> None:
         """Review gate block logs a distinct event name."""

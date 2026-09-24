@@ -227,7 +227,7 @@ async def test_client_catalogue_contains_review_at_connect(project: Path) -> Non
     # sub-agent it dispatches) can reach the requirement-quality validator.
     # CORE218 CA1 moves existing memory correction into kernel v2: 14 -> 15.
     # PRD-CORE-274 NFR07 makes comms default-on: trw_peers/trw_send/trw_inbox, 15 -> 18.
-    assert len(client.first_catalogue) == 18
+    assert len(client.first_catalogue) == 17  # trw_learn_update merged into trw_learn (PRD-CORE-291)
     assert {"trw_peers", "trw_send", "trw_inbox"} <= set(client.first_catalogue)
     assert "trw_submit_feedback" in client.first_catalogue
 

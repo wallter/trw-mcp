@@ -55,7 +55,6 @@ from trw_mcp.tools._before_edit_hint_core import (
     compute_before_edit_hint,
 )
 from trw_mcp.tools._client_detection import resolve_client_profile, resolve_tier_for_client
-from trw_mcp.tools.telemetry import log_tool_call
 
 __all__ = [
     "_SCHEMA_VERSION_ACCEPTED",
@@ -74,9 +73,8 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
     """Register trw_before_edit_hint on the MCP server."""
 
     # PRD-FIX-144 FR02: wrapped so its use reaches tool telemetry; the response
-    # is unchanged (log_tool_call never mutates the return value).
+    # is unchanged (the tool-call wrapper never mutates the return value).
     @server.tool()
-    @log_tool_call
     def trw_before_edit_hint(
         file_path: str,
         repo_root: str | None = None,
@@ -107,6 +105,15 @@ def register_before_edit_hint_tools(server: FastMCP) -> None:
             )
         # --- tier-aware response enrichment (fail-open) ---
         base: dict[str, Any] = result.model_dump()
+
+        # PRD-CORE-294 FR04(b): top-learning transition nudge -- minimal path,
+        # reuses the learnings already collected above rather than recalling
+        # again. No-op (no recall, no state write) when there are none.
+        with suppress(Exception):  # justified: fail-open -- a transition nudge must never break the base response
+            from trw_mcp.tools._ceremony_status_context import maybe_attach_edit_hint_transition_nudge
+
+            maybe_attach_edit_hint_transition_nudge(base, None, learnings=result.learnings)
+
         with suppress(Exception):  # justified: fail-open enrichment never breaks the base response
             from trw_mcp.channels._tool_return_tiers import enrich_response
 

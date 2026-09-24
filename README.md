@@ -19,7 +19,7 @@
 
 trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframework.com) — a methodology layer for AI-assisted development that turns each coding session's discoveries into permanent institutional knowledge. It works alongside [trw-memory](https://github.com/wallter/trw-memory), the standalone memory engine.
 
-- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->49<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->11<!-- /inv --> agents
+- **trw-mcp** (this repo): MCP server with <!-- inv:tools -->48<!-- /inv --> tools, <!-- inv:skills -->26<!-- /inv --> skills, <!-- inv:agents -->8<!-- /inv --> agents
 - **[trw-memory](https://github.com/wallter/trw-memory)**: Standalone memory engine with hybrid retrieval, scoring, and lifecycle
 
 ## What it does
@@ -103,7 +103,6 @@ learning_max_entries: 500          # Max learnings before auto-pruning
 build_check_enabled: true          # Run pytest+mypy on trw_build_check
 deliver_gate_mode: "block_coding"  # Block delivery for coding/rca/eval tasks without a passing build record;
                                    # set to "advisory" to restore warn-only posture (changed 2026-06-10)
-observation_masking: true          # Reduce verbosity in long sessions
 ceremony_mode: "full"              # "full" or "light"
 ```
 
@@ -183,7 +182,7 @@ A malformed `.trw/config.yaml` always emits a `WARNING` (and a stderr notice) ra
 
 | Capability | Default | Notes |
 |-----------|---------|-------|
-| Field-level encryption | **off** | opt-in via trw-memory `encryption_enabled` |
+| Encryption at rest (SQLCipher) | **off** | opt-in via trw-memory `encryption_enabled` |
 | Secret redaction in logs | **on** | API keys, tokens, and secret-named fields are masked in log output by default |
 | PII detection (memory content) | **warn** | PII (emails, API keys, etc.) is detected and logged but stored as-is by default (`pii_action: warn`); set `pii_action: block` to reject such writes, or `redact` to mask them |
 | Recall output filtering | **redact** | SEC-001 recall filter masks flagged values returned by recall (`recall_filter_mode: redact`) |
@@ -208,14 +207,14 @@ Then verify: `.trw/` dirs are `0700`, `memory.db` is `0600`, and no outbound con
 
 <a id="mcp-tools"></a>
 
-## MCP Tools (<!-- inv:tools -->49<!-- /inv -->)
+## MCP Tools (<!-- inv:tools -->48<!-- /inv -->)
 
-The table below covers the most-used tools out of the full <!-- inv:tools -->49<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
+The table below covers the most-used tools out of the full <!-- inv:tools -->48<!-- /inv -->. For the complete, always-current list run `trw-mcp config-reference` or browse the [tool reference docs](https://trwframework.com/docs).
 
 | Category | Tools | Purpose |
 |----------|-------|---------|
 | **Session** | `session_start`, `init`, `status`, `checkpoint`, `pre_compact_checkpoint`, `heartbeat`, `adopt_run` | Run lifecycle, progress tracking, and pin/liveness management |
-| **Learning** | `learn`, `learn_update`, `recall`, `instructions_sync` | Knowledge capture, retrieval, and instruction-file refresh |
+| **Learning** | `learn`, `recall`, `instructions_sync` | Knowledge capture, retrieval, and instruction-file refresh |
 | **Quality** | `build_check`, `review`, `deliver` | Verification and delivery |
 | **Requirements** | `prd_create`, `prd_validate`, `prd_diff` | [Spec-driven development](https://trwframework.com/docs) with AARE-F PRDs |
 | **Code intelligence** | `code_search`, `code_symbol`, `code_index_update`, `before_edit_hint`, `before_edit_hint_batch`, `codebase_risk_report` | Repo-aware search, symbol lookup, and risk signals |
@@ -233,15 +232,14 @@ Slash-command workflows — zero tokens until triggered. Full skill reference at
 
 **Framework**: `/trw-framework-check` · `/trw-project-health` · `/trw-memory-audit` · `/trw-memory-optimize`
 
-## Agents (<!-- inv:agents -->11<!-- /inv -->)
+## Agents (<!-- inv:agents -->8<!-- /inv -->)
 
 Optional specialized agent definitions for clients and harnesses that support delegation. TRW does not require multi-agent execution; the same lifecycle works sequentially.
 
 | Role | Agent | Purpose |
 |------|-------|---------|
-| **Core Team** | trw-lead, trw-implementer, trw-tester, trw-researcher, trw-reviewer, trw-auditor, trw-adversarial-auditor | Orchestration, TDD, testing, research, review, audit, spec-vs-code audit |
-| **Requirements** | trw-prd-groomer, trw-requirement-writer, trw-requirement-reviewer | PRD lifecycle specialists |
-| **Quality** | trw-traceability-checker | Requirement-to-code-and-test traceability verification |
+| **Core Team** | trw-lead, trw-implementer, trw-researcher, trw-reviewer, trw-auditor, trw-adversarial-auditor | Orchestration, TDD + test authoring, research, review, spec-vs-code audit (incl. traceability), adversarial audit |
+| **Requirements** | trw-prd-groomer, trw-requirement-reviewer | PRD lifecycle specialists |
 
 ## The 6-Phase Model
 

@@ -16,6 +16,21 @@ from pathlib import Path
 from ._utils import _DATA_DIR
 
 
+def _opencode_skill_names(opencode_root: Path, skills_source: Path) -> list[str]:
+    """Inventory skills opencode ships that exist in the canonical corpus."""
+    from ._opencode import load_opencode_skill_inventory
+    from ._optional_skills import CONDITIONAL_SKILLS
+
+    if not (opencode_root / "skills_inventory.yaml").is_file():
+        return []
+    inventory = load_opencode_skill_inventory(opencode_root)
+    return sorted(
+        name
+        for name, cfg in inventory.items()
+        if cfg.get("disposition") != "exclude" and name not in CONDITIONAL_SKILLS and (skills_source / name).is_dir()
+    )
+
+
 def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
     """Return sorted lists of bundled artifact names by category."""
     effective = data_dir or _DATA_DIR
@@ -24,7 +39,6 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
     hooks_source = effective / "hooks"
     opencode_root = effective / "opencode"
     opencode_commands = opencode_root / "commands"
-    opencode_skills = opencode_root / "skills"
     return {
         "skills": sorted(d.name for d in skills_source.iterdir() if d.is_dir()) if skills_source.is_dir() else [],
         "agents": sorted(f.name for f in agents_source.iterdir() if f.suffix == ".md")
@@ -42,9 +56,8 @@ def _get_bundled_names(data_dir: Path | None = None) -> dict[str, list[str]]:
         "opencode_agents": sorted(f.name for f in agents_source.iterdir() if f.suffix == ".md")
         if agents_source.is_dir()
         else [],
-        "opencode_skills": sorted(d.name for d in opencode_skills.iterdir() if d.is_dir())
-        if opencode_skills.is_dir()
-        else [],
+        # PRD-CORE-291-FR04: opencode's skills are canonical skills rendered for it.
+        "opencode_skills": _opencode_skill_names(opencode_root, skills_source),
     }
 
 
@@ -54,8 +67,14 @@ def _get_custom_names(target_dir: Path, data_dir: Path | None = None) -> dict[st
     bundled_skills = set(bundled["skills"])
     bundled_agents = set(bundled["agents"])
     bundled_hooks = set(bundled["hooks"])
-    bundled_opencode_commands = set(bundled.get("opencode_commands", []))
-    bundled_opencode_agents = set(bundled.get("opencode_agents", []))
+    # The distill channel's generated files are TRW's, not the user's (PRD-INFRA-192 FR12).
+    from trw_mcp.channels.opencode._custom_commands import opencode_distill_command_contents
+    from trw_mcp.channels.opencode._explorer_agent import EXPLORER_AGENT_RELPATH
+
+    bundled_opencode_commands = set(bundled.get("opencode_commands", [])) | {
+        Path(key).name for key in opencode_distill_command_contents()
+    }
+    bundled_opencode_agents = set(bundled.get("opencode_agents", [])) | {Path(EXPLORER_AGENT_RELPATH).name}
     bundled_opencode_skills = set(bundled.get("opencode_skills", []))
     result: dict[str, list[str]] = {
         "skills": [],

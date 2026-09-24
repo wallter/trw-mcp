@@ -1,33 +1,21 @@
-"""PRD-CORE-143 MCP knowledge-graph traversal tests."""
+"""PRD-CORE-143 MCP knowledge-graph traversal tests.
+
+The traversal itself (namespace scope, active-only rows, the breadth bound) runs in
+the store and is pinned by ``trw-memory/tests/test_tools_graph_related.py``. Here the
+tool must validate its bounds, resolve the root through the checkout's store, and
+shape the store's rows.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 from fastmcp import FastMCP
-from trw_memory.graph import _upsert_edge
-from trw_memory.models.memory import MemoryEntry, MemoryStatus
-from trw_memory.storage.sqlite_backend import SQLiteBackend
+from trw_memory.models.memory import MemoryEntry
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_tools_sync
 from trw_mcp.tools.knowledge import graph_related, register_knowledge_tools
-
-
-@pytest.fixture
-def backend(tmp_path: Path) -> Iterator[SQLiteBackend]:
-    store = SQLiteBackend(tmp_path / "graph.db")
-    try:
-        yield store
-    finally:
-        store.close()
-
-
-def _edge(backend: SQLiteBackend, source: str, target: str, edge_type: str = "related_to") -> None:
-    _upsert_edge(backend._conn, source, target, edge_type, 0.8, "2026-07-12T00:00:00+00:00", namespace="default")
-    backend._conn.commit()
 
 
 def test_graph_related_is_registered_on_mcp_surface() -> None:
@@ -37,69 +25,72 @@ def test_graph_related_is_registered_on_mcp_surface() -> None:
     assert "trw_graph_related" in get_tools_sync(server)
 
 
-def test_graph_related_returns_active_namespace_scoped_neighbours(backend: SQLiteBackend) -> None:
-    backend.store(MemoryEntry(id="L-root", content="root", namespace="project:a"))
-    backend.store(MemoryEntry(id="L-active", content="active", namespace="project:a", tags=["graph"]))
-    backend.store(MemoryEntry(id="L-obsolete", content="old", namespace="project:a", status=MemoryStatus.OBSOLETE))
-    backend.store(MemoryEntry(id="L-foreign", content="foreign", namespace="project:b"))
-    _edge(backend, "L-root", "L-active")
-    _edge(backend, "L-root", "L-obsolete")
-    _edge(backend, "L-root", "L-foreign")
+def test_graph_related_reads_the_roots_own_namespace_and_shapes_its_rows(fake_memory_store: FakeMemoryStore) -> None:
+    fake_memory_store.put("root", FAKE_NAMESPACE, {"entry_id": "L-root"})
+    fake_memory_store.rows[(FAKE_NAMESPACE, "L-active")] = MemoryEntry(
+        id="L-active", content="active", namespace=FAKE_NAMESPACE, tags=["graph"], importance=0.7
+    )
+    fake_memory_store.graph_edges[(FAKE_NAMESPACE, "L-root")] = [("L-active", "related_to", 0.8)]
 
-    with patch("trw_mcp.tools.knowledge.get_backend", return_value=backend):
-        result = graph_related("L-root")
+    result = graph_related("L-root", depth=2, limit=5)
 
-    assert result["found"] is True
-    assert result["namespace"] == "project:a"
-    assert result["count"] == 1
-    assert [item["id"] for item in result["related"]] == ["L-active"]
-
-
-def test_graph_related_unknown_id_is_typed_empty(backend: SQLiteBackend) -> None:
-    with patch("trw_mcp.tools.knowledge.get_backend", return_value=backend):
-        assert graph_related("L-missing") == {
-            "learning_id": "L-missing",
-            "related": [],
-            "count": 0,
-            "found": False,
-            "truncated": False,
-        }
-
-
-@pytest.mark.parametrize("depth", [0, 4])
-def test_graph_related_rejects_unbounded_depth(backend: SQLiteBackend, depth: int) -> None:
-    with patch("trw_mcp.tools.knowledge.get_backend", return_value=backend), pytest.raises(ValueError, match="depth"):
-        graph_related("L-root", depth=depth)
+    assert ("graph_related", (FAKE_NAMESPACE, "L-root", 2, 5)) in fake_memory_store.calls
+    assert result == {
+        "learning_id": "L-root",
+        "namespace": FAKE_NAMESPACE,
+        "related": [
+            {
+                "id": "L-active",
+                "summary": "active",
+                "importance": 0.7,
+                "tags": ["graph"],
+                "edge_type": "related_to",
+                "weight": 0.8,
+                "depth": 1,
+            }
+        ],
+        "count": 1,
+        "found": True,
+        "truncated": False,
+    }
 
 
-def test_graph_related_rejects_unknown_edge_type(backend: SQLiteBackend) -> None:
-    with (
-        patch("trw_mcp.tools.knowledge.get_backend", return_value=backend),
-        pytest.raises(ValueError, match="unsupported edge_types"),
-    ):
-        graph_related("L-root", edge_types=["not-real"])
+def test_graph_related_reports_the_stores_truncation(fake_memory_store: FakeMemoryStore) -> None:
+    fake_memory_store.put("root", FAKE_NAMESPACE, {"entry_id": "L-root"})
+    for index in range(4):
+        fake_memory_store.put(f"L-{index}", FAKE_NAMESPACE, {"entry_id": f"L-{index}"})
+    fake_memory_store.graph_edges[(FAKE_NAMESPACE, "L-root")] = [(f"L-{i}", "related_to", 0.8) for i in range(4)]
 
-
-def test_graph_related_caps_dense_neighbourhood_and_reports_truncation(backend: SQLiteBackend) -> None:
-    """NFR01: public traversal is bounded by breadth as well as depth."""
-    backend.store(MemoryEntry(id="L-root", content="root", namespace="project:a"))
-    for index in range(8):
-        learning_id = f"L-{index}"
-        backend.store(MemoryEntry(id=learning_id, content=learning_id, namespace="project:a"))
-        _edge(backend, "L-root", learning_id)
-
-    with patch("trw_mcp.tools.knowledge.get_backend", return_value=backend):
-        result = graph_related("L-root", limit=3)
+    result = graph_related("L-root", limit=3)
 
     assert result["count"] == 3
-    assert len(result["related"]) == 3
     assert result["truncated"] is True
 
 
-@pytest.mark.parametrize("limit", [0, 101])
-def test_graph_related_rejects_unbounded_limit(backend: SQLiteBackend, limit: int) -> None:
-    with (
-        patch("trw_mcp.tools.knowledge.get_backend", return_value=backend),
-        pytest.raises(ValueError, match="limit must be between"),
-    ):
-        graph_related("L-root", limit=limit)
+def test_graph_related_unknown_id_is_typed_empty(fake_memory_store: FakeMemoryStore) -> None:
+    assert graph_related("L-missing") == {
+        "learning_id": "L-missing",
+        "related": [],
+        "count": 0,
+        "found": False,
+        "truncated": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"depth": 0}, "depth"),
+        ({"depth": 4}, "depth"),
+        ({"edge_types": ["not-real"]}, "unsupported edge_types"),
+        ({"limit": 0}, "limit must be between"),
+        ({"limit": 101}, "limit must be between"),
+    ],
+)
+def test_graph_related_refuses_an_unbounded_traversal_before_the_store(
+    fake_memory_store: FakeMemoryStore, arguments: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        graph_related("L-root", **arguments)  # type: ignore[arg-type]
+
+    assert fake_memory_store.calls == []

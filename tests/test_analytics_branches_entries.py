@@ -13,7 +13,6 @@ from trw_mcp.state.analytics import (
     find_entry_by_id,
     has_existing_mechanical_learning,
     has_existing_success_learning,
-    surface_validated_learnings,
 )
 
 from ._analytics_branches_support import trw_dir  # noqa: F401
@@ -177,108 +176,6 @@ class TestDetectToolSequences:
             assert len(result) > 0
         else:
             assert len(result) == 0
-
-
-class TestSurfaceValidatedLearnings:
-    """Lines 308, 312-319: surface_validated_learnings."""
-
-    def test_nonexistent_entries_dir_returns_empty(self, tmp_path: Path) -> None:
-        """Returns [] when entries_dir doesn't exist — line 308."""
-        fake_trw = tmp_path / ".trw_nonexistent"
-        result = surface_validated_learnings(fake_trw)
-        assert result == []
-
-    def test_non_active_entries_skipped(self, trw_dir: Path) -> None:
-        """Non-active entries are skipped — line 312-313."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(
-            entries_dir,
-            "resolved_entry",
-            status="resolved",
-            q_value=0.9,
-            q_observations=5,
-        )
-        result = surface_validated_learnings(trw_dir)
-        assert result == []
-
-    def test_low_q_entries_excluded(self, trw_dir: Path) -> None:
-        """Entries below q_threshold are excluded — line 318."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(
-            entries_dir,
-            "low_q",
-            status="active",
-            q_value=0.3,
-            q_observations=5,
-        )
-        result = surface_validated_learnings(trw_dir, q_threshold=0.6)
-        assert result == []
-
-    def test_low_observations_excluded(self, trw_dir: Path) -> None:
-        """Entries below cold_start_threshold are excluded — line 318."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(
-            entries_dir,
-            "few_obs",
-            status="active",
-            q_value=0.9,
-            q_observations=1,
-        )
-        result = surface_validated_learnings(trw_dir, cold_start_threshold=3)
-        assert result == []
-
-    def test_qualified_entries_returned_sorted(self, trw_dir: Path) -> None:
-        """Qualified entries returned sorted by q_value descending — lines 312-319."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(
-            entries_dir,
-            "high_q",
-            summary="high q learning",
-            status="active",
-            q_value=0.95,
-            q_observations=5,
-        )
-        _write_entry(
-            entries_dir,
-            "mid_q",
-            summary="mid q learning",
-            status="active",
-            q_value=0.75,
-            q_observations=4,
-        )
-        _write_entry(
-            entries_dir,
-            "too_low",
-            summary="too low",
-            status="active",
-            q_value=0.4,
-            q_observations=4,
-        )
-        result = surface_validated_learnings(trw_dir, q_threshold=0.6, cold_start_threshold=3)
-        assert len(result) == 2
-        assert result[0]["q_value"] >= result[1]["q_value"]
-        assert result[0]["q_value"] == 0.95
-
-    def test_result_fields_present(self, trw_dir: Path) -> None:
-        """Result dicts have required keys — lines 319-325."""
-        entries_dir = trw_dir / "learnings" / "entries"
-        _write_entry(
-            entries_dir,
-            "qualified",
-            summary="important learning",
-            status="active",
-            q_value=0.8,
-            q_observations=3,
-            tags=["testing"],
-        )
-        result = surface_validated_learnings(trw_dir)
-        assert len(result) == 1
-        entry = result[0]
-        assert "learning_id" in entry
-        assert "summary" in entry
-        assert "q_value" in entry
-        assert "q_observations" in entry
-        assert "tags" in entry
 
 
 class TestHasExistingSuccessLearning:

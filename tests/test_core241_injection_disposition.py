@@ -16,6 +16,8 @@ clothes.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from trw_mcp.models.config import TRWConfig
@@ -100,7 +102,13 @@ class TestAgentsMdInjectionIsNotRedundant:
 class TestInjectedSectionCost:
     """FR02 — the section stays far below the cost that justified the CLAUDE.md removal."""
 
-    def test_injected_section_cost_is_recorded(self) -> None:
+    def test_injected_section_cost_is_recorded(self, tmp_path: Path) -> None:
+        # PRD-CORE-296/null-arms: _inject_learnings_to_agents no longer takes a
+        # pre-built (agents_content, learnings) pair -- it fetches learnings
+        # itself (gated behind learning_recall_enabled) via `recall_fn`, the
+        # same seam `test_agents_md_mark_promoted.py` stubs. The section-cost
+        # measurement is unchanged; only how the fixture learnings are supplied
+        # moved.
         from trw_mcp.state.claude_md._agents_md import _inject_learnings_to_agents
 
         learnings = [
@@ -112,8 +120,12 @@ class TestInjectedSectionCost:
             }
             for i in range(5)
         ]
-        rendered = _inject_learnings_to_agents("# AGENTS\n\nBody.\n", learnings)  # type: ignore[arg-type]
-        section = rendered[len("# AGENTS\n\nBody.\n") :]
+
+        def _recall_stub(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+            return learnings
+
+        config = TRWConfig()
+        section = _inject_learnings_to_agents(Path(str(tmp_path)), config, recall_fn=_recall_stub)
 
         assert len(section) < _SECTION_CHAR_CEILING, (
             f"injected section is {len(section)} chars, at or above the {_SECTION_CHAR_CEILING} "

@@ -185,14 +185,24 @@ class TestGenerateReviewMd:
         assert "- Flag: Validate inputs before use (L-002)" in content
         assert "http://docs.example.com" not in content
 
-    def test_caps_at_20_learnings(self, tmp_path: Path) -> None:
-        """At most 20 learnings are included."""
+    def test_requests_the_20_cap_from_the_factory(self, tmp_path: Path) -> None:
+        """generate_review_md asks the factory for the 20-cap; it does not re-cap.
+
+        The cap (and the impact ranking across the tag union, L-hzMb) is owned
+        entirely by ``recall_for_review_tags`` -- see
+        ``tests/test_recall_factories.py::test_recall_for_review_tags_retains_older_high_impact_across_full_tag_union``
+        and ``tests/test_review_md_real_store.py::test_an_older_high_impact_learning_beats_newer_lower_ones``
+        for the real (unmocked) proof of the cap. This test only proves
+        ``generate_review_md`` forwards ``max_results=_REVIEW_MAX_LEARNINGS`` and
+        renders whatever the factory returns without a second sort/slice pass.
+        """
+        from trw_mcp.state.claude_md._review_md import _REVIEW_MAX_LEARNINGS
         from trw_mcp.state.claude_md._sync import generate_review_md
 
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir(parents=True)
 
-        # Create 25 mock learnings
+        # A factory already respecting its own cap -- exactly 20 entries.
         mock_learnings = [
             {
                 "id": f"L-{i:03d}",
@@ -201,20 +211,21 @@ class TestGenerateReviewMd:
                 "status": "active",
                 "tags": ["gotcha"],
             }
-            for i in range(25)
+            for i in range(_REVIEW_MAX_LEARNINGS)
         ]
 
         with patch(
             "trw_mcp.state.recall_factories.recall_for_review_tags",
             return_value=mock_learnings,
-        ):
+        ) as mocked_factory:
             result = generate_review_md(trw_dir, repo_root=tmp_path)
 
-        assert result["rules_count"] == 20
+        assert mocked_factory.call_args.kwargs["max_results"] == _REVIEW_MAX_LEARNINGS
+        assert result["rules_count"] == _REVIEW_MAX_LEARNINGS
 
         content = Path(str(result["path"])).read_text(encoding="utf-8")
         flag_count = content.count("- Flag:")
-        assert flag_count == 20
+        assert flag_count == _REVIEW_MAX_LEARNINGS
 
     def test_review_md_written_at_repo_root(self, tmp_path: Path) -> None:
         """REVIEW.md is written at the repo root, not in .trw."""

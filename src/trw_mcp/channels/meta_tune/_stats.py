@@ -1,7 +1,12 @@
 """Meta-tune stats reporting — ChannelStatsReport + human table.
 
-Computes per-channel correlation + throttle status for reporting
-via CLI (channel-doctor stats) and MCP tool (trw_channel_stats).
+Computes per-channel correlation stats for reporting via CLI
+(channel-doctor stats) and MCP tool (trw_channel_stats).
+
+The tier-current column and throttle_status field were removed 2026-09-22
+(RC-014) with the throttle engine (``meta_tune/_throttle.py``) that produced
+them — ``tier_default`` was never read to change behavior, so a display
+column fed by it carried no signal either.
 
 PRD-DIST-2400 §meta-tune.
 """
@@ -9,7 +14,6 @@ PRD-DIST-2400 §meta-tune.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import structlog
 from pydantic import BaseModel, ConfigDict
@@ -46,8 +50,6 @@ class ChannelStatEntry(BaseModel):
     #: rate was measurable. Distinct from a measured 0.0 — see
     #: ``_correlator.CorrelationResult`` for why nothing has ever produced one.
     outcome_unmeasured: bool = False
-    tier_current: str
-    throttle_status: str  # "ok" | "insufficient_data" | "throttle_down" | "throttle_clear"
 
 
 class ChannelStatsReport(BaseModel):
@@ -68,7 +70,6 @@ def compute_channel_stats(
     log_path: Path,
     *,
     window_seconds: int = DEFAULT_CORRELATION_WINDOW_SECONDS,
-    manifest_path: Path | None = None,
 ) -> ChannelStatsReport:
     """Load events from *log_path* and compute per-channel correlation stats.
 
@@ -87,38 +88,19 @@ def compute_channel_stats(
 
     results: list[CorrelationResult] = correlate(events, window_seconds=window_seconds)
 
-    # Optionally enrich with tier from manifest
-    tier_map = _load_tier_map(manifest_path)
-
-    # Build throttle decisions inline (lightweight — no side effects)
-    from trw_mcp.channels.meta_tune._throttle import evaluate_throttle
-
-    entries: list[ChannelStatEntry] = []
-    for r in results:
-        tier_key = f"{r.client}:{r.channel_id}"
-        tier_current = tier_map.get(tier_key, "unknown")
-
-        # Build a minimal stat dict for throttle evaluation
-        from trw_mcp.channels.meta_tune._throttle import throttle_stats_for
-
-        stat_dict: dict[str, Any] = throttle_stats_for(r)
-        decision = evaluate_throttle(r.channel_id, r.client, stat_dict)
-        throttle_status = decision.verdict.value
-
-        entries.append(
-            ChannelStatEntry(
-                channel_id=r.channel_id,
-                client=r.client,
-                total_pushes=r.total_pushes,
-                correlated=r.correlated,
-                raw_rate=r.raw_rate,
-                adjusted_rate=r.adj_rate,
-                n_events=r.total_pushes,
-                tier_current=tier_current,
-                throttle_status=throttle_status,
-                outcome_unmeasured=r.outcome_unmeasured,
-            )
+    entries: list[ChannelStatEntry] = [
+        ChannelStatEntry(
+            channel_id=r.channel_id,
+            client=r.client,
+            total_pushes=r.total_pushes,
+            correlated=r.correlated,
+            raw_rate=r.raw_rate,
+            adjusted_rate=r.adj_rate,
+            n_events=r.total_pushes,
+            outcome_unmeasured=r.outcome_unmeasured,
         )
+        for r in results
+    ]
 
     # Sort for deterministic output
     entries.sort(key=lambda e: (e.client, e.channel_id))
@@ -129,25 +111,6 @@ def compute_channel_stats(
         window_seconds=window_seconds,
         log_path=str(log_path),
     )
-
-
-def _load_tier_map(manifest_path: Path | None) -> dict[str, str]:
-    """Return {client:channel_id -> tier_default} from manifest. Fail-open."""
-    if manifest_path is None or not manifest_path.exists():
-        return {}
-    try:
-        from trw_mcp.channels._manifest_loader import load
-
-        manifest = load(manifest_path)
-        return {f"{entry.client}:{entry.id}": entry.tier_default for entry in manifest.channels}
-    except Exception as exc:
-        log.debug(
-            "meta_tune_stats_tier_map_load_failed",
-            path=str(manifest_path),
-            error=str(exc),
-            outcome="tier_map_empty",
-        )
-        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -164,8 +127,8 @@ def format_stats_table(report: ChannelStatsReport) -> str:
         f"Channel Stats  events={report.total_events}  window={report.window_seconds}s",
         f"Log: {report.log_path}",
         "",
-        f"{'Channel':<28} {'Client':<18} {'Pushes':>7} {'Corr':>6} {'Raw%':>7} {'Adj%':>7} {'Tier':<8} {'Status'}",
-        "-" * 100,
+        f"{'Channel':<28} {'Client':<18} {'Pushes':>7} {'Corr':>6} {'Raw%':>7} {'Adj%':>7}",
+        "-" * 90,
     ]
 
     def _pct(value: float | None) -> str:
@@ -175,8 +138,7 @@ def format_stats_table(report: ChannelStatsReport) -> str:
 
     lines.extend(
         f"{e.channel_id:<28} {e.client:<18} {e.total_pushes:>7} "
-        f"{e.correlated:>6} {_pct(e.raw_rate)} {_pct(e.adjusted_rate)} "
-        f"{e.tier_current:<8} {e.throttle_status}"
+        f"{e.correlated:>6} {_pct(e.raw_rate)} {_pct(e.adjusted_rate)}"
         for e in report.channels
     )
     if any(e.outcome_unmeasured for e in report.channels):

@@ -15,17 +15,20 @@ from trw_mcp.models.surface_packs import STANDARD_TASK_PACKS
 
 
 def _assert_correction_available(text: str) -> None:
-    """Correction must be enumerated as available, never as a non-callable class.
+    """Correction must be enumerated as available via ``trw_learn``, never a separate tool.
 
     ``dde1c6fb6`` (PRD-FIX-140-FR08) stopped enumerating the discoverable and
-    operator-gated classes and collapsed them into a single counts-only bullet,
-    so the assertion is now: the AVAILABLE bullet names ``trw_learn_update``
-    once, and the collapsed non-callable bullet names it not at all.
+    operator-gated classes and collapsed them into a single counts-only bullet.
+    PRD-CORE-291 then merged ``trw_learn_update`` into ``trw_learn``'s
+    update mode, so the assertion is now: the AVAILABLE bullet names
+    ``trw_learn`` (the correction path), and ``trw_learn_update`` is named
+    nowhere in either bullet — it no longer exists as a separate tool.
     """
     available = next(line for line in text.splitlines() if line.startswith("- **Available now"))
     not_callable = next(line for line in text.splitlines() if line.startswith("- **Discoverable via"))
     assert "**Operator-grant only**" in not_callable
-    assert available.count("trw_learn_update") == 1
+    assert "trw_learn" in available
+    assert "trw_learn_update" not in available
     assert "trw_learn_update" not in not_callable
 
 

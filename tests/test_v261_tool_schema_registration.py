@@ -52,6 +52,31 @@ else:
     return str(json.loads(payload))
 
 
+def _production_tool_description(tmp_path: Path, tool: str) -> str:
+    """Return the served tool-level ``description`` (docstring) for one tool.
+
+    PRD-CORE-291-FR03 moved ``command_results`` off ``trw_build_check``'s
+    top-level parameters into its ``options`` mapping; the accepted-keys list
+    is documented in the tool docstring rather than a per-parameter schema
+    description, so the enforceable-input contract is checked there instead.
+    """
+    code = f"""
+import asyncio
+import json
+from trw_mcp.server._tools import mcp
+
+tools = asyncio.run(mcp.list_tools())
+for tool in tools:
+    if tool.name == {tool!r}:
+        print(json.dumps(tool.description or ""))
+        break
+else:
+    print(json.dumps(""))
+"""
+    payload = _run_registry_probe_raw(tmp_path, code)
+    return str(json.loads(payload))
+
+
 def _run_registry_probe(tmp_path: Path, code: str) -> dict[str, set[str]]:
     payload = json.loads(_run_registry_probe_raw(tmp_path, code))
     return {name: set(properties) for name, properties in payload.items()}
@@ -79,7 +104,11 @@ def _run_registry_probe_raw(tmp_path: Path, code: str) -> str:
 def test_fresh_production_process_exposes_v261_evidence_and_recovery_schema(tmp_path: Path) -> None:
     """A restarted production registry must advertise every enforceable input."""
     schemas = _production_schemas(tmp_path)
-    assert "command_results" in schemas["trw_build_check"]
+    # PRD-CORE-291-FR03: command_results moved into trw_build_check's
+    # ``options`` mapping — it is documented in the tool docstring, not
+    # advertised as a top-level property.
+    assert "options" in schemas["trw_build_check"]
+    assert "command_results" in _production_tool_description(tmp_path, "trw_build_check")
     assert {"review_completed", "reviewer_identity"} <= schemas["trw_review"]
     # reviewer_source / reviewer_receipt_id were collapsed out of the flat
     # signature into the reviewer_identity object. They are still enforceable

@@ -12,30 +12,35 @@ from pathlib import Path
 
 from trw_mcp.canons.registry import install_view, load_registry
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
+from trw_mcp.state.claude_md._sidecar_retire import SIDECAR_RELPATHS
 
 _CANON_REGISTRY = load_registry()
 _MANAGED_TRW_FILES: tuple[str, ...] = tuple(
     dict.fromkeys(
         [
             *(destination for _, destination in install_view(_CANON_REGISTRY) if destination.startswith(".trw/")),
-            *(
-                destination
-                for canon in _CANON_REGISTRY.compiled_canons
-                for destination in (canon.runtime_compact_core, canon.runtime_reference)
-            ),
             str(DEPLOYMENT_RELATIVE_PATH),
         ]
     )
 )
+# G2 (installer refinement 5.1.0): the change-counter's file discovery is this
+# allow-listed directory scan, and it silently missed `.grok` when grok became
+# a client — every file `update-project --ide grok` wrote landed outside the
+# diff, so a run that provisioned 12 new files reported "0 created". Audited
+# against every root-level UninstallSurface directory in
+# `client_profiles.catalog` (test_update_transaction_dirs_cover_every_client
+# parametrizes over `builtin_client_ids()` so a future client addition fails
+# loudly here instead of repeating this silently).
 _TRANSACTION_DIRS: tuple[str, ...] = (
     ".agents",
+    ".antigravitycli",
     ".claude",
     ".codex",
     ".cursor",
+    ".github",
+    ".grok",
     ".opencode",
     ".vscode",
-    ".github",
-    ".antigravitycli",
 )
 _TRANSACTION_FILES: tuple[str, ...] = (
     *_MANAGED_TRW_FILES,
@@ -57,9 +62,9 @@ _TRANSACTION_FILES: tuple[str, ...] = (
     ".trw/runtime/hook-env.sh",
     ".trw/templates/claude_md.md",
     ".trw/frameworks/VERSION.yaml",
-    # Store-rendered projections the instruction sync writes (PRD-INFRA-190 FR02:
-    # a write the transaction cannot see is a write the report cannot name).
-    ".trw/INSTRUCTIONS.md",
+    # The retired instruction sidecars (PRD-QUAL-143-FR01): the update deletes
+    # them, so a rollback that restores an ``@`` import must restore its target.
+    *SIDECAR_RELPATHS,
     ".mcp.json",
     "AGENTS.md",
     "ANTIGRAVITY.md",
@@ -295,9 +300,9 @@ def unpark_surface_links(root: Path, snapshot_root: Path, parked: list[str], res
         _restore_transaction_file(root, snapshot_root, rel)
 
 
-#: Store and analytics inputs the instruction render reads. They sit outside the
+#: Analytics inputs the instruction render reads. They sit outside the
 #: transaction surface, so the dry-run scratch tree needs its own copy of them.
-_RENDER_INPUT_DIRS: tuple[str, ...] = (".trw/memory", ".trw/context")
+_RENDER_INPUT_DIRS: tuple[str, ...] = (".trw/context",)
 
 
 def dirty_state(
@@ -329,9 +334,9 @@ def dirty_state(
 def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callable[[Path], None]) -> None:
     """Run *apply* against a scratch copy of the surface; the target is never written (FR02).
 
-    The scratch tree is the transaction snapshot plus a ``.git`` marker and the
-    render inputs, so the real update code produces the same bytes it would
-    produce in place.
+    The scratch tree is the transaction snapshot plus a ``.git`` marker, the
+    render inputs and the checkout's daemon token, so the real update code
+    produces the same bytes it would produce in place.
     """
     try:
         scratch = _snapshot_transaction_paths(target_dir)
@@ -347,6 +352,15 @@ def run_in_scratch(target_dir: Path, result: dict[str, list[str]], apply: Callab
         for rel in _RENDER_INPUT_DIRS:
             if (target_dir / rel).is_dir():
                 shutil.copytree(target_dir / rel, scratch / rel, ignore_dangling_symlinks=True, dirs_exist_ok=True)
+        # The render counts the store through the memory daemon (PRD-CORE-280),
+        # which this checkout reaches with its token: without it the scratch render
+        # says "not measured" and the dry run reports a change the real run never makes.
+        from trw_memory.daemon._grants import CHECKOUT_TOKEN_RELPATH
+
+        token = target_dir / CHECKOUT_TOKEN_RELPATH
+        if token.is_file() and not token.is_symlink():
+            (scratch / CHECKOUT_TOKEN_RELPATH).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(token, scratch / CHECKOUT_TOKEN_RELPATH)  # keeps the 0600 mode
         apply(scratch)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)

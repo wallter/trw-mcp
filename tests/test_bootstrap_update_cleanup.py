@@ -144,25 +144,38 @@ class TestUpdateRemovesStaleArtifacts:
         assert custom_agent.exists()
         assert custom_agent.read_text(encoding="utf-8") == "custom agent"
 
-    def test_no_cleanup_without_manifest(self, fake_git_repo: Path) -> None:
-        """First update without manifest writes manifest but skips cleanup."""
+    def test_no_manifest_refuses_before_any_cleanup(self, fake_git_repo: Path) -> None:
+        """PRD-INFRA-192-NFR02: a missing manifest refuses the whole update — including
+        cleanup — rather than writing a fresh manifest and skipping cleanup for one run.
+
+        Superseded behavior: this used to assert update_project() silently degraded
+        (wrote a manifest, skipped cleanup, left a custom skill alone). That fail-open
+        path is intentionally removed; an install with no manifest must refuse and
+        name the clean-reinstall remedy, and the project tree must not change at all.
+        """
         # Manually init without manifest (simulate pre-manifest install)
         init_project(fake_git_repo)
         manifest_path = fake_git_repo / ".trw" / "managed-artifacts.yaml"
         manifest_path.unlink()  # Remove manifest written by init
 
-        # Add a custom skill that should survive
+        # Add a custom skill to prove nothing about it changes either way.
         custom_skill = fake_git_repo / ".claude" / "skills" / "my-custom"
         custom_skill.mkdir(parents=True, exist_ok=True)
         (custom_skill / "SKILL.md").write_text("custom", encoding="utf-8")
 
-        result = update_project(fake_git_repo)
-        assert not result["errors"]
+        before = {str(p.relative_to(fake_git_repo)): p.read_bytes() for p in fake_git_repo.rglob("*") if p.is_file()}
 
-        # Custom skill survives (no cleanup without prior manifest)
-        assert custom_skill.exists()
-        # Manifest is now written for future updates
-        assert manifest_path.exists()
+        result = update_project(fake_git_repo)
+
+        assert len(result["errors"]) == 1, result["errors"]
+        assert "refusing to update" in result["errors"][0]
+        assert "clean reinstall" in result["errors"][0]
+
+        # No manifest is written, no cleanup ran, nothing changed — including
+        # the custom skill and the (still-absent) manifest.
+        assert not manifest_path.exists()
+        after = {str(p.relative_to(fake_git_repo)): p.read_bytes() for p in fake_git_repo.rglob("*") if p.is_file()}
+        assert after == before
 
 
 class TestContextCleanup:

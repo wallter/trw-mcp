@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -214,7 +215,7 @@ def _seed_event_log(root: Path, rows: list[dict[str, object]]) -> None:
 
 
 def _tool_row(tool_name: str, when: datetime) -> dict[str, object]:
-    return {"event": "tool_invocation", "tool_name": tool_name, "success": True, "ts": _iso(when)}
+    return {"event": "tool_call", "tool_name": tool_name, "success": True, "ts": _iso(when)}
 
 
 @pytest.fixture(params=_HOOK_DIRS, ids=lambda p: p.parent.name)
@@ -280,7 +281,7 @@ def test_degraded_detector_fires_only_without_observed_tool_call(tmp_path: Path,
     assert "DEGRADED" not in first_prompt.stdout, "one prompt is not the discriminating evidence"
 
 
-def test_a_non_trw_tool_invocation_is_not_trw_activity(tmp_path: Path, hook_dir: Path) -> None:
+def test_a_non_trw_tool_call_is_not_trw_activity(tmp_path: Path, hook_dir: Path) -> None:
     """FR01: a tail of only non-``trw_`` invocations is treated as no TRW activity."""
     now = datetime.now(timezone.utc)
     root = _make_project(tmp_path, hook_dir, "othertools")
@@ -584,7 +585,7 @@ def test_degraded_session_gets_no_framework_read_directive(tmp_path: Path, hook_
 def test_detector_reads_the_owned_run_event_log_before_the_pinless_fallback(tmp_path: Path, hook_dir: Path) -> None:
     """PRD-FIX-128-FR01 acceptance, all four arms.
 
-    The producer routes a ``tool_invocation`` row into the PINNED RUN's event log
+    The producer routes a ``tool_call`` row into the PINNED RUN's event log
     and returns; only a session with no pinned run reaches the pinless
     ``.trw/context/session-events.jsonl``. The two sinks are mutually exclusive,
     and the detector read the fallback one only -- so every session that owned a
@@ -1072,7 +1073,6 @@ def test_degraded_output_is_sanitized(tmp_path: Path, hook_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.perf
 @pytest.mark.slow
 @requires_local_timing
 @pytest.mark.xdist_group(name="core_247_hook_latency")
@@ -1111,35 +1111,86 @@ def test_hook_latency_budget(tmp_path: Path, hook_dir: Path) -> None:
         _epoch_marker(root, "lat").unlink(missing_ok=True)
         _run(root, "user-prompt-submit.sh", {"prompt": "measure me", "session_id": "lat"})
 
-    best: tuple[float, float] | None = None
+    best_session_start_ms = float("inf")
+    best_delta_ms = float("inf")
     for _batch in range(_LATENCY_BUDGET_BATCHES):
         session_start_ms = _mean(lambda: _run(root, "session-start.sh", {"source": "startup", "session_id": "lat"}))
         delta_ms = _mean(_with_detector) - _mean(_without_detector)
-        if best is None or (session_start_ms + delta_ms) < (best[0] + best[1]):
-            best = (session_start_ms, delta_ms)
+        if (session_start_ms + delta_ms) < (best_session_start_ms + best_delta_ms):
+            best_session_start_ms, best_delta_ms = session_start_ms, delta_ms
         if session_start_ms <= _SESSION_START_BUDGET_MS and delta_ms <= _DETECTOR_DELTA_BUDGET_MS:
             break
 
-    assert best is not None
-    session_start_ms, delta_ms = best
-    assert session_start_ms <= _SESSION_START_BUDGET_MS, (
-        f"SessionStart mean {session_start_ms:.1f} ms over {_LATENCY_RUNS} runs, best of "
-        f"{_LATENCY_BUDGET_BATCHES} batches, exceeds {_SESSION_START_BUDGET_MS} ms. The added work is one "
-        "small file write; if it grew, cut it or raise the budget in this same change with the new measurement."
-    )
-    assert delta_ms <= _DETECTOR_DELTA_BUDGET_MS, (
-        f"detector delta {delta_ms:.1f} ms, best of {_LATENCY_BUDGET_BATCHES} batches, exceeds "
-        f"{_DETECTOR_DELTA_BUDGET_MS} ms — the tail read must stay bounded by TRW_SESSION_EVENT_TAIL_LINES, "
-        "never a full log scan"
-    )
+    assert_budget("core_247_session_start_latency", best_session_start_ms, _SESSION_START_BUDGET_MS, "ms")
+    assert_budget("core_247_detector_delta_latency", best_delta_ms, _DETECTOR_DELTA_BUDGET_MS, "ms")
 
 
-@pytest.mark.perf
+def _build_intent_latency_fixture(tmp_path: Path, hook_dir: Path, label: str) -> tuple[Path, str, dict[str, object]]:
+    """Shared setup for the intent-guard fast-path latency tests.
+
+    Wires an ENROLLED project carrying the two intent hooks and a fresh glob
+    sidecar, so both the gating (correctness) and budget (latency) twins
+    measure the fast path, not the slow one. Returns ``(root, contract_rel,
+    payload)``; callers assert enrollment/sidecar state for themselves.
+    """
+    from trw_mcp.security.intent_contract.enrollment import write_enrollment
+
+    root = _make_project(tmp_path, hook_dir, label)
+    hooks = root / ".claude" / "hooks"
+    for name in ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh", "lib-intent-guard.sh"):
+        target = hooks / name
+        target.write_text((hook_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
+        target.chmod(0o755)
+    contract_rel = ".trw/contracts/must-not-happen.yaml"
+    (root / ".trw" / "contracts").mkdir(parents=True, exist_ok=True)
+    (root / contract_rel).write_text(
+        "contract_id: LAT\n"
+        "must_not_happen:\n"
+        "  - claim_id: C-1\n"
+        '    text: "not this one"\n'
+        "    authority_class: policy_derived\n"
+        "    state: active\n"
+        "    machine_checkable: true\n"
+        "    binding_channel: blocking_hook\n"
+        '    anchors: ["protected/module.py"]\n',
+        encoding="utf-8",
+    )
+    (root / "unrelated").mkdir(exist_ok=True)
+    (root / "unrelated" / "notes.py").write_text("x = 1\n", encoding="utf-8")
+    write_enrollment(root, contract_rel)
+    payload: dict[str, object] = {
+        "tool_name": "Edit",
+        "tool_input": {"file_path": "unrelated/notes.py", "old_string": 'a\\nb "q"', "new_string": "c"},
+    }
+    return root, contract_rel, payload
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq unavailable — the fast path defers by design without it")
+def test_hook_latency_budget_intent_guard_fast_path(tmp_path: Path, hook_dir: Path) -> None:
+    """PRD-CORE-254-NFR01 correctness twin: the fast path is wired and each hook exits 0.
+
+    The p95 latency budget is a host-resource measurement, moved to
+    ``test_hook_latency_budget_intent_guard_fast_path_budget``
+    (``requires_local_timing``, skipped on CI). This test keeps the
+    enrollment/sidecar wiring and per-hook exit-code assertions gating.
+    """
+    from trw_mcp.security.intent_contract._sidecar import glob_sidecar_path
+    from trw_mcp.security.intent_contract.enrollment import check_enrollment_status
+
+    root, contract_rel, payload = _build_intent_latency_fixture(tmp_path, hook_dir, "intent-latency")
+    assert check_enrollment_status(root, contract_rel) == "current"
+    assert glob_sidecar_path(root).is_file(), "no sidecar was written, so this would measure the slow path"
+
+    for hook in ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh"):
+        result = _run(root, hook, payload)
+        assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.slow
 @requires_local_timing
 @pytest.mark.skipif(shutil.which("jq") is None, reason="jq unavailable — the fast path defers by design without it")
 @pytest.mark.xdist_group(name="core_247_hook_latency")
-def test_hook_latency_budget_intent_guard_fast_path(tmp_path: Path, hook_dir: Path) -> None:
+def test_hook_latency_budget_intent_guard_fast_path_budget(tmp_path: Path, hook_dir: Path) -> None:
     """PRD-CORE-254-NFR01: the intent guard's non-matching path, p95 within budget, N=40.
 
     30 ms on Linux, platform-adjusted on macOS -- see ``_INTENT_FAST_PATH_BUDGET_MS``.
@@ -1163,65 +1214,24 @@ def test_hook_latency_budget_intent_guard_fast_path(tmp_path: Path, hook_dir: Pa
 
     Repeats each hook's N=40 batch up to ``_LATENCY_BUDGET_BATCHES`` times and
     keeps the best (lowest) p95 across batches, same shape as
-    ``test_p95_latency_under_budget`` -- the 30 ms budget itself is never
+    ``test_p95_latency_under_budget_budget`` -- the 30 ms budget itself is never
     touched, so a real regression fails every batch.
     """
-    from trw_mcp.security.intent_contract._sidecar import glob_sidecar_path
-    from trw_mcp.security.intent_contract.enrollment import check_enrollment_status, write_enrollment
-
-    root = _make_project(tmp_path, hook_dir, "intent-latency")
-    hooks = root / ".claude" / "hooks"
-    for name in ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh", "lib-intent-guard.sh"):
-        target = hooks / name
-        target.write_text((hook_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
-        target.chmod(0o755)
-    contract_rel = ".trw/contracts/must-not-happen.yaml"
-    (root / ".trw" / "contracts").mkdir(parents=True, exist_ok=True)
-    (root / contract_rel).write_text(
-        "contract_id: LAT\n"
-        "must_not_happen:\n"
-        "  - claim_id: C-1\n"
-        '    text: "not this one"\n'
-        "    authority_class: policy_derived\n"
-        "    state: active\n"
-        "    machine_checkable: true\n"
-        "    binding_channel: blocking_hook\n"
-        '    anchors: ["protected/module.py"]\n',
-        encoding="utf-8",
-    )
-    (root / "unrelated").mkdir(exist_ok=True)
-    (root / "unrelated" / "notes.py").write_text("x = 1\n", encoding="utf-8")
-    write_enrollment(root, contract_rel)
-    assert check_enrollment_status(root, contract_rel) == "current"
-    assert glob_sidecar_path(root).is_file(), "no sidecar was written, so this would measure the slow path"
-
-    payload = {
-        "tool_name": "Edit",
-        "tool_input": {"file_path": "unrelated/notes.py", "old_string": 'a\\nb "q"', "new_string": "c"},
-    }
+    root, _contract_rel, payload = _build_intent_latency_fixture(tmp_path, hook_dir, "intent-latency-budget")
 
     for hook in ("pre-tool-intent-guard.sh", "post-tool-intent-check.sh"):
-        best_p95: float | None = None
-        best_mean = 0.0
+        best_p95 = float("inf")
         for _batch in range(_LATENCY_BUDGET_BATCHES):
             samples: list[float] = []
             for _ in range(_P95_LATENCY_RUNS):
                 started = time.perf_counter()
-                result = _run(root, hook, payload)
+                _run(root, hook, payload)
                 samples.append((time.perf_counter() - started) * 1000.0)
-                assert result.returncode == 0, result.stderr
             samples.sort()
             rank = math.ceil(0.95 * _P95_LATENCY_RUNS)
             p95_ms = samples[rank - 1]
-            mean_ms = sum(samples) / len(samples)
-            if best_p95 is None or p95_ms < best_p95:
-                best_p95, best_mean = p95_ms, mean_ms
+            if p95_ms < best_p95:
+                best_p95 = p95_ms
             if p95_ms <= _INTENT_FAST_PATH_BUDGET_MS:
                 break
-        assert best_p95 is not None
-        assert best_p95 <= _INTENT_FAST_PATH_BUDGET_MS, (
-            f"{hook} fast-path p95 {best_p95:.1f} ms (mean {best_mean:.1f} ms over N={_P95_LATENCY_RUNS}), best of "
-            f"{_LATENCY_BUDGET_BATCHES} batches, exceeds {_INTENT_FAST_PATH_BUDGET_MS} ms. A miss this large "
-            "usually means the fast path DEFERRED and an interpreter ran: check the sidecar, the marker, and jq "
-            "before touching this budget."
-        )
+        assert_budget(f"core_254_intent_fast_path_{hook}", best_p95, _INTENT_FAST_PATH_BUDGET_MS, "ms")

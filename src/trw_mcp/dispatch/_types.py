@@ -18,6 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
+from trw_mcp.dispatch._client_spec_types import DispatchEffort as DispatchEffort
+
 # ``DispatchClient`` and ``SUPPORTED_CLIENTS`` are DEFINED in ``_client_specs``,
 # next to the registry entries they enumerate, and RE-EXPORTED here (``X as X``)
 # so every existing importer — config fields, env allowlist, normalizer, runner —
@@ -142,6 +144,27 @@ class DispatchRequest(BaseModel):
     client: DispatchClient = Field(description="Which coding-agent CLI to launch.")
     prompt: str = Field(min_length=1, description="The prompt/instruction body for the child agent.")
     model: str | None = Field(default=None, description="Optional model override passed to the client.")
+    effort: DispatchEffort | None = Field(
+        default=None,
+        description=(
+            "Portable reasoning-effort intent. The resolver fills it from the role's operator "
+            "default; build_command maps it onto the client's own flag (clamping to what the "
+            "client accepts) and omits it for a client with no documented flag."
+        ),
+    )
+    effort_source: str = Field(
+        default="none",
+        description="Which precedence tier chose effort: request, config, table or none (PRD-CORE-290-FR03).",
+    )
+    model_source: str = Field(
+        default="none",
+        description="Which precedence tier chose model: request, config, table, unsupported or none.",
+    )
+    max_turns: int | None = Field(
+        default=None,
+        description="Turn cap passed through the client's verified flag; None applies none (PRD-CORE-290-FR04).",
+    )
+    max_turns_source: str = Field(default="none", description="default, config, disabled or none.")
     cwd: Path | None = Field(default=None, description="Working directory for the child process.")
     timeout_s: int = Field(default=600, gt=0, description="Hard wall-clock timeout in seconds.")
     read_only: bool = Field(
@@ -153,8 +176,7 @@ class DispatchRequest(BaseModel):
             "and agy --sandbox; claude/opencode deny writes by default without a bypass. "
             "Set False (--allow-writes) to ACTUALLY enable writes: codex --sandbox "
             "workspace-write, claude --permission-mode acceptEdits, agy "
-            "--dangerously-skip-permissions. opencode has no working write flag in this "
-            "registry -- see the spec comment -- so a write run to it fails at argv parse."
+            "--dangerously-skip-permissions, opencode --auto."
         ),
     )
     isolate: bool = Field(
@@ -293,6 +315,11 @@ class DispatchRequest(BaseModel):
                 "with_trw cannot be combined with posture='reviewer': the reviewer posture already "
                 "injects TRW's MCP server, bounded to the read-only reviewer surface. Choose one."
             )
+        if self.with_trw and self.posture == "isolated-review":
+            raise ValueError(
+                "with_trw cannot be combined with posture='isolated-review': the lane admits a child only "
+                "after proving it has no MCP server, and with_trw would add one."
+            )
         return self
 
     @field_validator("model")
@@ -402,11 +429,31 @@ class DispatchResult(BaseModel):
             "egress, never a tool the child reached through its own MCP servers."
         ),
     )
+    next_read: str = Field(
+        default="",
+        description="Where the rest of the work is when the run stopped incomplete (a turn-cap hit); else empty.",
+    )
+    isolation: Literal["none", "snapshot-write-confined"] = Field(
+        default="none",
+        description=(
+            "Where the child ran: the caller's tree, or a snapshot of it with writes confined. "
+            "Reads are NOT confined: the child can read caller files and HOME secrets by absolute path."
+        ),
+    )
+    contamination: Literal["not-checked", "clean", "contaminated"] = Field(
+        default="not-checked",
+        description="Whether the snapshot or the caller's git state changed during the run; contaminated is never ok.",
+    )
+    changed_paths: list[str] = Field(default_factory=list, description="What changed, when contaminated.")
     silence_reason: str | None = Field(
         default=None,
         description=(
-            "Why this run produced no usable answer: 'timed_out', 'auth_or_content_stop', "
-            "'nonzero_exit', 'empty_output', or None when the answer is usable. Exists "
+            "Why this run produced no usable answer: 'timed_out', 'turn_cap_reached', 'auth_or_content_stop', "
+            "'subagent_deferral' (the client's own status field claims success while its answer text only "
+            "announces a handoff to a subagent -- the work was never actually returned), "
+            "'quota_exhausted' (the provider refused on usage or billing; fail over to another client), "
+            "'sandbox_unsupported' or 'client_unsupported' (the installed CLI lacks a flag dispatch passes; "
+            "nothing was run), 'nonzero_exit', 'empty_output', or None when the answer is usable. Exists "
             "because a caller that sees only empty findings cannot tell a clean review from "
             "a child that never ran (PRD-CORE-277-FR04)."
         ),
@@ -430,4 +477,5 @@ class DispatchResult(BaseModel):
         Exposed as a ``computed_field`` so it is included in ``model_dump_json``
         for the ``--output-file`` / ``--json`` CLI surfaces.
         """
-        return not self.timed_out and self.exit_code == 0 and bool(self.text.strip()) and self.silence_reason is None
+        clean = self.silence_reason is None and self.contamination != "contaminated"
+        return not self.timed_out and self.exit_code == 0 and bool(self.text.strip()) and clean

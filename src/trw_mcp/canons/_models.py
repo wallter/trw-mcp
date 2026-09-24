@@ -104,46 +104,6 @@ class VersionSurface:
 
 
 @dataclass(frozen=True)
-class CompiledCanon:
-    """Typed compiled-generation roles for one canon (PRD-CORE-207 FR05).
-
-    Records the single marked authoring source and the deterministic generated
-    outputs (compact core, reference, backward-compatible combined) plus the
-    obligation inventory and the frozen combined baseline digest. This is the
-    promoted generation contract: the ``combined`` output remains the legacy
-    package/runtime body while ``compact_core``/``reference`` are preview
-    artifacts, so runtime pointers select the compact core while combined paths remain valid.
-    """
-
-    id: str
-    authoring_source: str
-    obligation_inventory: str
-    compact_core: str
-    reference: str
-    combined: str
-    runtime_compact_core: str
-    runtime_reference: str
-    runtime_combined: str
-    frozen_baseline_digest: str
-    max_core_ratio: float
-    compiler_schema: int
-    core_mirrors: tuple[str, ...] = ()
-    reference_mirrors: tuple[str, ...] = ()
-
-    @property
-    def managed_outputs(self) -> tuple[str, ...]:
-        """Every tracked generated output path this compiled canon owns."""
-        return (
-            self.compact_core,
-            self.reference,
-            self.combined,
-            self.obligation_inventory,
-            *self.core_mirrors,
-            *self.reference_mirrors,
-        )
-
-
-@dataclass(frozen=True)
 class CanonRegistry:
     """The whole loaded registry: schema version, artifacts, version surfaces, digest."""
 
@@ -151,7 +111,6 @@ class CanonRegistry:
     artifacts: tuple[CanonArtifact, ...]
     version_surfaces: tuple[VersionSurface, ...]
     digest: str
-    compiled_canons: tuple[CompiledCanon, ...] = ()
 
     def artifact(self, artifact_id: str) -> CanonArtifact:
         """Return the artifact with ``artifact_id`` or raise ``KeyError``."""
@@ -164,19 +123,11 @@ class CanonRegistry:
         """Return all artifacts of ``kind`` in deterministic order."""
         return tuple(a for a in self.artifacts if a.kind is kind)
 
-    def compiled_canon(self, canon_id: str) -> CompiledCanon:
-        """Return the compiled-generation record for ``canon_id`` or raise ``KeyError``."""
-        for compiled in self.compiled_canons:
-            if compiled.id == canon_id:
-                return compiled
-        raise KeyError(canon_id)
-
 
 __all__ = [
     "ArtifactKind",
     "CanonArtifact",
     "CanonRegistry",
-    "CompiledCanon",
     "InstallRole",
     "InstallTarget",
     "SurfaceUsage",

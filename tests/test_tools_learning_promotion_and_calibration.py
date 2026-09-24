@@ -7,32 +7,19 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """These tests only assert on trw_learn's YAML sidecar / sync status -- the fake route suffices (PRD-CORE-280 e1)."""
+    return fake_memory_store
+
+
 class TestClaudeMdSyncQValuePromotion:
     """Tests for PRD-CORE-004 Phase 1c — q_value-based promotion in claude_md_sync."""
-
-    def test_mature_entry_uses_q_value(self, tmp_path: Path) -> None:
-        """CORE-093: learning promotion removed — q_value no longer drives CLAUDE.md content."""
-        from trw_mcp.state.memory_adapter import get_backend
-
-        tools = _get_tools()
-        result = tools["trw_learn"].fn(
-            summary="Mature q promotion test",
-            detail="Has high q_value",
-            impact=0.3,
-        )
-        learning_id = result["learning_id"]
-
-        trw_dir = tmp_path / _CFG.trw_dir
-        backend = get_backend(trw_dir)
-        backend.update(learning_id, q_value=0.9, q_observations=5, namespace="default")
-
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        # CORE-093: learnings_promoted always 0
-        assert sync_result["learnings_promoted"] == 0
 
     def test_immature_entry_uses_impact(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
         """CORE-093: learning promotion removed — impact no longer drives CLAUDE.md content."""
@@ -45,27 +32,6 @@ class TestClaudeMdSyncQValuePromotion:
 
         sync_result = tools["trw_claude_md_sync"].fn(scope="root")
         # CORE-093: learnings_promoted always 0
-        assert sync_result["learnings_promoted"] == 0
-
-    def test_mature_low_q_not_promoted(self, tmp_path: Path) -> None:
-        """Mature entry with low q_value is not promoted even if impact is high."""
-        from trw_mcp.state.memory_adapter import get_backend
-
-        tools = _get_tools()
-        result = tools["trw_learn"].fn(
-            summary="Mature low q no promote test",
-            detail="High impact but low q_value",
-            impact=0.9,  # High impact
-        )
-        learning_id = result["learning_id"]
-
-        # Update q_value and q_observations in SQLite (where list_active_learnings reads from)
-        trw_dir = tmp_path / _CFG.trw_dir
-        backend = get_backend(trw_dir)
-        backend.update(learning_id, q_value=0.2, q_observations=5, namespace="default")
-
-        sync_result = tools["trw_claude_md_sync"].fn(scope="root")
-        # Should use q_value (0.2) — not promoted
         assert sync_result["learnings_promoted"] == 0
 
 
@@ -211,28 +177,3 @@ class TestUnattributedCalibrationRetirement:
         matching = [data for data in stored if data.get("id") == result["learning_id"]]
         assert len(matching) == 1
         assert float(str(matching[0]["impact"])) == raw_impact
-
-    def test_unavailable_pooled_stats_do_not_affect_learning(
-        self,
-        tmp_path: Path,
-        reader: FileStateReader,
-    ) -> None:
-        """No pooled-statistics acquisition is required to persist a learning."""
-        tools = _get_tools()
-        raw_impact = 0.8
-
-        with patch(
-            "trw_mcp.state.recall_tracking.get_recall_stats",
-            side_effect=RuntimeError("tracking boom"),
-        ):
-            result = tools["trw_learn"].fn(
-                summary="Calibration failure test",
-                detail="Calibration should fall back gracefully",
-                impact=raw_impact,
-            )
-
-        assert result["status"] == "recorded"
-        # Verify it still saved something
-        entries_dir = _entries_dir(tmp_path)
-        entry_files = list(entries_dir.glob("*.yaml"))
-        assert len(entry_files) >= 1

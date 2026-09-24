@@ -13,10 +13,12 @@ ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 #: Every live copy of the internal PRD-review skill (two formerly-vendored
 #: mirrors were deleted wholesale in `a77650f238`; only these remain).
 #: Deliberately NOT filtered with `.exists()`: a deleted surface must fail
-#: loudly here, not silently drop out of the contract.
+#: loudly here, not silently drop out of the contract. Codex no longer ships
+#: a standalone `trw-prd-review/SKILL.md` at all (its content is merged into
+#: `trw-prd-ready/trw-prd-review-contract.md`, PRD-CORE-291-FR04); the
+#: property is checked against its RENDERED text below instead of a path.
 PRD_REVIEW_SURFACES = (
     PACKAGE_ROOT / "src/trw_mcp/data/skills/trw-prd-review/SKILL.md",
-    PACKAGE_ROOT / "src/trw_mcp/data/codex/skills/trw-prd-review/SKILL.md",
     pytest.param(ROOT / ".claude/skills/trw-prd-review/SKILL.md", marks=requires_monorepo),
     pytest.param(ROOT / ".agents/skills/trw-prd-review/SKILL.md", marks=requires_monorepo),
 )
@@ -44,6 +46,15 @@ def test_internal_prd_review_does_not_advertise_direct_invocation(path: Path) ->
     text = path.read_text(encoding="utf-8")
     assert INTERNAL_COMMAND.search(text) is None, path
     assert "invoked standalone" not in text, path
+
+
+def test_codex_rendering_of_internal_prd_review_does_not_advertise_direct_invocation() -> None:
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical = (PACKAGE_ROOT / "src/trw_mcp/data/skills/trw-prd-review/SKILL.md").read_text(encoding="utf-8")
+    text = render_skill_md(canonical, "codex")
+    assert INTERNAL_COMMAND.search(text) is None
+    assert "invoked standalone" not in text
 
 
 def test_prd_review_remains_internal_and_pipeline_owned() -> None:

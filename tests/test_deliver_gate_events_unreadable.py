@@ -150,3 +150,57 @@ def test_audit_repro_docs_task_with_unreadable_log_is_blocked(
     assert result.get("review_scope_block")
     # The soft warning is kept, not replaced by the block.
     assert result.get("build_gate_warning")
+
+
+#: A final row that no reader can take as an event: torn JSON (a failing check cut off
+#: mid-write, say), and valid JSON that is not an object (round-2 P1).
+_UNREADABLE_ROWS = [
+    pytest.param('{"event": "build_check_complete", "data": {"tests_passed": fal', id="torn-json"),
+    pytest.param('"build_check_complete"', id="non-object-json"),
+]
+
+
+def _passing_build_then_malformed_row(tmp_project: Path, row: str = '{"event": "build_check_complete", "da') -> Path:
+    """A passing build check, then a final *row* that is not a readable event."""
+    run_dir = _make_run(tmp_project, "coding", modified=1)
+    FileStateWriter().append_jsonl(
+        run_dir / "meta" / "events.jsonl",
+        {"event": "build_check_complete", "data": {"tests_passed": True, "test_count": 12, "scope": "pytest tests"}},
+    )
+    with (run_dir / "meta" / "events.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write(row + "\n")
+    return run_dir
+
+
+@pytest.mark.parametrize("row", _UNREADABLE_ROWS)
+def test_a_malformed_final_row_cannot_let_an_earlier_pass_authorise_delivery(
+    row: str, tmp_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-FIX-151 review P1: the gate reads build evidence strictly, so the malformed row blocks."""
+    # Observe receipt mode: the legacy event evidence is the only build evidence, so
+    # nothing but the malformed row can decide this (enforce would block on the
+    # absent typed receipt regardless).
+    cfg = TRWConfig().model_copy(update={"deliver_gate_mode": "block_coding", "evidence_receipt_mode": "observe"})
+    monkeypatch.setattr("trw_mcp.tools._deliver_gate_mode.get_config", lambda: cfg)
+    monkeypatch.setattr("trw_mcp.tools._delivery_helpers.get_config", lambda: cfg)
+    run_dir = _passing_build_then_malformed_row(tmp_project, row)
+
+    result = check_delivery_gates(run_dir, FileStateReader(), tmp_project / ".trw")
+
+    assert result.get("delivery_blocked"), result
+    assert "malformed row" in str(result.get("build_gate_warning"))
+
+
+@pytest.mark.parametrize("row", _UNREADABLE_ROWS)
+def test_an_unreadable_final_row_leaves_the_latest_build_verdict_unknown(row: str, tmp_project: Path) -> None:
+    """The latest-verdict path reads strictly too: unknown, never the earlier pass's False."""
+    from trw_mcp.tools._delivery_event_checks import latest_build_check_failed_for_run
+
+    assert latest_build_check_failed_for_run(_passing_build_then_malformed_row(tmp_project, row)) is None
+
+
+def test_summary_readers_stay_lenient_about_a_malformed_row(tmp_project: Path) -> None:
+    """Only the gate is strict; the default read still returns the valid records."""
+    run_dir = _passing_build_then_malformed_row(tmp_project)
+    assert len(_read_run_events(run_dir, FileStateReader()) or []) == 2
+    assert _read_run_events(run_dir, FileStateReader(), strict=True) is None

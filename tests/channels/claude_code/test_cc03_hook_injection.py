@@ -42,6 +42,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_jq
+
 _HOOK = (
     Path(__file__).parent.parent.parent.parent
     / "src"
@@ -86,6 +88,7 @@ def _run(payload_file_path: str, tmp_path: Path) -> subprocess.CompletedProcess[
     )
 
 
+@requires_jq
 def test_the_hook_actually_launches_a_python_subprocess(tmp_path: Path) -> None:
     """Non-vacuity control, and it must come first.
 
@@ -136,6 +139,7 @@ def test_a_malicious_file_path_cannot_execute_code(tmp_path: Path, template: str
     assert result.returncode == 0
 
 
+@requires_jq
 def test_an_apostrophe_in_a_real_filename_does_not_break_the_hook(tmp_path: Path) -> None:
     """The benign half of the same defect — but read what this does and does not prove.
 

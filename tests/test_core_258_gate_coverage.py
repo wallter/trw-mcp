@@ -245,8 +245,9 @@ class TestHookShapedMarkerThroughRealMiddleware:
         ``ts`` spelling (not ``timestamp``), this is the literal shape the
         bundled hook produces on the ordinary compaction path -- two sessions
         known before the rising edge must BOTH be gated, exactly as an
-        unowned ``timestamp``-keyed marker gates both in
-        ``test_a_marker_with_no_owner_arms_the_whole_generation_as_it_does_at_head``.
+        unowned ``timestamp``-keyed marker would. (With a session identity the
+        hook writes a per-session marker instead; see
+        ``test_compaction_marker_per_session.py``.)
         """
         trw_dir = tmp_path / ".trw"
         session_a = FakeContext(request_context=FakeRequestContext(session_id="hook-session-a"))

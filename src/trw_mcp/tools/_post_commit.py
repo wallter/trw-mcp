@@ -88,8 +88,8 @@ class _SweepDeadline(BaseException):
     """Raised by the budget timer to stop an over-running sweep.
 
     Derives from ``BaseException``, NOT ``Exception``, and that is load-bearing:
-    ``run_maintain_verify`` catches ``Exception`` per entry and the verification
-    pass catches it again, so an ``Exception``-derived deadline would be
+    trw-memory's ``run_maintain_verify`` catches ``Exception`` per entry and the
+    verification pass catches it again, so an ``Exception``-derived deadline would be
     swallowed by the first guard it met while the one-shot timer stayed
     exhausted — the budget would silently not exist.
     """

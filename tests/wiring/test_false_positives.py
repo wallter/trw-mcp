@@ -36,7 +36,6 @@ TEST_RESET_HELPERS: tuple[str, ...] = (
     "reset_state",
     "_reset_session_id",
     "_reset_yaml_path_index",
-    "reset_external_backends",
 )
 
 

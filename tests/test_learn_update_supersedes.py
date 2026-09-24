@@ -1,109 +1,110 @@
-"""PRD-CORE-194 FR04 — trw_learn_update supersession branch.
+"""PRD-CORE-194 FR04 — trw_learn's update mode supersession branch.
 
 Coordinator OQ4 resolution: the supersession branch fires ONLY on an explicit
-``supersedes=<record_id>`` parameter, NEVER on a routine field edit. Updating
-learning B with ``supersedes=A`` closes A's validity window (invalid_from +
-invalidated_by=B) and retains A (no delete). A plain field edit (no supersedes)
-leaves every prior record's window open.
+``metadata={"supersedes": <record_id>}`` key, NEVER on a routine field edit.
+Updating learning B with ``supersedes=A`` closes A's validity window
+(invalid_from + invalidated_by=B) and retains A (no delete). A plain field
+edit (no supersedes) leaves every prior record's window open. PRD-CORE-291
+merged the standalone ``trw_learn_update`` tool into ``trw_learn``'s update
+mode and moved ``supersedes`` from a flat kwarg into the ``metadata`` bag.
+
+Drives the tool's real update-mode implementation against a real
+daemon-backed checkout (PRD-CORE-280 slice e1: never an in-process
+``memory.db``). ``execute_learn_update`` is called directly with an explicit
+``trw_dir=daemon_checkout.trw_dir`` -- the suite's process-wide
+``resolve_trw_dir()`` stand-in always answers with the bare
+``tmp_path/.trw`` it is installed with, so going through the registered tool
+closure would silently land on the wrong (unmigrated) checkout.
 """
 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
-import pytest
-from trw_memory.models.memory import MemoryEntry
-from trw_memory.storage.sqlite_backend import SQLiteBackend
+from tests._memory_fixtures import DaemonCheckout
 
 
-def _learn_update_fn() -> object:
-    from fastmcp import FastMCP
+def _seed(daemon_checkout: DaemonCheckout, *ids: str) -> None:
+    async def _do() -> None:
+        for entry_id in ids:
+            await daemon_checkout.client.store(f"content {entry_id}", daemon_checkout.namespace, entry_id=entry_id)
 
-    from trw_mcp.tools.learning import register_learning_tools
-
-    server = FastMCP("test")
-    register_learning_tools(server)
-
-    async def _get() -> object:
-        for t in await server.list_tools():
-            if t.name == "trw_learn_update":
-                return t.fn
-        raise KeyError("trw_learn_update not found")
-
-    return asyncio.run(_get())
+    asyncio.run(_do())
 
 
-@pytest.fixture()
-def trw_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    trw = tmp_path / ".trw"
-    (trw / "learnings" / "entries").mkdir(parents=True)
-    (trw / "memory").mkdir(parents=True)
-    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
-    # Reset the memory backend singleton so the test's writes land in this tmp store.
-    from trw_mcp.state.memory_adapter import reset_backend
+def _get(daemon_checkout: DaemonCheckout, entry_id: str) -> dict[str, object]:
+    async def _do() -> dict[str, object]:
+        result = await daemon_checkout.client.get(entry_id, daemon_checkout.namespace)
+        return dict(result["entry"])
 
-    reset_backend()
-    return tmp_path
+    return asyncio.run(_do())
 
 
-def _seed(trw_dir: Path, *ids: str) -> SQLiteBackend:
-    from trw_mcp.state.memory_adapter import get_backend
+def _update(daemon_checkout: DaemonCheckout, learning_id: str, **kwargs: object) -> dict[str, object]:
+    """Drive ``trw_learn``'s real update-mode implementation against *daemon_checkout*."""
+    from trw_mcp.models.config import get_config
+    from trw_mcp.state.memory_adapter import update_learning as adapter_update
+    from trw_mcp.state.persistence import FileStateWriter
+    from trw_mcp.tools._learn_arg_bags import parse_learn_update_fields
+    from trw_mcp.tools._learn_update_impl import execute_learn_update
 
-    backend = get_backend(trw_dir)
-    for i in ids:
-        backend.store(MemoryEntry(id=i, content=f"content {i}", namespace="default"))
-    return backend
+    metadata = kwargs.pop("metadata", "")
+    upd, fields_reject = parse_learn_update_fields(metadata)  # type: ignore[arg-type]
+    if fields_reject is not None:
+        return fields_reject
+    return execute_learn_update(
+        trw_dir=daemon_checkout.trw_dir,
+        config=get_config(),
+        writer=FileStateWriter(),
+        adapter_update=adapter_update,
+        project_root=lambda: daemon_checkout.trw_dir.parent,
+        learning_id=learning_id,
+        status=kwargs.pop("status", None),  # type: ignore[arg-type]
+        summary=kwargs.pop("summary", None),  # type: ignore[arg-type]
+        detail=kwargs.pop("detail", None),  # type: ignore[arg-type]
+        impact=kwargs.pop("impact", None),  # type: ignore[arg-type]
+        tags=kwargs.pop("tags", None),  # type: ignore[arg-type]
+        type=kwargs.pop("type", None),  # type: ignore[arg-type]
+        confidence=kwargs.pop("confidence", None),  # type: ignore[arg-type]
+        upd=upd,
+    )
 
 
-def test_learn_update_supersedes(trw_project: Path) -> None:
+def test_learn_update_supersedes(daemon_checkout: DaemonCheckout) -> None:
     """supersedes=A closes A's window with invalidated_by=B; A is retained."""
-    trw_dir = trw_project / ".trw"
-    backend = _seed(trw_dir, "L-aaaa", "L-bbbb")
-    fn = _learn_update_fn()
+    _seed(daemon_checkout, "L-aaaa", "L-bbbb")
 
     # Update B (L-bbbb) declaring it supersedes A (L-aaaa).
-    result = fn(learning_id="L-bbbb", supersedes="L-aaaa", summary="corrected fact")
+    result = _update(daemon_checkout, "L-bbbb", summary="corrected fact", metadata={"supersedes": "L-aaaa"})
 
     assert result["status"] == "updated"
 
-    a = backend.get("L-aaaa", namespace="default")
-    assert a is not None
-    assert a.invalid_from is not None  # window closed
-    assert a.invalidated_by == "L-bbbb"  # closer is the updating record
-    assert a.validity_state() == "superseded"
+    a = _get(daemon_checkout, "L-aaaa")
+    assert a["invalid_from"] is not None  # window closed
+    assert a["invalidated_by"] == "L-bbbb"  # closer is the updating record
     # Retained (not deleted) — still gettable.
-    b = backend.get("L-bbbb", namespace="default")
-    assert b is not None
-    assert b.invalid_from is None  # the superseding record stays open
+    b = _get(daemon_checkout, "L-bbbb")
+    assert b["invalid_from"] is None  # the superseding record stays open
 
 
-def test_plain_edit_does_not_supersede(trw_project: Path) -> None:
+def test_plain_edit_does_not_supersede(daemon_checkout: DaemonCheckout) -> None:
     """OQ4: a routine field edit (no supersedes=) closes no window."""
-    trw_dir = trw_project / ".trw"
-    backend = _seed(trw_dir, "L-cccc")
-    fn = _learn_update_fn()
+    _seed(daemon_checkout, "L-cccc")
 
-    result = fn(learning_id="L-cccc", detail="sharper detail")
+    result = _update(daemon_checkout, "L-cccc", detail="sharper detail")
     assert result["status"] == "updated"
 
-    c = backend.get("L-cccc", namespace="default")
-    assert c is not None
-    assert c.invalid_from is None
-    assert c.invalidated_by is None
-    assert c.validity_state() == "open"
+    c = _get(daemon_checkout, "L-cccc")
+    assert c["invalid_from"] is None
+    assert c["invalidated_by"] is None
 
 
-def test_supersedes_missing_prior_is_reported(trw_project: Path) -> None:
+def test_supersedes_missing_prior_is_reported(daemon_checkout: DaemonCheckout) -> None:
     """supersedes=<unknown id> does not crash; the edit still applies."""
-    trw_dir = trw_project / ".trw"
-    backend = _seed(trw_dir, "L-dddd")
-    fn = _learn_update_fn()
+    _seed(daemon_checkout, "L-dddd")
 
-    result = fn(learning_id="L-dddd", supersedes="L-nope", summary="x")
+    result = _update(daemon_checkout, "L-dddd", summary="x", metadata={"supersedes": "L-nope"})
     # The primary update still succeeds; the missing prior is a no-op close.
     assert result["status"] == "updated"
-    d = backend.get("L-dddd", namespace="default")
-    assert d is not None
-    assert d.invalid_from is None
+    d = _get(daemon_checkout, "L-dddd")
+    assert d["invalid_from"] is None

@@ -102,12 +102,9 @@ class ClientArtifactSurface:
 
 
 def _codex_skill_names() -> set[str]:
-    from ._codex import _codex_skills_source_dir
+    from ._client_skills import skill_names
 
-    source = _codex_skills_source_dir()
-    if not source.is_dir():
-        return set()
-    return {d.name for d in source.iterdir() if d.is_dir()}
+    return set(skill_names("codex"))
 
 
 def _bundled_agent_filenames(client: str) -> set[str]:
@@ -154,16 +151,12 @@ def _cursor_command_names() -> set[str]:
 
 
 def _copilot_skill_names() -> set[str]:
-    # Copilot ships a CURATED subset (data/copilot/skills), not the full generic
-    # data/skills set — sourcing the 28-name generic set here left ~14 stale
-    # copilot skills uncleaned. Mirror _codex_skill_names and read the actual
-    # per-client source dir. (release-verify 2026-07-17 P1)
-    from ._copilot import _copilot_skills_source_dir
+    # Copilot ships a CURATED subset, not the full canonical set -- sourcing the
+    # whole set here once left ~14 stale copilot skills uncleaned
+    # (release-verify 2026-07-17 P1). The subset is _client_skills' membership.
+    from ._client_skills import skill_names
 
-    source = _copilot_skills_source_dir()
-    if not source.is_dir():
-        return set()
-    return {d.name for d in source.iterdir() if d.is_dir()}
+    return set(skill_names("copilot"))
 
 
 def _copilot_agent_names() -> set[str]:
@@ -198,7 +191,7 @@ def _copilot_skill_file_keys() -> set[str]:
 # missing/renamed symbol in a sibling module degrades to "no cleanup" for that
 # surface rather than breaking the whole update.
 _CLIENT_ARTIFACT_SURFACES: tuple[ClientArtifactSurface, ...] = (
-    # Codex: skills mirror bundled DIRECTORIES under data/codex/skills; agents
+    # Codex: skills are canonical skill directories rendered for codex; agents
     # are the bundled specialists rendered as .toml.
     ClientArtifactSurface(
         ".agents/skills",
@@ -362,21 +355,17 @@ def codex_artifact_contents() -> dict[str, bytes]:
     materialized from the shared bundle like every other client's, and are
     recorded by ``_managed_client_artifacts.bundled_agent_contents``.
     """
-    from ._codex import _CODEX_SKILLS_DIR, _codex_skills_source_dir
+    from ._client_skills import PRD_READY_CONTRACTS, skill_files, skill_names
+    from ._codex import _CODEX_SKILLS_DIR
 
     contents: dict[str, bytes] = {}
-    source = _codex_skills_source_dir()
-    if source.is_dir():
-        for skill in sorted(source.iterdir()):
-            if not skill.is_dir():
-                continue
-            for skill_file in sorted(skill.iterdir()):
-                if not skill_file.is_file():
-                    continue
-                try:
-                    contents[f"{_CODEX_SKILLS_DIR}/{skill.name}/{skill_file.name}"] = skill_file.read_bytes()
-                except OSError:
-                    logger.warning("codex_bundled_read_failed", path=str(skill_file))
+    # A folded readiness phase has no directory of its own: trw-prd-ready's files include its contract.
+    for name in sorted(set(skill_names("codex")) - set(PRD_READY_CONTRACTS["codex"])):
+        try:
+            for filename, data in skill_files("codex", name):
+                contents[f"{_CODEX_SKILLS_DIR}/{name}/{filename}"] = data
+        except OSError:
+            logger.warning("codex_bundled_read_failed", skill=name)
     return contents
 
 

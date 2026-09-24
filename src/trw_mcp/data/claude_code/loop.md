@@ -45,7 +45,7 @@ trw_init(task_name, prd_scope)
 ```
 
 Phase gates apply: RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER.
-Read `.trw/frameworks/FRAMEWORK-CORE.md` if context was compacted since last read.
+Read your phase's sections of `.trw/frameworks/FRAMEWORK.md` if context was compacted since last read.
 
 ### Step 4 — Checkpoint Cadence
 Call `trw_checkpoint` at least once per 15 minutes of implementation work,

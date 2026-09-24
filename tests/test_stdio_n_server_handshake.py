@@ -28,8 +28,6 @@ rewrite the pre-existing module.
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 import sys
 import time
 from collections.abc import Iterator
@@ -42,23 +40,18 @@ import pytest
 from tests import _stdio_harness
 from tests._layout import requires_local_timing
 from tests._stdio_benchmark_support import (
-    RECORD_FIELDS,
-    BenchmarkResult,
     build_temp_project,
     fix_130_budget_ms,
-    grow_pinned_wal,
     measure_pending_arm,
     measure_pending_control_repeats,
-    median_and_range,
-    run_arm,
 )
 from tests._stdio_harness import (
     ChildLeak,
     HarnessError,
     StdioServerHarness,
     stdio_import_skip_reason,
-    writer_lock_pids,
 )
+from tests._timing import assert_budget, on_ci_runner
 
 # ── Bounds (module constants, deliberately NOT config fields) ────────────────
 # A bound that lives in ``TRWConfig`` can be loosened by a production config
@@ -114,13 +107,15 @@ _SKIP_REASON = stdio_import_skip_reason()
 pytestmark = [
     pytest.mark.timeout(600),
     pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
-    # Every test (and the autouse module-wall-budget fixture below) asserts a
-    # fixed wall-clock ceiling measured against THIS box, calibrated on a known
-    # local Mac (see _MODULE_WALL_CEILING_S above). A shared CI runner is not
-    # that box, so skip the whole module there rather than let runner
-    # contention fail a ceiling that was never about the runner (T10; trw-mcp
-    # 5.0.0 mirror release, 2026-09-20).
-    requires_local_timing,
+    # PRD-QUAL-141: the module-wide timing skip that used to live here is gone.
+    # The tests in this module that assert a fixed wall-clock ceiling measured
+    # against THIS box (calibrated on a known local Mac; see
+    # _MODULE_WALL_CEILING_S above) now carry ``requires_local_timing``
+    # individually as ``*_budget`` tests, so a CI runner (not that box) skips
+    # only those and keeps every deterministic assertion in the gating suite.
+    # The autouse module-wall-budget fixture below enforces the same ceiling
+    # but bypasses it on a CI runner directly (``on_ci_runner()``), since it
+    # measures across the whole module rather than one test.
     # Keep the WHOLE module on ONE xdist worker (`--dist loadgroup` is in
     # addopts). Without a group, its tests scatter and EVERY worker that
     # receives one re-runs the module-scoped ``benchmark`` fixture: the N/WAL
@@ -151,119 +146,50 @@ def _enforce_module_wall_budget() -> Iterator[None]:
     """
     started = time.monotonic()
     yield
+    if on_ci_runner():
+        # This fixture spans the WHOLE module (every test and fixture phase),
+        # not one test, so it cannot be skipped via ``requires_local_timing``
+        # on an individual item; bypass the same way that marker's policy
+        # would on a CI runner (not the box this ceiling is calibrated for).
+        return
     elapsed = time.monotonic() - started
-    assert elapsed <= _MODULE_WALL_CEILING_S, (
-        f"module wall time {elapsed:.1f}s exceeds the {_MODULE_WALL_CEILING_S}s NFR01 ceiling "
-        "(measured across every test and fixture phase in this module, not just the arm sweep)"
-    )
+    assert_budget("module_wall_time", elapsed, _MODULE_WALL_CEILING_S, "s")
 
 
-def effective_ceiling_ms(baseline_median_ms: float) -> float:
-    """The binding ceiling: the LESSER of the absolute bound and the relative multiple."""
-    return min(_HANDSHAKE_ABS_CEILING_MS, _HANDSHAKE_REL_MULTIPLE * baseline_median_ms)
-
-
-@pytest.fixture(scope="module")
-def benchmark(tmp_path_factory: pytest.TempPathFactory) -> Iterator[BenchmarkResult]:
-    """Run every arm ONCE; the assertion tests below read the records.
-
-    Warm-up is amortized per NFR01: the N background servers are started and
-    warmed once per arm and reused across the repeats, so an arm costs roughly
-    N warm-ups plus ``_REPEATS`` measured clients rather than N x repeats.
-    """
-    root = tmp_path_factory.mktemp("stdio-n-server")
-    project, user_dir = build_temp_project(root)
-    stderr_dir = root / "stderr"
-    result = BenchmarkResult(root=root)
-    started = _stdio_harness.time.monotonic()
-    for label, n_background in (("n1", 1), ("n6", 6), ("n12", 12)):
-        result.arms[label] = run_arm(label, project, user_dir, stderr_dir, n_background=n_background, repeats=_REPEATS)
-    holder = grow_pinned_wal(project, _WAL_TARGET_BYTES)
-    try:
-        result.arms["wal_n6"] = run_arm("wal_n6", project, user_dir, stderr_dir, n_background=6, repeats=_REPEATS)
-    finally:
-        with suppress(sqlite3.Error):
-            holder.close()
-    result.module_wall_s = _stdio_harness.time.monotonic() - started
-    print("\nPRD-CORE-262 handshake benchmark:")
-    for record in result.arms.values():
-        print(json.dumps(record.as_dict()))
-    yield result
-
-
-# ── FR01 ─────────────────────────────────────────────────────────────────────
-
-
-def test_cold_initialize_bound_is_independent_of_writers_and_wal(benchmark: BenchmarkResult) -> None:
-    """FR01: every arm's median clears both bounds, and contention does not move it."""
-    baseline_median = benchmark.arms["n1"].median_initialize_ms
-    ceiling = effective_ceiling_ms(baseline_median)
-
-    for label, record in benchmark.arms.items():
-        median, low, high = median_and_range(record.initialize_ms)
-        assert record.writer_census == record.n_background, f"{label}: census drifted"
-        assert median <= ceiling, (
-            f"{label}: median cold initialize {median:.0f} ms exceeds {ceiling:.0f} ms "
-            f"(abs {_HANDSHAKE_ABS_CEILING_MS:.0f}, {_HANDSHAKE_REL_MULTIPLE}x baseline "
-            f"{baseline_median:.0f}); range {low:.0f}-{high:.0f} ms"
-        )
-
-    for label in ("n12", "wal_n6"):
-        ratio = benchmark.arms[label].median_initialize_ms / baseline_median
-        assert ratio <= _INDEPENDENCE_MAX_RATIO, (
-            f"{label}: independence ratio {ratio:.2f} exceeds {_INDEPENDENCE_MAX_RATIO}"
-        )
-
-    assert benchmark.arms["wal_n6"].wal_bytes >= _WAL_TARGET_BYTES, (
-        f"pinned-WAL arm ran against {benchmark.arms['wal_n6'].wal_bytes} bytes, "
-        f"below the {_WAL_TARGET_BYTES}-byte floor"
-    )
-
-
-def test_deferral_set_is_invariant_across_writer_counts(benchmark: BenchmarkResult) -> None:
-    """FR01 anti-tautology: a contended arm must not be fast because it did LESS.
-
-    Empty-vs-non-empty is not the test. If raising the writer count from 1 to 12
-    changes WHICH tasks session_start defers, the contended medians measure a
-    different amount of work than the baseline and the ratio assertion above is
-    a tautology. Comparing the deferred task NAMES is what makes it bind.
-    """
-    baseline = benchmark.arms["n1"].deferral_names
-    for label in ("n6", "n12", "wal_n6"):
-        assert benchmark.arms[label].deferral_names == baseline, (
-            f"{label} deferred {benchmark.arms[label].deferral_names!r} but the N=1 baseline "
-            f"deferred {baseline!r}; the arms are not comparable and the latency ratio is a tautology"
-        )
-
-
-@pytest.mark.perf
-def test_session_start_latency_is_asserted_only_on_an_undeferred_arm(benchmark: BenchmarkResult) -> None:
-    """FR01: a bare first-session_start bound under deferral would be a tautology."""
-    undeferred = [record for record in benchmark.arms.values() if not record.deferral_names]
-    # NFR03: the only sanctioned skip is an import failure. An all-deferred sweep
-    # means the fixture no longer produces an undeferred baseline (its writer-pressure
-    # threshold is pinned above N for exactly this reason), so it is a harness
-    # defect and FAILS rather than skipping into a reassuring default.
-    assert undeferred, (
-        f"every arm reported a non-empty deferral set ({benchmark.arms['n1'].deferral_names!r}); "
-        "a session_start latency bound here would pass because the server did less — "
-        "the fixture must keep at least one undeferred arm"
-    )
-    ceiling = effective_ceiling_ms(benchmark.arms["n1"].median_initialize_ms)
-    for record in undeferred:
-        assert record.median_session_start_ms <= ceiling, (
-            f"{record.label}: first session_start median {record.median_session_start_ms:.0f} ms"
-        )
+# FR01's N-server/WAL-contention benchmark (the ``benchmark`` fixture and its
+# 9 dependent tests below and further down: cold-initialize independence,
+# deferral-set invariance, session_start-latency-on-undeferred-arm, the module
+# wall-budget twin, the no-leak/no-live-store-touch check, and the
+# no-environment-content check) is DELETED (PRD-CORE-280 slice e, batch 23b).
+#
+# The incident it guarded -- many local ``trw-mcp`` processes each opening the
+# SAME per-checkout ``memory.db`` and contending for its SQLite writer lock --
+# is now architecturally impossible: no ``trw-mcp`` process opens SQLite for a
+# migrated checkout at all; every write and read goes through ONE shared
+# memory daemon via ``selected_store``. ``grow_pinned_wal`` asserted
+# ``.trw/memory/memory.db`` exists after N real stdio servers ran
+# ``trw_session_start`` against an unmigrated ``build_temp_project`` fixture --
+# it no longer does, because nothing in this process writes it. Rebuilding the
+# benchmark against a real daemon would prove the DAEMON's own writer-lock
+# behavior, which is trw-memory's concern; the client-side claim PRD-CORE-248-
+# FR01 makes (nothing opens SQLite, takes a writer lock, checkpoints, or reads
+# the pin store synchronously before the initialize reply) is if anything
+# STRONGER now that this process never opens SQLite at all, and remains
+# covered in-process by ``tests/test_boot_initialize_ordering.py`` (see this
+# module's own docstring for why that coverage does not see process-spawn
+# cost -- a claim the daemon split does not change).
+#
+# ``test_module_budget_and_marker_placement`` below is KEPT, but no longer
+# takes the ``benchmark`` fixture: its assertion (module carries ``slow``, not
+# ``unit``) never read benchmark data.
 
 
 # ── FR02 ─────────────────────────────────────────────────────────────────────
 
 
 def test_harness_reaps_every_child_on_failure(tmp_path: Path) -> None:
-    """FR02/NFR02: an induced mid-case failure leaves no child and no writer lock."""
+    """FR02/NFR02: an induced mid-case failure leaves no child alive."""
     project, user_dir = build_temp_project(tmp_path)
-    trw_dir = project / ".trw"
-    pre_census = list(writer_lock_pids(trw_dir))
     harness = StdioServerHarness(project, user_dir, tmp_path / "stderr")
     spawned: list[int] = []
     with pytest.raises(RuntimeError, match="induced mid-case failure"):
@@ -272,7 +198,7 @@ def test_harness_reaps_every_child_on_failure(tmp_path: Path) -> None:
                 server, _ = harness.cold_initialize(f"reap-{index}")
                 harness.call(server, "trw_session_start", {})
                 spawned.append(server.pid)
-            assert len(writer_lock_pids(trw_dir)) == 2
+            assert len(harness.live_children()) == 2
             raise RuntimeError("induced mid-case failure")
         finally:
             harness.teardown()
@@ -281,16 +207,6 @@ def test_harness_reaps_every_child_on_failure(tmp_path: Path) -> None:
     assert harness.live_children() == []
     for pid in spawned:
         assert not _stdio_harness.pid_is_live(pid), f"pid {pid} survived teardown"
-    assert list(writer_lock_pids(trw_dir)) == pre_census
-    # CORE262-04: physical removal, not just a census that agrees by
-    # construction. ``live_memory_writer_pids`` excludes any lock whose pid
-    # fails its liveness check, so a lock file that failed to unlink would
-    # STILL make the census-only assertion above pass -- only globbing the
-    # registry directory itself proves the file is actually gone.
-    for pid in spawned:
-        assert not (harness.writers_dir() / f"{pid}.lock").exists(), (
-            f"lock file for pid {pid} survived teardown even though the census excludes it"
-        )
 
 
 def test_teardown_survives_a_raising_terminate_and_still_reaps(tmp_path: Path) -> None:
@@ -379,20 +295,14 @@ def test_teardown_survives_raising_waits_with_multiple_children(tmp_path: Path) 
 # ── FR03 ─────────────────────────────────────────────────────────────────────
 
 
-@pytest.mark.perf
-def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
-    """FR03: assert the PRD-FIX-130 bound where the budget exists, report xfail where it does not.
+def _measure_pending_drain(tmp_path: Path) -> tuple[float | None, Any, Any, float]:
+    """Shared setup+operation for the pending-drain tests (real server spawns).
 
     The claim under test is that the first ``trw_session_start`` is bounded
     INDEPENDENT of K, so the measured K=27 arm is compared against a control arm
     run identically at K=1 rather than against an absolute number: both pay the
     one-time embedding-model initialization a first learn triggers, so it
     cancels and what remains is the cost of the extra 26 records.
-
-    No branch reports success without a measurement behind it: present asserts
-    the bound and full consumption, absent reports expected-failure naming
-    PRD-FIX-130 and the measured cost, and an indeterminate probe raises out of
-    ``fix_130_budget_ms`` and FAILS the case.
     """
     budget_ms = fix_130_budget_ms()
     # CORE262-07: two control repeats give an ACTUAL measured host-variance
@@ -427,8 +337,39 @@ def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
             }
         )
     )
+    return budget_ms, control, measured, slack_ms
 
-    assert measured.initialize_ms <= _HANDSHAKE_ABS_CEILING_MS, "pending records must not move the handshake"
+
+def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
+    """FR03: every seeded pending record is consumed where the PRD-FIX-130 budget exists.
+
+    No branch reports success without a measurement behind it: present asserts
+    full consumption, absent reports expected-failure naming PRD-FIX-130 and
+    the measured cost, and an indeterminate probe raises out of
+    ``fix_130_budget_ms`` and FAILS the case.
+    """
+    budget_ms, _control, measured, _slack_ms = _measure_pending_drain(tmp_path)
+
+    if budget_ms is None:
+        pytest.xfail(
+            "PRD-FIX-130 [planned] is absent from this build: learn_journal_drain_budget_ms is not a "
+            "TRWConfig field, so the first trw_session_start is unbounded in K. Measured at HEAD: "
+            f"{_MEASURED_PENDING_DRAIN_MS} ms for K={_PENDING_RECORDS} against a 248 MB store."
+        )
+
+    consumed_records = measured.seeded_records - measured.remaining_pending
+    assert consumed_records == measured.seeded_records, (
+        f"{measured.remaining_pending} of {measured.seeded_records} seeded records were never "
+        f"consumed after {measured.drain_rounds} sweeps"
+    )
+
+
+@requires_local_timing
+def test_pending_drain_case_tracks_fix_130_budget(tmp_path: Path) -> None:
+    """FR03: assert the PRD-FIX-130 bound where the budget exists, report xfail where it does not."""
+    budget_ms, control, measured, slack_ms = _measure_pending_drain(tmp_path)
+
+    assert_budget("pending_drain_initialize", measured.initialize_ms, _HANDSHAKE_ABS_CEILING_MS, "ms")
 
     if budget_ms is None:
         pytest.xfail(
@@ -438,48 +379,35 @@ def test_pending_drain_case_tracks_fix_130(tmp_path: Path) -> None:
         )
 
     bound_ms = control.first_session_start_ms + budget_ms + slack_ms
-    assert measured.first_session_start_ms <= bound_ms, (
-        f"first trw_session_start with K={_PENDING_RECORDS} pending took "
-        f"{measured.first_session_start_ms:.0f} ms, above the PRD-FIX-130 bound of {bound_ms:.0f} ms "
-        f"(K={_PENDING_CONTROL_RECORDS} control {control.first_session_start_ms:.0f} + budget {budget_ms} + "
-        f"{slack_ms:.0f} measured host-variance slack); the measured pre-FIX-130 cost was "
-        f"{_MEASURED_PENDING_DRAIN_MS} ms"
-    )
-    consumed_records = measured.seeded_records - measured.remaining_pending
-    assert consumed_records == measured.seeded_records, (
-        f"{measured.remaining_pending} of {measured.seeded_records} seeded records were never "
-        f"consumed after {measured.drain_rounds} sweeps"
-    )
+    assert_budget("pending_drain_first_session_start", measured.first_session_start_ms, bound_ms, "ms")
 
 
 # ── NFR01 / NFR02 / NFR03 / NFR04 ────────────────────────────────────────────
 
 
-@pytest.mark.perf
-def test_module_budget_and_marker_placement(benchmark: BenchmarkResult) -> None:
-    """NFR01: the module stays out of the fast lane and inside its wall budget."""
+def test_module_budget_and_marker_placement() -> None:
+    """NFR01: the module stays out of the fast lane."""
     from tests.conftest import _SLOW_FILES, _UNIT_FILES
 
     assert "test_stdio_n_server_handshake.py" in _SLOW_FILES
     assert "test_stdio_n_server_handshake.py" not in _UNIT_FILES
-    assert benchmark.module_wall_s <= _MODULE_WALL_CEILING_S, (
-        f"arm sweep took {benchmark.module_wall_s:.1f} s, above {_MODULE_WALL_CEILING_S} s"
-    )
-    for label, record in benchmark.arms.items():
-        assert record.wall_s <= _PER_ARM_WALL_CEILING_S, f"{label} took {record.wall_s:.1f} s"
 
 
-def test_no_process_or_lock_leak_and_no_live_store_touch(benchmark: BenchmarkResult, tmp_path: Path) -> None:
-    """NFR02: the census returns to zero and every resolved root is under the tmp dir."""
-    project = benchmark.root / "project"
-    assert list(writer_lock_pids(project / ".trw")) == []
+def test_no_process_or_lock_leak_and_no_live_store_touch(tmp_path: Path) -> None:
+    """NFR02: no child survives and every resolved root is under the tmp dir.
 
-    harness = StdioServerHarness(project, benchmark.root / "userdir", tmp_path / "stderr")
+    PRD-CORE-280 slice e (batch 23b): built its own ``project``/``user_dir``
+    via ``build_temp_project`` instead of reading them off the deleted
+    ``benchmark`` fixture -- this check is about child env var isolation, not
+    the N-server/WAL contention benchmark that fixture ran.
+    """
+    project, user_dir = build_temp_project(tmp_path)
+    harness = StdioServerHarness(project, user_dir, tmp_path / "stderr")
     env = harness.child_env("probe")
     assert Path(env["TRW_PROJECT_ROOT"]) == project
-    assert Path(env["TRW_USER_DIR"]) == benchmark.root / "userdir"
-    assert env["TRW_PROJECT_ROOT"].startswith(str(benchmark.root))
-    assert env["TRW_USER_DIR"].startswith(str(benchmark.root))
+    assert Path(env["TRW_USER_DIR"]) == user_dir
+    assert env["TRW_PROJECT_ROOT"].startswith(str(tmp_path))
+    assert env["TRW_USER_DIR"].startswith(str(tmp_path))
     # No inherited TRW_* root can slip a second store in behind these two.
     assert {key for key in env if key.startswith("TRW_")} == {
         "TRW_PROJECT_ROOT",
@@ -487,7 +415,6 @@ def test_no_process_or_lock_leak_and_no_live_store_touch(benchmark: BenchmarkRes
         "TRW_SESSION_ID",
         "TRW_HOT_PATH_STRICT",
     }
-    assert Path(benchmark.arms["n12"].store_path).is_relative_to(benchmark.root)
 
 
 def test_skip_reason_is_visible_and_narrow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -552,28 +479,8 @@ def test_skip_reason_names_transport_module_import_failure(monkeypatch: pytest.M
     assert reason is not None and _stdio_harness._TRANSPORT_MODULE in reason
 
 
-def test_timing_records_carry_no_environment_content(benchmark: BenchmarkResult) -> None:
-    """NFR04: every emitted field is a number, a fixed label, or a temporary path."""
-    environment_values = {value for value in os.environ.values() if len(value) > 8}
-    for record in benchmark.arms.values():
-        emitted = record.as_dict()
-        assert set(emitted) == set(RECORD_FIELDS)
-        assert Path(emitted["store_path"]).is_relative_to(benchmark.root)
-        # ``store_path`` is the one field that is a PATH by contract, and the
-        # line above is its check: it must live under the benchmark root. It is
-        # excluded from the environment scan because a temporary path legitimately
-        # CONTAINS the temporary directory -- on macOS ``TMPDIR`` is
-        # ``/var/folders/<..>/T/``, long enough to clear the >8 filter, and every
-        # store path is a superstring of it, so the scan flagged the one field it
-        # had already approved. On Linux ``TMPDIR`` is usually unset or ``/tmp``
-        # and the collision never appeared. Every other field is still scanned.
-        serialized = json.dumps({k: v for k, v in emitted.items() if k != "store_path"})
-        for value in environment_values:
-            assert value not in serialized, "a timing record leaked an environment value"
-        for key, value in emitted.items():
-            if key in {"label", "store_path"}:
-                continue
-            if isinstance(value, list):
-                assert all(isinstance(item, (int, float, str)) for item in value)
-            else:
-                assert isinstance(value, (int, float)), f"{key} is neither a number nor an allowed label"
+# test_timing_records_carry_no_environment_content DELETED (batch 23b): it
+# scanned ``ArmRecord.as_dict()`` output from the deleted N-server/WAL
+# benchmark for leaked environment content. ``ArmRecord``/``RECORD_FIELDS``
+# were deleted with the benchmark; the property (no timing record leaks an
+# environment value) has no producer left to check.

@@ -1,14 +1,9 @@
-"""Memory adapter — embedding status + corruption recovery helpers.
+"""Memory adapter — corruption recovery helpers.
 
 Belongs to the ``memory_adapter.py`` facade. Re-exported there for back-compat.
 
-Two micro-clusters:
-1. **Embedding status** (3 helpers) — read/reset/inject the embed-failure
-   counter. ``check_embeddings_status`` honors the
-   ``memory_adapter._embed_failures`` test-injection override at call time.
-2. **Corruption recovery** (3 helpers) — detect SQLite corruption,
-   force-recover, and reset the singleton. Triggered from CRUD code paths
-   when ``_is_corruption_error`` matches.
+Detect SQLite corruption, force-recover, and reset the singleton. Triggered
+from CRUD code paths when ``_is_corruption_error`` matches.
 
 Extracted as DIST-243 batch 44 to bring the parent ``memory_adapter.py``
 module under the 350 effective-LOC ceiling.
@@ -30,42 +25,6 @@ logger = structlog.get_logger(__name__)
 _MALFORMED_MARKERS = ("malformed", "database disk image", "not a database", "file is not a database")
 _RECOVERY_LOCK = threading.Lock()
 _RECOVERY_THREAD: threading.Thread | None = None
-
-
-def check_embeddings_status(
-    *,
-    allow_initialize: bool = True,
-    coverage_probe: bool = False,
-) -> dict[str, object]:
-    """Check embedding readiness; honors memory_adapter._embed_failures override.
-
-    Args:
-        allow_initialize: Whether to initialize embedder if not yet checked.
-        coverage_probe: When True, probe vector coverage ratio (PRD-FIX-COMPOUNDING-3-FR02).
-    """
-    from trw_mcp.state import memory_adapter
-    from trw_mcp.state._memory_connection import check_embeddings_status as _impl
-
-    result = _impl(allow_initialize=allow_initialize, coverage_probe=coverage_probe)
-    if memory_adapter._embed_failures is not None:
-        result["recent_failures"] = memory_adapter._embed_failures
-    return result
-
-
-def reset_embed_failure_count() -> None:
-    """Reset the embed failure counter and clear the facade-level override."""
-    from trw_mcp.state import memory_adapter
-    from trw_mcp.state._memory_connection import reset_embed_failure_count as _impl
-
-    _impl()
-    memory_adapter._embed_failures = None
-
-
-def set_embed_failure_count_for_testing(n: int) -> None:
-    """Set the facade-level embed failure override (for tests only)."""
-    from trw_mcp.state import memory_adapter
-
-    memory_adapter._embed_failures = n
 
 
 def _is_corruption_error(exc: BaseException) -> bool:
@@ -194,20 +153,10 @@ def _recover_and_reset_backend(trw_dir: Path) -> None:
     if sentinel.exists():
         sentinel.unlink()
     try:
-        backend = _get_backend(trw_dir)
+        _get_backend(trw_dir)
     except CorruptDatabaseUnsalvageableError as exc:
         _log_terminal_recovery(db_path, exc)
         raise
-    # PRD-FIX-COMPOUNDING-3-FR03: Schedule vector backfill after deferred recovery.
-    # get_backend() already fires _schedule_post_recovery_backfill when
-    # backend.recovered==True. Call it again here explicitly to handle the case
-    # where the newly created backend does NOT have recovered==True (because
-    # recovery_db was called manually above), ensuring the deferred-background
-    # recovery path always triggers backfill.
-    if not getattr(backend, "recovered", False):
-        from trw_mcp.state._memory_connection import _schedule_post_recovery_backfill
-
-        _schedule_post_recovery_backfill(trw_dir)
 
 
 def _logger() -> Any:

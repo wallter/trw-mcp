@@ -1,4 +1,7 @@
-"""End-to-end wiring for the ``trw_learn`` / ``trw_learn_update`` argument bags.
+"""End-to-end wiring for ``trw_learn``'s create/update ``metadata`` argument bags.
+
+PRD-CORE-291 merged the standalone ``trw_learn_update`` tool into ``trw_learn``'s
+update mode (``learning_id`` set); "trw_learn_update" below now means that mode.
 
 ``test_learn_arg_bag_contract.py`` owns the PARSER-level contract (unknown-key
 rejection, the two rejection shapes, JSON-string acceptance, bare-string list
@@ -30,20 +33,25 @@ from trw_mcp.tools._learn_arg_bags import LearnMetadata, LearnUpdateFields
 
 
 def test_the_two_bags_are_not_interchangeable() -> None:
-    """``trw_learn`` and ``trw_learn_update`` absorbed DIFFERENT name sets.
+    """``trw_learn``'s create and update ``metadata`` bags absorbed DIFFERENT name sets.
 
-    trw_learn deliberately dropped expires/team_origin (0 of 9,229 stored
-    entries carried them) and never took ``type`` in its bag, while
-    trw_learn_update never took provenance. A later "simplification" that
-    unified the two models would silently start accepting — and dropping —
-    keys the owning tool has no code to forward, so the split is pinned here
-    rather than left to a reviewer to notice.
+    Create mode deliberately dropped expires/team_origin (0 of 9,229 stored
+    entries carried them), while update mode never took provenance. PRD-CORE-291
+    additionally moved ``type``/``confidence`` OUT of both bags entirely into
+    top-level ``trw_learn`` kwargs, so neither bag carries them any more. A
+    later "simplification" that unified the two models would silently start
+    accepting — and dropping — keys the owning tool has no code to forward, so
+    the split is pinned here rather than left to a reviewer to notice.
     """
     metadata_keys = set(LearnMetadata.model_fields)
     update_keys = set(LearnUpdateFields.model_fields)
 
-    assert {"expires", "team_origin", "type"} <= update_keys
-    assert not ({"expires", "team_origin", "type"} & metadata_keys)
+    assert {"expires", "team_origin"} <= update_keys
+    assert not ({"expires", "team_origin"} & metadata_keys)
+    assert "type" not in metadata_keys
+    assert "type" not in update_keys
+    assert "confidence" not in metadata_keys
+    assert "confidence" not in update_keys
     assert {"source_identity", "client_profile", "model_id"} <= metadata_keys
     assert not ({"source_identity", "client_profile", "model_id"} & update_keys)
 
@@ -106,11 +114,13 @@ def test_trw_learn_metadata_keys_reach_the_store_in_both_wire_forms(
 def test_trw_learn_update_fields_reach_the_adapter_in_both_wire_forms(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_json_string: bool
 ) -> None:
-    """Every value set in ``fields`` arrives at the update adapter.
+    """Every value set in the update mode's ``metadata`` arrives at the update adapter.
 
     Includes expires and team_origin specifically: they were removed from
-    trw_learn, so trw_learn_update is now the ONLY way to set a TTL or correct
-    ownership. If this forwarding breaks there is no other path.
+    trw_learn's create mode, so update mode is now the ONLY way to set a TTL
+    or correct ownership. If this forwarding breaks there is no other path.
+    ``type``/``confidence`` are top-level kwargs (moved out of the bag by
+    PRD-CORE-291) and are checked alongside the bag's own keys.
     """
     from tests.conftest import extract_tool_fn, make_test_server
 
@@ -126,8 +136,6 @@ def test_trw_learn_update_fields_reach_the_adapter_in_both_wire_forms(
     monkeypatch.setattr("trw_mcp.state.analytics.resync_learning_index", lambda *a, **kw: None)
 
     payload: dict[str, object] = {
-        "type": "incident",
-        "confidence": "verified",
         "expires": "2026-12-31",
         "team_origin": "sprint-80",
         "nudge_line": "prefer the bag",
@@ -138,15 +146,19 @@ def test_trw_learn_update_fields_reach_the_adapter_in_both_wire_forms(
         "protection_tier": "protected",
     }
 
-    update_fn = extract_tool_fn(make_test_server("learning"), "trw_learn_update")
+    update_fn = extract_tool_fn(make_test_server("learning"), "trw_learn")
     result = update_fn(
         learning_id="L-bag",
-        fields=json.dumps(payload) if as_json_string else payload,
+        type="incident",
+        confidence="verified",
+        metadata=json.dumps(payload) if as_json_string else payload,
     )
 
     assert result["status"] == "updated", result
+    assert captured["type"] == "incident", "top-level type did not reach the adapter"
+    assert captured["confidence"] == "verified", "top-level confidence did not reach the adapter"
     for key, expected in payload.items():
-        assert captured[key] == expected, f"fields[{key!r}] did not reach the adapter"
+        assert captured[key] == expected, f"metadata[{key!r}] did not reach the adapter"
 
 
 def test_trw_learn_rejects_an_unknown_metadata_key_at_the_tool_boundary() -> None:
@@ -173,7 +185,7 @@ def test_trw_learn_rejects_an_unknown_metadata_key_at_the_tool_boundary() -> Non
 def test_trw_learn_update_rejects_an_unknown_field_at_the_tool_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A typo'd ``fields`` key must stop the update before the adapter runs."""
+    """A typo'd update-mode ``metadata`` key must stop the update before the adapter runs."""
     from tests.conftest import extract_tool_fn, make_test_server
 
     calls: list[object] = []
@@ -184,8 +196,8 @@ def test_trw_learn_update_rejects_an_unknown_field_at_the_tool_boundary(
     )
     monkeypatch.setattr("trw_mcp.tools.learning.resolve_trw_dir", lambda: tmp_path / ".trw")
 
-    update_fn = extract_tool_fn(make_test_server("learning"), "trw_learn_update")
-    result = update_fn(learning_id="L-bag", fields={"protection_teir": "high"})
+    update_fn = extract_tool_fn(make_test_server("learning"), "trw_learn")
+    result = update_fn(learning_id="L-bag", metadata={"protection_teir": "high"})
 
     assert result["status"] == "invalid"
     assert not calls, "the adapter must not be reached once the bag is rejected"

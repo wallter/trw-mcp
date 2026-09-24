@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from trw_mcp.state._constants import DEFAULT_NAMESPACE
 from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.outcomes import PendingOutcome, write_synced_marker
-from trw_mcp.sync.pull import _COMPANY_SYNC_SOURCE
+from trw_mcp.sync.pull import _COMPANY_SYNC_SOURCE, PullResult
 
 if TYPE_CHECKING:
     from trw_mcp.sync._client_push import TargetPushOutcome
@@ -224,14 +224,13 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
         pull_seq = client._coordinator.get_last_pull_seq()
         raw_company_pull_seq = client._coordinator.get_last_company_pull_seq()
         company_pull_seq = int(raw_company_pull_seq) if isinstance(raw_company_pull_seq, (int, float)) else 0
-        pull_result = await client._puller.pull_intel_state(
+        step = await pull_and_merge(
+            client,
+            pull_seq=pull_seq,
+            company_pull_seq=company_pull_seq,
             etag=client._cache.etag if client._config.intel_cache_enabled else None,
-            since_seq=pull_seq,
-            model_family=getattr(client._config, "model_family", ""),
-            trw_version=getattr(client._config, "framework_version", ""),
-            client_id=client._client_id,
-            since_company_seq=company_pull_seq,
         )
+        pull_result, merge_result = step.result, step.merge
         if pull_result is None:
             client._reset_poll_schedule()
             client._coordinator.record_sync_failure("pull failed")
@@ -247,74 +246,16 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
                     pushed=push_result.pushed, pulled=0, push_seq=push_seq, pull_seq=pull_seq, pull_completed=True
                 )
             return
-
-        pulled = len(pull_result.team_learnings or [])
-        merge_result = (
-            client._puller.merge_team_learnings(pull_result.team_learnings, namespace=DEFAULT_NAMESPACE)
-            if client._config.team_sync_enabled
-            else TeamMergeResult()
-        )
         # A cycle that pulled 50 and applied 1 is not a completed cycle in the
         # sense the log used to claim. Carry the per-outcome counts into the
         # cycle record so the shortfall is countable at the surface an operator
         # actually reads, and raise the level when anything was rejected.
-        merged = merge_result.applied
-        # THE CURSOR MAY ONLY PASS ITEMS THAT WERE JUDGED. Pulls are since_seq
-        # bounded, so anything this cursor steps over is never offered again —
-        # advancing past an item the merge never saw discards it permanently, and
-        # nothing anywhere reports a number.
-        #
-        # The arms are NOT alike and are deliberately not treated alike:
-        #   invalid / skipped_no_id / quarantined — a DECISION about the item. It
-        #     would be judged the same way next time, so holding the cursor makes
-        #     a poison-pill loop. Advancing is correct.
-        #   failed / unavailable — the item was NEVER JUDGED. `failed` raised
-        #     while storing; `unavailable` means the merge could not run at all,
-        #     which skips a whole batch at once.
-        #   team sync disabled — not a merge outcome. The items were never even
-        #     offered, so with team sync off every team learning that arrived used
-        #     to advance the cursor past itself and vanish. A user who later
-        #     enabled team sync had permanently lost everything that arrived while
-        #     it was off.
-        #
-        # Held at pull_seq the whole batch is re-offered next cycle. That costs a
-        # duplicate MERGE, not a duplicate row: `pull.py::find_existing` keys on
-        # source_learning_id and updates the existing entry.
-        #
-        # Counts, not ids: TeamMergeResult carries no per-item sequence numbers,
-        # so a precise "advance past the applied ones only" needs a shape change
-        # in the merge. This is the conservative version — it can re-offer a few
-        # already-applied items, and it can never drop one.
-        cursor_may_advance = (
-            client._config.team_sync_enabled and not merge_result.unavailable and merge_result.failed == 0
+        pulled, merged, cursor_may_advance, next_pull_seq = (
+            step.pulled,
+            merge_result.applied,
+            step.cursor_may_advance,
+            step.next_pull_seq,
         )
-        if cursor_may_advance:
-            next_pull_seq = max(
-                [
-                    pull_seq,
-                    *(
-                        int(item.get("sync_seq", 0))
-                        for item in (pull_result.team_learnings or [])
-                        if isinstance(item, dict) and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
-                    ),
-                ]
-            )
-        else:
-            next_pull_seq = pull_seq
-            if pulled:
-                facade_logger.warning(
-                    "sync_pull_cursor_held",
-                    client_id=client._client_id,
-                    pulled=pulled,
-                    reason=(
-                        "team_sync_disabled"
-                        if not client._config.team_sync_enabled
-                        else "merge_unavailable"
-                        if merge_result.unavailable
-                        else "merge_failed"
-                    ),
-                    detail="the cursor did not advance; these items will be re-offered rather than skipped",
-                )
         # PRD-FIX-138-FR02: the ETag is cached only when the cursor advanced. A
         # held cursor means this batch must be RE-OFFERED next cycle — but the
         # cache used to record the ETag before the merge ran, so the next pull
@@ -361,3 +302,99 @@ async def run_one_cycle(client: BackendSyncClient, *, force: bool = False) -> No
                 pull_seq=next_pull_seq,
                 pull_completed=True,
             )
+
+
+@dataclass(frozen=True)
+class PullStep:
+    """One pull page and its merge, and where the cursor may go (PRD-CORE-280 FR02)."""
+
+    #: ``None`` when the pull failed; ``not_modified`` when the server answered 304.
+    result: PullResult | None
+    merge: TeamMergeResult
+    pulled: int
+    #: The cursor after this page: ``pull_seq`` itself when it is held.
+    next_pull_seq: int
+    cursor_may_advance: bool
+
+
+async def pull_and_merge(
+    client: BackendSyncClient, *, pull_seq: int, company_pull_seq: int, etag: str | None
+) -> PullStep:
+    """Pull the page after *pull_seq*, merge its team learnings, and judge the cursor.
+
+    The one cursor engine: the periodic cycle and ``sync pull --full`` both call
+    it and differ only in where they start, what they do with the ETag and cache,
+    and when they stop. It touches no cursor, cache or ETag itself.
+    """
+    facade_logger = sys.modules["trw_mcp.sync.client"].logger
+    pull_result = await client._puller.pull_intel_state(
+        etag=etag,
+        since_seq=pull_seq,
+        model_family=getattr(client._config, "model_family", ""),
+        trw_version=getattr(client._config, "framework_version", ""),
+        client_id=client._client_id,
+        since_company_seq=company_pull_seq,
+    )
+    if pull_result is None or pull_result.not_modified:
+        return PullStep(pull_result, TeamMergeResult(), 0, pull_seq, False)
+    pulled = len(pull_result.team_learnings or [])
+    merge_result = (
+        client._puller.merge_team_learnings(pull_result.team_learnings)
+        if client._config.team_sync_enabled
+        else TeamMergeResult()
+    )
+    # THE CURSOR MAY ONLY PASS ITEMS THAT WERE JUDGED. Pulls are since_seq
+    # bounded, so anything this cursor steps over is never offered again —
+    # advancing past an item the merge never saw discards it permanently, and
+    # nothing anywhere reports a number.
+    #
+    # The arms are NOT alike and are deliberately not treated alike:
+    #   invalid / skipped_no_id / quarantined — a DECISION about the item. It
+    #     would be judged the same way next time, so holding the cursor makes
+    #     a poison-pill loop. Advancing is correct.
+    #   failed / unavailable — the item was NEVER JUDGED. `failed` raised
+    #     while storing; `unavailable` means the merge could not run at all,
+    #     which skips a whole batch at once.
+    #   team sync disabled — not a merge outcome. The items were never even
+    #     offered, so with team sync off every team learning that arrived used
+    #     to advance the cursor past itself and vanish. A user who later
+    #     enabled team sync had permanently lost everything that arrived while
+    #     it was off.
+    #
+    # Held at pull_seq the whole batch is re-offered next cycle. That costs a
+    # duplicate MERGE, not a duplicate row: `pull.py::find_existing` keys on
+    # source_learning_id and updates the existing entry.
+    #
+    # Counts, not ids: TeamMergeResult carries no per-item sequence numbers,
+    # so a precise "advance past the applied ones only" needs a shape change
+    # in the merge. This is the conservative version — it can re-offer a few
+    # already-applied items, and it can never drop one.
+    cursor_may_advance = client._config.team_sync_enabled and not merge_result.unavailable and merge_result.failed == 0
+    if cursor_may_advance:
+        next_pull_seq = max(
+            [
+                pull_seq,
+                *(
+                    int(item.get("sync_seq", 0))
+                    for item in (pull_result.team_learnings or [])
+                    if isinstance(item, dict) and not _is_company_entry(item, _COMPANY_SYNC_SOURCE)
+                ),
+            ]
+        )
+    else:
+        next_pull_seq = pull_seq
+        if pulled:
+            facade_logger.warning(
+                "sync_pull_cursor_held",
+                client_id=client._client_id,
+                pulled=pulled,
+                reason=(
+                    "team_sync_disabled"
+                    if not client._config.team_sync_enabled
+                    else "merge_unavailable"
+                    if merge_result.unavailable
+                    else "merge_failed"
+                ),
+                detail="the cursor did not advance; these items will be re-offered rather than skipped",
+            )
+    return PullStep(pull_result, merge_result, pulled, next_pull_seq, cursor_may_advance)

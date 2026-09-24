@@ -13,7 +13,6 @@ from tests.comms import test_send_contract as contract
 from tests.comms.test_policy import SendScene as PolicyScene
 from tests.comms.test_policy import scene as policy_scene  # noqa: F401
 from trw_mcp.comms._envelope import canonical_bytes
-from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
 from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
 
 SendScene = contract.SendScene
@@ -31,7 +30,6 @@ async def call(client: Any, scene: SendScene, member: str, name: str, **argument
 
 
 def add_real_response_middleware(scene: SendScene) -> None:
-    scene.server.add_middleware(ContextBudgetMiddleware())
     scene.server.add_middleware(ResponseOptimizerMiddleware())
 
 
@@ -179,7 +177,6 @@ async def test_out_of_range_wait_seconds_reach_the_handler_and_refuse_after_clos
 
 @pytest.fixture
 def wait_scene(policy_scene: PolicyScene) -> PolicyScene:
-    policy_scene.server.add_middleware(ContextBudgetMiddleware())
     policy_scene.server.add_middleware(ResponseOptimizerMiddleware())
     return policy_scene
 

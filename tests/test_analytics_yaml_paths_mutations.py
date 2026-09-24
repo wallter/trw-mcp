@@ -18,7 +18,7 @@ from trw_mcp.state.persistence import FileStateReader
 class TestUpdateAnalyticsExtendedYamlFallback:
     """Test YAML fallback in update_analytics_extended for q-learning scan."""
 
-    def test_yaml_fallback_counts_q_activations_and_high_impact(self, tmp_path: Path) -> None:
+    def test_yaml_fallback_counts_high_impact(self, tmp_path: Path) -> None:
         """Lines 727-735: YAML fallback scans entries for q_observations and impact."""
         trw_dir = _setup_trw(tmp_path)
         entries_dir = trw_dir / "learnings" / "entries"
@@ -39,7 +39,7 @@ class TestUpdateAnalyticsExtendedYamlFallback:
             )
 
         data = FileStateReader().read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert data["q_learning_activations"] == 2
+        assert "q_learning_activations" not in data  # PRD-CORE-293
         assert data["high_impact_learnings"] == 2
 
 
@@ -54,8 +54,8 @@ class TestMarkPromotedSqliteException:
         _write_entry(entries_dir, "promote-me", summary="promote target")
 
         with patch(
-            "trw_mcp.state.memory_adapter.get_backend",
-            side_effect=RuntimeError("sqlite broken"),
+            "trw_mcp.state._store_selection.selected_store",
+            side_effect=RuntimeError("store broken"),
         ):
             mark_promoted(trw_dir, "promote-me")
 

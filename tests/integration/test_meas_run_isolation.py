@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state._paths import pin_active_run, unpin_active_run
 from trw_mcp.telemetry.tool_call_timing import clear_pricing_cache
@@ -37,6 +38,11 @@ def meas_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[Path, Path, Path]]:
+    # Import the production tools before patching the resolvers below. A module
+    # first imported under the patch binds the lambda by name and keeps it after
+    # the patch is undone, which sends later tests' writes into this tmp_path.
+    import trw_mcp.server._tools  # noqa: F401
+
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
     (trw_dir / "learnings" / "entries").mkdir(parents=True)
@@ -101,8 +107,7 @@ def test_tool_call_events_run_id_isolation(
                 tests_passed=True,
                 test_count=1,
                 coverage_pct=100.0,
-                mypy_clean=True,
-                run_path=str(run_dir),
+                options={"mypy_clean": True, "run_path": str(run_dir)},
             )
 
     proj_one = _read_jsonl(run_one / "meta" / "tool_call_events.jsonl")
@@ -117,11 +122,21 @@ def test_tool_call_events_run_id_isolation(
 def test_artifact_registry_run_id_isolation(
     meas_workspace: tuple[Path, Path, Path],
     monkeypatch: pytest.MonkeyPatch,
+    memory_daemon: MemoryDaemon,
 ) -> None:
     """trw_session_start must isolate artifact-registry rows by run_id."""
-    _, run_one, run_two = meas_workspace
+    trw_dir, run_one, run_two = meas_workspace
     tool_fn = _get_production_tool_fn("trw_session_start")
     monkeypatch.setattr("trw_mcp.telemetry.boot_audit.run_boot_audit", lambda **_: [])
+
+    # PRD-CORE-280 slice e1: this workspace is built directly (not via
+    # ``daemon_checkout``), so pin it to the shared session daemon per the
+    # fixture contract's "test that builds its own .trw" note.
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    attach_checkout(trw_dir, memory_daemon)
+    from trw_mcp.models.config import reload_config
+
+    reload_config()
 
     for session_id, run_dir in (("sess-a", run_one), ("sess-b", run_two)):
         monkeypatch.setenv("TRW_SESSION_ID", session_id)

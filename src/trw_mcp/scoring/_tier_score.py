@@ -15,7 +15,7 @@ tier's expected ceremony.
 
 from __future__ import annotations
 
-from trw_mcp.models.run import ComplexityClass
+from trw_mcp.models.run import TOOL_CALL_EVENTS, ComplexityClass
 from trw_mcp.models.typed_dicts import TierCeremonyScoreResult
 
 
@@ -128,7 +128,7 @@ def _detect_ceremony_events(
     for evt in events:
         event_type = str(evt.get("event", ""))
         tool_name = str(evt.get("tool_name", ""))
-        is_tool = event_type == "tool_invocation"
+        is_tool = event_type in TOOL_CALL_EVENTS
 
         if event_type == "session_start" or (is_tool and tool_name == "trw_session_start"):
             has_recall = True

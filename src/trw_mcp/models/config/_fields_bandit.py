@@ -34,17 +34,9 @@ def _detect_model_family_from_env() -> str:
 class _BanditFields:
     """Bandit selection domain mixin — mixed into _TRWConfigFields via MI."""
 
-    # -- Bandit-based nudge selection (PRD-CORE-105-FR06) --
-
-    phase_transition_withhold_rate: float = Field(
-        default=0.10,
-        ge=0.0,
-        le=0.30,
-        description=(
-            "Fraction of non-critical learnings withheld at phase boundaries "
-            "for micro-randomized causal signal (FR06). Range: [0.0, 0.30]."
-        ),
-    )
+    # phase_transition_withhold_rate (former PRD-CORE-105-FR06
+    # bandit-based nudge selection field) was removed under PRD-CORE-291
+    # (slice 2): no production reader.
 
     # -- C-5 Model Generation Preparedness (PRD-CORE-105-FR01) --
 

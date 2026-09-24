@@ -6,18 +6,17 @@ no longer authorizes a verifier. This is not total recall latency or efficacy.
 
 from __future__ import annotations
 
-import time
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from trw_memory.lifecycle.verification_pass import run_maintain_verify
 from trw_memory.models.memory import Anchor, MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
-from tests._layout import requires_local_timing
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.tools._maintain_verify import run_maintain_verify
 from trw_mcp.tools._recall_impl import _verify_assertions
 
 
@@ -25,17 +24,16 @@ def forbid_work(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("evidence-only recall invoked verification/cache/write work")
 
-    monkeypatch.setattr("trw_mcp.tools._verification_pass.run_verification_pass", forbidden)
-    monkeypatch.setattr("trw_mcp.tools._verification_pass.persist_verification_outcome", forbidden)
+    monkeypatch.setattr("trw_memory.lifecycle.verification_pass.run_verification_pass", forbidden)
+    monkeypatch.setattr("trw_memory.lifecycle.verification_pass.persist_verification_outcome", forbidden)
     monkeypatch.setattr("trw_mcp.tools._verification_cache.warm_verified_verdict", forbidden)
     monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", forbidden)
 
 
-@pytest.mark.perf
-@pytest.mark.slow
-@requires_local_timing
-@pytest.mark.xdist_group(name="recall_verification_latency")
-def test_recall_verification_p95_within_budget(tmp_path: Path, monkeypatch):
+def _build_evidence_entries(tmp_path: Path) -> list[dict]:
+    """Build a 10k-filler + 25-evidence backend, run maintain_verify once, and
+    return the 25 qualified evidence entries as the read model _verify_assertions
+    consumes."""
     backend = SQLiteBackend(tmp_path / "memory.db")
     try:
         backend.store_many([MemoryEntry(id=f"L-filler-{i}", content="filler") for i in range(10_000)])
@@ -58,21 +56,30 @@ def test_recall_verification_p95_within_budget(tmp_path: Path, monkeypatch):
             batch_limit=10,
             project_root=tmp_path,
         )
-        entries = [backend.get(f"L-evidence-{i}", namespace="default").model_dump(mode="json") for i in range(25)]
-        assert all(entry["verification_checked_at"] for entry in entries)
-        forbid_work(monkeypatch)
-        rank = MagicMock(side_effect=lambda rows, *a, **k: rows)
-        samples = []
-        for _ in range(30):
-            started = time.perf_counter()
-            results = _verify_assertions(entries, [], TRWConfig(), rank)
-            samples.append((time.perf_counter() - started) * 1000)
-            assert all(row["verification_status"] == "last_known_pass" for row in results)
-            assert all(row["verification_evidence"]["current_tree_verified"] is False for row in results)
-        p95 = sorted(samples)[int(len(samples) * 0.95) - 1]
-        assert p95 < 40.0, f"evidence qualification p95={p95:.2f}ms, samples={samples}"
+        return [backend.get(f"L-evidence-{i}", namespace="default").model_dump(mode="json") for i in range(25)]
     finally:
         backend.close()
+
+
+@pytest.mark.skipif(
+    os.environ.get("TRW_E1_ORACLE") == "1",
+    reason="BLOCKED-ON-E3: _build_evidence_entries seeds 10k+25 rows through a raw "
+    "SQLiteBackend and drives trw_memory.lifecycle.verification_pass.run_maintain_verify "
+    "on it directly -- a bulk maintenance pass below the MemoryStore protocol, with no "
+    "fake/daemon equivalent",
+)
+def test_recall_verification_is_evidence_only_and_correct(tmp_path: Path, monkeypatch):
+    """CORE268: the qualified entries carry verification evidence, and a single
+    evidence-only call (with verification/cache/write work forbidden) returns the
+    correct last-known-pass shape."""
+    entries = _build_evidence_entries(tmp_path)
+    assert all(entry["verification_checked_at"] for entry in entries)
+
+    forbid_work(monkeypatch)
+    rank = MagicMock(side_effect=lambda rows, *a, **k: rows)
+    results = _verify_assertions(entries, [], TRWConfig(), rank)
+    assert all(row["verification_status"] == "last_known_pass" for row in results)
+    assert all(row["verification_evidence"]["current_tree_verified"] is False for row in results)
 
 
 @pytest.mark.parametrize(

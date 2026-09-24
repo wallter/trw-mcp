@@ -15,9 +15,10 @@ from typing import TYPE_CHECKING
 
 import structlog
 from pydantic import BaseModel
-from trw_memory.security.pii import anonymize_installation_id, redact_paths, strip_pii
+from trw_memory.security.pii import anonymize_installation_id, redact_paths
 
 from trw_mcp.sync.identity import resolve_sync_client_id
+from trw_mcp.telemetry.anonymizer import redact_secrets
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
@@ -60,20 +61,21 @@ def _content_sync_hash(payload: dict[str, object]) -> str:
 
 
 def _sanitize_metadata_value(value: object) -> object:
-    """Scrub PII from a metadata VALUE, recursing through lists and dicts.
+    """Redact secrets and PII from a metadata value, recursing through lists and dicts.
 
-    Metadata KEYS are structural (they name the field, e.g. ``client_profile``)
-    and are left intact; only the values can carry user text. Egress is the sole
+    Nested KEYS are redacted too: metadata is caller-supplied, so a key can carry a
+    pasted credential (two keys that redact alike collapse; both values are already
+    redacted, so nothing leaks). Egress is the sole
     masking boundary now that the write path stores verbatim
     (``trw_memory.security._runtime_pii``), so an unsanitized value here leaves
     the machine raw.
     """
     if isinstance(value, str):
-        return strip_pii(value)
-    if isinstance(value, list):
+        return redact_secrets(value)
+    if isinstance(value, (list, tuple)):
         return [_sanitize_metadata_value(item) for item in value]
     if isinstance(value, dict):
-        return {str(key): _sanitize_metadata_value(item) for key, item in value.items()}
+        return {redact_secrets(str(key)): _sanitize_metadata_value(item) for key, item in value.items()}
     return value
 
 
@@ -303,20 +305,22 @@ class SyncPusher:
         # Tags and metadata are egressed content just like summary/detail: a
         # credential or address pasted into a tag used to be masked by the write
         # path, which no longer mutates anything, so this boundary owns it.
-        tags = [strip_pii(str(tag)) for tag in list(raw_tags)[:20]] if isinstance(raw_tags, list) else []
-        summary = strip_pii(str(d.get("summary", d.get("content", ""))))
+        tags = [redact_secrets(str(tag)) for tag in list(raw_tags)[:20]] if isinstance(raw_tags, list) else []
+        summary = redact_secrets(str(d.get("summary", d.get("content", ""))))
         summary = redact_paths(summary, self._project_root)[:1000]
         raw_detail = d.get("detail")
         detail: str | None = None
         if raw_detail:
-            detail = redact_paths(strip_pii(str(raw_detail)), self._project_root)[:10000]
+            detail = redact_paths(redact_secrets(str(raw_detail)), self._project_root)[:10000]
         raw_vector_clock = d.get("vector_clock", {})
         vector_clock = dict(raw_vector_clock) if isinstance(raw_vector_clock, dict) else {}
         raw_metadata = d.get("metadata", {})
         raw_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-        metadata: dict[str, object] = {str(key): _sanitize_metadata_value(value) for key, value in raw_metadata.items()}
+        metadata: dict[str, object] = {
+            redact_secrets(str(key)): _sanitize_metadata_value(value) for key, value in raw_metadata.items()
+        }
         # Anonymized from the ORIGINAL value: the id is a hash input, and
-        # strip_pii would reshape digit-heavy ids before hashing.
+        # redaction would reshape digit-heavy ids before hashing.
         installation_id = raw_metadata.get("installation_id")
         if isinstance(installation_id, str) and installation_id:
             metadata["installation_id"] = anonymize_installation_id(installation_id)
@@ -330,6 +334,9 @@ class SyncPusher:
             "status": str(d.get("status", "active")),
             "vector_clock": vector_clock,
             "metadata": metadata,
+            # This entry's own write counter: the backend's stale guard compares it with
+            # this client's mark for the row. push_seq is a max over OTHER entries too.
+            "sync_seq": int(str(d.get("sync_seq") or 0)),
         }
         raw_sync_hash = d.get("sync_hash")
         payload["sync_hash"] = raw_sync_hash if _is_valid_sync_hash(raw_sync_hash) else _content_sync_hash(payload)

@@ -47,76 +47,14 @@ class ToolEntry(NamedTuple):
     description: str
 
 
-class PrescriptiveLanguageClassification(NamedTuple):
-    """Classification for instruction-surface wording changes."""
-
-    category: str
-    rewrite_allowed: bool
-    rationale: str
-
-
-_SAFETY_TERMS: Final[frozenset[str]] = frozenset(
-    {
-        "must not",
-        "never",
-        "secret",
-        "credential",
-        "security",
-        "destructive",
-        "approval",
-        "human review",
-    }
-)
-_PROCESS_TERMS: Final[frozenset[str]] = frozenset(
-    {
-        "must",
-        "shall",
-        "required",
-        "checkpoint",
-        "deliver",
-        "build_check",
-        "validate",
-        "test",
-    }
-)
-
-
-def classify_prescriptive_language(text: str) -> PrescriptiveLanguageClassification:
-    """Classify instruction language before tone rewrites.
-
-    Safety-critical language is not rewriteable by a tone-only pass; process-
-    critical language may be clarified but not weakened; advisory language can
-    be softened.
-    """
-    lowered = text.lower()
-    if any(term in lowered for term in _SAFETY_TERMS):
-        return PrescriptiveLanguageClassification(
-            category="safety-critical",
-            rewrite_allowed=False,
-            rationale="preserves enforceable safety or approval boundary language",
-        )
-    if any(term in lowered for term in _PROCESS_TERMS):
-        return PrescriptiveLanguageClassification(
-            category="process-critical",
-            rewrite_allowed=True,
-            rationale="may clarify wording but must preserve the required action",
-        )
-    return PrescriptiveLanguageClassification(
-        category="advisory",
-        rewrite_allowed=True,
-        rationale="tone rewrite may soften non-normative guidance",
-    )
-
-
 TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     # Core
     "trw_session_start": "Load prior learnings and recover any active run",
     "trw_checkpoint": "Save milestone progress so you can resume after interruptions",
-    "trw_learn": "Record durable technical discoveries (no status reports)",
+    "trw_learn": "Record durable technical discoveries (no status reports), or correct one by learning_id",
     "trw_deliver": "Persist everything when done (learnings, checkpoint, instruction sync)",
     # Memory
     "trw_recall": "Retrieve relevant learnings for a specific topic",
-    "trw_learn_update": "Update an existing learning entry with new detail or status",
     "trw_graph_related": "Traverse a bounded typed neighborhood from one learning",
     # Quality
     "trw_build_check": "Record project-native test/build/static-check results after you run them",
@@ -171,7 +109,7 @@ TOOL_DESCRIPTIONS: Final[dict[str, str]] = {
     "trw_peers": "Enroll, list or heartbeat this agent among its formation peers (pull-only)",
     "trw_send": "Send a bounded message to a formation peer or reconcile an exact retry (pull-only)",
     "trw_inbox": "Fetch pending messages, ACK receipt, or inspect body-free message facts (pull-only)",
-    "trw_decision": "Ask an opt-in calibrated judge a typed yes/no, choice or score question (advisory only)",
+    "trw_assess": "Batch typed noul/choice/score questions about a state (or many items) to an opt-in calibrated judge (advisory only)",
 }
 
 # Validate at import time: every eligible (public) manifest tool has a

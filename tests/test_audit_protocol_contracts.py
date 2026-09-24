@@ -20,10 +20,12 @@ from dataclasses import dataclass
 import pytest
 
 from tests._audit_protocol_support import (
+    AUDIT_MAX_CYCLES,
+    BUNDLED_AGENTS_DIR,
     REPO_ROOT,
     SKILL_PATH,
+    SKILL_PROJECTIONS,
     Protocol,
-    config_max_audit_cycles,
     fenced_yaml,
     level_two_headings,
     load_protocol,
@@ -231,16 +233,18 @@ def assert_verdict_parity(protocol: Protocol) -> None:
             f"  comment: {sentence}\n  table: {canonical[verdict]}"
         )
 
-    expected = config_max_audit_cycles()
+    # max_audit_cycles (TRWConfig) was removed under PRD-CORE-291 (slice 2): no
+    # production reader. "Maximum audit cycles before escalation: 3" in
+    # audit-framework.md is now a fixed protocol constant (AUDIT_MAX_CYCLES)
+    # rather than a restatement of a config default, but it is still the
+    # single source no other surface may restate.
     stated = re.findall(r"(?i)maximum audit cycles before escalation:\s*(\d+)", protocol.framework)
     assert stated, "the single source no longer states the maximum audit cycle count"
     for value in stated:
-        assert int(value) == expected, (
-            f"prose says max audit cycles = {value}, TRWConfig.max_audit_cycles default = {expected}"
-        )
+        assert int(value) == AUDIT_MAX_CYCLES, f"prose says max audit cycles = {value}, expected {AUDIT_MAX_CYCLES}"
     for name, text in sorted(protocol.surfaces.items()):
         assert not re.findall(r"(?i)maximum audit cycles before escalation:\s*\d+", text), (
-            f"{name} restates the max-audit-cycle default; its owner is TRWConfig.max_audit_cycles"
+            f"{name} restates the max-audit-cycle constant; audit-framework.md is the single source"
         )
 
 
@@ -529,8 +533,23 @@ def test_renaming_a_base_heading_alone_does_not_break_the_adapter(protocol: Prot
 
 
 def test_retired_identifiers_are_absent_from_every_surface(protocol: Protocol) -> None:
-    """FR08: 11 agents plus all 3 shipped or all 7 workspace projections."""
-    expected = 18 if MONOREPO_ROOT is not None else 14
+    """FR08: every bundled agent, plus the file-based skill projections in scope.
+
+    The exact agent count is derived (not hardcoded): a concurrent
+    agent-corpus consolidation lane (trw-traceability-checker->trw-auditor,
+    trw-tester->trw-implementer, trw-requirement-writer->trw-prd-groomer) is
+    changing it independently of this module, so pinning a literal here would
+    go stale the moment that lane lands. The projection count IS a literal
+    (5, all file-based): codex/copilot no longer fork the skill on disk
+    (PRD-CORE-291-FR04), so ``SKILL_PROJECTIONS`` itself carries that count.
+    """
+    from tests._layout import PACKAGE_ROOT
+
+    expected_agents = len(list(BUNDLED_AGENTS_DIR.glob("*.md")))
+    expected_projections = len(
+        [p for p in SKILL_PROJECTIONS if MONOREPO_ROOT is not None or p.is_relative_to(PACKAGE_ROOT)]
+    )
+    expected = expected_agents + expected_projections
     assert len(protocol.surfaces) == expected, f"expected {expected} scanned surfaces, got {len(protocol.surfaces)}"
     assert len(RETIRED_IDENTIFIERS) == 6, "the denylist is the union of the prior agent and skill lists"
     assert_no_retired_identifiers(protocol)

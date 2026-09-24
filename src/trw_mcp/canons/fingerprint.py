@@ -106,21 +106,6 @@ class ProcessFingerprint:
     surface_digest: str
     digest: str
 
-    def public_payload(self) -> dict[str, object]:
-        """Secret-free serializable payload (safe for status/resources/logs)."""
-        return {
-            "schema_version": self.schema_version,
-            "trw_mcp_version": self.trw_mcp_version,
-            "framework_version": self.framework_version,
-            "aaref_version": self.aaref_version,
-            "template_version": self.template_version,
-            "registry_digest": self.registry_digest,
-            "source_digests": dict(sorted(self.source_digests.items())),
-            "loaded_module_digest": self.loaded_module_digest,
-            "surface_digest": self.surface_digest,
-            "digest": self.digest,
-        }
-
 
 def _canonical(payload: dict[str, object]) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)

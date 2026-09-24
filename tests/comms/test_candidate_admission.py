@@ -396,7 +396,10 @@ def test_withdrawing_after_admission_prevents_pick_up(
 def test_an_admission_never_commits_without_its_worktree_record(
     formation_env: FormationFixture, tmp_path: Path
 ) -> None:
-    """M2: the record is written under the manifest lock BEFORE the manifest; a failure commits neither."""
+    """M2: the record is written only after every candidate transition committed; a
+    record failure commits neither the manifest NOR the candidate transition
+    (PRD-FIX-149 review R2 -- rolled back to ACTIVE, not left stranded ADMITTED).
+    """
     fixture = formation_env
     formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
     worktree = tmp_path / "wt"
@@ -407,11 +410,86 @@ def test_an_admission_never_commits_without_its_worktree_record(
         _admit(fixture, mine.candidate_id)
     loaded = formation.load(fixture.orchestrator_run, trw_dir=fixture.trw_dir)
     assert loaded is not None and loaded.manifest.member("impl-2").admitted_candidate is None
+    stranded = formation.candidate(fixture.trw_dir, mine.candidate_id)
+    assert stranded is not None and stranded.state == "active" and stranded.admitted_formation is None, (
+        "a worktree-record failure must roll the candidate back, not strand it admitted with nothing naming it"
+    )
 
     records.unlink()  # the operator repairs the store; the SAME handle now admits
     _admit(fixture, mine.candidate_id)
     record = formation.worktree_record(fixture.trw_dir, worktree)
     assert record is not None and record.member_id == "impl-2"
+
+
+def test_a_conflicting_second_candidate_admits_neither_candidate(formation_env: FormationFixture) -> None:
+    """PRD-FIX-149 review R2: within ONE admission call, an illegal transition on the
+    SECOND candidate (already admitted by a different formation -- the exact shape a
+    race between ``admitted_members``' unlocked read and the locked transition would
+    produce) must not leave the FIRST, otherwise-legal candidate committed either.
+    """
+    from trw_mcp.formation._admission import commit_admissions
+    from trw_mcp.formation._candidates import CandidateState, StateTransition, set_states
+    from trw_mcp.formation._manifest import FormationMember
+
+    fixture = formation_env
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    first = _announce(fixture, "pin-a", member="impl-1")
+    second = _announce(fixture, "pin-b", member="impl-2")
+    set_states(
+        fixture.trw_dir,
+        [StateTransition(second.candidate_id, CandidateState.ADMITTED, admitted_formation="hotfix-train")],
+    )
+
+    member1 = FormationMember(
+        member_id="impl-1", client="claude-code", admitted_candidate=first.candidate_id, admitted_revision=2
+    )
+    member2 = FormationMember(
+        member_id="impl-2", client="claude-code", admitted_candidate=second.candidate_id, admitted_revision=2
+    )
+
+    with pytest.raises(FormationError, match="cannot move from admitted"):
+        commit_admissions(
+            fixture.trw_dir,
+            "release-train",
+            fixture.orchestrator_run,
+            [(member1, first), (member2, second)],
+            [],
+        )
+
+    first_state = formation.candidate(fixture.trw_dir, first.candidate_id)
+    assert first_state is not None and (first_state.state, first_state.admitted_formation) == ("active", None), (
+        "the otherwise-valid first candidate must not be admitted when the second in the same batch fails"
+    )
+
+
+def test_release_refuses_a_candidate_admitted_by_a_different_formation(formation_env: FormationFixture) -> None:
+    """PRD-FIX-149 review R2: release (ADMITTED -> ACTIVE) is a CAS on ``admitted_formation``;
+    a formation may only release a candidate it actually admitted.
+    """
+    from trw_mcp.formation import FormationError as _FormationError
+    from trw_mcp.formation._candidates import CandidateState, StateTransition, set_states
+
+    fixture = formation_env
+    mine = _announce(fixture, "pin-b")
+    set_states(
+        fixture.trw_dir,
+        [StateTransition(mine.candidate_id, CandidateState.ADMITTED, admitted_formation="release-train")],
+    )
+
+    with pytest.raises(_FormationError, match="'hotfix-train'"):
+        set_states(
+            fixture.trw_dir,
+            [
+                StateTransition(
+                    mine.candidate_id,
+                    CandidateState.ACTIVE,
+                    admitted_formation=None,
+                    expected_admitted_formation="hotfix-train",
+                )
+            ],
+        )
+    unchanged = formation.candidate(fixture.trw_dir, mine.candidate_id)
+    assert unchanged is not None and (unchanged.state, unchanged.admitted_formation) == ("admitted", "release-train")
 
 
 def test_a_candidate_is_admitted_to_one_slot_at_a_time(formation_env: FormationFixture) -> None:
@@ -590,13 +668,15 @@ def test_a_worktree_candidate_added_to_a_new_slot_gets_its_fr17_record(
 
 
 def test_the_admit_cli_verb_admits_by_handle(
-    formation_env: FormationFixture, capsys: pytest.CaptureFixture[str]
+    formation_env: FormationFixture, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import argparse
 
+    from tests._formation_test_support import pin_session
     from trw_mcp.tools._formation_cli import run_formation
 
     fixture = formation_env
+    pin_session(monkeypatch, fixture.orchestrator_run)
     formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
     mine = _announce(fixture, "pin-b")
     args = argparse.Namespace(
@@ -610,3 +690,376 @@ def test_the_admit_cli_verb_admits_by_handle(
     assert done.value.code == 0, capsys.readouterr().err
     loaded = formation.load(fixture.orchestrator_run, trw_dir=fixture.trw_dir)
     assert loaded is not None and loaded.manifest.member("impl-2").admitted_candidate == mine.candidate_id
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 FR04/FR05 (ledger R4): two orchestrators, one announced handle.
+# --------------------------------------------------------------------------- #
+
+
+def test_set_state_same_state_different_formation_refuses(formation_env: FormationFixture) -> None:
+    """FR05: re-admitting to ANOTHER formation is refused; the same formation's retry is a no-op."""
+    from trw_mcp.formation._candidates import CandidateState, set_state
+
+    trw_dir = formation_env.trw_dir
+    mine = _announce(formation_env, "pin-b")
+    set_state(trw_dir, mine.candidate_id, CandidateState.ADMITTED, admitted_formation="alpha")
+
+    with pytest.raises(FormationError, match="'alpha'"):
+        set_state(trw_dir, mine.candidate_id, CandidateState.ADMITTED, admitted_formation="beta")
+    after = formation.candidate(trw_dir, mine.candidate_id)
+    assert after is not None and after.admitted_formation == "alpha", "the refusal overwrote nothing"
+
+    retried = set_state(trw_dir, mine.candidate_id, CandidateState.ADMITTED, admitted_formation="alpha")
+    assert retried is not None and (retried.state, retried.admitted_formation) == ("admitted", "alpha")
+
+
+def test_concurrent_admission_race_refuses_second_formation(
+    formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FR04: both orchestrators pass the unlocked ACTIVE read; exactly one admission commits.
+
+    A barrier inside the admission read holds both revisions until each has seen
+    the candidate ACTIVE -- the exact interleaving that let the second silently
+    take ``admitted_formation`` from the first.
+    """
+    import threading
+
+    from tests._formation_test_support import make_run_dir
+    from trw_mcp.formation import _admission
+
+    fixture = formation_env
+    other_run = make_run_dir(fixture.trw_dir / "runs", "orchestrator-b")
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    second = _strict_payload(fixture)
+    second["formation_id"] = "hotfix-train"
+    formation.create(other_run, second, trw_dir=fixture.trw_dir)
+    handle = _announce(fixture, "pin-b").candidate_id
+
+    barrier = threading.Barrier(2, timeout=10)
+    unlocked_read = _admission.candidate
+
+    def racing_read(trw_dir: Path, candidate_id: str) -> Any:
+        found = unlocked_read(trw_dir, candidate_id)
+        barrier.wait()  # both revisions now hold an ACTIVE snapshot
+        return found
+
+    outcomes: dict[str, str] = {}
+
+    def admit(formation_id: str, run: Path) -> None:
+        try:
+            formation.revise(formation_id, run, {"impl-2": {"admitted_candidate": handle}}, trw_dir=fixture.trw_dir)
+            outcomes[formation_id] = "admitted"
+        except FormationError as exc:
+            outcomes[formation_id] = str(exc)
+
+    monkeypatch.setattr(_admission, "candidate", racing_read)
+    threads = [
+        threading.Thread(target=admit, args=("release-train", fixture.orchestrator_run)),
+        threading.Thread(target=admit, args=("hotfix-train", other_run)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    winners = [fid for fid, outcome in outcomes.items() if outcome == "admitted"]
+    assert len(outcomes) == 2 and len(winners) == 1, outcomes
+    (loser,) = set(outcomes) - set(winners)
+    assert "cannot move from admitted" in outcomes[loser] and repr(winners[0]) in outcomes[loser]
+
+    held = formation.candidate(fixture.trw_dir, handle)
+    assert held is not None and held.admitted_formation == winners[0]
+    loser_run = fixture.orchestrator_run if loser == "release-train" else other_run
+    loser_view = formation.load(loser_run, trw_dir=fixture.trw_dir)
+    assert loser_view is not None and loser_view.manifest.member("impl-2").admitted_candidate is None
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 NFR01 (ledger R5): an interrupted join finishes on retry.
+# --------------------------------------------------------------------------- #
+
+
+def test_interrupted_join_retry_repairs_stamp(formation_env: FormationFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The manifest committed, the process died before stamping run.yaml; the retry stamps it."""
+    import importlib
+
+    from trw_mcp.formation import stamped_ids
+
+    _join = importlib.import_module("trw_mcp.formation._join")  # the package re-binds ``_join`` to a function
+    fixture = formation_env
+    run = fixture.member_runs["impl-1"]
+    formation.create(fixture.orchestrator_run, fixture.payload(), trw_dir=fixture.trw_dir)
+
+    def crash(*_args: Any, **_kwargs: Any) -> None:
+        raise SystemExit("killed between the manifest commit and the run stamp")
+
+    with monkeypatch.context() as crashed:
+        crashed.setattr(_join, "_stamp_run_record", crash)
+        with pytest.raises(SystemExit):
+            formation.join("release-train", "impl-1", run, pin_key="pin-a", trw_dir=fixture.trw_dir)
+    committed = formation.load(fixture.orchestrator_run, trw_dir=fixture.trw_dir)
+    assert committed is not None and committed.manifest.member("impl-1").status == "joined"
+    assert stamped_ids(run) is None, "precondition: the crash window left the run unstamped"
+    revision = committed.manifest.revision
+
+    retried = formation.join("release-train", "impl-1", run, pin_key="pin-a", trw_dir=fixture.trw_dir)
+
+    assert stamped_ids(run) == ("release-train", "impl-1")
+    assert retried.revision == revision, "the repair is a run.yaml write, not a manifest revision"
+    context = formation.load(run, trw_dir=fixture.trw_dir)
+    assert context is not None and context.member_id == "impl-1", "the member resolves its formation again"
+
+
+def test_a_retried_join_does_not_undo_a_revoked_stamp(formation_env: FormationFixture) -> None:
+    """The repair fills only a MISSING stamp: FR18 compensation stays final."""
+    from trw_mcp.formation import revoke_run_stamp, stamped_ids
+
+    fixture = formation_env
+    run = fixture.member_runs["impl-1"]
+    formation.create(fixture.orchestrator_run, fixture.payload(), trw_dir=fixture.trw_dir)
+    formation.join("release-train", "impl-1", run, pin_key="pin-a", trw_dir=fixture.trw_dir)
+    assert revoke_run_stamp(run) is True
+
+    formation.join("release-train", "impl-1", run, pin_key="pin-a", trw_dir=fixture.trw_dir)
+
+    assert stamped_ids(run) is None
+    assert "revoked_formation_id: release-train" in (run / "meta" / "run.yaml").read_text(encoding="utf-8")
+
+
+def test_a_retried_join_after_abandonment_is_refused(formation_env: FormationFixture) -> None:
+    """PRD-FIX-149 review R3: a settled orchestrator verdict is never resurrected by a stale retry.
+
+    The idempotent early-return branch that repairs a missing stamp must not
+    ALSO repair (or merely no-op through) a member the orchestrator has since
+    retired -- that would let a zombie process's retried join silently look
+    live again after the orchestrator's ``abandoned`` verdict.
+    """
+    fixture = formation_env
+    run = fixture.member_runs["impl-1"]
+    formation.create(fixture.orchestrator_run, fixture.payload(), trw_dir=fixture.trw_dir)
+    formation.join("release-train", "impl-1", run, pin_key="pin-a", trw_dir=fixture.trw_dir)
+    formation.revise(
+        "release-train", fixture.orchestrator_run, {"impl-1": {"status": "abandoned"}}, trw_dir=fixture.trw_dir
+    )
+
+    with pytest.raises(FormationError, match="abandoned"):
+        formation.join("release-train", "impl-1", run, pin_key="pin-a", trw_dir=fixture.trw_dir)
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 round 3 review: R6/R7/R9 (worktree record lifecycle, batch
+# rollback, and stranded-self-admission retry).
+# --------------------------------------------------------------------------- #
+
+
+def test_a_released_worktree_record_can_be_admitted_by_another_formation(
+    formation_env: FormationFixture, tmp_path: Path
+) -> None:
+    """R6: nothing ever removed a worktree membership record before this fix, so once F1
+    admitted a worktree, F2 could never admit it again -- even after F1 released it.
+    """
+    from tests._formation_test_support import make_run_dir
+
+    fixture = formation_env
+    worktree = tmp_path / "wt"
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    first = _announce(fixture, "pin-b", worktree=worktree)
+    _admit(fixture, first.candidate_id)
+    record = formation.worktree_record(fixture.trw_dir, worktree)
+    assert record is not None and record.formation_id == "release-train"
+
+    _admit(fixture, None)  # F1 releases the candidate before pick-up
+    assert formation.worktree_record(fixture.trw_dir, worktree) is None, "the stale record must be deleted on release"
+
+    other_run = make_run_dir(fixture.trw_dir / "runs", "orchestrator-b")
+    second_payload = _strict_payload(fixture)
+    second_payload["formation_id"] = "hotfix-train"
+    formation.create(other_run, second_payload, trw_dir=fixture.trw_dir)
+    second = _announce(fixture, "pin-c", worktree=worktree)
+    formation.revise(
+        "hotfix-train", other_run, {"impl-2": {"admitted_candidate": second.candidate_id}}, trw_dir=fixture.trw_dir
+    )
+    record2 = formation.worktree_record(fixture.trw_dir, worktree)
+    assert record2 is not None and record2.formation_id == "hotfix-train"
+
+
+def test_a_second_record_write_failure_deletes_the_first_records_in_the_same_batch(
+    formation_env: FormationFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R7: within ONE ``commit_admissions`` call, a SECOND record write failing must not
+    leave the FIRST record (already written earlier in the same batch) behind, and both
+    candidates roll back to ``active``.
+    """
+    from trw_mcp.formation import _admission
+    from trw_mcp.formation._admission import commit_admissions
+    from trw_mcp.formation._manifest import FormationMember
+
+    fixture = formation_env
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    wt1, wt2 = tmp_path / "wt1", tmp_path / "wt2"
+    first = _announce(fixture, "pin-a", member="impl-1", worktree=wt1)
+    second = _announce(fixture, "pin-b", member="impl-2", worktree=wt2)
+
+    real_record = _admission.record_worktree_member
+    calls: list[Path] = []
+
+    def flaky(trw_dir: Path, worktree: Path, **kw: Any) -> None:
+        calls.append(worktree)
+        if len(calls) == 2:
+            raise OSError("disk full")
+        real_record(trw_dir, worktree, **kw)
+
+    monkeypatch.setattr(_admission, "record_worktree_member", flaky)
+
+    member1 = FormationMember(
+        member_id="impl-1", client="claude-code", admitted_candidate=first.candidate_id, admitted_revision=2
+    )
+    member2 = FormationMember(
+        member_id="impl-2", client="claude-code", admitted_candidate=second.candidate_id, admitted_revision=2
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        commit_admissions(
+            fixture.trw_dir, "release-train", fixture.orchestrator_run, [(member1, first), (member2, second)], []
+        )
+
+    assert formation.worktree_record(fixture.trw_dir, wt1) is None, "the first record must be deleted on rollback"
+    assert formation.worktree_record(fixture.trw_dir, wt2) is None
+    for handle in (first.candidate_id, second.candidate_id):
+        state = formation.candidate(fixture.trw_dir, handle)
+        assert state is not None and (state.state, state.admitted_formation) == ("active", None), handle
+
+
+def test_a_failed_compensating_rollback_is_chained_onto_the_original_failure(
+    formation_env: FormationFixture, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R7: when the compensating rollback ITSELF raises, the original record-write
+    failure must not be lost -- it is chained onto the rollback error via ``raise ... from``.
+    """
+    from trw_mcp.formation import _admission
+    from trw_mcp.formation._admission import commit_admissions
+    from trw_mcp.formation._manifest import FormationMember
+
+    fixture = formation_env
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    mine = _announce(fixture, "pin-b", worktree=tmp_path / "wt")
+
+    real_set_states = _admission.set_states
+    calls = {"n": 0}
+
+    def flaky_set_states(trw_dir: Path, transitions: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_set_states(trw_dir, transitions)
+        raise RuntimeError("rollback storage unavailable")
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(_admission, "set_states", flaky_set_states)
+    monkeypatch.setattr(_admission, "record_worktree_member", boom)
+
+    member = FormationMember(
+        member_id="impl-2", client="claude-code", admitted_candidate=mine.candidate_id, admitted_revision=2
+    )
+
+    with pytest.raises(RuntimeError, match="rollback storage unavailable") as excinfo:
+        commit_admissions(fixture.trw_dir, "release-train", fixture.orchestrator_run, [(member, mine)], [])
+
+    assert isinstance(excinfo.value.__cause__, OSError), "the original write failure must be chained, not lost"
+
+
+def test_a_candidate_stranded_admitted_by_this_formation_with_no_manifest_is_re_admissible(
+    formation_env: FormationFixture,
+) -> None:
+    """R9: a crash between the candidate's CAS to ``admitted`` and the manifest write can
+    strand a candidate ``admitted`` by this formation with NO manifest anywhere naming it;
+    a retry by that SAME formation must be able to finish the admission it started.
+    """
+    from trw_mcp.formation._candidates import set_state
+
+    fixture = formation_env
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    mine = _announce(fixture, "pin-b")
+    set_state(fixture.trw_dir, mine.candidate_id, "admitted", admitted_formation="release-train")
+
+    revised = formation.revise(
+        "release-train",
+        fixture.orchestrator_run,
+        {"impl-2": {"admitted_candidate": mine.candidate_id}},
+        trw_dir=fixture.trw_dir,
+    )
+    assert revised.member("impl-2").admitted_candidate == mine.candidate_id
+    held = formation.candidate(fixture.trw_dir, mine.candidate_id)
+    assert held is not None and (held.state, held.admitted_formation) == ("admitted", "release-train")
+
+
+def test_a_candidate_admitted_by_another_member_in_the_same_formation_is_still_refused(
+    formation_env: FormationFixture,
+) -> None:
+    """R9's exception must not swallow D2: a candidate ALREADY committed to a DIFFERENT
+    member of this SAME formation is still refused for a second slot.
+    """
+    fixture = formation_env
+    formation.create(fixture.orchestrator_run, _strict_payload(fixture), trw_dir=fixture.trw_dir)
+    mine = _announce(fixture, "pin-b")
+    formation.revise(
+        "release-train",
+        fixture.orchestrator_run,
+        {"impl-2": {"admitted_candidate": mine.candidate_id}},
+        trw_dir=fixture.trw_dir,
+    )
+
+    with pytest.raises(FormationError, match="candidate_not_admissible"):
+        formation.revise(
+            "release-train",
+            fixture.orchestrator_run,
+            {"impl-1": {"admitted_candidate": mine.candidate_id}},
+            trw_dir=fixture.trw_dir,
+        )
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 round 3 review: R10 (create() locks its exists() check and write).
+# --------------------------------------------------------------------------- #
+
+
+def test_concurrent_creates_for_the_same_orchestrator_run_serialize_and_refuse_the_loser(
+    formation_env: FormationFixture,
+) -> None:
+    """R10: ``create``'s existence check and its write must happen under the SAME lock
+    hold, or two concurrent creates for the same orchestrator run can both pass the
+    ``exists()`` check before either writes, and the second silently clobbers the first.
+    """
+    import threading
+
+    fixture = formation_env
+    payload_a = _strict_payload(fixture)
+    payload_b = _strict_payload(fixture)
+    payload_b["formation_id"] = "release-train-b"
+
+    outcomes: dict[str, str] = {}
+
+    def make(name: str, payload: dict[str, Any]) -> None:
+        try:
+            outcomes[name] = formation.create(fixture.orchestrator_run, payload, trw_dir=fixture.trw_dir).formation_id
+        except FormationError as exc:
+            outcomes[name] = str(exc)
+
+    threads = [
+        threading.Thread(target=make, args=("a", payload_a)),
+        threading.Thread(target=make, args=("b", payload_b)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    winners = [name for name, outcome in outcomes.items() if outcome in {"release-train", "release-train-b"}]
+    assert len(outcomes) == 2 and len(winners) == 1, outcomes
+    (loser,) = set(outcomes) - set(winners)
+    assert "already exists" in outcomes[loser]
+
+    loaded = formation.load(fixture.orchestrator_run, trw_dir=fixture.trw_dir)
+    assert loaded is not None and loaded.manifest.formation_id == outcomes[winners[0]], "no partial or clobbered write"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from trw_mcp.tools.submit_feedback import _redact_pii
+from trw_mcp.telemetry.anonymizer import redact_secrets
 
 # ---------------------------------------------------------------------------
 # License key — trw_lic_*
@@ -24,7 +24,7 @@ from trw_mcp.tools.submit_feedback import _redact_pii
     ],
 )
 def test_redacts_license_key(raw: str) -> None:
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert "trw_lic_" not in redacted
     assert "<REDACTED:license_key>" in redacted
 
@@ -45,7 +45,7 @@ def test_redacts_license_key(raw: str) -> None:
     ],
 )
 def test_redacts_api_keys(raw: str, must_contain: str) -> None:
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert must_contain not in redacted
     assert "<REDACTED:api_key>" in redacted
 
@@ -67,7 +67,7 @@ def test_redacts_api_keys(raw: str, must_contain: str) -> None:
 )
 def test_redacts_connection_string_password(raw: str, leaked_pw: str, scheme: str) -> None:
     """P1-2: a DB connection string must not ship user:password to the wire."""
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked_pw not in redacted, f"password leaked: {redacted!r}"
     assert "<REDACTED:credentials>" in redacted
     # Scheme + host preserved for diagnostics.
@@ -90,7 +90,7 @@ def test_redacts_connection_string_password(raw: str, leaked_pw: str, scheme: st
 )
 def test_redacts_extended_connection_string_schemes(raw: str, leaked_pw: str, scheme: str) -> None:
     """Finding 1a: amqp/ldap/ftp/mssql/sqlserver schemes must redact creds."""
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked_pw not in redacted, f"password leaked: {redacted!r}"
     assert "<REDACTED:credentials>" in redacted
     assert f"{scheme}://" in redacted
@@ -107,7 +107,7 @@ def test_redacts_extended_connection_string_schemes(raw: str, leaked_pw: str, sc
 )
 def test_redacts_empty_username_connection_string(raw: str, leaked_pw: str) -> None:
     """Finding 1a: an empty-username connection string must still redact."""
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked_pw not in redacted, f"password leaked: {redacted!r}"
     assert "<REDACTED:credentials>" in redacted
 
@@ -128,7 +128,7 @@ def test_redacts_query_string_credentials(raw: str, leaked_val: str, key: str) -
 
     The separator + key survive for diagnostics; only the value collapses.
     """
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked_val not in redacted, f"value leaked: {redacted!r}"
     assert f"{key}=<REDACTED:credentials>" in redacted
 
@@ -145,7 +145,7 @@ def test_redacts_query_string_credentials(raw: str, leaked_val: str, key: str) -
 )
 def test_connection_string_no_false_positive(benign: str) -> None:
     """A creds-free URL (incl. host:port) must NOT be redacted."""
-    assert _redact_pii(benign) == benign
+    assert redact_secrets(benign) == benign
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ def test_connection_string_no_false_positive(benign: str) -> None:
 )
 def test_redacts_json_embedded_secret(raw: str, leaked: str, key: str) -> None:
     """P1-3: a JSON secret value must redact while the key is preserved."""
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked not in redacted, f"value leaked: {redacted!r}"
     assert "<REDACTED:json_secret>" in redacted
     # The key (diagnostic context) survives.
@@ -198,7 +198,7 @@ def test_redacts_json_variant_key_secrets(raw: str, leaked: str, key: str) -> No
     NFR01: {"apiKey": "…"} previously leaked entirely. The key is preserved
     for diagnostics; the value collapses to the placeholder.
     """
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked not in redacted, f"value leaked: {redacted!r}"
     assert "<REDACTED:json_secret>" in redacted
     assert f'"{key}"' in redacted
@@ -218,7 +218,7 @@ def test_redacts_json_variant_key_secrets(raw: str, leaked: str, key: str) -> No
 )
 def test_json_secret_no_false_positive(benign: str) -> None:
     """Benign JSON fields must NOT be redacted."""
-    assert _redact_pii(benign) == benign
+    assert redact_secrets(benign) == benign
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +229,7 @@ def test_json_secret_no_false_positive(benign: str) -> None:
 def test_redacts_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/operator")
     raw = "config lives at /home/operator/.trw/config.yaml ok"
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert "/home/operator" not in redacted
     assert "$HOME/.trw/config.yaml" in redacted
 
@@ -238,18 +238,18 @@ def test_skips_home_substitution_when_home_empty(monkeypatch: pytest.MonkeyPatch
     # Force expanduser to return literal "~" so the resolver short-circuits
     # the path-substitution branch.
     #
-    # Patched on _feedback_redaction, not on the submit_feedback facade: the
-    # redactor moved there, so patching the facade's namespace would no longer
-    # reach the `os` this function actually calls. A patch that silently stops
-    # applying leaves the test green while testing nothing, which is why the
-    # assertion below checks the PATH SURVIVES rather than merely that the call
-    # returned something.
+    # Patched on telemetry.anonymizer, the redactor's actual home (R2-014),
+    # not on the submit_feedback facade: patching the facade's namespace
+    # would no longer reach the `os` this function actually calls. A patch
+    # that silently stops applying leaves the test green while testing
+    # nothing, which is why the assertion below checks the PATH SURVIVES
+    # rather than merely that the call returned something.
     monkeypatch.setattr(
-        "trw_mcp.tools._feedback_redaction.os.path.expanduser",
+        "trw_mcp.telemetry.anonymizer.os.path.expanduser",
         lambda _: "~",
     )
     raw = "path is /home/operator/.trw"
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     # Path is left untouched when HOME cannot be resolved.
     assert "/home/operator/.trw" in redacted
 
@@ -257,7 +257,7 @@ def test_skips_home_substitution_when_home_empty(monkeypatch: pytest.MonkeyPatch
 def test_home_substitution_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/op/")
     raw = "see /home/op/config.yaml"
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert "$HOME/config.yaml" in redacted
 
 
@@ -280,7 +280,7 @@ def test_home_substitution_strips_trailing_slash(monkeypatch: pytest.MonkeyPatch
     ],
 )
 def test_redacts_env_kv(raw: str) -> None:
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert "<REDACTED:env>" in redacted
     # The value portion must be gone — `KEY=value` collapses to a single
     # placeholder so a regex regression that only drops the value while
@@ -293,7 +293,7 @@ def test_redacts_env_kv(raw: str) -> None:
 
 def test_env_redaction_preserves_surrounding_text() -> None:
     raw = "context PASSWORD=secret123 and more after"
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert redacted.startswith("context ")
     assert redacted.endswith(" and more after")
     assert "<REDACTED:env>" in redacted
@@ -321,7 +321,7 @@ def test_redacts_prefixed_env_names(raw: str, leaked_value: str) -> None:
     / ``GITHUB_TOKEN=`` assignment is caught by the env pattern regardless of the
     value's shape — the whole ``KEY=value`` token collapses to ``<REDACTED:env>``.
     """
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked_value not in redacted, f"value leaked: {redacted!r}"
     assert "<REDACTED:" in redacted
 
@@ -341,7 +341,7 @@ def test_redacts_quoted_env_value_with_spaces(raw: str, leaked_value: str) -> No
     leaking everything after it (``PASSWORD="my secret"`` left ``secret"`` in
     clear text on the wire).
     """
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert leaked_value not in redacted, f"value leaked: {redacted!r}"
     assert "<REDACTED:env>" in redacted
 
@@ -356,7 +356,7 @@ def test_redacts_quoted_env_value_with_spaces(raw: str, leaked_value: str) -> No
 )
 def test_env_redaction_no_false_positive_on_benign_keys(benign: str) -> None:
     """The keyword must be immediately followed by ``=`` — no over-matching."""
-    assert _redact_pii(benign) == benign
+    assert redact_secrets(benign) == benign
 
 
 # ---------------------------------------------------------------------------
@@ -366,11 +366,11 @@ def test_env_redaction_no_false_positive_on_benign_keys(benign: str) -> None:
 
 def test_clean_input_unchanged() -> None:
     raw = "Just an ordinary bug report with no secrets in it at all."
-    assert _redact_pii(raw) == raw
+    assert redact_secrets(raw) == raw
 
 
 def test_empty_string_unchanged() -> None:
-    assert _redact_pii("") == ""
+    assert redact_secrets("") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -381,14 +381,14 @@ def test_empty_string_unchanged() -> None:
 def test_idempotent_double_application(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/me")
     raw = "license trw_lic_ABC123 key sk_live_XYZ999 path /home/me/.trw env PASSWORD=secret"
-    once = _redact_pii(raw)
-    twice = _redact_pii(once)
+    once = redact_secrets(raw)
+    twice = redact_secrets(once)
     assert once == twice
 
 
 def test_idempotent_on_already_redacted_markers() -> None:
     raw = "<REDACTED:license_key> and <REDACTED:api_key>"
-    assert _redact_pii(raw) == raw
+    assert redact_secrets(raw) == raw
 
 
 def test_idempotent_double_application_new_patterns() -> None:
@@ -398,8 +398,8 @@ def test_idempotent_double_application_new_patterns() -> None:
     tokens. Covers API keys, connection strings, and JSON secrets together.
     """
     raw = 'stripe sk_live_leak123 db postgres://admin:hunter2@host/app json {"password": "topsecret"}'
-    once = _redact_pii(raw)
-    twice = _redact_pii(once)
+    once = redact_secrets(raw)
+    twice = redact_secrets(once)
     assert once == twice
     # And the placeholders themselves survived a second pass intact.
     assert "<REDACTED:api_key>" in twice
@@ -410,7 +410,7 @@ def test_idempotent_double_application_new_patterns() -> None:
 def test_idempotent_on_all_new_markers() -> None:
     """The new placeholder markers must be inert on a second pass."""
     raw = 'scheme://<REDACTED:credentials>@host "password": "<REDACTED:json_secret>" <REDACTED:api_key>'
-    assert _redact_pii(raw) == raw
+    assert redact_secrets(raw) == raw
 
 
 # ---------------------------------------------------------------------------
@@ -528,14 +528,14 @@ def test_a_pem_private_key_block_collapses_whole() -> None:
         "ZZZZsecretkeymaterialZZZZ\n"
         "-----END RSA PRIVATE KEY-----"
     )
-    redacted = _redact_pii(f"here is the key:\n{block}\nthat failed")
+    redacted = redact_secrets(f"here is the key:\n{block}\nthat failed")
     assert "MIIEowIBAAKCAQEA1234567890abcdef" not in redacted
     assert "ZZZZsecretkeymaterialZZZZ" not in redacted
     assert "BEGIN RSA PRIVATE KEY" not in redacted
     assert "<REDACTED:private_key>" in redacted
     # Surrounding diagnostic prose survives.
     assert "here is the key:" in redacted and "that failed" in redacted
-    assert _redact_pii(redacted) == redacted, "PEM redaction must be idempotent"
+    assert redact_secrets(redacted) == redacted, "PEM redaction must be idempotent"
 
 
 def test_an_authorization_header_survives_repeated_redaction() -> None:
@@ -544,14 +544,14 @@ def test_an_authorization_header_survives_repeated_redaction() -> None:
     With the "already redacted" guard on the VALUE alone, a re-run of
     ``Authorization: Bearer <REDACTED:authorization>`` let the optional scheme
     give up ``Bearer`` to satisfy the value slot, appending a second placeholder
-    on every pass. `_redact_pii` is contractually idempotent, so this is a
+    on every pass. `redact_secrets` is contractually idempotent, so this is a
     correctness bug, not a cosmetic one.
     """
-    once = _redact_pii("curl -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig12345'")
+    once = redact_secrets("curl -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig12345'")
     assert once.count("<REDACTED:") == 1, once
     assert "Bearer" in once, "the scheme is diagnostic, not secret — keep it"
     for _ in range(3):
-        once_again = _redact_pii(once)
+        once_again = redact_secrets(once)
         assert once_again == once, f"not idempotent: {once!r} -> {once_again!r}"
         once = once_again
 
@@ -565,7 +565,7 @@ def test_every_claimed_secret_shape_is_redacted(token: str, placeholder: str) ->
     are genuinely exercised.
     """
     raw = f"context before {token} context after"
-    redacted = _redact_pii(raw)
+    redacted = redact_secrets(raw)
     assert token not in redacted, f"secret leaked: {redacted!r}"
     assert placeholder in redacted, f"expected {placeholder} in {redacted!r}"
 
@@ -578,8 +578,8 @@ def test_every_claimed_secret_shape_is_idempotent(token: str, placeholder: str) 
     on the second pass.
     """
     raw = f"context before {token} context after"
-    once = _redact_pii(raw)
-    twice = _redact_pii(once)
+    once = redact_secrets(raw)
+    twice = redact_secrets(once)
     assert once == twice, f"not idempotent: {once!r} -> {twice!r}"
 
 
@@ -609,4 +609,4 @@ def test_no_over_redaction_on_benign_inputs(benign: str) -> None:
     The mirror of the zero-false-negative probe — zero false-POSITIVES on
     realistic non-secret text that merely shares a prefix or keyword.
     """
-    assert _redact_pii(benign) == benign
+    assert redact_secrets(benign) == benign

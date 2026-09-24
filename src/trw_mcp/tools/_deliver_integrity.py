@@ -1,12 +1,12 @@
 """Integrity-on-delivery helper (PRD-INFRA-067 / C2).
 
-Wraps :meth:`trw_memory.storage.sqlite_backend.SQLiteBackend.check_integrity`
-into a single-call helper that :func:`trw_deliver` invokes once per delivery.
-Records the result in ``events.jsonl`` and returns it for inclusion in the
-deliver response payload.
+Probes the checkout's SELECTED store -- the daemon store since PRD-CORE-298,
+never the retired checkout ``memory.db`` -- once per delivery via
+:func:`trw_deliver`. Records the result in ``events.jsonl`` and returns it for
+inclusion in the deliver response payload.
 
-Observability ONLY. A failed integrity probe at deliver time is logged at
-WARNING level with the detail; it NEVER raises, blocks, or triggers recovery.
+Observability ONLY. A failed or unreachable probe at deliver time is logged;
+it NEVER raises, blocks, or triggers recovery.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ class DeliverIntegrityResult(TypedDict):
 
     ok: bool
     detail: str
-    db_path: str
+    namespace: str
     checked_at: str
 
 
@@ -38,7 +38,10 @@ def check_memory_integrity_on_deliver(
     trw_dir: Path,
     run_dir: Path | None = None,
 ) -> DeliverIntegrityResult:
-    """Run one ``PRAGMA quick_check`` on the memory DB and record the outcome.
+    """Probe that the selected store answers for this checkout's namespace.
+
+    ``ok`` means reachable, not integrity-checked: trw-mcp no longer opens the
+    database, so it cannot run ``PRAGMA quick_check`` on it.
 
     Args:
         trw_dir: Resolved ``.trw`` directory.
@@ -47,75 +50,58 @@ def check_memory_integrity_on_deliver(
             ``db_integrity_check_on_deliver``.
 
     Returns:
-        Dict with ``ok``, ``detail``, ``db_path``, ``checked_at`` keys.
-        Always returns — never raises. On unexpected errors sets ``ok=False``
-        and ``detail`` to the error string.
+        Dict with ``ok``, ``detail``, ``namespace``, ``checked_at`` keys.
+        Always returns — never raises. An unreachable or unpinned store is
+        reported as ``ok=False``/``detail="not_measured: ..."`` -- it is never
+        conflated with a healthy store the way a missing checkout ``memory.db``
+        used to be (that file no longer exists once a checkout is migrated).
     """
-    db_path = trw_dir / "memory" / "memory.db"
     checked_at = datetime.now(timezone.utc).isoformat()
     result: DeliverIntegrityResult = {
         "ok": False,
         "detail": "unknown",
-        "db_path": str(db_path),
+        "namespace": "",
         "checked_at": checked_at,
     }
 
-    if not db_path.exists():
-        # Missing DB at deliver time is not a corruption event — fresh runs
-        # may not have materialised a memory DB yet.
-        result["ok"] = True
-        result["detail"] = "db_missing"
-    else:
-        # PRD-DIST-432: use a direct read-only URI sqlite3.connect that
-        # bypasses ``SQLiteBackend._connect`` (the singleton-aware path
-        # that historically produced false-positive ``"file is not a
-        # database"`` reports inside the MCP server's deliver flow —
-        # see PRD-DIST-429 for the cycle-274..278 evidence). Read-only
-        # mode does no WAL writes and no PRAGMA setup, so it can't
-        # interact with active connection state. ``PRAGMA quick_check``
-        # works identically in read-only mode.
-        import sqlite3
+    from trw_mcp.state._store_selection import StoreUnavailableError, measuring_only, selected_store
 
-        try:
-            uri = f"file:{db_path}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=5.0)
-            try:
-                rows = conn.execute("PRAGMA quick_check").fetchall()
-            finally:
-                conn.close()
-            healthy = len(rows) == 1 and rows[0][0] == "ok"
-            result["ok"] = healthy
-            result["detail"] = rows[0][0] if rows else "empty"
-        except sqlite3.DatabaseError as exc:
-            # Genuine corruption surfaces here. Preserve the prior detail
-            # shape so downstream consumers (reflog, dashboards) keep
-            # working.
-            logger.debug(
-                "deliver_integrity_probe_failed",
-                db=str(db_path),
-                error=str(exc),
-            )
-            result["ok"] = False
-            result["detail"] = str(exc)
-        except Exception as exc:  # justified: fail-open observability probe
-            logger.debug(
-                "deliver_integrity_probe_failed",
-                db=str(db_path),
-                error=str(exc),
-            )
-            result["ok"] = False
-            result["detail"] = f"probe_error: {exc}"
+    try:
+        with measuring_only():
+            store, namespace = selected_store(trw_dir)
+        result["namespace"] = namespace
+        store.health(namespace)
+    except StoreUnavailableError as exc:
+        logger.debug("deliver_integrity_probe_not_measured", trw_dir=str(trw_dir), error=str(exc))
+        result["ok"] = False
+        result["detail"] = f"not_measured: {exc}"
+    except Exception as exc:  # justified: fail-open observability probe
+        logger.debug(
+            "deliver_integrity_probe_failed",
+            trw_dir=str(trw_dir),
+            error=str(exc),
+        )
+        result["ok"] = False
+        result["detail"] = f"not_measured: {exc}"
+    else:
+        # The probe proves the daemon store answers for this namespace. It does
+        # not run an integrity check: the daemon owns its database, and
+        # trw-mcp no longer opens it. Say so rather than report "ok".
+        result["ok"] = True
+        result["detail"] = "reachable; integrity not checked (the memory daemon owns its store)"
 
     if result["ok"]:
         logger.debug(
             "deliver_db_integrity_ok",
-            db=str(db_path),
+            trw_dir=str(trw_dir),
+            namespace=result["namespace"],
             detail=result["detail"],
         )
     else:
         logger.warning(
             "deliver_db_integrity_regression",
-            db=str(db_path),
+            trw_dir=str(trw_dir),
+            namespace=result["namespace"],
             detail=result["detail"],
         )
 

@@ -21,30 +21,6 @@ from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 class TestDeliverTelemetryIntegration:
     """Tests for deferred steps (outcome correlation, telemetry, batch_send, etc.)."""
 
-    def test_deliver_does_not_correlate_exposure_with_success(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """R10: delivery must not trigger temporal learning credit."""
-        trw_dir = _make_deferred_trw_dir(tmp_path)
-        called_with: list[str] = []
-
-        def _fake_process(event_type: str, event_data: Any = None) -> list[str]:
-            called_with.append(event_type)
-            return ["L-test001"]
-
-        stubs = _stub_all_deferred_steps()
-        del stubs["_step_outcome_correlation"]
-
-        with patch("trw_mcp.scoring.process_outcome_for_event", side_effect=_fake_process):
-            with _apply_stubs(stubs):
-                _run_deferred_steps(trw_dir, None, {})
-
-        log_entry = _read_deferred_log(trw_dir)
-        assert log_entry["results"]["outcome_correlation"]["status"] == "skipped"
-        assert log_entry["results"]["outcome_correlation"]["updated"] == 0
-        assert called_with == []
-
     def test_deliver_emits_session_end_event(
         self,
         tmp_path: Path,
@@ -124,68 +100,6 @@ class TestDeliverTelemetryIntegration:
         log_entry = _read_deferred_log(trw_dir)
         assert "batch_send" in log_entry["results"]
         mock_sender.send.assert_called_once()
-
-    def test_deliver_does_not_label_exposures_positive(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """R10: historical unresolved exposure remains an observation, not success."""
-        trw_dir = _make_deferred_trw_dir(tmp_path)
-        tracking_path = trw_dir / "logs" / "recall_tracking.jsonl"
-        tracking_path.write_text(
-            '{"learning_id": "L-test001", "ts": "2026-02-22T00:00:00Z", "outcome": null}\n',
-            encoding="utf-8",
-        )
-
-        run_dir = tmp_path / "docs" / "task" / "runs" / "20260222T000000Z-test"
-        (run_dir / "meta").mkdir(parents=True)
-        (run_dir / "meta" / "run.yaml").write_text(
-            "run_id: test\nstatus: active\nphase: deliver\nprd_scope: []\n",
-            encoding="utf-8",
-        )
-        (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
-
-        recorded: list[tuple[str, str]] = []
-
-        def _fake_record_outcome(learning_id: str, outcome: str) -> None:
-            recorded.append((learning_id, outcome))
-
-        stubs = _stub_all_deferred_steps()
-        del stubs["_step_recall_outcome"]
-
-        with (
-            patch("trw_mcp.state.recall_tracking.record_outcome", side_effect=_fake_record_outcome),
-            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.state.recall_tracking.get_recall_stats", return_value={"unique_learnings": 1}),
-        ):
-            with _apply_stubs(stubs):
-                _run_deferred_steps(trw_dir, run_dir, {})
-
-        log_entry = _read_deferred_log(trw_dir)
-        assert log_entry["results"]["recall_outcome"]["status"] == "skipped"
-        assert log_entry["results"]["recall_outcome"]["recorded"] == 0
-        assert recorded == []
-
-    def test_deliver_outcome_correlation_failopen(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Step 6.5: process_outcome_for_event raising does not block other deferred steps."""
-        trw_dir = _make_deferred_trw_dir(tmp_path)
-        stubs = _stub_all_deferred_steps()
-        del stubs["_step_outcome_correlation"]
-
-        with patch(
-            "trw_mcp.scoring.process_outcome_for_event",
-            side_effect=RuntimeError("correlation boom"),
-        ):
-            with _apply_stubs(stubs):
-                _run_deferred_steps(trw_dir, None, {})
-
-        log_entry = _read_deferred_log(trw_dir)
-        assert log_entry["results"]["outcome_correlation"]["status"] == "skipped"
-        assert log_entry["results"]["outcome_correlation"]["updated"] == 0
-        assert "batch_send" in log_entry["results"]
 
     def test_deliver_telemetry_failopen(
         self,

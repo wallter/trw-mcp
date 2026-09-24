@@ -9,16 +9,15 @@ framing or the SDK's duplicate text/structured-content wrappers.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from trw_mcp.comms import _paging
 from trw_mcp.comms._admission import WAKE_UNOBSERVED, availability_of
 from trw_mcp.comms._endpoints import Endpoint
+from trw_mcp.comms._envelope import MEMBER_ID
 from trw_mcp.comms._identity import CallerBinding
 
 _CURSOR_MAX_CHARS = 512
-_MEMBER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
 
 class PageError(ValueError):
@@ -43,7 +42,7 @@ def decode_cursor(cursor: str | None, binding: CallerBinding, *, action: str) ->
         or fields[0] != binding.group_id
         or fields[1] != binding.member_id
         or not isinstance(fields[2], str)
-        or not _MEMBER_ID.fullmatch(fields[2])
+        or not MEMBER_ID.fullmatch(fields[2])
     ):
         raise PageError("invalid_cursor")
     return str(fields[2])

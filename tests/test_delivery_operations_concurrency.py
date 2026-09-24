@@ -13,6 +13,7 @@ import pytest
 
 from tests._delivery_support import make_coordinator, make_uuid7, strong_capability
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.tools._delivery_models import ClaimStatus, OperationState, QueueState, RecoverStatus
 from trw_mcp.tools._delivery_request import DeliveryRequestError
 
@@ -60,7 +61,6 @@ def test_multi_process_single_claim_and_bounded_status_latency(tmp_path: Path, m
     assert ops[0].operation_id == did
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_status_read_p95_latency_under_50ms(tmp_path) -> None:
     """NFR03: 100 read-only status calls have p95 <= 50 ms on the repo fixture."""
@@ -75,10 +75,9 @@ def test_status_read_p95_latency_under_50ms(tmp_path) -> None:
         samples.append((time.perf_counter() - start) * 1000)
     samples.sort()
     p95 = samples[94]
-    assert p95 <= 50.0, f"status p95={p95:.2f}ms"
+    assert_budget("status_read_p95", p95, 50.0, "ms")
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_duplicate_claim_read_p95_latency_under_100ms(tmp_path) -> None:
     """NFR03: 100 duplicate-claim reads have p95 <= 100 ms."""
@@ -94,7 +93,7 @@ def test_duplicate_claim_read_p95_latency_under_100ms(tmp_path) -> None:
         samples.append((time.perf_counter() - start) * 1000)
     samples.sort()
     p95 = samples[94]
-    assert p95 <= 100.0, f"duplicate-claim p95={p95:.2f}ms"
+    assert_budget("duplicate_claim_read_p95", p95, 100.0, "ms")
 
 
 # --- FR06: truthful deferred singleflight (attach vs FIFO queue) ---
@@ -291,7 +290,7 @@ def test_prd_core_215_nfr01(tmp_path) -> None:
     owner = DeliveryOperationOwner(coordinator_factory=lambda: make_coordinator(trw_dir))
 
     # Durable acceptance: the first claim commits the single effect.
-    first = owner.resolve_claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
+    first = owner.coordinator().claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
     assert first.status is ClaimStatus.CLAIMED
 
     # Concurrent + repeat retries with the SAME key (mimics reconnect storms).
@@ -299,7 +298,7 @@ def test_prd_core_215_nfr01(tmp_path) -> None:
     lock = threading.Lock()
 
     def _retry() -> None:
-        r = owner.resolve_claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
+        r = owner.coordinator().claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
         with lock:
             results.append(r)
 
@@ -376,15 +375,15 @@ def test_prd_core_215_fr03(tmp_path) -> None:
         # Identical request IDs (same delivery_id + same bound fields) dedupe via
         # the CORE-208 journal — the second resolve follows the original operation.
         did = make_uuid7()
-        first = delivery_owner.resolve_claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
-        second = delivery_owner.resolve_claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
+        first = delivery_owner.coordinator().claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
+        second = delivery_owner.coordinator().claim(delivery_id=did, capability_token=cap, run_identity="task/run-1")
         assert first.status is ClaimStatus.CLAIMED
         assert second.status is ClaimStatus.EXISTING
         assert second.operation_id == first.operation_id
         assert second.effect_calls == 0
 
         # Conflicting request ID (same id, different input digest) is a typed collision.
-        conflict = delivery_owner.resolve_claim(delivery_id=did, capability_token=cap, run_identity="task/run-2")
+        conflict = delivery_owner.coordinator().claim(delivery_id=did, capability_token=cap, run_identity="task/run-2")
         assert conflict.status is ClaimStatus.CONFLICT
         assert conflict.effect_calls == 0
 

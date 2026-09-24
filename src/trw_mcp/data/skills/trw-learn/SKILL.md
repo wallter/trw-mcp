@@ -19,7 +19,7 @@ Manage TRW's learning memory. Three modes:
 - **Retire**: `/trw-learn resolve L-id` or `/trw-learn obsolete L-id` — mark a learning as fixed or outdated
 - **Reflect**: `/trw-learn` (no args) — review session for discoveries, refine or retire stale entries
 
-**Update invariant:** `trw_learn_update` replaces `summary` and `detail`; it never appends them. Before either field is
+**Update invariant:** `trw_learn(learning_id=...)` replaces `summary` and `detail`; it never appends them. Before either field is
 updated, re-read the current entry and pass the complete replacement with all still-valid detail and provenance. Never
 pass a refinement or reason fragment expecting append semantics.
 
@@ -44,7 +44,7 @@ Adding no new learnings is perfectly fine — an empty reflection means existing
    - `--detail "..."` — extended context (default: generated from summary)
 
 2. **Check existing memory**: Call `trw_recall` with keywords from the summary.
-   - If a similar learning exists and this new one refines it, merge the refinement into the full current summary/detail, then call `trw_learn_update(learning_id, detail=..., summary=...)` instead of creating a duplicate.
+   - If a similar learning exists and this new one refines it, merge the refinement into the full current summary/detail, then call `trw_learn(learning_id=..., detail=..., summary=...)` instead of creating a duplicate.
    - If a near-duplicate exists with no new information, tell the user and skip.
    - If no match, proceed to record.
 
@@ -53,9 +53,9 @@ Adding no new learnings is perfectly fine — an empty reflection means existing
 4. **Enrich context** if not provided:
    - If no `--detail`, expand the summary with: what happened, why it matters, what to do differently
    - If no `--tags`, extract 2-3 relevant keywords
-   - Set `source_type` to `"human"`, default impact to 0.8
+   - Mark it human-sourced (`metadata={"source_type": "human"}`), default impact to 0.8
 
-5. **Record**: Call `trw_learn(summary, detail, tags, impact, source_type="human")`
+5. **Record**: Call `trw_learn(summary, detail, tags, impact, metadata={"source_type": "human"})`
 
 6. **Confirm**: Report the learning ID, summary, impact score, and tags.
 
@@ -69,7 +69,7 @@ When `$ARGUMENTS` starts with `resolve` or `obsolete`:
 
 2. **Verify**: Call `trw_recall` to find the learning and confirm it exists and is currently active.
 
-3. **Update**: Call `trw_learn_update(learning_id, status="resolved")` or `trw_learn_update(learning_id, status="obsolete")`.
+3. **Update**: Call `trw_learn(learning_id=..., status="resolved")` or `trw_learn(learning_id=..., status="obsolete")`.
    - If a reason was provided, append it locally to the fetched detail, then pass the full reconstructed detail as the replacement.
 
 4. **Confirm**: Report the change — learning ID, old status, new status, and reason.

@@ -56,6 +56,49 @@ def test_agent_files_discovered() -> None:
     assert _agent_files(), f"no agent files found under {[str(p) for p in MIRROR_DIRS]}"
 
 
+#: PRD-CORE-291-FR05: the bundled agent set after the traceability-checker ->
+#: auditor, tester -> implementer, and requirement-writer -> prd-groomer
+#: merges. Exactly these 8 names, never a superset or subset.
+_EXPECTED_BUNDLED_AGENT_NAMES = frozenset(
+    {
+        "trw-adversarial-auditor",
+        "trw-auditor",
+        "trw-implementer",
+        "trw-lead",
+        "trw-prd-groomer",
+        "trw-requirement-reviewer",
+        "trw-researcher",
+        "trw-reviewer",
+    }
+)
+
+_REMOVED_AGENT_NAMES = ("trw-traceability-checker", "trw-tester", "trw-requirement-writer")
+
+_CANONICAL_AGENTS_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "agents"
+
+
+def test_bundled_agent_set_is_exactly_eight_post_merge() -> None:
+    """PRD-CORE-291-FR05: 3 agents merged away, exactly 8 remain."""
+    stems = {path.stem for path in _CANONICAL_AGENTS_DIR.glob("*.md")}
+    assert stems == _EXPECTED_BUNDLED_AGENT_NAMES, (
+        f"expected exactly {sorted(_EXPECTED_BUNDLED_AGENT_NAMES)} under {_CANONICAL_AGENTS_DIR}, found {sorted(stems)}"
+    )
+    for removed in _REMOVED_AGENT_NAMES:
+        assert removed not in stems, f"{removed} was merged away by PRD-CORE-291-FR05 and must not reappear"
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted([*_CANONICAL_AGENTS_DIR.glob("*.md"), *(_CANONICAL_AGENTS_DIR.parent / "skills").rglob("*.md")]),
+    ids=lambda p: f"{p.parent.name}/{p.stem}",
+)
+def test_no_bundled_agent_invokes_a_removed_agent_name(path: Path) -> None:
+    """PRD-CORE-291-FR05: no bundled agent or skill may name a merged-away role as a live invocation target."""
+    text = path.read_text(encoding="utf-8")
+    for removed in _REMOVED_AGENT_NAMES:
+        assert removed not in text, f"{path}: still invokes removed agent name {removed!r}"
+
+
 @pytest.mark.parametrize("path", _agent_files(), ids=lambda p: f"{p.parent.name}/{p.stem}")
 def test_no_agent_pins_max_tokens(path: Path) -> None:
     fm = _parse_frontmatter(path)

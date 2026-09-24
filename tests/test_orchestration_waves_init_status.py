@@ -408,68 +408,6 @@ class TestRunCurrentness:
         )
         assert currentness == "unknown"
 
-    def test_trw_init_stamps_run_canon_fingerprints_and_summarizes_current(
-        self,
-        orch_tools: dict[str, Any],
-    ) -> None:
-        """Integration: trw_init writes the fingerprint stamp; a same-process run
-        summarizes as current (deployed + process both match live state)."""
-        # Freeze a real live-process fingerprint for this test process so the
-        # currentness comparison has both layers available.
-        from fastmcp import FastMCP
-
-        from trw_mcp.canons.fingerprint import (
-            freeze_fingerprint,
-            reset_frozen_fingerprint,
-            set_frozen_fingerprint,
-        )
-        from trw_mcp.canons.registry import load_registry, managed_source_digests
-        from trw_mcp.server._live_fingerprint import build_realized_surface
-        from trw_mcp.tools._orchestration_phase import summarize_run_currentness
-
-        reset_frozen_fingerprint()
-        registry = load_registry()
-        server = FastMCP("test")
-        from trw_mcp.tools.learning import register_learning_tools
-
-        register_learning_tools(server)
-        fp = freeze_fingerprint(
-            trw_mcp_version="0.0.0",
-            framework_version="v99.9_TRW",
-            aaref_version="v3.2.0",
-            template_version="3.2",
-            registry_digest=registry.digest,
-            source_digests=managed_source_digests(registry),
-            surface=build_realized_surface(server),
-        )
-        set_frozen_fingerprint(fp)
-        try:
-            init_result = orch_tools["trw_init"].fn(task_name="currentness-task")
-            run_root = Path(init_result["run_path"])
-
-            stamp_path = run_root / "meta" / "canon_fingerprints.yaml"
-            assert stamp_path.exists(), "trw_init must stamp canon fingerprints"
-
-            summary = summarize_run_currentness(run_root, run_framework="v99.9_TRW")
-            assert summary["currentness"] == "current"
-            assert summary["run_deployed_canon_fingerprint"] == registry.digest
-            assert summary["run_live_process_fingerprint"] == fp.digest
-        finally:
-            reset_frozen_fingerprint()
-
-    def test_run_without_stamp_is_unknown_not_current(
-        self,
-        orch_tools: dict[str, Any],
-        tmp_path: Path,
-    ) -> None:
-        """A run directory with no fingerprint stamp is unknown, never current."""
-        from trw_mcp.tools._orchestration_phase import summarize_run_currentness
-
-        run_root = tmp_path / "legacy-run"
-        (run_root / "meta").mkdir(parents=True)
-        summary = summarize_run_currentness(run_root, run_framework="v99.9_TRW")
-        assert summary["currentness"] == "unknown"
-
 
 class TestTrwStatusReversionMetrics:
     """Integration tests for reversion metrics in trw_status."""

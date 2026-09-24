@@ -234,11 +234,6 @@ def classify_proof_paths(blob: str, project_root: Path | None = None) -> tuple[l
     return sorted(missing), sorted(unverified)
 
 
-def missing_proof_paths(blob: str, project_root: Path | None = None) -> list[str]:
-    """Return only the hard-blocking tier of :func:`classify_proof_paths`."""
-    return classify_proof_paths(blob, project_root)[0]
-
-
 @dataclass(frozen=True)
 class ProofPathFindings:
     """The FR05 proof verdict, split by severity.

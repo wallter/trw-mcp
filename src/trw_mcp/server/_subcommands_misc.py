@@ -86,6 +86,8 @@ def _run_local(args: argparse.Namespace) -> None:
             print(f"Error: {exc}")
             sys.exit(1)
     elif local_cmd == "learn":
+        from trw_mcp.state._store_selection import StoreUnavailableError
+
         tags = list(getattr(args, "tag", []) or [])
         evidence = list(getattr(args, "evidence", []) or []) or None
         try:
@@ -102,7 +104,7 @@ def _run_local(args: argparse.Namespace) -> None:
                 print(f"Error: {result.get('message', result.get('reason', 'rejected'))}")
                 sys.exit(1)
             print(f"Learning {result.get('status', 'saved')}: {result.get('id', result.get('learning_id', 'unknown'))}")
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, StoreUnavailableError) as exc:
             print(f"Error: {exc}")
             sys.exit(1)
         except TrwMemoryError as exc:

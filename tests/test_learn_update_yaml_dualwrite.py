@@ -1,14 +1,16 @@
-"""Tests for YAML dual-write of 10 new typed fields in trw_learn_update.
+"""Tests for YAML dual-write of 10 new typed fields in trw_learn's update mode.
 
 Covers PRD-CORE-110 fix: YAML backup must include all 10 typed fields
 (type, nudge_line, expires, confidence, task_type, domain, phase_origin,
-phase_affinity, team_origin, protection_tier) when updating via trw_learn_update.
+phase_affinity, team_origin, protection_tier) when updating via trw_learn's
+update mode (formerly the standalone trw_learn_update tool, merged by
+PRD-CORE-291). type/confidence are top-level kwargs; the rest live in metadata.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -38,15 +40,6 @@ def tmp_project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _make_mock_backend(learning_id: str = "L-test") -> MagicMock:
-    mock_entry = MagicMock()
-    mock_entry.id = learning_id
-    mock_backend = MagicMock()
-    mock_backend.get.return_value = mock_entry
-    mock_backend.update.return_value = None
-    return mock_backend
-
-
 class TestYamlDualWriteNewFields:
     """Verify YAML backup captures all 10 new PRD-CORE-110 fields."""
 
@@ -64,9 +57,9 @@ class TestYamlDualWriteNewFields:
         async def _get_tool_fn() -> object:
             tools = await server.list_tools()
             for t in tools:
-                if t.name == "trw_learn_update":
+                if t.name == "trw_learn":
                     return t.fn
-            raise KeyError("trw_learn_update not found")
+            raise KeyError("trw_learn not found")
 
         fn = asyncio.run(_get_tool_fn())
 
@@ -90,10 +83,6 @@ class TestYamlDualWriteNewFields:
 
         with (
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
-            patch(
-                "trw_mcp.state.memory_adapter.get_backend",
-                return_value=_make_mock_backend(),
-            ),
             patch("trw_mcp.tools.learning.adapter_update") as mock_update,
             patch(
                 "trw_mcp.state.analytics.find_entry_by_id",
@@ -113,57 +102,57 @@ class TestYamlDualWriteNewFields:
 
     def test_type_written_to_yaml(self, tmp_project: Path) -> None:
         """type field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"type": "incident"})
+        data = self._run_update_and_capture_yaml(tmp_project, type="incident")
         assert data.get("type") == "incident"
 
     def test_nudge_line_written_to_yaml(self, tmp_project: Path) -> None:
         """nudge_line field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"nudge_line": "Use X"})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"nudge_line": "Use X"})
         assert data.get("nudge_line") == "Use X"
 
     def test_expires_written_to_yaml(self, tmp_project: Path) -> None:
         """expires field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"expires": "2026-12-31"})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"expires": "2026-12-31"})
         assert data.get("expires") == "2026-12-31"
 
     def test_confidence_written_to_yaml(self, tmp_project: Path) -> None:
         """confidence field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"confidence": "verified"})
+        data = self._run_update_and_capture_yaml(tmp_project, confidence="verified")
         assert data.get("confidence") == "verified"
 
     def test_task_type_written_to_yaml(self, tmp_project: Path) -> None:
         """task_type field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"task_type": "bug-fix"})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"task_type": "bug-fix"})
         assert data.get("task_type") == "bug-fix"
 
     def test_domain_written_to_yaml(self, tmp_project: Path) -> None:
         """domain field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"domain": ["testing", "mcp"]})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"domain": ["testing", "mcp"]})
         assert data.get("domain") == ["testing", "mcp"]
 
     def test_phase_origin_written_to_yaml(self, tmp_project: Path) -> None:
         """phase_origin field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"phase_origin": "IMPLEMENT"})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"phase_origin": "IMPLEMENT"})
         assert data.get("phase_origin") == "IMPLEMENT"
 
     def test_phase_affinity_written_to_yaml(self, tmp_project: Path) -> None:
         """phase_affinity field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"phase_affinity": ["IMPLEMENT", "VALIDATE"]})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"phase_affinity": ["IMPLEMENT", "VALIDATE"]})
         assert data.get("phase_affinity") == ["IMPLEMENT", "VALIDATE"]
 
     def test_team_origin_written_to_yaml(self, tmp_project: Path) -> None:
         """team_origin field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"team_origin": "sprint-80"})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"team_origin": "sprint-80"})
         assert data.get("team_origin") == "sprint-80"
 
     def test_protection_tier_written_to_yaml(self, tmp_project: Path) -> None:
         """protection_tier field is written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"protection_tier": "protected"})
+        data = self._run_update_and_capture_yaml(tmp_project, metadata={"protection_tier": "protected"})
         assert data.get("protection_tier") == "protected"
 
     def test_none_fields_not_written(self, tmp_project: Path) -> None:
         """Fields passed as None are not written to YAML backup."""
-        data = self._run_update_and_capture_yaml(tmp_project, fields={"type": "incident"})
+        data = self._run_update_and_capture_yaml(tmp_project, type="incident")
         # Only type and updated should be in the written data
         assert "type" in data
         assert "nudge_line" not in data

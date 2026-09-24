@@ -54,4 +54,4 @@ def test_rows_are_registered_in_the_doctor_catalogue() -> None:
     from trw_mcp.server._subcommands_doctor import _CHECKS
 
     names = [name for name, _fn in _CHECKS]
-    assert names[-2:] == ["gnu_timeout", "foreign_client_paths"]
+    assert names[-4:] == ["gnu_timeout", "foreign_client_paths", "version_status", "jev"]

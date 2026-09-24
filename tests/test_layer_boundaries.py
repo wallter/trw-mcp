@@ -151,7 +151,7 @@ def test_rework_metrics_helper_lives_outside_deferred_steps_learning() -> None:
 
 @pytest.mark.unit
 def test_correlation_accepts_finder_arg() -> None:
-    """process_outcome accepts a custom lookup_fn — no hard-coded state imports in _correlation.py.
+    """No hard-coded state imports in _correlation.py.
 
     Verifies FR05: scoring/_correlation.py has zero from trw_mcp.state.analytics
     and from trw_mcp.state.memory_adapter imports.
@@ -164,8 +164,6 @@ def test_correlation_accepts_finder_arg() -> None:
     assert "from trw_mcp.state.memory_adapter" not in content, (
         "_correlation.py imports from state.memory_adapter (FR05 violation)"
     )
-    # Verify the lookup_fn parameter exists (dependency injection in place)
-    assert "lookup_fn" in content, "_correlation.process_outcome must have a lookup_fn parameter"
 
 
 # --- FR06-T07: decay accepts entry iterator (no file I/O imports in _decay.py) ---

@@ -81,8 +81,7 @@ def _drive(
     monkeypatch.setattr(installer, "_detect_project_ides", lambda _p: list(detected_ides or []))
     monkeypatch.setattr(installer, "_prompt_ide_selection", _fake_prompt)
     monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
-    monkeypatch.setattr(installer, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
-    monkeypatch.setattr(installer, "_provision_user_scope", lambda _c: False)
+    monkeypatch.setattr(installer, "run_with_progress", lambda _ui, _label, cmd, **_k: run_calls.append(cmd) or True)
 
     resolved = installer.phase_project_setup(
         MagicMock(),
@@ -323,7 +322,7 @@ class TestInstallerTemplateAntigravityContract:
         assert "def _resolve_path_trw_mcp_version" in text, (
             "installer must resolve the PATH trw-mcp version to write an honest marker"
         )
-        assert '"version": marker_version' in text, (
+        assert '("version", marker_version)' in text, (
             "installed-version.json must record the resolved marker_version, not TRW_VERSION"
         )
         assert 'json.dumps({"version": TRW_VERSION' not in text, (
@@ -335,8 +334,9 @@ class TestInstallerTemplateAntigravityContract:
         """When the resolved trw-mcp differs from the freshly-installed version,
         the installer must LOUDLY warn about the shadow (not silently mask it)."""
         text = self._TEMPLATE.read_text(encoding="utf-8")
-        assert "resolved_version and resolved_version != TRW_VERSION" in text, (
-            "installer must detect a PATH-shadow mismatch"
+        assert "resolved_version and effective_version and resolved_version != effective_version" in text, (
+            "installer must detect a PATH-shadow mismatch against what THIS run decided "
+            "is resident (I2), not the blind bundle constant"
         )
         assert "shadowing" in text.lower(), "installer must name the shadow condition to the user"
 

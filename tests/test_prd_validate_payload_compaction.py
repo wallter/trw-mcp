@@ -8,10 +8,12 @@ counts/actionable-lines, cache-hash gating, and wiring-warning dedup.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, cast
 
+from trw_mcp.models.requirements import ValidationResultV2
 from trw_mcp.models.typed_dicts import ValidateResultDict
-from trw_mcp.tools._prd_validate_payload import compact_validate_payload
+from trw_mcp.tools._prd_validate_payload import build_validate_payload, compact_validate_payload
 
 
 def _full_payload() -> ValidateResultDict:
@@ -143,6 +145,39 @@ def test_compact_dedups_wiring_warning_already_in_suggestions() -> None:
     assert "wiring_gate_warning: FR01 has no consumer" not in warnings
     # A wiring warning NOT in the top-5 suggestions is preserved (FR03).
     assert "seam_schema_warning: FR02 seam expired" in warnings
+
+
+def test_compact_caps_overlap_warnings_by_specificity_but_keeps_other_warnings() -> None:
+    payload = _full_payload()
+    payload["integrity_warnings"] = [
+        f"Potential overlap with PRD-CORE-{n:03d}: shared control points `trw-mcp/src/file{n}.py`." for n in range(10)
+    ] + ["Mapping-artifact existence was NOT verified"]
+    payload["integrity_warnings"][9] = (
+        "Potential overlap with PRD-CORE-009: shared control points `trw-mcp/src/deep/module/file.py`."
+    )
+    compact = compact_validate_payload(payload)
+    overlaps = [warning for warning in compact["integrity_warnings"] if warning.startswith("Potential overlap")]
+    assert len(overlaps) == 5
+    assert any("PRD-CORE-009" in warning for warning in overlaps)
+    assert "Mapping-artifact existence was NOT verified" in compact["integrity_warnings"]
+
+
+def test_verbose_keeps_all_overlap_warnings() -> None:
+    warnings = [f"Potential overlap with PRD-CORE-{n:03d}: shared control points `src/file{n}.py`." for n in range(9)]
+    result = build_validate_payload(
+        ValidationResultV2(integrity_warnings=warnings),
+        path=Path("docs/PRD-X.md"),
+        sections=[],
+        sections_expected=[],
+        frontmatter={},
+        cache_hit=False,
+        cache_key="k",
+        cache_miss_reason="absent",
+        cache_metadata={},
+        verbose=True,
+    )
+    assert result["integrity_warnings"] == warnings
+    assert result["compact"] is False
 
 
 def test_compact_sets_compact_flag() -> None:

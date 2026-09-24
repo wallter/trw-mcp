@@ -72,6 +72,9 @@ class SyncCoordinator:
         try:
             fd = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR)
             _lock_ex_nb(fd)
+            with suppress(OSError):  # the holder pid is for a refused caller's message only
+                os.ftruncate(fd, 0)
+                os.write(fd, f"{os.getpid()}\n".encode())
             logger.debug("sync_lock_acquired", pid=os.getpid())
             yield True
         except OSError:
@@ -85,6 +88,13 @@ class SyncCoordinator:
                 with suppress(OSError):
                     _lock_un(fd)
                 os.close(fd)
+
+    def sync_lock_holder(self) -> int | None:
+        """The pid that last took the sync lock, or ``None`` when it is unrecorded."""
+        try:
+            return int(self._lock_path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):  # trw-fail-silent-allow: no recorded holder is reported as unknown
+            return None
 
     def record_sync_success(
         self,
@@ -228,6 +238,31 @@ class SyncCoordinator:
         """Read the independent company-tier pull cursor (PRD-INFRA-139 P1-B)."""
         state = self._read_state()
         return self._int_field(state, "last_company_pull_seq")
+
+    def replay_state(self) -> dict[str, object] | None:
+        """The unfinished ``sync pull --full`` block (``next_seq``, ``pages``), or ``None`` (PRD-CORE-280 FR02)."""
+        block = self._read_state().get("replay")
+        return block if isinstance(block, dict) else None
+
+    def record_replay_page(self, *, next_seq: int, company_seq: int, pages: int) -> None:
+        """Record a full pull's position on both cursors; the periodic cursors are only ever raised."""
+        state = self._read_state()
+        state["replay"] = {
+            "next_seq": next_seq,
+            "company_seq": company_seq,
+            "pages": pages,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        state["last_pull_seq"] = max(self._int_field(state, "last_pull_seq"), next_seq)
+        state["last_company_pull_seq"] = max(self._int_field(state, "last_company_pull_seq"), company_seq)
+        state["version"] = 1
+        self._write_state(state)
+
+    def clear_replay(self) -> None:
+        """Drop the replay block once the full pull has reached the end."""
+        state = self._read_state()
+        if state.pop("replay", None) is not None:
+            self._write_state(state)
 
     def get_last_outcome_line(self) -> int:
         """Read the last successfully pushed local outcome line number."""

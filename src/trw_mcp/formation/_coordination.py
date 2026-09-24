@@ -32,8 +32,6 @@ the admin directory is gone).
 
 from __future__ import annotations
 
-import json
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,8 +39,9 @@ from typing import Any
 
 import structlog
 
+from trw_mcp.formation._candidates import worktree_admitted_by
 from trw_mcp.formation._manifest import FormationError
-from trw_mcp.formation._store import _exclusive, write_owner_only
+from trw_mcp.formation._store import _exclusive, read_json_store, write_json_store
 
 logger = structlog.get_logger(__name__)
 _RECORDS_RELATIVE = ("runtime", "worktree-members.json")
@@ -108,17 +107,8 @@ def _records_path(trw_dir: Path) -> Path:
 
 
 def _read_records(trw_dir: Path) -> dict[str, dict[str, Any]]:
-    path = _records_path(trw_dir)
-    if not path.is_file():
-        return {}
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise FormationError(f"worktree membership records {path} are unreadable: {exc}") from exc
-    records = raw.get("records") if isinstance(raw, dict) else None
-    if not isinstance(records, dict):
-        raise FormationError(f"worktree membership records {path} are malformed")
-    return {str(k): v for k, v in records.items() if isinstance(v, dict)}
+    raw = read_json_store(_records_path(trw_dir), section="records", label="worktree membership records")
+    return {key: value for key, value in raw.items() if isinstance(value, dict)}
 
 
 def worktree_record(trw_dir: Path, worktree: Path) -> WorktreeRecord | None:
@@ -151,15 +141,36 @@ def record_worktree_member(
     """Write or replace the membership record, revisioned, under the store lock.
 
     Callers are the authority: the orchestrator's admission (FR18) or a member
-    bound under FR01 from the main root. This function checks neither, which is
-    why it is reachable only through those paths and never from a tool argument.
+    bound under FR01 from the main root. This function checks neither caller,
+    which is why it is reachable only through those paths and never from a
+    tool argument -- but it DOES check the record itself (PRD-FIX-149 review
+    R2): an existing record for this worktree naming a DIFFERENT formation is
+    never silently overwritten, because that record is what lets a member
+    reach the main root's authority at all, and two formations racing the same
+    worktree must not let the second silently steal it from the first.
+
+    PRD-FIX-149 review R6: a record naming a different formation is refused
+    only while that formation still actually HOLDS the worktree's candidate
+    (an ``admitted`` state under its own id). ``commit_admissions`` deletes the
+    record proactively on release, but this check is the backstop for a record
+    that outlived its owner's hold some other way -- without it, a worktree a
+    formation once admitted and later lost could never be admitted by anyone
+    else, because nothing forces the record's deletion to happen first.
     """
     path = _records_path(trw_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     key = str(worktree.resolve())
     with _exclusive(path):
         records = _read_records(trw_dir)
-        revision = int(records.get(key, {}).get("revision", 0)) + 1
+        existing = records.get(key)
+        if existing is not None:
+            owner = str(existing.get("formation_id"))
+            if owner != formation_id and worktree_admitted_by(trw_dir, worktree, owner):
+                raise FormationError(
+                    f"worktree {worktree} already has a membership record for formation "
+                    f"{owner!r}; refusing to overwrite it with {formation_id!r}"
+                )
+        revision = int(existing.get("revision", 0)) + 1 if existing is not None else 1
         records[key] = {
             "formation_id": formation_id,
             "member_id": member_id,
@@ -168,10 +179,36 @@ def record_worktree_member(
             "revision": revision,
             "recorded_at": time.time(),
         }
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        write_owner_only(tmp, (json.dumps({"records": records}, indent=2, sort_keys=True) + "\n").encode())
-        os.replace(tmp, path)
+        write_json_store(path, section="records", records=records)
     return WorktreeRecord(key, formation_id, member_id, manifest_revision, str(creating_run), revision)
+
+
+def release_worktree_member(trw_dir: Path, worktree: Path, *, formation_id: str) -> bool:
+    """Delete *worktree*'s membership record iff *formation_id* is its recorded owner (CAS delete).
+
+    PRD-FIX-149 review R6/R7: called when the admitting formation's hold on
+    this worktree ends -- a candidate released back to ``active`` (an
+    unassigned ``admitted_candidate``, ``remove_slot``), or an admission batch
+    that is being rolled back because a LATER record in the same batch failed
+    to write. Without this, nothing ever removed a worktree membership record,
+    so a worktree formation F1 once admitted could never be admitted by any
+    other formation again -- :func:`record_worktree_member` refuses to replace
+    a record naming a different formation. A record for another formation, or
+    no record at all, is left untouched: only the current owner may delete its
+    own record. Returns whether a record was actually deleted.
+    """
+    path = _records_path(trw_dir)
+    if not path.is_file():
+        return False
+    key = str(worktree.resolve())
+    with _exclusive(path):
+        records = _read_records(trw_dir)
+        existing = records.get(key)
+        if existing is None or str(existing.get("formation_id")) != formation_id:
+            return False
+        del records[key]
+        write_json_store(path, section="records", records=records)
+        return True
 
 
 def own_root() -> CoordinationRoot:
@@ -221,21 +258,14 @@ def shared_authority_root(own: CoordinationRoot | None = None) -> tuple[Coordina
     return None if record is None else (root, record)
 
 
-def authority_roots(own: CoordinationRoot | None = None) -> tuple[CoordinationRoot, ...]:
-    """Distinct roots a caller may bind at: its FR17 bootstrap root, then its own root."""
-    own = own or own_root()
-    shared = bootstrap_root(own)
-    return (shared,) if (shared.project_root, shared.trw_dir) == (own.project_root, own.trw_dir) else (shared, own)
-
-
 __all__ = [
     "CoordinationRoot",
     "WorktreeRecord",
-    "authority_roots",
     "bootstrap_root",
     "linked_worktree",
     "own_root",
     "record_worktree_member",
+    "release_worktree_member",
     "shared_authority_root",
     "worktree_record",
 ]

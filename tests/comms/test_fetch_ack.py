@@ -12,13 +12,11 @@ from tests._formation_test_support import formation_env  # noqa: F401
 from tests.comms.conftest import core
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
 from trw_mcp.comms._envelope import canonical_bytes
-from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
 from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
 
 
 @pytest.fixture
 def transport_scene(scene: SendScene) -> SendScene:
-    scene.server.add_middleware(ContextBudgetMiddleware())
     scene.server.add_middleware(ResponseOptimizerMiddleware())
     return scene
 

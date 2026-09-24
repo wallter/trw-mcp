@@ -50,20 +50,22 @@ class _CeremonyFields:
     agents_md_learning_max: int = 5
     agents_md_learning_min_impact: float = 0.7
 
-    framework_version: str = "v27.2_TRW"
+    framework_version: str = "v27.3_TRW"
     aaref_version: str = "v3.2.1"
 
     ambiguity_rate_max: float = 0.05
     completeness_min: float = 0.85
     traceability_coverage_min: float = 0.90
-    consistency_validation_min: float = 0.95
     validation_density_weight: float = 20.0
     validation_structure_weight: float = 20.0
     validation_implementation_readiness_weight: float = 25.0
     validation_traceability_weight: float = 35.0
-    validation_smell_weight: float = 0.0
-    validation_readability_weight: float = 0.0
-    validation_ears_weight: float = 0.0
+    # consistency_validation_min, validation_smell_weight,
+    # validation_readability_weight, and validation_ears_weight were removed
+    # under PRD-CORE-291 (slice 2): no production reader outside this module
+    # and no originating PRD kept them advisory-live (validation_smell_weight
+    # and validation_ears_weight were already documented as permanently-0
+    # advisory tunables the scorer never multiplies by).
     density_weight_problem_statement: float = Field(default=2.0, ge=0.0, le=10.0)
     density_weight_functional_requirements: float = Field(default=2.0, ge=0.0, le=10.0)
     density_weight_traceability_matrix: float = Field(default=1.5, ge=0.0, le=10.0)
@@ -101,11 +103,11 @@ class _CeremonyFields:
     # was held back then as "triaged on its own evidence"; that triage finished
     # on 2026-09-16 with the same answer, and it left with
     # reflect_sequence_lookback and reflect_q_value_threshold under
-    # PRD-QUAL-139-FR05. reflect_max_positive_learnings is equally unread but
-    # STAYED: its originating PRD-FIX-021 is done, which makes removing it a
-    # scope decision about a delivered requirement rather than a retirement.
+    # PRD-QUAL-139-FR05. reflect_max_positive_learnings followed the same path
+    # under PRD-CORE-291 (slice 2): its originating PRD-FIX-021 is done and
+    # nothing reads it, so the delivered-requirement carve-out no longer
+    # applies -- removed.
 
-    reflect_max_positive_learnings: int = 5
     reflect_max_success_patterns: int = 5
 
     reversion_rate_elevated: float = 0.15
@@ -119,12 +121,10 @@ class _CeremonyFields:
     # configure; the whole cluster described a feature that does not exist.
 
     # compliance_long_session_event_threshold, compliance_warning_threshold and
-    # compliance_history_file were removed 2026-09-16 (PRD-QUAL-139-FR05): no
-    # consumer under the corrected scan, no originating PRD, no test.
-    # compliance_strictness and compliance_pass_threshold are equally unread but
-    # STAYED -- PRD-INFRA-027 and PRD-CORE-060 are done.
-    compliance_strictness: Literal["strict", "lenient", "off"] = "lenient"
-    compliance_pass_threshold: float = 0.8
+    # compliance_history_file were removed 2026-09-16 (PRD-QUAL-139-FR05); their
+    # siblings compliance_strictness and compliance_pass_threshold (PRD-INFRA-027
+    # and PRD-CORE-060, both done) followed under PRD-CORE-291 (slice 2): no
+    # consumer under the corrected scan, no test beyond a default pin.
     compliance_dir: str = "compliance"
     compliance_changelog_filename: str = "CHANGELOG.md"
     # PRD-LOCAL-049 FR03: package-changelog advisory (opt-in). Default OFF —
@@ -134,27 +134,25 @@ class _CeremonyFields:
     # PRD-CORE-201-NFR04: up-front REVIEW-mandatory advisory for STANDARD/
     # COMPREHENSIVE runs. Default ON, advisory-only (never gates delivery).
     review_mandate_advisory_enabled: bool = True
-    commit_fr_trailer_enabled: bool = True
     # sprint_integration_branch_pattern removed 2026-07-28 (PRD-QUAL-131-FR01)
     # with the rest of the sprint_* cluster. Its only reference outside this
     # file was a test asserting its default, which is not a consumer.
+    # commit_fr_trailer_enabled, provenance_enabled, confidence_threshold,
+    # atdd_enabled, test_skeleton_dir, completion_hooks_blocking,
+    # incremental_validation_enabled, security_check_enabled,
+    # pause_after_compaction, ceremony_alert_threshold, and
+    # ceremony_alert_consecutive were removed under PRD-CORE-291 (slice 2) for
+    # the same reason: no production reader, only a test pinning a default.
     compliance_review_retention_days: int = 365
-    provenance_enabled: bool = True
-    confidence_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
 
-    atdd_enabled: bool = True
-    test_skeleton_dir: str = ""
-    completion_hooks_blocking: bool = False
-
+    # self_review_blocking KEPT under PRD-CORE-291 (slice 2) despite scanning
+    # unread: `.claude/hooks/self-review.sh:21-22,133` reads this key straight
+    # out of `.trw/config.yaml` (not an env-var twin), a real consumer outside
+    # the scanner's corpus (trw-mcp/src/trw_mcp/data/hooks only) -- class E,
+    # `.trw/compliance/config-field-consumers-baseline.json`.
     self_review_blocking: bool = False
-    enforcement_variant: str = "baseline"
-    incremental_validation_enabled: bool = True
-    security_check_enabled: bool = True
     compact_instructions_template: str = ""
-    pause_after_compaction: bool = False
 
-    ceremony_alert_threshold: int = 40
-    ceremony_alert_consecutive: int = 3
     ceremony_feedback_min_samples: int = 10
     ceremony_feedback_score_threshold: float = 80.0
     ceremony_feedback_quality_threshold: float = 0.9
@@ -164,19 +162,22 @@ class _CeremonyFields:
     semantic_checks_enabled: bool = True
     assertion_failure_penalty: float = Field(default=0.15, ge=0.0, le=1.0)
     assertion_stale_threshold_days: int = Field(default=30, ge=1)
-    observation_masking: bool = True
-    compact_after_turns: int = 10
-    minimal_after_turns: int = 30
 
     migration_gate_enabled: bool = True
     dry_check_enabled: bool = True
     dry_check_min_block_size: int = 5
-    max_audit_cycles: int = Field(default=3, ge=1, le=10, description="Maximum audit cycles before escalation")
+    # max_audit_cycles removed under PRD-CORE-291 (slice 2): no production
+    # reader, only a bundled skill doc restating its default.
     audit_pattern_promotion_threshold: int = Field(
         default=3, ge=1, le=20, description="Minimum distinct PRDs for audit pattern promotion"
     )
 
-    hooks_enabled: bool | None = None
+    # The one switch for every bundled hook. Hooks cannot walk this cascade, so
+    # the resolved value is published to .trw/runtime/hook-flags (state/_hook_flags.py)
+    # and lib-trw.sh reads only that file. Exempt by design: the intent-contract
+    # write guards stay on when this is false. They are security enforcement, not
+    # ablation surface (lead ruling 2026-09-23).
+    hooks_enabled: bool = True
     framework_md_enabled: bool | None = None
     skills_enabled: bool | None = None
     agents_enabled: bool | None = None

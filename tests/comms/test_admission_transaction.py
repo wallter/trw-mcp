@@ -16,6 +16,7 @@ import pytest
 
 from tests._formation_test_support import formation_env  # noqa: F401
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from tests.comms._wait_transport_support import held_wait
 from tests.comms.test_policy import SendScene, scene
 
@@ -230,8 +231,8 @@ def test_refusal_counter_saturates_without_refused_body_retention(scene: SendSce
     assert scene.rows("SELECT body FROM admissions") == [("hello",)]
 
 
-@requires_local_timing
-def test_busy_refusal_is_bounded_retryable_and_does_not_count(scene: SendScene) -> None:
+def _busy_refusal_scene(scene: SendScene) -> tuple[dict[str, Any], float, list[Any], list[Any]]:
+    """Hold the sqlite write lock and measure the elapsed time of a contended send."""
     import time
 
     from trw_mcp.comms import _store
@@ -244,15 +245,27 @@ def test_busy_refusal_is_bounded_retryable_and_does_not_count(scene: SendScene) 
         started = time.monotonic()
         refused = scene.send()
         elapsed = time.monotonic() - started
-        assert refused["reason"] == "storage_contended"
-        assert refused["retryable"] is True
-        assert 0.015 <= elapsed < 0.75
     finally:
         conn.rollback()
         conn.close()
-    assert scene.rows("SELECT * FROM groups") == before
+    after = scene.rows("SELECT * FROM groups")
+    return refused, elapsed, before, after
+
+
+def test_busy_refusal_is_bounded_retryable_and_does_not_count(scene: SendScene) -> None:
+    refused, _elapsed, before, after = _busy_refusal_scene(scene)
+    assert refused["reason"] == "storage_contended"
+    assert refused["retryable"] is True
+    assert after == before
     assert scene.rows("SELECT COUNT(*) FROM refusal_counts") == [(0,)]
     assert scene.send()["status"] == "ok"
+
+
+@requires_local_timing
+def test_busy_refusal_is_bounded_retryable_and_does_not_count_budget(scene: SendScene) -> None:
+    _refused, elapsed, _before, _after = _busy_refusal_scene(scene)
+    assert_budget("busy_refusal_elapsed_min", elapsed, 0.015, "s", at_least=True)
+    assert_budget("busy_refusal_elapsed_max", elapsed, 0.75, "s")
 
 
 def test_invalid_binding_cannot_count_refusal_or_mutate_mailbox(scene: SendScene) -> None:
@@ -265,11 +278,9 @@ def test_invalid_binding_cannot_count_refusal_or_mutate_mailbox(scene: SendScene
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("worker", ["import time; time.sleep(60)", "raise SystemExit(2)"])
-@requires_local_timing
-def test_child_initialization_failure_is_bounded_and_reaps_children(
+def _child_init_failure_scene(
     scene: SendScene, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker: str
-) -> None:
+) -> tuple[float, list[subprocess.Popen[str]]]:
     children: list[subprocess.Popen[str]] = []
     original = subprocess.Popen
 
@@ -283,10 +294,27 @@ def test_child_initialization_failure_is_bounded_and_reaps_children(
     started = time.monotonic()
     with pytest.raises(AssertionError, match="READY"):
         race(scene, tmp_path, ready_timeout=0.3)
-    assert time.monotonic() - started < 5
+    elapsed = time.monotonic() - started
+    return elapsed, children
+
+
+@pytest.mark.parametrize("worker", ["import time; time.sleep(60)", "raise SystemExit(2)"])
+def test_child_initialization_failure_is_bounded_and_reaps_children(
+    scene: SendScene, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker: str
+) -> None:
+    _elapsed, children = _child_init_failure_scene(scene, tmp_path, monkeypatch, worker)
     assert len(children) == 16
     assert all(child.poll() is not None for child in children)
     assert scene.rows("SELECT charge FROM groups") == [(0,)]
+
+
+@pytest.mark.parametrize("worker", ["import time; time.sleep(60)", "raise SystemExit(2)"])
+@requires_local_timing
+def test_child_initialization_failure_is_bounded_and_reaps_children_budget(
+    scene: SendScene, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker: str
+) -> None:
+    elapsed, _children = _child_init_failure_scene(scene, tmp_path, monkeypatch, worker)
+    assert_budget("child_init_failure_bound", elapsed, 5, "s")
 
 
 def test_verifier_refuses_a_persisted_history_that_breaks_the_rate_policy(scene: SendScene) -> None:
@@ -344,8 +372,8 @@ def test_comms_never_reaches_for_an_advisory_file_lock() -> None:
 
 # ---------------------------------------------------------------------------
 # PRD-CORE-274 NFR08: bounded per-operation cost at the supported envelope.
-# Perf-marked: the release gate invokes `-m perf` explicitly. The result is an
-# environment observation recorded with its machine, never a portable claim.
+# The budget half runs under `requires_local_timing` (host-resource budget). The
+# result is an environment observation recorded with its machine, never a portable claim.
 # ---------------------------------------------------------------------------
 
 import contextlib
@@ -404,37 +432,67 @@ def _fill_to_envelope(scene: SendScene, rows: int, body_bytes: int) -> None:
         conn.close()
 
 
-@pytest.mark.perf
-@requires_local_timing
-def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope(
-    scene: SendScene, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
-) -> None:
-    import asyncio
+_OPERATION_COUNT = 50
+#: index % 3 == 0 sends; the rest fetch (and conditionally ack) -- how many sends the loop below performs.
+_SEND_COUNT = len(range(0, _OPERATION_COUNT, 3))
 
-    if "perf" not in str(request.config.getoption("markexpr") or ""):
-        # A wall-clock budget under a loaded xdist run measures the machine, not the mailbox.
-        pytest.skip("NFR08 budget runs only under an explicit -m perf")
+
+def _run_envelope_operations(
+    scene: SendScene, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[float], list[float], list[bool], int]:
+    """Fill the mailbox to the configured maximum and exercise 50 mixed operations.
+
+    Records per-operation lock-hold and operation-cost wall-clock timings alongside each send's
+    outcome and the peak concurrent lock depth, so a gating test can check the outcomes and lock
+    structure (deterministic, always run) and a budget test can check the timings (host-resource
+    measurement, ``requires_local_timing``) without the two disagreeing about what was exercised.
+
+    NFR08 (PRD-CORE-274) is a wall-clock contract -- p95 SQLite write-lock hold and p95
+    per-operation latency at the configured maximum row/body envelope -- so timing uses
+    ``time.perf_counter()``, not a CPU-time clock: excluding scheduling and SQLite I/O wait
+    while the lock is held would stop the assertion from proving the NFR at all. The budget
+    assertion is measured only under the ``requires_local_timing`` marker (deliberate quiet-host
+    perf runs; skipped on CI, per the marker's existing policy), while every other property this
+    exercise proves -- outcomes and lock structure -- stays in the unmarked, always-run test.
+
+    Filled to ``row_limit - _SEND_COUNT`` rows (not an arbitrary smaller number) so the mailbox
+    reaches the true configured maximum exactly when the loop's sends complete, honoring NFR08's
+    "at the configured maximum row limit" contract; body size is ``body_budget // row_limit`` so
+    the live-byte total also sits at the configured maximum concurrently.
+    """
+    import asyncio
 
     import trw_mcp.comms as comms
 
-    _fill_to_envelope(scene, rows=4000, body_bytes=4096)  # about 15.6 MiB of live bodies, 4000 of 4096 rows
+    row_limit = scene.config.comms_group_row_limit
+    body_budget = scene.config.comms_group_body_budget_bytes
+    _fill_to_envelope(scene, rows=row_limit - _SEND_COUNT, body_bytes=body_budget // row_limit)
     holds: list[float] = []
     real_immediate = comms.immediate
+    depth = 0
+    max_depth = 0
 
     @contextlib.contextmanager
     def timed_immediate(conn: Any) -> Any:
+        nonlocal depth, max_depth
+        depth += 1
+        max_depth = max(max_depth, depth)
         started = time.perf_counter()
-        with real_immediate(conn) as locked:
-            yield locked
-        holds.append(time.perf_counter() - started)
+        try:
+            with real_immediate(conn) as locked:
+                yield locked
+        finally:
+            holds.append(time.perf_counter() - started)
+            depth -= 1
 
     monkeypatch.setattr(comms, "immediate", timed_immediate)
     operations: list[float] = []
-    for index in range(50):
+    send_ok: list[bool] = []
+    for index in range(_OPERATION_COUNT):
         started = time.perf_counter()
         if index % 3 == 0:
             scene.actor("impl-1")
-            assert scene.send(f"live-{index}", "x")["status"] == "ok"
+            send_ok.append(scene.send(f"live-{index}", "x")["status"] == "ok")
         else:
             scene.actor("impl-2")
             fetched = asyncio.run(scene.server.call_tool("trw_inbox", {})).structured_content
@@ -442,13 +500,40 @@ def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope(
             if ids:
                 asyncio.run(scene.server.call_tool("trw_inbox", {"action": "ack", "message_ids": ids}))
         operations.append(time.perf_counter() - started)
+    return holds, operations, send_ok, max_depth
+
+
+def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope(
+    scene: SendScene, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deterministic, always-run half of NFR08: outcomes and lock structure.
+
+    Every operation succeeds at the configured maximum, the write lock is taken at least once
+    per operation (it is genuinely exercised, not bypassed), and it is never held re-entrantly
+    (``max_depth == 1``) -- the structural property the wall-clock bound in the sibling
+    ``_budget`` test depends on: a nested/doubly-held lock would silently invalidate that p95
+    measurement without this assertion ever catching it.
+    """
+    holds, operations, send_ok, max_depth = _run_envelope_operations(scene, monkeypatch)
+    assert all(send_ok)
+    assert len(holds) >= len(operations), "every operation must acquire the write lock at least once"
+    assert max_depth == 1, "the write lock must be taken exactly once per transaction, never nested/re-acquired"
+
+
+@requires_local_timing
+def test_nfr08_lock_hold_and_operation_cost_at_the_supported_envelope_budget(
+    scene: SendScene, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    holds, operations, _send_ok, _max_depth = _run_envelope_operations(scene, monkeypatch)
 
     def p95(samples: list[float]) -> float:
         return statistics.quantiles(samples, n=20)[-1] * 1000
 
+    row_limit = scene.config.comms_group_row_limit
+    body_bytes = scene.config.comms_group_body_budget_bytes // row_limit
     print(
-        f"nfr08 machine={platform.machine()} {platform.platform()} rows=4000 body_bytes=4096 "
+        f"nfr08 machine={platform.machine()} {platform.platform()} rows={row_limit} body_bytes={body_bytes} "
         f"lock_p95_ms={p95(holds):.1f} op_p95_ms={p95(operations):.1f} ops={len(operations)} holds={len(holds)}"
     )
-    assert p95(holds) <= 100.0
-    assert p95(operations) <= 250.0
+    assert_budget("nfr08_lock_hold_p95", p95(holds), 100.0, "ms")
+    assert_budget("nfr08_operation_p95", p95(operations), 250.0, "ms")

@@ -43,17 +43,10 @@ _event_name="${2:-}"
 # --- Read stdin payload ---
 _input=$(cat) || true
 
-# --- Extract toolName (jq preferred, grep/sed fallback) ---
+# --- Extract toolName: jq only (T29); empty without it ---
 TOOL_NAME=""
 if command -v jq >/dev/null 2>&1; then
     TOOL_NAME=$(printf '%s' "$_input" | jq -r '.toolName // empty' 2>/dev/null) || true
-fi
-if [ -z "$TOOL_NAME" ]; then
-    # POSIX grep/sed fallback — avoids any nested quoting in the outer command
-    TOOL_NAME=$(printf '%s' "$_input" \
-        | grep -o '"toolName"[[:space:]]*:[[:space:]]*"[^"]*"' 2>/dev/null \
-        | head -1 \
-        | sed 's/.*"toolName"[[:space:]]*:[[:space:]]*"//;s/"$//' 2>/dev/null) || true
 fi
 export TOOL_NAME
 

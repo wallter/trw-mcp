@@ -1,6 +1,6 @@
-"""Tests for trw_learn_update assertions support (PRD-CORE-086 FR12).
+"""Tests for trw_learn's update mode assertions support (PRD-CORE-086 FR12).
 
-Verifies that assertions can be added, replaced, or removed via trw_learn_update.
+Verifies that assertions can be added, replaced, or removed via trw_learn's update mode (learning_id set; merged from trw_learn_update by PRD-CORE-291).
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ REPLACEMENT_ASSERTIONS = [
 
 
 class TestUpdateAddsAssertions:
-    """FR12: trw_learn_update adds assertions to an entry."""
+    """FR12: trw_learn's update mode adds assertions to an entry."""
 
     def test_update_adds_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """When assertions are provided, they are validated and stored."""
@@ -47,11 +47,11 @@ class TestUpdateAddsAssertions:
         from tests.conftest import extract_tool_fn, make_test_server
 
         server = make_test_server("learning")
-        update_fn = extract_tool_fn(server, "trw_learn_update")
+        update_fn = extract_tool_fn(server, "trw_learn")
 
         update_fn(
             learning_id="L-test1",
-            fields={"assertions": SAMPLE_ASSERTIONS},
+            metadata={"assertions": SAMPLE_ASSERTIONS},
         )
 
         saved = captured["assertions"]
@@ -78,11 +78,11 @@ class TestUpdateReplacesAssertions:
         from tests.conftest import extract_tool_fn, make_test_server
 
         server = make_test_server("learning")
-        update_fn = extract_tool_fn(server, "trw_learn_update")
+        update_fn = extract_tool_fn(server, "trw_learn")
 
         update_fn(
             learning_id="L-test2",
-            fields={"assertions": REPLACEMENT_ASSERTIONS},
+            metadata={"assertions": REPLACEMENT_ASSERTIONS},
         )
 
         saved = captured["assertions"]
@@ -115,11 +115,11 @@ class TestUpdateReplacesAssertions:
         from tests.conftest import extract_tool_fn, make_test_server
 
         server = make_test_server("learning")
-        update_fn = extract_tool_fn(server, "trw_learn_update")
+        update_fn = extract_tool_fn(server, "trw_learn")
 
         update_fn(
             learning_id="L-test2",
-            fields={"assertions": REPLACEMENT_ASSERTIONS},
+            metadata={"assertions": REPLACEMENT_ASSERTIONS},
         )
 
         updated = FileStateReader().read_yaml(entry_path)
@@ -149,11 +149,11 @@ class TestDeleteAssertionsWithEmptyList:
         from tests.conftest import extract_tool_fn, make_test_server
 
         server = make_test_server("learning")
-        update_fn = extract_tool_fn(server, "trw_learn_update")
+        update_fn = extract_tool_fn(server, "trw_learn")
 
         update_fn(
             learning_id="L-test3",
-            fields={"assertions": []},
+            metadata={"assertions": []},
         )
 
         assert captured["assertions"] == []
@@ -179,8 +179,9 @@ class TestUpdateAssertionsNoneSkipsUpdate:
         from tests.conftest import extract_tool_fn, make_test_server
 
         server = make_test_server("learning")
-        update_fn = extract_tool_fn(server, "trw_learn_update")
+        update_fn = extract_tool_fn(server, "trw_learn")
 
         update_fn(learning_id="L-test4")
 
-        assert captured["assertions"] is None
+        # PRD-CORE-294 FR03: an unnamed field is not sent at all (None is "not named").
+        assert "assertions" not in captured

@@ -455,14 +455,28 @@
     "ceremony": 60,
     "context": 40
   },
-  "pool_ignore_counts": {
-    "workflow": 5,
-    "learnings": 3,
-    "ceremony": 8,
-    "context": 2
+  "pool_cooldowns": {
+    "context": {
+      "ignore_count": 2,
+      "until_counter": 0,
+      "set_at": ""
+    },
+    "learnings": {
+      "ignore_count": 3,
+      "until_counter": 0,
+      "set_at": ""
+    },
+    "workflow": {
+      "ignore_count": 5,
+      "until_counter": 0,
+      "set_at": ""
+    },
+    "ceremony": {
+      "ignore_count": 8,
+      "until_counter": 0,
+      "set_at": ""
+    }
   },
-  "pool_cooldown_until": {},
-  "pool_cooldown_set_at": {},
   "tool_call_counter": 10000,
   "last_nudge_pool": "learnings"
 }

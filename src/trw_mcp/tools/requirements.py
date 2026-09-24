@@ -50,7 +50,6 @@ from trw_mcp.state.validation import (
     validate_prd_quality_v2 as validate_prd_quality_v2,
 )
 from trw_mcp.state.validation.template_variants import get_required_sections
-from trw_mcp.tools.telemetry import log_tool_call
 
 # Backward-compatible re-exports for test imports (assignments are
 # formatter-stable; the isort hook re-splits aliased import blocks).
@@ -87,7 +86,6 @@ def _register_prd_create_tool(server: FastMCP) -> None:
     """Register the PRD creation tool."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_prd_create(
         input_text: str,
         category: str = "CORE",
@@ -99,13 +97,13 @@ def _register_prd_create_tool(server: FastMCP) -> None:
     ) -> PrdCreateResultDict:
         """Generate an AARE-F PRD from a feature description and write it to disk.
 
-        Use when you have a feature request and need a structured PRD before
-        writing code for a P0/P1/P2 feature or risky behavioral change.
+        Use when a feature request needs a structured PRD before coding a
+        P0-P2 feature or risky behavioral change.
 
-        Allocates a PRD ID and frontmatter; syncs INDEX.md/ROADMAP.md. category
-        is CORE|QUAL|INFRA|LOCAL|EXPLR|RESEARCH|FIX (extendable via config);
-        priority is P0|P1|P2|P3; risk_level is critical|high|medium|low;
-        sequence auto-increments when left at 1.
+        Allocates a PRD ID and frontmatter; syncs INDEX.md/ROADMAP.md.
+        category: CORE|QUAL|INFRA|LOCAL|EXPLR|RESEARCH|FIX (extendable via
+        config). priority: P0-P3. risk_level: critical|high|medium|low.
+        sequence auto-increments from 1.
 
         Output: prd_id, output_path, sections_generated, index_synced.
 

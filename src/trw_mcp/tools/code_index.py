@@ -9,7 +9,6 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict
 
 from trw_mcp.code_index.update import update_code_index
-from trw_mcp.tools.telemetry import log_tool_call
 
 
 class CodeIndexUpdateToolResult(BaseModel):
@@ -67,7 +66,6 @@ def register_code_index_tools(server: FastMCP) -> None:
     """Register code-index MCP tools."""
 
     @server.tool(name="trw_code_index_update", output_schema=None)
-    @log_tool_call
     def trw_code_index_update_tool(
         repo_root: str,
         force: bool = False,

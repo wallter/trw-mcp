@@ -11,7 +11,9 @@ stdin, and that exceeding the timeout FAILS CLOSED via the transaction error typ
 from __future__ import annotations
 
 import hashlib
+import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -19,6 +21,7 @@ from pathlib import Path
 import pytest
 
 import trw_mcp.state._git_commit_hooks as hooks_mod
+from tests._layout import PACKAGE_ROOT
 from trw_mcp.models.git_commit_transaction import OwnershipManifest
 from trw_mcp.state._git_commit_hooks import (
     DEFAULT_HOOK_TIMEOUT_SECONDS,
@@ -86,7 +89,6 @@ def _run(repo: Path, parent: str, *, timeout: float | None) -> None:
 
 @pytest.mark.integration
 class TestBlockingHookTimeout:
-    @pytest.mark.perf
     def test_hanging_hook_times_out_and_fails_closed(self, tmp_path: Path) -> None:
         """A pre-commit hook that sleeps past the timeout raises the transaction error fast."""
         repo, parent = _init_repo(tmp_path)
@@ -123,7 +125,6 @@ class TestBlockingHookTimeout:
         assert captured["stdin"] is subprocess.DEVNULL, "hook stdin must be DEVNULL, not inherited"
         assert captured["timeout"] == 7.0
 
-    @pytest.mark.perf
     def test_stdin_reading_hook_does_not_hang(self, tmp_path: Path) -> None:
         """A hook that drains stdin returns immediately (EOF from DEVNULL), never blocking."""
         repo, parent = _init_repo(tmp_path)
@@ -150,3 +151,138 @@ class TestHookTimeoutConfig:
 
         monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: _Cfg())
         assert _resolve_hook_timeout_seconds() == 42.0
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 FR06 -- jq-less bundled hooks disclose, never fabricate
+# --------------------------------------------------------------------------- #
+#
+# T15: without jq, ``append_event``'s old else-branch silently dropped the
+# tool/file/session_id fields the deliver gate reads, and pre-compact.sh's
+# trigger read only inside ``if command -v jq`` with no fallback. The fix is
+# not a second (shell) JSON parser: ``_json_str_field`` is jq-only and
+# ``append_event`` no longer parses its caller's pre-escaped ``$3`` at all, so
+# it needs no jq to avoid truncating. These tests run the real shipped scripts
+# with jq removed from PATH.
+
+_HOOKS_DIR = PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "hooks"
+#: Every external tool the two hooks under test (transitively, via lib-trw.sh)
+#: invoke, EXCEPT jq -- planting exactly these and nothing else proves each
+#: jq-less path is exercised for real, not merely skipped: ``append_event``
+#: because it never re-parses its caller's already-escaped extra fields (no
+#: detour through a shell JSON parser), and ``pre-compact.sh`` because its own
+#: trigger/session_id reads (``_json_str_field``, jq-only by contract)
+#: correctly come back empty without jq, rather than falling through to some
+#: hand-rolled parse.
+_NO_JQ_TOOLS = ("sh", "date", "grep", "sed", "tr", "cat", "tail", "wc", "mkdir", "dirname", "expr", "awk")
+
+
+def _no_jq_bin_dir(tmp_path: Path) -> Path:
+    bin_dir = tmp_path / "bin-no-jq"
+    bin_dir.mkdir(exist_ok=True)
+    for tool in _NO_JQ_TOOLS:
+        resolved = shutil.which(tool)
+        assert resolved is not None, f"required tool missing from the test environment: {tool}"
+        (bin_dir / tool).symlink_to(resolved)
+    assert shutil.which("jq", path=str(bin_dir)) is None, "the no-jq PATH accidentally includes jq"
+    return bin_dir
+
+
+def test_append_event_no_jq_keeps_every_extra_field(tmp_path: Path) -> None:
+    """``append_event`` keeps every extra field even with jq absent (T15 fixed).
+
+    It no longer re-parses its caller's already-escaped ``$3`` at all, so
+    dropping jq from PATH must not truncate the event the way the old
+    ``else`` branch did.
+    """
+    project_root = tmp_path / "project"
+    (project_root / ".trw" / "context").mkdir(parents=True)
+    events_path = project_root / ".trw" / "context" / "session-events.jsonl"
+
+    probe = project_root / "probe.sh"
+    probe.write_text(
+        f"""#!/bin/sh
+. "{_HOOKS_DIR / "lib-trw.sh"}"
+append_event "{events_path}" "trw_deliver_complete" '"tool":"trw_checkpoint","file":"a.py","session_id":"s-1"'
+""",
+        encoding="utf-8",
+    )
+    probe.chmod(0o755)
+
+    result = subprocess.run(
+        ["sh", str(probe)],
+        capture_output=True,
+        text=True,
+        env={"PATH": str(_no_jq_bin_dir(tmp_path))},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    payload = json.loads(events_path.read_text(encoding="utf-8").strip())
+    assert payload["event"] == "trw_deliver_complete"
+    assert payload["tool"] == "trw_checkpoint"
+    assert payload["file"] == "a.py"
+    assert payload["session_id"] == "s-1"
+
+
+def test_pre_compact_no_jq_reports_unavailable(tmp_path: Path) -> None:
+    """``pre-compact.sh`` logs one explicit diagnostic with jq absent, and never
+    guesses ``trigger``/``session_id`` via a sed/grep parse (PRD-FIX-149 FR06).
+    """
+    project_root = tmp_path / "project"
+    (project_root / ".trw" / "context").mkdir(parents=True)
+
+    result = subprocess.run(
+        ["sh", str(_HOOKS_DIR / "pre-compact.sh")],
+        input=json.dumps({"trigger": "manual", "session_id": "s-2"}),
+        text=True,
+        capture_output=True,
+        cwd=project_root,
+        env={"PATH": str(_no_jq_bin_dir(tmp_path)), "CLAUDE_PROJECT_DIR": str(project_root)},
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    log_path = project_root / ".trw" / "context" / "hook-executions.log"
+    assert log_path.is_file(), "no diagnostic log was written"
+    assert "jq_unavailable=1" in log_path.read_text(encoding="utf-8")
+
+    state_path = project_root / ".trw" / "context" / "pre_compact_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["trigger"] == "unknown", (
+        "without jq the trigger must be reported unavailable, never guessed by a shell JSON parser"
+    )
+
+
+def test_pre_compact_unresolvable_identity_never_falls_back_to_recency(tmp_path: Path) -> None:
+    """PRD-FIX-149 review R4: no jq AND no TRW_SESSION_ID must not resolve via
+    ``find_active_run``'s recency guess -- the exact PRD-FIX-118 cross-instance
+    resume bug. A real, newer-than-everything run sits on disk; the snapshot
+    must still come back empty/unowned rather than naming it.
+    """
+    project_root = tmp_path / "project"
+    run_dir = project_root / ".trw" / "runs" / "some-task" / "20990101T000000Z-aaaa1111"
+    (run_dir / "meta").mkdir(parents=True)
+    (run_dir / "meta" / "run.yaml").write_text(
+        "run_id: 20990101T000000Z-aaaa1111\nphase: implement\n", encoding="utf-8"
+    )
+    (project_root / ".trw" / "context").mkdir(parents=True, exist_ok=True)
+
+    env = {"PATH": str(_no_jq_bin_dir(tmp_path)), "CLAUDE_PROJECT_DIR": str(project_root)}
+    assert "TRW_SESSION_ID" not in env
+
+    result = subprocess.run(
+        ["sh", str(_HOOKS_DIR / "pre-compact.sh")],
+        input=json.dumps({"trigger": "manual"}),
+        text=True,
+        capture_output=True,
+        cwd=project_root,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+    state_path = project_root / ".trw" / "context" / "pre_compact_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["run_path"] == "", "unresolvable identity must never adopt the newest run on disk"
+    assert state.get("ownership") == "unowned"

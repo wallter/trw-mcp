@@ -67,7 +67,7 @@ HOLDERS = _checkpoint_holders_without_init()
 
 def test_grant_holder_set_is_not_empty() -> None:
     """Non-vacuity: a moved directory or renamed grant must not pass silently."""
-    assert len(HOLDERS) >= 7, f"expected >=7 checkpoint-without-init agents, found {[p.name for p in HOLDERS]}"
+    assert len(HOLDERS) >= 6, f"expected >=6 checkpoint-without-init agents, found {[p.name for p in HOLDERS]}"
 
 
 def test_precondition_fragment_exists_and_names_the_executable_remedy() -> None:

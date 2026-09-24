@@ -13,8 +13,7 @@ pending_before``. The ground truth is the file, not the string: a record that
 is still on disk was NOT recovered, whatever the replay said.
 
 **2. May this record be retried?** The gates can legitimately be STRICTER at
-replay time than they were at journal time — ``llm_utility_filter_enabled``
-flipped on, or tightened length caps / injection patterns / noise heuristics
+replay time than they were at journal time — tightened length caps / injection patterns / noise heuristics
 shipped by an upgrade. The journal is designed to survive restarts and
 upgrades, so this is an upgrade hazard by construction, and the pre-fix answer
 ("retry forever") meant such a record occupied active journal capacity and was
@@ -57,6 +56,9 @@ DEAD_LETTER_DIRNAME: Final = "dead_letter"
 # content itself. ``"error"`` is deliberately absent — a store error is the
 # transient case the write-ahead journal exists to retry.
 DETERMINISTIC_STATUSES: Final[frozenset[str]] = frozenset({"rejected", "invalid"})
+# The store's write window was full. It clears on its own, so the record is kept and
+# the attempt is not booked against the retry budget.
+RATE_LIMITED: Final = "rate_limited"
 
 # Exception types that mean "this payload can never be replayed as-is":
 # invalid enum values, schema/shape violations (incl. ``Utf8ValidationError``,
@@ -128,6 +130,8 @@ def classify_replay(
             return ReplayDisposition("dead_lettered", f"deterministic_error:{type(error).__name__}")
     elif status in DETERMINISTIC_STATUSES:
         return ReplayDisposition("dead_lettered", f"deterministic_rejection:{status}")
+    elif status == RATE_LIMITED:
+        return ReplayDisposition("retained", RATE_LIMITED)
     if 0 < max_attempts <= attempt:
         return ReplayDisposition("dead_lettered", f"retry_budget_exhausted:{attempt}")
     return ReplayDisposition("retained", "")
@@ -191,6 +195,7 @@ __all__ = [
     "DEAD_LETTER_DIRNAME",
     "DETERMINISTIC_EXCEPTIONS",
     "DETERMINISTIC_STATUSES",
+    "RATE_LIMITED",
     "ReplayDisposition",
     "ReplayOutcome",
     "classify_replay",

@@ -187,6 +187,14 @@ class FormationManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
     formation_id: str
+    #: Optional schema marker (ledger N4). 5.0.0 READS it and never WRITES it:
+    #: this model is ``extra="forbid"``, so the first manifest to carry the key
+    #: becomes unreadable to every older server, which for a live formation means
+    #: its members start refusing comms the moment the orchestrator rewrites the
+    #: manifest. Shipping the reader first means the release that begins writing
+    #: it can assume every peer already understands it. ``None`` means "written
+    #: before schema versions existed", which is not the same as version 0.
+    schema_version: int | None = Field(default=None, ge=1)
     revision: int = Field(default=1, ge=1)
     created_utc: str
     updated_utc: str

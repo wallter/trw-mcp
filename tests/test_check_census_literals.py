@@ -30,6 +30,7 @@ from typing import Any
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS = REPO_ROOT / "scripts"
@@ -838,14 +839,13 @@ def test_two_scans_over_identical_inputs_are_byte_identical(tmp_path: Path) -> N
     assert lines == sorted(lines)
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_full_repository_scan_stays_within_a_gate_sized_budget() -> None:
     """NFR01: the scan must fit the budget of the fastest existing gate targets."""
     started = time.monotonic()
     census.run_scan(REAL_SCOPE, REPO_ROOT)
     elapsed = time.monotonic() - started
-    assert elapsed < 120.0, f"full-repository scan took {elapsed:.1f}s"
+    assert_budget("full_repository_census_scan", elapsed, 120.0, "s")
 
 
 def test_the_lint_is_absent_from_the_published_package() -> None:

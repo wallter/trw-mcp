@@ -179,64 +179,6 @@ def classify_tier(
     return "project"
 
 
-# core185-8: cache the user-scope presence probe. The presence of a
-# machine-local user store is a BOOT-TIME condition (the config flag or the
-# on-disk DB) that does not change within a session, so the per-call config
-# read + ``Path.exists()`` on the hot path (every ``trw_learn`` route + every
-# ``recall_learnings`` federate) are redundant. ``None`` = not yet probed. The
-# cache is cleared by :func:`reset_user_scope_cache` (wired into
-# ``reset_user_backend`` for test isolation).
-_user_scope_cached: bool | None = None
-
-
-def reset_user_scope_cache() -> None:
-    """Clear the cached :func:`user_scope_present` result (test isolation)."""
-    global _user_scope_cached
-    _user_scope_cached = None
-
-
-def user_scope_present() -> bool:
-    """Return True when a machine-local user-scope store is PRESENT/configured.
-
-    This is the effective gate for automatic promotion (NFR02): a user-scope
-    store counts as present when EITHER
-
-      * ``user_tier_enabled`` is set in the effective config (installer-seeded
-        machine-layer knob), OR
-      * the user-space memory DB already exists on disk.
-
-    Resolution never creates the directory (``create=False``) so a mere probe
-    does not provision a store. Fails closed (project-only) on any error. The
-    result is memoized (core185-8); call :func:`reset_user_scope_cache` to
-    re-probe (presence is otherwise a stable boot-time condition).
-    """
-    global _user_scope_cached
-    if _user_scope_cached is not None:
-        return _user_scope_cached
-
-    result = False
-    try:
-        from trw_mcp.models.config import get_config
-
-        if get_config().user_tier_enabled:
-            result = True
-    except Exception:  # justified: fail-closed to project-only on config error
-        logger.debug("user_scope_config_probe_failed", exc_info=True)
-
-    if not result:
-        try:
-            from trw_mcp.state._user_paths import resolve_user_memory_dir
-
-            db_path = resolve_user_memory_dir(create=False) / "memory.db"
-            result = db_path.exists()
-        except Exception:  # justified: fail-closed to project-only on path error
-            logger.debug("user_scope_path_probe_failed", exc_info=True)
-            result = False
-
-    _user_scope_cached = result
-    return result
-
-
 def tier_of_entry(entry: object) -> Tier:
     """Read the routed tier off a built :class:`MemoryEntry`'s metadata.
 
@@ -266,9 +208,8 @@ def route_tier(
 ) -> Tier:
     """Decide the destination tier for a ``trw_learn`` write.
 
-    Precedence:
-      * No user-scope store present -> ALWAYS ``"project"`` (zero behavior
-        change; explicit ``scope`` is irrelevant when there is nowhere to route).
+    ``user:local`` always exists in the one store and is never pushed, so there
+    is no presence gate (PRD-CORE-280 FR06). Precedence:
       * Explicit ``scope="user"`` BUT content carries strong project-specific
         signals (repo-relative paths / repo-local symbols / project tags) ->
         HONORED to ``"user"`` but a structured warning is emitted (P2-C, WARN +
@@ -281,8 +222,6 @@ def route_tier(
       * Explicit ``scope="user"`` / ``scope="project"`` -> that tier (override).
       * ``scope="auto"`` -> heuristic :func:`classify_tier`.
     """
-    if not user_scope_present():
-        return "project"
     if scope == "user":
         if has_project_signal(tags=tags, summary=summary, detail=detail):
             logger.warning(

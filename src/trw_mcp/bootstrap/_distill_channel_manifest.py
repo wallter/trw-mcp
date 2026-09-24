@@ -39,10 +39,14 @@ def merge_distill_channel_manifest(repo_root: Path, manifest_data: Path, client_
         # and no manifest_recovered telemetry event (see auto_recreate_empty).
         auto_recreate_empty(manifest_path, reason="missing")
         manifest = load(manifest_path)
-    except ManifestValidationError:
-        # Real corruption — keep the WARNING + telemetry recovery signal.
-        auto_recreate_empty(manifest_path)
-        manifest = load(manifest_path)
+    except ManifestValidationError as exc:
+        # Never replace an existing manifest: it may hold entries no bundle can restore. Fail loudly with the
+        # file untouched; every caller reports this in the install/update result (RC-014 review P0).
+        raise ManifestValidationError(
+            f"{manifest_path} is invalid and was left unchanged ({exc}). A manifest from before trw-mcp 6.0.0"
+            " carries the retired keys tier_default and tier_min: delete those two keys from every entry, or"
+            " remove the file and run `trw-mcp update-project` to regenerate it."
+        ) from exc
 
     existing_ids = {entry.id for entry in manifest.channels}
     added = 0

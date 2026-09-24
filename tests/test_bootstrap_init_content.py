@@ -58,10 +58,7 @@ class TestInitProjectStructure:
 
         expected_files = [
             ".trw/frameworks/FRAMEWORK.md",
-            ".trw/frameworks/FRAMEWORK-CORE.md",
-            ".trw/frameworks/FRAMEWORK-REFERENCE.md",
-            ".trw/frameworks/AARE-F-CORE.md",
-            ".trw/frameworks/AARE-F-REFERENCE.md",
+            ".trw/frameworks/AARE-F-FRAMEWORK.md",
             ".trw/context/behavioral_protocol.yaml",
             ".trw/context/messages.yaml",
             ".trw/templates/claude_md.md",
@@ -75,6 +72,9 @@ class TestInitProjectStructure:
         ]
         for f in expected_files:
             assert (fake_git_repo / f).is_file(), f"Missing file: {f}"
+        # S4: one installed document per canon; the compiled views are retired.
+        for retired in ("FRAMEWORK-CORE.md", "FRAMEWORK-REFERENCE.md", "AARE-F-CORE.md", "AARE-F-REFERENCE.md"):
+            assert not (fake_git_repo / ".trw" / "frameworks" / retired).exists(), retired
 
     def test_creates_all_expected_files(self, fake_git_repo: Path) -> None:
         """All files reported as created on first run."""
@@ -196,13 +196,12 @@ class TestValidation:
             result = init_project(tmp_path)
 
         # ── The framework IS deployed — the actual subject of the 0.63.0 fix.
-        # The five bodies named in the changelog must exist AND be non-empty:
+        # The four bodies named in the changelog must exist AND be non-empty:
         # the reported failure was files missing, and a zero-byte body would be
         # the same half-install wearing a passing existence check.
         for body in (
-            "FRAMEWORK-CORE.md",
-            "AARE-F-CORE.md",
-            "AARE-F-REFERENCE.md",
+            "FRAMEWORK.md",
+            "AARE-F-FRAMEWORK.md",
             "VERSION.yaml",
             "DEPLOYMENT.json",
         ):
@@ -261,39 +260,22 @@ class TestContent:
         init_project(fake_git_repo)
         claude_md = fake_git_repo / "CLAUDE.md"
 
-        # The protocol must be *reachable*, which is what a client actually
-        # resolves — not necessarily inline. A fresh install now externalizes to
-        # .trw/INSTRUCTIONS.md and leaves an @-import behind. Resolving the import
-        # is a stricter check than the old raw read: a dangling import fails here.
-        content = resolve_instruction_text(claude_md)
+        content = claude_md.read_text(encoding="utf-8")
         assert "trw_session_start" in content
         assert "trw_deliver" in content
 
-    def test_claude_md_does_not_inline_the_protocol(self, fake_git_repo: Path) -> None:
-        """A fresh install leaves an @-import, not injected framework prose.
+    def test_claude_md_carries_the_protocol_inline(self, fake_git_repo: Path) -> None:
+        """PRD-QUAL-143-FR01: the block is inline, with no ``@`` import or sidecar.
 
-        TRW does not own the user's CLAUDE.md. Beyond the marker region it writes
-        exactly one line -- the include -- and the framework text lives in a
-        TRW-owned file under .trw/. Guards the migration against a silent
-        regression back to injection.
-
-        ``ide`` is passed explicitly rather than relying on auto-detection:
-        ``detect_ide`` sets cursor-ide from ``shutil.which("cursor")``, a
-        machine-global signal, so on a developer box with Cursor installed a
-        bare ``init_project`` resolves an import-incapable target and correctly
-        stays inline. Leaving it implicit would make this assertion depend on
-        what is installed on the machine running the suite.
+        ``ide`` is explicit because ``detect_ide`` reads ``shutil.which("cursor")``,
+        a machine-global signal.
         """
         init_project(fake_git_repo, ide="claude-code")
         raw = (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8")
 
-        imports = [ln.strip() for ln in raw.splitlines() if ln.strip().startswith("@")]
-        assert imports == ["@.trw/INSTRUCTIONS.md"], f"expected one include, got {imports}"
-        assert "trw_session_start" not in raw, "protocol must not be injected inline"
-
-        sidecar = fake_git_repo / ".trw" / "INSTRUCTIONS.md"
-        assert sidecar.exists(), "the include target must exist (no dangling import)"
-        assert "trw_session_start" in sidecar.read_text(encoding="utf-8")
+        assert [ln for ln in raw.splitlines() if ln.strip().startswith("@")] == []
+        assert "trw_session_start" in raw
+        assert not (fake_git_repo / ".trw" / "INSTRUCTIONS.md").exists()
 
     def test_framework_md_is_v24(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo)
@@ -357,8 +339,10 @@ class TestHooks:
         "subagent-start.sh",
         "subagent-stop.sh",
         "user-prompt-submit.sh",
-        "validate-prd-write.sh",
     ]
+    #: Opt-in CC-03 pair. A bundled hook ships only when it is registered, or sourced
+    #: by a registered hook, so these ship (and register) only when the feature is on.
+    CC03_HOOKS = frozenset({"lib-distill-hint.sh", "pre-tool-distill-hint.sh"})
 
     @_EXACT_SET_MONOREPO_ONLY
     def test_all_hooks_copied(self, fake_git_repo: Path) -> None:
@@ -367,12 +351,55 @@ class TestHooks:
         hooks_dir = fake_git_repo / ".claude" / "hooks"
 
         copied = sorted(f.name for f in hooks_dir.iterdir() if f.suffix == ".sh")
-        # CC03 resources always ship for Claude; installation is not activation.
-        cc03_hooks = {"lib-distill-hint.sh", "pre-tool-distill-hint.sh"}
-        assert copied == sorted(set(self.EXPECTED_HOOKS) | cc03_hooks)
-        settings = json.loads((fake_git_repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
-        registered_hooks = json.dumps(settings.get("hooks", {}))
-        assert all(name not in registered_hooks for name in cc03_hooks)
+        # CC-03 is off by default, so its pair neither ships nor registers.
+        assert copied == sorted(self.EXPECTED_HOOKS)
+        assert all(name not in self._registered(fake_git_repo) for name in self.CC03_HOOKS)
+
+    @staticmethod
+    def _registered(repo: Path) -> str:
+        settings = json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        return json.dumps(settings.get("hooks", {}))
+
+    def test_cc03_pair_ships_registered_when_enabled_and_leaves_when_disabled(self, fake_git_repo: Path) -> None:
+        from trw_mcp.bootstrap import update_project
+
+        init_project(fake_git_repo, ide="claude-code")
+        config = fake_git_repo / ".trw" / "config.yaml"
+        base = config.read_text(encoding="utf-8")
+        hooks_dir = fake_git_repo / ".claude" / "hooks"
+
+        config.write_text(base + "cc03_hook_enabled: true\n", encoding="utf-8")
+        update_project(fake_git_repo, ide="claude-code")
+        assert all((hooks_dir / name).is_file() for name in self.CC03_HOOKS)
+        assert "pre-tool-distill-hint.sh" in self._registered(fake_git_repo)
+
+        config.write_text(base + "cc03_hook_enabled: false\n", encoding="utf-8")
+        update_project(fake_git_repo, ide="claude-code")
+        assert not any((hooks_dir / name).exists() for name in self.CC03_HOOKS)
+        assert "pre-tool-distill-hint.sh" not in self._registered(fake_git_repo)
+
+    def test_update_removes_a_hook_the_installer_wrote_and_no_longer_ships(self, fake_git_repo: Path) -> None:
+        import hashlib
+
+        from trw_mcp.bootstrap import update_project
+
+        init_project(fake_git_repo, ide="claude-code")
+        hooks_dir = fake_git_repo / ".claude" / "hooks"
+        retired, edited = hooks_dir / "validate-prd-write.sh", hooks_dir / "retired-and-edited.sh"
+        retired.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+        edited.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        manifest = fake_git_repo / ".trw" / "managed-artifacts.yaml"
+        recorded = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (retired, edited)}
+        edited.write_text("#!/bin/sh\n# my local change\nexit 0\n", encoding="utf-8")
+        text = manifest.read_text(encoding="utf-8")
+        entries = "".join(f"  {name}: {digest}\n" for name, digest in recorded.items())
+        manifest.write_text(text.replace("content_hashes:\n", "content_hashes:\n" + entries, 1), encoding="utf-8")
+
+        result = update_project(fake_git_repo, ide="claude-code")
+
+        assert not retired.exists(), "an unedited hook TRW wrote and no longer ships must be removed"
+        assert edited.exists(), "a user-edited copy is never deleted"
+        assert any("retired-and-edited.sh" in w for w in result.get("warnings", [])), result.get("warnings")
 
     def test_hooks_no_phase_check(self, fake_git_repo: Path) -> None:
         """post-phase-check.sh should NOT be deployed (tool removed)."""
@@ -396,11 +423,11 @@ class TestSkills:
     """Test skill directory deployment."""
 
     EXPECTED_SKILLS = [
+        "trw-assess",
         "trw-audit",
         "trw-ceremony-guide",
         "trw-code-search",
         "trw-commit",
-        "trw-decision",
         "trw-delegate",
         "trw-deliver",
         "trw-dry-check",
@@ -424,6 +451,12 @@ class TestSkills:
         "trw-test-strategy",
     ]
 
+    def _installed_by_default(self) -> list[str]:
+        """The allowlist minus opt-in skills whose feature is off by default (trw-assess)."""
+        from trw_mcp.bootstrap._optional_skills import CONDITIONAL_SKILLS
+
+        return [s for s in self.EXPECTED_SKILLS if s not in CONDITIONAL_SKILLS]
+
     def test_init_deploys_skills(self, fake_git_repo: Path) -> None:
         """After init_project(), .claude/skills/ has 26 subdirectories each with SKILL.md."""
         result = init_project(fake_git_repo)
@@ -431,9 +464,9 @@ class TestSkills:
 
         skills_dir = fake_git_repo / ".claude" / "skills"
         deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
-        assert deployed == self.EXPECTED_SKILLS
+        assert deployed == self._installed_by_default()
 
-        for skill in self.EXPECTED_SKILLS:
+        for skill in self._installed_by_default():
             skill_md = skills_dir / skill / "SKILL.md"
             assert skill_md.is_file(), f"Missing SKILL.md in {skill}"
             assert skill_md.stat().st_size > 0, f"SKILL.md is empty in {skill}"
@@ -463,7 +496,7 @@ class TestSkills:
         # All skill files should be skipped on second run
         skills_dir = fake_git_repo / ".claude" / "skills"
         deployed = sorted(d.name for d in skills_dir.iterdir() if d.is_dir())
-        assert deployed == self.EXPECTED_SKILLS
+        assert deployed == self._installed_by_default()
 
     def test_email_template_skill_not_shipped(self, fake_git_repo: Path) -> None:
         """Regression: the `email-template` skill must NOT ship to user projects.
@@ -485,16 +518,14 @@ class TestSkills:
     def test_bundled_source_excludes_email_template(self) -> None:
         """The canonical bundled-skills source dir must not contain email-template.
 
-        Guards the source of truth the installer globs over
-        (``trw-mcp/src/trw_mcp/data/skills/``) and the Codex client variant
-        (``data/codex/skills/``), so a stray copy in either location is caught.
+        Every client (codex, copilot, opencode) now renders from this one
+        corpus (PRD-CORE-291-FR04), so a single absence check on the
+        canonical dir covers every client's projection.
         """
         canonical = _DATA_DIR / "skills"
-        codex = _DATA_DIR / "codex" / "skills"
         assert not (canonical / "email-template").exists(), (
             "email-template leaked back into the canonical bundled skills dir"
         )
-        assert not (codex / "email-template").exists(), "email-template leaked back into the codex bundled skills dir"
 
     def test_every_shipped_skill_is_a_trw_framework_skill(self, fake_git_repo: Path) -> None:
         """Allowlist guard: every shipped skill must be a TRW framework skill.
@@ -515,7 +546,7 @@ class TestSkills:
         # The shipped set matches the curated allowlist exactly — a new
         # skill (stray or intentional) forces this assertion to be updated,
         # surfacing the addition for review.
-        assert deployed == self.EXPECTED_SKILLS, (
+        assert deployed == self._installed_by_default(), (
             "shipped skill set drifted from the TRW-framework allowlist; "
             f"unexpected: {sorted(set(deployed) - set(self.EXPECTED_SKILLS))}, "
             f"missing: {sorted(set(self.EXPECTED_SKILLS) - set(deployed))}"
@@ -526,13 +557,9 @@ class TestSkills:
 class TestDryCheckSkillContent:
     """The read-only duplicate scan must not prescribe unsafe extraction."""
 
-    BUNDLED_VARIANTS = (
-        _DATA_DIR / "skills" / "trw-dry-check" / "SKILL.md",
-        _DATA_DIR / "codex" / "skills" / "trw-dry-check" / "SKILL.md",
-        _DATA_DIR / "copilot" / "skills" / "trw-dry-check" / "SKILL.md",
-    )
-
     def test_duplicate_matches_are_evidence_aware_candidates(self) -> None:
+        from trw_mcp.bootstrap._client_skills import canonical_skills_dir, render_skill_md
+
         required = (
             "evidence, not a verdict",
             "Required client projections",
@@ -542,12 +569,15 @@ class TestDryCheckSkillContent:
             "reduces net complexity",
             "justified no-change result",
         )
-        for skill_path in self.BUNDLED_VARIANTS:
-            content = skill_path.read_text(encoding="utf-8")
+        canonical_text = (canonical_skills_dir() / "trw-dry-check" / "SKILL.md").read_text(encoding="utf-8")
+        for client in ("codex", "copilot", "opencode"):
+            content = render_skill_md(canonical_text, client)
             assert "duplicated code blocks that violate DRY principles" not in content
             assert "For each duplicated block, suggest" not in content
             for guidance in required:
-                assert guidance in content, f"{skill_path} is missing duplicate-classification guidance: {guidance}"
+                assert guidance in content, (
+                    f"{client} rendering is missing duplicate-classification guidance: {guidance}"
+                )
 
 
 # ── Agents Tests ────────────────────────────────────────────────────────
@@ -568,11 +598,8 @@ class TestAgents:
         "trw-lead.md",
         "trw-prd-groomer.md",
         "trw-requirement-reviewer.md",
-        "trw-requirement-writer.md",
         "trw-researcher.md",
         "trw-reviewer.md",
-        "trw-tester.md",
-        "trw-traceability-checker.md",
     ]
 
     @_EXACT_SET_MONOREPO_ONLY
@@ -594,65 +621,36 @@ class TestAgents:
             assert agent_file.stat().st_size > 0, f"Agent {agent} is empty"
 
 
-# ── Bootstrap Config Flags — PRD-INFRA-011-FR06 ────────────────────────
+# Bootstrap Config Flags (PRD-INFRA-011-FR06) test class removed under
+# PRD-CORE-291 (slice 2): the --source-package/--test-path flags and the
+# source_package_name/tests_relative_path config fields they populated had
+# no reader anywhere, so the flags, the init_project()/`_default_config()`
+# parameters, and this test class were all removed together.
 
 
-@pytest.mark.unit
-class TestBootstrapConfigFlags:
-    """Tests for source_package and test_path bootstrap flags — PRD-INFRA-011-FR06."""
+def _all_clients() -> list[str]:
+    """Every built-in profile, derived from the registry so a new client is covered."""
+    from trw_mcp.models.config._profiles import _PROFILES
 
-    def test_source_package_in_config(self, fake_git_repo: Path) -> None:
-        """source_package='myapp' → config.yaml has source_package_name: myapp."""
-        init_project(fake_git_repo, source_package="myapp")
-        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
-        assert "source_package_name: myapp" in content
-
-    def test_test_path_in_config(self, fake_git_repo: Path) -> None:
-        """test_path='tests' → config.yaml has tests_relative_path: tests."""
-        init_project(fake_git_repo, test_path="tests")
-        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
-        assert "tests_relative_path: tests" in content
-
-    def test_both_flags_in_config(self, fake_git_repo: Path) -> None:
-        """Both flags → config.yaml has both fields."""
-        init_project(fake_git_repo, source_package="myapp", test_path="tests")
-        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
-        assert "source_package_name: myapp" in content
-        assert "tests_relative_path: tests" in content
-
-    def test_default_no_extra_fields(self, fake_git_repo: Path) -> None:
-        """No args → config.yaml does NOT have source_package_name or tests_relative_path."""
-        init_project(fake_git_repo)
-        content = (fake_git_repo / ".trw" / "config.yaml").read_text(encoding="utf-8")
-        assert "source_package_name" not in content
-        assert "tests_relative_path" not in content
+    return sorted(_PROFILES)
 
 
-def _import_incapable_clients() -> list[str]:
-    """Every profile that cannot resolve an in-file include, from the registry.
+def _declared_carrier_clients() -> list[str]:
+    """Clients whose ``instruction_path`` is their carrier.
 
-    Derived, never listed. A hand-written list is why the previous version of
-    this class checked four clients and missed the fifth: a new client added
-    with the default ``instruction_import_syntax="none"`` would inherit no
-    coverage at all. Deriving it means the arrival contract below extends
-    itself the moment a profile is added.
+    claude-code declares ``.claude/INSTRUCTIONS.md``, which no writer produces
+    (see ``client_profiles/catalog.py``); its carrier is CLAUDE.md, asserted by
+    ``test_claude_code_target_gets_the_inline_block``.
     """
-    from trw_mcp.models.config._profiles import _PROFILES, resolve_client_profile
-
-    return sorted(
-        client_id for client_id in _PROFILES if resolve_client_profile(client_id).instruction_import_syntax == "none"
-    )
+    return [client for client in _all_clients() if client != "claude-code"]
 
 
-class TestCarrierRespectsClientImportCapability:
-    """Only a client that can resolve an in-file import may receive one.
+class TestEveryClientGetsAnInlineBlock:
+    """PRD-QUAL-143-FR01: the TRW block is inline for every client.
 
-    ``CLAUDE.md`` is not exclusively Claude Code's. ``_determine_write_target_decision``
-    also emits it for a cursor-ide-only project, and cursor-ide declares
-    ``instruction_import_syntax="none"``. Externalizing there would leave that
-    client with an instruction file whose content it cannot resolve — a file that
-    exists, parses, reports success, and says nothing. That is the exact failure
-    mode this migration exists to remove, so it must not be introduced by it.
+    The ``.trw/INSTRUCTIONS.md`` sidecar and its ``@`` import are retired, so no
+    install may emit an import, and each client's declared carrier must hold the
+    protocol and the deliver gate itself.
     """
 
     @staticmethod
@@ -661,40 +659,28 @@ class TestCarrierRespectsClientImportCapability:
         imports = [ln.strip() for ln in text.splitlines() if ln.strip().startswith("@")]
         return imports, "trw_session_start" in text
 
-    def test_claude_code_target_gets_the_import(self, fake_git_repo: Path) -> None:
+    def test_claude_code_target_gets_the_inline_block(self, fake_git_repo: Path) -> None:
         init_project(fake_git_repo, ide="claude-code")
 
+        from trw_mcp.state.claude_md.sections._tool_lifecycle import DELIVER_GATE_PHRASE
+
         imports, inline = self._shape(fake_git_repo)
-        assert imports == ["@.trw/INSTRUCTIONS.md"]
-        assert not inline
-        assert (fake_git_repo / ".trw" / "INSTRUCTIONS.md").is_file()
+        assert imports == []
+        assert inline
+        assert DELIVER_GATE_PHRASE in (fake_git_repo / "CLAUDE.md").read_text(encoding="utf-8")
+        assert not (fake_git_repo / ".trw" / "INSTRUCTIONS.md").exists()
 
-    @pytest.mark.parametrize("client", _import_incapable_clients())
-    def test_import_incapable_target_gets_no_import_it_cannot_resolve(self, fake_git_repo: Path, client: str) -> None:
-        """CLAUDE.md must never hand these clients an include they cannot follow.
-
-        Deliberately narrow: this asserts only that no unresolvable ``@`` import
-        is emitted. It says nothing about whether CLAUDE.md carries the protocol,
-        because for four of these five clients CLAUDE.md is not a file they read
-        — see :meth:`test_declared_instruction_surface_carries_the_protocol` for
-        where the protocol actually has to land.
-
-        A codex-ONLY selection is a narrower case still: PRD-CORE-262-FR05 (the
-        codex-only scaffold-containment fix) means no CLAUDE.md is written at
-        all, not even the import-free shell every other import-incapable
-        client here still receives. No file means no unresolvable import can
-        exist, so the property holds trivially and is asserted directly.
-        """
+    @pytest.mark.parametrize("client", _all_clients())
+    def test_no_client_gets_an_import(self, fake_git_repo: Path, client: str) -> None:
+        """A codex-only selection writes no CLAUDE.md at all (PRD-CORE-262-FR05)."""
         init_project(fake_git_repo, ide=client)
 
-        if client == "codex":
-            assert not (fake_git_repo / "CLAUDE.md").exists(), "codex-only must get no root CLAUDE.md (FR05)"
+        if not (fake_git_repo / "CLAUDE.md").exists():
             return
-
         imports, _ = self._shape(fake_git_repo)
-        assert imports == [], f"{client} cannot resolve an in-file import, got {imports}"
+        assert imports == [], f"{client} got {imports}"
 
-    @pytest.mark.parametrize("client", _import_incapable_clients())
+    @pytest.mark.parametrize("client", _declared_carrier_clients())
     def test_declared_instruction_surface_carries_the_protocol(self, fake_git_repo: Path, client: str) -> None:
         """The protocol must arrive in the file this client actually reads.
 
@@ -710,8 +696,8 @@ class TestCarrierRespectsClientImportCapability:
         assertion follows the protocol wherever the framework decides to put it,
         and fails only when it genuinely fails to arrive.
 
-        An import-incapable client has no sidecar to fall back on, so a dangling
-        or empty carrier is total loss for that client, not degraded service.
+        No client has a sidecar to fall back on, so a dangling or empty carrier
+        is total loss for that client, not degraded service.
         """
         from trw_mcp.models.config._profiles import resolve_client_profile
 
@@ -733,14 +719,14 @@ class TestCarrierRespectsClientImportCapability:
     # as designed: it went RED (XPASS) the moment the gate was added to
     # render_antigravity_instructions, instead of quietly outliving the defect.
     # Marker removed because the case now genuinely passes — every
-    # import-incapable client states the gate verbatim, with no exemptions.
-    @pytest.mark.parametrize("client", _import_incapable_clients())
+    # client states the gate verbatim, with no exemptions.
+    @pytest.mark.parametrize("client", _declared_carrier_clients())
     def test_declared_instruction_surface_states_the_deliver_gate(self, fake_git_repo: Path, client: str) -> None:
         """Arrival is not enough — the carrier must state the gate verbatim.
 
         ``trw_session_start`` appearing somewhere proves a TRW block was written.
         It does not prove the block still contains the one rule that makes it a
-        *protocol* carrier. These clients have no sidecar and no fallback, so a
+        *protocol* carrier. No client has a sidecar or a fallback, so a
         block that names the tools but drops the gate is a surface that looks
         installed and licenses an unverified delivery.
         """
@@ -768,10 +754,13 @@ class TestCarrierRespectsClientImportCapability:
         answer would depend on what is installed on the build box.
         """
         init_project(fake_git_repo, ide="cursor-ide")
-        assert (fake_git_repo / ".claude").is_dir(), "precondition: install creates .claude"
+        # PRD-INFRA-192 FR09: an explicit cursor-ide install no longer scaffolds
+        # Claude Code's .claude/, so detection has even less to go on; the
+        # resolved targets still decide.
+        assert not (fake_git_repo / ".claude").exists()
 
         imports, inline = self._shape(fake_git_repo)
-        assert imports == [], "post-install .claude/ must not re-enable externalization"
+        assert imports == [], "post-install .claude/ must not add an import"
         # No inline block either. cursor-ide's protocol lives in the file Cursor
         # documents and always applies; the CLAUDE.md copy was redundant. The
         # distinction that unblocked this — "chose cursor-ide" vs "`which cursor`
@@ -782,3 +771,26 @@ class TestCarrierRespectsClientImportCapability:
         rule = (fake_git_repo / ".cursor" / "rules" / "trw-ceremony.mdc").read_text(encoding="utf-8")
         assert "alwaysApply: true" in rule
         assert "trw_session_start" in rule
+
+
+@pytest.mark.integration
+def test_claude_skills_install_when_claude_code_is_not_the_first_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ``.claude/skills`` gate follows claude-code's profile, not the first-listed client's.
+
+    ``TRWConfig.client_profile`` is the FIRST ``target_platforms`` entry. With
+    opencode listed first, its profile (no skills) gated the Claude Code skill
+    install off, so a project targeting claude-code got an empty
+    ``.claude/skills`` on init and update (PRD-INFRA-192 FR06).
+    """
+    import trw_mcp.models.config as config_mod
+
+    (tmp_path / ".git").mkdir()
+    config = TRWConfig(target_platforms=["opencode", "claude-code"])
+    monkeypatch.setattr(config_mod, "get_config", lambda: config)
+
+    result = init_project(tmp_path, ide="all")
+
+    assert not result["errors"], result["errors"]
+    assert (tmp_path / ".claude" / "skills" / "trw-deliver" / "SKILL.md").is_file()

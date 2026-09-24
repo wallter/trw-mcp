@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from tests import _stdio_harness
-from tests._formation_test_support import make_run_dir
+from tests._formation_test_support import make_run_dir, open_slot
 from tests._stdio_harness import HarnessError, ServerProcess, StdioServerHarness
 
 __all__ = [
@@ -116,13 +116,7 @@ def build_coordination(
     payload: dict[str, object] = {
         "formation_id": formation_id,
         "members": [
-            {
-                "member_id": member_id,
-                "client": client,
-                "role": "implementer",
-                "owned_paths": [f"src/{member_id}"],
-                "open_join": True,  # PRD-CORE-274-FR18: first-come join needs an open slot
-            }
+            open_slot(member_id, client, role="implementer", owned_paths=[f"src/{member_id}"])
             for member_id, client in members
         ],
     }

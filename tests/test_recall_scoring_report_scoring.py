@@ -120,32 +120,16 @@ class TestComputeUtilityScoreAccessBoost:
         """access_count > 0 adds sub-linear boost to utility (line 186)."""
         from trw_mcp.scoring import compute_utility_score
 
-        score_no_access = compute_utility_score(0.5, 0, 1, 0.5, 5, access_count=0)
-        score_with_access = compute_utility_score(0.5, 0, 1, 0.5, 5, access_count=10)
+        score_no_access = compute_utility_score(0, 1, 0.5, access_count=0)
+        score_with_access = compute_utility_score(0, 1, 0.5, access_count=10)
         assert score_with_access > score_no_access
 
     def test_access_count_boost_is_capped(self) -> None:
         """access_count boost is capped at access_count_boost_cap."""
         from trw_mcp.scoring import compute_utility_score
 
-        score_moderate = compute_utility_score(
-            0.5,
-            0,
-            1,
-            0.5,
-            5,
-            access_count=10,
-            access_count_boost_cap=0.15,
-        )
-        score_high = compute_utility_score(
-            0.5,
-            0,
-            1,
-            0.5,
-            5,
-            access_count=10000,
-            access_count_boost_cap=0.15,
-        )
+        score_moderate = compute_utility_score(0, 1, 0.5, access_count=10, access_count_boost_cap=0.15)
+        score_high = compute_utility_score(0, 1, 0.5, access_count=10000, access_count_boost_cap=0.15)
         assert abs(score_high - score_moderate) < 0.001 or score_high >= score_moderate
 
 

@@ -9,7 +9,7 @@ from tests._tools_orchestration_support import orch_tools, set_project_root  # n
 
 
 class TestCeremonyScoring:
-    """Tests for compute_ceremony_score() — direct and tool_invocation event formats."""
+    """Tests for compute_ceremony_score() — direct and tool_call event formats."""
 
     def _score(self, events: list[dict[str, object]]) -> dict[str, object]:
         from trw_mcp.state.analytics.report import compute_ceremony_score
@@ -48,57 +48,57 @@ class TestCeremonyScoring:
         assert result["build_passed"] is True
         assert result["score"] == 10
 
-    def test_tool_invocation_session_start_detected(self) -> None:
+    def test_tool_call_session_start_detected(self) -> None:
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_session_start"},
+                {"event": "tool_call", "tool_name": "trw_session_start"},
             ]
         )
         assert result["session_start"] is True
         assert result["score"] == 25
 
-    def test_tool_invocation_deliver_via_trw_deliver(self) -> None:
+    def test_tool_call_deliver_via_trw_deliver(self) -> None:
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_deliver"},
+                {"event": "tool_call", "tool_name": "trw_deliver"},
             ]
         )
         assert result["deliver"] is True
         assert result["score"] == 25
 
-    def test_tool_invocation_deliver_via_trw_reflect(self) -> None:
+    def test_tool_call_deliver_via_trw_reflect(self) -> None:
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_reflect"},
+                {"event": "tool_call", "tool_name": "trw_reflect"},
             ]
         )
         assert result["deliver"] is True
 
-    def test_tool_invocation_checkpoint_counted(self) -> None:
+    def test_tool_call_checkpoint_counted(self) -> None:
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_checkpoint"},
-                {"event": "tool_invocation", "tool_name": "trw_checkpoint"},
-                {"event": "tool_invocation", "tool_name": "trw_checkpoint"},
+                {"event": "tool_call", "tool_name": "trw_checkpoint"},
+                {"event": "tool_call", "tool_name": "trw_checkpoint"},
+                {"event": "tool_call", "tool_name": "trw_checkpoint"},
             ]
         )
         assert result["checkpoint_count"] == 3
         assert result["score"] == 20
 
-    def test_tool_invocation_learn_counted(self) -> None:
+    def test_tool_call_learn_counted(self) -> None:
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_learn"},
-                {"event": "tool_invocation", "tool_name": "trw_learn"},
+                {"event": "tool_call", "tool_name": "trw_learn"},
+                {"event": "tool_call", "tool_name": "trw_learn"},
             ]
         )
         assert result["learn_count"] == 2
         assert result["score"] == 10
 
-    def test_tool_invocation_build_check(self) -> None:
+    def test_tool_call_build_check(self) -> None:
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_build_check"},
+                {"event": "tool_call", "tool_name": "trw_build_check"},
             ]
         )
         assert result["build_check"] is True
@@ -110,15 +110,15 @@ class TestCeremonyScoring:
         assert result["score"] == 25
 
     def test_mixed_formats_full_score(self) -> None:
-        """Real-world mix: tool_invocation events produce full 100-point score."""
+        """Real-world mix: tool_call events produce full 100-point score."""
         events: list[dict[str, object]] = [
-            {"event": "tool_invocation", "tool_name": "trw_session_start"},
-            {"event": "tool_invocation", "tool_name": "trw_learn"},
-            {"event": "tool_invocation", "tool_name": "trw_learn"},
-            {"event": "tool_invocation", "tool_name": "trw_checkpoint"},
-            {"event": "tool_invocation", "tool_name": "trw_build_check"},
-            {"event": "tool_invocation", "tool_name": "trw_deliver"},
-            {"event": "tool_invocation", "tool_name": "trw_review"},
+            {"event": "tool_call", "tool_name": "trw_session_start"},
+            {"event": "tool_call", "tool_name": "trw_learn"},
+            {"event": "tool_call", "tool_name": "trw_learn"},
+            {"event": "tool_call", "tool_name": "trw_checkpoint"},
+            {"event": "tool_call", "tool_name": "trw_build_check"},
+            {"event": "tool_call", "tool_name": "trw_deliver"},
+            {"event": "tool_call", "tool_name": "trw_review"},
         ]
         result = self._score(events)
         assert result["session_start"] is True
@@ -129,11 +129,11 @@ class TestCeremonyScoring:
         assert result["review"] is True
         assert result["score"] == 100
 
-    def test_unrelated_tool_invocation_ignored(self) -> None:
-        """tool_invocation with unrelated tool_name does not affect score."""
+    def test_unrelated_tool_call_ignored(self) -> None:
+        """tool_call with unrelated tool_name does not affect score."""
         result = self._score(
             [
-                {"event": "tool_invocation", "tool_name": "trw_status"},
+                {"event": "tool_call", "tool_name": "trw_status"},
             ]
         )
         assert result["score"] == 0

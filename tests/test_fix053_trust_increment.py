@@ -164,11 +164,9 @@ def test_activity_counts_never_increment_successful_sessions(
     from trw_mcp.tools._deferred_delivery import _step_trust_increment
 
     events: list[dict[str, object]] = [
-        {"event": "tool_invocation", "data": {"tool_name": "trw_learn"}} for _ in range(learn_count)
+        {"event": "tool_call", "data": {"tool_name": "trw_learn"}} for _ in range(learn_count)
     ]
-    events.extend(
-        {"event": "tool_invocation", "data": {"tool_name": "trw_checkpoint"}} for _ in range(checkpoint_count)
-    )
+    events.extend({"event": "tool_call", "data": {"tool_name": "trw_checkpoint"}} for _ in range(checkpoint_count))
     _write_events(run_dir, events)
     _write_run_yaml(run_dir, "coding")
 
@@ -321,7 +319,7 @@ def test_concurrent_processes_consume_outcome_once(
     "event",
     [
         {"event": "build_check_complete", "data": {"result": "pass"}},
-        {"event": "tool_invocation", "data": {"tool_name": "trw_build_check", "build_passed": True}},
+        {"event": "tool_call", "data": {"tool_name": "trw_build_check", "build_passed": True}},
         {"event": "review_complete", "data": {"verdict": "pass"}},
         {"event": "acceptable_failure", "data": {"authorized": True}},
     ],

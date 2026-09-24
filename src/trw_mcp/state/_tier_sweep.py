@@ -133,7 +133,7 @@ def _sweep_warm_to_cold(
             list_active_learnings,
         )
 
-        active_entries = list_active_learnings(self._trw_dir)
+        active_entries = list_active_learnings(self._trw_dir, purpose="maintenance")
         for data in active_entries:
             entry_id = str(data.get("id", ""))
             if not entry_id:

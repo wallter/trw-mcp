@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.channels._lock import ChannelLock, ChannelLockSkip
 
 # ---------------------------------------------------------------------------
@@ -57,14 +58,50 @@ def test_channel_lock_sequential_reacquire(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.perf
+def _hold_and_attempt_skip(lock_file: Path) -> tuple[threading.Thread, threading.Event, ChannelLockSkip]:
+    """Hold the lock on a background thread, then attempt it and capture the skip."""
+    lock_acquired = threading.Event()
+    release_lock = threading.Event()
+
+    def holder() -> None:
+        with ChannelLock(lock_file, timeout_ms=5000):
+            lock_acquired.set()
+            release_lock.wait(timeout=10.0)
+
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
+    lock_acquired.wait(timeout=5.0)
+
+    with pytest.raises(ChannelLockSkip) as exc_info:
+        with ChannelLock(lock_file, timeout_ms=200):
+            pass
+
+    return t, release_lock, exc_info.value
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows advisory locking is a no-op — skip contention test",
+)
+def test_channel_lock_skip_on_timeout(tmp_path: Path) -> None:
+    """Background thread holds lock; main thread sees ChannelLockSkip naming the lock path."""
+    lock_file = tmp_path / "ch.lock"
+
+    t, release_lock, skip = _hold_and_attempt_skip(lock_file)
+
+    assert "ch.lock" in str(skip.lock_path)
+
+    release_lock.set()
+    t.join(timeout=5.0)
+
+
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="Windows advisory locking is a no-op — skip contention test",
 )
 @requires_local_timing
-def test_channel_lock_skip_on_timeout(tmp_path: Path) -> None:
-    """Background thread holds lock; main thread sees ChannelLockSkip within 4100ms."""
+def test_channel_lock_skip_on_timeout_budget(tmp_path: Path) -> None:
+    """Main thread sees ChannelLockSkip within 4100ms of a background thread holding the lock."""
     lock_file = tmp_path / "ch.lock"
 
     lock_acquired = threading.Event()
@@ -80,16 +117,15 @@ def test_channel_lock_skip_on_timeout(tmp_path: Path) -> None:
     lock_acquired.wait(timeout=5.0)
 
     start = time.monotonic()
-    with pytest.raises(ChannelLockSkip) as exc_info:
+    with pytest.raises(ChannelLockSkip):
         with ChannelLock(lock_file, timeout_ms=200):
             pass
     elapsed = time.monotonic() - start
 
-    assert elapsed < 1.0  # Should fail fast (200ms + overhead)
-    assert "ch.lock" in str(exc_info.value.lock_path)
-
     release_lock.set()
     t.join(timeout=5.0)
+
+    assert_budget("channel_lock_skip_elapsed", elapsed, 1.0, "s")
 
 
 @pytest.mark.skipif(

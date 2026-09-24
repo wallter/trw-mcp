@@ -78,7 +78,7 @@ class TestRiskProfileWeights:
 class TestImprovementSuggestions:
     """Test generate_improvement_suggestions."""
 
-    def test_skeleton_gets_suggestions(self) -> None:
+    def test_skeleton_gets_actionable_suggestions_without_density(self) -> None:
         dims = [
             DimensionScore(name="content_density", score=2.0, max_score=20.0),
             DimensionScore(name="structural_completeness", score=3.0, max_score=20.0),
@@ -86,10 +86,14 @@ class TestImprovementSuggestions:
             DimensionScore(name="traceability", score=0.0, max_score=35.0),
         ]
         suggestions = generate_improvement_suggestions(dims)
-        assert len(suggestions) >= 4
+        assert {suggestion.dimension for suggestion in suggestions} == {
+            "structural_completeness",
+            "implementation_readiness",
+            "traceability",
+        }
 
-    def test_improvement_suggestions_exclude_stubs(self) -> None:
-        stub_names = {"smell_score", "readability", "ears_coverage"}
+    def test_improvement_suggestions_exclude_diagnostics_and_stubs(self) -> None:
+        diagnostic_names = {"content_density", "smell_score", "readability", "ears_coverage"}
         dims = [
             DimensionScore(name="content_density", score=0.0, max_score=20.0),
             DimensionScore(name="structural_completeness", score=0.0, max_score=20.0),
@@ -98,15 +102,15 @@ class TestImprovementSuggestions:
         ]
         suggestions = generate_improvement_suggestions(dims)
         for suggestion in suggestions:
-            assert suggestion.dimension not in stub_names
+            assert suggestion.dimension not in diagnostic_names
 
-    def test_readiness_suggestions_sort_ahead_of_density(self) -> None:
+    def test_readiness_suggestion_does_not_compete_with_density(self) -> None:
         dims = [
             DimensionScore(name="content_density", score=8.0, max_score=20.0),
             DimensionScore(name="implementation_readiness", score=8.0, max_score=25.0),
         ]
         suggestions = generate_improvement_suggestions(dims)
-        assert suggestions[0].dimension == "implementation_readiness"
+        assert [suggestion.dimension for suggestion in suggestions] == ["implementation_readiness"]
 
     def test_max_5_suggestions(self) -> None:
         dims = [DimensionScore(name=f"dim_{i}", score=0.0, max_score=20.0) for i in range(8)]

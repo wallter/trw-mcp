@@ -39,8 +39,13 @@ from trw_mcp.tools._prd_proof_paths import (
     classify_proof_paths,
     default_path_proof_blocking,
     default_path_proof_findings,
-    missing_proof_paths,
 )
+
+
+def _missing(blob: str, project_root: Path | None = None) -> list[str]:
+    """The hard-blocking tier of ``classify_proof_paths``."""
+    return classify_proof_paths(blob, project_root)[0]
+
 
 _DIGEST = "sha256:" + "0" * 64
 
@@ -51,13 +56,13 @@ def _proof(receipt: str, removal: str = "superseded path removed") -> dict[str, 
 
 class TestMissingProofPaths:
     def test_names_a_deleted_test_file(self, tmp_path: Path) -> None:
-        missing = missing_proof_paths("proved by tests/test_evaporated.py::test_gone", project_root=tmp_path)
+        missing = _missing("proved by tests/test_evaporated.py::test_gone", project_root=tmp_path)
         assert missing == ["tests/test_evaporated.py"]
 
     def test_existing_file_is_accepted(self, tmp_path: Path) -> None:
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "test_real.py").write_text("", encoding="utf-8")
-        assert missing_proof_paths("tests/test_real.py::test_x", project_root=tmp_path) == []
+        assert _missing("tests/test_real.py::test_x", project_root=tmp_path) == []
 
     def test_file_under_a_package_prefix_is_accepted(self, tmp_path: Path) -> None:
         # Receipts routinely write a path relative to the package, e.g.
@@ -65,14 +70,14 @@ class TestMissingProofPaths:
         target = tmp_path / "trw-mcp" / "src" / "trw_mcp" / "server"
         target.mkdir(parents=True)
         (target / "_tools.py").write_text("", encoding="utf-8")
-        assert missing_proof_paths("wired in server/_tools.py", project_root=tmp_path) == []
+        assert _missing("wired in server/_tools.py", project_root=tmp_path) == []
 
     def test_absolute_and_run_artifact_paths_are_ignored(self, tmp_path: Path) -> None:
         blob = "/tmp/coverage-run.log plus .trw/runs/x/meta/receipts/review/r.json"
-        assert missing_proof_paths(blob, project_root=tmp_path) == []
+        assert _missing(blob, project_root=tmp_path) == []
 
     def test_prose_without_paths_is_ignored(self, tmp_path: Path) -> None:
-        assert missing_proof_paths("make prd-projection-gate is the production default", tmp_path) == []
+        assert _missing("make prd-projection-gate is the production default", tmp_path) == []
 
 
 class TestDefaultPathProofBlocking:
@@ -143,7 +148,7 @@ class TestNonPythonProofPathsAreActuallyChecked:
 
     @pytest.mark.parametrize("proof_path", _MAINSTREAM_PROOF_PATHS)
     def test_a_vanished_path_blocks(self, tmp_path: Path, proof_path: str) -> None:
-        assert missing_proof_paths(f"proved by {proof_path}", project_root=tmp_path) == [proof_path]
+        assert _missing(f"proved by {proof_path}", project_root=tmp_path) == [proof_path]
         assert default_path_proof_blocking(_proof(f"proved by {proof_path}"), "live", project_root=tmp_path) == [
             DEFAULT_PATH_PROOF_FILE_MISSING
         ]
@@ -163,7 +168,7 @@ class TestNonPythonProofPathsAreActuallyChecked:
         # could pass on the wrong file or block on a real one.
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "a.ts").write_text("", encoding="utf-8")
-        assert missing_proof_paths("proved by src/a.tsx", project_root=tmp_path) == ["src/a.tsx"]
+        assert _missing("proved by src/a.tsx", project_root=tmp_path) == ["src/a.tsx"]
 
 
 class TestUnverifiableReferencesAreVisible:
@@ -328,7 +333,7 @@ class TestShippedPrdsDoNotRegress:
             checked += 1
             proof = frontmatter["default_path_proof"]
             blob = f"{proof.get('receipt', '')} {proof.get('removal_assertion', '')}"
-            missing = missing_proof_paths(blob, project_root=root)
+            missing = _missing(blob, project_root=root)
             if missing:
                 offenders[prd.name] = missing
         # Non-vacuity floor, not a target: 5 PRDs currently carry a frontmatter

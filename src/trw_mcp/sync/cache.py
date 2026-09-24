@@ -47,15 +47,6 @@ class IntelligenceCache:
             return None
         return raw
 
-    def get_synthesis_overlay(self) -> dict[str, Any] | None:
-        """Read cached synthesis overlay."""
-        raw = self._read_cached_field("synthesis_overlay")
-        if not isinstance(raw, dict):
-            if raw is not None:
-                self._log_validation_error(field_name="synthesis_overlay", reason="invalid_type")
-            return None
-        return raw
-
     def update(self, state: dict[str, Any], etag: str | None = None) -> None:
         """Atomically write new state to cache."""
         state["_meta"] = {

@@ -109,10 +109,6 @@ class DeliveryOperationOwner:
 
         return _coordinator()
 
-    def resolve_claim(self, **claim_kwargs: object) -> ClaimResult:
-        """Delegate to the CORE-208 claim: exact repeat dedupes, changed field conflicts."""
-        return self.coordinator().claim(**claim_kwargs)  # type: ignore[arg-type]
-
 
 # --- Registry -------------------------------------------------------------
 

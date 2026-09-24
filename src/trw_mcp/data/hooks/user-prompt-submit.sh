@@ -52,13 +52,11 @@ if isinstance(prompt, str):
 fi
 
 # PRD-FIX-124 FR11: hand infer_phase THIS session's identity so it resolves the
-# run we own instead of whichever run sorted newest project-wide. Same grep-based
-# extraction phase-cycle-stop.sh uses; empty is the honest "identity unknown"
-# state, which infer_phase degrades to its recency fallback.
-_stdin_session_id=$(printf '%s' "$_payload" \
-  | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
-  | head -1 \
-  | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || _stdin_session_id=""
+# run we own instead of whichever run sorted newest project-wide. jq only (T29);
+# empty is the honest "identity unknown" state, for which infer_phase prints
+# "none" (R2-009), and a jq-less host logs one diagnostic saying so.
+_stdin_session_id=$(_json_str_field "$_payload" session_id) || _stdin_session_id=""
+command -v jq >/dev/null 2>&1 || log_hook_execution "UserPromptSubmit" "unknown" "0" "jq_unavailable=1"
 
 _phase=$(infer_phase "$_stdin_session_id")
 _project_root="$(get_repo_root)" || exit 0
@@ -131,7 +129,7 @@ _emitted_any=$_degraded_emitted
 if [ "$_phase_suppressed" = "0" ]; then
   case "$_phase" in
     none)
-      echo "TRW: Call trw_session_start(query='your task domain') to load context, then read .trw/frameworks/FRAMEWORK-CORE.md — it defines the methodology your tools implement."
+      echo "TRW: Call trw_session_start(query='your task domain') to load context, then read the EXECUTION MODEL SUMMARY and PHASES sections of .trw/frameworks/FRAMEWORK.md — they define the methodology your tools implement."
       _emitted_any=1
       ;;
     early)
@@ -192,6 +190,11 @@ fi
 [ -n "$TRW_AUTO_RECALL_MAX_TOKENS" ] && _auto_recall_max_tokens="$TRW_AUTO_RECALL_MAX_TOKENS"
 [ -n "$TRW_AUTO_RECALL_MIN_SCORE" ] && _auto_recall_min_score="$TRW_AUTO_RECALL_MIN_SCORE"
 [ -n "$TRW_AUTO_RECALL_SCAN_CAP" ] && _auto_recall_scan_cap="$TRW_AUTO_RECALL_SCAN_CAP"
+# The learning_recall_enabled master switch outranks auto_recall_enabled and its env
+# override. The guard keeps a project whose lib-trw.sh predates the helper working.
+if command -v trw_learnings_injection_allowed >/dev/null 2>&1 && ! trw_learnings_injection_allowed; then
+  _auto_recall_enabled="false"
+fi
 
 # Early exit if disabled
 if [ "$_auto_recall_enabled" = "false" ]; then

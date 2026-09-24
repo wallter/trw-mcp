@@ -13,9 +13,7 @@ Provides:
 Authoritative field name (P1-02 fix):
   ``python -c "from trw_mcp.models.config._fields_ceremony import _CeremonyFields;
   print(list(_CeremonyFields.model_fields))"`` confirms ``ceremony_mode`` exists
-  (values: ``"full"`` | ``"light"``).  ``enforcement_variant`` is a SEPARATE field
-  (values are per-client baseline strings, unrelated to the ceremony gate).
-  The CC-02 gate uses ``ceremony_mode``.
+  (values: ``"full"`` | ``"light"``). The CC-02 gate uses ``ceremony_mode``.
 """
 
 from __future__ import annotations
@@ -45,7 +43,6 @@ __all__ = [
 # --- P1-02 resolution: authoritative field name ---
 # Verified by inspecting trw_mcp.models.config._fields_ceremony.model_fields:
 #   ceremony_mode: Literal["full", "light"] = "full"
-# enforcement_variant is a separate, per-baseline string field.
 # This constant is referenced by tests and the CC-02 segment gate.
 _CEREMONY_MODE_FIELD: str = "ceremony_mode"
 

@@ -28,7 +28,6 @@ from fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from trw_mcp.tools._operation_owner_adapter import status_envelope
-from trw_mcp.tools.telemetry import log_tool_call
 
 if TYPE_CHECKING:
     from trw_mcp.tools._delivery_operations import DeliveryCoordinator
@@ -66,7 +65,6 @@ def register_delivery_tools(server: FastMCP) -> None:
         output_schema=None,
         annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False),
     )
-    @log_tool_call
     def trw_delivery_status(
         ctx: Context | None = None,
         delivery_id: str = "",
@@ -96,7 +94,6 @@ def register_delivery_tools(server: FastMCP) -> None:
         output_schema=None,
         annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=False, openWorldHint=False),
     )
-    @log_tool_call
     def trw_delivery_recover(
         ctx: Context | None = None,
         delivery_id: str = "",
@@ -111,15 +108,14 @@ def register_delivery_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Recover a stale/crashed delivery. Use when a lease is stale or
         its process crashed — not for routine checks (trw_delivery_status).
-        Requires the delivery_id and capability_token trw_deliver returned,
-        plus the exact expected_revision.
+        Requires the delivery_id, capability_token (from trw_deliver), and
+        exact expected_revision.
 
         Args: action in {takeover_pending, resume, reconcile_applied,
         reconcile_not_applied, request_cancel}. resume finishes a crashed
-        delivery under the SAME delivery_id: it classifies the crashed
-        steps, refuses with reconciliation_required while any is
-        indeterminate, otherwise leases this process so a re-invoked
-        trw_deliver runs only the steps that never started.
+        delivery under the SAME delivery_id (may refuse with
+        reconciliation_required); a re-invoked trw_deliver then runs only the
+        steps that never started.
         """
         if action not in _SUPPORTED_ACTIONS:
             return {"result": "unsupported_action", "action": action, "supported": list(_SUPPORTED_ACTIONS)}

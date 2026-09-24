@@ -12,9 +12,18 @@ from __future__ import annotations
 import argparse
 
 from trw_mcp import __version__
+from trw_mcp.bootstrap._utils import SUPPORTED_IDES
 from trw_mcp.server._cli_argparse_dispatch import add_dispatch_subcommand
 from trw_mcp.server._cli_argparse_operational import add_operational_subcommands
-from trw_mcp.server._cli_argparse_project import add_project_subcommands
+from trw_mcp.server._cli_argparse_project import _ide_choice, add_project_subcommands
+
+#: CLIENT-REMOVE (PRD-INFRA-192-FR09): the installable client set for
+#: ``uninstall --ide`` (the one spelling; ``--remove-ide`` was removed, not aliased). Deliberately excludes "all" (that is the plain
+#: `uninstall` — a whole-project removal, not a per-client one) and reuses
+#: ``_ide_choice`` so a retired id (e.g. ``aider``) gets the same "retired,
+#: here's the migration hint" error `--ide` gives, instead of a bare argparse
+#: "invalid choice".
+_REMOVE_IDE_CHOICES = sorted(SUPPORTED_IDES)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -81,17 +90,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         # trw-mcp. Rejecting the flag turns every such install into a hard
         # fail. Accept exactly "stdio"; any other value still errors.
     )
-    parser.add_argument(
-        "--memory-db",
-        dest="memory_db",
-        action="append",
-        default=None,
-        metavar="PATH",
-        help=(
-            "Register an EXTERNAL trw-memory DB as a READ-ONLY source unioned into "
-            "trw_recall (PRD-CORE-202). Repeatable; union'd with config.extra_read_stores."
-        ),
-    )
 
     subparsers = parser.add_subparsers(dest="command")
 
@@ -136,14 +134,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Skip confirmation prompt",
     )
     uninstall_parser.add_argument(
-        "--user-tier",
+        "--delete-memory",
         action="store_true",
-        help="Also remove the machine-local ~/.trw user-tier store (PRD-SEC-006)",
+        help="Also delete this checkout's own namespace from the shared memory store, through its grant",
     )
     uninstall_parser.add_argument(
         "--keep-memory",
         action="store_true",
         help="Preserve the learning corpus (.trw/memory + .trw/learnings) while removing all other TRW state",
+    )
+    uninstall_parser.add_argument(
+        "--ide",
+        choices=_REMOVE_IDE_CHOICES,
+        type=_ide_choice,
+        default=None,
+        help=(
+            "Remove only this client's surfaces (its config, agents, skills, hooks) and drop it from "
+            "target_platforms, instead of uninstalling the whole project"
+        ),
     )
 
     # config-reference

@@ -163,6 +163,12 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         ),
         allow_writes_argv=("--permission-mode", "acceptEdits"),
         model_flag="--model",
+        tier_profile="claude-code",
+        # `claude --help` (2.1.280, 2026-09-22): "--effort <level> ... (low, medium, high,
+        # xhigh, max)". The ONLY effort control Opus 5.5 honours from the CLI; the
+        # top-level effortLevel setting no longer applies to it.
+        effort_flag="--effort",
+        effort_levels=("low", "medium", "high", "xhigh", "max"),
         prompt_flag="-p",
         version_argv=("--version",),
         output_shape="single_json_object",
@@ -344,7 +350,18 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # read, which is the fail-closed direction.
         confined_read_only_argv=("--dangerously-skip-permissions",),
         host_confinement=True,
+        # isolated_review stays unset (PRD-CORE-297-FR05 probe, agy 1.2.8, 2026-09-23).
+        # With the lane's temp HOME as the ONE writable path, the confined preflight
+        # passed (exit 0, "No MCP servers configured."), but the run failed: that HOME
+        # holds no agy credentials, so agy starts an OAuth login and exits 1 with
+        # "authentication failed or timed out"; the canary is never read. Isolation held:
+        # contamination clean, the escape write denied, the caller byte-identical.
+        # Seeding real credentials into the lane would widen it; not done.
         model_flag="--model",
+        # `agy --help` (1.2.7, 2026-09-22): "--effort  Reasoning effort for the current
+        # CLI session (low|medium|high)". xhigh/max requests clamp down to high.
+        effort_flag="--effort",
+        effort_levels=("low", "medium", "high"),
         # MEASURED 2026-09-16: without --add-dir, agy loads NONE of the project's
         # instruction files (the AGENTS.md canary came back NOT LOADED); with it, the canary
         # returned the file's first line. instruction_files below declares AGENTS.md, so
@@ -398,21 +415,14 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         binary="opencode",
         base_argv=("opencode", "run"),
         structured_output_argv=("--format", "json"),
-        # MEASURED DEFECT, 2026-09-12, left in place deliberately rather than
-        # silently "fixed": `opencode run --help` at 1.18.30 has NO
-        # --dangerously-skip-permissions. Its auto-approve flag is `--auto`
-        # ("auto-approve permissions that are not explicitly denied
-        # (dangerous!)"), and opencode REJECTS an unknown option by printing
-        # help and exiting 1 -- verified by running
-        # `opencode run --zzz-not-a-flag --model bogus/bogus "hi"` (help, exit 1)
-        # against the same argv without the bogus flag (reaches the provider).
-        # So a read_only=False dispatch to opencode never starts the run: the
-        # current state is FAIL-CLOSED. Swapping in `--auto` would turn a
-        # non-starting run into a live permission bypass, which is a security
-        # posture change for the dispatch owner to make with the read-only lane
-        # in view, not a typo fix. Documented in docs/CLIENT-PROFILES.md
-        # §What will bite you until then.
-        allow_writes_argv=("--dangerously-skip-permissions",),
+        # `opencode run --help` at 1.18.30 has no --dangerously-skip-permissions
+        # (the binary does not contain the string); its non-interactive write grant
+        # is `--auto` ("auto-approve permissions that are not explicitly denied"),
+        # which the opencode CLI docs list for `run` (checked 2026-09-23). Until then
+        # a write dispatch failed at argv parse (help, exit 1). Read-only runs never
+        # carry it: read-only IS the omission of this fragment, and `--auto` stays
+        # in _FORBIDDEN_EXTRA_ARG_TOKENS so a caller cannot add it.
+        allow_writes_argv=("--auto",),
         model_flag="--model",
         cwd_flag="--dir",
         version_argv=("--version",),
@@ -601,6 +611,14 @@ CLIENT_SPECS: dict[DispatchClient, ClientSpec] = {
         # CHANGELOG row says so too.
         allow_writes_argv=("--permission-mode", "auto"),
         model_flag="--model",
+        # `grok --help` (1.0.34, 2026-09-22) documents `--max-turns <N>`; a probe at
+        # --max-turns 1 exited 1 with "Error: max turns reached" on stderr.
+        max_turns_flag="--max-turns",
+        max_turns_exhausted_marker="max turns reached",
+        # NO effort_flag, deliberately. `grok --help` (1.0.34, 2026-09-22) documents
+        # --reasoning-effort (alias --effort) but does not enumerate its values, and
+        # learning them would take a live model call. A guessed value fails at argv
+        # parse, so grok children run at grok's own default until a probe records them.
         prompt_flag="-p",
         cwd_flag="--cwd",
         version_argv=("version",),

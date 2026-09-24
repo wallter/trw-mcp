@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+from fastmcp import Context, FastMCP
 
 from trw_mcp.telemetry.event_base import ToolCallEvent, validate_parent_within_run
 from trw_mcp.telemetry.tool_call_timing import (
@@ -135,11 +139,187 @@ class TestUsdCostEstimate:
             usd = _usd_cost_estimate(model_id=model_id, input_tokens=1000, output_tokens=1000)
             assert usd > 0.0, f"{model_id} is priced at zero"
 
+    def test_opus_5_5_has_its_own_row(self) -> None:
+        """Opus 5.5 is $4/$20 per MTok; the boundary match must not price it as Opus 5 ($5/$25)."""
+        for spelling in ("claude-opus-5-5", "anthropic.claude-opus-5-5", "claude-opus-5-5[1m]"):
+            usd = _usd_cost_estimate(model_id=spelling, input_tokens=1000, output_tokens=1000)
+            assert usd == pytest.approx(0.004 + 0.020, abs=1e-9), spelling
+        assert _usd_cost_estimate(model_id="claude-opus-5", input_tokens=1000, output_tokens=1000) == pytest.approx(
+            0.005 + 0.025, abs=1e-9
+        )
+
     def test_near_miss_id_does_not_inherit_a_shorter_family(self) -> None:
         assert _usd_cost_estimate(model_id="claude-opus-4-80", input_tokens=1000, output_tokens=1000) == 0.0
 
 
 class TestWrapTool:
+    def test_sync_callable_returning_coroutine_still_runs_under_fastmcp(self) -> None:
+        server = FastMCP("sync-awaitable")
+
+        def returns_coroutine() -> object:
+            async def inner() -> str:
+                await asyncio.sleep(0)
+                return "done"
+
+            return inner()
+
+        server.tool()(wrap_tool(returns_coroutine))
+        result = asyncio.run(server.call_tool("returns_coroutine", {}))
+        assert result.structured_content == {"result": "done"}
+
+    def test_sync_callable_returning_coroutine_disposes_inner_on_immediate_cancel(self) -> None:
+        inner_calls: list[object] = []
+
+        async def inner() -> None:
+            await asyncio.Future()
+
+        def returns_coroutine() -> object:
+            result = inner()
+            inner_calls.append(result)
+            return result
+
+        async def cancel_immediately() -> None:
+            task = asyncio.create_task(wrap_tool(returns_coroutine)())
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(cancel_immediately())
+        assert len(inner_calls) == 1
+        assert inspect.getcoroutinestate(inner_calls[0]) == inspect.CORO_CLOSED
+
+    def test_cancel_before_first_step_leaves_no_call_marker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import trw_mcp.formation as formation
+        import trw_mcp.telemetry.tool_call_timing as timing
+
+        marker = tmp_path / "blocked.json"
+        starts: list[float] = []
+        emitted: list[object] = []
+
+        def begin(_ctx: object, since: float) -> Path:
+            starts.append(since)
+            marker.write_text("started")
+            return marker
+
+        monkeypatch.setattr(formation, "begin_call", begin)
+        monkeypatch.setattr(timing, "emit_tool_call_event", emitted.append)
+
+        async def never_started() -> None:
+            await asyncio.Future()
+
+        async def cancel_immediately() -> None:
+            task = asyncio.create_task(wrap_tool(never_started)())
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(cancel_immediately())
+        assert not starts, "a cancelled-before-start tool never began a call episode"
+        assert not marker.exists()
+        assert not emitted, "a tool cancelled before its first step did not execute"
+
+    @pytest.mark.parametrize("outcome", ["success", "failure", "cancelled"])
+    def test_async_event_waits_and_emits_once_with_terminal_outcome(
+        self, monkeypatch: pytest.MonkeyPatch, outcome: str
+    ) -> None:
+        import trw_mcp.telemetry.tool_call_timing as timing
+
+        emitted: list[object] = []
+        monkeypatch.setattr(timing, "emit_tool_call_event", emitted.append)
+
+        async def run() -> None:
+            await asyncio.sleep(0.02)
+            if outcome == "failure":
+                raise RuntimeError("later failure")
+            if outcome == "cancelled":
+                await asyncio.Future()
+
+        async def exercise() -> None:
+            task = asyncio.create_task(wrap_tool(run)())
+            if outcome == "cancelled":
+                await asyncio.sleep(0.03)
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            elif outcome == "failure":
+                with pytest.raises(RuntimeError, match="later failure"):
+                    await task
+            else:
+                await task
+
+        asyncio.run(exercise())
+        assert len(emitted) == 1
+        event = emitted[0]
+        assert (event.end_ts - event.start_ts).total_seconds() >= 0.015
+        assert event.outcome == ("success" if outcome == "success" else "error")
+        assert event.error_class == {"success": None, "failure": "RuntimeError", "cancelled": "CancelledError"}[outcome]
+
+    def test_formed_call_marker_clears_on_sync_exit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import trw_mcp.formation as formation
+
+        marker = tmp_path / "blocked.json"
+
+        def begin(*_args: object) -> Path:
+            marker.write_text("started")
+            return marker
+
+        monkeypatch.setattr(formation, "begin_call", begin)
+        assert wrap_tool(lambda: "done")() == "done"
+        assert not marker.exists()
+
+    def test_formed_async_call_marker_clears_on_cancellation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import trw_mcp.formation as formation
+
+        marker = tmp_path / "blocked.json"
+
+        def begin(*_args: object) -> Path:
+            marker.write_text("started")
+            return marker
+
+        monkeypatch.setattr(formation, "begin_call", begin)
+
+        async def slow() -> None:
+            await asyncio.Future()
+
+        async def cancel() -> None:
+            task = asyncio.create_task(wrap_tool(slow)())
+            await asyncio.sleep(0)
+            assert marker.exists()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        asyncio.run(cancel())
+        assert not marker.exists()
+
+    def test_fastmcp_awaits_wrapped_async_call_before_marker_clear(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import trw_mcp.formation as formation
+
+        marker = tmp_path / "blocked.json"
+
+        def begin(*_args: object) -> Path:
+            marker.write_text("started")
+            return marker
+
+        monkeypatch.setattr(formation, "begin_call", begin)
+        server = FastMCP("call-marker-test")
+
+        async def probe(ctx: Context) -> str:
+            assert marker.exists()
+            await asyncio.sleep(0)
+            return "done"
+
+        server.tool()(wrap_tool(probe))
+        result = asyncio.run(server.call_tool("probe", {}))
+        assert result.structured_content == {"result": "done"}
+        assert not marker.exists()
+
     def test_wrapper_returns_original_value(self) -> None:
         def my_tool(a: int, b: int) -> int:
             return a + b
@@ -226,7 +406,6 @@ _FR04_EXPECTED_TOOLS = frozenset(
         "trw_prd_create",
         "trw_prd_validate",
         "trw_learn",
-        "trw_learn_update",
         "trw_checkpoint",
         "trw_build_check",
         "trw_review",
@@ -259,9 +438,11 @@ def test_prd_core_215_fr04() -> None:
         ceremony_tool_spec,
     )
 
-    # --- The inventory is EXACTLY the 16 named tools — no more, no fewer. ---
+    # --- The inventory is EXACTLY the 15 named tools — no more, no fewer. ---
+    # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode, so it
+    # is no longer a separate ceremony-tool entry.
     assert ceremony_tool_names() == _FR04_EXPECTED_TOOLS
-    assert len(_FR04_EXPECTED_TOOLS) == 16
+    assert len(_FR04_EXPECTED_TOOLS) == 15
 
     # --- Every named tool has one disposition, budget, policy, and owner. ---
     for name in _FR04_EXPECTED_TOOLS:
@@ -287,7 +468,7 @@ def test_prd_core_215_fr04() -> None:
         assert ceremony_tool_disposition(name) is CeremonyExecutionClass.SYNCHRONOUS_ONLY
     assert ceremony_tool_disposition("trw_prd_validate") is CeremonyExecutionClass.SYNCHRONOUS_BOUNDED
     synchronous_only = _FR04_EXPECTED_TOOLS - _FR04_OPERATION_BACKED - {"trw_prd_validate"}
-    assert len(synchronous_only) == 14
+    assert len(synchronous_only) == 13
     for name in synchronous_only:
         assert ceremony_tool_disposition(name) is CeremonyExecutionClass.SYNCHRONOUS_ONLY
 

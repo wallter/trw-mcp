@@ -16,6 +16,7 @@ from contextlib import suppress
 import structlog
 
 from trw_mcp.models.config._client_profile import NudgePoolWeights
+from trw_mcp.state._ceremony_state_model import PoolCooldown
 from trw_mcp.state._nudge_state import _STEPS, CeremonyState, NudgeContext
 from trw_mcp.state._nudge_state import _step_complete as _step_complete  # re-export
 
@@ -192,26 +193,26 @@ def _reversion_prompt(context: NudgeContext | None, state: CeremonyState) -> str
 # ---------------------------------------------------------------------------
 
 
-def is_pool_in_cooldown(
+def resolve_pool_cooldown(
     state: CeremonyState,
     pool: str,
     *,
     wall_clock_max_hours: int | None = None,
 ) -> bool:
-    """Check if a pool is currently in cooldown.
+    """Expire stale cooldown state, then report whether the pool remains cooled.
 
     A pool is in cooldown when the tool_call_counter has not yet reached
     the cooldown_until value for that pool.
 
     PRD-CORE-144 FR03: when *wall_clock_max_hours* is provided (or resolved
     from config) and more than that many hours have elapsed since the pool
-    entered cooldown (tracked in ``pool_cooldown_set_at``), the pool is
+    entered cooldown (tracked in ``PoolCooldown.set_at``), the pool is
     forced out of cooldown on the next evaluation. This prevents the
     primary "learnings" pool from getting stuck indefinitely after a burst
     of pool nudges exceeded the per-pool counter.
     """
-    cooldown_until = state.pool_cooldown_until.get(pool, 0)
-    if state.tool_call_counter >= cooldown_until:
+    cooldown = state.pool_cooldowns.get(pool)
+    if cooldown is None or state.tool_call_counter >= cooldown.until_counter:
         return False
 
     # Wall-clock cap — resolve default from config if not provided.
@@ -223,7 +224,7 @@ def is_pool_in_cooldown(
         except Exception:  # justified: fail-open — no config means use conservative default
             wall_clock_max_hours = 24
 
-    entered_at_raw = state.pool_cooldown_set_at.get(pool, "")
+    entered_at_raw = cooldown.set_at
     if entered_at_raw:
         try:
             import datetime as _dt
@@ -237,9 +238,9 @@ def is_pool_in_cooldown(
                 # Force-expire on this read. Mutates state in place so the
                 # next selection pass sees the pool as eligible. The
                 # containing nudge tick persists state after pool selection.
-                state.pool_cooldown_until[pool] = 0
-                state.pool_cooldown_set_at.pop(pool, None)
-                state.pool_ignore_counts[pool] = 0
+                cooldown.until_counter = 0
+                cooldown.set_at = ""
+                cooldown.ignore_count = 0
                 logger.info(
                     "pool_cooldown_wall_clock_expired",
                     pool=pool,
@@ -247,9 +248,10 @@ def is_pool_in_cooldown(
                     max_hours=wall_clock_max_hours,
                 )
                 return False
+        # trw-fail-silent-allow: corrupt timestamp releases transient cooldown (PRD-CORE-144 NFR03).
         except (ValueError, TypeError):
             # Corrupt timestamp — drop it, treat as "never cooled" (NFR03).
-            state.pool_cooldown_set_at.pop(pool, None)
+            cooldown.set_at = ""
             return False
 
     return True
@@ -266,12 +268,14 @@ def apply_pool_cooldown(
     Returns True if cooldown was activated. Resets the ignore count
     for the pool when cooldown is applied.
 
-    PRD-CORE-144 FR03: also stamps ``pool_cooldown_set_at[pool]`` with the
+    PRD-CORE-144 FR03: also stamps ``PoolCooldown.set_at`` with the
     current UTC timestamp so the wall-clock cap can force-expire pools
     that would otherwise stay cooled indefinitely.
     """
-    ignores = state.pool_ignore_counts.get(pool, 0)
+    cooldown = state.pool_cooldowns.get(pool)
+    ignores = cooldown.ignore_count if cooldown is not None else 0
     if cooldown_after > 0 and ignores >= cooldown_after:
+        cooldown = state.pool_cooldowns[pool]  # a positive ignore count came from this record
         import datetime as _dt
 
         # PRD-CORE-146 FR04: nudge_density lever biases cooldown duration.
@@ -289,9 +293,9 @@ def apply_pool_cooldown(
         except Exception:  # justified: fail-open — density is a bias, not a gate
             logger.debug("nudge_density_resolve_failed", exc_info=True)
 
-        state.pool_cooldown_until[pool] = state.tool_call_counter + effective_cooldown
-        state.pool_cooldown_set_at[pool] = _dt.datetime.now(_dt.timezone.utc).isoformat()
-        state.pool_ignore_counts[pool] = 0
+        cooldown.until_counter = state.tool_call_counter + effective_cooldown
+        cooldown.set_at = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        cooldown.ignore_count = 0
         return True
     return False
 
@@ -325,7 +329,7 @@ def _select_nudge_pool(
     for pool, weight in pool_weights.items():
         if weight <= 0:
             continue
-        if is_pool_in_cooldown(state, pool):
+        if resolve_pool_cooldown(state, pool):
             skip_reason = "pool_cooldown"
             try:
                 from trw_mcp.models.config import get_config
@@ -338,7 +342,7 @@ def _select_nudge_pool(
                 "nudge_pool_suppressed",
                 pool=pool,
                 reason="cooldown",
-                until=state.pool_cooldown_until.get(pool, 0),
+                until=state.pool_cooldowns.get(pool, PoolCooldown()).until_counter,
             )
             with suppress(Exception):  # justified: fail-open per NFR02
                 structlog.get_logger(__name__).debug(

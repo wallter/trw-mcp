@@ -109,9 +109,6 @@ from trw_mcp.state.analytics.dedup import (
     _compute_removal_scores_from_sqlite as _compute_removal_scores_from_sqlite,
 )
 from trw_mcp.state.analytics.dedup import (
-    _score_impact_distribution as _score_impact_distribution,
-)
-from trw_mcp.state.analytics.dedup import (
     _score_learning_depth as _score_learning_depth,
 )
 from trw_mcp.state.analytics.dedup import (
@@ -163,9 +160,6 @@ from trw_mcp.state.analytics.entries import (
     save_learning_entry as save_learning_entry,
 )
 from trw_mcp.state.analytics.entries import (
-    surface_validated_learnings as surface_validated_learnings,
-)
-from trw_mcp.state.analytics.entries import (
     update_learning_index as update_learning_index,
 )
 
@@ -196,7 +190,6 @@ __all__ = [
     "normalize_audit_learning_metadata",
     "resync_learning_index",
     "save_learning_entry",
-    "surface_validated_learnings",
     "update_analytics",
     "update_analytics_extended",
     "update_analytics_sync",

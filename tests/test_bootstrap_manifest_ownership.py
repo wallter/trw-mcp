@@ -485,28 +485,13 @@ class TestNoUnguardedRecorder:
 # ---------------------------------------------------------------------------
 
 
+def _snapshot_tree(root: Path) -> dict[str, bytes]:
+    """Return ``{relpath: bytes}`` for every regular file under *root*."""
+    return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
 class TestDegradedManifest:
     """NFR01/NFR04: unknown ownership must never resolve to "TRW owns it"."""
-
-    @pytest.mark.parametrize("degradation", ["absent", "empty", "corrupt"])
-    def test_corrupt_manifest_still_preserves_user_edits(self, degradation: str, tmp_path: Path) -> None:
-        repo = _init_all_clients(tmp_path)
-        hook = repo / ".claude" / "hooks" / "session-start.sh"
-        user_bytes = _user_edit(hook.read_bytes(), ".sh")
-        hook.write_bytes(user_bytes)
-
-        manifest = repo / ".trw" / "managed-artifacts.yaml"
-        if degradation == "absent":
-            manifest.unlink()
-        elif degradation == "empty":
-            manifest.write_text("", encoding="utf-8")
-        else:
-            manifest.write_text("content_hashes: [oops\n  version: :::\n", encoding="utf-8")
-
-        update_project(repo)
-        assert hook.read_bytes() == user_bytes, f"destroyed on run 1 with a {degradation} manifest"
-        update_project(repo)
-        assert hook.read_bytes() == user_bytes, f"destroyed on run 2 with a {degradation} manifest"
 
     def test_unreadable_artifact_fails_toward_preservation(self, tmp_path: Path) -> None:
         """NFR04: an OSError on the artifact read leaves it UNRECORDED, never raises."""
@@ -550,9 +535,17 @@ class TestDegradedManifest:
         from trw_mcp.bootstrap._version_manifest import _manifest_content_hashes, _read_manifest
         from trw_mcp.bootstrap._version_migration import _write_manifest
 
+        def bare_sh_keys(hashes: dict[str, str]) -> list[str]:
+            # ``.sh`` keys bare (no ``/``) are ``.claude/hooks/*.sh`` -- the ONE
+            # surface ``_framework_content_hashes`` (patched below) baselines.
+            # PRD-INFRA-192 FR09 C3 added a SEPARATE ``.sh`` producer
+            # (``.github/hooks/*.sh``, full-path keys) that this stub does not
+            # touch, so a bare check would stay non-vacuous for the wrong reason.
+            return [k for k in hashes if k.endswith(".sh") and "/" not in k]
+
         repo = _init_all_clients(tmp_path)
         before = _manifest_content_hashes(_read_manifest(repo)) or {}
-        assert any(k.endswith(".sh") for k in before), "non-vacuity: hooks must be recorded before the stub"
+        assert bare_sh_keys(before), "non-vacuity: hooks must be recorded before the stub"
 
         monkeypatch.setattr(_version_manifest, "_framework_content_hashes", lambda _src: set())
         result: dict[str, list[str]] = {"updated": [], "created": [], "errors": []}
@@ -560,7 +553,349 @@ class TestDegradedManifest:
 
         assert not result["errors"]
         after = _manifest_content_hashes(_read_manifest(repo)) or {}
-        assert not any(k.endswith(".sh") for k in after)
+        assert not bare_sh_keys(after)
+
+
+class TestInvalidManifestRefuses:
+    """PRD-INFRA-192-NFR02: a missing/corrupt/unsupported-schema manifest makes
+    ``update_project`` refuse before touching any artifact, rather than guessing
+    ownership. This supersedes the old fail-open "preserves user edits anyway"
+    behavior asserted by the retired ``test_corrupt_manifest_still_preserves_user_edits``
+    — refusal makes that assertion vacuously true (nothing was touched at all),
+    so it is replaced with an explicit refusal + byte-identical-tree contract.
+    """
+
+    def _assert_refuses_without_side_effects(self, repo: Path) -> None:
+        before = _snapshot_tree(repo)
+        assert before, "non-vacuity: the tree snapshot must contain at least one file"
+        assert any(rel.startswith(".trw" + "/") for rel in before), (
+            "non-vacuity: the snapshot must cover .trw/ (memory/learnings), not just client dirs"
+        )
+
+        result = update_project(repo)
+
+        assert len(result["errors"]) == 1, result["errors"]
+        (message,) = result["errors"]
+        assert "refusing to update" in message
+        assert "clean reinstall: `trw-mcp uninstall --keep-memory` then `trw-mcp init-project`" in message
+
+        after = _snapshot_tree(repo)
+        assert after == before, "refusal must not modify a single byte of the project"
+
+        # A second call also refuses — no side effect from the first call made
+        # the manifest valid.
+        result2 = update_project(repo)
+        assert len(result2["errors"]) == 1, result2["errors"]
+        assert "refusing to update" in result2["errors"][0]
+        assert _snapshot_tree(repo) == before
+
+    @pytest.mark.parametrize("degradation", ["absent", "empty", "corrupt", "non_mapping"])
+    def test_missing_or_malformed_manifest_refuses(self, degradation: str, tmp_path: Path) -> None:
+        repo = _init_all_clients(tmp_path)
+        manifest = repo / ".trw" / "managed-artifacts.yaml"
+        if degradation == "absent":
+            manifest.unlink()
+        elif degradation == "empty":
+            manifest.write_text("", encoding="utf-8")
+        elif degradation == "corrupt":
+            manifest.write_text("content_hashes: [oops\n  version: :::\n", encoding="utf-8")
+        else:  # non_mapping — a YAML list at the document root, not a mapping
+            manifest.write_text("- version\n- 2\n", encoding="utf-8")
+
+        self._assert_refuses_without_side_effects(repo)
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("content_hashes", None),
+            ("content_hashes", ["a.md"]),
+            ("content_hashes", {"a.md": 3}),
+            ("agents", "trw-lead.md"),
+            ("custom_hooks", [1]),
+            ("packages", ["trw-mcp"]),
+            ("packages", {"trw-mcp": None}),
+            ("owners", ["a.md"]),
+            ("owners", {"a.md": "claude-code"}),
+            ("owners", {"a.md": [1]}),
+            ("tombstones", {"a.md": "oops"}),
+            ("tombstones", [1]),
+        ],
+    )
+    def test_parseable_manifest_with_a_malformed_field_refuses(self, field: str, value: object, tmp_path: Path) -> None:
+        """A current-schema manifest whose ownership fields are the wrong type refuses too.
+
+        The reader coerces a wrong-typed field to empty, so an update would rewrite
+        the ownership record from nothing (codex review of 14ae6dd34).
+        """
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        repo = _init_all_clients(tmp_path)
+        manifest_path = repo / ".trw" / "managed-artifacts.yaml"
+        data = FileStateReader().read_yaml(manifest_path)
+        if value is None:
+            del data[field]
+        else:
+            data[field] = value
+        FileStateWriter().write_yaml(manifest_path, data)
+
+        self._assert_refuses_without_side_effects(repo)
+        assert repr(field) in update_project(repo)["errors"][0]
+
+    @pytest.mark.parametrize("literal", ["2.0", "true", "'2'"])
+    def test_a_version_that_is_not_an_int_refuses(self, literal: str, tmp_path: Path) -> None:
+        """Codex round 2: YAML ``2.0`` equals ``2`` in Python and passed the check, then
+        crashed the reader's ``int(str(...))``."""
+        repo = _init_all_clients(tmp_path)
+        manifest = repo / ".trw" / "managed-artifacts.yaml"
+        text = manifest.read_text(encoding="utf-8")
+        assert "version: 2\n" in text
+        manifest.write_text(text.replace("version: 2\n", f"version: {literal}\n", 1), encoding="utf-8")
+
+        self._assert_refuses_without_side_effects(repo)
+        assert "unsupported schema version" in update_project(repo)["errors"][0]
+
+    @pytest.mark.parametrize("version", [1, 99])
+    def test_unsupported_schema_version_refuses(self, version: int, tmp_path: Path) -> None:
+        """An otherwise-valid manifest with a schema version this build does not
+        read is refused exactly like a missing/corrupt one — no legacy reader."""
+        repo = _init_all_clients(tmp_path)
+        manifest = repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.bootstrap._version_manifest import MANIFEST_VERSION
+
+        original = manifest.read_text(encoding="utf-8")
+        current = f"version: {MANIFEST_VERSION}"
+        assert current in original, "non-vacuity: the real manifest must carry the current version"
+        downgraded = original.replace(current, f"version: {version}", 1)
+        manifest.write_text(downgraded, encoding="utf-8")
+
+        self._assert_refuses_without_side_effects(repo)
+
+    def test_dry_run_also_refuses(self, tmp_path: Path) -> None:
+        repo = _init_all_clients(tmp_path)
+        (repo / ".trw" / "managed-artifacts.yaml").unlink()
+        before = _snapshot_tree(repo)
+
+        result = update_project(repo, dry_run=True)
+
+        assert len(result["errors"]) == 1
+        assert "refusing to update" in result["errors"][0]
+        assert "clean reinstall" in result["errors"][0]
+        assert _snapshot_tree(repo) == before
+
+    def test_fresh_install_in_new_target_succeeds(self, tmp_path: Path) -> None:
+        """A brand-new ``init_project`` writes a current-schema manifest, so the very
+        next ``update_project`` on that target succeeds with no errors — the
+        refusal is specific to an existing installation with a bad manifest,
+        not a blanket block on updates."""
+        repo = _init_all_clients(tmp_path)
+        manifest = repo / ".trw" / "managed-artifacts.yaml"
+        from trw_mcp.bootstrap._version_manifest import MANIFEST_VERSION
+
+        assert f"version: {MANIFEST_VERSION}" in manifest.read_text(encoding="utf-8")
+
+        result = update_project(repo)
+        assert not result["errors"], result["errors"]
+
+
+class TestOpencodeDistillOwnership:
+    """PRD-INFRA-192 FR12: the opencode distill files are recorded by the one recorder registry.
+
+    Their installer used to keep its own ``commands``/``explorer_agent`` keys,
+    which ``_write_manifest`` dropped, so every update ran with no baseline and
+    overwrote a user's edit to ``.opencode/commands/trw-*.md``.
+    """
+
+    _COMMANDS = (
+        ".opencode/commands/trw-before-edit.md",
+        ".opencode/commands/trw-distill-hotspots.md",
+        ".opencode/commands/trw-distill-conventions.md",
+    )
+
+    def _init_opencode(self, root: Path) -> Path:
+        repo = root / "proj"
+        (repo / ".git").mkdir(parents=True)
+        assert not init_project(repo, ide="opencode")["errors"]
+        return repo
+
+    def test_user_edits_survive_repeated_updates(self, tmp_path: Path) -> None:
+        repo = self._init_opencode(tmp_path)
+        edited = {rel: (repo / rel).read_bytes() + b"\nmy note\n" for rel in self._COMMANDS}
+        for rel, body in edited.items():
+            (repo / rel).write_bytes(body)
+
+        for _ in range(2):
+            assert not update_project(repo, ide="opencode")["errors"]
+            assert {rel: (repo / rel).read_bytes() for rel in self._COMMANDS} == edited
+
+    def test_manifest_records_them_as_trw_owned_and_nowhere_else(self, tmp_path: Path) -> None:
+        from trw_mcp.state.persistence import FileStateReader
+
+        repo = self._init_opencode(tmp_path)
+        assert not update_project(repo, ide="opencode")["errors"]
+        manifest = FileStateReader().read_yaml(repo / ".trw" / "managed-artifacts.yaml")
+
+        content_hashes = manifest["content_hashes"]
+        assert isinstance(content_hashes, dict)
+        for rel in self._COMMANDS:
+            assert content_hashes[rel] == hashlib.sha256((repo / rel).read_bytes()).hexdigest()
+        assert "commands" not in manifest
+        assert "explorer_agent" not in manifest
+        assert not {Path(rel).name for rel in self._COMMANDS} & set(manifest["custom_opencode_commands"])
+
+    def test_recorded_stale_command_is_refreshed(self, tmp_path: Path) -> None:
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        repo = self._init_opencode(tmp_path)
+        rel = self._COMMANDS[0]
+        current = (repo / rel).read_bytes()
+        (repo / rel).write_bytes(b"an older TRW body\n")
+        manifest_path = repo / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        manifest["content_hashes"][rel] = hashlib.sha256(b"an older TRW body\n").hexdigest()
+        FileStateWriter().write_yaml(manifest_path, manifest)
+
+        assert not update_project(repo, ide="opencode")["errors"]
+        assert (repo / rel).read_bytes() == current
+
+
+class TestOpencodeDistillWriteFailure:
+    """Codex round 2: a distill file the installer failed to write returned ``status: error``
+    that never reached ``result['errors']``, so init reported success and wrote a manifest."""
+
+    def test_failed_first_install_reports_and_writes_no_manifest(self, tmp_path: Path) -> None:
+        repo = tmp_path / "proj"
+        (repo / ".git").mkdir(parents=True)
+        (repo / ".opencode" / "commands" / "trw-before-edit.md").mkdir(parents=True)
+
+        errors = init_project(repo, ide="opencode")["errors"]
+
+        assert any("trw-before-edit.md not written" in error for error in errors), errors
+        assert not (repo / ".trw" / "managed-artifacts.yaml").exists()
+
+    def test_failed_explorer_write_on_first_install_reports_and_writes_no_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("trw_mcp.bootstrap._distill_entitlement.distill_artifacts_entitled", lambda **_kwargs: True)
+        repo = tmp_path / "proj"
+        (repo / ".git").mkdir(parents=True)
+        (repo / ".opencode" / "agents" / "trw-distill-explorer.md").mkdir(parents=True)
+
+        errors = init_project(repo, ide="opencode")["errors"]
+
+        assert any("explorer agent not written" in error for error in errors), errors
+        assert not (repo / ".trw" / "managed-artifacts.yaml").exists()
+
+    def test_failed_write_during_update_restores_prior_files_and_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
+        repo = tmp_path / "proj"
+        (repo / ".git").mkdir(parents=True)
+        assert not init_project(repo, ide="opencode")["errors"]
+        # Non-vacuity: a successful update would rewrite the manifest's packages
+        # and refresh this TRW-recorded stale command.
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+            lambda: {"trw-mcp": "99.0.0", "trw-memory": "98.0.0"},
+        )
+        hotspots = repo / ".opencode" / "commands" / "trw-distill-hotspots.md"
+        hotspots.write_text("an older TRW body\n", encoding="utf-8")
+        manifest_path = repo / ".trw" / "managed-artifacts.yaml"
+        manifest = FileStateReader().read_yaml(manifest_path)
+        manifest["content_hashes"][".opencode/commands/trw-distill-hotspots.md"] = hashlib.sha256(
+            b"an older TRW body\n"
+        ).hexdigest()
+        FileStateWriter().write_yaml(manifest_path, manifest)
+        target = repo / ".opencode" / "commands" / "trw-before-edit.md"
+        target.unlink()
+        target.mkdir()
+        before = _snapshot_tree(repo)
+
+        result = update_project(repo, ide="opencode")
+
+        assert any("trw-before-edit.md not written" in error for error in result["errors"]), result["errors"]
+        assert _snapshot_tree(repo) == before
+
+
+class TestManifestRecordsPackages:
+    """PRD-INFRA-192 FR12: the manifest's ``packages`` is the one record of resolved versions."""
+
+    def test_init_and_update_record_the_interpreter_versions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import importlib.metadata
+
+        from trw_mcp.state.persistence import FileStateReader
+
+        repo = _init_all_clients(tmp_path)
+        manifest = repo / ".trw" / "managed-artifacts.yaml"
+        assert FileStateReader().read_yaml(manifest)["packages"] == {
+            "trw-mcp": importlib.metadata.version("trw-mcp"),
+            "trw-memory": importlib.metadata.version("trw-memory"),
+        }
+
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+            lambda: {"trw-mcp": "99.0.0", "trw-memory": "98.0.0"},
+        )
+        assert not update_project(repo)["errors"]
+        assert FileStateReader().read_yaml(manifest)["packages"] == {"trw-mcp": "99.0.0", "trw-memory": "98.0.0"}
+
+    def test_failed_update_does_not_claim_the_new_versions_and_a_retry_does(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from trw_mcp.bootstrap import _update_project
+
+        repo = _init_all_clients(tmp_path)
+        manifest = repo / ".trw" / "managed-artifacts.yaml"
+        before = manifest.read_bytes()
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+            lambda: {"trw-mcp": "99.0.0", "trw-memory": "98.0.0"},
+        )
+        real_phases = _update_project._run_post_update_phases
+
+        def failing(*args: object, **kwargs: object) -> None:
+            raise OSError("disk full")
+
+        monkeypatch.setattr(_update_project, "_run_post_update_phases", failing)
+        assert update_project(repo)["errors"]
+        assert manifest.read_bytes() == before
+
+        monkeypatch.setattr(_update_project, "_run_post_update_phases", real_phases)
+        assert not update_project(repo)["errors"]
+        assert "99.0.0" in manifest.read_text(encoding="utf-8")
+
+    def test_init_that_reported_errors_writes_no_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def failing_integrations(*args: object, result: dict[str, list[str]], **kwargs: object) -> None:
+            result["errors"].append("integration failed")
+
+        monkeypatch.setattr("trw_mcp.bootstrap._init_project.run_install_integrations", failing_integrations)
+        repo = tmp_path / "proj"
+        (repo / ".git").mkdir(parents=True)
+        assert init_project(repo, ide="claude-code")["errors"]
+        assert not (repo / ".trw" / "managed-artifacts.yaml").exists()
+
+        refusal = update_project(repo)["errors"]
+        assert len(refusal) == 1
+        assert "is missing" in refusal[0]
+        assert "trw-mcp uninstall --keep-memory" in refusal[0]
+
+    def test_version_yaml_carries_no_package_stamp(self, tmp_path: Path) -> None:
+        repo = _init_all_clients(tmp_path)
+        (repo / ".trw" / "frameworks" / "VERSION.yaml").write_text(
+            (repo / ".trw" / "frameworks" / "VERSION.yaml").read_text(encoding="utf-8")
+            + "trw_mcp_version: 0.0.1\ntrw_memory_version: 0.0.1\n",
+            encoding="utf-8",
+        )
+        (repo / ".trw" / "frameworks" / "FRAMEWORK.md").write_text("stale\n", encoding="utf-8")
+        assert not update_project(repo)["errors"]
+        stamp = (repo / ".trw" / "frameworks" / "VERSION.yaml").read_text(encoding="utf-8")
+        assert "trw_mcp_version" not in stamp
+        assert "trw_memory_version" not in stamp
 
 
 # ---------------------------------------------------------------------------
@@ -691,16 +1026,21 @@ _DROPPED_KEY = ".agents/skills/trw-audit/audit-framework.md"
 
 @pytest.fixture
 def codex_bundle(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A writable copy of the codex skills bundle, wired in as the live source.
+    """A writable copy of the canonical skills bundle, wired in as the live source.
 
-    Lets a test drop a file from a skill that stays bundled — the shape the
-    directory-granular cleanup cannot see.
+    Every client now renders from the one canonical corpus
+    (``_client_skills.canonical_skills_dir()``, PRD-CORE-291-FR04); redirecting
+    it is how a test drops a file from a skill that stays bundled — the shape
+    the directory-granular cleanup cannot see. Patched at
+    ``trw_mcp.bootstrap._client_skills`` (the consumer site imports it via a
+    local ``from ._client_skills import canonical_skills_dir`` inside each
+    call, so the module attribute is what's actually looked up).
     """
-    from trw_mcp.bootstrap import _codex
+    from trw_mcp.bootstrap import _client_skills
 
     fake = tmp_path_factory.mktemp("codex-bundle") / "skills"
-    shutil.copytree(_codex._codex_skills_source_dir(), fake)
-    monkeypatch.setattr(_codex, "_codex_skills_source_dir", lambda: fake)
+    shutil.copytree(_client_skills.canonical_skills_dir(), fake)
+    monkeypatch.setattr(_client_skills, "canonical_skills_dir", lambda: fake)
     return fake
 
 
@@ -736,8 +1076,11 @@ class TestDroppedBundleFileDoesNotFreeze:
 
         update_project(repo)
 
+        from trw_mcp.bootstrap._client_skills import render_skill_md
+
         assert not dropped.exists(), "the orphaned file survived the sweep"
-        assert skill_md.read_bytes() == bundled_skill_md.read_bytes(), (
+        expected = render_skill_md(bundled_skill_md.read_text(encoding="utf-8"), "codex").encode("utf-8")
+        assert skill_md.read_bytes() == expected, (
             "control: a file that IS still bundled must still refresh — a sweep "
             "that deleted everything would pass without this"
         )
@@ -940,3 +1283,71 @@ def test_a_user_edited_agent_produces_exactly_one_dropped_key_warning(tmp_path: 
 
     dropped = [w for w in result["warnings"] if w.startswith("manifest_key_dropped:")]
     assert dropped == ["manifest_key_dropped: trw-implementer.md (user_edited)"]
+
+
+class TestOwnersRecorded:
+    """PRD-INFRA-192 FR12: ``owners`` records which client(s) own each key."""
+
+    def test_init_records_owners_per_declared_client(self, tmp_path: Path) -> None:
+        """``init --ide claude-code`` then ``update --ide codex``: ``.claude/hooks`` is shared, ``.claude/skills`` is not."""
+        from trw_mcp.state.persistence import FileStateReader
+
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        assert not init_project(repo, ide="claude-code")["errors"]
+        assert not update_project(repo, ide="codex")["errors"]
+
+        manifest = FileStateReader().read_yaml(repo / ".trw" / "managed-artifacts.yaml")
+        owners = manifest["owners"]
+        hook_keys = [k for k in owners if (repo / ".claude" / "hooks" / k).is_file()]
+        assert hook_keys, "precondition: at least one hook key recorded"
+        for key in hook_keys:
+            assert sorted(owners[key]) == ["claude-code", "codex"], (key, owners[key])
+
+        skill_keys = [k for k in owners if k.endswith("/SKILL.md") and (repo / ".claude" / "skills" / k).is_file()]
+        assert skill_keys, "precondition: at least one skill key recorded"
+        for key in skill_keys:
+            assert owners[key] == ["claude-code"], (key, owners[key])
+
+    def test_update_evaluates_owners_at_write_time_including_the_ide_override(self, tmp_path: Path) -> None:
+        """``update --ide codex`` on a claude-code project: codex joins ``.claude/hooks``' owners."""
+        from trw_mcp.state.persistence import FileStateReader
+
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        assert not init_project(repo, ide="claude-code")["errors"]
+
+        manifest_before = FileStateReader().read_yaml(repo / ".trw" / "managed-artifacts.yaml")
+        hook_key = next(k for k in manifest_before["owners"] if (repo / ".claude" / "hooks" / k).is_file())
+        assert manifest_before["owners"][hook_key] == ["claude-code"]
+
+        assert not update_project(repo, ide="codex")["errors"]
+
+        manifest_after = FileStateReader().read_yaml(repo / ".trw" / "managed-artifacts.yaml")
+        # codex declares .claude/hooks too (shared hook-command surface), and by
+        # the time _write_manifest runs, target_platforms already includes codex
+        # (PRD-INFRA-192 FR12: evaluated at write time, not before the update).
+        assert sorted(manifest_after["owners"][hook_key]) == ["claude-code", "codex"]
+
+    def test_leftover_key_no_recorded_client_declares_gets_empty_owners(self, tmp_path: Path) -> None:
+        """A key whose path no client in the run set covers gets ``owners: []`` and is kept on disk."""
+        from trw_mcp.bootstrap._client_ownership import owners_for_content_hashes
+
+        owners = owners_for_content_hashes({"stale-agent.md": "deadbeef"}, ["opencode"])
+        assert owners == {"stale-agent.md": []}
+
+    def test_owners_map_survives_an_update_that_adds_no_new_client(self, tmp_path: Path) -> None:
+        """A bare ``update-project`` (no --ide) still (re)computes owners from the recorded set."""
+        from trw_mcp.state.persistence import FileStateReader
+
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / ".git").mkdir()
+        assert not init_project(repo, ide="claude-code")["errors"]
+        assert not update_project(repo)["errors"]
+
+        manifest = FileStateReader().read_yaml(repo / ".trw" / "managed-artifacts.yaml")
+        hook_key = next(k for k in manifest["owners"] if (repo / ".claude" / "hooks" / k).is_file())
+        assert manifest["owners"][hook_key] == ["claude-code"]

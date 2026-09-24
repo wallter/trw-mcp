@@ -18,6 +18,7 @@ import structlog
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import get_config as get_config
 from trw_mcp.models.config._client_profile import CeremonyWeights
+from trw_mcp.models.run import TOOL_CALL_EVENTS
 from trw_mcp.models.typed_dicts import (
     AggregateMetrics,
     AnalyticsReport,
@@ -67,22 +68,22 @@ _CEREMONY_WEIGHTS: dict[str, int] = CeremonyWeights().as_dict()
 def _classify_event(
     event_type: str,
     tool_name: str,
-    is_tool_invocation: bool,
+    is_tool_call: bool,
 ) -> tuple[bool, bool, bool, bool, bool, bool, bool | None]:
     """Classify a single event and extract ceremony flags.
 
     Returns tuple of: (has_session_start, has_deliver, has_checkpoint, has_learn,
                        has_build_check, has_review, build_passed).
     """
-    has_session_start = event_type == "session_start" or (is_tool_invocation and tool_name == "trw_session_start")
+    has_session_start = event_type == "session_start" or (is_tool_call and tool_name == "trw_session_start")
     has_deliver = event_type in ("reflection_complete", "trw_deliver_complete") or (
-        is_tool_invocation and tool_name in ("trw_deliver", "trw_reflect")
+        is_tool_call and tool_name in ("trw_deliver", "trw_reflect")
     )
-    has_checkpoint = event_type == "checkpoint" or (is_tool_invocation and tool_name == "trw_checkpoint")
-    has_learn = "learn" in event_type or (is_tool_invocation and tool_name == "trw_learn")
-    has_build_check = event_type == "build_check_complete" or (is_tool_invocation and tool_name == "trw_build_check")
+    has_checkpoint = event_type == "checkpoint" or (is_tool_call and tool_name == "trw_checkpoint")
+    has_learn = "learn" in event_type or (is_tool_call and tool_name == "trw_learn")
+    has_build_check = event_type == "build_check_complete" or (is_tool_call and tool_name == "trw_build_check")
     has_review = event_type in ("review_complete", "spec_reconciliation") or (
-        is_tool_invocation and tool_name == "trw_review"
+        is_tool_call and tool_name == "trw_review"
     )
     build_passed: bool | None = None
     return has_session_start, has_deliver, has_checkpoint, has_learn, has_build_check, has_review, build_passed
@@ -107,9 +108,9 @@ def _accumulate_event_counts(
     for evt in events:
         event_type = str(evt.get("event", ""))
         tool_name = str(evt.get("tool_name", ""))
-        is_tool_invocation = event_type == "tool_invocation"
+        is_tool_call = event_type in TOOL_CALL_EVENTS
 
-        ss, dl, cp, ln, bc, rv, _bp = _classify_event(event_type, tool_name, is_tool_invocation)
+        ss, dl, cp, ln, bc, rv, _bp = _classify_event(event_type, tool_name, is_tool_call)
 
         if ss:
             has_session_start = True

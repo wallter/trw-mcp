@@ -11,7 +11,9 @@ Precedence (highest wins):
 
 - client: explicit ``client`` > ``dispatch_role_client[role]`` (when ``role``
   set) > ``dispatch_default_client``. ``None`` after that -> error.
-- model: explicit ``model`` > ``dispatch_default_models[client]``.
+- model: explicit ``model`` > ``dispatch_default_models[client]`` > the role's task-class tier
+  where the client has a verified tier map (PRD-CORE-290-FR03).
+- effort: explicit ``effort`` > ``dispatch_default_effort`` > the role's task-class effort.
 - timeout: explicit ``timeout_s`` (not None) > ``dispatch_default_timeout_s``.
 - read_only: an EXPLICIT ``read_only`` (True or False) is honored; ``None`` ->
   the ``dispatch_default_read_only`` config baseline. (The caller is responsible
@@ -44,8 +46,12 @@ output, which is a worse failure than refusing.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING, cast, get_args
+
+import structlog
 
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
+from trw_mcp.dispatch._policy import operator_set, resolve_effort, resolve_max_turns, resolve_model
 from trw_mcp.dispatch._posture import (
     ReviewerPostureError,
     TrwAccessError,
@@ -54,6 +60,11 @@ from trw_mcp.dispatch._posture import (
 )
 from trw_mcp.dispatch._roles import apply_role
 from trw_mcp.dispatch._types import DispatchPosture, DispatchRequest
+
+if TYPE_CHECKING:
+    from trw_mcp.models.config._sub_models import DispatchConfig
+
+logger = structlog.get_logger(__name__)
 
 
 class DispatchResolutionError(ValueError):
@@ -141,6 +152,7 @@ def resolve_dispatch_request(
     prompt: str,
     role: str | None,
     model: str | None,
+    effort: str | None = None,
     cwd: Path | None,
     timeout_s: int | None,
     read_only: bool | None = None,
@@ -158,12 +170,28 @@ def resolve_dispatch_request(
     """
     resolved_client = _resolve_client(client=client, role=role, dispatch_cfg=dispatch_cfg)
 
-    # Model: explicit wins; otherwise the per-client config override.
-    resolved_model = model
-    if resolved_model is None:
-        default_models = getattr(dispatch_cfg, "dispatch_default_models", {})
-        if isinstance(default_models, dict):
-            resolved_model = default_models.get(resolved_client)
+    # Model and effort: explicit request > operator config > the role's task-class
+    # row (PRD-CORE-290-FR03); the winning source is recorded on the request.
+    # Only what the operator set counts as "config" (DispatchConfig.operator_set).
+    cfg = cast("DispatchConfig", dispatch_cfg)
+    models = cfg.dispatch_default_models if operator_set(cfg, "dispatch_default_models") else None
+    config_effort = cfg.dispatch_default_effort if operator_set(cfg, "dispatch_default_effort") else None
+    config_turns = cfg.dispatch_default_max_turns if operator_set(cfg, "dispatch_default_max_turns") else None
+    resolved_model, model_source = resolve_model(model, resolved_client, role, models)
+    try:
+        resolved_effort, effort_source = resolve_effort(effort, role, config_effort)
+    except ValueError as exc:
+        raise DispatchResolutionError(str(exc), exit_code=2) from exc
+    max_turns, max_turns_source = resolve_max_turns(config_turns, role)
+    logger.info(
+        "dispatch_policy_resolved",
+        client=resolved_client,
+        role=role,
+        effort=resolved_effort,
+        effort_source=effort_source,
+        model=resolved_model,
+        model_source=model_source,
+    )
 
     # Timeout: an explicit value (any int) wins; None -> config default.
     resolved_timeout = timeout_s
@@ -218,6 +246,11 @@ def resolve_dispatch_request(
         client=resolved_client,  # type: ignore[arg-type]  # validated against the Literal by Pydantic
         prompt=resolved_prompt,
         model=resolved_model,
+        model_source=model_source,
+        effort=resolved_effort,  # type: ignore[arg-type]  # validated against EFFORT_LEVELS above
+        effort_source=effort_source,
+        max_turns=max_turns,
+        max_turns_source=max_turns_source,
         cwd=resolved_cwd,
         timeout_s=int(resolved_timeout),
         read_only=effective_read_only,
@@ -258,13 +291,14 @@ def _resolve_posture(posture: str, *, client: str, read_only: bool) -> DispatchP
     that child's output as contained evidence. The message names the client and
     the reason so the caller has a next step other than a bypass.
     """
-    if posture not in ("default", "reviewer"):
+    postures = get_args(DispatchPosture)
+    if posture not in postures:
         raise DispatchResolutionError(
-            f"unknown dispatch posture {posture!r}; expected 'default' or 'reviewer'.",
+            f"unknown dispatch posture {posture!r}; expected one of {', '.join(postures)}.",
             exit_code=2,
         )
     try:
         verify_reviewer_posture(client, posture, read_only=read_only)
     except ReviewerPostureError as exc:
         raise DispatchResolutionError(str(exc), exit_code=2) from exc
-    return "reviewer" if posture == "reviewer" else "default"
+    return cast("DispatchPosture", posture)

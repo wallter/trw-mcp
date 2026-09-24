@@ -72,7 +72,6 @@ from trw_mcp.tools._ceremony_telemetry import (
     step_first_session_marker as step_first_session_marker,
 )
 from trw_mcp.tools._deferred_delivery import _step_checkpoint as _step_checkpoint
-from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
@@ -175,13 +174,7 @@ from trw_mcp.tools._ceremony_session_start_steps import (
     step_assertion_health as step_assertion_health,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
-    step_auto_recall_orchestrated as step_auto_recall_orchestrated,
-)
-from trw_mcp.tools._ceremony_session_start_steps import (
     step_graph_health as step_graph_health,
-)
-from trw_mcp.tools._ceremony_session_start_steps import (
-    step_phase_auto_recall as step_phase_auto_recall,
 )
 from trw_mcp.tools._ceremony_session_start_steps import (
     step_pipeline_health_advisory as step_pipeline_health_advisory,
@@ -214,9 +207,6 @@ from trw_mcp.tools._ceremony_step_table import (
     _ss_counter as _ss_counter,
 )
 from trw_mcp.tools._ceremony_step_table import (
-    _ss_embed_health as _ss_embed_health,
-)
-from trw_mcp.tools._ceremony_step_table import (
     _ss_first_session_marker as _ss_first_session_marker,
 )
 from trw_mcp.tools._ceremony_step_table import (
@@ -226,13 +216,13 @@ from trw_mcp.tools._ceremony_step_table import (
     _ss_handoff_readback as _ss_handoff_readback,
 )
 from trw_mcp.tools._ceremony_step_table import (
+    _ss_hook_flags as _ss_hook_flags,
+)
+from trw_mcp.tools._ceremony_step_table import (
     _ss_log_event as _ss_log_event,
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_moved_checkout as _ss_moved_checkout,
-)
-from trw_mcp.tools._ceremony_step_table import (
-    _ss_phase_recall as _ss_phase_recall,
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_pipeline_health as _ss_pipeline_health,
@@ -242,6 +232,9 @@ from trw_mcp.tools._ceremony_step_table import (
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_recall as _ss_recall,
+)
+from trw_mcp.tools._ceremony_step_table import (
+    _ss_recall_withdraw as _ss_recall_withdraw,
 )
 from trw_mcp.tools._ceremony_step_table import (
     _ss_reconcile_local_writes as _ss_reconcile_local_writes,
@@ -278,7 +271,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
     """Register session ceremony composite tools on the MCP server."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_session_start(
         ctx: Context | None = None,
         query: str = "",
@@ -290,19 +282,18 @@ def register_ceremony_tools(server: FastMCP) -> None:
         tasks. query focuses the recall; verbose=True returns the full payload
         instead of the compact default.
 
-        Output: learnings (capped, with an omitted count), run/pin state, errors.
+        Output: learnings (up to 3 stubs, omitted count), run/pin state, errors.
 
         See Also: trw_status for the run snapshot, trw_recall for a narrower query.
         """
         # Compaction mechanics (maintainer detail, deliberately not in the
         # docstring — callers pay for that text on every session):
-        # ``query`` non-empty and not "*" runs a focused recall AND a baseline
-        # high-impact recall, then merges + dedupes; ``query_matched`` /
-        # ``query_advisory`` say whether the query actually matched.
-        # verbose=False caps ``learnings`` to top-K in IMPACT order (recall
-        # returns them impact-ordered, so the cap is not relevance-ranked) and
-        # sets ``learnings_omitted``; reduces ``connection_fingerprint`` to its
-        # two non-constant fields; folds embed_health / assertion_health /
+        # One recall (PRD-CORE-294 FR02): ``query`` non-empty and not "*" focuses
+        # it; ``query_advisory`` explains a focused recall that matched nothing.
+        # verbose=False presents at most three stubs within 1,500 bytes and sets
+        # ``learnings_omitted``; verbose=True returns the full ranked rows.
+        # verbose=False also reduces ``connection_fingerprint`` to its
+        # two non-constant fields; folds assertion_health /
         # sync_health / step_durations_ms into a one-line ``health_summary``.
         # Run/pin recovery, errors, framework_reminder and degraded advisories
         # are never trimmed. Each sub-step is fail-open: one failure does not
@@ -354,6 +345,7 @@ def register_ceremony_tools(server: FastMCP) -> None:
                 results=results,
                 errors=errors,
                 step_durations_ms=step_durations_ms,
+                verbose=verbose,
             )
             run_steps(SESSION_START_STEPS, sctx, _ceremony)
 
@@ -387,7 +379,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
             HOT_PATH.reset(_hot_path_token)
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_deliver(
         ctx: Context | None = None,
         run_path: str | None = None,
@@ -439,7 +430,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
     # ── PRD-CORE-141 FR07 — trw_heartbeat ─────────────────────────────
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_heartbeat(
         ctx: Context | None = None,
         message: str = "",
@@ -462,7 +452,6 @@ def register_ceremony_tools(server: FastMCP) -> None:
 
     # ── PRD-CORE-141 FR08 — trw_adopt_run ─────────────────────────────
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_adopt_run(
         ctx: Context | None = None,
         run_path: str = "",

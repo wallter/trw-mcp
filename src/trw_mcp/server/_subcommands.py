@@ -34,6 +34,9 @@ from trw_mcp.server._subcommands_commit import (
 from trw_mcp.server._subcommands_commit import (
     _run_prepare_candidate as _run_prepare_candidate,
 )
+from trw_mcp.server._subcommands_commit import (
+    _run_recover_candidate as _run_recover_candidate,
+)
 from trw_mcp.server._subcommands_doctor import (
     _doctor_core as _doctor_core,
 )
@@ -41,12 +44,8 @@ from trw_mcp.server._subcommands_doctor import (
     _run_doctor as _run_doctor,
 )
 from trw_mcp.server._subcommands_gc import _run_gc as _run_gc
-from trw_mcp.server._subcommands_learn_drain import (
-    _run_learn_drain as _run_learn_drain,
-)
-from trw_mcp.server._subcommands_lifecycle import (
-    _run_auth as _run_auth,
-)
+from trw_mcp.server._subcommands_learn_drain import _run_learn_drain as _run_learn_drain
+from trw_mcp.server._subcommands_lifecycle import _run_auth as _run_auth
 from trw_mcp.server._subcommands_lifecycle import (
     _run_uninstall as _run_uninstall,
 )
@@ -134,7 +133,12 @@ def _summarize_update_result(result: dict[str, list[str]], *, target: Path, dry_
         _print_cli_line("Codex: managed config uses [features].hooks; hooks, agents, skills, and AGENTS.md synced")
     if not dry_run:
         _print_cli_line("")
-        _print_cli_line("Use -v for per-file changes or --log-json for structured output.")
+        # G3 (installer refinement 5.1.0): `-v` is registered on the TOP-LEVEL
+        # parser only (_cli_argparse.py), not on the `update-project`
+        # subcommand — `update-project . -v` fails with "unrecognized
+        # arguments: -v" because it reads as the natural (wrong) place to put
+        # it after this line. The flag must come BEFORE the subcommand name.
+        _print_cli_line("Use 'trw-mcp -v update-project ...' for per-file changes or --log-json for structured output.")
 
 
 def _run_init_project(args: argparse.Namespace) -> None:
@@ -154,8 +158,6 @@ def _run_init_project(args: argparse.Namespace) -> None:
     result = init_project(
         target,
         force=args.force,
-        source_package=args.source_package,
-        test_path=args.test_path,
         runs_root=getattr(args, "runs_root", ".trw/runs"),
         ide=getattr(args, "ide", None),
         on_progress=_progress,
@@ -185,53 +187,13 @@ def _run_init_project(args: argparse.Namespace) -> None:
     sys.exit(1 if result["errors"] else 0)
 
 
-def _run_embedding_repair(args: argparse.Namespace) -> None:
-    """Explicit local vector maintenance, never a framework-update operation."""
-    from trw_memory.exceptions import MemoryError as TRWMemoryError
-    from trw_memory.storage.interface import EntryCursor
-
-    try:
-        bound = getattr(args, "repair_embeddings", None)
-        if type(bound) is not int or bound < 1:
-            raise ValueError("--embedding-after requires --repair-embeddings with a positive entry bound")
-        if args.pip_install or getattr(args, "ide", None) is not None or args.dry_run:
-            raise ValueError("--repair-embeddings cannot combine with --pip-install, --ide or --dry-run")
-        cursor = None
-        raw = getattr(args, "embedding_after", None)
-        if raw is not None:
-            value = json.loads(raw)
-            if (
-                not isinstance(value, dict)
-                or set(value) != {"updated_at", "entry_id"}
-                or any(not isinstance(item, str) or not item.strip() for item in value.values())
-            ):
-                raise ValueError("--embedding-after requires nonempty updated_at and entry_id strings")
-            cursor = EntryCursor(updated_at=value["updated_at"], entry_id=value["entry_id"])
-        trw_dir = Path(args.target_dir).resolve() / ".trw"
-        if not trw_dir.is_dir():
-            raise ValueError("existing project .trw directory is required")
-        from trw_mcp.state._memory_connection import repair_embeddings
-
-        result = repair_embeddings(trw_dir, max_entries=bound, after=cursor)
-    except (ValueError, OSError, RuntimeError, TRWMemoryError) as exc:
-        print(json.dumps({"status": "error", "error": str(exc)}))
-        raise SystemExit(2) from exc
-    print(json.dumps(result))
-    raise SystemExit(
-        1 if result.get("failed", 0) or result.get("status") in {"failed", "blocked", "unavailable"} else 0
-    )
-
-
 def _run_update_project(args: argparse.Namespace) -> None:
     """Handle the ``update-project`` subcommand."""
-    if getattr(args, "repair_embeddings", None) is not None or getattr(args, "embedding_after", None) is not None:
-        _run_embedding_repair(args)
     from trw_mcp.bootstrap import update_project
 
     target = Path(args.target_dir).resolve()
     dry_run: bool = getattr(args, "dry_run", False)
-    detailed = _is_detailed_cli(args)
-    quiet = _is_quiet_cli(args)
+    detailed, quiet = _is_detailed_cli(args), _is_quiet_cli(args)
 
     def _progress(action: str, path: str) -> None:
         if detailed:
@@ -245,6 +207,7 @@ def _run_update_project(args: argparse.Namespace) -> None:
         dry_run=dry_run,
         ide=getattr(args, "ide", None),
         on_progress=_progress,
+        reprovision=getattr(args, "reprovision", None),
     )
 
     if detailed:
@@ -427,33 +390,6 @@ def _run_session_changelog(args: argparse.Namespace) -> None:
     sys.exit(0)
 
 
-SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
-    "init-project": _run_init_project,
-    "update-project": _run_update_project,
-    "audit": _run_audit,
-    "export": _run_export,
-    "import-learnings": _run_import_learnings,
-    "build-release": _run_build_release,
-    "version-status": _run_version_status,
-    "auth": _run_auth,
-    "uninstall": _run_uninstall,
-    "config-reference": _run_config_reference,
-    "local": _run_local,
-    "prepare-candidate": _run_prepare_candidate,
-    "commit-candidate": _run_commit_candidate,
-    "prd-state": _run_prd_state,
-    "prd-epoch": _run_prd_epoch,
-    "check-instructions": _run_check_instructions,
-    "doctor": _run_doctor,
-    "gc": _run_gc,
-    "maintain-verify": _run_maintain_verify,
-    "learn-drain": _run_learn_drain,
-    "channel-doctor": _run_channel_doctor,
-    "session-changelog": _run_session_changelog,
-    "tendencies": _run_tendencies,
-}
-
-
 def _lazy_verb(module: str, attribute: str) -> Callable[[argparse.Namespace], None]:
     """Build a handler that imports its implementation only when the verb runs.
 
@@ -474,11 +410,36 @@ def _lazy_verb(module: str, attribute: str) -> Callable[[argparse.Namespace], No
     return _run
 
 
-SUBCOMMAND_HANDLERS.update(
-    {
-        "tier": _lazy_verb("trw_mcp.server._subcommands_tier", "run_tier"),
-        "dispatch": _lazy_verb("trw_mcp.dispatch._cli", "run_dispatch"),
-        "formation": _lazy_verb("trw_mcp.tools._formation_cli", "run_formation"),
-        "plan": _lazy_verb("trw_mcp.tools._plan_cli", "run_plan"),
-    }
-)
+SUBCOMMAND_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
+    "init-project": _run_init_project,
+    "update-project": _run_update_project,
+    "audit": _run_audit,
+    "export": _run_export,
+    "import-learnings": _run_import_learnings,
+    "build-release": _run_build_release,
+    "version-status": _run_version_status,
+    "auth": _run_auth,
+    "uninstall": _run_uninstall,
+    "config-reference": _run_config_reference,
+    "local": _run_local,
+    "prepare-candidate": _run_prepare_candidate,
+    "commit-candidate": _run_commit_candidate,
+    "recover-candidate": _run_recover_candidate,
+    "prd-state": _run_prd_state,
+    "prd-epoch": _run_prd_epoch,
+    "check-instructions": _run_check_instructions,
+    "doctor": _run_doctor,
+    "gc": _run_gc,
+    "maintain-verify": _run_maintain_verify,
+    "learn-drain": _run_learn_drain,
+    "channel-doctor": _run_channel_doctor,
+    "session-changelog": _run_session_changelog,
+    "tendencies": _run_tendencies,
+    "tier": _lazy_verb("trw_mcp.server._subcommands_tier", "run_tier"),
+    "memory": _lazy_verb("trw_mcp.server._subcommands_memory", "run_memory"),
+    "dispatch": _lazy_verb("trw_mcp.dispatch._cli", "run_dispatch"),
+    "formation": _lazy_verb("trw_mcp.tools._formation_cli", "run_formation"),
+    "plan": _lazy_verb("trw_mcp.tools._plan_cli", "run_plan"),
+    "hook-flags": _lazy_verb("trw_mcp.state._hook_flags", "run_hook_flags_cli"),
+    "sync": _lazy_verb("trw_mcp.server._subcommands_sync", "run_sync"),
+}

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
 from trw_mcp.models.config import DispatchConfig, TRWConfig, get_config, reload_config
 
@@ -99,8 +100,19 @@ def test_dispatch_config_fields_exist_on_trwconfig() -> None:
     would never be read). This catches that drift.
     """
     trw_fields = set(TRWConfig.model_fields)
-    for name in DispatchConfig.model_fields:
+    # operator_set is the projection's own marker (which fields the operator set), not a copied field.
+    for name in set(DispatchConfig.model_fields) - {"operator_set"}:
         assert name in trw_fields, f"DispatchConfig.{name} has no matching TRWConfig field"
+
+
+def test_every_dispatch_field_on_trwconfig_reaches_the_projection() -> None:
+    """The inverse drift: a TRWConfig ``dispatch_*`` field missing from DispatchConfig is never read.
+
+    ``dispatch_default_effort`` and ``dispatch_default_max_turns`` shipped that way:
+    ``get_config().dispatch`` dropped them, so the operator's value never arrived.
+    """
+    missing = {n for n in TRWConfig.model_fields if n.startswith("dispatch_")} - set(DispatchConfig.model_fields)
+    assert not missing, f"TRWConfig dispatch fields not projected into DispatchConfig: {sorted(missing)}"
 
 
 @pytest.fixture()
@@ -141,18 +153,8 @@ def test_config_yaml_override_reflected_in_dispatch(_project: Path) -> None:
 # --------------------------------------------------------------------------- #
 
 
-@requires_local_timing
-def test_version_probe_timeout_knob_bounds_the_readiness_row(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """An operator-set probe timeout actually bounds the doctor's live probe.
-
-    A wiring test, not an existence test: a binary that hangs for 30 s must be
-    abandoned at the CONFIGURED bound, and the record must name that bound so the
-    row proves which value applied.
-    """
+def _hung_probe_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TRWConfig:
     import stat
-    import time
-
-    from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -163,18 +165,44 @@ def test_version_probe_timeout_knob_bounds_the_readiness_row(tmp_path: Path, mon
     hung.chmod(hung.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", str(bin_dir))
 
-    config = TRWConfig(
+    return TRWConfig(
         trw_dir=str(tmp_path / ".trw"),
         dispatch_enabled_clients=["claude"],
         dispatch_version_probe_timeout_s=1,
     )
-    started = time.monotonic()
+
+
+def test_version_probe_timeout_knob_bounds_the_readiness_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An operator-set probe timeout actually bounds the doctor's live probe.
+
+    A wiring test, not an existence test: a binary that hangs for 30 s must be
+    abandoned at the CONFIGURED bound, and the record must name that bound so the
+    row proves which value applied. The abandonment DEADLINE itself is checked
+    by the ``_budget`` twin below.
+    """
+    from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
+
+    config = _hung_probe_config(tmp_path, monkeypatch)
     _status, _message, rows = formation_readiness_report(config)
-    elapsed = time.monotonic() - started
 
     assert rows[0]["verdict"] == "not_measured"
     assert "1s" in str(rows[0]["reason"])
-    assert elapsed < 10, f"the configured 1 s bound did not apply ({elapsed:.1f}s)"
+
+
+@requires_local_timing
+def test_version_probe_timeout_knob_bounds_the_readiness_row_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
+
+    config = _hung_probe_config(tmp_path, monkeypatch)
+    started = time.monotonic()
+    formation_readiness_report(config)
+    elapsed = time.monotonic() - started
+
+    assert_budget("version_probe_timeout_bound", elapsed, 10, "s")
 
 
 def test_version_probe_timeout_is_a_bounded_documented_field() -> None:

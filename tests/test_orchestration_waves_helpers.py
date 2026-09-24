@@ -7,7 +7,7 @@ import pytest
 
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateWriter
-from trw_mcp.tools._orchestration_helpers import _get_bundled_file, _get_package_version
+from trw_mcp.tools._orchestration_helpers import _get_bundled_file
 from trw_mcp.tools._orchestration_phase import _check_framework_version_staleness
 
 
@@ -28,37 +28,6 @@ class TestGetBundledFile:
         """Returns None when subdir/file combo doesn't exist."""
         result = _get_bundled_file("nonexistent.md", subdir="templates")
         assert result is None
-
-
-class TestGetPackageVersion:
-    """Tests for _get_package_version helper (lines 475-476)."""
-
-    def test_returns_string(self) -> None:
-        """Returns a string (either version or 'unknown')."""
-        result = _get_package_version()
-        assert isinstance(result, str)
-
-    def test_returns_unknown_when_package_not_found(self) -> None:
-        """Returns 'unknown' when importlib.metadata raises PackageNotFoundError."""
-        from importlib.metadata import PackageNotFoundError
-
-        with patch(
-            "importlib.metadata.version",
-            side_effect=PackageNotFoundError("trw-mcp"),
-        ):
-            result = _get_package_version()
-            assert result == "unknown"
-
-    def test_exception_path_returns_unknown(self) -> None:
-        """Directly test the exception path by patching importlib.metadata."""
-        from importlib.metadata import PackageNotFoundError
-
-        with patch(
-            "importlib.metadata.version",
-            side_effect=PackageNotFoundError("trw-mcp"),
-        ):
-            result = _get_package_version()
-            assert result == "unknown"
 
 
 class TestCheckFrameworkVersionStaleness:

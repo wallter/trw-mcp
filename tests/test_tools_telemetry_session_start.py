@@ -10,7 +10,6 @@ import pytest
 from tests._tools_telemetry_support import (  # noqa: F401
     _make_ceremony_tools,
     _read_jsonl,
-    reset_telemetry_cache,
     run_dir,
 )
 

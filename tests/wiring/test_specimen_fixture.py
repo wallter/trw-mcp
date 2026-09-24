@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.wiring.detector import DetectorResult, run_detector
 from trw_mcp.wiring.model import EdgeClass
 
@@ -144,7 +145,6 @@ def test_every_finding_is_actionable(live_result: DetectorResult) -> None:
         assert finding.producer_side.strip() and finding.consumer_side.strip(), f"{finding.key} names only one side"
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_full_scan_under_ten_seconds(live_result: DetectorResult, repo_root: Path) -> None:
     """NFR02: a check people are tempted to disable is a check that gets disabled.
@@ -162,7 +162,4 @@ def test_full_scan_under_ten_seconds(live_result: DetectorResult, repo_root: Pat
         if durations[-1] < _SCAN_BUDGET_SECONDS:
             break
         durations.append(run_detector(repo_root).duration_seconds)
-    assert min(durations) < _SCAN_BUDGET_SECONDS, (
-        f"repo-wide scan of {repo_root} took {durations} across {len(durations)} attempt(s), "
-        f"all over the {_SCAN_BUDGET_SECONDS}s budget"
-    )
+    assert_budget("full_scan_min_duration", min(durations), _SCAN_BUDGET_SECONDS, "s")

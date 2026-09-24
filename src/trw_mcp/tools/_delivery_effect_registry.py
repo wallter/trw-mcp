@@ -182,8 +182,6 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
     ),
     ("D07", "learning POST fan-out", "_step_publish_learnings", _O, _NR, "receiver idempotency/status proof"),
     ("D08", "learning publish-hash sidecar", "publish_learnings", _O, _PP, "local content digest; never proves D07"),
-    ("D09", "outcome/Q correlation", "_step_outcome_correlation", _O, _NR, "operation-keyed correlation upsert"),
-    ("D10", "recall positive-outcome append", "_step_recall_outcome", _O, _KI, "effect-id dedup append"),
     ("D11", "telemetry pipeline drain/stop", "_step_telemetry", _O, _CO, "coordination; not a send proof"),
     (
         "D12",
@@ -308,8 +306,10 @@ def _build_registry() -> dict[str, EffectDescriptor]:
 #: The approved, immutable current delivery-effect inventory (§6.6).
 DELIVERY_EFFECT_REGISTRY: dict[str, EffectDescriptor] = _build_registry()
 
-#: Deferred roster IDs that FR03 requires to be represented (13 roster entries
-#: D01-D13 plus post-batch D14-D24 and the D00 coordination lock).
+#: Deferred roster IDs that FR03 requires to be represented (D01-D08 and D11-D13
+#: roster entries -- D09/D10 retired by PRD-CORE-293, the dead outcome/Q
+#: correlation and recall positive-outcome roster steps -- plus post-batch
+#: D14-D26 and the D00 coordination lock).
 DEFERRED_ROSTER_IDS: frozenset[str] = frozenset(
     d.effect_id for d in DELIVERY_EFFECT_REGISTRY.values() if d.effect_id.startswith("D")
 )

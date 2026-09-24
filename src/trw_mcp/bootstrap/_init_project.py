@@ -150,8 +150,7 @@ def _write_ceremony_state_skeleton(
         "review_p0_count": 0,
         "nudge_history": {},
         "pool_nudge_counts": {},
-        "pool_ignore_counts": {},
-        "pool_cooldown_until": {},
+        "pool_cooldowns": {},
         "tool_call_counter": 0,
         "last_nudge_pool": "",
         # PRD-FIX-076 sentinel — flipped to False on first session_start.
@@ -168,8 +167,6 @@ def _write_initial_config(
     force: bool,
     result: dict[str, list[str]],
     *,
-    source_package: str = "",
-    test_path: str = "",
     runs_root: str = ".trw/runs",
     target_platforms: list[str] | None = None,
     on_progress: ProgressCallback = None,
@@ -178,8 +175,6 @@ def _write_initial_config(
     _write_if_missing(
         target_dir / ".trw" / "config.yaml",
         _default_config(
-            source_package=source_package,
-            test_path=test_path,
             runs_root=runs_root,
             target_platforms=target_platforms,
         ),
@@ -211,29 +206,30 @@ def _install_hooks(
     ``post-commit`` event — so the git-hook family is installed separately into
     ``.git/hooks/`` (PRD-CORE-231 FR01/FR02).
 
-    The ``.claude/hooks`` copy is gated on *clients* (PRD-CORE-262-FR05): those
-    scripts are Claude Code's, and a codex-only project received 17 of them
-    under a directory none of its clients read. Only an EXPLICIT codex-only
-    selection drops the copy (CORE262-13: *explicit* distinguishes a user
-    ``--ide codex`` from ``detect_ide`` resolving to ``["codex"]`` off a
-    pre-existing ``.codex/`` marker on a bare install, which must NOT drop
-    it) — every other case (default, claude-code, cursor-ide, a mixed set,
-    ...) keeps it exactly as HEAD did. The git-hook family and the
-    intent-hook re-blessing stay unconditional — both are client-neutral.
+    The ``.claude/hooks`` copy is gated on *clients* (PRD-CORE-262-FR05,
+    generalized under PRD-INFRA-192 FR09): the directory is shared by
+    claude-code, codex and copilot (their own hook commands run scripts from
+    it too — see ``bootstrap/_codex_hooks.py`` / ``bootstrap/_copilot.py``),
+    so any explicit selection containing one of those three keeps the copy;
+    only an explicit selection with none of them (e.g. cursor-ide alone)
+    drops it. CORE262-13: *explicit* distinguishes a user ``--ide`` choice
+    from ``detect_ide`` resolving off an on-disk marker on a bare install,
+    which must NOT drop it. The git-hook family and the intent-hook
+    re-blessing stay unconditional — both are client-neutral.
     """
-    from . import _wants_claude_scaffold
+    from ._client_ownership import writes_surface
+    from ._hook_closure import deployable_hook_files
 
     hooks_source = _DATA_DIR / "hooks"
-    if _wants_claude_scaffold(clients, explicit=explicit) and hooks_source.is_dir():
-        for hook_file in sorted(hooks_source.iterdir()):
-            if hook_file.suffix == ".sh":
-                _copy_file(
-                    hook_file,
-                    target_dir / ".claude" / "hooks" / hook_file.name,
-                    force,
-                    result,
-                    on_progress,
-                )
+    if writes_surface(".claude/hooks", clients, explicit=explicit) and hooks_source.is_dir():
+        for name in sorted(deployable_hook_files(clients, hooks_source)):
+            _copy_file(
+                hooks_source / name,
+                target_dir / ".claude" / "hooks" / name,
+                force,
+                result,
+                on_progress,
+            )
 
     # A re-init over an ALREADY-enrolled project rewrites the same bundled hooks
     # the update path does, so it carries the same brick-the-project hazard (see
@@ -315,7 +311,12 @@ def _recordable_targets(target_dir: Path, ide_targets: list[str], *, explicit: b
     # is the user's own. Only the machine-global half of detection is dropped.
     on_disk = set(clients_with_markers_on_disk(target_dir))
     kept = [client for client in ide_targets if client in on_disk]
-    return kept or ["claude-code"]
+    # PRD-INFRA-192 FR09 §2: a bare init-project (explicit=False) still writes
+    # every Claude Code surface unconditionally (CORE262-13), so it must
+    # record claude-code too — `kept or ["claude-code"]` dropped claude-code
+    # from the record whenever detection found ANY other on-disk client,
+    # though the scaffold write happened regardless. Deduped, order-preserving.
+    return list(dict.fromkeys([*kept, "claude-code"]))
 
 
 def _generate_root_files(
@@ -336,7 +337,10 @@ def _generate_root_files(
     user had chosen it made a plain ``init-project`` on any machine with Cursor
     installed strip the CLAUDE.md protocol from every new project.
     """
-    _merge_mcp_json(target_dir, result, on_progress)
+    from ._client_ownership import writes_surface
+
+    if writes_surface(".mcp.json", ide_targets or [], explicit=ide_explicit):
+        _merge_mcp_json(target_dir, result, on_progress)
     claude_md_path = target_dir / "CLAUDE.md"
     # Record which clients the user actually chose BEFORE anything reads it
     # back. Installing writes `.claude/` and `.cursor/` into every project
@@ -369,12 +373,8 @@ def _generate_root_files(
         )
     else:
         _write_if_missing(claude_md_path, _minimal_claude_md(), force, result, on_progress)
-    # Resolve the PRD-CORE-203 carrier on the file we just scaffolded, so a fresh
-    # install produces the same shape an existing project converges to. Without
-    # this, `init-project` always wrote a fully inline TRW block while
-    # `update-project` externalized it — the two entry points disagreed about the
-    # same file, and which shape a project ended up in depended on entry order.
-    # Bookkeeping goes to a scratch dict only to avoid double-reporting the path
+    # Write the TRW block into the file we just scaffolded, so a fresh install
+    # produces the same shape an existing project converges to. Bookkeeping goes to a scratch dict only to avoid double-reporting the path
     # `_write_if_missing` already recorded — but its ERRORS are merged back. A
     # carrier failure here (EROFS/ENOSPC, malformed markers) would otherwise be
     # discarded while the installer still reported a clean create, which is a
@@ -403,7 +403,7 @@ def _generate_root_files(
         from ._template_claude_md import _update_claude_md_trw_section
 
         carrier_result: dict[str, list[str]] = {"updated": [], "preserved": [], "errors": []}
-        _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir, ide_targets)
+        _update_claude_md_trw_section(claude_md_path, carrier_result, target_dir)
         result.setdefault("errors", []).extend(carrier_result["errors"])
         # An existing user CLAUDE.md that `_write_if_missing` reported as
         # "skipped" IS modified by the carrier; say so rather than leaving the
@@ -439,8 +439,6 @@ def init_project(
     target_dir: Path,
     *,
     force: bool = False,
-    source_package: str = "",
-    test_path: str = "",
     runs_root: str = ".trw/runs",
     ide: str | None = None,
     on_progress: ProgressCallback = None,
@@ -450,8 +448,6 @@ def init_project(
     Args:
         target_dir: Root of the target git repository.
         force: If ``True``, overwrite existing files.
-        source_package: Pre-populate ``source_package_name`` in config.
-        test_path: Pre-populate ``tests_relative_path`` in config.
         ide: Target IDE override ("claude-code", "cursor-ide", "cursor-cli", "opencode", "all").
             When None, auto-detect from existing IDE config directories.
         on_progress: Optional callback called as ``on_progress(action, path)``
@@ -483,17 +479,18 @@ def init_project(
         result.setdefault("warnings", []).append(warning)
         logger.warning("project_init_non_git", project_root=str(target_dir))
 
+    from trw_mcp.agents._report_cap import project_report_cap
+
     try:
-        _run_init_phases(
-            target_dir,
-            result,
-            force=force,
-            source_package=source_package,
-            test_path=test_path,
-            runs_root=runs_root,
-            ide=ide,
-            on_progress=on_progress,
-        )
+        with project_report_cap(target_dir):  # PRD-CORE-290-FR04: the target's configured report cap
+            _run_init_phases(
+                target_dir,
+                result,
+                force=force,
+                runs_root=runs_root,
+                ide=ide,
+                on_progress=on_progress,
+            )
     except Exception as exc:  # justified: honor the dict-contract return, never raise a raw traceback
         logger.exception("project_init_exception", project_root=str(target_dir))
         result["errors"].append(f"init-project failed: {type(exc).__name__}: {exc}")
@@ -520,8 +517,6 @@ def _run_init_phases(
     result: dict[str, list[str]],
     *,
     force: bool,
-    source_package: str,
-    test_path: str,
     runs_root: str,
     ide: str | None,
     on_progress: ProgressCallback,
@@ -533,7 +528,16 @@ def _run_init_phases(
     ``result['errors']`` by the caller rather than escaping as a raw traceback
     that would violate the documented dict-contract return.
     """
+    from ._skill_tombstone_prune import snapshot_skill_dir_siblings
+    from ._tombstones import detect_tombstones, enforce_tombstones
     from ._update_project import _write_manifest
+    from ._version_manifest import _read_manifest
+
+    # PRD-INFRA-192 FR10: a path the user deleted from a PRIOR install stays
+    # deleted on a re-run over the same project; computed before any writer
+    # below runs, from the manifest as it stood at the start of this run.
+    tombstones = detect_tombstones(target_dir, _read_manifest(target_dir))
+    skill_dir_snapshot = snapshot_skill_dir_siblings(target_dir, tombstones)
 
     # Resolve IDE targets before creating any provider-specific directories.
     # Otherwise new scaffold directories can pollute auto-detection.
@@ -555,17 +559,28 @@ def _run_init_phases(
     # 2. Copy bundled data files
     _copy_bundled_data_files(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
 
-    # 3. Write generated config and seed files (includes target_platforms)
+    # 3. Write generated config and seed files (includes target_platforms). A
+    # checkout whose own store holds rows keeps its config byte-for-byte, even
+    # under --force (PRD-CORE-280 FR06).
+    # --force never re-keys an existing pin: a moved checkout's migrated rows live
+    # under the pinned namespace, not the one its new location derives.
+    from trw_mcp.state._store_migration import _set_pin
+
+    from ._namespace_pin import pin_empty_checkout, store_holds_data, written_pin
+
+    rewrite_config, kept_pin = force and not store_holds_data(target_dir), written_pin(target_dir)
     _write_initial_config(
         target_dir,
-        force,
+        rewrite_config,
         result,
-        source_package=source_package,
-        test_path=test_path,
         runs_root=runs_root,
         target_platforms=_recordable_targets(target_dir, ide_targets, explicit=ide_explicit),
         on_progress=on_progress,
     )
+    if rewrite_config and kept_pin:
+        _set_pin(target_dir / ".trw", kept_pin)
+    # 3a. A new checkout has nothing to move: pin project_namespace and mint its grant (PRD-CORE-280 FR06)
+    pin_empty_checkout(target_dir, result)
 
     # 4. Copy hook scripts
     _install_hooks(target_dir, force, result, on_progress, clients=ide_targets, explicit=ide_explicit)
@@ -614,8 +629,12 @@ def _run_init_phases(
     # config on every fire.
     _write_hook_env_for_primary_profile(target_dir, ide_targets)
 
-    # 8. Write managed-artifacts manifest
-    _write_manifest(target_dir, result)
+    # 8. The manifest records a successful install (PRD-INFRA-192 FR12). An init
+    # that reported errors writes none, so a later update refuses and names the remedy.
+    if not result["errors"]:
+        enforce_tombstones(target_dir, tombstones, result, skill_dir_snapshot)
+    if not result["errors"]:
+        _write_manifest(target_dir, result, tombstones=tombstones)
 
     # 9. Write installer metadata + VERSION.yaml
     _write_installer_metadata(target_dir, "init-project", result, on_progress)

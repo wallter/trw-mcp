@@ -1,0 +1,151 @@
+{
+ "1000": {
+  "_run": {
+   "close_failed": 0.0,
+   "rows": 1000.0,
+   "store_mb": 48.216932,
+   "wall_s": 15.360523666022345
+  },
+  "trw-daemon-tool": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 89.58333333333334,
+   "n": 16.0,
+   "p50_ms": 148.85641681030393,
+   "p95_ms": 163.5004160925746
+  },
+  "trw-framework": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 89.58333333333334,
+   "n": 16.0,
+   "p50_ms": 165.88854184374213,
+   "p95_ms": 3255.7394590694457
+  }
+ },
+ "20000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 20000.0,
+   "store_mb": 553.195262,
+   "wall_s": 158.4149313340895
+  },
+  "trw-daemon-tool": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 87.5,
+   "n": 16.0,
+   "p50_ms": 1049.043167149648,
+   "p95_ms": 1708.183583104983
+  },
+  "trw-framework": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.5625,
+   "n": 16.0,
+   "p50_ms": 258.41416604816914,
+   "p95_ms": 297.5774588994682
+  }
+ },
+ "5000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 5000.0,
+   "store_mb": 187.463578,
+   "wall_s": 40.432452416047454
+  },
+  "trw-daemon-tool": {
+   "complete@10": 62.5,
+   "complete@10_ci95": [
+    38.64064709793481,
+    81.5190174452472
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 4,
+    "b_only": 0,
+    "delta_pp": -25.0,
+    "n": 16,
+    "p": 0.125
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 62.5,
+   "mrr": 54.37499999999999,
+   "n": 16.0,
+   "p50_ms": 435.11633295565844,
+   "p95_ms": 635.5482919607311
+  },
+  "trw-framework": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.25,
+   "n": 16.0,
+   "p50_ms": 261.82183297351,
+   "p95_ms": 471.0817919112742
+  }
+ }
+}

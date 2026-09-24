@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 # ---------------------------------------------------------------------------
 # FR07 — No {{ }} template tokens in installed script
@@ -270,7 +271,6 @@ def test_hook_stdlib_only_imports() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_execution_under_50ms(tmp_path: Path) -> None:
     """NFR04: hook execution time < 50 ms for non-matching tool (no I/O)."""
@@ -295,7 +295,7 @@ def test_execution_under_50ms(tmp_path: Path) -> None:
 
     # 50ms is for the script logic itself; Python startup adds overhead.
     # We use 2s as a generous bound to avoid flakiness on slow CI.
-    assert elapsed_ms < 2000, f"Hook took {elapsed_ms:.0f} ms (expected < 2000 ms)"
+    assert_budget("hook_execution_elapsed", elapsed_ms, 2000, "ms")
 
 
 # ---------------------------------------------------------------------------

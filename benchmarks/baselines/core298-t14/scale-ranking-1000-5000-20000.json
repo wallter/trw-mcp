@@ -1,0 +1,223 @@
+{
+ "1000": {
+  "_run": {
+   "close_failed": 0.0,
+   "rows": 1000.0,
+   "store_mb": 47.463999,
+   "wall_s": 21.811852999962866
+  },
+  "trw-daemon-tool": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 89.58333333333334,
+   "n": 16.0,
+   "p50_ms": 225.89975013397634,
+   "p95_ms": 242.46550002135336
+  },
+  "trw-framework": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 89.58333333333334,
+   "n": 16.0,
+   "p50_ms": 216.5664581116289,
+   "p95_ms": 3514.914209023118
+  },
+  "trw-query-pool": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 89.58333333333334,
+   "n": 16.0,
+   "p50_ms": 81.61887503229082,
+   "p95_ms": 105.6425420101732
+  }
+ },
+ "20000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 20000.0,
+   "store_mb": 529.217843,
+   "wall_s": 167.03807862498797
+  },
+  "trw-daemon-tool": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.5625,
+   "n": 16.0,
+   "p50_ms": 950.5098338704556,
+   "p95_ms": 1291.933000087738
+  },
+  "trw-framework": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.5625,
+   "n": 16.0,
+   "p50_ms": 306.8612921051681,
+   "p95_ms": 661.5962910000235
+  },
+  "trw-query-pool": {
+   "complete@10": 81.25,
+   "complete@10_ci95": [
+    56.99064013154177,
+    93.40852122641324
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 1,
+    "b_only": 0,
+    "delta_pp": -6.25,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 81.25,
+   "mrr": 70.3125,
+   "n": 16.0,
+   "p50_ms": 194.302000105381,
+   "p95_ms": 534.4785419292748
+  }
+ },
+ "5000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 5000.0,
+   "store_mb": 191.468614,
+   "wall_s": 53.35179554205388
+  },
+  "trw-daemon-tool": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.25,
+   "n": 16.0,
+   "p50_ms": 516.2684998940676,
+   "p95_ms": 613.8479169458151
+  },
+  "trw-framework": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.25,
+   "n": 16.0,
+   "p50_ms": 303.6239589564502,
+   "p95_ms": 576.8637089058757
+  },
+  "trw-query-pool": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 84.375,
+   "n": 16.0,
+   "p50_ms": 198.50412500090897,
+   "p95_ms": 272.52074982970953
+  }
+ }
+}

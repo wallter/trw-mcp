@@ -26,12 +26,10 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
-# PII redaction lives in its own module (see ``_feedback_redaction``); the names
-# are re-exported here so ``submit_feedback._redact_pii`` remains the import path
-# and the monkeypatch target it has always been.
-from trw_mcp.tools._feedback_redaction import _redact_metadata, _redact_pii
+# Secret/PII redaction: the single trw-mcp redactor lives in ``telemetry.anonymizer`` (R2-014).
+from trw_mcp.telemetry.anonymizer import redact_metadata, redact_secrets
 
-__all__ = ["_redact_metadata", "_redact_pii", "submit_feedback", "submit_feedback_via_http"]
+__all__ = ["submit_feedback", "submit_feedback_via_http"]
 
 
 logger = structlog.get_logger(__name__)
@@ -309,9 +307,9 @@ def _submit_feedback_impl(
     # the box — message body, subject headline, AND each user-supplied metadata
     # value. Redaction runs BEFORE validation so the length/content checks see
     # the redacted form and the network call never carries secrets in clear.
-    message = _redact_pii(message)
-    subject = _redact_pii(subject)
-    metadata = _redact_metadata(metadata)
+    message = redact_secrets(message)
+    subject = redact_secrets(subject)
+    metadata = redact_metadata(metadata)
     error = _validate(
         category=category,
         subject=subject,
@@ -370,7 +368,7 @@ def submit_feedback(
     configured, returns ``success=False`` with a clear error so the operator
     knows to set ``TRW_BACKEND_URL`` / ``TRW_BACKEND_API_KEY``.
 
-    PRD-INFRA-132 FR04a: the ``message`` body is run through ``_redact_pii``
+    PRD-INFRA-132 FR04a: the ``message`` body is run through ``redact_secrets``
     BEFORE validation so length / content checks see the redacted form and
     the network call never carries secrets in clear text.
 

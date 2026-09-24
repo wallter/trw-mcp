@@ -107,22 +107,18 @@ def _update_wave_status(
     message: str,
 ) -> None:
     """Update wave status in run.yaml with checkpoint metadata."""
+    del reader, writer  # kept for callers; the locked N1 path owns the read and the write
     try:
-        run_yaml = meta_path / "run.yaml"
-        if not run_yaml.exists():
-            return
-        run_data = reader.read_yaml(run_yaml)
-        if not isinstance(run_data, dict):
-            return
-        wave_status = run_data.get("wave_status", {})
-        if not isinstance(wave_status, dict):
-            wave_status = {}
-        wave_status[wave_id] = {
-            "last_checkpoint": ts,
-            "message": message,
-        }
-        run_data["wave_status"] = wave_status
-        writer.write_yaml(run_yaml, run_data)
+        from trw_mcp.state._run_yaml_update import update_run_yaml
+
+        def _stamp_wave(run_data: dict[str, object]) -> None:
+            wave_status = run_data.get("wave_status", {})
+            if not isinstance(wave_status, dict):
+                wave_status = {}
+            wave_status[wave_id] = {"last_checkpoint": ts, "message": message}
+            run_data["wave_status"] = wave_status
+
+        update_run_yaml(meta_path.parent, _stamp_wave)
     except Exception:  # justified: fail-open, wave status metadata update must not block checkpoint
         logger.debug("wave_status_update_failed", wave_id=wave_id)
 

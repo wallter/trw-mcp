@@ -311,18 +311,92 @@ def test_prd_qual_139_retired_fields_are_gone_and_warned(capsys: pytest.CaptureF
         assert key in err
 
 
-def test_max_research_waves_was_deliberately_not_retired() -> None:
-    """PRD-QUAL-139-FR05's one hold-back, pinned so it is a decision not a slip.
+def test_max_research_waves_was_retired_under_core_291() -> None:
+    """PRD-QUAL-139-FR05's hold-back reason stopped applying under PRD-CORE-291.
 
-    It is as unread as the twenty-one, but ``OrchestrationConfig`` redeclares it
-    in ``_sub_models.py``. Deleting the flat field would leave the nested default
-    live, so the removal would change nothing an operator can observe while a
-    retired-key warning told them it had. The platform config-schema docs page
-    also still advertises it.
+    Its old hold-back was that ``OrchestrationConfig`` redeclared the flat
+    field in ``_sub_models.py``, so deleting only the flat field would leave a
+    live nested default behind. PRD-CORE-291 (slice 2) removed BOTH the flat
+    field and its ``OrchestrationConfig`` mirror together, so nothing an
+    operator could observe survives, and the field is now a normal retired key
+    (empty replacement).
     """
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.models.config._retired_keys import retired_config_keys
 
-    assert "max_research_waves" in TRWConfig.model_fields
-    assert "max_research_waves" not in retired_config_keys()
-    assert "max_research_waves" in type(TRWConfig().orchestration).model_fields
+    assert "max_research_waves" not in TRWConfig.model_fields
+    assert retired_config_keys().get("max_research_waves") == ""
+    assert "max_research_waves" not in type(TRWConfig().orchestration).model_fields
+
+
+# The config keys removed between the 5.0.0 cut (04e6751bc mcp / 05bdd5eac memory)
+# and 6.0.0 that shipped without a retired-map entry, so an operator's leftover
+# value read as a probable typo. Found by diffing the field sets at the cut
+# against main; mapped to their replacement ("" = none).
+_REMOVED_SINCE_5_0 = {
+    "decision_enabled": "assess_enabled",  # trw_decision -> trw_assess clean break
+    "hybrid_bm25_candidates": "",  # PRD-CORE-292: recall uses the library's acquisition
+    "hybrid_vector_candidates": "",  # PRD-CORE-292
+    "hybrid_search_candidate_pool_size": "",  # PRD-CORE-292
+    "llm_utility_filter_enabled": "",  # PRD-CORE-291: the dormant Haiku learn gate
+    "contradiction_penalty_reward": "",  # PRD-CORE-293: the reward loop is gone
+    "lifecycle_use_fsrs": "",  # PRD-CORE-293: FSRS scoring is gone (trw-memory key)
+    "observation_masking": "",  # C9 finding: nothing downstream cuts or elides a response
+    "compact_after_turns": "",  # C9 finding
+    "minimal_after_turns": "",  # C9 finding
+}
+
+
+@pytest.mark.parametrize("key", sorted(_REMOVED_SINCE_5_0))
+def test_keys_removed_since_5_0_warn_as_retired_not_as_a_typo(key: str, capsys: pytest.CaptureFixture[str]) -> None:
+    """A removed key must be reported as retired, with its replacement if any."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_unrecognised_config_keys
+
+    assert key not in TRWConfig.model_fields, f"{key} is still a live field"
+    assert retired_config_keys().get(key) == _REMOVED_SINCE_5_0[key]
+
+    assert warn_unrecognised_config_keys({key: "leftover-value"}, set(TRWConfig.model_fields)) == [key]
+    err = capsys.readouterr().err
+    assert key in err and "retired" in err
+    assert "typo" not in err
+    assert "leftover-value" not in err
+    if _REMOVED_SINCE_5_0[key]:
+        assert _REMOVED_SINCE_5_0[key] in err
+
+
+@pytest.mark.parametrize("key", ["compact_after_turns", "minimal_after_turns", "observation_masking"])
+def test_a_retired_key_set_through_its_env_var_warns_by_name_never_value(
+    key: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``TRW_<KEY>`` reaches the same retired-key table as ``.trw/config.yaml``.
+
+    A retired field's env alias is dropped as silently as its YAML key, so an
+    operator who exported it would never learn it is gone.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.models.config._retired_keys import retired_config_keys, warn_retired_env_vars
+
+    assert key not in TRWConfig.model_fields
+    assert key in retired_config_keys()
+    env_var = f"TRW_{key.upper()}"
+    assert warn_retired_env_vars({env_var: "leftover-7731", "TRW_DEBUG": "1", "PATH": "/bin"}) == [env_var]
+    err = capsys.readouterr().err
+    assert env_var in err and "retired" in err
+    assert "leftover-7731" not in err
+    assert "TRW_DEBUG" not in err
+
+
+def test_the_loader_checks_retired_env_vars_on_the_real_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wiring: the check runs even when no config file sets anything."""
+    from trw_mcp.models.config import _loader
+
+    seen: list[set[str]] = []
+    monkeypatch.setattr(_loader, "warn_retired_env_vars", lambda environ: seen.append(set(environ)) or [])
+    monkeypatch.setattr(_loader, "_read_yaml_overrides", lambda _path: {})
+    monkeypatch.setattr(_loader, "resolve_platform_api_key", lambda _path: "")
+    monkeypatch.setenv("TRW_COMPACT_AFTER_TURNS", "5")
+
+    _loader._build_config()
+
+    assert seen and "TRW_COMPACT_AFTER_TURNS" in seen[0]

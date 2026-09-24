@@ -12,7 +12,7 @@ from trw_mcp.bootstrap._update_transaction import (
     _restore_transaction_snapshot,
     _snapshot_transaction_paths,
 )
-from trw_mcp.canons.registry import load_registry
+from trw_mcp.canons.registry import install_view, load_registry
 from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
 
 
@@ -20,8 +20,7 @@ def test_transaction_covers_every_managed_framework_artifact() -> None:
     registry = load_registry()
     expected = {
         str(DEPLOYMENT_RELATIVE_PATH),
-        *(canon.runtime_compact_core for canon in registry.compiled_canons),
-        *(canon.runtime_reference for canon in registry.compiled_canons),
+        *(dest for _, dest in install_view(registry) if dest.startswith(".trw/")),
     }
     assert expected <= set(_MANAGED_TRW_FILES)
 

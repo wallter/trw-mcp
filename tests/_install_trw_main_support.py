@@ -69,11 +69,14 @@ def drive_main(
     *,
     extra_argv: tuple[str, ...] = (),
     env: dict[str, str] | None = None,
+    project_setup: bool = False,
 ) -> MainRun:
     """Run the real ``main()`` against *target* with all I/O phases stubbed.
 
     ``--script`` forces the non-interactive path (the ``curl … | bash`` shape).
     Raises ``SystemExit`` out to the caller — that is the exit code under test.
+    ``project_setup=True`` runs the real project phase: init-project in a child
+    process of this interpreter, against *target*.
     """
     run = MainRun()
 
@@ -101,8 +104,12 @@ def drive_main(
     monkeypatch.setattr(installer, "phase_install_packages", _record("install", ""))
     monkeypatch.setattr(installer, "phase_install_extras", lambda *_a, **_k: [])
     monkeypatch.setattr(installer, "phase_install_proprietary", _record("proprietary", []))
-    monkeypatch.setattr(installer, "_resolve_user_tier_consent", lambda *_a, **_k: False)
-    monkeypatch.setattr(installer, "phase_project_setup", _record("project_setup", ["claude-code"]))
+    if project_setup:
+        monkeypatch.setattr(
+            installer, "find_trw_cmd", lambda *_a, **_k: [installer.sys.executable, "-B", "-m", "trw_mcp.server"]
+        )
+    else:
+        monkeypatch.setattr(installer, "phase_project_setup", _record("project_setup", ["claude-code"]))
     monkeypatch.setattr(installer, "run_install_doctor", _record("doctor", None))
     monkeypatch.setattr(installer, "phase_configure", _record("configure", "offline"))
     monkeypatch.setattr(installer, "_restart_mcp_servers", lambda *_a, **_k: None)

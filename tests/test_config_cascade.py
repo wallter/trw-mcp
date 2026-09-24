@@ -84,8 +84,7 @@ def test_no_machine_file_is_backward_compatible(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: empty_home))
     reload_config()
     cfg = get_config()
-    # Defaults preserved — user_tier fields carry their code defaults.
-    assert cfg.user_tier_enabled is False
+    # Defaults preserved — the user-tier cap carries its code default.
     assert cfg.recall_user_tier_cap == 5
     assert cfg.task_root == "docs"
 
@@ -104,22 +103,21 @@ def test_populated_project_no_machine_matches_project_values(
     empty_home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: empty_home))
     (project_dir / ".trw" / "config.yaml").write_text(
-        "task_root: from-project\nuser_tier_enabled: true\nrecall_user_tier_cap: 9\n",
+        "task_root: from-project\nrecall_user_tier_cap: 9\n",
         encoding="utf-8",
     )
     reload_config()
     cfg = get_config()
     # Every project-file key is reflected verbatim (no machine layer to dilute).
     assert cfg.task_root == "from-project"
-    assert cfg.user_tier_enabled is True
     assert cfg.recall_user_tier_cap == 9
 
 
-def test_user_tier_fields_exist_with_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """FR04 introduces ``user_tier_enabled`` + ``recall_user_tier_cap``.
+def test_user_tier_cap_exists_with_its_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FR04 introduced ``recall_user_tier_cap`` (``user_tier_enabled`` was retired by PRD-CORE-280 FR06).
 
     Isolated so neither the machine layer (``~/.trw/config.yaml``) nor an
-    ambient ``TRW_USER_TIER_ENABLED`` env can mask the code defaults: home is
+    ambient env knob can mask the code default: home is
     pointed at an empty dir and the user-tier env knobs are cleared before
     ``reload_config()`` (the autouse ``_point_project`` already pins a clean,
     config-less project root).
@@ -127,11 +125,8 @@ def test_user_tier_fields_exist_with_defaults(tmp_path: Path, monkeypatch: pytes
     empty_home = tmp_path / "empty_home"
     empty_home.mkdir()
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: empty_home))
-    monkeypatch.delenv("TRW_USER_TIER_ENABLED", raising=False)
     monkeypatch.delenv("TRW_RECALL_USER_TIER_CAP", raising=False)
     reload_config()
     cfg = get_config()
-    assert hasattr(cfg, "user_tier_enabled")
-    assert hasattr(cfg, "recall_user_tier_cap")
-    assert cfg.user_tier_enabled is False
+    assert not hasattr(cfg, "user_tier_enabled")
     assert cfg.recall_user_tier_cap == 5

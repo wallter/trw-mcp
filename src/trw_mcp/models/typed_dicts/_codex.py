@@ -31,6 +31,8 @@ class CodexMcpServerEntry(TypedDict, total=False):
     enabled: bool
     enabled_tools: list[str]
     disabled_tools: list[str]
+    # Names of the client's own environment variables Codex passes through to the server.
+    env_vars: list[str]
     # `enabled_tools` is the VISIBILITY axis; `tools` carries the APPROVAL axis.
     # Under `approval_policy = "never"` a visible tool is still refused at call
     # time unless something grants it an approval mode, which is why a codex

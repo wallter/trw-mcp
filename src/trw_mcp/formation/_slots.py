@@ -81,7 +81,12 @@ def add_slots(
         grown = _revised(manifest, [*manifest.members, *members])
         supplied = {str(p.get("member_id")): p for p in members}
         stamped, admitted, released = admitted_members(
-            trw_dir, manifest, list(grown.members), revision=grown.revision, supplied=supplied
+            trw_dir,
+            manifest,
+            list(grown.members),
+            formation_id=formation_id,
+            revision=grown.revision,
+            supplied=supplied,
         )
         revised = grown.model_copy(update={"members": stamped})
         commit_admissions(trw_dir, formation_id, Path(revised.orchestrator_run_path), admitted, released)

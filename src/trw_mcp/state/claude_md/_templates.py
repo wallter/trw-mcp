@@ -55,7 +55,7 @@ CEREMONY_TOOLS: list[CeremonyTool] = [
         "trw_recall",
         "Quick tasks \u2014 retrieves relevant prior learnings without a full run",
         "Surface discoveries from past sessions so you don't repeat solved problems",
-        "trw_recall('auth patterns', min_impact=0.7)",
+        "trw_recall('auth patterns', options={'min_impact': 0.7})",
     ),
     CeremonyTool(
         "Start",

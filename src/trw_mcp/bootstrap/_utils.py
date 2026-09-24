@@ -123,8 +123,11 @@ def _write_version_yaml(
     Derived values (no static file to maintain):
     - ``framework_version``: from TRWConfig default
     - ``aaref_version``: from TRWConfig default
-    - ``trw_mcp_version``: from installed package metadata
     - ``deployed_at``: current UTC timestamp
+
+    PRD-INFRA-192 FR12: no ``trw_mcp_version`` field — the resolved
+    package version is recorded in ``.trw/managed-artifacts.yaml`` ``packages``
+    (written by ``_write_manifest``), which ``version-status`` reads back.
     """
     from trw_mcp import __version__ as pkg_version
     from trw_mcp.canons.registry import bundled_manifest_bytes, load_registry
@@ -144,22 +147,15 @@ def _write_version_yaml(
         # "created" on recreation, not blanket-classified by flow type.
         preexisting = {path: path.exists() for path in managed_paths}
         registry = load_registry(bundled_manifest_bytes())
-        compiled_artifacts: dict[Path, bytes] = {}
-        for canon in registry.compiled_canons:
-            compiled_artifacts[Path(canon.runtime_compact_core)] = (
-                _DATA_DIR / Path(canon.compact_core).name
-            ).read_bytes()
-            compiled_artifacts[Path(canon.runtime_reference)] = (_DATA_DIR / Path(canon.reference).name).read_bytes()
         framework_source = (_DATA_DIR / "framework.md").read_text(encoding="utf-8")
         aaref_source = (_DATA_DIR / "aaref.md").read_text(encoding="utf-8")
         expected = {
             Path(".trw/frameworks/FRAMEWORK.md"): framework_source.encode("utf-8"),
             Path(".trw/frameworks/AARE-F-FRAMEWORK.md"): aaref_source.encode("utf-8"),
-            **compiled_artifacts,
         }
         from ._framework_generation import framework_generation_current
 
-        if framework_generation_current(target_dir, expected, registry.digest, pkg_version):
+        if framework_generation_current(target_dir, expected, registry.digest):
             return
         repair_framework_runtime(
             target_dir,
@@ -167,9 +163,7 @@ def _write_version_yaml(
             aaref_source=aaref_source,
             framework_version=config.framework_version,
             aaref_version=config.aaref_version,
-            trw_mcp_version=pkg_version,
             registry_digest=registry.digest,
-            additional_artifacts=compiled_artifacts,
         )
         logger.debug(
             "version_yaml_generated",
@@ -354,6 +348,7 @@ def _check_instruction_markers(target_dir: Path, result: dict[str, list[str]]) -
     from trw_mcp.bootstrap._template_claude_md import _recorded_or_detected_targets
     from trw_mcp.client_profiles.catalog import client_surfaces
     from trw_mcp.server._subcommands_uninstall_config import _MANAGED_BLOCK_MARKERS
+    from trw_mcp.state.claude_md._instruction_carrier import InstructionFileClass, classify_instruction_file
 
     client_ids = _recorded_or_detected_targets(target_dir)
     relpaths: set[str] = set()
@@ -365,6 +360,10 @@ def _check_instruction_markers(target_dir: Path, result: dict[str, list[str]]) -
     for relpath in sorted(relpaths):
         instruction_path = target_dir / relpath
         if not instruction_path.exists():
+            continue
+        # A single-source pointer (``@AGENTS.md``) is the intended layout and carries
+        # no block by design; the write path and doctor already treat it as correct.
+        if classify_instruction_file(instruction_path).kind is InstructionFileClass.POINTER:
             continue
         content = instruction_path.read_text(encoding="utf-8")
         has_markers = any(start in content and end in content for start, end in _MANAGED_BLOCK_MARKERS)

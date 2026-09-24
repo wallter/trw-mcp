@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import (
     _CFG,
     _entries_dir,
@@ -13,6 +16,12 @@ from tests._tools_learning_shared import (
 from trw_mcp.state.persistence import FileStateReader
 
 
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """These tests only assert on trw_learn's YAML sidecar / index -- the fake route suffices (PRD-CORE-280 e1)."""
+    return fake_memory_store
+
+
 class TestToolDocstrings:
     """PRD-CORE-119: learning tool schema guidance stays accurate and high-signal."""
 
@@ -20,20 +29,20 @@ class TestToolDocstrings:
         tools = _get_tools()
         doc = tools["trw_learn"].fn.__doc__ or ""
 
-        # Quality-gate guidance present. Phrasing was condensed twice: first for
-        # the PRD-CORE-125 200-word gate, then for the tool-DEFINITION token
+        # Quality-gate guidance present. Phrasing was condensed three times: first
+        # for the PRD-CORE-125 200-word gate, then for the tool-DEFINITION token
         # budget (a docstring is billed in every client's system prompt, so the
         # multi-line "Recommended:" / "Advanced (auto-detected if omitted):"
-        # headers were folded into prose). The intent asserted here is unchanged:
-        # record only behavior-changing learnings, routine observations hurt
-        # recall, and the required vs. auto-detected field tiers are stated.
+        # headers were folded into prose), then again for PRD-CORE-291 when the
+        # standalone trw_learn_update tool merged into this docstring's create/
+        # update split. The intent asserted here is unchanged: record only
+        # behavior-changing learnings, routine observations hurt recall, and
+        # the create mode's required field tier is stated.
         assert "Routine observations" in doc
         assert "dilute recall" in doc
-        assert "Required:" in doc
-        assert "auto-detect when omitted" in doc
+        assert "required" in doc
         # Write-tier vocabulary (scope) still callable from the docstring alone.
         assert "scope" in doc
-        assert "user store" in doc
 
     def test_trw_instructions_sync_docstring_matches_post_093_behavior(self) -> None:
         tools = _get_tools()
@@ -85,7 +94,7 @@ class TestTrwLearn:
 
 
 class TestTrwLearnUpdate:
-    """Tests for trw_learn_update tool."""
+    """Tests for trw_learn's update mode (learning_id set; merged from trw_learn_update by PRD-CORE-291)."""
 
     def test_updates_status_to_resolved(self, tmp_path: Path, reader: FileStateReader) -> None:
         tools = _get_tools()
@@ -96,7 +105,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id=lid,
             status="resolved",
         )
@@ -121,7 +130,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id=lid,
             status="obsolete",
         )
@@ -137,7 +146,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id=lid,
             summary="Refined summary",
             detail="Better detail with more context",
@@ -164,7 +173,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id=lid,
             impact=0.9,
         )
@@ -180,7 +189,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id=lid,
             status="invalid_status",
         )
@@ -196,7 +205,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id=lid,
             impact=1.5,
         )
@@ -205,7 +214,7 @@ class TestTrwLearnUpdate:
 
     def test_not_found_returns_error(self, tmp_path: Path) -> None:
         tools = _get_tools()
-        update_result = tools["trw_learn_update"].fn(
+        update_result = tools["trw_learn"].fn(
             learning_id="L-nonexistent",
             status="resolved",
         )
@@ -221,7 +230,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        update_result = tools["trw_learn_update"].fn(learning_id=lid)
+        update_result = tools["trw_learn"].fn(learning_id=lid)
         assert update_result["status"] == "no_changes"
 
     def test_resyncs_index_after_update(self, tmp_path: Path, reader: FileStateReader) -> None:
@@ -233,7 +242,7 @@ class TestTrwLearnUpdate:
         )
         lid = result["learning_id"]
 
-        tools["trw_learn_update"].fn(
+        tools["trw_learn"].fn(
             learning_id=lid,
             status="resolved",
         )

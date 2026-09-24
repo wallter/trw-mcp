@@ -119,7 +119,6 @@ def _light_profile(
         include_delegation=include_delegation,
         # Surface control (PRD-CORE-125)
         nudge_enabled=nudge_enabled,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=False,
         skills_enabled=False,
         on_transition=on_transition,  # type: ignore[arg-type]
@@ -139,17 +138,12 @@ _PROFILES: dict[str, ClientProfile] = {
         include_delegation=True,
         # Surface control (PRD-CORE-125)
         nudge_enabled=True,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         # PRD-FIX-078: claude-code exposes MCP tools under mcp__{server}__{tool}
         tool_namespace_prefix="mcp__trw__",
         # PRD-INTENT-002 FR04: claude-code supports tools.listChanged.
         on_transition="notify",
-        # PRD-CORE-203 FR01: this client (claude-code) supports `@<path>`
-        # in-file imports, so the TRW block can be externalized to
-        # `.trw/INSTRUCTIONS.md`.
-        instruction_import_syntax="at_path",
     ),
     "opencode": _light_profile(
         "opencode",
@@ -192,7 +186,6 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         on_transition="silent",  # PRD-INTENT-002 FR04
@@ -258,7 +251,6 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=False,
         include_delegation=False,
         nudge_enabled=True,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         on_transition="silent",  # PRD-INTENT-002 FR04
@@ -287,32 +279,6 @@ _PROFILES: dict[str, ClientProfile] = {
     "copilot": ClientProfile(
         client_id="copilot",
         display_name="GitHub Copilot CLI",
-        # "none" — and the reason is a SURFACE split, not an absence.
-        #
-        # This was briefly set to `at_path_repo_relative` on the strength of the
-        # Copilot *CLI* docs, which do document `@relpath` includes. But this one
-        # profile serves both surfaces: it also writes `.vscode/mcp.json`, and
-        # `docs/CLIENT-PROFILES.md` describes it as covering GitHub Copilot
-        # generally. GitHub's repository-instructions docs and VS Code's own
-        # custom-instructions docs describe NO file-inclusion syntax for
-        # `.github/copilot-instructions.md` — only inline Markdown, with links
-        # being references a human follows rather than content that is pulled in.
-        #
-        # So an `@` line there is a dangling literal for every Copilot Chat user:
-        # a file that exists, parses, reports success and carries nothing. That
-        # is strictly worse than the injection it replaced (P5), which is exactly
-        # what PRD-CORE-240 exists to prevent — so the block stays inline in the
-        # always-on file, which IS "automatically included in every chat request".
-        #
-        # The include-free way to externalize this is
-        # `.github/instructions/*.instructions.md` with `applyTo: "**"` ("Use `**`
-        # to apply to all files"), a TRW-owned file Copilot loads itself — the
-        # same config-registered shape opencode and codex use. TRW already writes
-        # that directory, so it is a small addition rather than new machinery.
-        # Sources: docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
-        #          code.visualstudio.com/docs/copilot/customization/custom-instructions
-        #          docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-custom-instructions (CLI only)
-        instruction_import_syntax="none",
         # AGENTS.md WITHDRAWN (PRD-CORE-240-FR04). Copilot does read AGENTS.md —
         # VS Code documents it as always-on alongside copilot-instructions.md —
         # but TRW already writes TWO carriers of its own for this client: the
@@ -334,7 +300,6 @@ _PROFILES: dict[str, ClientProfile] = {
         scoring_weights=ScoringDimensionWeights(),
         response_format="json",
         hooks_enabled=True,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         on_transition="silent",  # PRD-INTENT-002 FR04
@@ -363,7 +328,6 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
     ),
@@ -378,7 +342,8 @@ _PROFILES: dict[str, ClientProfile] = {
             instruction_path="AGENTS.md",
         ),
         instruction_max_lines=400,
-        # TRW instruction budget, not grok-4.6's unpublished model window.
+        # TRW instruction budget, not grok-4.7's 500K model window (verified
+        # 2026-09-22, docs/documentation/prompting/GROK-4-7-RESEARCH-2026-09-22.md).
         context_window_tokens=128_000,
         ceremony_mode="full",
         ceremony_weights=CeremonyWeights(),
@@ -392,7 +357,6 @@ _PROFILES: dict[str, ClientProfile] = {
         include_framework_ref=True,
         include_delegation=True,
         nudge_enabled=True,
-        learning_recall_enabled=True,
         mcp_instructions_enabled=True,
         skills_enabled=True,
         # Empty, like every non-Claude profile: grok renders the SHARED AGENTS.md

@@ -134,23 +134,3 @@ def test_surface_log_dir_hardened_0700(tmp_path: Path) -> None:
     assert logs_dir.is_dir()
     assert stat.S_IMODE(os.stat(logs_dir).st_mode) == 0o700
     assert stat.S_IMODE(os.stat(trw_dir).st_mode) == 0o700
-
-
-@_POSIX_ONLY
-def test_memory_dir_and_db_hardened_on_backend_create(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """get_backend() creates .trw/memory dir 0700 and memory.db 0600."""
-    from trw_mcp.state import _memory_connection
-
-    _memory_connection.reset_backend()
-    trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    backend = _memory_connection.get_backend(trw_dir=trw_dir)
-    try:
-        memory_dir = trw_dir / "memory"
-        db_path = memory_dir / "memory.db"
-        assert memory_dir.is_dir()
-        assert stat.S_IMODE(os.stat(memory_dir).st_mode) == 0o700
-        assert db_path.exists()
-        assert stat.S_IMODE(os.stat(db_path).st_mode) == 0o600
-    finally:
-        _memory_connection.reset_backend()

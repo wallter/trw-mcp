@@ -9,6 +9,8 @@ from unittest.mock import patch
 import pytest
 
 from tests._ceremony_helpers import make_ceremony_server as _make_ceremony_server
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.tools._ceremony_step_table import SESSION_START_STEPS, SessionStartContext, Step, run_steps
 
 
@@ -106,6 +108,7 @@ class TestSessionStartPartialFailure:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        fake_memory_store: object,
     ) -> None:
         """Both recall and status succeed."""
         tools = _make_ceremony_server(monkeypatch, tmp_path)
@@ -145,7 +148,7 @@ class TestSessionStartPartialFailure:
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch(
                 "trw_mcp.tools._ceremony_helpers.perform_session_recalls",
-                return_value=(surfaced, False, {}),
+                return_value=(surfaced, {}),
             ),
         ):
             result = tools["trw_session_start"].fn()
@@ -197,10 +200,12 @@ class TestSessionStartPartialFailure:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """Assertion health is exposed through the production trw_session_start tool path."""
         from datetime import datetime, timedelta, timezone
-        from unittest.mock import MagicMock
+
+        from trw_memory.models.memory import Assertion, AssertionType, MemoryEntry
 
         tools = _make_ceremony_server(monkeypatch, tmp_path)
         trw_dir = tmp_path / ".trw"
@@ -208,26 +213,23 @@ class TestSessionStartPartialFailure:
         (trw_dir / "context").mkdir(parents=True)
 
         recent = datetime.now(timezone.utc) - timedelta(hours=1)
-        mock_backend = MagicMock()
-        mock_backend.entries_with_assertions.return_value = [
-            MagicMock(
-                assertions=[
-                    MagicMock(last_result=True, last_verified_at=recent),
-                    MagicMock(last_result=False, last_verified_at=recent),
-                ]
-            ),
-            MagicMock(
-                assertions=[
-                    MagicMock(last_result=None, last_verified_at=None),
-                    MagicMock(last_result=None, last_verified_at=recent),
-                ]
-            ),
-        ]
+
+        def claim(result: bool | None, verified_at: datetime | None) -> Assertion:
+            return Assertion(
+                type=AssertionType.GLOB_EXISTS, target="x.py", last_result=result, last_verified_at=verified_at
+            )
+
+        for entry_id, assertions in (
+            ("L-ah1", [claim(True, recent), claim(False, recent)]),
+            ("L-ah2", [claim(None, None), claim(None, recent)]),
+        ):
+            fake_memory_store.rows[(FAKE_NAMESPACE, entry_id)] = MemoryEntry(
+                id=entry_id, content=entry_id, namespace=FAKE_NAMESPACE, assertions=assertions
+            )
 
         with (
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
         ):
             # verbose=True: assertion_health is a diagnostic sub-block that
             # compact-by-default (PRD-IMPROVE-MCP-04) folds into health_summary.
@@ -477,7 +479,6 @@ class TestSessionStartPayloadTrimming:
         # no runtime size estimate, load-bearing fields intact.
         assert result["compact"] is True
         assert "health_summary" in result
-        assert "embed_health" not in result
         assert "step_durations_ms" not in result
         assert "payload_token_estimate" not in result
         assert "run" in result
@@ -504,7 +505,9 @@ class TestSessionStartPayloadTrimming:
         # Verbose mode: full diagnostic payload, no summary collapse.
         assert result["compact"] is False
         assert "health_summary" not in result
-        assert "embed_health" in result
+        assert "sync_health" in result
+        # The MCP-side embed status is gone: the daemon owns the model (6.0.0).
+        assert "embed_health" not in result
         assert "step_durations_ms" in result
         # Run/pin + framework reminder still present.
         assert "run" in result
@@ -536,9 +539,11 @@ def test_every_critical_step_failure_degrades_the_payload(step: Step) -> None:
 
     Attribution: reverting the FR01 change (restoring the broad handler in any of
     the five critical step bodies, or restoring the runner's bare ``raise``)
-    turns this red on ``recall``, ``surface_stamp``, ``profile_resolve`` and
-    ``phase_recall`` — the four that fail with ``success: true`` at HEAD — and on
-    ``run_resolve`` for the reason wording.
+    turns this red on ``recall``, ``surface_stamp`` and ``profile_resolve`` —
+    the three that fail with ``success: true`` at HEAD — and on ``run_resolve``
+    for the reason wording. (A fourth step, ``phase_recall``, carried this same
+    behavior until PRD-CORE-294 FR02 deleted the auto-recall phase it belonged
+    to; it is no longer in ``SESSION_START_STEPS``.)
 
     Parametrising over the whole table rather than one representative entry is
     deliberate: ``wiring-defect-patterns.md`` §5 records a fix that reintroduced
@@ -628,7 +633,7 @@ def test_canary_tamper_through_real_recall_dependency_degrades_the_payload(
     with (
         patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
         patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-        patch("trw_mcp.state.recall_factories.recall_baseline_high_impact", _raise_tamper),
+        patch("trw_mcp.state.recall_factories.recall_session_start", _raise_tamper),
     ):
         result = tools["trw_session_start"].fn(verbose=True)
 
@@ -641,45 +646,3 @@ def test_canary_tamper_through_real_recall_dependency_degrades_the_payload(
     assert "recall_degraded" not in result
     # DR-001: the mandated first call still returns a payload.
     assert "framework_reminder" in result
-
-
-def test_phase_recall_inner_failure_is_not_double_wrapped(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """PRD-CORE-263 DEF-03 attribution.
-
-    Drives the REAL ``phase_recall`` critical step through
-    ``trw_session_start`` with a failure injected at
-    ``_phase_contextual_recall`` (the dependency ``step_phase_auto_recall``
-    wraps into ``SessionStartStepError`` BEFORE returning to
-    ``step_auto_recall_orchestrated``, which used to catch-and-rewrap that
-    already-typed error a second time). The degradation's ``error_class`` must
-    name the real failure (``RuntimeError``), not ``SessionStartStepError``.
-    Reverting the DEF-03 fix (removing the ``except SessionStartStepError:
-    raise`` re-raise-as-is branch) turns this red.
-    """
-    tools = _make_ceremony_server(monkeypatch, tmp_path)
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "learnings" / "entries").mkdir(parents=True)
-    (trw_dir / "context").mkdir(parents=True)
-
-    with (
-        patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-        patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-        patch(
-            "trw_mcp.tools._ceremony_helpers._phase_contextual_recall",
-            side_effect=RuntimeError("phase recall backend unavailable"),
-        ),
-    ):
-        result = tools["trw_session_start"].fn(verbose=True)
-
-    assert result["success"] is False
-    degradations = cast("list[dict[str, object]]", result["degradations"])
-    phase_entries = [d for d in degradations if d["step"] == "phase_recall"]
-    assert len(phase_entries) == 1
-    assert phase_entries[0]["error_class"] == "RuntimeError", (
-        f"expected the ORIGINAL error class, got {phase_entries[0]['error_class']!r} "
-        "(a SessionStartStepError here means the runner unwrapped a double-wrapped cause)"
-    )
-    assert any("phase_recall" in err and "RuntimeError" in err for err in result["errors"]), result["errors"]

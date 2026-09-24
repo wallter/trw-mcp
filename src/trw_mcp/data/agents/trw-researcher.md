@@ -1,6 +1,6 @@
 ---
 name: trw-researcher
-effort: high
+effort: medium
 description: "Read-only investigation of code, external evidence, and competing approaches. Use when an implementation decision depends on facts, tradeoffs, root-cause analysis, or current primary sources. Returns scoped findings with citations, uncertainty, and recommended next steps."
 model: balanced
 maxTurns: 75
@@ -65,7 +65,7 @@ findings:
     evidence: ["path/to/file.py:42", "path/to/other.py:100"]
     sources: ["https://docs.example.com/guide"]  # online references (URLs)
     confidence: high  # high | medium | low
-    relevant_reqs: ["FR01", "FR03"]
+    relevant_reqs: ["FR-a", "FR-b"]
 open_questions:
   - "Question that needs follow-up"
 files_examined:
@@ -79,7 +79,7 @@ making that schema a superset of the fields above — in particular
 `open_questions` (see the axis-substitution rule below), since a schema
 declaring `additionalProperties: false` without it forces a direct conflict
 between this contract and the caller's, burning retries until one side loses
-(diagnosed 2026-07-27, commit 9700e9b709).
+(diagnosed in production; commit 9700e9b709).
 </workflow>
 
 <constraints>

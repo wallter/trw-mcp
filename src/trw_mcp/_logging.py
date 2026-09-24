@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import sys
 from collections.abc import MutableMapping
 from datetime import datetime, timezone
@@ -55,10 +54,6 @@ _SENSITIVE_PATTERNS: frozenset[str] = frozenset(
     }
 )
 
-_SENSITIVE_VALUE_RE = re.compile(
-    r"((?:Bearer|Basic|Token)\s+)\S+",
-    re.IGNORECASE,
-)
 
 # Noisy third-party loggers to suppress below WARNING
 _NOISY_LOGGERS: tuple[str, ...] = (
@@ -89,7 +84,10 @@ def _redact_secrets(
         if any(pat in key_lower for pat in _SENSITIVE_PATTERNS):
             event_dict[key] = "***REDACTED***"
         elif isinstance(event_dict[key], str):
-            event_dict[key] = _SENSITIVE_VALUE_RE.sub(r"\1***REDACTED***", event_dict[key])
+            # The one redactor (R2-014): credentials anywhere in the text, not only after Bearer/Basic/Token.
+            from trw_mcp.telemetry.anonymizer import redact_secrets
+
+            event_dict[key] = redact_secrets(event_dict[key])
     return event_dict
 
 

@@ -46,7 +46,7 @@ class TestSuppressInternalEventsFlag:
         logger = FileEventLogger(writer=mock_writer)
 
         user_facing_types = [
-            "tool_invocation",
+            "tool_call",
             "session_start",
             "checkpoint",
             "build_check_complete",
@@ -117,7 +117,7 @@ class TestSuppressInternalEventsFlag:
         assert "yaml_written" in INTERNAL_EVENT_TYPES
         assert "vector_upserted" in INTERNAL_EVENT_TYPES
         # User-facing events must NOT be in this set
-        assert "tool_invocation" not in INTERNAL_EVENT_TYPES
+        assert "tool_call" not in INTERNAL_EVENT_TYPES
         assert "session_start" not in INTERNAL_EVENT_TYPES
         assert "checkpoint" not in INTERNAL_EVENT_TYPES
 
@@ -129,12 +129,12 @@ class TestSuppressInternalEventsFlag:
 
         with suppress_internal_events():
             logger.log_event(events_path, "yaml_written", {})  # suppressed
-            logger.log_event(events_path, "tool_invocation", {"tool": "trw_learn"})  # not suppressed
+            logger.log_event(events_path, "tool_call", {"tool": "trw_learn"})  # not suppressed
             logger.log_event(events_path, "jsonl_appended", {})  # suppressed
             logger.log_event(events_path, "checkpoint", {"message": "mid-task"})  # not suppressed
 
-        # Only 2 calls: tool_invocation and checkpoint
+        # Only 2 calls: tool_call and checkpoint
         assert mock_writer.append_jsonl.call_count == 2
         written_event_types = [call_args[0][1].get("event") for call_args in mock_writer.append_jsonl.call_args_list]
-        assert "tool_invocation" in written_event_types
+        assert "tool_call" in written_event_types
         assert "checkpoint" in written_event_types

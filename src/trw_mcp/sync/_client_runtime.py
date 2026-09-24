@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from trw_mcp.state._constants import DEFAULT_NAMESPACE
+from trw_mcp.state import _store_selection
 
 logger = structlog.get_logger(__name__)
 
 _MIN_HINT_DELAY_SECONDS = 60
 _MAX_HINT_DELAY_SECONDS = 7200
 _MAX_CONSECUTIVE_IMMEDIATE_REPOLLS = 1
+#: Dirty rows pushed per cycle; the rest go on the next cycle, oldest first.
+DIRTY_PAGE_SIZE = 500
 
 if TYPE_CHECKING:
     from trw_memory.models.memory import MemoryEntry
@@ -93,26 +96,20 @@ def consume_next_cycle_force(next_cycle_force: bool) -> tuple[bool, bool]:
     return next_cycle_force, False
 
 
-def get_dirty_entries(*, client_id: str) -> list[MemoryEntry]:
+def get_dirty_entries(*, client_id: str, trw_dir: Path) -> list[MemoryEntry]:
+    """The oldest page of this checkout's project rows not yet pushed (PRD-CORE-298 FR01)."""
     try:
-        from trw_memory.sync.delta import DeltaTracker
-
-        from trw_mcp.state._memory_connection import get_backend as _get_backend
-
-        backend = _get_backend()
-        return DeltaTracker.get_dirty_entries(backend, since_seq=0)
+        store, namespace = _store_selection.selected_store(trw_dir)
+        return store.page_dirty(namespace, DIRTY_PAGE_SIZE)
     except Exception:  # justified: fail-open, dirty-entry discovery falls back to no-op sync
+        # trw-fail-silent-allow: an unreadable page leaves every row dirty, so the next cycle pushes it; nothing is lost.
         logger.debug("sync_get_dirty_failed", client_id=client_id, exc_info=True)
         return []
 
 
-def mark_synced(*, client_id: str, entries: list[MemoryEntry]) -> None:
+def mark_synced(*, client_id: str, trw_dir: Path, entries: list[MemoryEntry]) -> None:
     try:
-        from trw_memory.sync.delta import DeltaTracker
-
-        from trw_mcp.state._memory_connection import get_backend as _get_backend
-
-        backend = _get_backend()
-        DeltaTracker.mark_synced([e.id for e in entries if hasattr(e, "id")], backend, namespace=DEFAULT_NAMESPACE)
+        store, namespace = _store_selection.selected_store(trw_dir)
+        store.mark_synced(namespace, entries)
     except Exception:  # justified: fail-open, sync bookkeeping must not break successful pushes
         logger.debug("sync_mark_synced_failed", client_id=client_id, exc_info=True)

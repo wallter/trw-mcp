@@ -13,6 +13,11 @@ so a reader that knew only ``timestamp`` would call the most common real marker
 in production unreadable while passing every fixture-written test. Both
 spellings are read; ``unknown`` is correctly rejected as a non-ISO instant.
 
+The marker is keyed by session (:func:`pre_compact_marker_path`): with several
+sessions in one checkout, a single project-wide file gated every session's
+``trw_*`` calls whenever any one of them compacted, and replayed the compacted
+session's run into the others' recovery context.
+
 The marker is UNTRUSTED input (PRD-CORE-258-NFR03): its timestamp is parsed with
 :func:`datetime.fromisoformat` and re-emitted with :meth:`datetime.isoformat`, so
 no raw marker text can reach an agent-visible response. A document that cannot be
@@ -27,6 +32,7 @@ no-op.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections.abc import Mapping
@@ -39,11 +45,13 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 __all__ = [
     "PRE_COMPACT_MARKER_FILENAME",
+    "PRE_COMPACT_SESSION_DIRNAME",
     "MarkerReadResult",
     "PreCompactMarker",
     "pre_compact_marker_path",
     "read_pre_compact_marker",
     "read_pre_compact_marker_detail",
+    "session_marker_key",
     "write_pre_compact_marker",
 ]
 
@@ -60,13 +68,70 @@ MISSING_TIMESTAMP = "missing_timestamp"
 NON_ISO_TIMESTAMP = "non_iso_timestamp"
 
 
+#: Per-session markers live here, one file per session key.
+PRE_COMPACT_SESSION_DIRNAME = "pre_compact"
+
+#: Longest session key, in bytes, spelled as hex in the filename (its hex plus
+#: ``.json`` stays inside the common 255-byte limit). A longer key is named by
+#: its SHA-256 instead, under a ``sha256-`` prefix that hex output never forms.
+_MAX_SESSION_KEY_BYTES = 120
+
+
+def session_marker_key() -> str:
+    """This session's marker key, or ``""`` when no shared identity exists.
+
+    The marker is written by the PreCompact shell hook and read by this server,
+    so the key must be one BOTH processes observe, resolved in the same order:
+    ``TRW_SESSION_ID``, then the first non-empty registered client session
+    variable. ``pre_compact_state_file`` in ``lib-trw.sh`` resolves the same
+    variables raw; a test pins its list to the registry. A FastMCP context id or
+    the process UUID is invisible to the hook, so it never keys a marker.
+
+    ``ctx_isolation_enabled`` is deliberately NOT consulted: it selects the pin
+    key, and a hook cannot observe it, so honoring it here alone would leave the
+    two sides on different files.
+    """
+
+    from trw_mcp.client_profiles.session_identity import known_session_id_env_vars
+
+    for name in ("TRW_SESSION_ID", *known_session_id_env_vars()):
+        value = os.environ.get(name, "")
+        if value:
+            return value
+    return ""
+
+
+def _marker_filename(key: str) -> str:
+    """Encode *key* into a bounded filename that no other key shares.
+
+    Encoding instead of filtering keeps every distinct key on a distinct file
+    (``run:a`` and ``run:b`` included) with no path separator or dot-file
+    possible: hex up to ``_MAX_SESSION_KEY_BYTES``, ``sha256-<digest>`` past it.
+    The shell side spells the same bytes with ``od -An -v -tx1`` and a sha256 tool.
+    """
+
+    raw = os.fsencode(key)
+    if len(raw) > _MAX_SESSION_KEY_BYTES:
+        return f"sha256-{hashlib.sha256(raw).hexdigest()}.json"
+    return f"{raw.hex()}.json"
+
+
 def pre_compact_marker_path(trw_dir: Path | None = None) -> Path:
-    """Return the marker path under *trw_dir*, defaulting to the resolved ``.trw``."""
+    """Return THIS session's marker path under *trw_dir* (default: resolved ``.trw``).
+
+    One file per session: ``context/pre_compact/<encoded key>.json``. A
+    compaction in one session therefore never gates, clears or feeds recovery
+    state to another. Only a session with no shared identity falls back to the
+    project-wide ``context/pre_compact_state.json``.
+    """
 
     if trw_dir is None:
         from trw_mcp.state._paths import resolve_trw_dir
 
         trw_dir = resolve_trw_dir()
+    key = session_marker_key()
+    if key:
+        return trw_dir / "context" / PRE_COMPACT_SESSION_DIRNAME / _marker_filename(key)
     return trw_dir / "context" / PRE_COMPACT_MARKER_FILENAME
 
 
@@ -75,10 +140,8 @@ class PreCompactMarker(BaseModel):
 
     ``extra="ignore"``: the writers emit a dozen more keys (run path, phase,
     events, pending ceremony) and must stay free to evolve without breaking
-    every reader. ``owner_pid`` is recorded for operator diagnostics and is
-    never consulted by the arming decision — the PreCompact hook runs in a
-    process unrelated to the server, so a pid comparison could never match on
-    the path that matters most.
+    every reader. Ownership is the file's PATH (one file per session), never a
+    field inside it.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -88,8 +151,6 @@ class PreCompactMarker(BaseModel):
     phase: str = ""
     directive: str = ""
     context_anchor: str = ""
-    owner_pin_key: str = ""
-    owner_pid: int = 0
 
     @field_validator("timestamp")
     @classmethod

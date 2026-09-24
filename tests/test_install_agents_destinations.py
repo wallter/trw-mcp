@@ -438,7 +438,12 @@ def test_update_project_installs_agents_end_to_end(tmp_path: Path) -> None:
     for path in dest.iterdir():
         path.unlink()
 
-    result = update_project(tmp_path, ide="codex")
+    # PRD-INFRA-192: a file the user deleted stays deleted (a tombstone) until they ask for it back.
+    kept = update_project(tmp_path, ide="codex")
+    assert not kept["errors"], kept["errors"]
+    assert not list(dest.iterdir())
+
+    result = update_project(tmp_path, ide="codex", reprovision=["all"])
 
     assert not result["errors"], result["errors"]
     assert sorted(p.name.removesuffix(fmt.filename_suffix) for p in dest.iterdir()) == _bundled_stems()

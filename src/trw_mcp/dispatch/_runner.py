@@ -29,13 +29,16 @@ from typing import Literal
 
 import structlog
 
+from trw_mcp.dispatch._capability import unadvertised_flags
 from trw_mcp.dispatch._child_marker import dispatched_child_active
-from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
+from trw_mcp.dispatch._client_specs import CLIENT_SPECS, client_spec_for
 from trw_mcp.dispatch._commands import build_command
-from trw_mcp.dispatch._confine import CONFINEMENT_MECHANISM, confinement_prefix, confinement_unavailable_reason
 from trw_mcp.dispatch._env import build_subprocess_env
+from trw_mcp.dispatch._host_confinement import _confinement_for, _needs_host_confinement, _read_only_enforced
+from trw_mcp.dispatch._isolated import IsolationFailedError, run_isolated
 from trw_mcp.dispatch._normalize import classify_silence, normalize_output
 from trw_mcp.dispatch._posture import (
+    ISOLATED_REVIEW_POSTURE,
     ReviewerPostureError,
     TrwAccessError,
     reviewer_posture_enforced,
@@ -74,6 +77,22 @@ def _cap_output(text: str) -> str:
         return text
     dropped = len(text) - _MAX_OUTPUT_CHARS
     return text[:_MAX_OUTPUT_CHARS] + f"\n…[truncated {dropped} chars]"
+
+
+def _turn_cap_next_read(req: DispatchRequest, stderr: str) -> str:
+    """A pointer to the rest of the work when the turn cap stopped the child (PRD-CORE-290-FR04).
+
+    Only the client's own measured exhaustion text counts; an ordinary failure is
+    never relabelled. The partial transcript is kept whole in ``raw_stdout``.
+    """
+    spec = CLIENT_SPECS.get(req.client)
+    marker = spec.max_turns_exhausted_marker if spec is not None else None
+    if req.max_turns is None or not marker or marker not in stderr:
+        return ""
+    return (
+        f"incomplete: the {req.max_turns}-turn cap stopped the child. The partial transcript is whole in "
+        "raw_stdout (verbose=True); raise dispatch_default_max_turns to let the work finish."
+    )
 
 
 def _kill_tree(proc: subprocess.Popen[str], identity: dict[str, str | int] | None = None) -> None:
@@ -182,6 +201,7 @@ def dispatch(
     req: DispatchRequest,
     *,
     pid_callback: Callable[[int], None] | None = None,
+    _lane_home: Path | None = None,
 ) -> DispatchResult:
     """Run *req* and return a normalized :class:`DispatchResult`.
 
@@ -211,17 +231,30 @@ def dispatch(
             exit_code=-1,
             stderr="nested dispatch is refused: this TRW server was started for a dispatched child",
         )
+    if req.posture == ISOLATED_REVIEW_POSTURE and _lane_home is None:
+        return _enter_isolated_lane(req, pid_callback)
     # Posture is settled BEFORE any argv exists and therefore before any spawn.
     # DispatchRequest already refuses reviewer+writes at construction; this second
     # check costs nothing and covers a request reconstructed by another path (a
     # model_construct, a hand-built job file), so no route to Popen skips it.
-    confine_argv, confine_note = _confinement_for(req)
+    confine_argv, confine_note = _confinement_for(req, _lane_home)
     # The probe runs BEFORE the child it describes, which is what the field
     # claims and what an operator needs: a verdict that arrives after the run it
     # was meant to bound has already finished is a post-mortem, not a control.
     sandbox_verdict, sandbox_note = _sandbox_claim(req, confine_note)
+    if req.read_only and not confine_argv and _needs_host_confinement(req):
+        # AGY-SANDBOX: this client's bare read-only flag denies reads and its
+        # read-enabling flag is safe only inside the wrapper, so without one there
+        # is no read-only run that is both usable and contained: refuse, never widen.
+        return _early_result(req, [], exit_code=2, stderr=f"read-only dispatch to {req.client} refused: {confine_note}")
     try:
         verify_reviewer_posture(req.client, req.posture, read_only=req.read_only)
+        if req.posture == ISOLATED_REVIEW_POSTURE and not (_lane_home and confine_argv):
+            # Only the lane (``_isolated.run_isolated``) may spawn this posture, and
+            # only confined: an empty prefix is a refusal, never an unconfined run.
+            raise ReviewerPostureError("posture='isolated-review' runs only inside its confined snapshot lane")
+        if req.posture == ISOLATED_REVIEW_POSTURE and req.with_trw:
+            raise ReviewerPostureError("posture='isolated-review' refuses with_trw: it would add an MCP server")
         verify_trw_access(req.client, req.with_trw)
         argv = build_command(req, confined=bool(confine_argv))
     except ReviewerPostureError as exc:
@@ -265,6 +298,8 @@ def dispatch(
         run_argv = [*confine_argv, *run_argv]
         argv_redacted = [*confine_argv, *argv_redacted]
     env = build_subprocess_env(req.client, posture=req.posture, with_trw=req.with_trw)
+    if _lane_home is not None:
+        env["HOME"] = str(_lane_home)
 
     # Validate cwd in the RUNNER (not just the CLI) so the future MCP path is
     # protected too: a non-directory cwd would make subprocess raise.
@@ -276,6 +311,21 @@ def dispatch(
             stderr=f"cwd is not a directory: {req.cwd}",
         )
     cwd = str(req.cwd) if req.cwd is not None else None
+    # Before any child runs: an installed CLI that lacks a flag TRW passes it
+    # either rejects the argv or (the copilot shim) answers exit 0 with an
+    # install prompt that would read as ok=True.
+    unsupported = unadvertised_flags(
+        client_spec_for(req.client),
+        redacted_base,
+        read_only=req.read_only,
+        extra_args=req.extra_args,
+        env=env,
+        cwd=req.cwd,
+    )
+    if unsupported is not None:
+        reason, message = unsupported
+        logger.warning("dispatch_client_unsupported", client=req.client, silence_reason=reason, detail=message)
+        return _early_result(req, argv_redacted, exit_code=-1, stderr=message, silence_reason=reason)
 
     if not req.read_only:
         logger.warning(
@@ -374,11 +424,14 @@ def dispatch(
         # nothing. Hand the merged stream over for that launch shape alone.
         merged_stderr=raw_stdout if req.use_pty else "",
     )
+    next_read = _turn_cap_next_read(req, raw_stderr if not req.use_pty else raw_stdout)
+    if next_read:
+        silence_reason = "turn_cap_reached"
 
     result = DispatchResult(
         client=req.client,
         argv_redacted=argv_redacted,
-        read_only_enforced=req.read_only,
+        read_only_enforced=_read_only_enforced(req, confine_argv),
         posture=req.posture,
         posture_enforced=reviewer_posture_enforced(req.client, req.posture),
         trw_access_enforced=trw_access_enforced(req.client, req.with_trw),
@@ -392,6 +445,7 @@ def dispatch(
         sandbox_verified=sandbox_verdict,
         sandbox_note=sandbox_note,
         silence_reason=silence_reason,
+        next_read=next_read,
     )
 
     logger.info(
@@ -408,23 +462,17 @@ def dispatch(
     return result
 
 
-def _confinement_for(req: DispatchRequest) -> tuple[list[str], str]:
-    """Return the host write-denial prefix for *req* and the note explaining it.
-
-    Only a READ-ONLY request for a client that declares ``host_confinement`` is
-    wrapped. A write run is not wrapped on purpose: the caller asked for writes,
-    and a wrapper that denied them would make ``--allow-writes`` a silent no-op.
-    """
+def _enter_isolated_lane(req: DispatchRequest, pid_callback: Callable[[int], None] | None) -> DispatchResult:
+    """Admit, then run *req* in a standalone snapshot (PRD-CORE-297-FR04); refusals never spawn."""
     try:
-        spec = client_spec_for(req.client)
-    except UnknownClientError:  # pragma: no cover - guarded by the Literal upstream
-        return [], "unknown client: no confinement"
-    if not req.read_only or not spec.host_confinement:
-        return [], ""
-    prefix = confinement_prefix()
-    if not prefix:
-        return [], f"host write-denial wrapper unavailable ({confinement_unavailable_reason()})"
-    return prefix, CONFINEMENT_MECHANISM
+        verify_reviewer_posture(req.client, req.posture, read_only=req.read_only)
+        return run_isolated(req, lambda lane_req, home: dispatch(lane_req, pid_callback=pid_callback, _lane_home=home))
+    except ReviewerPostureError as exc:
+        logger.warning("dispatch_posture_refused", client=req.client, posture=req.posture, error=str(exc))
+        return _early_result(req, [], exit_code=-1, stderr=f"reviewer posture refused: {exc}")
+    except IsolationFailedError as exc:
+        logger.warning("dispatch_isolation_failed", client=req.client, error=str(exc))
+        return _early_result(req, [], exit_code=-1, stderr=str(exc))
 
 
 def _sandbox_claim(req: DispatchRequest, confine_note: str) -> tuple[bool | Literal["unverified"], str]:
@@ -508,6 +556,7 @@ def _early_result(
     *,
     exit_code: int,
     stderr: str,
+    silence_reason: str = "nonzero_exit",
 ) -> DispatchResult:
     """Build a clean failure result for a pre-spawn / launch failure (no child).
 
@@ -515,11 +564,15 @@ def _early_result(
     these paths by construction: no child was launched, so nothing was bounded
     and nothing was connected. Reporting the spec's capability here would claim
     containment -- or a TRW connection -- for a process that never existed.
+
+    ``read_only_enforced`` is False for the same reason: a wrapper prefix that
+    was found but never ran enforced nothing (a missing agy binary once
+    reported enforced containment here).
     """
     return DispatchResult(
         client=req.client,
         argv_redacted=argv_redacted,
-        read_only_enforced=req.read_only,
+        read_only_enforced=False,
         posture=req.posture,
         posture_enforced=False,
         trw_access_enforced=False,
@@ -530,5 +583,5 @@ def _early_result(
         raw_stdout="",
         raw_stderr=stderr,
         structured=None,
-        silence_reason="timed_out" if exit_code is None else "nonzero_exit",
+        silence_reason=silence_reason,
     )

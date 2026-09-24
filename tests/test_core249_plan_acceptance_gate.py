@@ -22,6 +22,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.plan_acceptance import AcceptanceDeclarationError, AcceptanceStatus, parse_status_token
 from trw_mcp.tools import _plan_acceptance_gate as gate
@@ -331,13 +332,9 @@ def test_failclosed_gate_failopen_write(project: Path, monkeypatch: pytest.Monke
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.perf
-@pytest.mark.integration
-@requires_local_timing
-def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """NFR01: gate <=150 ms p95 at 200 identifiers; handoff write <=100 ms p95."""
+def _make_200_id_run(project: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Any]:
+    """Shared setup for the gate-latency budget tests: a 200-identifier run."""
     from trw_mcp.state.persistence import FileStateReader
-    from trw_mcp.tools import _project_handoff as ph
 
     plan = "# Plan\n\n" + "".join(f"- X-{i}: item {i}\n" for i in range(1, 201))
     declarations = "".join(f'  "X-{i}": "blocked:human-only:ops"\n' for i in range(1, 201))
@@ -345,7 +342,23 @@ def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> 
     config = TRWConfig()
     monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: config)
     run_data = FileStateReader().read_yaml(run_dir / "meta" / "run.yaml")
+    return run_dir, run_data
+
+
+@pytest.mark.integration
+def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """NFR01: the gate enumerates all 200 identifiers at that scale."""
+    run_dir, run_data = _make_200_id_run(project, monkeypatch)
     assert len(gate.evaluate_plan_acceptance(run_dir, run_data).enumerated) == 200
+
+
+@pytest.mark.integration
+@requires_local_timing
+def test_gate_latency_budget_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """NFR01: gate <=150 ms p95 at 200 identifiers; handoff write <=100 ms p95."""
+    from trw_mcp.tools import _project_handoff as ph
+
+    run_dir, run_data = _make_200_id_run(project, monkeypatch)
 
     def p95(samples: list[float]) -> float:
         return sorted(samples)[int(len(samples) * 0.95) - 1]
@@ -355,7 +368,7 @@ def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> 
         started = time.perf_counter()
         gate.evaluate_plan_acceptance(run_dir, run_data)
         gate_samples.append((time.perf_counter() - started) * 1000.0)
-    assert p95(gate_samples) <= 150.0, f"gate p95 {p95(gate_samples):.1f} ms exceeds the 150 ms budget"
+    assert_budget("gate_evaluate_p95", p95(gate_samples), 150.0, "ms")
 
     target = project / ".trw" / "HANDOFF.md"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -366,7 +379,7 @@ def test_gate_latency_budget(project: Path, monkeypatch: pytest.MonkeyPatch) -> 
         started = time.perf_counter()
         ph.write_handoff_rows(run_id="R", accepted=accepted, resolved_gate_ids=[])
         write_samples.append((time.perf_counter() - started) * 1000.0)
-    assert p95(write_samples) <= 100.0, f"write p95 {p95(write_samples):.1f} ms exceeds the 100 ms budget"
+    assert_budget("handoff_write_p95", p95(write_samples), 100.0, "ms")
 
 
 # --------------------------------------------------------------------------- #

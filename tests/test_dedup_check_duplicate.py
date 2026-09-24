@@ -1,4 +1,4 @@
-"""Tests for core check_duplicate behavior."""
+"""Tests for core dedup_verdict behavior."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 from tests._dedup_test_support import mock_embed, write_entry
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.dedup import check_duplicate
+from trw_mcp.state.dedup import dedup_verdict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
 class TestCheckDuplicate:
-    """Tests for the check_duplicate() function."""
+    """Tests for the dedup_verdict() function."""
 
     def test_store_when_no_entries(self, tmp_path: Path, reader: FileStateReader) -> None:
         """New learning with no existing entries → 'store'."""
@@ -21,7 +21,7 @@ class TestCheckDuplicate:
         config = TRWConfig(embeddings_enabled=True)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate("test summary", "test detail", entries_dir, reader, config=config)
+            result = dedup_verdict("test summary", "test detail", entries_dir, reader, config=config)
 
         assert result.action == "store"
         assert result.existing_id is None
@@ -40,7 +40,7 @@ class TestCheckDuplicate:
         write_entry(entries_dir, writer, "L-existing01", summary, detail)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate(summary, detail, entries_dir, reader, config=config)
+            result = dedup_verdict(summary, detail, entries_dir, reader, config=config)
 
         assert result.action == "skip"
         assert result.existing_id == "L-existing01"
@@ -95,7 +95,7 @@ class TestCheckDuplicate:
             return mock_embed(text)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=controlled_embed):
-            result = check_duplicate(
+            result = dedup_verdict(
                 new_text,
                 "",
                 entries_dir,
@@ -118,7 +118,7 @@ class TestCheckDuplicate:
         write_entry(entries_dir, writer, "L-existing02", "some summary", "some detail")
 
         with patch("trw_mcp.state.dedup.embed", return_value=None):
-            result = check_duplicate("some summary", "some detail", entries_dir, reader, config=config)
+            result = dedup_verdict("some summary", "some detail", entries_dir, reader, config=config)
 
         assert result.action == "store"
         assert result.existing_id is None
@@ -138,12 +138,12 @@ class TestCheckDuplicate:
         new_detail = "infrastructure as code terraform aws"
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate(new_summary, new_detail, entries_dir, reader, config=config)
+            result = dedup_verdict(new_summary, new_detail, entries_dir, reader, config=config)
 
         assert result.action == "store"
 
     def test_dedup_disabled_config(self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter) -> None:
-        """config.dedup_enabled=False means check_duplicate returns 'store' immediately."""
+        """config.dedup_enabled=False means dedup_verdict returns 'store' immediately."""
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()
         config = TRWConfig(dedup_enabled=False, embeddings_enabled=True)
@@ -157,12 +157,12 @@ class TestCheckDuplicate:
             return mock_embed(text)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=tracking_embed):
-            result = check_duplicate("test summary", "test detail", entries_dir, reader, config=config)
+            result = dedup_verdict("test summary", "test detail", entries_dir, reader, config=config)
 
         # When dedup disabled, it still processes (disabled check happens in caller)
-        # The check_duplicate itself always runs — the caller checks config.dedup_enabled
+        # The dedup_verdict itself always runs — the caller checks config.dedup_enabled
         # This test verifies the tool-level integration skips the call
-        assert result is not None  # check_duplicate itself doesn't check config
+        assert result is not None  # dedup_verdict itself doesn't check config
 
     def test_skip_against_obsolete_entry(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
@@ -193,7 +193,7 @@ class TestCheckDuplicate:
             patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
             patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
         ):
-            result = check_duplicate(
+            result = dedup_verdict(
                 "unique test summary for dedup",
                 "unique test detail for dedup",
                 entries_dir,
@@ -261,7 +261,7 @@ class TestCheckDuplicate:
             patch("trw_mcp.state.dedup.embed", side_effect=controlled_embed),
             patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
         ):
-            result = check_duplicate(
+            result = dedup_verdict(
                 new_text,
                 "",
                 entries_dir,
@@ -301,7 +301,7 @@ class TestCheckDuplicate:
             patch("trw_mcp.state.dedup.embed", side_effect=mock_embed),
             patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
         ):
-            result = check_duplicate(
+            result = dedup_verdict(
                 "unique test summary for dedup",
                 "unique test detail for dedup",
                 entries_dir,

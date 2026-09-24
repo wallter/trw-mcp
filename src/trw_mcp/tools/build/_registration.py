@@ -36,6 +36,7 @@ from trw_mcp.state._paths import (
     resolve_trw_dir,
 )
 from trw_mcp.tools._evidence_persistence import WriteOutcome
+from trw_mcp.tools._evidence_writers import parse_build_command_results
 from trw_mcp.tools.build._build_check_helpers import (
     _finalize_build_result as _finalize_build_result,
 )
@@ -56,15 +57,6 @@ from trw_mcp.tools.build._core import (
     persist_build_progress_state,
 )
 from trw_mcp.tools.build._failure_attribution import attribute_failures
-
-# PRD-FIX-088 FR01: the deferred Q-learning subsystem lives in a sibling module.
-# Re-exported explicitly (``X as X``) because mypy --strict rejects implicit
-# re-export and ``test_fix027_scoring_build_check.py`` reaches for
-# ``reg_mod.get_q_learning_health()``.
-from trw_mcp.tools.build._q_learning_dispatch import (
-    get_q_learning_health as get_q_learning_health,
-)
-from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
@@ -88,7 +80,6 @@ def register_build_tools(server: FastMCP) -> None:
     """Register build verification tools on the MCP server."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_build_check(
         ctx: Context | None = None,
         tests_passed: bool | None = None,
@@ -96,32 +87,26 @@ def register_build_tools(server: FastMCP) -> None:
         failure_count: int = 0,
         coverage_pct: float = 0.0,
         static_checks_clean: bool | None = None,
-        mypy_clean: bool = True,
         scope: str = "full",
-        failures: list[str] | None = None,
-        run_path: str | None = None,
-        min_coverage: float | None = None,
-        command_results: list[dict[str, object]] | str | None = None,
+        options: dict[str, object] | str = "",
     ) -> dict[str, object]:
         """Record build/test results for ceremony tracking and delivery gates.
 
         Use when you just ran validation and need it logged for the delivery gate.
 
-        This tool does not execute anything - run validation yourself, then
-        call this with the results. tests_passed is required with no default
-        guess. scope is e.g. "full" or "quick". min_coverage flips
-        tests_passed False below threshold.
+        This tool does not execute anything — run validation yourself first.
+        tests_passed is required (no default guess). scope e.g. "full"/"quick".
+        coverage_pct: 0.0-100.0, if measured. static_checks_clean: omit to
+        record CLEAN.
+
+        options (unknown keys rejected): failures (list), run_path,
+        min_coverage (flips tests_passed False below it), mypy_clean (legacy
+        alias of static_checks_clean), command_results (enforce mode: one per
+        required command, {command_id: "tests"|"static_checks", label,
+        command_class: "test"|"static", exit_code}).
 
         Output: tests_passed, static_checks_clean, coverage_pct,
         coverage_threshold_failed.
-
-        Args:
-            coverage_pct: 0.0-100.0, if measured.
-            static_checks_clean: pass/fail for static/type/lint checks. Set this
-                one; omitting it records CLEAN. mypy_clean is its legacy alias.
-            command_results: enforce mode requires one entry per required command,
-                each {"command_id": "tests"|"static_checks", "label": str,
-                "command_class": "test"|"static", "exit_code": int}.
         """
         # PRD-FIX-088 FR03: Per-step latency telemetry for ``trw_build_check``.
         # Every named step records elapsed-since-start so future regressions
@@ -136,15 +121,18 @@ def register_build_tools(server: FastMCP) -> None:
         # PRD-FIX-088 FR01: ``tool_call_id`` is captured up-front and
         # threaded through the bg worker so async ``q_learning_complete``
         # and ``outcome_correlation_applied`` events correlate back to the
-        # originating call. ``log_tool_call`` already binds the same id
-        # into structlog contextvars; we pull it from there when present
+        # originating call. The tool-call wrapper (telemetry/tool_call_timing.py) binds the
+        # call's id into structlog contextvars; we pull it from there when present
         # to keep ids consistent, otherwise mint a fresh 12-char hex.
         bound_ctx = structlog.contextvars.get_contextvars()
         bound_id = bound_ctx.get("tool_call_id")
         tool_call_id: str = bound_id if isinstance(bound_id, str) and bound_id else uuid.uuid4().hex[:12]
 
-        from trw_mcp.tools._evidence_writers import parse_build_command_results
+        from trw_mcp.tools._tool_options import BuildCheckOptions, parse_options
 
+        opts = parse_options(BuildCheckOptions, options)
+        mypy_clean, failures, run_path = opts.mypy_clean, opts.failures, opts.run_path
+        min_coverage, command_results = opts.min_coverage, opts.command_results
         typed_command_results = parse_build_command_results(command_results)
         if typed_command_results is None:
             reported_tests_passed = _require_tests_passed(tests_passed)
@@ -284,13 +272,6 @@ def register_build_tools(server: FastMCP) -> None:
         # Coverage threshold enforcement (sprint-finish anti-regression)
         _finalize_build_result(result, min_coverage)
 
-        # Surface Q-learning background health — errors bubble up here
-        # so callers see if outcome correlation is failing silently.
-        q_health = get_q_learning_health()
-        if q_health["last_error"] is not None:
-            result["q_learning_error"] = q_health["last_error"]
-            result["q_learning_error_count"] = q_health["error_count"]
-
         # Ledger UF-042: trw_build_check never called the ceremony injector, so
         # ``NudgeContext.build_passed`` had NO production writer anywhere and the
         # "Build failed -> revert to PLAN" branch of ``_reversion_prompt`` plus
@@ -306,8 +287,17 @@ def register_build_tools(server: FastMCP) -> None:
             from trw_mcp.tools._ceremony_status_context import append_ceremony_status_for_tool
 
             _build_ok = status.tests_passed and effective_static_checks_clean
+            # PRD-CORE-294 FR04(a): the only failure detail this tool has --
+            # the reported failures plus the scope label -- anchors the
+            # learning-transition candidate; unused on a passing build.
+            _failure_hints = [*effective_failures, status.scope] if status.scope else list(effective_failures)
             append_ceremony_status_for_tool(
-                result, trw_dir, tool_name="build_check", tool_success=_build_ok, build_passed=_build_ok
+                result,
+                trw_dir,
+                tool_name="build_check",
+                tool_success=_build_ok,
+                build_passed=_build_ok,
+                failure_hints=_failure_hints,
             )
         except Exception:  # justified: fail-open, status decoration must not fail build_check
             logger.debug("build_check_ceremony_status_skipped", exc_info=True)

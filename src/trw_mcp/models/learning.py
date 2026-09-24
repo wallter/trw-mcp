@@ -11,7 +11,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # PRD-CORE-001, PRD-CORE-004: Learning entry models with utility scoring
 
@@ -85,47 +85,8 @@ class LearningEntry(BaseModel):
     promoted_to_claude_md: bool = False
     last_accessed_at: date | None = None
     access_count: int = Field(ge=0, default=0)
-    q_value: float = Field(ge=0.0, le=1.0, default=0.5)
-    q_observations: int = Field(ge=0, default=0)
     outcome_history: list[str] = Field(default_factory=list)
     shard_id: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _preseed_q_value(cls, data: dict[str, object]) -> dict[str, object]:
-        """Pre-seed q_value from impact when creating a new entry.
-
-        When q_value is not explicitly provided and q_observations is 0
-        (a brand-new entry), compute an initial q_value that reflects the
-        assessed impact rather than using the flat 0.5 default.  This gives
-        high-impact learnings an immediate advantage in recall ranking.
-
-        Only applies to dict input (not already-validated model instances).
-        """
-        if not isinstance(data, dict):
-            return data
-        # Only pre-seed when q_value was not explicitly provided
-        if "q_value" in data:
-            return data
-        # Only pre-seed for new entries (no observations yet)
-        q_obs_raw = data.get("q_observations", 0)
-        q_obs: int = 0
-        if isinstance(q_obs_raw, (int, float)):
-            q_obs = int(q_obs_raw)
-        elif isinstance(q_obs_raw, str):
-            try:
-                q_obs = int(q_obs_raw)
-            except ValueError:
-                q_obs = 0
-        if q_obs > 0:
-            return data
-        # Compute pre-seeded q_value from impact
-        impact = data.get("impact", 0.5)
-        if isinstance(impact, (int, float)):
-            from trw_mcp.scoring._correlation import compute_initial_q_value
-
-            data["q_value"] = compute_initial_q_value(float(impact))
-        return data
 
     # PRD-CORE-110: Typed learning fields
     type: LearningType = Field(

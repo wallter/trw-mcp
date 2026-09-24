@@ -1,19 +1,16 @@
-"""Instruction-file carrier resolution: pointer detection, externalization, healing.
+"""Instruction-file carrier resolution: pointer detection and healing.
 
-PRD-CORE-203. A *carrier* is how the TRW auto-generated block reaches a client
-instruction file (CLAUDE.md / AGENTS.md):
+PRD-CORE-203, narrowed by PRD-QUAL-143-FR01. A *carrier* is how the TRW
+auto-generated block reaches a client instruction file (CLAUDE.md / AGENTS.md):
 
-- ``INLINE``       — the full block is written between the TRW markers
-  (legacy default; byte-identical to pre-203 behaviour).
-- ``IMPORT``       — the block is externalized to a ``.trw/`` sidecar and a
-  single ``@<sidecar>`` import directive sits in the marker region. Only for
-  clients whose profile declares ``instruction_import_syntax == "at_path"``
-  (Claude Code's recursive ``@path`` import). Keeps tracked instruction files
-  short and moves the artifact back into ``.trw/``.
+- ``INLINE``       — the full block is written between the TRW markers.
 - ``POINTER_SKIP`` — the file is a thin *single-source pointer* (its only
   substantive lines are import directives, e.g. a CLAUDE.md that is just
   ``@AGENTS.md``). TRW leaves it un-clobbered and heals any stale block that an
   older append-when-no-markers sync left behind.
+
+The ``.trw`` sidecar mode is gone: it made a second writer for the same content,
+and the sidecar went stale while the inline block stayed correct.
 
 This module is the **single shared guard** consumed by BOTH appender paths —
 ``_parser.merge_trw_section`` and bootstrap ``_update_claude_md_trw_section`` —
@@ -51,23 +48,6 @@ from trw_mcp.state.claude_md._carrier_classify import (
 from trw_mcp.state.claude_md._carrier_classify import (
     classify_instruction_file as classify_instruction_file,
 )
-
-# Externalization lives in the ``_carrier_externalize`` sibling (350-line gate).
-# Re-exported here so import paths are unchanged AND so ``apply_carrier``
-# resolves ``externalize_block`` as a module global — the seam existing tests
-# monkeypatch.
-from trw_mcp.state.claude_md._carrier_externalize import (
-    AT_IMPORT_PREFIX as AT_IMPORT_PREFIX,
-)
-from trw_mcp.state.claude_md._carrier_externalize import (
-    externalize_block as externalize_block,
-)
-from trw_mcp.state.claude_md._carrier_externalize import (
-    is_path_within as is_path_within,
-)
-from trw_mcp.state.claude_md._carrier_externalize import (
-    render_import_region as render_import_region,
-)
 from trw_mcp.state.claude_md._parser import (
     TRW_MARKER_END,
     TRW_MARKER_START,
@@ -76,30 +56,11 @@ from trw_mcp.state.persistence import FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
-# The include-incapable registry lives in ``_instruction_clients`` with the
-# other client-tier data; re-exported here so existing importers are unchanged.
-from trw_mcp.state.claude_md._instruction_clients import (  # noqa: E402
-    INCLUDE_INCAPABLE_CLIENTS as INCLUDE_INCAPABLE_CLIENTS,
-)
-
-# Externalize knob values (mirror config Literal; centralized so the write path
-# carries no magic strings).
-EXTERNALIZE_OFF = "off"
-
-#: Import syntaxes that can resolve an externalized sidecar. Both are in-file
-#: ``@path`` directives resolved eagerly at session start; they differ only in
-#: what paths are legal. ``at_path_repo_relative`` (Copilot) rejects absolute and
-#: ``~``-rooted references, which is satisfied here because the sidecar path is
-#: always repo-relative (``.trw/INSTRUCTIONS.md``) and containment is enforced by
-#: :func:`is_path_within` before any write.
-IMPORT_CAPABLE_SYNTAXES: frozenset[str] = frozenset({"at_path", "at_path_repo_relative"})
-
 
 class CarrierMode(str, Enum):
     """How the TRW block is delivered into a target instruction file."""
 
     INLINE = "inline"
-    IMPORT = "import"
     POINTER_SKIP = "pointer_skip"
 
 
@@ -114,25 +75,16 @@ class CarrierOutcome:
 
     mode: CarrierMode
     total_lines: int = 0
-    external_path: str | None = None
     pointer_targets: tuple[str, ...] = ()
     healed: bool = False
     refusal: InstructionWriteRefusalDict | None = None
     diff: InstructionDiffDict | None = None
 
 
-def resolve_carrier_mode(
-    classification: InstructionFileClassification,
-    *,
-    import_syntax: str,
-    externalize: str,
-    scope: str,
-) -> CarrierMode:
-    """Pure decision: which carrier mode applies for a target (FR04/FR05)."""
+def resolve_carrier_mode(classification: InstructionFileClassification) -> CarrierMode:
+    """Pure decision: a pointer file is skipped, everything else is inlined."""
     if classification.kind is InstructionFileClass.POINTER:
         return CarrierMode.POINTER_SKIP
-    if externalize != EXTERNALIZE_OFF and import_syntax in IMPORT_CAPABLE_SYNTAXES and scope == "root":
-        return CarrierMode.IMPORT
     return CarrierMode.INLINE
 
 
@@ -182,35 +134,19 @@ def pointer_skip_guard(target: Path) -> InstructionFileClassification | None:
 def apply_carrier(
     target: Path,
     rendered_block: str,
-    max_lines: int,
+    max_lines: int | None,
     *,
-    import_syntax: str,
-    externalize: str,
-    scope: str,
-    external_filename: str,
-    project_root: Path,
     markers: tuple[str, str] = (TRW_MARKER_START, TRW_MARKER_END),
     force: bool = False,
     dry_run: bool = False,
 ) -> CarrierOutcome:
-    """Resolve and apply the carrier mode for *target* (FR04/FR05/FR06).
-
-    Orchestrates the three carrier modes. POINTER targets are healed and left
-    un-clobbered; import-capable targets are externalized to the sidecar (with
-    an inline fallback on any failure — NFR02); everything else is inlined via
-    ``merge_trw_section``.
-    """
+    """Heal and skip a pointer *target*; otherwise merge the block inline."""
     classification = (
         classify_instruction_file(target, markers)
         if target.exists()
         else InstructionFileClassification(InstructionFileClass.EMPTY)
     )
-    mode = resolve_carrier_mode(
-        classification,
-        import_syntax=import_syntax,
-        externalize=externalize,
-        scope=scope,
-    )
+    mode = resolve_carrier_mode(classification)
 
     if mode is CarrierMode.POINTER_SKIP:
         # A dry run writes nothing at all, healing included.
@@ -229,45 +165,6 @@ def apply_carrier(
             healed=healed,
         )
 
-    if mode is CarrierMode.IMPORT:
-        sidecar_path = project_root / external_filename
-        # P0-1: refuse a sidecar path that escapes the project root; degrade to
-        # inline rather than writing outside the repo.
-        if not is_path_within(project_root, sidecar_path):
-            logger.warning(
-                "instruction_external_filename_escapes_root_fallback_inline",
-                external_filename=external_filename,
-                project_root=str(project_root),
-            )
-        else:
-            try:
-                verdict = externalize_block(
-                    target,
-                    rendered_block=rendered_block,
-                    sidecar_path=sidecar_path,
-                    sidecar_relpath=external_filename,
-                    max_lines=max_lines,
-                    markers=markers,
-                    force=force,
-                    dry_run=dry_run,
-                )
-                if verdict.written or verdict.diff is not None:
-                    logger.info("instruction_externalized", target=str(target), sidecar=external_filename)
-                return CarrierOutcome(
-                    mode=mode,
-                    total_lines=verdict.total_lines,
-                    external_path=external_filename,
-                    refusal=verdict.refusal,
-                    diff=verdict.diff,
-                )
-            except Exception:  # justified: fail-open — externalization must degrade to inline, never dangle
-                logger.warning(
-                    "instruction_externalize_failed_fallback_inline",
-                    target=str(target),
-                    exc_info=True,
-                )
-
-    # INLINE — also the IMPORT fallback path.
     from trw_mcp.state.claude_md._parser import merge_trw_section
 
     verdict = merge_trw_section(target, rendered_block, max_lines, markers, force=force, dry_run=dry_run)

@@ -81,9 +81,9 @@ def test_auto_upgrade_off_by_default() -> None:
 @pytest.mark.unit
 def test_otel_export_off_by_default() -> None:
     cfg = _fresh_config()
-    # OpenTelemetry export is an outbound path — must be opt-in with no endpoint.
+    # OpenTelemetry export is an outbound path — must be opt-in.
+    # otel_endpoint removed under PRD-CORE-291 (slice 2): no production reader.
     assert cfg.otel_enabled is False
-    assert cfg.otel_endpoint == ""
 
 
 @pytest.mark.unit
@@ -107,4 +107,3 @@ def test_all_egress_flags_off_in_one_shot() -> None:
     assert cfg.platform_urls == []
     assert cfg.backend_url == ""
     assert cfg.platform_url == ""
-    assert cfg.otel_endpoint == ""

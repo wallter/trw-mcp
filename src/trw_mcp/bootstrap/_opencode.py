@@ -7,7 +7,6 @@ FR16: opencode.json Smart Merge (PRD-CORE-074)
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import structlog
@@ -112,15 +111,27 @@ def _copy_file(
     manifest_hashes: dict[str, str] | None = None,
 ) -> None:
     try:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        result["errors"].append(f"Failed to create directory {dest.parent}: {exc}")
-        return
-
-    try:
         incoming = src.read_bytes()
     except OSError as exc:
         result["errors"].append(f"Failed to read {src}: {exc}")
+        return
+    _write_rendered(incoming, dest, rel_path, result, force=force, manifest_hashes=manifest_hashes)
+
+
+def _write_rendered(
+    incoming: bytes,
+    dest: Path,
+    rel_path: str,
+    result: dict[str, list[str]],
+    *,
+    force: bool = False,
+    manifest_hashes: dict[str, str] | None = None,
+) -> None:
+    """Write *incoming* to *dest* unless the user edited it or it is already current."""
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        result["errors"].append(f"Failed to create directory {dest.parent}: {exc}")
         return
 
     from ._managed_client_artifacts import artifact_user_edited
@@ -134,10 +145,10 @@ def _copy_file(
         if existed and not force and dest.read_bytes() == incoming:
             result["preserved"].append(rel_path)
             return
-        shutil.copy2(src, dest)
+        dest.write_bytes(incoming)
         result["updated" if existed else "created"].append(rel_path)
     except OSError as exc:
-        result["errors"].append(f"Failed to copy {src} -> {dest}: {exc}")
+        result["errors"].append(f"Failed to write {dest}: {exc}")
 
 
 def _copy_markdown_dir(
@@ -200,19 +211,21 @@ def install_opencode_skills(
     manifest_hashes: dict[str, str] | None = None,
     data_dir: Path | None = None,
 ) -> dict[str, list[str]]:
-    """Install the curated OpenCode skill subset into ``.opencode/skills``."""
+    """Install the curated OpenCode skill subset, rendered from the canonical corpus."""
+    from ._client_skills import skill_files
+    from ._optional_skills import retire_disabled_skills, skill_enabled
+
     result = _new_result()
     base_dir = data_dir or _OPENCODE_DATA_DIR
     inventory = load_opencode_skill_inventory(base_dir)
-    variant_root = base_dir / "skills"
     dest_root = target_dir / ".opencode" / "skills"
-
+    canonical_root = base_dir.parent / "skills"
+    retire_disabled_skills(dest_root, canonical_root, result, ".opencode/skills", client="opencode")
     for skill_name, cfg in sorted(inventory.items()):
-        if cfg.get("disposition") == "exclude":
+        if cfg.get("disposition") == "exclude" or not skill_enabled(skill_name):
             continue
-        skill_dir = variant_root / skill_name
-        if not skill_dir.is_dir():
-            result["errors"].append(f"Missing OpenCode skill variant for {skill_name}")
+        if not (canonical_root / skill_name).is_dir():
+            result["errors"].append(f"Missing canonical skill for OpenCode: {skill_name}")
             continue
         try:
             dest_skill = dest_root / skill_name
@@ -220,31 +233,15 @@ def install_opencode_skills(
         except OSError as exc:
             result["errors"].append(f"Failed to create directory {dest_root / skill_name}: {exc}")
             continue
-        for skill_file in sorted(skill_dir.iterdir()):
-            if not skill_file.is_file():
-                continue
-            rel_path = f".opencode/skills/{skill_name}/{skill_file.name}"
-            _copy_file(
-                skill_file,
-                dest_root / skill_name / skill_file.name,
-                rel_path,
+        for filename, data in skill_files("opencode", skill_name, root=canonical_root):
+            _write_rendered(
+                data,
+                dest_skill / filename,
+                f".opencode/skills/{skill_name}/{filename}",
                 result,
                 force=force,
                 manifest_hashes=manifest_hashes,
             )
-        if skill_name == "trw-prd-ready":
-            # ND3: ship the shared owners as local supporting files, not another
-            # hand-maintained OpenCode pipeline or a monorepo-only pointer.
-            for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
-                filename = f"{phase}-contract.md"
-                _copy_file(
-                    base_dir.parent / "skills" / phase / "SKILL.md",
-                    dest_skill / filename,
-                    f".opencode/skills/{skill_name}/{filename}",
-                    result,
-                    force=force,
-                    manifest_hashes=manifest_hashes,
-                )
     return result
 
 

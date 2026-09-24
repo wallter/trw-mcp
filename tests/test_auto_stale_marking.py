@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from trw_memory.models.memory import AssertionType
 
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 
 
@@ -88,26 +89,23 @@ class TestOldFailureAgeRemainsUnknown:
     """An old failure-age field is not a dated verification observation."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
-    @patch("trw_mcp.state.memory_adapter.get_backend")
     @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
     def test_old_failure_age_remains_unknown(
         self,
         mock_resolve_root: MagicMock,
         mock_verify: MagicMock,
-        mock_get_backend: MagicMock,
         mock_resolve_trw: MagicMock,
         config: TRWConfig,
         mock_rank_fn: MagicMock,
         tmp_path: Path,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """Recall cannot infer stale from unverified failure-age metadata."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = tmp_path
         mock_resolve_trw.return_value = tmp_path / ".trw"
-        mock_backend = MagicMock()
-        mock_get_backend.return_value = mock_backend
 
         # Both assertions fail
         mock_verify.return_value = [
@@ -134,13 +132,11 @@ class TestOldFailureAgeRemainsUnknown:
 
         original = deepcopy(learnings)
         mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
-        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         assert learnings == original
         mock_verify.assert_not_called()
-        mock_get_backend.assert_not_called()
-        assert mock_backend.mock_calls == []
+        assert fake_memory_store.calls == []
         mock_resolve_root.assert_not_called()
         mock_resolve_trw.assert_not_called()
         mock_rank_fn.assert_not_called()
@@ -153,27 +149,23 @@ class TestRecentFailureAgeRemainsUnknown:
     """When first_failed_at is recent (< 30 days), learning is NOT marked stale."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
-    @patch("trw_mcp.state.memory_adapter.get_backend")
     @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
     def test_recent_failure_not_stale(
         self,
         mock_resolve_root: MagicMock,
         mock_verify: MagicMock,
-        mock_get_backend: MagicMock,
         mock_resolve_trw: MagicMock,
         config: TRWConfig,
         mock_rank_fn: MagicMock,
         tmp_path: Path,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """Learning is NOT marked stale when failures are recent."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = tmp_path
         mock_resolve_trw.return_value = tmp_path / ".trw"
-        mock_backend = MagicMock()
-        mock_get_backend.return_value = mock_backend
-
         mock_verify.return_value = [
             _make_assertion_result(passed=False),
         ]
@@ -191,13 +183,11 @@ class TestRecentFailureAgeRemainsUnknown:
 
         original = deepcopy(learnings)
         mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
-        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         assert learnings == original
         mock_verify.assert_not_called()
-        mock_get_backend.assert_not_called()
-        assert mock_backend.mock_calls == []
+        assert fake_memory_store.calls == []
         mock_resolve_root.assert_not_called()
         mock_resolve_trw.assert_not_called()
         mock_rank_fn.assert_not_called()
@@ -210,27 +200,23 @@ class TestUnobservedMixedResultsRemainUnknown:
     """When some assertions pass and some fail, NOT marked stale."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
-    @patch("trw_mcp.state.memory_adapter.get_backend")
     @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
     def test_mixed_pass_fail_not_stale(
         self,
         mock_resolve_root: MagicMock,
         mock_verify: MagicMock,
-        mock_get_backend: MagicMock,
         mock_resolve_trw: MagicMock,
         config: TRWConfig,
         mock_rank_fn: MagicMock,
         tmp_path: Path,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """Mixed pass/fail assertions do not trigger stale marking."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = tmp_path
         mock_resolve_trw.return_value = tmp_path / ".trw"
-        mock_backend = MagicMock()
-        mock_get_backend.return_value = mock_backend
-
         # One passes, one fails
         mock_verify.return_value = [
             _make_assertion_result(passed=True),
@@ -255,13 +241,11 @@ class TestUnobservedMixedResultsRemainUnknown:
 
         original = deepcopy(learnings)
         mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
-        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         assert learnings == original
         mock_verify.assert_not_called()
-        mock_get_backend.assert_not_called()
-        assert mock_backend.mock_calls == []
+        assert fake_memory_store.calls == []
         mock_resolve_root.assert_not_called()
         mock_resolve_trw.assert_not_called()
         mock_rank_fn.assert_not_called()
@@ -275,27 +259,23 @@ class TestMissingFailureAgeRemainsUnknown:
     """When first_failed_at is None (new failure), NOT marked stale."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
-    @patch("trw_mcp.state.memory_adapter.get_backend")
     @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
     def test_no_first_failed_at_not_stale(
         self,
         mock_resolve_root: MagicMock,
         mock_verify: MagicMock,
-        mock_get_backend: MagicMock,
         mock_resolve_trw: MagicMock,
         config: TRWConfig,
         mock_rank_fn: MagicMock,
         tmp_path: Path,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """Learning with first_failed_at=None is not marked stale even if failing."""
         from trw_mcp.tools._recall_impl import _verify_assertions
 
         mock_resolve_root.return_value = tmp_path
         mock_resolve_trw.return_value = tmp_path / ".trw"
-        mock_backend = MagicMock()
-        mock_get_backend.return_value = mock_backend
-
         mock_verify.return_value = [
             _make_assertion_result(passed=False),
         ]
@@ -312,13 +292,11 @@ class TestMissingFailureAgeRemainsUnknown:
 
         original = deepcopy(learnings)
         mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
-        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         assert learnings == original
         mock_verify.assert_not_called()
-        mock_get_backend.assert_not_called()
-        assert mock_backend.mock_calls == []
+        assert fake_memory_store.calls == []
         mock_resolve_root.assert_not_called()
         mock_resolve_trw.assert_not_called()
         mock_rank_fn.assert_not_called()
@@ -332,17 +310,16 @@ class TestCustomThresholdDoesNotAuthorizeRecallVerification:
     """The maintenance threshold cannot make absent recall evidence known."""
 
     @patch("trw_mcp.state._paths.resolve_trw_dir")
-    @patch("trw_mcp.state.memory_adapter.get_backend")
     @patch("trw_memory.lifecycle.verification.verify_assertions")
     @patch("trw_mcp.state._paths.resolve_project_root")
     def test_custom_threshold_respected(
         self,
         mock_resolve_root: MagicMock,
         mock_verify: MagicMock,
-        mock_get_backend: MagicMock,
         mock_resolve_trw: MagicMock,
         mock_rank_fn: MagicMock,
         tmp_path: Path,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """Even a short maintenance threshold leaves this recall evidence unknown."""
         from trw_mcp.tools._recall_impl import _verify_assertions
@@ -352,9 +329,6 @@ class TestCustomThresholdDoesNotAuthorizeRecallVerification:
 
         mock_resolve_root.return_value = tmp_path
         mock_resolve_trw.return_value = tmp_path / ".trw"
-        mock_backend = MagicMock()
-        mock_get_backend.return_value = mock_backend
-
         mock_verify.return_value = [
             _make_assertion_result(passed=False),
         ]
@@ -372,13 +346,11 @@ class TestCustomThresholdDoesNotAuthorizeRecallVerification:
 
         original = deepcopy(learnings)
         mock_verify.side_effect = AssertionError("recall must not verify repository assertions")
-        mock_get_backend.side_effect = AssertionError("recall qualification must not access storage")
         result = _verify_assertions(learnings, ["test"], config, mock_rank_fn)
 
         assert learnings == original
         mock_verify.assert_not_called()
-        mock_get_backend.assert_not_called()
-        assert mock_backend.mock_calls == []
+        assert fake_memory_store.calls == []
         mock_resolve_root.assert_not_called()
         mock_resolve_trw.assert_not_called()
         mock_rank_fn.assert_not_called()

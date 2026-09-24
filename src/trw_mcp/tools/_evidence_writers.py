@@ -15,6 +15,7 @@ from trw_mcp.models._evidence_records import BuildReceipt
 from trw_mcp.state.persistence import FileStateWriter
 from trw_mcp.tools._evidence_binding import build_content_binding, mint_run_owned_scope
 from trw_mcp.tools._evidence_gates import validate_build_receipt
+from trw_mcp.tools._evidence_git import clean_git_sha
 from trw_mcp.tools._evidence_persistence import WriteOutcome, generate_receipt_id, write_receipt
 
 logger = structlog.get_logger(__name__)
@@ -368,6 +369,7 @@ def record_build_receipt(
         receipt = BuildReceipt(
             receipt_id=receipt_id,
             run_id=run_path.name,
+            git_sha=clean_git_sha(project_root),
             completed_at=datetime.now(timezone.utc).isoformat(),
             plan_id=plan.plan_id,
             plan_digest=plan.plan_digest,
@@ -381,7 +383,9 @@ def record_build_receipt(
             legacy_static_checks_clean=static_checks_clean,
         )
         return write_receipt(run_path, "build", receipt_id, receipt)
-    except Exception:  # justified: writer failure is missing evidence, never a legacy positive in enforce mode
+    except (
+        Exception
+    ):  # trw-fail-silent-allow: writer failure is missing evidence, never a legacy positive in enforce mode
         logger.warning("build_receipt_write_failed", run=str(run_path), exc_info=True)
         return None
 

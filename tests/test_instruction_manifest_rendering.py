@@ -169,7 +169,10 @@ class TestConditionalSectionRendering:
             # AND the FR06 capability appendix (which names discoverable/gated
             # tools) — both legitimately name tools outside the LIST. The
             # tool-LIST filter itself must omit unexposed tools.
+            # PRD-QUAL-143-FR01: the fixed protocol prose after the tool list
+            # (memory routing, offline table) also names tools by design.
             tool_list = _strip_client_integration_appendix(_strip_deliver_gate_block(output), "agents")
+            tool_list = tool_list.split("**Delegation**")[0]
             assert "trw_build_check" not in tool_list
             assert "trw_recall" not in tool_list
 
@@ -236,7 +239,8 @@ class TestAgentsSectionToolFiltering:
         ):
             from trw_mcp.state.claude_md._static_sections import render_agents_trw_section
 
-            output = render_agents_trw_section(exposed_tools={"trw_session_start"})
+            # The fixed protocol prose after the tool list names tools by design.
+            output = render_agents_trw_section(exposed_tools={"trw_session_start"}).split("**Delegation**")[0]
             assert "`trw_session_start()`" in output
             assert "`trw_build_check()`" not in output
             assert "`trw_review()`" not in output

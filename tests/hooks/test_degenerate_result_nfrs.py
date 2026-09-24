@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_jq, requires_local_timing, requires_non_root
+from tests._timing import assert_budget
 from tests.hooks._degenerate_result_harness import (
     _ADAPTER,
     _DEFAULT_DEADLINE_RETRY_ATTEMPTS,
@@ -31,6 +32,8 @@ from tests.hooks._degenerate_result_harness import (
     pytest_skip_no_jq,
     pytest_skip_no_sh,
 )
+from trw_mcp.models.config import TRWConfig
+from trw_mcp.state._hook_flags import write_hook_flags
 
 #: NFR01's budget is 50 ms and the hook MEETS it on Linux, where a process
 #: spawn costs ~1 ms. It does not on macOS, where the adapter's own work costs
@@ -48,12 +51,28 @@ _LATENCY_BUDGET_MS = 200.0 if sys.platform == "darwin" else 50.0
 _MAX_LATENCY_BATCHES = 3
 
 
-@pytest.mark.perf
-@requires_local_timing
 @pytest_skip_no_sh
 @pytest_skip_no_jq
 @pytest.mark.xdist_group(name="degenerate_result_latency")
 def test_p95_latency_under_budget(tmp_path: Path) -> None:
+    """NFR01 correctness twin: 20 consecutive invocations all exit 0.
+
+    The p95 wall-clock budget itself is a host-resource measurement, moved to
+    ``test_p95_latency_under_budget_budget`` (``requires_local_timing``, skipped
+    on CI). This test keeps the deterministic per-invocation assertion gating.
+    """
+    root = _project(tmp_path, "latency")
+    payload = _payload(response="def add(a, b):\n    return a + b\n" * 40)
+    for _ in range(20):
+        result = _run(root, payload)
+        assert result.returncode == 0
+
+
+@requires_local_timing
+@pytest_skip_no_sh
+@pytest_skip_no_jq
+@pytest.mark.xdist_group(name="degenerate_result_latency")
+def test_p95_latency_under_budget_budget(tmp_path: Path) -> None:
     """NFR01: p95 over 20 consecutive invocations is under 50 ms.
 
     Measured on the process the client actually pays for — ``sh`` startup plus
@@ -73,25 +92,19 @@ def test_p95_latency_under_budget(tmp_path: Path) -> None:
     """
     root = _project(tmp_path, "latency")
     payload = _payload(response="def add(a, b):\n    return a + b\n" * 40)
-    best_p95: float | None = None
-    best_samples: list[float] = []
+    best_p95 = float("inf")
     for _batch in range(_MAX_LATENCY_BATCHES):
         samples: list[float] = []
         for _ in range(20):
             started = time.perf_counter()
-            result = _run(root, payload)
+            _run(root, payload)
             samples.append((time.perf_counter() - started) * 1000)
-            assert result.returncode == 0
         samples.sort()
         p95 = samples[int(len(samples) * 0.95) - 1]
-        if best_p95 is None or p95 < best_p95:
-            best_p95, best_samples = p95, samples
+        best_p95 = min(best_p95, p95)
         if p95 < _LATENCY_BUDGET_MS:
             break
-    assert best_p95 is not None and best_p95 < _LATENCY_BUDGET_MS, (
-        f"p95 {best_p95:.1f}ms over the {_LATENCY_BUDGET_MS}ms budget on every batch; "
-        f"best batch samples={[round(s, 1) for s in best_samples]}"
-    )
+    assert_budget("degenerate_result_p95_latency", best_p95, _LATENCY_BUDGET_MS, "ms")
 
 
 @pytest_skip_no_sh
@@ -138,7 +151,8 @@ def test_fail_open_matrix(tmp_path: Path, case: str) -> None:
     elif case == "no-trw-dir":
         shutil.rmtree(root / ".trw")
     elif case == "hooks-disabled":
-        env["HOOKS_ENABLED"] = "false"
+        (root / ".trw" / "config.yaml").write_text("hooks_enabled: false\n", encoding="utf-8")
+        write_hook_flags(root / ".trw", TRWConfig(hooks_enabled=False))
     elif case.startswith("lib-trw-"):
         # The adapter's ONLY dependency inside the hooks directory, and the one
         # whose absence a `chmod 000` makes invisible to git. Unlike the intent
@@ -183,12 +197,16 @@ def test_fail_open_matrix(tmp_path: Path, case: str) -> None:
         assert _advisories(result) == [], f"{case}: {result.stdout!r} {result.stderr!r}"
 
 
-@pytest.mark.perf
-@requires_local_timing
 @pytest_skip_no_sh
 @pytest_skip_no_jq
 def test_payload_is_never_interpolated_and_is_byte_capped(tmp_path: Path) -> None:
-    """NFR03: hostile content reaches no command, and the read is bounded."""
+    """NFR03: hostile content reaches no command, and the read is bounded.
+
+    The bounded-read TIME budget for a 10MB body is a host-resource measurement,
+    moved to ``test_payload_is_never_interpolated_and_is_byte_capped_budget``
+    (``requires_local_timing``, skipped on CI). This test keeps the
+    deterministic assertions gating.
+    """
     root = _project(tmp_path, "hostile")
     canary = root / "PWNED"
     hostile = f'$(touch {canary}); `touch {canary}`; \x1b[31mRED\x1b[0m; "; touch {canary}; #'
@@ -198,13 +216,23 @@ def test_payload_is_never_interpolated_and_is_byte_capped(tmp_path: Path) -> Non
     assert "\x1b" not in result.stdout and "\x1b" not in result.stderr, "an ANSI escape passed through"
     assert _advisories(result) == [], "a healthy hostile result should not advise"
 
-    # A 10 MB body must not be read whole, must not hang, and must still exit 0.
+    # A 10 MB body must not be read whole and must still exit 0.
+    huge = _payload(response="y" * (10 * 1024 * 1024))
+    result = _run(root, huge)
+    assert result.returncode == 0
+
+
+@requires_local_timing
+@pytest_skip_no_sh
+@pytest_skip_no_jq
+def test_payload_is_never_interpolated_and_is_byte_capped_budget(tmp_path: Path) -> None:
+    """NFR03: a 10 MB body must not be read whole and must not hang."""
+    root = _project(tmp_path, "hostile-budget")
     huge = _payload(response="y" * (10 * 1024 * 1024))
     started = time.perf_counter()
-    result = _run(root, huge)
+    _run(root, huge)
     elapsed = (time.perf_counter() - started) * 1000
-    assert result.returncode == 0
-    assert elapsed < 2000, f"a 10MB body took {elapsed:.0f}ms — the byte cap is not bounding the read"
+    assert_budget("degenerate_result_huge_body_read", elapsed, 2000.0, "ms")
 
 
 @pytest_skip_no_sh
@@ -214,7 +242,13 @@ def test_payload_is_byte_capped(tmp_path: Path) -> None:
     root = _project(tmp_path, "bytecap")
     (root / ".trw" / "config.yaml").write_text("degenerate_result_max_read_bytes: 1024\n", encoding="utf-8")
     beyond = _payload(response="z" * 5000 + f"[3 {_MARKER}")
-    assert _advisories(_run(root, beyond)) == [], "content past the cap was classified"
+    # PRD-INFRA-194-FR04 interaction: hitting the 1024-byte read cap now ALSO
+    # fires the independent oversize signal (by design), so this asserts the
+    # SHAPE rule (rule 2) specifically did not see past the cap, not that the
+    # call produced zero advisories of any kind.
+    assert not any("could not look" in a for a in _advisories(_run(root, beyond))), (
+        "content past the cap was classified"
+    )
 
     root = _project(tmp_path, "bytecap-wide")
     (root / ".trw" / "config.yaml").write_text("degenerate_result_max_read_bytes: 65536\n", encoding="utf-8")

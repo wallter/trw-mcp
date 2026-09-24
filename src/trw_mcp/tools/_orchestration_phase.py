@@ -166,27 +166,6 @@ def current_live_process_fingerprint() -> str | None:
     return frozen.digest if frozen is not None else None
 
 
-def read_run_canon_fingerprints(run_root: Path) -> tuple[str | None, str | None]:
-    """Read a run's stamped ``(deployed_canon_fingerprint, live_process_fingerprint)``.
-
-    A legacy run (no stamp file) or an unreadable/incomplete stamp yields
-    ``(None, None)`` so currentness stays unknown — absence never means current.
-    """
-    stamp_path = run_root / "meta" / "canon_fingerprints.yaml"
-    reader = FileStateReader()
-    if not reader.exists(stamp_path):
-        return None, None
-    try:
-        data = reader.read_yaml(stamp_path)
-    except (StateError, ValueError, TypeError, OSError):
-        return None, None
-    deployed = data.get("deployed_canon_fingerprint")
-    process = data.get("live_process_fingerprint")
-    deployed_str = str(deployed) if isinstance(deployed, str) and deployed else None
-    process_str = str(process) if isinstance(process, str) and process else None
-    return deployed_str, process_str
-
-
 def evaluate_run_currentness(
     run_deployed_fingerprint: str | None,
     run_process_fingerprint: str | None,
@@ -225,24 +204,6 @@ def evaluate_run_currentness(
         reasons.append("connected process changed/restarted since this run was initialized")
         return Currentness.STALE.value, reasons
     return Currentness.CURRENT.value, reasons
-
-
-def summarize_run_currentness(run_root: Path, run_framework: str) -> dict[str, object]:
-    """Build the run-currentness status block for a run (FR08 status surface)."""
-    run_deployed, run_process = read_run_canon_fingerprints(run_root)
-    currentness, reasons = evaluate_run_currentness(
-        run_deployed,
-        run_process,
-        current_deployed_fingerprint=current_deployed_canon_fingerprint(),
-        current_process_fingerprint=current_live_process_fingerprint(),
-    )
-    return {
-        "currentness": currentness,
-        "reasons": reasons,
-        "run_framework": run_framework,
-        "run_deployed_canon_fingerprint": run_deployed,
-        "run_live_process_fingerprint": run_process,
-    }
 
 
 def _check_framework_version_staleness(run_framework: str) -> str | None:

@@ -4,21 +4,27 @@
 #
 # Usage: . "$(dirname "$0")/lib-trw.sh"
 
-# PRD-CORE-149 FR04/FR05: load the profile-resolved hook policy before any
-# caller starts timers or emits output.  Keep the legacy TRW_HOOKS_ENABLED
-# name as an input fallback, but normalize all shipped hooks onto the generated
-# HOOKS_ENABLED / NUDGE_ENABLED contract.
 _trw_hook_env_root="${CLAUDE_PROJECT_DIR:-}"
 if [ -z "$_trw_hook_env_root" ]; then
   _trw_hook_env_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
+# The one hooks switch. TRWConfig owns hooks_enabled and publishes its resolved
+# value (machine -> project -> TRW_* env) to .trw/runtime/hook-flags; a client
+# profile only seeds the config at install. Off, the calling hook ends here,
+# before timers, stdin reads, output or writes. A missing file means on.
+# Exempt by design: the intent-contract write guards. They are security
+# enforcement, not ablation surface, and source this lib only in a detached
+# telemetry subshell, so this exit cannot disarm them.
+if grep -qx 'hooks_enabled=false' "$_trw_hook_env_root/.trw/runtime/hook-flags" 2>/dev/null; then
+  exit 0
+fi
+# PRD-CORE-149 FR04: the profile-resolved nudge policy and client identity.
 if [ -f "$_trw_hook_env_root/.trw/runtime/hook-env.sh" ]; then
   # shellcheck source=/dev/null
   . "$_trw_hook_env_root/.trw/runtime/hook-env.sh" 2>/dev/null || true
 fi
-HOOKS_ENABLED="${HOOKS_ENABLED:-${TRW_HOOKS_ENABLED:-true}}"
 NUDGE_ENABLED="${NUDGE_ENABLED:-true}"
-export HOOKS_ENABLED NUDGE_ENABLED
+export NUDGE_ENABLED
 unset _trw_hook_env_root
 
 # get_repo_root: Resolve the project root portably.
@@ -78,6 +84,39 @@ trw_pin_key() {
   printf '%s' "$_tpk_key"
 }
 
+# pre_compact_state_file: Print THIS session's pre-compaction marker path.
+#
+# One file per session, .trw/context/pre_compact/<hex key>.json. The key is
+# TRW_SESSION_ID, else the client session variable -- the same order the MCP
+# server resolves (state/pre_compact_marker.py; a test pins the variable list to
+# its registry). The key's bytes are hex-encoded so every distinct id (run:a vs
+# run:b included) names a distinct, separator-free file. A single project-wide
+# file gated every session's trw_* calls whenever any one of them compacted.
+# A key over 120 bytes is named sha256-<digest> (sha256sum or shasum), as the
+# server names it. A session with no identity -- or, for a long key, no sha256
+# tool -- falls back to the project-wide .trw/context/pre_compact_state.json.
+#
+# Args: $1=project root.
+pre_compact_state_file() {
+  _pcs_key="${TRW_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-}}"
+  _pcs_name=""
+  if [ -n "$_pcs_key" ]; then
+    _pcs_name=$(printf '%s' "$_pcs_key" | od -An -v -tx1 | tr -d ' \n')
+    if [ "${#_pcs_name}" -gt 240 ]; then
+      _pcs_name=$(printf '%s' "$_pcs_key" | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | cut -d' ' -f1)
+      case "$_pcs_name" in
+        ????????????????????????????????????????????????????????????????) _pcs_name="sha256-$_pcs_name" ;;
+        *) _pcs_name="" ;;
+      esac
+    fi
+  fi
+  if [ -n "$_pcs_name" ]; then
+    printf '%s/.trw/context/pre_compact/%s.json' "$1" "$_pcs_name"
+  else
+    printf '%s/.trw/context/pre_compact_state.json' "$1"
+  fi
+}
+
 # resolve_owned_run: Print the run directory THIS session owns, or nothing.
 # PRD-FIX-118 FR02 -- the single run-ownership primitive.
 #
@@ -123,6 +162,8 @@ resolve_owned_run() {
   case "${_ror_path%/}/" in
     "${_ror_root%/}/.trw/runs/"*) : ;;
     "${_ror_root%/}/${_ror_task_root%/}/"*/runs/*/) : ;;
+    # Pattern 2, {task_root}/{task}/{run_id}/ -- find_active_run scans it too.
+    "${_ror_root%/}/${_ror_task_root%/}/"*/*/) : ;;
     *) return 1 ;;
   esac
 
@@ -204,22 +245,34 @@ _json_escape() {
     | tr -d '\000-\010\013\014\016-\037\177'
 }
 
+# _json_str_field: Print the string value of top-level key $2 in the JSON text $1.
+# jq ONLY -- there is no printf/sed/grep shell JSON parser here (PRD-FIX-149
+# FR06, binding decision): a hand-rolled parser cannot tell an escaped quote
+# from a closing one and once silently mis-parsed nested/escaped JSON. Returns 1
+# with no output when jq is absent, rather than guessing. Called inside a
+# `$(...)` substitution (a subshell), so it cannot set a variable the caller
+# observes -- callers check `command -v jq` directly for the one diagnostic
+# they emit, not this function's exit status.
+_json_str_field() {
+  if ! command -v jq >/dev/null 2>&1; then
+    return 1
+  fi
+  printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // empty | strings' 2>/dev/null
+}
+
 # append_event: Append a JSON event line to events.jsonl.
 # Args: $1=events_path, $2=event_type, $3=extra_json_fields (optional)
-# Requires: date, printf. Uses jq if available, falls back to printf.
+# Requires: date, printf. No jq: $3 arrives already escaped, so there is
+# nothing to parse (PRD-FIX-149 FR06 -- a jq test here once dropped $3's
+# tool/file/session_id on every jq-less host).
 # SECURITY: $2 (event_type) is JSON-escaped here. The caller is responsible
 # for escaping any value embedded in $3 via _json_escape (see post-tool-event.sh).
 append_event() {
   _events_path="$1"
   _event_type="$(_json_escape "$2")"
-  _extra="${3:-}"
+  _extra="${3:+,$3}"
   _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
-
-  if command -v jq >/dev/null 2>&1 && [ -n "$_extra" ]; then
-    printf '{"ts":"%s","event":"%s",%s}\n' "$_ts" "$_event_type" "$_extra" >> "$_events_path"
-  else
-    printf '{"ts":"%s","event":"%s"}\n' "$_ts" "$_event_type" >> "$_events_path"
-  fi
+  printf '{"ts":"%s","event":"%s"%s}\n' "$_ts" "$_event_type" "$_extra" >> "$_events_path"
 }
 
 # has_event: Check if events.jsonl contains an event of a given type.
@@ -340,11 +393,11 @@ trw_stop_deliver_window_min() {
 #
 # Why this exists. The telemetry fallback path (the one taken precisely when no
 # run directory resolves) writes an unpinned delivery as
-#   {"event":"tool_invocation","tool_name":"trw_deliver","success":true,...}
+#   {"event":"tool_call","tool_name":"trw_deliver","success":true,...}
 # and NEVER as {"event":"trw_deliver_complete",...}. has_event matches the
 # "event" field only, so has_recent_session_deliver above is structurally blind
 # to unpinned deliveries — not merely unlucky. Measured on the live log
-# 2026-07-24: 208 rows, 186 tool_invocation, 22 of them trw_deliver, and the
+# 2026-07-24: 208 rows, 186 tool-call rows (then named tool_invocation), 22 of them trw_deliver, and the
 # trw_deliver_complete type effectively absent from the unpinned write path.
 #
 # Recency is evaluated on the ROW's own ts, not on the file's mtime, because
@@ -393,7 +446,7 @@ has_recent_session_tool_deliver() {
   if command -v jq >/dev/null 2>&1; then
     tail -n "$_hrstd_tail" "$_hrstd_events" 2>/dev/null | jq -e -R --arg cut "$_hrstd_cut" '
         (fromjson? // empty)
-        | select(.event == "tool_invocation" and .tool_name == "trw_deliver" and .success == true)
+        | select(.event == "tool_call" and .tool_name == "trw_deliver" and .success == true)
         | select(((.ts // "") | tostring)[0:19] >= $cut)
       ' >/dev/null 2>&1 && return 0
     return 1
@@ -401,7 +454,7 @@ has_recent_session_tool_deliver() {
 
   # Fallback path (NFR02): no new runtime dependency. Same verdict, text match.
   tail -n "$_hrstd_tail" "$_hrstd_events" 2>/dev/null | awk -v cut="$_hrstd_cut" '
-    /"event"[[:space:]]*:[[:space:]]*"tool_invocation"/ &&
+    /"event"[[:space:]]*:[[:space:]]*"tool_call"/ &&
     /"tool_name"[[:space:]]*:[[:space:]]*"trw_deliver"/ &&
     /"success"[[:space:]]*:[[:space:]]*true/ {
       if (match($0, /"ts"[[:space:]]*:[[:space:]]*"[^"]*"/)) {
@@ -472,20 +525,16 @@ phase_from_events() {
 # Prints one of: none, early, plan, implement, validate, deliver, done.
 # Used by the UserPromptSubmit hook for phase-calibrated output.
 #
-# PRD-FIX-124 FR11: ownership first, recency second. resolve_owned_run is the
-# single run-ownership primitive (PRD-FIX-118 FR02); reaching find_active_run
-# straight away — as this function used to — meant a parallel instance that had
-# just called trw_deliver could pin THIS session's phase to "done". The recency
-# fallback survives only for a genuinely unpinned session, where identity is
-# unknowable and newest-wins is the honest best guess.
+# Ownership only (R2-009). resolve_owned_run is the single run-ownership
+# primitive (PRD-FIX-118 FR02). The newest-run fallback this used to take on an
+# unresolved session is gone: with several instances live, "newest" is routinely
+# another session's run, so a parallel trw_deliver could pin THIS session's
+# phase to "done". An unknown identity or an unpinned session prints "none".
 #
 # Args: $1=optional session_id from the hook's stdin payload, used as the
 #       fallback pin key when TRW_SESSION_ID is absent (see trw_pin_key).
 infer_phase() {
   _ip_run_dir=$(resolve_owned_run "${1:-}" 2>/dev/null) || _ip_run_dir=""
-  if [ -z "$_ip_run_dir" ]; then
-    _ip_run_dir=$(find_active_run) || { printf 'none'; return; }
-  fi
   [ -n "$_ip_run_dir" ] || { printf 'none'; return; }
 
   phase_from_events "${_ip_run_dir}meta/events.jsonl"
@@ -585,30 +634,6 @@ check_ceremony_status() {
   return 0
 }
 
-# trw_enforcement_variant: Read enforcement_variant from .trw/config.yaml.
-# Prints the configured variant (default: "baseline").
-# CORE-074-FR09: A/B test infrastructure for ceremony enforcement.
-trw_enforcement_variant() {
-  _tev_config_file="$(get_repo_root 2>/dev/null)/.trw/config.yaml"
-  if [ -f "$_tev_config_file" ]; then
-    _tev_val=$(grep 'enforcement_variant:' "$_tev_config_file" | head -1 \
-      | sed 's/^enforcement_variant:[[:space:]]*//' | tr -d "'" | tr -d '"' | tr -d '[:space:]')
-    [ -n "$_tev_val" ] && printf '%s' "$_tev_val" && return
-  fi
-  printf 'baseline'
-}
-
-# trw_should_run_hooks: Return 0 (true) if hooks should run, 1 (false) if disabled by variant.
-# Variants "mcp-only" and "none" disable hooks; all others allow them.
-# CORE-074-FR09: A/B test infrastructure for ceremony enforcement.
-trw_should_run_hooks() {
-  _tsrh_variant="$(trw_enforcement_variant)"
-  case "$_tsrh_variant" in
-    mcp-only|none) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
 # cleanup_block_files: Remove stale per-helper block count files.
 # Called by session-end.sh as housekeeping.
 # Args: $1=context_dir
@@ -661,7 +686,7 @@ read_build_failures() {
 # No hook can ASK the client whether MCP attached — the client exposes that only
 # in its own UI, and by the time it gives up (120000 ms in the reported failure)
 # SessionStart has long since run. So the surface's absence is inferred from the
-# absence of the trace a healthy session leaves: a `tool_invocation` row whose
+# absence of the trace a healthy session leaves: a `tool_call` row whose
 # `tool_name` begins `trw_`.
 #
 # A liveness probe is deliberately NOT used. `trw-mcp --version` measured
@@ -780,6 +805,14 @@ _sanitize_context_text() {
           -e 's/[Uu][Ss][Ee][Rr][[:space:]]*:/user_/g' \
           -e 's/\[\/*[Ii][Nn][Ss][Tt][^]]*\]/ /g' \
     | cut -c1-200
+}
+
+# trw_learnings_injection_allowed: the shell half of learnings_injection_allowed
+# (state/_recall_gate.py). learning_recall_enabled is the master switch over every
+# path that hands learnings to the agent; a hook that injects learnings calls this
+# first. Reads the value TRWConfig published (see the hooks switch above).
+trw_learnings_injection_allowed() {
+  ! grep -qx 'learning_recall_enabled=false' "$(get_repo_root 2>/dev/null)/.trw/runtime/hook-flags" 2>/dev/null
 }
 
 # trw_config_int: Read a bounded integer tunable.
@@ -1114,7 +1147,7 @@ trw_session_epoch_ts() {
 
 # _trw_scan_log_for_trw_call: scan ONE event log for a trw_ invocation.
 #
-# Returns 0 when $1 holds a `tool_invocation` row whose `tool_name` begins `trw_`
+# Returns 0 when $1 holds a `tool_call` row whose `tool_name` begins `trw_`
 # with a `ts` at or after $2 -- and ALSO 0 when $1 cannot be read as an event
 # stream at all, because "we could not read the log" is not evidence of silence.
 # Returns 1 only in the one case that IS evidence: a readable, recognisable tail
@@ -1190,7 +1223,7 @@ _trw_scan_log_for_trw_call() {
   if command -v jq >/dev/null 2>&1; then
     printf '%s\n' "$_tottc_body" | jq -e -R --arg cut "$_tottc_since" '
         (fromjson? // empty)
-        | select(.event == "tool_invocation" and ((.tool_name // "") | tostring | startswith("trw_")))
+        | select(.event == "tool_call" and ((.tool_name // "") | tostring | startswith("trw_")))
         | select(((.ts // "") | tostring)[0:19] >= $cut)
       ' >/dev/null 2>&1 && return 0
     return 1
@@ -1221,7 +1254,7 @@ for line in sys.stdin:
         continue
     if not isinstance(row, dict):
         continue
-    if row.get("event") != "tool_invocation":
+    if row.get("event") != "tool_call":
         continue
     tool_name = row.get("tool_name")
     if not isinstance(tool_name, str) or not tool_name.startswith("trw_"):
@@ -1246,7 +1279,7 @@ sys.exit(0 if found else 1)
 # invocation at or after $1 (its own epoch timestamp).
 #
 # PRD-FIX-128-FR01. The producer settled this long ago and the consumer never
-# followed: tools/telemetry.py writes a tool_invocation row into the PINNED
+# followed: the tool-call wrapper writes a tool_call row into the PINNED
 # RUN's meta/events.jsonl and returns; only a session with no pinned run reaches
 # the pinless .trw/context/session-events.jsonl. The two sinks are mutually
 # exclusive by construction, and this function used to read the fallback one
@@ -1450,9 +1483,15 @@ trw_emit_offline_protocol_block() {
 # property FR10 pins with `grep_absent: "=50"`.
 #
 # Args: $1=short key — cooldown_calls | max_read_bytes | deadline_ms |
-#       truncation_markers | freshness_commands.
-# Prints: one integer for the first three; one item per LINE for the last two.
+#       truncation_markers | freshness_commands | size_warning_bytes.
+# Prints: one integer for the first three and the last; one item per LINE for
+#       truncation_markers/freshness_commands.
 # Returns 1 (printing nothing) for an unknown key.
+#
+# `size_warning_bytes` (PRD-INFRA-194-FR04) is the odd one out: it mirrors
+# `tool_output_size_warning_bytes` in _fields_degenerate_result.py rather than a
+# `degenerate_result_*` field, because it is a fourth, independent signal riding
+# the same PostToolUse adapter and the same accessor rather than its own.
 #
 # Precedence, first non-empty wins, following trw_stop_deliver_window_min:
 #   1. $TRW_DEGENERATE_RESULT_<KEY>                    (env, per session; scalars only)
@@ -1505,6 +1544,9 @@ stat
 curl
 gh api
 gh run list'; _tdrs_env='' ;;
+    size_warning_bytes) _tdrs_field='tool_output_size_warning_bytes'; _tdrs_kind=int
+      _tdrs_default='8192'; _tdrs_min='1'; _tdrs_max='10485760'
+      _tdrs_env="${TRW_TOOL_OUTPUT_SIZE_WARNING_BYTES:-}" ;;
     *) return 1 ;;
   esac
 

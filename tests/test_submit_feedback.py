@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from trw_mcp.telemetry.anonymizer import redact_metadata
 from trw_mcp.tools.submit_feedback import (
     MAX_MESSAGE_LEN,
     MAX_METADATA_KEY_LEN,
@@ -29,7 +30,6 @@ from trw_mcp.tools.submit_feedback import (
     _extract_error_message,
     _extract_submission_id,
     _merge_metadata,
-    _redact_metadata,
     _validate,
     register_submit_feedback_tools,
     submit_feedback,
@@ -216,7 +216,7 @@ def test_merge_metadata_handles_none_user() -> None:
 
 def test_redact_metadata_redacts_values() -> None:
     """Baseline: a secret in a metadata VALUE is scrubbed."""
-    out = _redact_metadata({"trace": "conn postgres://admin:dbpw@host/app"})
+    out = redact_metadata({"trace": "conn postgres://admin:dbpw@host/app"})
     assert out is not None
     assert "dbpw" not in out["trace"]
     assert "<REDACTED:credentials>" in out["trace"]
@@ -226,10 +226,10 @@ def test_redact_metadata_redacts_secret_in_key() -> None:
     """Finding 3b: a secret embedded in a metadata KEY must be redacted.
 
     NFR01: ``{"sk_live_<secret>": "x"}`` previously leaked the key in clear
-    text. Both key and value now route through ``_redact_pii``.
+    text. Both key and value now route through ``redact_secrets``.
     """
     secret_key = "sk_live_51Abc123Def456Ghi789"
-    out = _redact_metadata({secret_key: "note"})
+    out = redact_metadata({secret_key: "note"})
     assert out is not None
     assert secret_key not in out
     # The redacted key carries the placeholder; the value is untouched here.
@@ -238,7 +238,7 @@ def test_redact_metadata_redacts_secret_in_key() -> None:
 
 
 def test_redact_metadata_handles_none() -> None:
-    assert _redact_metadata(None) is None
+    assert redact_metadata(None) is None
 
 
 def test_redact_metadata_collision_collapses_low_harm() -> None:
@@ -247,7 +247,7 @@ def test_redact_metadata_collision_collapses_low_harm() -> None:
     Documented acceptable behavior: both values are already redacted, so the
     only loss is a duplicate diagnostic key — never a leaked secret.
     """
-    out = _redact_metadata(
+    out = redact_metadata(
         {
             "sk_live_AAAAAAAAAAAAAAAAAAAA": "v1",
             "sk_live_BBBBBBBBBBBBBBBBBBBB": "v2",

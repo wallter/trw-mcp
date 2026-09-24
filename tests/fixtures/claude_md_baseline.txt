@@ -150,7 +150,7 @@ RESEARCH → PLAN → IMPLEMENT → VALIDATE → REVIEW → DELIVER
 | Phase | Tool | When to Use | What It Does | Example |
 |-------|------|-------------|--------------|---------|
 | Start | `trw_session_start` | First action — loads prior learnings + recovers active run state | Start from accumulated knowledge instead of zero — prior agents already found gotchas for your area | `trw_session_start(query='task domain')` |
-| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings without a full run | Surface discoveries from past sessions so you don't repeat solved problems | `trw_recall('auth patterns', min_impact=0.7)` |
+| Start | `trw_recall` | Quick tasks — retrieves relevant prior learnings without a full run | Surface discoveries from past sessions so you don't repeat solved problems | `trw_recall('auth patterns', options={'min_impact': 0.7})` |
 | Start | `trw_status` | When resuming — shows current phase, progress, and next steps | Pick up where you left off instead of redoing completed work | `trw_status()` |
 | RESEARCH | `trw_init` | New structured tasks — creates run directory for tracking | Enables run checkpoints; a durable native handoff can preserve work without creating a run | `trw_init(task_name='...')` |
 | Any | `trw_learn` | On errors, discoveries, or gotchas | Saves your finding so no future agent repeats your mistake — this is how institutional knowledge grows | `trw_learn(summary='...', impact=0.8)` |

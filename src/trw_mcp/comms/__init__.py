@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
 
+from trw_mcp.comms import _pause_state
 from trw_mcp.comms._bootstrap import BOOTSTRAP_ACTIONS, bootstrap, caller_state
 from trw_mcp.comms._endpoints import (
     EndpointError,
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
 
     from trw_mcp.models.config import TRWConfig
 
-PeerAction = Literal["enroll", "list", "heartbeat", "announce", "withdraw", "discover"]
+PeerAction = Literal["enroll", "list", "heartbeat", "announce", "withdraw", "discover", "ack_pause"]
 _logger = structlog.get_logger(__name__)
 
 #: One bounded wait per serving process (FR11). Non-blocking acquire; a second
@@ -112,7 +113,9 @@ def _exception_refused(exc: IdentityError | EndpointError | StoreError) -> dict[
     return _refused(exc.refusal.value)
 
 
-def _peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None) -> dict[str, Any]:
+def _peers(
+    action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None, pause_id: str | None = None
+) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
     from trw_mcp.models.config import get_config
     from trw_mcp.state._paths import resolve_project_root, resolve_trw_dir
@@ -124,7 +127,7 @@ def _peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None
         return _refused("context_isolation_disabled")
     if action in BOOTSTRAP_ACTIONS:
         # FR18: non-authoritative, so no membership is required and nothing is enrolled.
-        return {**bootstrap(action, ctx, config), "delivery": "pull_only"}
+        return {**bootstrap(action, ctx, config, cursor=cursor), "delivery": "pull_only"}
     try:
         pickup: Pickup | None = advance_pickup(ctx)
     except FormationError:
@@ -144,6 +147,10 @@ def _peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None
         if not snapshot.all_terminal:
             snapshot.assert_eligible()
         binding = snapshot.binding
+        if action == "ack_pause" and not snapshot.all_terminal:
+            # A narrow file write (its own ack only), not a mailbox operation.
+            acked = _pause_state.ack(binding, pause_id)
+            return _refused(acked["reason"]) if acked["status"] == "refused" else {**acked, "delivery": "pull_only"}
         # trw:intentional A trusted terminal observation only closes the group;
         # cursor errors cannot skip that bookkeeping or authorize peer reads.
         after = "" if snapshot.all_terminal else decode_cursor(cursor, binding, action=action)
@@ -369,12 +376,17 @@ def _finish(result: dict[str, Any], ctx: Context | None, action: str) -> dict[st
     except Exception:  # justified: fail-open, a missing identity only means no guidance memory
         key = None
     observed: str | None = None
+    pause: dict[str, str] | None = None
+    binding = _CALL_BINDING.get()
     if result.get("status") == "refused" and result.get("reason") in IDENTITY_REASONS:
         observed = caller_state(ctx)
     elif result.get("status") == "ok" and action not in BOOTSTRAP_ACTIONS:
-        binding = _CALL_BINDING.get()
         observed = "enrolled" if binding is not None and holds_endpoint(binding) else "joined"
-    return _finish_guidance(result, key=key, action=action, config=get_config(), observed=observed)
+    if binding is not None and (observed == "enrolled" or result.get("reason") == "formation_paused"):
+        paused = _pause_state.member_state(binding)
+        if paused is not None:
+            observed, pause = paused
+    return _finish_guidance(result, key=key, action=action, config=get_config(), observed=observed, pause=pause)
 
 
 def _scoped(call: Callable[[], dict[str, Any]], ctx: Context | None, action: str) -> dict[str, Any]:
@@ -385,9 +397,11 @@ def _scoped(call: Callable[[], dict[str, Any]], ctx: Context | None, action: str
         _CALL_BINDING.reset(token)
 
 
-def peers(action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None) -> dict[str, Any]:
+def peers(
+    action: PeerAction, ctx: Context | None = None, *, cursor: str | None = None, pause_id: str | None = None
+) -> dict[str, Any]:
     """Perform one trusted peer operation, including irreversible closure."""
-    return _scoped(lambda: _peers(action, ctx, cursor=cursor), ctx, action)
+    return _scoped(lambda: _peers(action, ctx, cursor=cursor, pause_id=pause_id), ctx, action)
 
 
 def send(

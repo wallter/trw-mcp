@@ -68,6 +68,12 @@ def memory_daemon_row() -> tuple[str, str]:
     from trw_memory.daemon.client import DAEMON_START_COMMAND
 
     paths = DaemonPaths.resolve(create=False)
+    if paths.token.exists():
+        return (
+            "WARN",
+            f"a Slice A all-namespace token remains at {paths.token}; the daemon refuses to start "
+            f"while it exists (PRD-CORE-298 FR02). Run: trw-mcp memory token --migrate",
+        )
     result = read_discovery_result(paths)
     if isinstance(result, DiscoveryAbsent):
         return (

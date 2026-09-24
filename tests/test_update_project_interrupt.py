@@ -32,7 +32,7 @@ def _interrupt(*_args: object, **_kwargs: object) -> None:
 
 def _apply(root: Path) -> dict[str, list[str]]:
     result: dict[str, list[str]] = {"errors": [], "warnings": [], "preserved": []}
-    _update_project._apply_update(root, root, result, ide=None, on_progress=None, manifest_hashes=None, dirty=None)
+    _update_project._apply_update(root, root, result, ide=None, on_progress=None, dirty=None, reprovision=None)
     return result
 
 
@@ -68,7 +68,7 @@ def test_failed_restore_keeps_the_snapshot_and_names_it(tmp_path: Path, monkeypa
     result: dict[str, list[str]] = {"errors": [], "warnings": [], "preserved": []}
 
     with pytest.raises(KeyboardInterrupt):
-        _update_project._apply_update(root, root, result, ide=None, on_progress=None, manifest_hashes=None, dirty=None)
+        _update_project._apply_update(root, root, result, ide=None, on_progress=None, dirty=None, reprovision=None)
 
     kept = [e for e in result["errors"] if "recovery copy kept at " in e]
     assert kept, "the failed restore must report where the recovery data is"

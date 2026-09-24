@@ -97,8 +97,7 @@ def test_pricing_table_path_override_reflected_in_tool_call_event(
         tests_passed=True,
         test_count=1,
         coverage_pct=99.0,
-        mypy_clean=True,
-        run_path=str(meas_run),
+        options={"mypy_clean": True, "run_path": str(meas_run)},
     )
 
     events_file = next((meas_run / "meta").glob("events-*.jsonl"))

@@ -47,15 +47,11 @@ class TestMiddlewareHelpers:
             result = _try_load_config()
             assert result is None
 
-    def test_try_init_observation_masking_returns_none_when_disabled(self) -> None:
-        from trw_mcp.models.config import TRWConfig
-        from trw_mcp.server._app import _try_init_observation_masking
+    def test_no_downstream_masking_middleware_is_built(self) -> None:
+        """Nothing after the tools cuts or elides a response (C9 frozen-workload finding)."""
+        from trw_mcp.server._app import _build_middleware
 
-        config = TRWConfig()
-        # observation_masking defaults to True, so let's test with disabled
-        config_copy = config.model_copy(update={"observation_masking": False})
-        result = _try_init_observation_masking(config_copy)
-        assert result is None
+        assert not [mw for mw in _build_middleware() if type(mw).__name__ == "ContextBudgetMiddleware"]
 
     def test_try_init_response_optimizer_returns_middleware(self) -> None:
         from trw_mcp.server._app import _try_init_response_optimizer

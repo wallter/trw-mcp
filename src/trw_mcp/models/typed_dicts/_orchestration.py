@@ -2,23 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-from typing_extensions import NotRequired, Required, TypedDict
-
-# Mirrors of the closed vocabularies owned by ``state/memory_pressure.py``,
-# ``state/deferral_ledger.py`` and ``state/_writer_census_identity.py``.
-# Duplicated rather than imported: ``models/`` must not depend on ``state/``
-# (import-boundary convention), and Pydantic resolves TypedDict field
-# annotations at RUNTIME via ``get_type_hints`` when building a tool's JSON
-# schema — a ``TYPE_CHECKING``-only import satisfies mypy but leaves the name
-# undefined at runtime, which crashes schema generation for every tool
-# returning ``TrwStatusDict``. A contract test pins these four aliases equal
-# to their ``state/`` originals so the two cannot drift apart.
-CensusState = Literal["measured", "unreadable"]
-LedgerState = Literal["ok", "degraded"]
-HeartbeatState = Literal["measured", "partial", "unavailable"]
-IdentityState = Literal["verified", "unverified"]
+from typing_extensions import NotRequired, TypedDict
 
 # ---------------------------------------------------------------------------
 # trw_init / trw_checkpoint local shapes
@@ -58,11 +42,14 @@ class CheckpointRecordDict(TypedDict, total=False):
 
 
 class DeployFrameworksVersionDataDict(TypedDict):
-    """Shape of ``version_data`` written to ``frameworks/VERSION.yaml`` by ``_deploy_frameworks``."""
+    """Shape of ``version_data`` written to ``frameworks/VERSION.yaml`` by ``_deploy_frameworks``.
+
+    PRD-INFRA-192 FR12: no ``trw_mcp_version`` field — package versions
+    are recorded in ``.trw/managed-artifacts.yaml`` ``packages`` instead.
+    """
 
     framework_version: str
     aaref_version: str
-    trw_mcp_version: str
     deployed_at: str
 
 
@@ -145,41 +132,6 @@ class DeliverGateScanDict(TypedDict):
     deliver_gate_summary: str
 
 
-class DeferredStepStatusDict(TypedDict):
-    """One covered step's open deferral streak, projected onto ``trw_status``."""
-
-    age_hours: float
-    deferred_count: int
-
-
-class WriterPressureDict(TypedDict):
-    """The ``writer_pressure`` block on ``trw_status`` (PRD-CORE-257-FR05).
-
-    Always present, independent of ``effective_nudge_enabled`` and of whether any
-    nudge was suppressed: before this, the only pressure signal was a
-    ``nudge_deferred`` block attached by the nudge path, which is skipped
-    outright when nudges are disabled — so the signal disappeared exactly where
-    an operator would look for it.
-
-    ``census_state`` is ``measured`` or ``unreadable`` and ``ledger_state`` is
-    ``ok`` or ``degraded``. **An absence of measurement is not a measurement of
-    absence**: when the registry scan fails the counts are held at 0 for SHAPE
-    stability only and ``under_pressure`` is False. A caller MUST distinguish
-    ``unreadable`` from a healthy zero census; reading ``under_pressure`` without
-    reading ``census_state`` is reading an unsafe default.
-    """
-
-    writer_count: int
-    peer_writer_count: int
-    threshold: int
-    under_pressure: bool
-    census_state: CensusState
-    ledger_state: LedgerState
-    heartbeat_state: HeartbeatState
-    identity_state: IdentityState
-    deferred_steps: dict[str, DeferredStepStatusDict]
-
-
 class TrwStatusDict(TypedDict, total=False):
     """Internal construction type for the ``trw_status`` MCP tool.
 
@@ -225,12 +177,6 @@ class TrwStatusDict(TypedDict, total=False):
     build_gate_ready: bool
     review_gate_ready: bool
     deliver_gate_summary: str
-    # PRD-CORE-257-FR05: writer-pressure census + open deferral streaks.
-    # ``Required`` on an otherwise ``total=False`` TypedDict (audit row 5):
-    # ``trw_status`` must carry this key on EVERY call, healthy or degraded —
-    # the assembly function guarantees it by falling back to a typed degraded
-    # block rather than letting an exception omit the key entirely.
-    writer_pressure: Required[WriterPressureDict]
     # PRD-CORE-265-FR07: the derived formation board. Present ONLY when a
     # formation is active for the calling run, so its absence is a fact about
     # the run and never a scan failure — an unreadable manifest reports

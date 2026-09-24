@@ -19,10 +19,14 @@ imports this module, so a module-level import back into it would be a cycle.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.models.typed_dicts import DeliverResultDict
+
+if TYPE_CHECKING:
+    from trw_mcp.state._paths import TRWCallContext
 
 logger = structlog.get_logger(__name__)
 
@@ -152,6 +156,8 @@ def evaluate_formation(
     trw_dir: Path,
     allow_unverified: bool,
     unverified_reason: str,
+    *,
+    call_ctx: TRWCallContext | None = None,
 ) -> bool:
     """PRD-CORE-265-FR11 — block ORCHESTRATOR delivery on a non-terminal member.
 
@@ -161,6 +167,11 @@ def evaluate_formation(
     OWNS the manifest, so a member delivering on its own is unaffected and the
     gate cannot deadlock a formation by blocking the members it waits for.
 
+    *call_ctx* is the calling session's own resolved identity, threaded through
+    to :func:`_formation_deliver_gate.evaluate_formation_gate` so its R1 caller
+    verification (PRD-FIX-149 review) can tell an orchestrator's own delivery
+    from a peer merely naming the orchestrator's ``run_path``.
+
     Returns True when delivery must BLOCK. The only escape is the same
     PRD-CORE-191 acceptable-failure record every hard gate honours — free text is
     rejected by ``apply_structured_override``, not by anything here.
@@ -168,7 +179,7 @@ def evaluate_formation(
     from trw_mcp.tools._deliver_gate_dispatch import _hard_block_override
     from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
 
-    outcome = evaluate_formation_gate(resolved_run)
+    outcome = evaluate_formation_gate(resolved_run, call_ctx=call_ctx)
     if outcome.warning:
         results["formation_gate_warning"] = outcome.warning
     if not outcome.should_block:

@@ -52,7 +52,6 @@ def _user_backend_kwargs() -> dict[str, Any]:
 
         mem_cfg = MemoryConfig()
         backend_kwargs["integrity_check_interval_minutes"] = mem_cfg.memory_integrity_check_interval_minutes
-        backend_kwargs["concurrent_writer_warn_threshold"] = mem_cfg.memory_concurrent_writer_warn_threshold
     return backend_kwargs
 
 
@@ -113,9 +112,3 @@ def reset_user_backend() -> None:
         if _user_backend is not None:
             _user_backend.close()
             _user_backend = None
-    # core185-8: the user-scope presence probe is memoized on a boot-time
-    # condition; clearing the backend (test isolation / reconfiguration) must
-    # also re-arm that probe so a later config/disk change is observed.
-    from trw_mcp.state._tier_routing import reset_user_scope_cache
-
-    reset_user_scope_cache()

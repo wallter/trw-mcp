@@ -7,6 +7,26 @@ from pathlib import Path
 
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 PACKAGE = DATA.parent
+_RENDERED_CLIENTS = ("codex", "copilot", "opencode")
+
+
+def _read(relative: str) -> str:
+    """Read *relative*, rendering codex/copilot/opencode variants from the canonical skill.
+
+    codex/copilot/opencode no longer ship SKILL.md forks (PRD-CORE-291-FR04);
+    ``render_skill_md`` only reduces frontmatter keys, so the body text these
+    assertions check is identical to the canonical source.
+    """
+    parts = relative.split("/")
+    if len(parts) == 4 and parts[0] in _RENDERED_CLIENTS and parts[1] == "skills" and parts[3] == "SKILL.md":
+        from trw_mcp.bootstrap._client_skills import render_skill_md
+
+        client, _, skill_name, _ = parts
+        canonical = (DATA / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        return render_skill_md(canonical, client)
+    return (DATA / relative).read_text(encoding="utf-8")
+
+
 FORBIDDEN_DEFAULTS = (
     re.compile(r"coverage_threshold:\s*80\b", re.IGNORECASE),
     re.compile(r"threshold:\s*80%", re.IGNORECASE),
@@ -44,7 +64,7 @@ def test_primary_coverage_workflows_name_the_no_threshold_behavior() -> None:
         "codex/skills/trw-sprint-init/SKILL.md",
         "codex/skills/trw-test-strategy/SKILL.md",
     ):
-        content = (DATA / relative).read_text(encoding="utf-8").lower()
+        content = _read(relative).lower()
         assert "if no coverage threshold is configured" in content, relative
         assert "do not invent" in content, relative
 
@@ -56,7 +76,7 @@ def test_read_only_test_strategy_does_not_mutate_build_gate_state() -> None:
         "codex/skills/trw-test-strategy/SKILL.md",
         "opencode/skills/trw-test-strategy/SKILL.md",
     ):
-        content = (DATA / relative).read_text(encoding="utf-8")
+        content = _read(relative)
         assert "trw_build_check(" not in content, relative
         assert "mcp__trw__trw_build_check" not in content, relative
 

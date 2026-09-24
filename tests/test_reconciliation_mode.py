@@ -260,7 +260,7 @@ class TestTrwReviewReconcileDispatch:
             patch("trw_mcp.state._paths.find_active_run", return_value=run_d),
         ):
             trw_review = tools["trw_review"]
-            trw_review.fn(mode="reconcile", prd_ids=["PRD-TEST-001"])
+            trw_review.fn(mode="reconcile", options={"prd_ids": ["PRD-TEST-001"]})
 
         mock_handler.assert_called_once()
         call_args = mock_handler.call_args

@@ -17,6 +17,8 @@ from unittest.mock import MagicMock
 import pytest
 from structlog.testing import capture_logs
 
+from trw_mcp.state.persistence import FileStateWriter
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -185,7 +187,7 @@ def test_sweep_does_not_clobber_concurrent_terminal_transition(tmp_path: Path, m
         data = original_load(path)
         assert data is not None
         data["status"] = "complete"
-        _run_gc._dump_run_yaml_atomic(path, data)
+        FileStateWriter().write_yaml(path, data)
         return original_load(path)
 
     monkeypatch.setattr(_run_gc, "_load_run_yaml", _complete_before_final_read)
@@ -248,7 +250,7 @@ def test_dry_run_uses_authoritative_final_status(tmp_path: Path, monkeypatch: py
         data = original_load(path)
         assert data is not None
         data["status"] = "complete"
-        _run_gc._dump_run_yaml_atomic(path, data)
+        FileStateWriter().write_yaml(path, data)
         return original_load(path)
 
     monkeypatch.setattr(_run_gc, "_load_run_yaml", _complete_before_final_read)
@@ -398,8 +400,8 @@ def test_concurrent_sweep_leaves_parseable_run_yaml(tmp_path: Path) -> None:
     """PRD-FIX-126-NFR04: concurrent sweeps leave every run.yaml loadable.
 
     Each MCP client spawns its own stdio server, so several processes sweep the
-    same run tree. The status transition is a single atomic replace
-    (``_dump_run_yaml_atomic``); this proves the invariant that matters
+    same run tree. The status transition is one locked, atomic run.yaml
+    update (``update_run_yaml``); this proves the invariant that matters
     downstream — after the dust settles every run.yaml still parses through
     ``RunState`` and carries exactly one ``status`` key.
     """

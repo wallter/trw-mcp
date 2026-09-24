@@ -6,11 +6,14 @@ and ``bootstrap/_ide_targets.py``.
 
 Artifacts written:
   - .claude/agents/trw-distill-explorer.md    (CC-05)
-  - .claude/hooks/pre-tool-distill-hint.sh    (CC-03 — opt-in gate applies)
-  - .claude/hooks/lib-distill-hint.sh         (CC-03 shared library)
+  - .claude/hooks/pre-tool-distill-hint.sh    (CC-03, only while cc03_hook_enabled)
+  - .claude/hooks/lib-distill-hint.sh         (CC-03 shared library, same gate)
   - .trw/channels/manifest.yaml               (two CC channel entries merged)
 
-NOTE: .claude/settings.json is NOT modified — operator opt-in per PRD-2405 OQ-01.
+A bundled hook ships only when it is registered, or sourced by a registered hook
+(PRD-INFRA-192). So the CC-03 pair ships AND registers in .claude/settings.json
+while ``cc03_hook_enabled`` is on, and both are withdrawn when it is turned off:
+an unedited copy is removed, an edited one is kept.
 
 PRD-DIST-2405 FR41-FR43.
 
@@ -27,8 +30,10 @@ import structlog
 
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.bootstrap._file_ops import _new_result
+from trw_mcp.bootstrap._settings_merge import _set_hook_registration
 from trw_mcp.channels._manifest_loader import ManifestValidationError
 from trw_mcp.channels.claude_code._explorer_subagent import install_cc05_subagent
+from trw_mcp.channels.claude_code._hook_helpers import read_cc03_config
 
 log = structlog.get_logger(__name__)
 
@@ -77,6 +82,32 @@ def _get_hook_content(hook_name: str) -> str | None:
     if hook_path.exists():
         return hook_path.read_text(encoding="utf-8")
     return None
+
+
+_CC03_HOOKS = ("pre-tool-distill-hint.sh", "lib-distill-hint.sh")
+_CC03_ENTRY: dict[str, object] = {
+    "matcher": "Write|Edit|MultiEdit",
+    "hooks": [
+        {
+            "type": "command",
+            "command": 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/pre-tool-distill-hint.sh"',
+            "timeout": 3000,
+        }
+    ],
+}
+
+
+def _withdraw_hook(repo_root: Path, hook_name: str, result: dict[str, list[str]]) -> None:
+    """Remove the installed copy of *hook_name* if it is still the bundled bytes."""
+    dest = repo_root / ".claude" / "hooks" / hook_name
+    if not dest.is_file():
+        return
+    rel = str(dest.relative_to(repo_root))
+    if dest.read_text(encoding="utf-8") == _get_hook_content(hook_name):
+        dest.unlink()
+        result.setdefault("removed", []).append(rel)
+    else:
+        result["preserved"].append(rel)
 
 
 def _install_hook(
@@ -148,14 +179,17 @@ def install_claude_code_distill_channels(
         log.warning("cc05_subagent_install_failed", error=str(exc), outcome="warning")
         result["errors"].append(f"CC-05 subagent install failed: {exc}")
 
-    # 2. Install CC-03 hook scripts (.claude/hooks/)
-    # NOTE: does NOT modify .claude/settings.json — operator opt-in (OQ-01)
-    for hook_name in ("pre-tool-distill-hint.sh", "lib-distill-hint.sh"):
+    # 2. CC-03 hook pair: shipped and registered while enabled, withdrawn otherwise.
+    enabled = bool(read_cc03_config(target_dir)["cc03_hook_enabled"])
+    for hook_name in _CC03_HOOKS:
         try:
-            _install_hook(target_dir, hook_name, result)
+            (_install_hook if enabled else _withdraw_hook)(target_dir, hook_name, result)
         except Exception as exc:  # justified: fail-open, hook install is best-effort
             log.warning("cc_hook_install_failed", hook=hook_name, error=str(exc), outcome="warning")
             result["errors"].append(f"CC-03 hook {hook_name} install failed: {exc}")
+    settings = target_dir / ".claude" / "settings.json"
+    if settings.is_file() and _set_hook_registration(settings, "PreToolUse", _CC03_ENTRY, present=enabled):
+        result["updated"].append(".claude/settings.json")
 
     # 3. Bootstrap channel manifest (two CC channel entries)
     try:

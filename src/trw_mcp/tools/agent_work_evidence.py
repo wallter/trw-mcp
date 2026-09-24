@@ -12,7 +12,6 @@ from trw_mcp.models.agent_work_evidence import AgentWorkEvidence, validate_agent
 from trw_mcp.state._call_context import build_call_context as _build_call_context
 from trw_mcp.state._paths import resolve_run_path
 from trw_mcp.state.agent_work_evidence import assemble_agent_work_evidence
-from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
@@ -21,7 +20,6 @@ def register_agent_work_evidence_tools(server: FastMCP) -> None:
     """Register AgentWorkEvidence export and validation tools."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_agent_work_evidence(
         ctx: Context | None = None,
         run_path: str | None = None,
@@ -52,7 +50,6 @@ def register_agent_work_evidence_tools(server: FastMCP) -> None:
         return result
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_validate_agent_work_evidence(data: dict[str, object]) -> dict[str, object]:
         """Validate an AgentWorkEvidence JSON candidate before ingestion.
 

@@ -19,7 +19,6 @@ displace a candidate the orchestrator is about to admit.
 
 from __future__ import annotations
 
-import json
 import secrets
 import time
 from dataclasses import asdict, dataclass
@@ -28,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from trw_mcp.formation._manifest import FormationError
-from trw_mcp.formation._store import _exclusive, write_owner_only
+from trw_mcp.formation._store import _exclusive, read_json_store, write_json_store
 
 CANDIDATE_CAP = 64
 _REGISTRY_RELATIVE = ("runtime", "comms-candidates.json")
@@ -47,7 +46,7 @@ class CandidateState(str, Enum):
 
 
 LIVE_STATES = frozenset({CandidateState.ACTIVE.value, CandidateState.ADMITTED.value, CandidateState.JOINING.value})
-#: Every legal move. Re-entering the same state is always legal (retries are idempotent).
+#: Every legal move. Re-entering the same state is legal only as a no-op retry (see set_state).
 _TRANSITIONS: dict[str, frozenset[str]] = {
     CandidateState.ACTIVE.value: frozenset(
         {CandidateState.ADMITTED.value, CandidateState.WITHDRAWN.value, CandidateState.REVOKED.value}
@@ -100,21 +99,15 @@ def _path(trw_dir: Path) -> Path:
 
 def _read(trw_dir: Path) -> dict[str, Candidate]:
     path = _path(trw_dir)
-    if not path.is_file():
-        return {}
+    raw = read_json_store(path, section="candidates", label="candidate registry")
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        return {str(k): Candidate(**v) for k, v in raw["candidates"].items()}
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        raise FormationError(f"candidate registry {path} is unreadable") from exc
+        return {key: Candidate(**value) for key, value in raw.items()}
+    except TypeError as exc:  # a record whose FIELDS do not match this build's Candidate
+        raise FormationError(f"candidate registry {path} is unreadable: {exc}") from exc
 
 
 def _write(trw_dir: Path, records: dict[str, Candidate]) -> None:
-    path = _path(trw_dir)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    payload: dict[str, Any] = {"candidates": {k: asdict(v) for k, v in records.items()}}
-    write_owner_only(tmp, (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode())
-    tmp.replace(path)
+    write_json_store(_path(trw_dir), section="candidates", records={k: asdict(v) for k, v in records.items()})
 
 
 def _same(candidate: Candidate, pin_key: str, run_path: Path) -> bool:
@@ -161,15 +154,35 @@ def announce(
 _KEEP = object()
 
 
+def _apply_transition(found: Candidate, state: CandidateState | str, admitted_formation: object) -> Candidate:
+    """Validate and apply one transition to *found*; the shared core of :func:`set_state`
+    and :func:`set_states` (PRD-FIX-149 review R2 -- one validation, not two copies).
+
+    An illegal transition (for example reviving a revoked candidate) raises
+    FormationError rather than silently rewriting history. A retry is idempotent
+    only when it changes nothing: re-admitting a candidate that another formation
+    already admitted is refused here, which is what makes two orchestrators
+    racing for one handle end with exactly one winner (PRD-FIX-149 FR04/FR05).
+    """
+    state = CandidateState(state).value
+    retry = state == found.state and admitted_formation in (_KEEP, found.admitted_formation)
+    if not retry and state not in _TRANSITIONS.get(found.state, frozenset()):
+        held = f" (admitted by {found.admitted_formation!r})" if found.admitted_formation else ""
+        raise FormationError(f"candidate {found.candidate_id!r} cannot move from {found.state}{held} to {state}")
+    changes: dict[str, Any] = {"state": state}
+    if admitted_formation is not _KEEP:
+        changes["admitted_formation"] = admitted_formation
+    return Candidate(**{**asdict(found), **changes})
+
+
 def set_state(
     trw_dir: Path, candidate_id: str, state: CandidateState | str, *, admitted_formation: object = _KEEP
 ) -> Candidate | None:
     """Move one candidate to *state* (and optionally its admitting formation); None when unknown.
 
-    An illegal transition (for example reviving a revoked candidate) raises
-    FormationError rather than silently rewriting history.
+    See :func:`_apply_transition` for the transition-legality contract. Held
+    under the registry lock for the single candidate, read-modify-write.
     """
-    state = CandidateState(state).value
     path = _path(trw_dir)
     if not path.is_file():
         return None
@@ -178,14 +191,86 @@ def set_state(
         found = records.get(candidate_id)
         if found is None:
             return None
-        if state != found.state and state not in _TRANSITIONS.get(found.state, frozenset()):
-            raise FormationError(f"candidate {candidate_id!r} cannot move from {found.state} to {state}")
-        changes: dict[str, Any] = {"state": state}
-        if admitted_formation is not _KEEP:
-            changes["admitted_formation"] = admitted_formation
-        records[candidate_id] = Candidate(**{**asdict(found), **changes})
+        records[candidate_id] = _apply_transition(found, state, admitted_formation)
         _write(trw_dir, records)
         return records[candidate_id]
+
+
+@dataclass(frozen=True)
+class StateTransition:
+    """One requested move, batched with others under :func:`set_states`."""
+
+    candidate_id: str
+    state: CandidateState | str
+    admitted_formation: object = _KEEP
+    #: When not ``_KEEP``, the candidate's CURRENT ``admitted_formation`` must
+    #: equal this value while the candidate is actually ``admitted``, or the
+    #: whole batch refuses -- an ownership CAS for a release: only the
+    #: formation that holds a candidate may free it back to the pool
+    #: (PRD-FIX-149 review R2). A candidate that is no longer ``admitted``
+    #: (already released, expired, withdrawn) has nothing to own, so this
+    #: check does not apply to it.
+    expected_admitted_formation: object = _KEEP
+    #: When False, a missing candidate or a transition that no longer applies
+    #: is silently skipped rather than refusing the whole batch -- for a
+    #: best-effort release of a candidate that may already be gone. An
+    #: ownership CAS violation (see above) is never silently skipped,
+    #: regardless of this flag.
+    required: bool = True
+
+
+def set_states(trw_dir: Path, transitions: list[StateTransition]) -> list[Candidate]:
+    """Apply every transition under ONE hold of the registry lock, or apply none.
+
+    ``commit_admissions`` used to call :func:`set_state` once PER candidate,
+    each call taking and releasing the lock separately -- so a multi-candidate
+    admission whose SECOND candidate's transition was illegal (already claimed
+    by a concurrent admitter, say) left the FIRST candidate already ADMITTED,
+    with no manifest ever committed to name it (PRD-FIX-149 review R2). Reading
+    every candidate once, validating every requested move against that single
+    snapshot, and calling the store's ``_write`` exactly ONCE -- only after
+    every validation in the batch passed -- makes a partial application
+    impossible: nothing is persisted until the whole batch is legal.
+    """
+    if not transitions:
+        return []
+    path = _path(trw_dir)
+    if not path.is_file():
+        if any(op.required for op in transitions):
+            raise FormationError(f"candidate registry {path} does not exist; nothing to transition")
+        return []
+    with _exclusive(path):
+        records = _read(trw_dir)
+        revised: list[Candidate] = []
+        for op in transitions:
+            found = records.get(op.candidate_id)
+            if found is None:
+                if op.required:
+                    raise FormationError(f"unknown candidate {op.candidate_id!r}")
+                continue
+            if (
+                op.expected_admitted_formation is not _KEEP
+                and found.state == CandidateState.ADMITTED.value
+                and found.admitted_formation != op.expected_admitted_formation
+            ):
+                # Ownership is never optional, whether or not this op is
+                # best-effort: a caller that is not the recorded admitter must
+                # never move this candidate out from under its real owner.
+                raise FormationError(
+                    f"candidate {op.candidate_id!r} is admitted by {found.admitted_formation!r}, not "
+                    f"{op.expected_admitted_formation!r}; refusing a transition from a non-owning formation"
+                )
+            try:
+                updated = _apply_transition(found, op.state, op.admitted_formation)
+            except FormationError:
+                if op.required:
+                    raise
+                continue
+            records[op.candidate_id] = updated
+            revised.append(updated)
+        if revised:
+            _write(trw_dir, records)
+        return revised
 
 
 def candidate(trw_dir: Path, candidate_id: str) -> Candidate | None:
@@ -203,14 +288,34 @@ def live_candidates(trw_dir: Path, now: float | None = None) -> list[Candidate]:
     return sorted((c for c in _read(trw_dir).values() if c.live(moment)), key=lambda c: c.announced_at)
 
 
+def worktree_admitted_by(trw_dir: Path, worktree: Path, formation_id: str) -> bool:
+    """Whether *formation_id* currently holds an ``admitted`` candidate for *worktree*.
+
+    Used by the FR17 coordination store (PRD-FIX-149 review R6) to tell a
+    genuinely-held worktree apart from a STALE membership record naming a
+    formation that released, lost, or never actually held the candidate: only
+    the former refuses a new admission. Ownership does not expire merely
+    because the candidate's own announcement TTL lapsed, so this checks state
+    and admitting formation only, never liveness.
+    """
+    key = str(worktree.resolve())
+    return any(
+        c.worktree == key and c.state == CandidateState.ADMITTED.value and c.admitted_formation == formation_id
+        for c in _read(trw_dir).values()
+    )
+
+
 __all__ = [
     "CANDIDATE_CAP",
     "Candidate",
     "CandidateError",
     "CandidateState",
+    "StateTransition",
     "announce",
     "candidate",
     "candidate_for",
     "live_candidates",
     "set_state",
+    "set_states",
+    "worktree_admitted_by",
 ]

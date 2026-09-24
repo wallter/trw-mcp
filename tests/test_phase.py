@@ -188,23 +188,23 @@ class TestCeremonyScoreBoolCompat:
         result = compute_ceremony_score(events)
         assert result["build_passed"] is False
 
-    def test_tool_invocation_without_tests_passed_preserves_none(self) -> None:
-        """tool_invocation event lacking tests_passed should not set build_passed."""
+    def test_tool_call_without_tests_passed_preserves_none(self) -> None:
+        """tool_call event lacking tests_passed should not set build_passed."""
         from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
-            {"event": "tool_invocation", "tool_name": "trw_build_check"},
+            {"event": "tool_call", "tool_name": "trw_build_check"},
         ]
         result = compute_ceremony_score(events)
         # build_passed should remain None (not False) since no tests_passed data
         assert result["build_passed"] is None
 
-    def test_tool_invocation_then_build_complete_uses_build_complete(self) -> None:
-        """build_check_complete after tool_invocation should use the complete event."""
+    def test_tool_call_then_build_complete_uses_build_complete(self) -> None:
+        """build_check_complete after tool_call should use the complete event."""
         from trw_mcp.state.analytics.report import compute_ceremony_score
 
         events: list[dict[str, object]] = [
-            {"event": "tool_invocation", "tool_name": "trw_build_check"},
+            {"event": "tool_call", "tool_name": "trw_build_check"},
             {"event": "build_check_complete", "test_count": 12, "scope": "pytest tests", "tests_passed": True},
         ]
         result = compute_ceremony_score(events)

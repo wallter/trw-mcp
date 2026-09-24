@@ -5,8 +5,8 @@ from __future__ import annotations
 import statistics
 import time
 
-import pytest
-
+from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.profile import (
     PROFILE_SURFACE_KEYS,
     ProfileLayer,
@@ -71,7 +71,7 @@ def test_explain_renders_override_chain() -> None:
     assert review["override_chain"] == ["defaults:MINIMAL", "org:STANDARD"]
 
 
-@pytest.mark.perf
+@requires_local_timing
 def test_explain_build_latency_under_generous_bound() -> None:
     """F-09 / NFR-5 — building the explanation payload is cheap.
 
@@ -94,4 +94,4 @@ def test_explain_build_latency_under_generous_bound() -> None:
         build_explanation(resolved)
         samples.append((time.perf_counter() - start) * 1000.0)
     median_ms = statistics.median(samples)
-    assert median_ms < 50.0, f"build_explanation median {median_ms:.3f}ms exceeded 50ms bound"
+    assert_budget("build_explanation_median", median_ms, 50.0, "ms")

@@ -30,6 +30,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         (tmp_path / ".opencode").mkdir()
 
         with patch_update_project_internals():

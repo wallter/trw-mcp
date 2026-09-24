@@ -11,6 +11,8 @@ and the coverage/contradiction rules that are pure functions of the payload.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from trw_mcp.models._evidence_core import (
@@ -147,6 +149,9 @@ class BuildReceipt(BaseModel):
     schema_version: int = Field(default=SCHEMA_VERSION)
     receipt_id: str
     run_id: str
+    # Optional for older receipts and non-git/dirty projects. Only the server
+    # stamps a clean HEAD; merge-queue gates require an exact nonempty match.
+    git_sha: str | None = None
     reporter_origin: str = "reporter_asserted"
     completed_at: str
     plan_id: str
@@ -167,6 +172,13 @@ class BuildReceipt(BaseModel):
     @classmethod
     def _bound_text(cls, value: str) -> str:
         return _require_bounded_text(value, "build limitations")
+
+    @field_validator("git_sha")
+    @classmethod
+    def _valid_git_sha(cls, value: str | None) -> str | None:
+        if value is not None and re.fullmatch(r"[0-9a-f]{40,64}", value) is None:
+            raise ValueError("git_sha must be a lowercase Git object ID")
+        return value
 
     @model_validator(mode="after")
     def _validate_receipt(self) -> BuildReceipt:

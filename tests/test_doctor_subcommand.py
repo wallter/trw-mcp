@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server import _doctor_backend_connectivity as backend_conn
 from trw_mcp.server import _subcommands_doctor as doctor
@@ -344,8 +346,14 @@ def test_instruction_reuses_canonical_phrase() -> None:
 # ── FR-08: .trw directory integrity ──────────────────────────────────────────
 
 
-def test_trw_dir_absent_warn(tmp_path: Path) -> None:
-    """No .trw/ directory -> WARN naming init-project; does not fail the run."""
+def test_trw_dir_absent_warn(tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
+    """No .trw/ directory -> WARN naming init-project; does not fail the run.
+
+    ``fake_memory_store`` routes the unrelated ``memory_backend`` row around
+    ``selected_store``'s real FAIL-on-unpinned-checkout behaviour (PRD-CORE-280
+    FR05; see ``test_memory_backend_unpinned_checkout_fails``), so this test's
+    "everything else is PASS/WARN" premise holds.
+    """
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     td = _status_of(results, "trw_dir")
     assert td.status == "WARN"
@@ -372,45 +380,40 @@ def test_trw_dir_not_a_directory_fail(tmp_path: Path) -> None:
 # ── FR-09: memory backend health (read-only) ─────────────────────────────────
 
 
-def test_memory_backend_no_store_warn(tmp_path: Path) -> None:
-    """No memory store yet -> WARN, and the run creates no .trw/memory files."""
+def test_memory_backend_unpinned_checkout_fails(tmp_path: Path) -> None:
+    """No project_namespace pin -> FAIL naming update-project (PRD-CORE-280 FR05).
+
+    Superseded by ``selected_store``'s daemon-only routing: an unpinned checkout
+    cannot resolve a store at all (there is no more in-process fallback to be
+    merely "empty"), so this reports FAIL, not the retired WARN. The run still
+    creates no ``.trw/memory`` files.
+    """
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     mem = _status_of(results, "memory_backend")
-    assert mem.status == "WARN"
-    assert "no memory store" in mem.message.lower()
+    assert mem.status == "FAIL"
+    assert "update-project" in mem.message
     # Read-only guarantee: no memory store materialised.
     assert not (tmp_path / ".trw" / "memory").exists()
 
 
-def test_memory_backend_present_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A present, healthy store -> PASS (vectors available)."""
-    store = tmp_path / ".trw" / "memory"
-    store.mkdir(parents=True)
-    (store / "memory.db").write_bytes(b"")
+def test_memory_backend_present_pass(tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
+    """A pinned checkout with rows in its store -> PASS, reporting the row count (PRD-CORE-280 FR05)."""
+    for i in range(3):
+        fake_memory_store.put(f"Row {i}", FAKE_NAMESPACE, {"entry_id": f"L-{i}"})
 
-    monkeypatch.setattr(doctor, "_probe_memory_backend", lambda p: (12, True))
     results = _doctor_core(tmp_path, _make_config(tmp_path))
     mem = _status_of(results, "memory_backend")
     assert mem.status == "PASS"
-    assert "12" in mem.message
-
-
-def test_memory_backend_degraded_vectors_warn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    store = tmp_path / ".trw" / "memory"
-    store.mkdir(parents=True)
-    (store / "memory.db").write_bytes(b"")
-
-    monkeypatch.setattr(doctor, "_probe_memory_backend", lambda p: (3, False))
-    results = _doctor_core(tmp_path, _make_config(tmp_path))
-    mem = _status_of(results, "memory_backend")
-    assert mem.status == "WARN"
-    assert "sqlite-vec" in mem.message
+    assert "3" in mem.message
+    assert FAKE_NAMESPACE in mem.message
 
 
 # ── FR-10: optional backend probe + installer-flag advisory ──────────────────
 
 
-def test_backend_skip_and_installer_advisory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_backend_skip_and_installer_advisory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_memory_store: FakeMemoryStore
+) -> None:
     """Empty backend_url -> SKIP with NO network call; CLM-014 advisory SKIPs clean.
 
     The installer-flag advisory is documentation, not a detected defect, so on a
@@ -598,56 +601,31 @@ def test_no_production_endpoint_in_messages(tmp_path: Path) -> None:
     assert "://trwframework.com" not in joined
 
 
-class TestInstructionGateUnderImportCarrier:
-    """Doctor must resolve the @-import before asserting the deliver gate.
+class TestInstructionGateReadsTheInlineBlock:
+    """The gate reads the marker region itself and never follows an ``@`` import.
 
-    Under the PRD-CORE-203 IMPORT carrier -- the shipped default for claude-code,
-    since ``instruction_externalize`` defaults to ``auto`` -- the marker region
-    holds a single ``@.trw/INSTRUCTIONS.md`` line and the ceremony text lives in
-    the sidecar. Asserting against the raw block reported FAIL for a *correctly*
-    externalized project: doctor told users their instruction surface was broken
-    exactly when it was right.
-
-    The pre-existing POINTER exemption cannot cover this. It fires only when the
-    WHOLE file is import directives; a real CLAUDE.md carries user prose and so
-    classifies CONTENT.
+    PRD-QUAL-143-FR01 retired the ``.trw/INSTRUCTIONS.md`` sidecar: the block is
+    inline again, so a region that only imports its gate states it zero times.
     """
 
-    _RENDERED = (
-        "<!-- TRW AUTO-GENERATED — do not edit between markers -->\n"
-        "<!-- trw:start -->\n"
-        "Do NOT call `trw_deliver` unless\nbody\n"
-        "<!-- trw:end -->\n"
-    )
-
-    def _externalize(self, root: Path) -> None:
-        from trw_mcp.state.claude_md._instruction_carrier import CarrierMode, apply_carrier
-
-        target = root / "CLAUDE.md"
-        target.write_text("# Project\n\nUser prose.\n", encoding="utf-8")
-        outcome = apply_carrier(
-            target,
-            self._RENDERED,
-            500,
-            import_syntax="at_path",
-            externalize="auto",
-            scope="root",
-            external_filename=".trw/INSTRUCTIONS.md",
-            project_root=root,
+    def test_inline_gate_passes(self, tmp_path: Path) -> None:
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Project\n\n<!-- trw:start -->\nDo NOT call `trw_deliver` unless\n<!-- trw:end -->\n",
+            encoding="utf-8",
         )
-        assert outcome.mode is CarrierMode.IMPORT, "precondition: carrier must externalize"
-
-    def test_externalized_surface_passes(self, tmp_path: Path) -> None:
-        self._externalize(tmp_path)
 
         result = doctor._check_instruction_gate(tmp_path, TRWConfig())
 
         assert result.status == "PASS", result.message
 
-    def test_dangling_import_still_fails(self, tmp_path: Path) -> None:
-        """Resolving imports must not weaken the check into an unconditional pass."""
-        self._externalize(tmp_path)
-        (tmp_path / ".trw" / "INSTRUCTIONS.md").unlink()
+    def test_import_only_block_fails(self, tmp_path: Path) -> None:
+        trw = tmp_path / ".trw"
+        trw.mkdir()
+        (trw / "INSTRUCTIONS.md").write_text("Do NOT call `trw_deliver` unless\n", encoding="utf-8")
+        (tmp_path / "CLAUDE.md").write_text(
+            "# Project\n\nUser prose.\n\n<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n",
+            encoding="utf-8",
+        )
 
         result = doctor._check_instruction_gate(tmp_path, TRWConfig())
 

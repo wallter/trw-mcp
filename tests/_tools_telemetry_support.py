@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-import trw_mcp.tools.telemetry as telemetry
 from tests.conftest import get_tools_sync, make_test_server
 from trw_mcp.state.persistence import FileStateReader
 
@@ -32,12 +31,6 @@ def _config_with(**overrides: object) -> Any:
     for attr, val in overrides.items():
         object.__setattr__(cfg, attr, val)
     return cfg
-
-
-@pytest.fixture(autouse=True)
-def reset_telemetry_cache() -> None:
-    """Reset the module-level run-dir cache before each test to avoid inter-test pollution."""
-    telemetry._cached_run_dir = (0.0, None)
 
 
 @pytest.fixture()

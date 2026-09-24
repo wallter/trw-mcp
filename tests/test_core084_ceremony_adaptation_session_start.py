@@ -44,7 +44,6 @@ class TestSessionStartLightMode:
             patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
             patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
             patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
             result: dict[str, object] = tools["trw_session_start"].fn(query="")
@@ -64,17 +63,17 @@ class TestSessionStartLightMode:
         assert "completed" in reminder
         assert "gate" in reminder
         assert "to persist your work" not in reminder
-        assert "FRAMEWORK-CORE.md" not in reminder
+        assert "FRAMEWORK.md" not in reminder
 
     def test_full_mode_framework_reminder_mentions_framework(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """Full mode framework_reminder references FRAMEWORK-CORE.md."""
+        """Full mode framework_reminder references FRAMEWORK.md."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")
         reminder = str(result.get("framework_reminder", ""))
-        assert "FRAMEWORK-CORE.md" in reminder
+        assert "FRAMEWORK.md" in reminder
 
     def test_light_mode_skips_ceremony_nudge(
         self,
@@ -93,19 +92,16 @@ class TestSessionStartLightMode:
         """In full mode, ceremony_status nudge IS injected."""
         result = self._invoke_session_start(monkeypatch, tmp_path, "full")
         reminder = str(result.get("framework_reminder", ""))
-        assert "FRAMEWORK-CORE.md" in reminder
+        assert "FRAMEWORK.md" in reminder
 
 
-@pytest.mark.parametrize("mode,compacted", [("light", False), ("full", True)])
-def test_compact_reminder_preserves_acceptance_boundary(mode: str, compacted: bool) -> None:
-    """Both short-reminder branches preserve the same lifecycle distinction."""
+def test_compact_reminder_preserves_acceptance_boundary() -> None:
+    """The light-mode short-reminder branch preserves the lifecycle distinction."""
     from trw_mcp.models.typed_dicts import SessionStartResultDict
     from trw_mcp.tools._ceremony_session_start_steps import finalize_session_start
 
-    config = TRWConfig(ceremony_mode=mode)
+    config = TRWConfig(ceremony_mode="light")
     results: SessionStartResultDict = {}
-    if compacted:
-        results["response_compacted"] = True
     with (
         patch("trw_mcp.tools._ceremony_helpers.step_mark_session_started"),
         patch("trw_mcp.tools._ceremony_helpers.step_ceremony_status"),

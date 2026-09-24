@@ -124,11 +124,18 @@ def dispatch_for_profile(
 
     refresh_hook_policy(trw_dir, project_root, config, client)
 
+    # PRD-QUAL-143-FR01: before the cache check, so an unchanged render still
+    # drops a stale ``.trw`` sidecar and every ``@`` import of it.
+    if scope != "sub":
+        from trw_mcp.state.claude_md._sidecar_retire import retire_instruction_sidecars
+
+        retire_instruction_sidecars(project_root, dry_run=dry_run)
+
     # PRD-CORE-093 FR05: Hash excludes learning content — only package version
     # determines whether CLAUDE.md needs re-rendering. This keeps the prompt
     # cache stable across trw_deliver calls.
     if scope != "sub":
-        current_hash = _compute_sync_hash(config)
+        current_hash = _compute_sync_hash()
         stored_hash = _read_stored_hash(trw_dir)
         # ``force=True`` must bypass the cache-hit early return. Before this
         # fix, a hash match reported "unchanged" and returned unconditionally
@@ -173,7 +180,7 @@ def dispatch_for_profile(
             # PRD-CORE-203 FR07 (P1-1): report the carrier state even on a cache
             # hit (no write happens, so this is a read-only classification of the
             # current CLAUDE.md).
-            cm, ps, ep = _cache_hit_carrier_report(target, decision.write_claude, config, scope)
+            cm, ps = _cache_hit_carrier_report(target, decision.write_claude)
             return _build_sync_result(
                 path=str(target),
                 scope=scope,
@@ -188,7 +195,6 @@ def dispatch_for_profile(
                 hash_value=current_hash,
                 carrier_mode=cm,
                 pointer_skips=ps,
-                external_path=ep,
                 capability_parity_drift=_capability_parity_drift(decision.write_agents, client),
             )
 
@@ -212,38 +218,20 @@ def dispatch_for_profile(
     total_lines = 0
     carrier_mode: str | None = None
     pointer_skips: list[InstructionPointerSkipDict] | None = None
-    external_path: str | None = None
     refusals: list[InstructionWriteRefusalDict] = []
     diffs: list[InstructionDiffDict] = []
     if write_claude:
-        # PRD-CORE-203 FR05/FR06/FR07: resolve the carrier for CLAUDE.md. It is
-        # Claude Code's instruction file, so import-capability comes from the
-        # claude-code profile regardless of the requested ``client`` (client="all"
-        # still writes CLAUDE.md for Claude Code). A single-source pointer is
-        # healed + left un-clobbered; an import-capable target is externalized to
-        # the ``.trw`` sidecar (inline fallback on failure); else inline.
-        from trw_mcp.models.config._profiles import resolve_client_profile
+        # PRD-CORE-203 FR04/FR06: a single-source pointer is healed and left
+        # un-clobbered; anything else gets the block inline.
         from trw_mcp.state.claude_md._instruction_carrier import CarrierMode, apply_carrier
 
-        outcome = apply_carrier(
-            target,
-            trw_section,
-            max_lines,
-            import_syntax=resolve_client_profile("claude-code").instruction_import_syntax,
-            externalize=config.instruction_externalize,
-            scope=scope,
-            external_filename=config.instruction_external_filename,
-            project_root=project_root,
-            force=force,
-            dry_run=dry_run,
-        )
+        outcome = apply_carrier(target, trw_section, max_lines, force=force, dry_run=dry_run)
         total_lines = outcome.total_lines
         if outcome.refusal is not None:
             refusals.append(outcome.refusal)
         if outcome.diff is not None:
             diffs.append(outcome.diff)
         carrier_mode = outcome.mode.value
-        external_path = outcome.external_path
         if outcome.mode is CarrierMode.POINTER_SKIP:
             pointer_skips = [
                 {
@@ -280,7 +268,7 @@ def dispatch_for_profile(
     # refused write must NOT record the hash: doing so would make the next real
     # sync a cache hit and silently skip the write that never happened.
     if scope != "sub" and not dry_run and not refusals:
-        rendered_hash = _compute_sync_hash(config)
+        rendered_hash = _compute_sync_hash()
         _write_stored_hash(trw_dir, rendered_hash)
 
     # PRD-CORE-084 FR08: Generate REVIEW.md after CLAUDE.md sync completes.
@@ -318,7 +306,6 @@ def dispatch_for_profile(
         review_md=review_md_result,
         carrier_mode=carrier_mode,
         pointer_skips=pointer_skips,
-        external_path=external_path,
         capability_parity_drift=_capability_parity_drift(write_agents, client),
         diffs=diffs if dry_run else None,
         refusals=refusals or None,

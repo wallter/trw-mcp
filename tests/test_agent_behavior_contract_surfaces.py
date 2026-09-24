@@ -22,32 +22,32 @@ def test_requirement_review_uses_canonical_category_aware_readiness() -> None:
         assert forbidden not in content
 
 
-def test_traceability_uses_configured_gate_and_unknown_links() -> None:
-    content = (AGENTS / "trw-traceability-checker.md").read_text(encoding="utf-8")
+def test_auditor_carries_merged_traceability_gate_and_unknown_links() -> None:
+    """PRD-CORE-291-FR05: trw-traceability-checker merged into trw-auditor —
+    the checker's unique link-status taxonomy and gate policy must survive."""
+    content = (AGENTS / "trw-auditor.md").read_text(encoding="utf-8")
     for phrase in (
-        "Configured gate: none",
-        "Gate status: REPORT_ONLY",
-        "project configuration or an explicit requirement",
+        "REPORT_ONLY",
+        "governing requirement defines one",
         "UNKNOWN",
-        "source and test evidence separately",
+        "STALE",
     ):
         assert phrase in content
     assert "Gate Threshold | 90%" not in content
     assert "PRD-level comment covers all FRs" not in content
 
 
-def test_requirement_writer_selects_syntax_and_verification_to_fit() -> None:
-    content = (AGENTS / "trw-requirement-writer.md").read_text(encoding="utf-8")
+def test_prd_groomer_carries_merged_verification_method_selection() -> None:
+    """PRD-CORE-291-FR05: trw-requirement-writer merged into trw-prd-groomer —
+    the writer's EARS/verification-method selection guidance must survive."""
+    content = (AGENTS / "trw-prd-groomer.md").read_text(encoding="utf-8")
     for phrase in (
         "Use EARS",
-        "when an event, state, feature",
-        "Given/When/Then for externally observable",
-        "Test**, **Analysis**, **Inspection**, or **Demonstration",
+        "Test, Analysis, Inspection, or Demonstration",
         "never invent a percentage",
-        "candidate/open question",
+        "operating conditions, bounds, and a measurement procedure",
     ):
         assert phrase in content
-    assert "Every requirement you" not in content
 
 
 def test_implementer_keeps_evidence_and_simplification_without_harness_folklore() -> None:

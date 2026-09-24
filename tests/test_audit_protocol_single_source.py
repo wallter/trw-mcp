@@ -29,6 +29,7 @@ from tests._audit_protocol_support import (
     table_with_header,
 )
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_local_timing
+from tests._timing import assert_budget
 
 REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 _SCRIPT = REPO_ROOT / "scripts" / "check_audit_protocol_single_source.py"
@@ -110,7 +111,7 @@ def test_auditor_agent_defers_protocol_and_keeps_headroom(agents_dir: Path) -> N
 
 @pytest.mark.parametrize("projection", SKILL_PROJECTIONS, ids=lambda p: str(p).split("trw-framework/")[-1])
 def test_every_skill_projection_is_an_invocation_adapter(projection: Path) -> None:
-    """FR03: all seven projections point at the protocol instead of restating it."""
+    """FR03: every file-based projection points at the protocol instead of restating it."""
     text = projection.read_text(encoding="utf-8")
     surface = _gate.parse_surface(text)
     defined = [s.element for s in _gate.SIGNATURES if _gate.find_definitions(s, surface)]
@@ -120,8 +121,34 @@ def test_every_skill_projection_is_an_invocation_adapter(projection: Path) -> No
     assert "prior_learning_verification: checked" not in text, f"{projection} still carries the scalar form (D5)"
 
 
-def test_all_seven_projections_are_scanned() -> None:
-    assert len(SKILL_PROJECTIONS) == 7, "guard coverage must reach 7 of 7 projections, not 4 of 7"
+@pytest.mark.parametrize("client", ("codex", "copilot"))
+def test_rendered_codex_and_copilot_projection_is_an_invocation_adapter(client: str) -> None:
+    """FR03 for the two clients that render rather than fork the file (PRD-CORE-291-FR04).
+
+    Same property as :func:`test_every_skill_projection_is_an_invocation_adapter`,
+    checked against the RENDERED text instead of a deleted on-disk fork.
+    """
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical_text = (FRAMEWORK_PATH.parent / "SKILL.md").read_text(encoding="utf-8")
+    text = render_skill_md(canonical_text, client)
+    surface = _gate.parse_surface(text)
+    defined = [s.element for s in _gate.SIGNATURES if _gate.find_definitions(s, surface)]
+    assert not defined, f"{client} rendering restates protocol elements: {defined}"
+    assert "audit-framework.md" in text, f"{client} rendering does not name the single source"
+    assert "Pagination limits" not in text, f"{client} rendering still carries the drifted NFR item 1 (D1/D2)"
+    assert "prior_learning_verification: checked" not in text, f"{client} rendering still carries the scalar form (D5)"
+
+
+def test_all_projections_are_scanned() -> None:
+    """5 file-based projections (canonical + 4 repo mirrors) since codex/copilot dropped their forks.
+
+    Was 7 of 7 before PRD-CORE-291-FR04 deleted ``data/codex/skills`` and
+    ``data/copilot/skills``; those two clients are still covered, by
+    :func:`test_rendered_codex_and_copilot_projection_is_an_invocation_adapter`
+    above, not by this file-based list.
+    """
+    assert len(SKILL_PROJECTIONS) == 5, "guard coverage must reach 5 of 5 file-based projections"
 
 
 def test_pointer_prose_is_a_reference_not_a_definition() -> None:
@@ -180,18 +207,26 @@ def test_linter_reports_a_planted_duplicate(tmp_path: Path) -> None:
     assert _gate.run(check=True, surfaces=[owner]) == 0
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_linter_runtime_is_bounded() -> None:
-    """NFR01: both linters together add under 5s to make bundle-sync."""
-    started = time.perf_counter()
+    """Correctness twin: both linters exit clean. The NFR01 5s wall-time budget
+    is asserted by the ``_budget`` twin below."""
     for script in (_SCRIPT, _CONTRACT_LINT):
         result = subprocess.run(
             [sys.executable, str(script), "--check"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=60
         )
         assert result.returncode == 0, f"{script.name} failed:\n{result.stdout}\n{result.stderr}"
+
+
+@requires_local_timing
+def test_linter_runtime_is_bounded_budget() -> None:
+    """NFR01: both linters together add under 5s to make bundle-sync."""
+    started = time.perf_counter()
+    for script in (_SCRIPT, _CONTRACT_LINT):
+        subprocess.run(
+            [sys.executable, str(script), "--check"], cwd=REPO_ROOT, capture_output=True, text=True, timeout=60
+        )
     elapsed = time.perf_counter() - started
-    assert elapsed < 5.0, f"combined linter wall time {elapsed:.2f}s exceeds the 5s budget"
+    assert_budget("combined_linter_runtime", elapsed, 5.0, "s")
 
 
 def test_module_skips_cleanly_without_repo_root_scripts(tmp_path: Path) -> None:
@@ -208,6 +243,7 @@ def test_module_skips_cleanly_without_repo_root_scripts(tmp_path: Path) -> None:
         "_audit_protocol_support.py",
         "test_audit_protocol_single_source.py",
         "_layout.py",
+        "_timing.py",
     ):
         (tests / name).write_text((here / name).read_text(encoding="utf-8"), encoding="utf-8")
     assert not (tmp_path / "scripts").exists(), "the fixture must reproduce a scripts-less tree"

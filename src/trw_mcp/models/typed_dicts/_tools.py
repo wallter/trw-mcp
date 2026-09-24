@@ -7,7 +7,6 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 from trw_mcp.models.typed_dicts._ceremony import (
-    AutoRecalledItemDict,
     MovedCheckoutDict,
     OpenHandoffDict,
     ReconciledLocalWritesDict,
@@ -36,52 +35,22 @@ class Degradation(TypedDict):
     severity: Literal["info", "warn"]
 
 
-class RecallContextDict(TypedDict, total=False):
-    """Shape of the context dict returned by ``collect_context()`` and embedded in ``RecallResultDict``.
-
-    Both keys are optional — populated only when the corresponding YAML file
-    exists in the ``.trw/context/`` directory.
-    """
-
-    architecture: object
-    conventions: object
-
-
 class RecallResultDict(TypedDict, total=False):
-    """Return shape of ``trw_recall`` MCP tool."""
-
-    remote_recall: dict[str, object]  # remote failure/incompleteness or unevaluated temporal coverage
-    retrieval_warning: str  # semantic initialization was not awaited on the interactive path
+    """Return shape of ``trw_recall`` (PRD-CORE-294 FR01)."""
 
     query: str
+    #: Stubs ``{id, claim, anchor?}`` by default; full rows for ``ids=``.
     learnings: list[dict[str, object]]
-    patterns: list[dict[str, object]]
-    context: RecallContextDict
+    #: Rows ranked for this query after dedup and the ``max_results`` cap.
     total_matches: int
-    # PRD-FIX-141-FR05. Three counts, three populations, stated once:
-    #   total_matches    — entries + patterns actually returned after the cap.
-    #   total_available  — bounded PRE-CAP match population (learnings + patterns);
-    #                      a FLOOR, not a corpus size, because the DB fetch itself
-    #                      is capped at max_results * PREFETCH_MULTIPLIER.
-    #   candidate_count  — rows the backend returned before ranking/dedup/cap.
-    #   store_count      — the project store's own inventory; OMITTED (never 0)
-    #                      when the store could not be read.
-    total_available: int
-    candidate_count: int
-    store_count: int
-    compact: bool
-    max_results: int
-    topic_filter_ignored: bool
-    # Non-empty when topic_filter_ignored=True — explains why the filter was a no-op.
+    #: Ranked rows the byte budget cut; absent when nothing was cut.
+    omitted: int
+    #: Requested ``ids`` no store holds; only with ``ids=``.
+    missing_ids: list[str]
+    remote_recall: dict[str, object]  # remote failure/incompleteness or unevaluated temporal coverage
+    store_unavailable: str  # the memory store could not be opened; empty results are not "nothing learned"
+    # Non-empty only when a requested topic filter was a no-op; explains why.
     topic_filter_warning: str
-    count: int
-    ceremony_hint: str
-    # Token budget fields (PRD-CORE-123 Phase 2)
-    tokens_used: int
-    tokens_budget: int | None
-    tokens_truncated: bool
-    # Post-rank near-duplicate dedup (F-DEDUP-001): count of entries collapsed.
-    duplicates_collapsed: int
 
 
 class RunStatusDict(TypedDict, total=False):
@@ -119,35 +88,24 @@ class SessionStartResultDict(TypedDict, total=False):
     learnings: list[dict[str, object]]
     learnings_count: int
     query: str
-    query_matched: int
-    # Present ONLY when a focused query matched zero entries — explains that the
-    # returned learnings are the query-independent impact-ranked baseline and
-    # points the caller at trw_recall for full hybrid search.
+    # Present ONLY when a focused query matched zero entries — says why the
+    # learning block is empty and points the caller at trw_recall.
     query_advisory: str
-    # ``total_available`` here is the RETURNED set, not the corpus; ``store_count``
-    # is the project store's inventory, omitted when it could not be read
-    # (PRD-FIX-141-FR05).
-    total_available: int
+    # The project store's inventory, omitted when it could not be read (PRD-FIX-141-FR05).
     store_count: int
     # PRD-CORE-215 FR01 connection fingerprint. Full ten-field block under
     # verbose=True; compact mode keeps only build_identity + connection_nonce
     # (see tools/_session_start_trim.py::_FINGERPRINT_COMPACT_FIELDS).
     connection_fingerprint: dict[str, object]
-    response_compacted: bool
-    side_effects_deferred: dict[str, object]
     run: RunStatusDict
     first_session_emitted: bool
-    embeddings_advisory: str
+    # The daemon-measured share of this namespace's entries holding a vector,
+    # from session start's pipeline-health probe; omitted when not measured.
+    embeddings_coverage_ratio: float
     errors: list[str]
     success: bool
     framework_reminder: str
     ceremony_status: str
-    nudge_deferred: dict[str, object]
-    # Auto-recall (phase-contextual, PRD-CORE-049)
-    auto_recalled: list[AutoRecalledItemDict]
-    auto_recall_count: int
-    # Embed health advisory (PRD-FIX-053)
-    embed_health: dict[str, object]
     # Sync-push health advisory (PRD-FIX-COMPOUNDING-1) — degraded when the
     # backend push has stalled (consecutive_failures >= threshold or stale push)
     sync_health: dict[str, object]
@@ -181,33 +139,6 @@ class SessionStartResultDict(TypedDict, total=False):
     update_advisory: str
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
-    stale_runs_deferred: dict[str, object]
-    auto_upgrade_check_deferred: dict[str, object]
-    embeddings_backfill: dict[str, int]
-    embeddings_backfill_deferred: dict[str, object]
-    embeddings_backfill_not_performed: dict[str, object]  # PRD-CORE-263 DEF-11
-    embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01
-    embeddings_migration: dict[str, object]  # background re-embed into the configured model's space
-    # PRD-CORE-263 DEF-12: named ``_skipped``, not ``_deferred`` — nothing
-    # journals or later performs either while ``response_compacted`` is true.
-    auto_recall_skipped: dict[str, object]
-    ceremony_status_skipped: dict[str, object]
-    # Compact-mode fold of the individual ``*_deferred`` blocks above:
-    # ``{reason: [step, ...]}`` plus a single writer_count. The per-step
-    # blocks are only present with ``verbose=True``.
-    deferred: dict[str, list[str]]
-    deferred_writer_count: int
-    # PRD-CORE-257-FR11: the compact response is the one an agent reads, so the
-    # fold keeps the bar the work was deferred against, the worst streak age and
-    # both measurement states rather than discarding them.
-    deferred_threshold: int
-    deferred_max_age_hours: float
-    deferred_census_state: str
-    deferred_ledger_state: str
-    # PRD-CORE-257-FR03: steps that ran despite pressure because their bound
-    # expired. Present only when a bound actually fired.
-    deferral_expired_ran: list[str]
-    step_outcomes: dict[str, str]
     # PRD-CORE-141 FR06: Structured guidance when no pin exists for the
     # caller's ctx — directs agents to ``trw_init`` (new run) or to pass
     # ``run_path`` (resume). Populated only on the no-pin path.
@@ -247,7 +178,7 @@ class SessionStartResultDict(TypedDict, total=False):
     boot_audit_failures: list[dict[str, str]]
     # PRD-FIX-084: Per-step latency telemetry (milliseconds). Keys: recall,
     # run_resolve, surface_stamp, log_event, telemetry, counter,
-    # sanitize_maintain, phase_recall, total. Absent keys mean the step
+    # sanitize_maintain, total. Absent keys mean the step
     # did not start (e.g. exited via partial-failure earlier). Future
     # regressions of the "step accidentally O(corpus)" class are visible
     # from a single log line via the ``session_start_ok`` event payload.
@@ -257,8 +188,8 @@ class SessionStartResultDict(TypedDict, total=False):
     # False when the full payload was returned (verbose=True). ``health_summary``
     # is the one-line collapse of the diagnostic sub-blocks (embed/assertion/
     # sync health + total latency) present ONLY in compact mode.
-    # ``learnings_omitted`` is the "N more" indicator — how many top-K-capped
-    # learnings were dropped from the returned list (0 when nothing was capped).
+    # ``learnings_omitted`` is the "N more" indicator — how many ranked rows the
+    # PRD-CORE-294 FR02 presenter left out of the learning block; absent when none.
     compact: bool
     health_summary: str
     learnings_omitted: int
@@ -275,30 +206,6 @@ class SessionStartResultDict(TypedDict, total=False):
     # by ``errors``); both keys are ABSENT on a fully-clean session.
     degradations: list[Degradation]
     degraded_steps: int
-
-
-class QLearningDeferredDict(TypedDict):
-    """Stable shape of ``BuildCheckResultDict.q_learning_deferred`` (PRD-FIX-088 FR01).
-
-    Always-present fields. Returned by ``_dispatch_q_learning_async`` and
-    surfaced to MCP callers so log readers can correlate the eventual
-    async ``q_learning_complete`` / ``outcome_correlation_applied``
-    events back to the originating ``trw_build_check`` call.
-    """
-
-    reason: Literal["deferred_always"]
-    scheduled_at: str
-    thread_state: Literal["launched", "queued", "queue_full"]
-    tool_call_id: str
-
-
-class QLearningHealthDict(TypedDict):
-    """Return shape of ``get_q_learning_health()`` (PRD-FIX-088 FR01)."""
-
-    queue_size: int
-    error_count: int
-    last_error: str | None
-    worker_alive: bool
 
 
 class FailureAttributionItemDict(TypedDict):
@@ -347,10 +254,6 @@ class BuildCheckResultDict(TypedDict, total=False):
     ``SessionStartResultDict`` precedent set by PRD-FIX-084. Keys
     populated on the success path: persist, run_resolve, log_event,
     finalize, total.
-
-    Legacy optional Q-learning fields remain readable for compatibility.
-    The current build tool schedules no temporal-Q attribution and omits
-    ``q_learning_deferred``; absence is not a failed or queued operation.
     """
 
     tests_passed: bool
@@ -369,9 +272,6 @@ class BuildCheckResultDict(TypedDict, total=False):
     coverage_threshold_failed: bool
     coverage_threshold: float
     coverage_threshold_message: str
-    q_learning_deferred: QLearningDeferredDict
-    q_learning_error: str
-    q_learning_error_count: int
     step_durations_ms: dict[str, float]
     failure_attribution: FailureAttributionDict
     summary: str
@@ -511,9 +411,9 @@ class DeliverResultDict(TypedDict, total=False):
     # Shape: {"processed": int, "edges_built": int, "skipped": int, "failed": int}.
     graph_backfill: dict[str, int]
     # PRD-INFRA-067 (C2): Integrity-on-delivery probe result. Surfaced in the
-    # response ONLY on a real corruption event (ok=False), and then only the
-    # actionable {"ok": bool, "detail": str}. The full record (incl. db_path /
-    # checked_at) always persists to events.jsonl for the audit trail.
+    # response ONLY on a real regression (ok=False, incl. "not measured"), and
+    # then only the actionable {"ok": bool, "detail": str}. The full record
+    # (incl. namespace / checked_at) always persists to events.jsonl.
     db_integrity: dict[str, object]
     # PRD-INFRA-068 (C3): Memory health dashboard — surfaced here so clients
     # can report health when deliver is a session's last action.
@@ -578,52 +478,6 @@ class DeliverResultDict(TypedDict, total=False):
     # ``{"status": "failed", "error": ...}`` records the failure and delivery
     # still succeeds, so this is never absent-meaning-succeeded.
     project_handoff: dict[str, object]
-
-
-class ToolEventDataDict(TypedDict, total=False):
-    """Shape of the ``event_data`` dict written by ``_write_tool_event`` in telemetry.py.
-
-    Always-present keys: ``tool_name``, ``duration_ms``, ``success``,
-    ``status``, ``agent_id``, ``agent_role``, ``phase``.
-    Optional: trace fields plus ``error``, ``error_type`` (present only when the tool call raised).
-    """
-
-    tool_name: str
-    duration_ms: float
-    learn_stage_ms: dict[str, float]
-    success: bool
-    status: str
-    agent_id: str
-    agent_role: str
-    phase: str
-    capability_tier: str
-    recommended_effort: str
-    effort_source: str
-    effort_adapter_status: str
-    error: str
-    error_type: str
-    event_id: str
-    parent_event_id: str | None
-    tool_call_id: str
-    turn_index: int
-    input_hash: str
-    output_hash: str
-    task_profile_hash: str
-    causal_relation: str
-
-
-class TelemetryRecordDict(TypedDict):
-    """Shape of the detailed record written by ``_write_telemetry_record`` in telemetry.py.
-
-    Written to ``.trw/logs/tool-telemetry.jsonl`` (FR04).
-    All keys are always present.
-    """
-
-    tool: str
-    args_hash: str
-    duration_ms: float
-    result_summary: str
-    success: bool
 
 
 class PreCompactResultDict(TypedDict, total=False):

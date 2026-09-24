@@ -373,8 +373,9 @@ def check_delivery_gates(
             result["build_gate_warning"] = build_warning
         return result
 
-    # Read shared data once — avoids reading events.jsonl 3x and run.yaml 2x
-    events = _read_run_events(run_path, reader)
+    # Read shared data once — avoids reading events.jsonl 3x and run.yaml 2x.
+    # Strict: this list is build evidence, so a malformed row blocks (uncomputable).
+    events = _read_run_events(run_path, reader, strict=True)
     run_data = _read_run_yaml(run_path, reader)
 
     # Review gate (PRD-QUAL-022). A verdict=block + critical findings on a
@@ -501,29 +502,10 @@ def check_delivery_gates(
         if retraction_nudge:
             result["retraction_nudge"] = retraction_nudge
 
-        # FR04. Wrapped, because this gate must not be able to raise. The marker on
-        # `unsettled_contradiction_ids` asserts the contract for BOTH halves --
-        # "neither an advisory nor a reward signal may raise inside the delivery
-        # gate" -- and only the advisory half was implemented; pre-release review
-        # traced a live path (`_default_lookup_entry` -> `backend.get`, unguarded,
-        # so a `sqlite3.OperationalError` from a locked or damaged store escapes).
-        # `_ceremony_deliver_tool` calls this gate with no try of its own AFTER
-        # opening the PRD-CORE-208 delivery journal, so a raise here would both fail
-        # trw_deliver and strand that journal in a non-terminal state.
-        try:
-            from trw_mcp.scoring import apply_contradiction_penalty
-            from trw_mcp.tools._retraction_nudge import fresh_contradiction_ids
-
-            contradicted = fresh_contradiction_ids(trw_dir)
-            if contradicted:
-                penalised = apply_contradiction_penalty(contradicted, trw_dir)
-                logger.info(
-                    "contradiction_penalty_applied",
-                    candidates=len(contradicted),
-                    penalised=len(penalised),
-                )
-        except Exception:  # trw-fail-silent-allow: a reward signal may never fail a delivery; the warning below is the durable record, and skipping one penalty costs nothing a retry cannot recover
-            logger.warning("contradiction_penalty_skipped", exc_info=True)
+        # PRD-CORE-293: the contradiction penalty that used to follow (a q_value
+        # reward write) is gone with the reward loop; it never fired (q_observations
+        # was 0 on every row). The nudge above is the visible path: the agent sees the
+        # contradiction and updates or retracts the learning itself.
 
     return result
 

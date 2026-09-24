@@ -40,7 +40,11 @@ EXPLORER_QUOTA_BYTES: int = 8192
 # PRD-CORE-210 FR07 (FUTURE-WORK §3a): operator override for the CC-05 model,
 # resolved at template-render time. Allowlisted so a typo or a disallowed
 # tier (fable is main-loop only by operator rule) can never land in the
-# generated agent file.
+# generated agent file. Since 2026-09-22 the default MAIN-loop model is Opus
+# 5.5 and Fable 5.1 is the explicit escalation tier; neither changes this
+# allowlist. A read-only explorer is the cheapest lane in the system, and
+# ``opus`` is deliberately absent too: an Opus-priced explorer defeats the
+# point of delegating the sweep (see tier_resolver's policy note).
 EXPLORER_MODEL_ENV_VAR: str = "CLAUDE_CODE_EXPLORER_MODEL"
 _EXPLORER_DEFAULT_MODEL: str = "haiku"
 _EXPLORER_ALLOWED_MODELS: frozenset[str] = frozenset({"haiku", "sonnet"})

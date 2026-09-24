@@ -61,7 +61,7 @@ class TestSubstantiveDefaultsToFalse:
 
         tools["trw_review"].fn(
             findings=[{"category": "correctness", "severity": "info", "description": "x"}],
-            run_path=str(run),
+            options={"run_path": str(run)},
         )
 
         assert recorded["substantive"] is False
@@ -92,7 +92,7 @@ class TestSubstantiveDefaultsToFalse:
 
         result = tools["trw_review"].fn(
             findings=[{"category": "correctness", "severity": "warning", "description": "real finding"}],
-            run_path=str(run),
+            options={"run_path": str(run)},
         )
 
         assert result["substantive"] is True
@@ -155,6 +155,24 @@ class TestReceiptRefusesAVerdictlessReview:
         )
 
         assert outcome.ok is True
+
+    def test_an_unresolved_governing_prd_is_named_not_generic(self, tmp_path: Path) -> None:
+        """A prd_scope PRD missing from this tree used to surface only as the generic
+        review_receipt_write_failed; the refusal now names the cause and the path."""
+        from trw_mcp.tools._review_receipt_writer import record_review_receipt
+
+        _project, run = self._project_run(tmp_path)
+
+        outcome = record_review_receipt(
+            run,
+            {"review_id": "review-1", "mode": "manual", "substantive": True, "verdict": "pass"},
+            ("PRD-FIX-999",),
+            policy_mode="enforce",
+        )
+
+        assert outcome.ok is False
+        assert outcome.reason_code == "governing_prd_unresolved"
+        assert "docs/requirements-aare-f/prds/PRD-FIX-999.md" in outcome.detail
 
     def test_a_blank_verdict_is_treated_as_missing(self, tmp_path: Path) -> None:
         from trw_mcp.tools._review_receipt_writer import record_review_receipt

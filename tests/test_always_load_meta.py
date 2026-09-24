@@ -28,6 +28,7 @@ WHAT IS PINNED, AND WHY EACH ASSERTION IS NON-VACUOUS
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -128,3 +129,39 @@ async def test_unresolvable_tool_name_is_survivable() -> None:
 
     applied = await _always_load.apply_always_load_meta(_EmptyServer())  # type: ignore[arg-type]
     assert applied == (), "an unresolvable floor must yield no applications, not an exception"
+
+
+@pytest.mark.parametrize("assess_enabled", [True, False], ids=["enabled", "disabled"])
+async def test_trw_assess_loads_upfront_only_when_the_project_enabled_it(assess_enabled: bool) -> None:
+    """An opted-in project gets the judge without a ToolSearch; every other install keeps it deferred."""
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ASSESS_TOOL, apply_always_load_meta
+    from trw_mcp.server._app import mcp
+
+    tool = await mcp.get_tool(ASSESS_TOOL)
+    original = dict(tool.meta or {})
+    try:
+        applied = await apply_always_load_meta(mcp, assess_enabled=assess_enabled)
+        marked = (await _wire_meta())[ASSESS_TOOL].get(ALWAYS_LOAD_META_KEY) is True
+    finally:
+        tool.meta = original  # the registry is a process singleton; leave it as the boot path set it
+
+    assert (ASSESS_TOOL in applied, marked) == (assess_enabled, assess_enabled)
+
+
+async def test_the_boot_hook_reads_assess_enabled_from_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wiring: the server's boot path passes the project's assess_enabled through, not a constant."""
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.server import _tools
+    from trw_mcp.server._always_load import ALWAYS_LOAD_META_KEY, ASSESS_TOOL
+    from trw_mcp.server._app import mcp
+
+    tool = await mcp.get_tool(ASSESS_TOOL)
+    original = dict(tool.meta or {})
+    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: TRWConfig(assess_enabled=True))
+    try:
+        await asyncio.to_thread(_tools._apply_always_load_meta)
+        marked = (await _wire_meta())[ASSESS_TOOL].get(ALWAYS_LOAD_META_KEY) is True
+    finally:
+        tool.meta = original
+
+    assert marked

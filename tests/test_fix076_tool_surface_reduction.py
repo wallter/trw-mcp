@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
+
 pytestmark = pytest.mark.unit
 
 # The 4 surviving tools removed by FIX-076 (had live @server.tool decorators).
@@ -120,7 +122,7 @@ def test_internal_state_logic_importable_by_consumers() -> None:
 
 
 @pytest.mark.integration
-def test_internal_state_logic_behaves(tmp_path: Path) -> None:
+def test_internal_state_logic_behaves(tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
     """F3: the preserved state APIs actually EXECUTE their logic, not just exist.
 
     Replaces the prior ``assert callable(...)`` existence checks (testing.md
@@ -167,6 +169,6 @@ def test_internal_state_logic_behaves(tmp_path: Path) -> None:
     assert sync["threshold_met"] is False
 
     # backfill_graph returns its int-valued counter dict on an empty store.
-    counts = backfill_graph(trw_dir, limit=0)
+    counts = backfill_graph(trw_dir, limit=1)
     assert isinstance(counts, dict)
     assert all(isinstance(v, int) for v in counts.values())

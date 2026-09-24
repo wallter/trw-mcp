@@ -60,15 +60,15 @@ choices do not waive existing session, verification, or delivery obligations.
 
 ## Project vs user tier
 
-`trw_learn()` routes into one of two tiers. The **project** tier (default, under `.trw/`) holds repo-specific knowledge that travels with the codebase. The opt-in **user** tier (machine-local, at `~/.trw`) holds portable knowledge — operator preferences, cross-cutting patterns, workflow rules — shared by every repo on the box.
+`trw_learn()` routes into one of two namespaces of the one store the memory daemon serves. The **project** namespace (`project_namespace`, pinned in `.trw/config.yaml`) holds repo-specific knowledge; every worktree of the checkout shares it. The **user** namespace (`user:local`) holds portable knowledge (operator preferences, cross-cutting patterns, workflow rules) shared by every repo on the machine. It is never pushed by team sync.
 
-- `scope="auto"` (default) classifies portability: repo-local paths/symbols stay project; cross-cutting findings route to the user tier when one is present.
-- `scope="project"` / `scope="user"` force the tier.
-- `trw_recall()` federates both tiers into one ranked result; `include_tiers=["project"]` restricts it to project-only.
+- `scope="auto"` (default) classifies portability: repo-local paths and symbols stay project, cross-cutting findings route to `user:local`, and ambiguous content defaults to project.
+- `scope="project"` / `scope="user"` force the namespace.
+- `trw_recall()` reads both namespaces in one store recall (user rows capped by `recall_user_tier_cap`); `options={"include_tiers": ["project"]}` restricts it to project-only.
 
-The user tier is off by default and non-destructive: a project that never opts in keeps single-store behavior, and enabling it never moves existing project learnings.
+There is nothing to opt into: `init-project` pins `project_namespace` and mints the checkout's memory grant. A checkout whose own `.trw/memory/memory.db` still holds rows is told to run `trw-mcp memory migrate --to user --apply`, which moves them into the store.
 
-Use `trw_learn_update(memory_id, ...)` to correct or amend an existing entry — avoid storing a duplicate when the intent is to fix stale or inaccurate knowledge.
+Use `trw_learn(learning_id=..., ...)` to correct or amend an existing entry — avoid storing a duplicate when the intent is to fix stale or inaccurate knowledge.
 
 ## Feedback semantics
 

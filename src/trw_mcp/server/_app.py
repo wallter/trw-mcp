@@ -73,7 +73,7 @@ _DEFAULT_INSTRUCTIONS = (
     "Call trw_session_start() first: it restores prior learnings and any active run, "
     "so you start from what the team already learned instead of re-deriving it. "
     "Workflow: plan, implement, verify, deliver. "
-    "Read .trw/frameworks/FRAMEWORK-CORE.md after startup or compaction for phase gates. "
+    "Read your phase's sections of .trw/frameworks/FRAMEWORK.md after startup or compaction for phase gates. "
     "Use trw_learn() when you discover a root cause or durable pattern. "
     "Preserve material unfinished work with a checkpoint or durable native handoff and a next-read pointer. Nothing material to preserve: do not manufacture artifacts. Use trw_deliver only for completed-work acceptance under unchanged delivery gates; recorded learnings already persist."
 )
@@ -106,19 +106,6 @@ def _try_load_config() -> TRWConfig | None:
         return get_config()
     except Exception:  # justified: fail-open, config load failure must not crash server startup
         logger.warning("middleware_config_load_failed", component="get_config")
-        return None
-
-
-def _try_init_observation_masking(config: TRWConfig) -> object | None:
-    """Try to initialize ContextBudgetMiddleware. Returns None on failure."""
-    if not config.observation_masking:
-        return None
-    try:
-        from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
-
-        return ContextBudgetMiddleware()
-    except Exception:  # justified: fail-open, observation masking is optional enhancement
-        logger.warning("middleware_init_failed", component="ContextBudgetMiddleware")
         return None
 
 
@@ -166,8 +153,8 @@ def _try_init_phase_exposure() -> object | None:
     """Try to initialize PhaseExposureMiddleware. Returns None on failure (fail-open).
 
     PRD-INTENT-002 FR08: inserted immediately after CeremonyMiddleware (session
-    state resolved first) and before ContextBudgetMiddleware (phase filtering
-    precedes context/observation masking). The middleware self-resolves its
+    state resolved first) and before ResponseOptimizerMiddleware (phase filtering
+    precedes response shaping). The middleware self-resolves its
     ``enabled`` flag from ``phase_exposure_enabled`` config (default false for
     the v1 rollout), so it is always appended — a disabled flag is a no-op
     pass-through, not a missing chain entry.
@@ -270,8 +257,8 @@ def _build_middleware() -> list[object]:
         middleware.append(surface_authority)
 
     # PRD-INTENT-002 FR08: phase masking sits AFTER Ceremony (session state
-    # first) and BEFORE ContextBudget (phase filtering precedes context/
-    # observation masking). Appended here so the relative order holds.
+    # first) and BEFORE ResponseOptimizer (phase filtering precedes response
+    # shaping). Appended here so the relative order holds.
     phase_exposure = _try_init_phase_exposure()
     if phase_exposure is not None:
         middleware.append(phase_exposure)
@@ -282,14 +269,9 @@ def _build_middleware() -> list[object]:
     if version_drift is not None:
         middleware.append(version_drift)
 
-    middleware.extend(
-        mw
-        for mw in (
-            _try_init_observation_masking(config),
-            _try_init_response_optimizer(),
-        )
-        if mw is not None
-    )
+    response_optimizer = _try_init_response_optimizer()
+    if response_optimizer is not None:
+        middleware.append(response_optimizer)
 
     return middleware
 

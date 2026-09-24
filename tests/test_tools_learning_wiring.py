@@ -1,33 +1,48 @@
-"""Tests for learning tool registration and fail-open wiring around recall."""
+"""Tests for learning tool registration and fail-open wiring around recall.
+
+PRD-CORE-280 slice e1: every ``trw_recall`` call here is exercised for its
+wiring (remote-fetch augmentation/fail-open, record_recall tracking), not for
+memory storage behaviour, so the checkout routes through ``fake_memory_store``.
+Access tracking (``memory_adapter.record_surfaced``, called by
+``execute_recall`` on every recall that surfaces rows) routes through the
+same fake seam, so it needs no separate silencing.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from trw_memory.sync import SharedFetchResult
 
 from tests._tools_learning_shared import _CFG, _entries_dir, _get_tools
 from tests.conftest import get_tools_sync, make_test_server
+
+pytestmark = pytest.mark.usefixtures("fake_memory_store")
 
 
 class TestToolDelegationIntact:
     """Verify all learning tool functions remain registered and callable."""
 
     def test_all_learning_tools_registered(self) -> None:
-        """All learning tools (incl. deprecated alias) should be registered on a test server."""
+        """All learning tools (incl. deprecated alias) should be registered on a test server.
+
+        PRD-CORE-291 merged ``trw_learn_update`` into ``trw_learn``'s update
+        mode (``learning_id`` set); it is no longer a separate registration.
+        """
         srv = make_test_server("learning")
         tool_names = set(get_tools_sync(srv).keys())
         expected = {
             "trw_learn",
-            "trw_learn_update",
             "trw_recall",
             "trw_instructions_sync",
             # Deprecated alias retained for backward compat.
             "trw_claude_md_sync",
         }
         assert expected.issubset(tool_names), f"Missing tools: {expected - tool_names}"
-        assert len(tool_names) == 5, f"Expected 5 tools, got {len(tool_names)}: {tool_names}"
+        assert "trw_learn_update" not in tool_names
+        assert len(tool_names) == 4, f"Expected 4 tools, got {len(tool_names)}: {tool_names}"
 
 
 class TestRemoteRecallWiring:
@@ -61,9 +76,10 @@ class TestRemoteRecallWiring:
         ):
             result = tools["trw_recall"].fn(query="testing")
 
-        # Remote learnings should be included
-        all_summaries = [str(e.get("summary", "")) for e in result.get("learnings", [])]
-        assert any("[shared]" in s for s in all_summaries)
+        # Remote learnings should be included among the presented stubs.
+        # PRD-CORE-294 FR01: default rows are stubs {id, claim, anchor?}.
+        all_claims = [str(e.get("claim", "")) for e in result.get("learnings", [])]
+        assert any("[shared]" in c for c in all_claims)
 
     def test_remote_refusal_is_reported_not_merged_silently(self, tmp_path: Path) -> None:
         """W13: an empty remote result whose cause was refusal is logged as such.

@@ -342,7 +342,9 @@ def test_upgrade_version_metadata_parses_full_framework_version(tmp_path: Path) 
     content = (frameworks / "VERSION.yaml").read_text(encoding="utf-8")
     assert "framework_version: v26.1.1_TRW" in content
     assert "aaref_version: v3.2.0" in content
-    assert f"trw_mcp_version: {module.TRW_VERSION}" in content
+    # PRD-INFRA-192 FR12: the stale trw_mcp_version stamp is stripped,
+    # never rewritten — package versions live in managed-artifacts.yaml.
+    assert "trw_mcp_version" not in content
 
 
 def test_upgrade_version_metadata_fails_closed_when_authorities_are_missing(tmp_path: Path) -> None:

@@ -29,7 +29,6 @@ from ._copilot_artifacts import _COPILOT_INSTRUCTIONS_DIR as _COPILOT_INSTRUCTIO
 from ._copilot_artifacts import _COPILOT_SKILLS_DIR as _COPILOT_SKILLS_DIR
 from ._copilot_artifacts import _PATH_SCOPED_TEMPLATES as _PATH_SCOPED_TEMPLATES
 from ._copilot_artifacts import _copilot_data_dir as _copilot_data_dir
-from ._copilot_artifacts import _copilot_skills_source_dir as _copilot_skills_source_dir
 from ._copilot_artifacts import copilot_path_instruction_contents as copilot_path_instruction_contents
 from ._copilot_artifacts import copilot_skill_contents as copilot_skill_contents
 from ._copilot_artifacts import generate_copilot_path_instructions as generate_copilot_path_instructions
@@ -67,13 +66,6 @@ _COPILOT_ADAPTER_INSTALL_PATH = f".github/hooks/{_COPILOT_ADAPTER_SCRIPT_NAME}"
 _COPILOT_TRW_START_MARKER = "<!-- trw:copilot:start -->"
 _COPILOT_TRW_END_MARKER = "<!-- trw:copilot:end -->"
 _TRW_HOOK_DESCRIPTION_PREFIX = "TRW managed:"
-
-#: Copilot's own externalization sidecar. Deliberately NOT the shared
-#: ``.trw/INSTRUCTIONS.md``: that file holds the Claude Code block, and a
-#: project with both clients installed would have each overwrite the other's
-#: content while both instruction files still reported success.
-_COPILOT_SIDECAR_RELPATH = ".trw/COPILOT-INSTRUCTIONS.md"
-
 
 # ---------------------------------------------------------------------------
 # TypedDicts for structured data
@@ -151,12 +143,12 @@ def generate_copilot_instructions(
 
     Delegates to the shared ``write_instruction_file_with_merge`` helper.
     """
+    from trw_mcp.state.claude_md._sidecar_retire import retire_instruction_sidecars
+
     result = _new_result()
     target_path = target_dir / _COPILOT_INSTRUCTIONS_PATH
     rendered = _copilot_instructions_content()
-
-    if _externalize_copilot_block(target_path, target_dir, rendered, result, force=force):
-        return result
+    retire_instruction_sidecars(target_dir)
 
     write_instruction_file_with_merge(
         target_path=target_path,
@@ -168,133 +160,6 @@ def generate_copilot_instructions(
         result=result,
     )
     return result
-
-
-def _externalize_copilot_block(
-    target_path: Path,
-    project_root: Path,
-    rendered: str,
-    result: dict[str, list[str]],
-    *,
-    force: bool = False,
-) -> bool:
-    """Replace copilot's inline block with an ``@``-include. ``True`` when handled.
-
-    **Resolution base — verified, not assumed.** GitHub documents the reference as
-    repo-relative without saying whether it resolves from the repository root or
-    the containing directory, and those differ for a file under ``.github/``.
-    Emitting on a guess would produce an instruction file that parses and carries
-    nothing. Read out of the shipped Copilot CLI bundle
-    (``@github/copilot-linux-x64/app.js``): the repository case calls
-    ``hut(root, root, "repository", "")`` -> ``repoResolveInstructionImports(
-    content, filePath, root)``. The base is the REPOSITORY ROOT, so a
-    repo-relative sidecar path resolves correctly from
-    ``.github/copilot-instructions.md``. (The home-level branch passes
-    ``dirname(path)`` — different base, but TRW never writes there.)
-
-    Copilot's OWN marker pair is threaded through, because the uninstall registry
-    and ``doctor`` both key on ``trw:copilot:start/end``; emitting the carrier's
-    generic pair here would orphan the block from both.
-
-    Declines to the inline path (returning ``False``) whenever externalization is
-    off, the profile declares no import syntax, or the carrier raises — inline
-    always works, a dangling include does not. ``force`` still replaces wholesale,
-    and an unchanged re-run reports ``preserved`` rather than ``updated``.
-    """
-    from trw_mcp.models.config import get_config
-    from trw_mcp.models.config._profiles import resolve_client_profile
-    from trw_mcp.state.claude_md._instruction_carrier import IMPORT_CAPABLE_SYNTAXES, CarrierMode, apply_carrier
-
-    config = get_config()
-    if config.instruction_externalize == "off":
-        return False
-
-    # Decline BEFORE touching the file. `apply_carrier` writes whichever mode it
-    # resolves to, so calling it for an include-incapable client wrote the file
-    # via the INLINE path and only then failed the mode check below. The restore
-    # is a no-op when the file did not exist, so it stayed on disk — and the
-    # inline writer that runs next saw a pre-existing identical file and
-    # reported "preserved" for a file this installer had just created. Wrong
-    # bookkeeping about our own writes is a truthfulness defect, not cosmetic.
-    if resolve_client_profile("copilot").instruction_import_syntax not in IMPORT_CAPABLE_SYNTAXES:
-        return False
-
-    before = target_path.read_text(encoding="utf-8") if target_path.is_file() else None
-
-    # `force` must discard existing content (a pointer file included) rather
-    # than merge into it. The prior implementation got that by truncating
-    # `target_path` in place before calling `apply_carrier` (so its
-    # classification saw an EMPTY file) and restoring `before` on any failure
-    # -- but a crash between the truncate and the restore left the user's
-    # instruction file empty on disk with nothing left to recover from. A
-    # nonexistent path classifies identically to an empty one
-    # (`classify_instruction_file`/`render_merged_content` both special-case a
-    # missing target), so routing the carrier at a not-yet-existing staging
-    # path gets the same "discard existing content" behaviour without ever
-    # writing to `target_path` until the single atomic `Path.replace()` below.
-    # `target_path` therefore holds either the original bytes or the fully
-    # written new bytes at every instant -- never an intermediate empty one.
-    staging_path: Path | None = None
-    carrier_target = target_path
-    if force and target_path.is_file():
-        staging_path = target_path.with_name(f".{target_path.name}.trw-force-staging")
-        staging_path.unlink(missing_ok=True)  # drop any leftover from a prior interrupted run
-        carrier_target = staging_path
-
-    def _discard_staging() -> None:
-        if staging_path is not None:
-            staging_path.unlink(missing_ok=True)
-
-    profile = resolve_client_profile("copilot")
-    try:
-        outcome = apply_carrier(
-            carrier_target,
-            rendered,
-            profile.instruction_max_lines,
-            import_syntax=profile.instruction_import_syntax,
-            externalize=config.instruction_externalize,
-            scope="root",
-            external_filename=_COPILOT_SIDECAR_RELPATH,
-            project_root=project_root,
-            markers=(_COPILOT_TRW_START_MARKER, _COPILOT_TRW_END_MARKER),
-        )
-    except Exception:  # justified: fail-open — bootstrap must never break on carrier failure
-        logger.warning("copilot_externalize_failed", target=str(target_path), exc_info=True)
-        _discard_staging()
-        return False
-
-    if outcome.refusal is not None:
-        # PRD-FIX-123-NFR04: a guard refusal is not a success. Nothing was
-        # ever written to `target_path` (a staged write lands only at
-        # `carrier_target`), so there is nothing to restore; reporting the
-        # reason is what must not be skipped.
-        _discard_staging()
-        result.setdefault("errors", []).append(
-            f"Refused to write {target_path} ({outcome.refusal['reason']}): {outcome.refusal['detail']}"
-        )
-        return False
-
-    if outcome.mode is not CarrierMode.IMPORT:
-        _discard_staging()
-        return False
-
-    if staging_path is not None:
-        try:
-            staging_path.replace(target_path)  # single atomic swap onto the real file
-        except OSError:
-            logger.warning("copilot_externalize_staging_swap_failed", target=str(target_path), exc_info=True)
-            _discard_staging()
-            return False
-
-    after = target_path.read_text(encoding="utf-8") if target_path.is_file() else None
-    if before is None:
-        key = "created"
-    elif before == after:
-        key = "preserved"
-    else:
-        key = "updated"
-    result.setdefault(key, []).append(_COPILOT_INSTRUCTIONS_PATH)
-    return True
 
 
 # ---------------------------------------------------------------------------

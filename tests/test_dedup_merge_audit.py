@@ -1,15 +1,15 @@
-"""Tests for merge_entries audit trail behavior."""
+"""Tests for merge_into_survivor audit trail behavior."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from trw_mcp.state.dedup import merge_entries
+from trw_mcp.state.dedup import merge_into_survivor
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
 class TestMergeAuditTrail:
-    """Tests for FR03 — audit trail format in merge_entries."""
+    """Tests for FR03 — audit trail format in merge_into_survivor."""
 
     def test_merge_detail_uses_audit_trail_format(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
@@ -45,7 +45,7 @@ class TestMergeAuditTrail:
             "impact": 0.5,
             "merged_from": [],
         }
-        merge_entries(existing_path, new_data, reader, writer)
+        merge_into_survivor(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
         detail = str(updated["detail"])
@@ -92,7 +92,7 @@ class TestMergeAuditTrail:
             "impact": 0.5,
             "merged_from": [],
         }
-        merge_entries(existing_path, new_data, reader, writer)
+        merge_into_survivor(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
         detail = str(updated["detail"])

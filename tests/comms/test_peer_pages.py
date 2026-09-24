@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
+from tests._formation_test_support import open_slot
+
 
 @dataclass
 class Pages:
@@ -63,7 +65,7 @@ def pages(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pages:
         runs[0],
         {
             "formation_id": "paging",
-            "members": [{"member_id": member, "client": "codex", "open_join": True} for member in ids],
+            "members": [open_slot(member) for member in ids],
         },
         trw_dir=root / ".trw",
         prds_dir=root / "prds",
@@ -194,7 +196,7 @@ def test_real_other_formation_cursor_refuses_before_first_database(pages: Pages)
     (other / "meta" / "run.yaml").write_text("run_id: other\ntask: paging\nstatus: active\n")
     formation.create(
         other,
-        {"formation_id": "other", "members": [{"member_id": "lead", "client": "codex", "open_join": True}]},
+        {"formation_id": "other", "members": [open_slot("lead")]},
         trw_dir=pages.root / ".trw",
         prds_dir=pages.root / "prds",
     )

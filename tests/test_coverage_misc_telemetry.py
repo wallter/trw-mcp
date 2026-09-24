@@ -76,7 +76,7 @@ class TestPublisherCoverage:
                     }
                     mock_reader_cls.return_value = mock_reader
 
-                    with patch("trw_mcp.telemetry.publisher.strip_pii", side_effect=lambda x: x):
+                    with patch("trw_mcp.telemetry.publisher.redact_secrets", side_effect=lambda x: x):
                         with patch("trw_mcp.telemetry.publisher.embed", return_value=[0.1]):
                             with patch("trw_mcp.telemetry.publisher._post_learning", return_value=True):
                                 result = pub.publish_learnings()

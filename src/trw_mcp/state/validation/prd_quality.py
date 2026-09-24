@@ -127,6 +127,16 @@ from trw_mcp.state.validation.prd_integrity import run_prd_integrity_checks as r
 logger = structlog.get_logger(__name__)
 
 
+def _score_actionable_dimensions(dimensions: list[DimensionScore]) -> float:
+    """Normalize substantive dimensions; prose density stays diagnostic only."""
+    # trw:intentional density must never reward padding or move a quality tier.
+    actionable = [dimension for dimension in dimensions if dimension.name != "content_density"]
+    max_possible = sum(dimension.max_score for dimension in actionable)
+    if max_possible <= 0:
+        return 0.0
+    return round(min(sum(dimension.score for dimension in actionable) / max_possible * 100.0, 100.0), 2)
+
+
 def _build_smell_suggestion(findings: list[SmellFinding]) -> ImprovementSuggestion | None:
     """Build the bounded advisory without letting summarization block validation."""
     try:
@@ -161,10 +171,9 @@ def validate_prd_quality_v2(
 ) -> ValidationResultV2:
     """Validate a PRD with multi-dimension semantic scoring.
 
-    Orchestrates all active dimension scorers (content_density,
-    structural_completeness, implementation_readiness, traceability),
-    computes total score, classifies quality tier, and generates improvement
-    suggestions. Also populates V1-compatible fields for backward compatibility.
+    Scores structure, implementation readiness, and traceability; reports
+    content density as a diagnostic that cannot affect the total or tier.
+    Also generates suggestions and populates V1-compatible fields.
     Stub dimensions (smell_score, readability, ears_coverage) are reserved for
     future implementation and are NOT included in dimensions output.
 
@@ -210,8 +219,7 @@ def validate_prd_quality_v2(
     # is loaded or computed.
     _proj_root_path = None
 
-    # Score active dimensions -- density, structure, implementation readiness,
-    # and traceability.
+    # Score dimensions -- density is reported but not included in total_score.
     # Stub dimensions (smell_score, readability, ears_coverage) are reserved for future
     # implementation and are NOT appended here (FR01 -- PRD-FIX-054).
     _active_dims: list[tuple[str, Callable[[], DimensionScore], float]] = [
@@ -262,15 +270,8 @@ def validate_prd_quality_v2(
         ears_classifications = []
     readability_metrics: dict[str, float] = {}
 
-    # Compute total score (normalized to 0-100 against active dimensions)
-    max_possible = sum(d.max_score for d in dimensions)
-    if max_possible > 0:
-        total_score = round(
-            min(sum(d.score for d in dimensions) / max_possible * 100.0, 100.0),
-            2,
-        )
-    else:
-        total_score = 0.0
+    # Normalize the substantive dimensions only, in the base and refresh paths.
+    total_score = _score_actionable_dimensions(dimensions)
 
     # Classify tier and grade
     tier = classify_quality_tier(total_score, _config)
@@ -281,6 +282,11 @@ def validate_prd_quality_v2(
 
     # Generate improvement suggestions
     suggestions = generate_improvement_suggestions(dimensions)
+    from trw_mcp.state.validation._prd_scoring_ai import missing_ai_operational_suggestion
+
+    ai_gap = missing_ai_operational_suggestion(dimensions, suggestions)
+    if ai_gap is not None:
+        suggestions.append(ai_gap)
 
     # PRD-QUAL-092 FR01: surface warning-severity smells as exactly ONE bounded
     # advisory suggestion so the grooming workflow sees them. Looked up via the

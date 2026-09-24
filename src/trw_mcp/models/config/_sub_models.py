@@ -10,17 +10,17 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from trw_mcp.dispatch._client_spec_types import DispatchEffort
 from trw_mcp.dispatch._types import SUPPORTED_CLIENTS, DispatchClient
 from trw_mcp.models.config._defaults import (
-    DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
     DEFAULT_LEARNING_MAX_ENTRIES,
-    DEFAULT_MUTATION_TIMEOUT_SECS,
     DEFAULT_PARALLELISM_MAX,
     DEFAULT_RECALL_MAX_RESULTS,
     DEFAULT_RECALL_RECEIPT_MAX_ENTRIES,
     DEFAULT_SCORING_DEFAULT_DAYS_UNUSED,
 )
 from trw_mcp.models.config._fields_dispatch import (
+    DEFAULT_DISPATCH_MAX_TURNS,
     DEFAULT_DISPATCH_TIMEOUT_SECS,
     DEFAULT_DISPATCH_VERSION_PROBE_TIMEOUT_SECS,
 )
@@ -32,21 +32,15 @@ class BuildConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     build_check_enabled: bool = True
-    build_check_timeout_secs: int = DEFAULT_BUILD_CHECK_TIMEOUT_SECS
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: str = "lenient"
-    build_check_pytest_args: str = ""
-    build_check_mypy_args: str = "--strict"
-    build_check_pytest_cmd: str | None = None
     run_auto_close_enabled: bool = True
     auto_checkpoint_enabled: bool = True
     auto_checkpoint_tool_interval: int = 25
     auto_checkpoint_pre_compact: bool = True
-    mutation_enabled: bool = False
-    mutation_threshold: float = 0.50
-    mutation_threshold_critical: float = 0.70
-    mutation_threshold_experimental: float = 0.30
-    mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
+    # The mutation_* mirror fields were removed under PRD-CORE-291 (slice 2)
+    # alongside the flat TRWConfig fields they projected (_fields_build.py):
+    # nothing ever read config.build.mutation_*.
 
 
 class DispatchConfig(BaseModel):
@@ -70,6 +64,12 @@ class DispatchConfig(BaseModel):
     dispatch_tools_exposed: bool = False
     dispatch_child_trw_access: bool = False
     dispatch_role_client: dict[str, str] = Field(default_factory=dict)
+    dispatch_default_effort: DispatchEffort | None = None
+    dispatch_default_max_turns: int = DEFAULT_DISPATCH_MAX_TURNS
+    #: The dispatch field names the OPERATOR set (config.yaml or TRW_* env). The
+    #: projection passes every field explicitly, so this model's own
+    #: ``model_fields_set`` cannot tell an operator value from a default.
+    operator_set: frozenset[str] = frozenset()
 
 
 class MemoryConfig(BaseModel):
@@ -104,14 +104,16 @@ class TelemetryConfig(BaseModel):
     debug: bool = False
     platform_telemetry_enabled: bool = False
     otel_enabled: bool = False
-    otel_endpoint: str = ""
+    # otel_endpoint mirror field removed under PRD-CORE-291 (slice 2) with the
+    # flat field it projected (_fields_telemetry.py): no consumer.
     # PRD-INFRA-145: see _fields_telemetry.py for semantics. 'legacy' default
     # preserves the current tool.*/trw.* span shape; 'gen_ai' opts into OTel
     # GenAI semantic conventions. Message-body capture is off by default.
     otel_semconv: Literal["legacy", "gen_ai"] = "legacy"
     otel_capture_messages: bool = False
-    ceremony_alert_threshold: int = 40
-    ceremony_alert_consecutive: int = 3
+    # ceremony_alert_threshold / ceremony_alert_consecutive mirror fields
+    # removed under PRD-CORE-291 (slice 2) with the flat fields they
+    # projected (_fields_ceremony.py): no consumer anywhere.
 
 
 class OrchestrationConfig(BaseModel):
@@ -121,7 +123,8 @@ class OrchestrationConfig(BaseModel):
 
     parallelism_max: int = DEFAULT_PARALLELISM_MAX
     timebox_hours: int = 8
-    max_research_waves: int = 3
+    # max_research_waves mirror field removed under PRD-CORE-291 (slice 2)
+    # with the flat field it projected (_fields_orchestration.py): no consumer.
     auto_recall_enabled: bool = True
     auto_recall_max_results: int = 3
     auto_recall_max_tokens: int = 100
@@ -173,8 +176,10 @@ class ToolsConfig(BaseModel):
     # The legacy PRD-CORE-125 tool_exposure_mode/list projection was removed with
     # the CORE-125 preset filter.
     tool_resolution_mode: str = "standard"
-    tool_descriptions_variant: str = "default"
-    mcp_server_instructions_enabled: bool | None = None
+    # tool_descriptions_variant / mcp_server_instructions_enabled mirror
+    # fields removed under PRD-CORE-291 (slice 2) with the flat fields they
+    # projected (_fields_tools.py): the SurfaceConfig/resolve_surface consumer
+    # they fed was itself removed in 2.0.0 (WD-02), leaving zero readers.
     code_index_enabled: bool = False
     code_index_max_file_bytes: int = 1_000_000
     code_index_exclude_dirs: list[str] = Field(default_factory=list)
@@ -203,7 +208,8 @@ class PathsConfig(BaseModel):
     trw_dir: str = ".trw"
     context_dir: str = "context"
     logs_dir: str = "logs"
-    source_package_path: str = "src"
+    # source_package_path mirror field removed under PRD-CORE-291 (slice 2)
+    # with the flat field it projected (_fields_paths.py): no consumer.
 
 
 class MetaTuneConfig(BaseModel):

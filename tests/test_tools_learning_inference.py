@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import _entries_dir, _get_tools
 from trw_mcp.state.persistence import FileStateReader
+
+
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """These tests only assert on trw_learn's YAML sidecar tags -- the fake route suffices (PRD-CORE-280 e1)."""
+    return fake_memory_store
 
 
 class TestInferTopicTags:

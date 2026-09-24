@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 
 from tests._dedup_test_support import mock_embed
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -27,6 +29,7 @@ class TestTrwLearnDedup:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """When a duplicate exists, trw_learn returns 'skipped_duplicate'."""
         from fastmcp import FastMCP
@@ -67,6 +70,9 @@ class TestTrwLearnDedup:
                 "merged_from": [],
             },
         )
+        # The exact-content dedup seam reads through the fake store, not the YAML
+        # sidecar directly, so the row must exist there too for the match to fire.
+        fake_memory_store.put(summary, FAKE_NAMESPACE, {"entry_id": "L-existing99", "detail": detail})
 
         # Patch embed to return deterministic vectors
         monkeypatch.setattr("trw_mcp.state.dedup.embed", mock_embed)
@@ -99,6 +105,7 @@ class TestTrwLearnDedup:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """When dedup_enabled=False, trw_learn stores normally."""
         self._make_entries_dir(tmp_path)
@@ -212,7 +219,12 @@ class TestTrwLearnGracefulDegradation:
     """CORE-042-FR01: When embed() returns None, trw_learn falls back to 'store' (recorded)."""
 
     def _make_setup(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> object:
         """Common setup for trw_learn integration tests."""
         from fastmcp import FastMCP
@@ -238,13 +250,18 @@ class TestTrwLearnGracefulDegradation:
         return tools["trw_learn"].fn
 
     def test_trw_learn_recorded_when_embed_returns_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """FR01: When embed() returns None (no sentence-transformers), trw_learn stores normally.
 
         The dedup path fails gracefully and the learning is written with status 'recorded'.
         """
-        tool_fn = self._make_setup(tmp_path, monkeypatch, reader, writer)
+        tool_fn = self._make_setup(tmp_path, monkeypatch, reader, writer, fake_memory_store)
 
         # Simulate embed not available
         monkeypatch.setattr("trw_mcp.state.dedup.embed", lambda text: None)
@@ -258,10 +275,15 @@ class TestTrwLearnGracefulDegradation:
         assert "learning_id" in result
 
     def test_trw_learn_recorded_when_new_entry_embed_none(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: FileStateReader, writer: FileStateWriter
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reader: FileStateReader,
+        writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """FR01: Even with an existing entry, if embed(new_text) returns None, stores as new."""
-        tool_fn = self._make_setup(tmp_path, monkeypatch, reader, writer)
+        tool_fn = self._make_setup(tmp_path, monkeypatch, reader, writer, fake_memory_store)
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
 
         # Write an existing entry
@@ -308,7 +330,9 @@ class TestDedupStaysSequentialAcrossASweep:
     identical one. This pins that non-goal.
     """
 
-    def test_later_record_in_a_sweep_sees_an_earlier_stored_record(self, tmp_path: Path) -> None:
+    def test_later_record_in_a_sweep_sees_an_earlier_stored_record(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         from trw_mcp.models.config import TRWConfig
         from trw_mcp.state import learn_journal
         from trw_mcp.state.memory_adapter import list_active_learnings

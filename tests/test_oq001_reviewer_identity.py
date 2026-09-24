@@ -296,8 +296,8 @@ def test_trw_review_tool_records_verified_reviewer_identity(
     tools = make_ceremony_server(monkeypatch, tmp_path)
     result = tools["trw_review"].fn(
         findings=[{"category": "quality", "severity": "info", "description": "audit finding"}],
-        run_path=str(delivering_run),
         reviewer_identity={"reviewer_source": "subagent", "reviewer_run_id": "run-reviewer"},
+        options={"run_path": str(delivering_run)},
     )
     assert result["reviewer_identity_verified"] is True
     review_data = reader.read_yaml(delivering_run / "meta" / "review.yaml")
@@ -319,8 +319,8 @@ def test_trw_review_tool_fabricated_identity_stays_asserted(
     tools = make_ceremony_server(monkeypatch, tmp_path)
     result = tools["trw_review"].fn(
         findings=[{"category": "quality", "severity": "info", "description": "audit finding"}],
-        run_path=str(delivering_run),
         reviewer_identity={"reviewer_source": "subagent", "reviewer_run_id": "run-fabricated"},
+        options={"run_path": str(delivering_run)},
     )
     assert result["reviewer_identity_verified"] is False
     review_data = reader.read_yaml(delivering_run / "meta" / "review.yaml")

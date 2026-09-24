@@ -33,7 +33,7 @@ import structlog
 from trw_mcp.models.typed_dicts import (
     ReconciledLocalWritesDict as ReconciledLocalWritesDict,
 )
-from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, DEFAULT_NAMESPACE, RECONCILE_PENDING_TAG
+from trw_mcp.state._constants import DEFAULT_LIST_LIMIT, RECONCILE_PENDING_TAG
 from trw_mcp.tools._ceremony_degradations import DegradationCollector
 
 logger = structlog.get_logger(__name__)
@@ -42,17 +42,15 @@ logger = structlog.get_logger(__name__)
 def _pending_entries(trw_dir: Path) -> list[tuple[str, list[str]]]:
     """Return ``(learning_id, current_tags)`` for every pending offline write.
 
-    The tag predicate is pushed into SQL by ``list_entries(tags=...)``, so this
-    is a narrow indexed query and not a full-store scan on every session start.
+    The tag predicate is pushed into the store's query (``list_entries(tags=...)``),
+    so this is a narrow indexed query and not a full-store scan on every session
+    start. It reads the checkout's own project namespace through its store, so a
+    migrated checkout lists its daemon rows.
     """
-    from trw_mcp.state.memory_adapter import get_backend
+    from trw_mcp.state._store_selection import selected_store
 
-    backend = get_backend(trw_dir)
-    entries = backend.list_entries(
-        namespace=DEFAULT_NAMESPACE,
-        limit=DEFAULT_LIST_LIMIT,
-        tags=[RECONCILE_PENDING_TAG],
-    )
+    store, namespace = selected_store(trw_dir)
+    entries = store.list_entries(namespace, tags=[RECONCILE_PENDING_TAG], limit=DEFAULT_LIST_LIMIT)
     return [(str(entry.id), list(entry.tags)) for entry in entries]
 
 
@@ -70,10 +68,11 @@ def _live_tags(trw_dir: Path, learning_id: str) -> list[str] | None:
     tag written inside that window; the previous shape dropped one written any
     time in the whole step, across every row.
     """
-    from trw_mcp.state.memory_adapter import get_backend
+    from trw_mcp.state._store_selection import selected_store
 
-    entry = get_backend(trw_dir).get(learning_id, namespace=DEFAULT_NAMESPACE)
-    return None if entry is None else list(entry.tags)
+    store, namespace = selected_store(trw_dir)
+    entry = store.get(learning_id)
+    return None if entry is None or entry.namespace != namespace else list(entry.tags)
 
 
 def step_reconcile_local_writes(

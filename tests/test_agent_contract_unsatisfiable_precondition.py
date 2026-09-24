@@ -143,7 +143,7 @@ def test_the_rule_is_live_on_real_agents_not_vacuously_passing() -> None:
         if module._lint_unsatisfiable_preconditions(path.stem, tools, without_remedy):
             depend_on_remedy.append(path.stem)
 
-    assert len(depend_on_remedy) >= 7, (
-        "the rule must actually bind the agents PRD-CORE-233 measured (7 grant "
-        f"checkpoint with no run provider); it only bound {depend_on_remedy}"
+    assert len(depend_on_remedy) >= 6, (
+        "the rule must actually bind the agents PRD-CORE-233 measured (6 grant "
+        f"checkpoint with no run provider, post PRD-CORE-291-FR05 merge); it only bound {depend_on_remedy}"
     )

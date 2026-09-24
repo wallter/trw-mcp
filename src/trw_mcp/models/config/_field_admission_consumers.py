@@ -54,10 +54,14 @@ from trw_mcp.models.config._field_admission_registry import ConfigAdmission
 CONFIG_MODEL_NAME = "TRWConfig"
 
 #: Admissions that name the config model as their consumer while the field DOES
-#: have a production reader. Measured 2026-07-28 after PRD-QUAL-131-FR01 removed
-#: 41 fields. RATCHET: may only shrink. A rise means a new field copied the
-#: pattern, which is how the 115-field backlog accumulated in the first place.
-SELF_REFERENTIAL_WITH_READER_CEILING = 298
+#: have a production reader. Measured 2026-09-23 after batch 17 retired the
+#: ContextBudgetMiddleware compact-tier fields (compact_after_turns,
+#: minimal_after_turns, observation_masking, and related config surface),
+#: dropping the count from 298. RATCHET: may only shrink. A rise means a new
+#: field copied the pattern, which is how the 115-field backlog accumulated
+#: in the first place. 276 after merging batch 17 into PRD-CORE-294 FR02, which
+#: retired the two session_start_recent_bypass_* fields.
+SELF_REFERENTIAL_WITH_READER_CEILING = 276
 
 
 class ConsumerClaimReport(BaseModel):

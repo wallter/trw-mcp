@@ -18,8 +18,6 @@ channels:
   file: .opencode/commands/trw-before-edit.md
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T2
-  tier_min: T0
   quota_total_bytes: 4096
   human_edit_detection: SHA256_SEGMENT
   description: "opencode custom command — before-edit risk intelligence"
@@ -31,8 +29,6 @@ channels:
   file: .opencode/commands/trw-distill-hotspots.md
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T2
-  tier_min: T0
   quota_total_bytes: 4096
   human_edit_detection: SHA256_SEGMENT
   description: "opencode custom command — project hotspots ranked table"
@@ -44,8 +40,6 @@ channels:
   file: .opencode/commands/trw-distill-conventions.md
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T2
-  tier_min: T0
   quota_total_bytes: 4096
   human_edit_detection: SHA256_SEGMENT
   description: "opencode custom command — project conventions (single trw_recall call)"
@@ -56,8 +50,6 @@ channels:
   telemetry_tag: opencode_tool_return_enrichment
   status: active
   write_strategy: EPHEMERAL_STDOUT
-  tier_default: T2
-  tier_min: T0
   description: "opencode MCP tool-return enrichment — T2 default (P1-11 fix); T3 requires opt-in"
 
 - id: opencode-explorer-agent
@@ -67,8 +59,6 @@ channels:
   file: .opencode/agents/trw-distill-explorer.md
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T2
-  tier_min: T0
   quota_total_bytes: 8192
   human_edit_detection: SHA256_SEGMENT
   description: "opencode trw-distill-explorer read-only specialist subagent"

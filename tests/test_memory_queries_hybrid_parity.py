@@ -1,444 +1,63 @@
-"""PRD-DIST-254 §FR03 follow-up: MCP hybrid recall parity with MemoryClient.
+"""PRD-CORE-292 FR03: expired transient entries are excluded on every MCP recall path.
 
-`state/_memory_queries._search_entries` (the path the live ``trw_recall`` MCP
-tool takes via ``recall_learnings``) historically:
-
-1. Ranked only a ~75-record candidate slice: the ≤25 LIKE-substring keyword
-   hits + ``hybrid_vector_candidates`` vector hits.
-2. Fused a LIKE-substring keyword ranking (near-noise on a natural-language
-   query) against the vector ranking with pure-position RRF.
-
-On the 226-record operator gold set this drove embeddings-ON Recall@5 to 0.583
-(vs MemoryClient 0.9375): a gold record sitting at vector rank 0 was demoted to
-fused rank 5-7 because ~10 irrelevant LIKE hits leapfrogged it under RRF.
-
-The fix routes the hybrid branch through the SAME
-``trw_memory.retrieval.pipeline.hybrid_search`` (BM25 + dense + RRF) the
-MemoryClient path uses, over the full candidate pool. These tests drive the
-REAL fusion (no mocked fuser) with REAL stored embeddings so the dense ranker
-runs, and assert the fused ORDER, not mere existence.
+The hybrid-fusion parity cases that lived here ran trw-mcp's own search over an
+in-process SQLite store; that search moved to the memory daemon with PRD-CORE-280
+e3, and trw-memory's retrieval tests own it now.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
-from unittest.mock import patch
 
-from trw_memory.models.memory import MemoryEntry
-
-from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.memory_adapter import _search_entries, get_backend
-
-from ._memory_adapter_branches_support import trw_dir  # noqa: F401
-
-
-class _VecEmbedder:
-    """Embedder returning a fixed query vector.
-
-    Combined with a patched ``get_stored_embeddings`` that maps each entry id to
-    a controlled vector, this drives the real cosine ``dense_search`` ranker
-    deterministically while exercising the real BM25 + RRF fusion.
-    """
-
-    def __init__(self, query_vec: list[float]) -> None:
-        self._q = query_vec
-
-    def embed(self, _text: str) -> list[float]:
-        return self._q
-
-    def available(self) -> bool:
-        return True
-
-
-def _store(backend: Any, eid: str, content: str, *, importance: float = 0.5) -> MemoryEntry:
-    entry = MemoryEntry(id=eid, content=content, detail="d", importance=importance)
-    backend.store(entry)
-    return entry
-
-
-def _run(
-    backend: Any,
-    query: str,
-    *,
-    query_vec: list[float],
-    stored: dict[str, list[float]],
-    top_k: int = 10,
-    namespace: str | None = "default",
-    min_impact: float = 0.0,
-) -> list[str]:
-    cfg = TRWConfig()
-    with (
-        patch(
-            "trw_mcp.state._memory_connection.get_embedder",
-            return_value=_VecEmbedder(query_vec),
-        ),
-        patch.object(backend, "get_stored_embeddings", return_value=stored),
-        patch("trw_mcp.models.config.get_config", return_value=cfg),
-    ):
-        results = _search_entries(backend, query, top_k=top_k, namespace=namespace, min_impact=min_impact)
-    return [e.id for e in results]
-
-
-class TestHybridParity:
-    def test_strong_vector_hit_not_demoted_by_noisy_keyword_matches(self, trw_dir: Path) -> None:
-        """A doc the dense ranker puts FIRST must not be buried by LIKE matches.
-
-        The gold doc carries the discriminating query tokens ("corrupted",
-        "writers") AND is dense-nearest. A pile of distractor docs share only the
-        high-frequency filler token "the" with the query (3x each, high TF).
-        Under the old pure-position LIKE+vector RRF the filler-token distractors
-        leapfrogged the gold doc; BM25 down-weights "the" (low IDF) so the gold
-        doc's discriminating-token match plus its dense rank keep it on top.
-        """
-        backend = get_backend(trw_dir)
-        _store(backend, "L-gold", "database corrupted with concurrent writers")
-        for i in range(8):
-            _store(backend, f"L-noise-{i}", f"the the the unrelated topic {i}")
-
-        query = "the database got corrupted with concurrent writes"
-        query_vec = [1.0, 0.0, 0.0]
-        stored = {"L-gold": [1.0, 0.0, 0.0]}  # identical → cosine 1.0, dense rank 1
-        for i in range(8):
-            stored[f"L-noise-{i}"] = [0.0, 1.0, 0.0]  # orthogonal → cosine 0
-
-        ids = _run(backend, query, query_vec=query_vec, stored=stored)
-
-        assert ids, "hybrid recall returned nothing"
-        assert ids[0] == "L-gold", f"strong vector hit was demoted by noisy keyword matches: {ids[:5]}"
-
-    def test_pool_widening_surfaces_record_beyond_like_slice(self, trw_dir: Path) -> None:
-        """A vector-only gold record must surface even with many LIKE distractors.
-
-        Seed 40 lexically-unrelated decoys plus one gold record that does NOT
-        lexically match the query but IS dense-nearest. The decoys are dense-far.
-        The old path capped the keyword slice + vector candidates at ~75 entries,
-        so a vector-only gold could be lost entirely on a larger namespace. The
-        widened pool + dense ranking surfaces it at the top.
-        """
-        backend = get_backend(trw_dir)
-        _store(backend, "L-vec-gold", "ed25519 signing key rotation runbook", importance=0.9)
-        for i in range(40):
-            _store(backend, f"L-decoy-{i}", f"unrelated filesystem topic number {i}")
-
-        # Query shares no content tokens with any doc → BM25 contributes nothing
-        # to anyone, isolating the dense ranker + pool-widening effect.
-        query = "rotate the signing credential"
-        query_vec = [1.0, 0.0, 0.0]
-        stored = {"L-vec-gold": [1.0, 0.0, 0.0]}
-        for i in range(40):
-            stored[f"L-decoy-{i}"] = [0.0, 1.0, 0.0]
-
-        ids = _run(backend, query, query_vec=query_vec, stored=stored, top_k=5)
-
-        assert "L-vec-gold" in ids, f"vector-only gold record missing from top-5: {ids}"
-        assert ids[0] == "L-vec-gold"
-
-    def test_no_embedder_falls_back_to_keyword(self, trw_dir: Path) -> None:
-        """When no embedder is available the path degrades to keyword-only.
-
-        Graceful degradation: the hybrid pool/BM25 path must NEVER fail when
-        embeddings are off — it returns the existing LIKE keyword results.
-        """
-        backend = get_backend(trw_dir)
-        _store(backend, "L-kw", "unique distinctive marker token zebra")
-        _store(backend, "L-other", "completely different content")
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=None,
-            ),
-            patch("trw_mcp.models.config.get_config", return_value=TRWConfig()),
-        ):
-            results = _search_entries(backend, "zebra")
-
-        ids = [e.id for e in results]
-        assert "L-kw" in ids, "keyword fallback lost the matching record"
-
-    def test_raising_embed_local_only_violation_falls_back_to_keyword(self, trw_dir: Path) -> None:
-        """A raising ``embedder.embed`` (trw_memory MemoryError family) degrades.
-
-        Hardening (verifier note, 2026-06-10): the embedder is PRESENT (so the
-        early ``embedder is None`` guard is bypassed) but ``embed()`` raises a
-        ``trw_memory.exceptions.LocalOnlyViolationError`` — a ``MemoryError``
-        subclass that the original ``(OSError, ValueError, RuntimeError,
-        ImportError)`` except tuple did NOT catch, so the exception would have
-        escaped and crashed the recall instead of degrading to keyword. This must
-        return the LIKE keyword results, not raise.
-        """
-        from trw_memory.exceptions import LocalOnlyViolationError
-
-        backend = get_backend(trw_dir)
-        _store(backend, "L-kw", "unique distinctive marker token zebra")
-        _store(backend, "L-other", "completely different content")
-
-        class _RaisingEmbedder:
-            def embed(self, _text: str) -> list[float]:
-                raise LocalOnlyViolationError("network blocked by local-only mode")
-
-            def available(self) -> bool:
-                return True
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=_RaisingEmbedder(),
-            ),
-            patch("trw_mcp.models.config.get_config", return_value=TRWConfig()),
-        ):
-            results = _search_entries(backend, "zebra")
-
-        ids = [e.id for e in results]
-        assert "L-kw" in ids, "raising embed must degrade to keyword, not crash"
-
-    def test_raising_embed_type_error_falls_back_to_keyword(self, trw_dir: Path) -> None:
-        """A ``TypeError`` from the embed/hybrid path also degrades to keyword.
-
-        Hardening (verifier note, 2026-06-10): a misconfigured embedder returning
-        a non-vector (or an upstream signature mismatch) surfaces as ``TypeError``
-        inside ``hybrid_search`` — also not in the original except tuple. Must
-        fall back rather than escape.
-        """
-        backend = get_backend(trw_dir)
-        _store(backend, "L-kw", "unique distinctive marker token zebra")
-
-        class _BadVecEmbedder:
-            def embed(self, _text: str) -> list[float]:
-                raise TypeError("embed got an unexpected vector shape")
-
-            def available(self) -> bool:
-                return True
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=_BadVecEmbedder(),
-            ),
-            patch("trw_mcp.models.config.get_config", return_value=TRWConfig()),
-        ):
-            results = _search_entries(backend, "zebra")
-
-        ids = [e.id for e in results]
-        assert "L-kw" in ids, "TypeError must degrade to keyword, not crash"
-
-    def test_namespace_none_searches_all_tiers(self, trw_dir: Path) -> None:
-        """``namespace=None`` (user-tier federation) must still hybrid-rank.
-
-        The user store holds only ``user:<id>`` entries; recall passes
-        ``namespace=None`` to search across them. The widened-pool candidate
-        scan must honour that or federation silently returns nothing.
-        """
-        backend = get_backend(trw_dir)
-        backend.store(
-            MemoryEntry(
-                id="L-user",
-                content="machine local user note about vim keybindings",
-                detail="d",
-                importance=0.6,
-                namespace="user:local",
-            )
-        )
-
-        ids = _run(
-            backend,
-            "vim keybindings",
-            query_vec=[1.0, 0.0, 0.0],
-            stored={"L-user": [1.0, 0.0, 0.0]},
-            namespace=None,
-        )
-
-        assert "L-user" in ids, "namespace=None hybrid scan dropped the user-tier entry"
-
-    def test_min_impact_filter_applied_to_pool(self, trw_dir: Path) -> None:
-        """A low-impact candidate below ``min_impact`` must be excluded.
-
-        Even though the low-impact doc is dense-nearest, the ``min_impact`` floor
-        applied at the candidate-pool scan must drop it before ranking.
-        """
-        backend = get_backend(trw_dir)
-        _store(backend, "L-hi", "alpha beta gamma high impact", importance=0.9)
-        _store(backend, "L-lo", "alpha beta gamma low impact", importance=0.1)
-
-        ids = _run(
-            backend,
-            "alpha beta gamma",
-            query_vec=[1.0, 0.0, 0.0],
-            stored={"L-lo": [1.0, 0.0, 0.0], "L-hi": [0.0, 1.0, 0.0]},
-            min_impact=0.5,
-        )
-
-        assert "L-lo" not in ids, "min_impact filter did not exclude low-impact candidate"
-        assert "L-hi" in ids
-
+from ._memory_fixtures import DaemonCheckout
 
 # ---------------------------------------------------------------------------
-# P1/Item5 — Hybrid pool-cap boundary (known limitation pin test).
+# PRD-CORE-292 FR03 — expired transient entries are excluded on every MCP path.
 # ---------------------------------------------------------------------------
 
 
-class TestHybridPoolCapBoundary:
-    """Pin the hybrid_search_candidate_pool_size=1000 cap behaviour.
+class TestExpiryAdmission:
+    """MemoryClient.recall's exclude_expired default, at recall_learnings' single boundary.
 
-    When the namespace holds >1000 entries, ``list_entries`` is called with
-    ``limit=1000`` so only the 1000 most-recent (DB insertion order, as
-    ``list_entries`` returns newest-first by updated_at) are fetched into the
-    candidate pool. Entries inserted earlier may be excluded from ranking.
-    This is a DOCUMENTED LIMITATION, not a bug — the cap prevents unbounded
-    memory usage for very large stores. This test pins the contract so a
-    future change that widens or removes the cap is visible in the diff.
+    The validity prior already closes a row whose own ``expires`` field has passed
+    (PRD-CORE-244). What it does not see is expiry carried in ``metadata`` -- the
+    shape SourcePolicy reads -- nor an expired transient row re-admitted by
+    ``include_superseded``. Only lifecycle/episodic families expire here.
+
+    PRD-CORE-280 slice e: ``test_historical_as_of_judges_expiry_at_that_instant``
+    and ``test_exact_day_is_still_valid`` are DELETED (batch 23b). Both needed a
+    ``valid_from`` set in the past (2018) so an ``as_of`` of 2019-2020 still
+    admits the row; ``store_learning``/``StoreRequest`` (the only route to a
+    store once ``get_backend``/``SQLiteBackend`` are gone) has no ``valid_from``
+    passthrough, so porting is not possible without a new store-API field. The
+    day-exclusive as_of/expiry semantics they guarded are covered by
+    trw-memory's own suite (``tests/test_validity_aware_recall.py``,
+    ``tests/test_temporal_selection.py``, ``tests/test_client_temporal_fallback.py``).
     """
 
-    def test_pool_capped_at_1000_list_entries_limit(self, trw_dir: Path) -> None:
-        """With 1050 stored entries, list_entries is called with limit=1000.
+    def _seed(self, trw_dir: Path) -> None:
+        from trw_mcp.state.memory_adapter import store_learning
 
-        We verify the cap by intercepting list_entries and asserting the
-        ``limit`` keyword argument equals exactly 1000 (the default config
-        value). The test does NOT require 1050 real DB writes — it patches
-        list_entries to avoid the cost while still exercising the cap logic.
-        """
-        backend = get_backend(trw_dir)
-        # Seed enough entries to trigger the hybrid path (non-empty backend).
-        _store(backend, "L-seed", "seed entry for hybrid path trigger", importance=0.5)
-
-        captured_limit: list[int] = []
-        real_list = backend.list_entries
-
-        def _capturing_list_entries(**kwargs: object) -> list[object]:
-            limit = int(kwargs.get("limit", 0))
-            captured_limit.append(limit)
-            # Return only the one real entry so the rest of the hybrid path
-            # proceeds without error.
-            return real_list(**kwargs)
-
-        cfg = TRWConfig(hybrid_search_candidate_pool_size=1000)
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=_VecEmbedder([1.0, 0.0, 0.0]),
-            ),
-            patch.object(backend, "list_entries", side_effect=_capturing_list_entries),
-            patch("trw_mcp.models.config.get_config", return_value=cfg),
-        ):
-            _search_entries(backend, "seed entry", top_k=25)
-
-        assert captured_limit, "list_entries was not called — hybrid path not reached"
-        # The cap is max(top_k * 5, pool_size) = max(125, 1000) = 1000.
-        assert captured_limit[0] == 1000, (
-            f"Expected pool cap of 1000 but list_entries was called with limit={captured_limit[0]}"
-        )
-
-    def test_pool_cap_excludes_oldest_when_namespace_exceeds_cap(
-        self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The 1000-entry cap is documented: oldest entries may be excluded.
-
-        With pool_size=5 (a small test cap) and 6 stored entries where the
-        oldest entry "L-oldest" has a strong vector match but falls outside
-        the pool, it may NOT appear in results. This pins the behaviour:
-        the cap is a known limitation, not a silent correctness bug.
-
-        Note: this test documents the KNOWN LIMITATION, not an absolute
-        invariant. If the backend's list_entries ordering changes, the test
-        may need adjustment — the important signal is that the cap is applied.
-        """
-        backend = get_backend(trw_dir)
-
-        # Store 6 entries; "L-oldest" first so it may fall outside a pool of 5.
-        _store(backend, "L-oldest", "unique distinctive zebra finder token old", importance=0.9)
-        for i in range(5):
-            _store(backend, f"L-new{i}", f"newer entry noise {i}", importance=0.3)
-
-        # Use pool_size=5 so "L-oldest" might be excluded by the cap.
-        cfg = TRWConfig(hybrid_search_candidate_pool_size=5)
-        # top_k * 5 = 25 * 5 = 125 — use a small top_k so max(top_k*5, pool_size) = pool_size.
-        # We override pool_size to 5; use top_k=1 so max(1*5, 5) = 5.
-        captured: list[int] = []
-        real_list = backend.list_entries
-
-        def _spy(**kwargs: object) -> list[object]:
-            captured.append(int(kwargs.get("limit", 0)))
-            return real_list(**kwargs)
-
-        with (
-            patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=_VecEmbedder([1.0, 0.0, 0.0]),
-            ),
-            patch.object(backend, "list_entries", side_effect=_spy),
-            patch("trw_mcp.models.config.get_config", return_value=cfg),
-        ):
-            _search_entries(backend, "zebra finder", top_k=1)
-
-        # The limit sent to list_entries must equal the configured pool cap (5).
-        assert captured and captured[0] == 5, f"Pool cap 5 not respected; limit was {captured}"
-
-
-class TestRecallDoesNotRerank:
-    """PRD-CORE-284 FR05/NFR04: trw_recall and session_start auto-recall stay rerank-free.
-
-    trw-memory made cross-encoder re-ranking and its adaptive confidence floor
-    unconditional for ``MemoryClient.recall()``. ``_search_entries`` (shared by
-    ``trw_recall`` and the session-start auto-recall) calls ``hybrid_search``
-    directly and was never wired to either; wiring it needs its own PRD with a
-    token-cost measurement (PRD-CORE-284 OQ-5), so this fails if it happens silently.
-    """
-
-    # Captured by running this corpus through _search_entries on the pre-PRD-CORE-284
-    # trw-memory (HEAD 4e9666967). A rerank or floor would reorder or cut it.
-    BASELINE = ["L-gold", "L-near", "L-mid-2", "L-mid-0", "L-mid-1", "L-far-0", "L-far-1", "L-far-2"]
-
-    def test_search_entries_does_not_request_rerank(self, trw_dir: Path) -> None:
-        from trw_memory.embeddings.provenance import EmbeddingSpace, StoredVector, VectorProvenance
-        from trw_memory.retrieval import pipeline
-
-        space = EmbeddingSpace("c" * 64, "deterministic-test", 2)
-
-        class Provider:
-            def embedding_space(self) -> EmbeddingSpace:
-                return space
-
-            def embed(self, _text: str) -> list[float]:
-                return [1.0, 0.0]
-
-            def available(self) -> bool:
-                return True
-
-        backend = get_backend(trw_dir)
-        corpus = {
-            "L-gold": ("database corrupted with concurrent writers", [1.0, 0.0]),
-            "L-near": ("concurrent writers need a database lock", [0.8, 0.6]),
-            # distinct vectors so no rank depends on a tie-break
-            **{f"L-mid-{i}": (f"database backup rotation note {i}", [0.6 - 0.1 * i, 0.8]) for i in range(3)},
-            **{f"L-far-{i}": (f"unrelated gardening tip {i}", [0.1 - 0.03 * i, 1.0]) for i in range(3)},
+        rows = {
+            "L-expired": ("lifecycle", "2020-01-01"),
+            "L-fresh": ("lifecycle", "2999-01-01"),
+            "L-rule": ("instruction_rule", "2020-01-01"),
+            "L-episode": ("episodic", "2020-01-01"),
         }
-        records = {}
-        for eid, (content, vector) in corpus.items():
-            entry = _store(backend, eid, content)
-            proof = VectorProvenance.for_vector(space, f"{entry.content} {entry.detail}", vector)
-            records[eid] = StoredVector(tuple(vector), proof)
+        for eid, (kind, expires) in rows.items():
+            store_learning(
+                trw_dir,
+                eid,
+                f"zebra finder handoff note {eid}",
+                "d",
+                metadata={"source_kind": kind, "expires": expires},
+            )
 
-        calls: list[dict[str, Any]] = []
-        real = pipeline.hybrid_search
+    def test_expired_transient_rows_are_excluded_wildcard(self, daemon_checkout: DaemonCheckout) -> None:
+        """Wildcard listing: the daemon fixture has no embedder, this is the real keyword/admission path."""
+        from trw_mcp.state.memory_adapter import recall_learnings
 
-        def spy(*args: Any, **kwargs: Any) -> Any:
-            calls.append(kwargs)
-            return real(*args, **kwargs)
-
-        def never(*_args: Any, **_kwargs: Any) -> None:
-            raise AssertionError("trw-mcp recall invoked the cross-encoder")
-
-        with (
-            patch("trw_mcp.state._memory_connection.get_embedder", return_value=Provider()),
-            patch("trw_mcp.models.config.get_config", return_value=TRWConfig()),
-            patch.object(backend, "get_vector_records", return_value=records),
-            patch.object(pipeline, "hybrid_search", side_effect=spy),
-            patch("trw_memory.retrieval.reranker.cross_encode_scores", side_effect=never),
-        ):
-            ids = [e.id for e in _search_entries(backend, "database corrupted by concurrent writers", top_k=10)]
-
-        assert calls, "the hybrid path was not exercised"
-        for kwargs in calls:
-            assert not {k for k in kwargs if k.startswith("rerank")}, sorted(kwargs)
-        assert ids == self.BASELINE, " ".join(ids)
+        self._seed(daemon_checkout.trw_dir)
+        ids = {str(r["id"]) for r in recall_learnings(daemon_checkout.trw_dir, "*", max_results=25)}
+        assert "L-expired" not in ids and "L-episode" not in ids, ids
+        assert {"L-fresh", "L-rule"} <= ids, ids

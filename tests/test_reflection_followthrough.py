@@ -52,7 +52,6 @@ def test_prd_qual_120_nfr04(tmp_path) -> None:
     import pytest
 
     from trw_mcp.state.reflection_followthrough import (
-        reconcile_debt,
         reconcile_debt_bounded,
     )
 
@@ -84,10 +83,6 @@ def test_prd_qual_120_nfr04(tmp_path) -> None:
     full = reconcile_debt_bounded(actions, prds, max_actions=500)
     assert full["truncated"] is False and full["evaluated_count"] == 7
     assert full["skipped_actions"] == []
-
-    # The FR07 wrapper keeps its signature and shares the bound.
-    open_debt, closed = reconcile_debt(actions, prds, max_actions=5)
-    assert len(open_debt) + len(closed) == 5
 
     # A non-positive bound is a typed usage error, never an unbounded scan.
     with pytest.raises(ValueError, match="max_actions must be positive"):

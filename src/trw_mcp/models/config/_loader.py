@@ -15,7 +15,7 @@ import structlog
 
 from trw_mcp.models.config._credentials import resolve_platform_api_key
 from trw_mcp.models.config._main import TRWConfig
-from trw_mcp.models.config._retired_keys import warn_unrecognised_config_keys
+from trw_mcp.models.config._retired_keys import warn_retired_env_vars, warn_unrecognised_config_keys
 
 logger = structlog.get_logger(__name__)
 
@@ -172,6 +172,9 @@ def _build_config_unguarded() -> TRWConfig:
     - Any import or filesystem error occurs
     """
 
+    # A retired key's TRW_* alias is dropped as silently as its YAML key, with or
+    # without a config file; the one retired-keys table covers both.
+    warn_retired_env_vars(os.environ)
     try:
         from trw_mcp.state._paths import resolve_project_root
 

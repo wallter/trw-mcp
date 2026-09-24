@@ -3,7 +3,7 @@
 Belongs to the ``_subcommands.py`` facade. Re-exported there for back-compat.
 
 Thin boundary only: argument marshalling, JSON output, exit codes.
-``commit-candidate`` (PRD-CORE-219): the workflow lives in
+``commit-candidate``/``recover-candidate`` (PRD-CORE-219): the workflow lives in
 ``state/git_commit_workflow.py``. ``prd-state`` (PRD-QUAL-121-FR04): the
 WIP-limit-enforcing ledger writer lives in ``state/requirements_registry.py``
 — this handler is its production caller for operator PRD activations.
@@ -70,6 +70,18 @@ def _run_commit_candidate(args: argparse.Namespace) -> None:
         print(json.dumps({"error": str(exc), "shared_state": "untouched"}))
         sys.exit(1)
     print(json.dumps(dict(result), indent=2))
+
+
+def _run_recover_candidate(args: argparse.Namespace) -> None:
+    """Handle ``trw-mcp recover-candidate`` after an interrupted transaction (NFR03)."""
+    from trw_mcp.state.git_commit_transaction import GitTransactionError, recover_transaction
+
+    try:
+        journal = recover_transaction(Path(args.repo_root).resolve(), args.transaction_id)
+    except GitTransactionError as exc:
+        print(json.dumps({"error": str(exc), "shared_state": "untouched"}))
+        sys.exit(1)
+    print(json.dumps(journal.model_dump(include={"transaction_id", "state", "reason", "recovery_action"}), indent=2))
 
 
 def _run_prd_epoch(args: argparse.Namespace) -> None:

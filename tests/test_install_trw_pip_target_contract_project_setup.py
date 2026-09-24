@@ -50,7 +50,7 @@ def test_phase_project_setup_prefers_pip_target_wrapper_for_multi_client_setup(
 
     monkeypatch.setattr(module, "_detect_installed_clis", list)
     monkeypatch.setattr(module, "_detect_project_ides", lambda _path: ["cursor-ide", "codex"])
-    monkeypatch.setattr(module, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
+    monkeypatch.setattr(module, "run_with_progress", lambda _ui, _label, cmd, **_k: run_calls.append(cmd) or True)
 
     selected = module.phase_project_setup(
         ui,

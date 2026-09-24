@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
@@ -19,10 +20,20 @@ _CFG = TRWConfig()
 
 
 @pytest.fixture(autouse=True)
-def _set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _set_project_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: MemoryDaemon) -> Path:
     """Set TRW_PROJECT_ROOT to temp directory for all tests."""
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
+    # PRD-CORE-280 slice e1: this workspace is built directly (not via
+    # ``daemon_checkout``), so pin it to the shared session daemon per the
+    # fixture contract's "test that builds its own .trw" note.
+    trw_dir = tmp_path / str(_CFG.trw_dir)
+    (trw_dir / _CFG.learnings_dir / _CFG.entries_dir).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    attach_checkout(trw_dir, memory_daemon)
+    from trw_mcp.models.config import reload_config
+
+    reload_config()
     return tmp_path
 
 
@@ -93,20 +104,12 @@ class TestRecallBehavior:
         result = tools["trw_recall"].fn(query="database")
         assert "learnings" in result
         assert "total_matches" in result
-        assert "total_available" in result
         assert isinstance(result["learnings"], list)
-
-    def test_recall_compact_mode_fields(self, tmp_path: Path) -> None:
-        tools = _get_tools()
-        _seed_learning(tools, summary="Compact mode test")
-        result = tools["trw_recall"].fn(query="*", compact=True)
-        assert "compact" in result
-        assert result["compact"] is True
-        if result["learnings"]:
-            entry = result["learnings"][0]
-            # Compact mode should only have a subset of fields
-            assert "id" in entry
-            assert "summary" in entry
+        # PRD-CORE-294 FR01: default rows are stubs {id, claim, anchor?}.
+        entry = result["learnings"][0]
+        assert "id" in entry
+        assert "claim" in entry
+        assert "summary" not in entry
 
     def test_recall_empty_result_structure(self, tmp_path: Path) -> None:
         tools = _get_tools()

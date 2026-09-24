@@ -98,8 +98,6 @@ def patch_trw_deliver_deps(trw_dir: Path) -> Any:
     stack.enter_context(patch("trw_mcp.tools._deferred_delivery._do_index_sync", return_value={"status": "success"}))
     stack.enter_context(patch("trw_mcp.tools._deferred_delivery._do_auto_progress", return_value={"status": "skipped"}))
     stack.enter_context(patch("trw_mcp.telemetry.publisher.publish_learnings", return_value={"status": "skipped"}))
-    stack.enter_context(patch("trw_mcp.scoring.process_outcome_for_event", return_value=[]))
-    stack.enter_context(patch("trw_mcp.state.recall_tracking.get_recall_stats", return_value={}))
     stack.enter_context(patch("trw_mcp.telemetry.client.TelemetryClient.from_config", return_value=MagicMock()))
     stack.enter_context(
         patch(

@@ -927,7 +927,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "audit this"
       ]
     },
@@ -942,7 +942,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "--dir",
         "/tmp/dispatch-baseline",
         "audit this"
@@ -959,7 +959,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "--model",
         "baseline-model-1",
         "audit this"
@@ -976,7 +976,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "--model",
         "baseline-model-1",
         "--dir",
@@ -1059,7 +1059,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "audit this"
       ]
     },
@@ -1074,7 +1074,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "--dir",
         "/tmp/dispatch-baseline",
         "audit this"
@@ -1091,7 +1091,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "--model",
         "baseline-model-1",
         "audit this"
@@ -1108,7 +1108,7 @@
         "run",
         "--format",
         "json",
-        "--dangerously-skip-permissions",
+        "--auto",
         "--model",
         "baseline-model-1",
         "--dir",

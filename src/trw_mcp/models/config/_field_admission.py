@@ -97,9 +97,11 @@ def _legacy_admission(field_name: str) -> ConfigAdmission:
 #: Frozen baseline census of the public ``TRWConfig`` fields admitted at the
 #: PRD-CORE-218 implementation commit, less the two legacy CORE-125 fields
 #: (``tool_exposure_mode`` / ``tool_exposure_list``) removed at FR03/FR04
-#: activation, and less the two more (``nudge_urgency_mode`` /
-#: ``nudge_dedup_enabled``) removed in 2.0.0 by WD-02 — each a net surface
-#: REDUCTION, not a new admission. A field NOT in this
+#: activation, less the two more (``nudge_urgency_mode`` /
+#: ``nudge_dedup_enabled``) removed in 2.0.0 by WD-02, and less 44 further
+#: fields removed under PRD-CORE-291 (slice 2) per
+#: ``.trw/compliance/config-field-consumers-baseline.json`` — each a net
+#: surface REDUCTION, not a new admission. A field NOT in this
 #: set and NOT in :data:`FIELD_ADMISSIONS` is a NEW public field that must pay
 #: the full admission budget. This is a committed receipt, NOT derived from the
 #: live model at runtime — deriving it would let any new field auto-admit and
@@ -108,7 +110,6 @@ LEGACY_ADMITTED_FIELDS: frozenset[str] = frozenset(
     """
 aaref_version
 access_count_utility_boost_cap
-adaptation_auto_approve_threshold
 additional_repo_roots
 agents_enabled
 agents_md_enabled
@@ -116,12 +117,8 @@ agents_md_learning_injection
 agents_md_learning_max
 agents_md_learning_min_impact
 ambiguity_rate_max
-api_fuzz_base_url
-api_fuzz_level
-api_fuzz_timeout_secs
 assertion_failure_penalty
 assertion_stale_threshold_days
-atdd_enabled
 audit_pattern_promotion_threshold
 auto_checkpoint_enabled
 auto_checkpoint_pre_compact
@@ -136,13 +133,7 @@ backend_url
 boot_gc_deferred
 build_check_coverage_min
 build_check_enabled
-build_check_mypy_args
-build_check_pytest_args
-build_check_pytest_cmd
-build_check_timeout_secs
 build_gate_enforcement
-ceremony_alert_consecutive
-ceremony_alert_threshold
 ceremony_feedback_escalation_threshold
 ceremony_feedback_escalation_window
 ceremony_feedback_min_samples
@@ -153,15 +144,11 @@ changelog_advisory_enabled
 checkpoint_suggest_hours
 claude_md_max_lines
 cleanup_on_boot
-code_index_enabled
 code_index_exclude_dirs
 code_index_include_extensions
 code_index_max_file_bytes
-commit_fr_trailer_enabled
-compact_after_turns
 compact_instructions_template
 completeness_min
-completion_hooks_blocking
 complexity_hard_override_threshold
 complexity_tier_comprehensive
 complexity_tier_minimal
@@ -173,11 +160,7 @@ complexity_weight_large_refactoring
 complexity_weight_novel_patterns
 compliance_changelog_filename
 compliance_dir
-compliance_pass_threshold
 compliance_review_retention_days
-compliance_strictness
-confidence_threshold
-consistency_validation_min
 context_dir
 cross_model_provider
 cross_model_review_enabled
@@ -210,35 +193,25 @@ dispatch_enabled_clients
 dispatch_role_client
 dry_check_enabled
 dry_check_min_block_size
-embeddings_auto_backfill_on_low_coverage
 embeddings_coverage_warn_threshold
 embeddings_enabled
-enforcement_variant
 entries_dir
 events_file
 evidence_receipt_mode
-external_store_recall_cap
 extra_prd_categories
-extra_read_stores
 feedback
 framework_md_enabled
 framework_version
 frameworks_dir
 hooks_enabled
-hybrid_bm25_candidates
 hybrid_rrf_k
-hybrid_search_candidate_pool_size
-hybrid_vector_candidates
 impact_decay_half_life_days
 impact_forced_distribution_enabled
 impact_high_threshold_pct
 impact_tier_critical_cap
 impact_tier_high_cap
-incremental_validation_enabled
 index_auto_sync_on_status_change
 installation_id
-instruction_external_filename
-instruction_externalize
 instruction_size_gate_mode
 intel_cache_enabled
 intel_cache_ttl_seconds
@@ -255,7 +228,6 @@ learning_decay_use_exponent
 learning_max_entries
 learning_outcome_correlation_scope
 learning_outcome_correlation_window_minutes
-learning_outcome_history_cap
 learning_promotion_impact
 learning_recall_enabled
 learning_repeated_op_threshold
@@ -266,14 +238,10 @@ learnings_dir
 llm_default_model
 llm_usage_log_enabled
 llm_usage_log_file
-llm_utility_filter_enabled
 logs_dir
-max_audit_cycles
 max_auto_lines
 max_cluster_size
 max_consolidated_tags
-max_research_waves
-mcp_server_instructions_enabled
 memory_cold_threshold_days
 memory_consolidation_enabled
 memory_consolidation_max_per_cycle
@@ -289,15 +257,7 @@ memory_store_path
 meta_tune
 meta_tune_enabled
 migration_gate_enabled
-minimal_after_turns
 model_family
-mutation_critical_paths
-mutation_enabled
-mutation_experimental_paths
-mutation_threshold
-mutation_threshold_critical
-mutation_threshold_experimental
-mutation_timeout_secs
 nudge_budget_chars
 nudge_density
 nudge_enabled
@@ -306,10 +266,8 @@ nudge_pool_cooldown_after
 nudge_pool_cooldown_calls
 nudge_pool_cooldown_wall_clock_max_hours
 nudge_variant
-observation_masking
 otel_capture_messages
 otel_enabled
-otel_endpoint
 otel_semconv
 outcome_weight_learning_rate
 outcome_weight_p0_defects
@@ -320,10 +278,8 @@ path_index_exclude_dirs
 path_index_max_files
 path_index_max_seconds
 patterns_dir
-pause_after_compaction
 phase_exposure_enabled
 phase_gate_enforcement
-phase_transition_withhold_rate
 pin_ttl_hours
 pipeline_health_bandit_probe_enabled
 pipeline_health_bandit_stale_days
@@ -346,19 +302,12 @@ prd_validation_cache_max_total_bytes
 prds_relative_path
 pricing_table_path
 profile_system_enabled
-provenance_enabled
-proximal_reward_weight
-q_cold_start_threshold
-q_learning_rate
-q_recurrence_bonus
-recall_compact_fields
 recall_internal_fields
 recall_max_results
 recall_receipt_max_entries
 recall_user_tier_cap
 recall_utility_lambda
 receipts_dir
-reflect_max_positive_learnings
 reflect_max_success_patterns
 reflections_dir
 response_format
@@ -370,7 +319,6 @@ review_confidence_threshold
 review_gate_mode
 review_mandate_advisory_enabled
 risk_scaling_enabled
-run_archive_hours
 run_auto_close_enabled
 run_stale_ttl_hours
 run_staleness_grace_hours
@@ -383,17 +331,11 @@ scoring_recency_discount_floor
 scout_blast_radius_threshold
 scout_churn_commit_threshold
 scout_enabled
-scratch_dir
 scripts_dir
 security
-security_check_enabled
 self_review_blocking
 semantic_checks_enabled
-session_start_defer_under_writer_pressure
 session_start_recall_enabled
-session_start_recent_bypass_days
-session_start_recent_bypass_min_impact
-session_start_writer_pressure_threshold
 skill_contribution_cold_start
 skill_contribution_half_life_days
 skill_duplicate_max_skills
@@ -403,8 +345,6 @@ skill_retirement_windows
 skill_surface_tracking_enabled
 skills_enabled
 source_human_utility_boost
-source_package_name
-source_package_path
 strict_input_criteria
 sub_claude_md_max_lines
 sync_health_failure_threshold
@@ -420,10 +360,7 @@ telemetry
 telemetry_enabled
 telemetry_file
 templates_dir
-test_skeleton_dir
-tests_relative_path
 timebox_hours
-tool_descriptions_variant
 traceability_coverage_min
 trust_crawl_boundary
 trust_locked
@@ -432,21 +369,16 @@ trust_walk_boundary
 trust_walk_sample_rate
 trw_dir
 update_channel
-user_tier_enabled
 validation_density_weight
 validation_draft_threshold
-validation_ears_weight
 validation_implementation_readiness_weight
-validation_readability_weight
 validation_review_threshold
 validation_skeleton_threshold
-validation_smell_weight
 validation_structure_weight
 validation_traceability_weight
 version_check_interval_seconds
 wal_checkpoint_threshold_mb
 wiring_gate_mode
-worktree_dir
 """.split()  # noqa: SIM905 - compact immutable baseline keeps module below the LOC gate
 )
 

@@ -24,6 +24,7 @@ from tests._auto_recall_hook_harness import (
     _run_hook,
 )
 from tests._layout import PACKAGE_ROOT, requires_local_timing, requires_monorepo
+from tests._timing import assert_budget
 
 _HOOK_CASES = tuple(
     pytest.param(
@@ -308,7 +309,6 @@ def _hook_with_deadline(source_hook: Path, target: Path, timeout_ns: int) -> Pat
 _DEADLINE_SCAN_RETRY_ATTEMPTS = 3
 
 
-@pytest.mark.perf
 def test_deadline_emits_best_so_far(tmp_path: Path) -> None:
     """FR08: a mid-scan deadline emits what it already found instead of discarding it.
 
@@ -444,10 +444,14 @@ def test_read_model_contract_document_exists() -> None:
 _BUDGET_ATTEMPTS = 3
 
 
-@pytest.mark.perf
-@requires_local_timing
-def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
-    """NFR01: a 10,000-entry store scores inside the 500ms deadline."""
+def _scoring_budget_attempts(tmp_path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
+    """Run the NFR01 10,000-entry scoring scan up to _BUDGET_ATTEMPTS times, keeping the best.
+
+    The attempt that got FURTHEST, not the fastest: a truncated attempt always
+    reports elapsed_ms == the deadline, so every truncated attempt ties and a
+    min() on elapsed picks an arbitrary one. A clean attempt scans all 10,000,
+    which is also the maximum, so this selects it whenever one exists.
+    """
     learnings = [
         {
             "learning_id": f"L-perf-{i}",
@@ -472,16 +476,23 @@ def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
         if attempts[-1]["decision"] != "deadline" and attempts[-1]["scanned"] == "10000":
             break
 
-    # The attempt that got FURTHEST, not the fastest: a truncated attempt always
-    # reports elapsed_ms == the deadline, so every truncated attempt ties and a
-    # min() on elapsed picks an arbitrary one. A clean attempt scans all 10,000,
-    # which is also the maximum, so this selects it whenever one exists.
     best = max(attempts, key=lambda diagnostic: int(diagnostic["scanned"]))
+    return attempts, best
 
-    # A truncated scan is never a PASS. On a host where the margin is 1-6% it is
-    # also not a verdict about the hook: the measurement could not be taken.
-    # Floor first, so a hook that scans nothing still fails everywhere.
-    assert int(best["scanned"]) > 5_000, f"the scan barely started on every attempt: {attempts}"
+
+# PRD-QUAL-141: whether a 10,000-entry store scans inside its 500ms deadline is a host-throughput
+# measurement, not a correctness property -- the deadline-emits-best-so-far *behavior* (the code
+# path this NFR exercises) is already proven deterministically above with a FORCED, tiny deadline
+# (test_deadline_emits_best_so_far / test_deadline_before_any_match_is_silent), which trips on
+# every host regardless of speed. Whether a REAL 10,000-entry scan finishes inside the real 500ms
+# budget depends on this machine's concurrent load (observed 614-1,168 entries scanned under load
+# vs a clean 10,000), so every assertion here -- scanned count, truncation, and elapsed_ms -- is a
+# host-resource budget and belongs behind requires_local_timing via assert_budget, not a bare
+# assert in the gating suite.
+@requires_local_timing
+def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
+    """NFR01 host-resource: a 10,000-entry store scores inside the 500ms deadline."""
+    attempts, best = _scoring_budget_attempts(tmp_path)
     if best["decision"] == "deadline" and sys.platform != "linux":
         pytest.skip(
             f"no clean measurement available on {sys.platform}: the scan hit the 500 ms "
@@ -491,9 +502,8 @@ def test_scoring_budget_under_deadline(tmp_path: Path) -> None:
             "Linux and still fails hard there; this skip reports that the host could not "
             "answer, and the thin macOS margin is the finding, not the test."
         )
-    assert best["scanned"] == "10000", f"the scan truncated on every attempt: {attempts}"
-    assert best["decision"] != "deadline", f"the deadline stopped the scan on every attempt: {attempts}"
-    assert int(best["elapsed_ms"]) < 500, f"best of {_BUDGET_ATTEMPTS} attempts: {attempts}"
+    assert_budget("scoring_10k_entries_scanned", int(best["scanned"]), 10_000, "entries", at_least=True)
+    assert_budget("scoring_10k_entries_elapsed", int(best["elapsed_ms"]), 500, "ms")
 
 
 @pytest.mark.parametrize(

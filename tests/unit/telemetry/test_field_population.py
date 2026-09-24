@@ -21,6 +21,7 @@ from typing import Any, Final
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.models.config import _reset_config
 from trw_mcp.state._paths import _reset_session_id, get_session_id, pin_active_run, unpin_active_run
 from trw_mcp.telemetry.event_base import (
@@ -28,6 +29,8 @@ from trw_mcp.telemetry.event_base import (
     EVENT_TYPE_REGISTRY,
     CeremonyEvent,
     ContractEvent,
+    DispatchPolicyEvent,
+    DispatchUsageEvent,
     HPOCeremonyComplianceEvent,
     HPOSessionEndEvent,
     HPOSessionStartEvent,
@@ -173,6 +176,24 @@ _SAMPLE_BUILDERS: Final[dict[str, HPOTelemetryEvent]] = {
             "decisive": True,
         },
     ),
+    "dispatch_usage": DispatchUsageEvent(
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
+        payload={"child_id": "job-1", "client": "grok", "input_tokens": 1200, "output_tokens": 80},
+    ),
+    "dispatch_policy": DispatchPolicyEvent(
+        session_id="s1",
+        run_id="r1",
+        surface_snapshot_id="snap_a",
+        payload={
+            "child_id": "job-1",
+            "client": "claude",
+            "effort": {"requested": "high", "applied": "high", "source": "table"},
+            "model": {"requested": "opus", "applied": "opus", "source": "table"},
+            "turns": {"requested": 30, "applied": None, "source": "unsupported"},
+        },
+    ),
 }
 
 
@@ -263,10 +284,17 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 def production_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    memory_daemon: MemoryDaemon,
 ) -> Iterator[Path]:
     trw_dir = tmp_path / ".trw"
     (trw_dir / "context").mkdir(parents=True)
     (trw_dir / "learnings" / "entries").mkdir(parents=True)
+    # PRD-CORE-280 slice e1: pin this checkout to the real session daemon so
+    # ``trw_session_start``'s boot-time learnings load routes through
+    # ``selected_store``'s DaemonMemoryStore branch, not the in-process
+    # SqliteMemoryStore an unmigrated checkout would otherwise open.
+    attach_checkout(trw_dir, memory_daemon)
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
     run_dir = trw_dir / "runs" / "task" / "run-123"
     meta_dir = run_dir / "meta"
     meta_dir.mkdir(parents=True)
@@ -320,8 +348,7 @@ class TestRepresentativeProductionPaths:
             tests_passed=True,
             test_count=2,
             coverage_pct=98.0,
-            mypy_clean=True,
-            run_path=str(production_workspace),
+            options={"mypy_clean": True, "run_path": str(production_workspace)},
         )
 
         events_file = next((production_workspace / "meta").glob("events-*.jsonl"))
@@ -369,8 +396,7 @@ class TestRepresentativeProductionPaths:
             tests_passed=True,
             test_count=2,
             coverage_pct=98.0,
-            mypy_clean=True,
-            run_path=str(production_workspace),
+            options={"mypy_clean": True, "run_path": str(production_workspace)},
         )
         query_events(session_id="sess-123")
         surface_diff(snapshot_id_a="snap-123", snapshot_id_b="snap-456")
@@ -387,7 +413,7 @@ class TestRepresentativeProductionPaths:
         tool_fn = _get_production_tool_fn("trw_build_check")
 
         with pytest.raises(ValueError, match="tests_passed is required"):
-            tool_fn(run_path=str(production_workspace))
+            tool_fn(options={"run_path": str(production_workspace)})
 
         events_file = next((production_workspace / "meta").glob("events-*.jsonl"))
         tool_rows = [row for row in _read_jsonl(events_file) if row["event_type"] == "tool_call"]

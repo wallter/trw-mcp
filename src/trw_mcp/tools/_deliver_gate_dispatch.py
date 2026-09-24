@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import structlog
 
@@ -60,6 +60,9 @@ from trw_mcp.models.gate_decision import (
     GateStatus,
 )
 from trw_mcp.models.typed_dicts import DeliverResultDict, DeliveryGatesDict
+
+if TYPE_CHECKING:
+    from trw_mcp.state._paths import TRWCallContext
 
 # ``_ceremony_deliver_steps.unpack_gate_result`` runs BEFORE this dispatcher (see
 # ``_ceremony_deliver_tool.run_trw_deliver``) and hand-copies a subset of
@@ -233,6 +236,8 @@ def evaluate_delivery_gates(
     trw_dir: Path,
     allow_unverified: bool,
     unverified_reason: str,
+    *,
+    call_ctx: TRWCallContext | None = None,
 ) -> bool:
     """Run the deliver-gate cascade once. Returns True iff delivery must BLOCK.
 
@@ -240,6 +245,13 @@ def evaluate_delivery_gates(
     by its :class:`OverridePolicy`. A valid structured override lets a hard gate
     pass and evaluation continues to the next gate; a remaining soft warning is
     advisory and never blocks.
+
+    *call_ctx* is the calling session's own resolved identity (PRD-FIX-149
+    review R1) — threaded ONLY to the formation gate, which is the sole
+    consumer that needs to distinguish the orchestrator's own delivery from a
+    peer naming its ``run_path`` explicitly. Every other gate below is
+    unaffected; omitting it keeps the formation gate's own conservative
+    (fail-closed) default.
     """
     # CORE-205 FR07/FR08: typed decisions are now the authoritative dispatch
     # input.  The projector preserves the stable public keys while eliminating
@@ -290,7 +302,9 @@ def evaluate_delivery_gates(
     # PRD-CORE-265-FR11: the orchestrator's formation gate — same seam, same
     # PRD-CORE-191 override contract, and self-computing like the two above.
     # Deleting this call is the FR11 rollback lever and turns its gate test red.
-    if _evaluate_formation(results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason):
+    if _evaluate_formation(
+        results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason, call_ctx=call_ctx
+    ):
         return True
     _log_unused_override_intent(allow_unverified, unverified_reason, resolved_run)
     return _evaluate_advisory(typed_gate_result, resolved_run)

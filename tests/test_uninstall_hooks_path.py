@@ -65,7 +65,7 @@ def test_uninstall_strips_the_trw_block_from_the_configured_hooks_dir(
 
     from trw_mcp.server._subcommands_uninstall_config import _remove_managed_block_file
 
-    _remove_managed_block_file(resolved / "post-commit", dry_run=False)
+    _remove_managed_block_file(resolved / "post-commit", repo_with_custom_hooks_path, dry_run=False)
 
     remaining = hook.read_text(encoding="utf-8")
     assert MARKER_START not in remaining, "TRW's post-commit block survived uninstall"

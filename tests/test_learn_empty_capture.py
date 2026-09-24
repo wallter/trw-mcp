@@ -8,16 +8,15 @@ from fastmcp import FastMCP
 
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.tools import _learn_impl, learning, telemetry
+from trw_mcp.tools import _learn_impl, learning
 
 
 @pytest.mark.parametrize("summary,detail", [("", ""), (" \t", "\n"), ("\u2003", "\r\n ")])
 def test_empty_capture_never_allocates_journals_or_stores(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, summary, detail
 ):
-    config = TRWConfig(telemetry_enabled=False, llm_utility_filter_enabled=False)
+    config = TRWConfig(telemetry_enabled=False)
     monkeypatch.setattr(learning, "get_config", lambda: config)
-    monkeypatch.setattr(telemetry, "get_config", lambda: config)
     monkeypatch.setattr(learning, "resolve_trw_dir", lambda: tmp_path / ".trw")
     boundaries = []
     for module, name in (
@@ -49,4 +48,4 @@ def test_empty_capture_never_allocates_journals_or_stores(
 def test_short_or_single_field_content_keeps_existing_acceptance(summary, detail):
     from trw_mcp.tools._learn_preflight import run_accept_gates
 
-    assert run_accept_gates(summary, detail, TRWConfig(llm_utility_filter_enabled=False), Mock()) is None
+    assert run_accept_gates(summary, detail, Mock()) is None

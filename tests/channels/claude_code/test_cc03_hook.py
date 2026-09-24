@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_jq
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -176,6 +178,7 @@ class TestOptInGate:
         assert result.returncode == 0
         assert result.stdout == ""
 
+    @requires_jq
     def test_enabled_produces_output_for_py_file(self, tmp_path: Path) -> None:
         """When enabled, a .py file produces at least the T0 beacon."""
         _enable_cc03(tmp_path)
@@ -194,6 +197,7 @@ class TestOptInGate:
         # Invalid YAML → grep finds nothing → falls back to 'false'
         assert result.stdout == ""
 
+    @requires_jq
     def test_nested_channels_cc03_hook_enabled_enables_hook(self, tmp_path: Path) -> None:
         """channels.cc03_hook_enabled: true (nested) enables the hook via shell.
 
@@ -226,6 +230,7 @@ class TestOptInGate:
         # Top-level false overrides nested true
         assert result.stdout == ""
 
+    @requires_jq
     def test_nested_channels_cc03_enabled_enables_hook(self, tmp_path: Path) -> None:
         """channels.cc03.enabled: true (alternative nested path) enables the hook."""
         trw_dir = tmp_path / ".trw"
@@ -306,18 +311,21 @@ class TestSkipConditions:
         assert result.returncode == 0
         assert result.stdout == ""
 
+    @requires_jq
     def test_non_skipped_py_extension_produces_output(self, tmp_path: Path) -> None:
         """.py files are NOT in the skip allowlist and produce a hint."""
         result = _run_hook(_make_pretooluse(file_path="src/engine.py"), tmp_path)
         assert result.returncode == 0
         assert len(result.stdout) > 0
 
+    @requires_jq
     def test_non_skipped_ts_extension_produces_output(self, tmp_path: Path) -> None:
         """.ts files are NOT in the skip allowlist and produce a hint."""
         result = _run_hook(_make_pretooluse(file_path="src/index.ts"), tmp_path)
         assert result.returncode == 0
         assert len(result.stdout) > 0
 
+    @requires_jq
     def test_non_skipped_yaml_extension_produces_output(self, tmp_path: Path) -> None:
         """.yaml files are NOT in the skip allowlist (they have blast radius)."""
         result = _run_hook(_make_pretooluse(file_path=".trw/config.yaml"), tmp_path)
@@ -424,6 +432,7 @@ class TestDebounce:
         assert r2.returncode == 0
         assert r2.stdout == "", "Second call within debounce window must be silent"
 
+    @requires_jq
     def test_different_files_not_debounced(self, tmp_path: Path) -> None:
         """Different file_paths are independent debounce entries."""
         _enable_cc03(tmp_path)
@@ -435,6 +444,7 @@ class TestDebounce:
         assert len(r1.stdout) > 0
         assert len(r2.stdout) > 0
 
+    @requires_jq
     def test_debounce_dir_created_on_first_call(self, tmp_path: Path) -> None:
         """Debounce directory is created at .trw/context/cc03-debounce."""
         _enable_cc03(tmp_path)

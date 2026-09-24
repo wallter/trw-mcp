@@ -21,12 +21,13 @@ from pydantic import ValidationError
 
 from trw_mcp.models.config._client_profile import NudgePoolWeights
 from trw_mcp.models.config._profiles import resolve_client_profile
+from trw_mcp.state._ceremony_state_model import PoolCooldown
 from trw_mcp.state._nudge_content import load_pool_message
 from trw_mcp.state._nudge_rules import (
     _highest_priority_pending_step,
     _select_nudge_pool,
     apply_pool_cooldown,
-    is_pool_in_cooldown,
+    resolve_pool_cooldown,
 )
 from trw_mcp.state._nudge_state import (
     CeremonyState,
@@ -194,11 +195,8 @@ def test_select_pool_all_zero_returns_none() -> None:
     # Use a weights object where all eligible pools are in cooldown
     weights = NudgePoolWeights()
     # Put all pools in cooldown (counter=0, cooldown_until=100 means in cooldown)
-    state.pool_cooldown_until = {
-        "workflow": 100,
-        "learnings": 100,
-        "ceremony": 100,
-        "context": 100,
+    state.pool_cooldowns = {
+        pool: PoolCooldown(until_counter=100) for pool in ("workflow", "learnings", "ceremony", "context")
     }
     pool = _select_nudge_pool(state, weights)
     assert pool is None
@@ -213,42 +211,46 @@ def test_select_pool_all_zero_returns_none() -> None:
 def test_cooldown_suppresses_pool() -> None:
     """Pool in cooldown is not selected."""
     state = CeremonyState(tool_call_counter=5)
-    state.pool_cooldown_until["workflow"] = 15  # Cooldown until counter reaches 15
+    state.pool_cooldowns["workflow"] = PoolCooldown(until_counter=15)
 
-    assert is_pool_in_cooldown(state, "workflow") is True
-    assert is_pool_in_cooldown(state, "learnings") is False
+    assert resolve_pool_cooldown(state, "workflow") is True
+    assert resolve_pool_cooldown(state, "learnings") is False
 
 
 @pytest.mark.unit
 def test_cooldown_expires_after_counter() -> None:
     """Pool cooldown expires when tool_call_counter reaches cooldown_until."""
     state = CeremonyState(tool_call_counter=15)
-    state.pool_cooldown_until["workflow"] = 15
+    state.pool_cooldowns["workflow"] = PoolCooldown(until_counter=15)
 
-    assert is_pool_in_cooldown(state, "workflow") is False
+    assert resolve_pool_cooldown(state, "workflow") is False
 
 
 @pytest.mark.unit
 def test_apply_cooldown_activates() -> None:
     """apply_pool_cooldown activates when ignore count reaches threshold."""
     state = CeremonyState(tool_call_counter=10)
-    state.pool_ignore_counts["workflow"] = 3
+    state.pool_cooldowns["workflow"] = PoolCooldown(ignore_count=3)
 
     activated = apply_pool_cooldown(state, "workflow", cooldown_after=3, cooldown_calls=10)
     assert activated is True
-    assert state.pool_cooldown_until["workflow"] == 20  # 10 + 10
-    assert state.pool_ignore_counts["workflow"] == 0  # Reset
+    assert state.pool_cooldowns["workflow"].until_counter == 20  # 10 + 10
+    assert state.pool_cooldowns["workflow"].ignore_count == 0  # Reset
 
 
 @pytest.mark.unit
 def test_apply_cooldown_not_activated() -> None:
     """apply_pool_cooldown does not activate when ignore count is below threshold."""
     state = CeremonyState(tool_call_counter=10)
-    state.pool_ignore_counts["workflow"] = 2
+    state.pool_cooldowns["workflow"] = PoolCooldown(ignore_count=2)
 
     activated = apply_pool_cooldown(state, "workflow", cooldown_after=3, cooldown_calls=10)
     assert activated is False
-    assert "workflow" not in state.pool_cooldown_until
+    assert state.pool_cooldowns["workflow"].until_counter == 0
+
+    empty = CeremonyState()
+    assert apply_pool_cooldown(empty, "workflow", cooldown_after=3, cooldown_calls=10) is False
+    assert empty.pool_cooldowns == {}
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +369,7 @@ def test_ceremony_state_pool_fields_round_trip(tmp_path: Path) -> None:
     state = CeremonyState(
         session_started=True,
         pool_nudge_counts={"workflow": 5, "ceremony": 2},
-        pool_ignore_counts={"learnings": 3},
-        pool_cooldown_until={"workflow": 20},
+        pool_cooldowns={"learnings": PoolCooldown(ignore_count=3), "workflow": PoolCooldown(until_counter=20)},
         tool_call_counter=15,
         last_nudge_pool="workflow",
     )
@@ -376,14 +377,15 @@ def test_ceremony_state_pool_fields_round_trip(tmp_path: Path) -> None:
 
     loaded = read_ceremony_state(trw_dir)
     assert loaded.pool_nudge_counts == {"workflow": 5, "ceremony": 2}
-    assert loaded.pool_ignore_counts == {"learnings": 3}
-    assert loaded.pool_cooldown_until == {"workflow": 20}
+    assert loaded.pool_cooldowns == state.pool_cooldowns
     assert loaded.tool_call_counter == 15
     assert loaded.last_nudge_pool == "workflow"
 
 
-def test_ceremony_state_pool_fields_default_on_missing(tmp_path: Path) -> None:
-    """Pool fields default to empty when reading state without them."""
+def test_ceremony_state_missing_cooldowns_is_legacy_reset(tmp_path: Path) -> None:
+    """Missing the unified cooldown object is an incompatible old shape."""
+    import structlog
+
     trw_dir = tmp_path / ".trw"
     trw_dir.mkdir()
     ctx_dir = trw_dir / "context"
@@ -392,12 +394,58 @@ def test_ceremony_state_pool_fields_default_on_missing(tmp_path: Path) -> None:
     old_state = {"session_started": True, "phase": "implement"}
     (ctx_dir / "ceremony-state.json").write_text(json.dumps(old_state))
 
-    loaded = read_ceremony_state(trw_dir)
+    with structlog.testing.capture_logs() as events:
+        loaded = read_ceremony_state(trw_dir)
+        assert read_ceremony_state(trw_dir) == CeremonyState()
+    resets = [event for event in events if event.get("event") == "ceremony_state_reset"]
+    assert len(resets) == 1 and resets[0]["reason"] == "schema_mismatch"
+    assert loaded == CeremonyState()
     assert loaded.pool_nudge_counts == {}
-    assert loaded.pool_ignore_counts == {}
-    assert loaded.pool_cooldown_until == {}
+    assert loaded.pool_cooldowns == {}
     assert loaded.tool_call_counter == 0
     assert loaded.last_nudge_pool == ""
+
+
+@pytest.mark.parametrize(
+    ("contents", "reason"),
+    [("{bad", "malformed_json"), ("[]", "not_object"), ('{"pool_cooldowns": []}', "schema_mismatch")],
+)
+def test_ceremony_state_reset_warning_for_each_invalid_shape(tmp_path: Path, contents: str, reason: str) -> None:
+    import structlog
+
+    trw_dir = tmp_path / ".trw"
+    path = trw_dir / "context" / "ceremony-state.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(contents)
+    with structlog.testing.capture_logs() as events:
+        assert read_ceremony_state(trw_dir) == CeremonyState()
+        assert read_ceremony_state(trw_dir) == CeremonyState()
+    resets = [event for event in events if event.get("event") == "ceremony_state_reset"]
+    assert len(resets) == 1
+    assert resets[0]["reason"] == reason and resets[0]["path"] == str(path)
+
+
+def test_legacy_pool_cache_resets_once_and_rewrites_new_schema(tmp_path: Path) -> None:
+    import structlog
+
+    trw_dir = tmp_path / ".trw"
+    path = trw_dir / "context" / "ceremony-state.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"session_started": True, "pool_ignore_counts": {"workflow": 2}}))
+
+    with structlog.testing.capture_logs() as events:
+        state = read_ceremony_state(trw_dir)
+        assert read_ceremony_state(trw_dir).pool_cooldowns == {}
+    resets = [event for event in events if event.get("event") == "ceremony_state_reset"]
+    assert len(resets) == 1
+    assert resets[0]["reason"] == "schema_mismatch" and resets[0]["path"] == str(path)
+    assert state == CeremonyState()
+
+    write_ceremony_state(trw_dir, state)
+    stored = json.loads(path.read_text())
+    assert stored["pool_cooldowns"] == {}
+    assert "pool_ignore_counts" not in stored
+    assert read_ceremony_state(trw_dir) == state
 
 
 # ---------------------------------------------------------------------------
@@ -443,7 +491,7 @@ def test_record_pool_ignore(tmp_path: Path) -> None:
 
     record_pool_ignore(trw_dir, "ceremony")
     state = read_ceremony_state(trw_dir)
-    assert state.pool_ignore_counts["ceremony"] == 1
+    assert state.pool_cooldowns["ceremony"].ignore_count == 1
 
 
 # ---------------------------------------------------------------------------

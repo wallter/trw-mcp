@@ -542,7 +542,7 @@ class TierManager:
         t0 = time.monotonic()
 
         try:
-            active_entries = list_active_learnings(trw_dir)
+            active_entries = list_active_learnings(trw_dir, purpose="maintenance")
         except Exception:  # justified: boundary, listing active entries may fail on corrupt backend state
             logger.warning("assign_impact_tiers_list_failed", exc_info=True)
             return distribution

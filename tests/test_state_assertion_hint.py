@@ -79,7 +79,8 @@ class TestValidityWindowNudge:
     def test_nudge_names_the_days_and_the_exact_call(self) -> None:
         text = validity_window_nudge("L-abc1", timedelta(days=90))
         assert "90 days" in text
-        assert "trw_learn_update(learning_id='L-abc1'" in text
+        # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode.
+        assert "trw_learn(learning_id='L-abc1'" in text
         assert "'expires'" in text
 
 

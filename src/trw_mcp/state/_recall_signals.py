@@ -36,6 +36,9 @@ class RecallSignals:
         self._bindings: dict[int, tuple[object, DenseSignal]] = {}
         self._spaces: dict[tuple[EmbeddingSpace, tuple[float, ...]], object] = {}
         self._stores: dict[int, tuple[object, object]] = {}
+        # PRD-CORE-292: the retrieval pipeline's own score per candidate, exactly as
+        # hybrid_search_scored returned it (fused, or positional after a rerank).
+        self._relevance: dict[int, tuple[object, float]] = {}
 
     def get(self, candidate: object) -> DenseSignal | None:
         binding = self._bindings.get(id(candidate))
@@ -46,6 +49,17 @@ class RecallSignals:
         signal = self.get(source)
         if signal is not None:
             self._bindings[id(destination)] = (destination, signal)
+        score = self.relevance(source)
+        if score is not None:
+            self._relevance[id(destination)] = (destination, score)
+
+    def bind_relevance(self, candidate: object, score: float) -> None:
+        """Record the pipeline's score for *candidate*; never recomputed downstream."""
+        self._relevance[id(candidate)] = (candidate, score)
+
+    def relevance(self, candidate: object) -> float | None:
+        binding = self._relevance.get(id(candidate))
+        return binding[1] if binding is not None and binding[0] is candidate else None
 
     def bind_dense(
         self,

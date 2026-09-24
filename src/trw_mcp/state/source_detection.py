@@ -107,8 +107,18 @@ def _parse_opencode_model(cwd: str | Path | None = None) -> str:
     return ""
 
 
-def detect_model_id(*, cwd: str | Path | None = None) -> str:
-    """Detect the AI model ID from environment variables or config files.
+def detect_model_id(*, cwd: str | Path | None = None, client_profile: str | None = None) -> str:
+    """Detect the AI model ID from environment variables or the *detected
+    client's own* config file.
+
+    ``client_profile`` scopes phase 2 to the config file that actually
+    belongs to the running client — e.g. ``opencode.json`` is only
+    consulted when the client is ``"opencode"``. Without this guard, any
+    repo carrying another client's config file (e.g. opencode's, left
+    behind from a different session) would get its model guessed for
+    every client, mislabeling learnings written from Claude Code, Codex,
+    etc. with opencode's configured model. When ``client_profile`` is not
+    passed, it is auto-detected from the same ``cwd``.
 
     Returns a model identifier string (e.g., ``"claude-opus-4-7"``) or
     ``""`` when detection fails.
@@ -122,10 +132,12 @@ def detect_model_id(*, cwd: str | Path | None = None) -> str:
             logger.debug("model_detected_env", model=model, source=env_key)
             return model
 
-    # Phase 2: config file fallback (opencode.json)
-    model = _parse_opencode_model(cwd)
-    if model:
-        logger.debug("model_detected_config", model=model)
-        return model
+    # Phase 2: config file fallback — ONLY for the client that owns the file.
+    resolved_client = client_profile if client_profile is not None else detect_client_profile(cwd=cwd)
+    if resolved_client == "opencode":
+        model = _parse_opencode_model(cwd)
+        if model:
+            logger.debug("model_detected_config", model=model)
+            return model
 
     return ""

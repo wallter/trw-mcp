@@ -7,6 +7,8 @@ credentials.yaml
 # proprietary path, which then aborted their whole public install
 # (PRD-INFRA-126 FR05).
 proprietary-installed.json
+# Secret: runtime/memory-token is this checkout's memory daemon grant (mode 0600) — never track it (PRD-CORE-280).
+runtime/memory-token
 context/
 reflections/
 logs/

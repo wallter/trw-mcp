@@ -15,34 +15,9 @@ from ._prd_audit_claudemd_support import _reader, _writer
 
 
 class TestCollectPromotableLearnings:
-    """Cover lines 654, 660: q_value path and below-threshold filtering."""
+    """Below-threshold and status filtering."""
 
-    def test_uses_q_value_for_mature_entries(self, tmp_path: Path) -> None:
-        from trw_mcp.state.claude_md import collect_promotable_learnings
-
-        config = TRWConfig()
-        trw_dir = tmp_path / ".trw"
-        entries_dir = trw_dir / config.learnings_dir / config.entries_dir
-        entries_dir.mkdir(parents=True)
-
-        # Entry with enough q_observations to use q_value
-        _writer.write_yaml(
-            entries_dir / "mature.yaml",
-            {
-                "id": "L-mature",
-                "summary": "Mature learning",
-                "status": "active",
-                "impact": 0.3,  # below threshold
-                "q_observations": config.q_cold_start_threshold,  # at threshold
-                "q_value": 0.9,  # above threshold via q_value
-            },
-        )
-
-        with pytest.warns(DeprecationWarning):
-            result = collect_promotable_learnings(trw_dir, config, _reader)
-        assert any(e.get("id") == "L-mature" for e in result)
-
-    def test_filters_below_threshold(self, tmp_path: Path) -> None:
+    def test_filters_below_threshold(self, tmp_path: Path, fake_memory_store: object) -> None:
         from trw_mcp.state.claude_md import collect_promotable_learnings
 
         config = TRWConfig()
@@ -66,7 +41,7 @@ class TestCollectPromotableLearnings:
             result = collect_promotable_learnings(trw_dir, config, _reader)
         assert all(e.get("id") != "L-low" for e in result)
 
-    def test_skips_non_active_entries(self, tmp_path: Path) -> None:
+    def test_skips_non_active_entries(self, tmp_path: Path, fake_memory_store: object) -> None:
         from trw_mcp.state.claude_md import collect_promotable_learnings
 
         config = TRWConfig()
@@ -88,7 +63,7 @@ class TestCollectPromotableLearnings:
             result = collect_promotable_learnings(trw_dir, config, _reader)
         assert all(e.get("id") != "L-obs" for e in result)
 
-    def test_returns_empty_when_no_entries_dir(self, tmp_path: Path) -> None:
+    def test_returns_empty_when_no_entries_dir(self, tmp_path: Path, fake_memory_store: object) -> None:
         from trw_mcp.state.claude_md import collect_promotable_learnings
 
         config = TRWConfig()
@@ -244,7 +219,7 @@ class TestCollectPromotableLearningsExceptionContinue:
     """Cover claude_md.py lines 673-674: exception handling in collect_promotable_learnings."""
 
     def test_read_error_on_entry_file_is_skipped(self, tmp_path: Path) -> None:
-        """Entry with unparseable q_observations raises ValueError and is skipped."""
+        """Entry with a non-numeric impact scores 0 and is not promoted."""
         from unittest.mock import patch
 
         from trw_mcp.state.claude_md import collect_promotable_learnings
@@ -253,23 +228,18 @@ class TestCollectPromotableLearningsExceptionContinue:
         trw_dir = tmp_path / ".trw"
 
         # collect_promotable_learnings now reads from SQLite via list_active_learnings.
-        # Patch it to return one good entry and one bad entry where q_observations
-        # has a type that causes int() to raise (exercises the ValueError/TypeError
-        # continue branch at lines 687-688).
+        # Patch it to return one good entry and one entry with a malformed impact.
         good_entry: dict[str, object] = {
             "id": "L-good",
             "summary": "Good learning",
             "status": "active",
             "impact": 0.9,
-            "q_observations": 0,
         }
         bad_entry: dict[str, object] = {
             "id": "L-bad",
             "summary": "Bad learning",
             "status": "active",
-            "impact": 0.9,
-            # dict cannot be converted to int — triggers TypeError in the loop
-            "q_observations": {"invalid": "value"},
+            "impact": {"invalid": "value"},
         }
 
         with patch(
@@ -279,6 +249,6 @@ class TestCollectPromotableLearningsExceptionContinue:
             with pytest.warns(DeprecationWarning):
                 result = collect_promotable_learnings(trw_dir, config, _reader)
 
-        # bad entry should be skipped due to TypeError; good entry returned
+        # the malformed entry is not promoted; the good one is
         assert any(e.get("id") == "L-good" for e in result)
         assert all(e.get("id") != "L-bad" for e in result)

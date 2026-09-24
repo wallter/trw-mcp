@@ -29,9 +29,6 @@ class TestDoClaudeMdSync:
 
     def test_deliver_includes_ceremony_sections(self, trw_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """trw_deliver path produces CLAUDE.md via canonical execute_claude_md_sync."""
-        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
-        # so pin instruction_externalize="off" to keep exercising the inline path.
-        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         trw_dir = trw_project / ".trw"
         with (
             patch("trw_mcp.state._paths.resolve_project_root", return_value=trw_project),

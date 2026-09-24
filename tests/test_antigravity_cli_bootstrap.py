@@ -77,6 +77,37 @@ class TestAntigravityCliMcpConfigHardening:
         assert "other-server" in data["mcpServers"]
         assert "trw" in data["mcpServers"]
 
+    def test_preserves_the_users_own_keys_on_the_trw_entry(self, tmp_path: Path) -> None:
+        """env/cwd/disabled on mcpServers.trw belong to the user; TRW rewrites only command/args/url."""
+        settings = _antigravity_global_mcp_config_path()
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "trw": {
+                            "command": "/old/trw-mcp",
+                            "args": ["--stale"],
+                            "url": "http://127.0.0.1:9999/mcp",
+                            "env": {"OPENROUTER_API_KEY": "sk-or-user-000", "TRW_DEBUG": "1"},
+                            "cwd": "/work",
+                            "disabled": False,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        generate_antigravity_mcp_config(tmp_path)
+
+        entry = json.loads(settings.read_text(encoding="utf-8"))["mcpServers"]["trw"]
+        assert entry["env"] == {"OPENROUTER_API_KEY": "sk-or-user-000", "TRW_DEBUG": "1"}
+        assert entry["cwd"] == "/work"
+        assert entry["disabled"] is False
+        assert "url" not in entry
+        assert entry["command"] != "/old/trw-mcp" and entry["args"] != ["--stale"]
+
     def test_idempotent_second_run_is_preserved(self, tmp_path: Path) -> None:
         first = generate_antigravity_mcp_config(tmp_path)
         second = generate_antigravity_mcp_config(tmp_path)
@@ -156,7 +187,7 @@ class TestAntigravityCliInstructions:
         from trw_mcp.state.claude_md.renderers._review_and_opencode import _bundled_agent_stems
 
         stems = _bundled_agent_stems()
-        assert len(stems) >= 11, f"derived only {len(stems)} bundled agent(s) — the check would be near-vacuous"
+        assert len(stems) >= 8, f"derived only {len(stems)} bundled agent(s) — the check would be near-vacuous"
         assert f"{agent_format_for('antigravity-cli').destination_dir}/" in content
         for stem in stems:
             assert f"@{stem}" in content, f"ANTIGRAVITY.md never names the installed agent {stem}"

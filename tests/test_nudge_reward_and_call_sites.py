@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -211,6 +210,7 @@ def test_deliver_supplies_the_recorded_build_outcome(
 def test_recall_reaches_the_injector_with_a_recall_context(
     tmp_project: Path,
     status_spy: list[NudgeContext | None],
+    fake_memory_store: object,
 ) -> None:
     server = make_test_server("learning")
     extract_tool_fn(server, "trw_recall")(query="nudge attribution")
@@ -220,29 +220,11 @@ def test_recall_reaches_the_injector_with_a_recall_context(
     assert status_spy[-1].tool_name == ToolName.RECALL
 
 
-def test_recall_response_carries_ceremony_status(tmp_project: Path) -> None:
+def test_recall_response_carries_ceremony_status(tmp_project: Path, fake_memory_store: object) -> None:
     """Live path, no spy — the field actually lands on the payload."""
     server = make_test_server("learning")
     result = extract_tool_fn(server, "trw_recall")(query="nudge attribution")
     assert isinstance(result.get("ceremony_status"), str)
-
-
-@pytest.mark.parametrize("warning", [None, "Semantic retrieval unavailable; lexical fallback only."])
-def test_ultra_compact_recall_stays_minimal(
-    tmp_project: Path, monkeypatch: pytest.MonkeyPatch, warning: str | None
-) -> None:
-    """No ceremony decoration; material retrieval limitations must still surface."""
-    monkeypatch.setattr(
-        "trw_mcp.tools._interactive_recall.prepare_interactive_recall",
-        lambda adapter, **kwargs: (adapter, warning),
-    )
-    server = make_test_server("learning")
-    result = extract_tool_fn(server, "trw_recall")(query="nudge attribution", ultra_compact=True)
-    expected = {"learnings", "count", "ceremony_hint"}
-    if warning:
-        expected.add("retrieval_warning")
-        assert result["retrieval_warning"] == warning
-    assert set(result) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -257,77 +239,6 @@ def _signal(learning_id: str) -> ProximalSignal:
         phase="implement",
         turn_offset=1,
     )
-
-
-def test_proximal_signal_moves_the_q_value(tmp_path: Path) -> None:
-    from trw_mcp.scoring import apply_proximal_rewards
-
-    captured: dict[str, dict[str, object]] = {}
-
-    def _lookup(lid: str, _trw_dir: Path, _entries: Path) -> tuple[Path | None, dict[str, object] | None]:
-        if lid != "L-prox":
-            return None, None
-        data: dict[str, object] = {"id": lid, "q_value": 0.4, "q_observations": 2, "impact": 0.6}
-        captured[lid] = data
-        return None, data
-
-    updated = apply_proximal_rewards(tmp_path / ".trw", [_signal("L-prox")], lookup_fn=_lookup)
-
-    assert updated == ["L-prox"]
-    # tests_passed carries reward 0.8, so the Q-value must move UP from 0.4.
-    q_value = captured["L-prox"]["q_value"]
-    assert isinstance(q_value, float)
-    assert q_value > 0.4
-    assert captured["L-prox"]["q_observations"] == 3
-    history = captured["L-prox"]["outcome_history"]
-    assert isinstance(history, list)
-    assert history[-1].endswith(":proximal_tests_passed")
-
-
-def test_proximal_rewards_skip_ids_with_no_stored_learning(tmp_path: Path) -> None:
-    """Synthetic SYS-nudge-* ids have no entry; they must be silently skipped."""
-    from trw_mcp.scoring import apply_proximal_rewards
-
-    calls: list[str] = []
-
-    def _lookup(lid: str, _trw_dir: Path, _entries: Path) -> tuple[Path | None, dict[str, object] | None]:
-        calls.append(lid)
-        return None, None
-
-    updated = apply_proximal_rewards(
-        tmp_path / ".trw",
-        [_signal("SYS-nudge-standard-workflow-unattributed")],
-        lookup_fn=_lookup,
-    )
-    assert updated == []
-    assert calls == ["SYS-nudge-standard-workflow-unattributed"]
-
-
-def test_proximal_rewards_are_deduplicated_per_learning(tmp_path: Path) -> None:
-    """Repeated signals for one learning yield ONE q_observations increment."""
-    from trw_mcp.scoring import apply_proximal_rewards
-
-    seen: list[str] = []
-
-    def _lookup(lid: str, _trw_dir: Path, _entries: Path) -> tuple[Path | None, dict[str, object] | None]:
-        seen.append(lid)
-        return None, {"id": lid, "q_value": 0.5, "q_observations": 0}
-
-    apply_proximal_rewards(
-        tmp_path / ".trw",
-        [_signal("L-dup"), _signal("L-dup"), _signal("L-dup")],
-        lookup_fn=_lookup,
-    )
-    assert seen == ["L-dup"]
-
-
-def test_empty_signal_list_is_a_no_op(tmp_path: Path) -> None:
-    from trw_mcp.scoring import apply_proximal_rewards
-
-    def _lookup(_lid: str, _t: Path, _e: Path) -> tuple[Path | None, dict[str, object] | None]:
-        raise AssertionError("lookup must not run for an empty signal list")
-
-    assert apply_proximal_rewards(tmp_path / ".trw", [], lookup_fn=_lookup) == []
 
 
 def test_proximal_scan_needs_both_streams_merged(tmp_path: Path) -> None:
@@ -434,40 +345,8 @@ def test_real_nudge_then_real_build_check_produces_a_proximal_signal(tmp_project
         static_checks_clean=True,
         test_count=3,
         scope="pytest tests/",
-        run_path=str(run_dir),
+        options={"run_path": str(run_dir)},
     )
 
     signals = detect_proximal_signals(read_proximal_event_window(trw_dir, run_dir))
     assert [s["learning_id"] for s in signals] == ["L-e2e-prox"], read_proximal_event_window(trw_dir, run_dir)
-
-
-def test_delivery_metrics_preserves_signals_without_inventing_usefulness(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """R10: detected proximity remains observable but never grants persistent credit."""
-    from trw_mcp.tools import _deferred_steps_learning as mod
-
-    run_dir = tmp_path / "run"
-    (run_dir / "meta").mkdir(parents=True)
-    (run_dir / "meta" / "events.jsonl").write_text("", encoding="utf-8")
-
-    detected = [_signal("L-bridge")]
-    forwarded: list[Any] = []
-
-    monkeypatch.setattr(
-        "trw_mcp.scoring.proximal_reward.detect_proximal_signals",
-        lambda *_a, **_kw: detected,
-    )
-
-    def _fake_apply(_trw_dir: Path, signals: list[ProximalSignal]) -> list[str]:
-        forwarded.append(signals)
-        return ["L-bridge"]
-
-    monkeypatch.setattr("trw_mcp.scoring.apply_proximal_rewards", _fake_apply)
-
-    result = mod._step_delivery_metrics(tmp_path / ".trw", run_dir)
-
-    assert forwarded == []
-    assert result["proximal_signals"] == detected
-    assert "proximal_q_updates" not in result

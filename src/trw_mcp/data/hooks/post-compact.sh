@@ -12,12 +12,6 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
-# PRD-CORE-149 FR05: exit before timers, path discovery, or output.
-if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
-  exit 0
-fi
-
-
 init_hook_timer
 
 _project_root="$(get_repo_root)" || exit 0
@@ -28,8 +22,8 @@ echo "Context compaction completed. Your implementation progress is preserved."
 echo "This recovery context is injected automatically by the PostCompact hook."
 echo ""
 
-# Recover state from pre_compact_state.json (written by pre-compact.sh)
-_state_file="$_project_root/.trw/context/pre_compact_state.json"
+# Recover THIS session's pre-compaction marker (written by pre-compact.sh)
+_state_file=$(pre_compact_state_file "$_project_root" 2>/dev/null) || _state_file=""
 _run_path=""
 _phase=""
 _event_count=0
@@ -48,7 +42,7 @@ if [ -n "$_run_path" ]; then
   [ -n "$_last_cp" ] && echo "LAST CHECKPOINT: \"$_last_cp\""
   echo ""
   echo "NEXT STEPS:"
-  echo "  1. Read .trw/frameworks/FRAMEWORK-CORE.md (compaction erased methodology context)"
+  echo "  1. Read your phase's sections of .trw/frameworks/FRAMEWORK.md (the SessionStart reload names them)"
   echo "  2. Call trw_session_start(query='your task domain') to reload learnings"
   echo "  3. Call trw_status() to confirm current phase"
   echo "  4. Resume from the last checkpoint — do not re-plan"
@@ -58,7 +52,7 @@ else
 fi
 
 echo ""
-echo "MANDATORY: Read .trw/frameworks/FRAMEWORK-CORE.md before resuming work."
+echo "MANDATORY: Read your phase's sections of .trw/frameworks/FRAMEWORK.md before resuming work."
 echo "WHY: Compaction erased your understanding of the 6-phase protocol, exit criteria,"
 echo "  and quality gates. Skipping this produces methodology drift and rework."
 

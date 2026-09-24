@@ -273,6 +273,7 @@ def test_two_clients_trw_init_then_status_no_cross_read(
 def test_trw_recall_ctx_aware_no_scan_hijack(
     isolated_project: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fake_memory_store: object,
 ) -> None:
     """Audit P1-01: trw_recall(ctx=fresh) must not scan-hijack another session.
 
@@ -323,78 +324,29 @@ def test_trw_recall_ctx_aware_no_scan_hijack(
     assert isinstance(result, dict)
 
 
-def test_trw_learn_ctx_aware_telemetry_not_scan_hijacked(
+def test_tool_call_wrapper_routes_by_the_callers_ctx(
     isolated_project: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Audit P1-01: trw_learn(ctx=fresh) telemetry routes via ctx, not scan."""
-    from tests.conftest import extract_tool_fn, make_test_server
-
-    # Seed other-session active run — the telemetry scan would pick this up.
-    _seed_active_run(isolated_project, "other-task", "20260101T000000Z-other0001")
+    """Audit P1-01: the per-call producer resolves the run from the handler's ctx, not a scan."""
+    import trw_mcp.telemetry.tool_call_timing as timing
 
     captured: list[object | None] = []
+    original = timing._build_call_context
 
-    # Patch _get_cached_run_dir to record the call_ctx it receives.
-    from trw_mcp.tools import telemetry as tel_mod
+    def _spy(ctx: object | None) -> object | None:
+        captured.append(ctx)
+        return original(ctx)
 
-    original = tel_mod._get_cached_run_dir
+    monkeypatch.setattr(timing, "_build_call_context", _spy)
 
-    def _spy(call_ctx: object | None = None) -> Path | None:
-        captured.append(call_ctx)
-        return original(call_ctx=call_ctx)
-
-    monkeypatch.setattr(tel_mod, "_get_cached_run_dir", _spy)
-
-    server = make_test_server("learning")
-    trw_learn = extract_tool_fn(server, "trw_learn")
-
-    fresh_ctx = _fresh_ctx("fresh-learn-session")
-    try:
-        trw_learn(
-            ctx=fresh_ctx,
-            summary="ctx parity",
-            detail="covers FR03 telemetry routing for trw_learn",
-        )
-    except Exception:
-        # trw_learn may raise on backend unavailability in isolated fixture;
-        # we only care about the telemetry decorator's ctx propagation.
-        pass
-
-    assert captured, "telemetry decorator must invoke _get_cached_run_dir"
-    assert any(c is not None for c in captured), (
-        "FR03: log_tool_call decorator must pass a TRWCallContext when the "
-        f"wrapped handler was given ctx (captured: {captured!r})"
-    )
-
-
-def test_log_tool_call_decorator_uses_ctx_when_available(
-    isolated_project: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Audit P1-01: log_tool_call extracts ctx from kwargs and builds call_ctx."""
-    from trw_mcp.tools import telemetry as tel_mod
-    from trw_mcp.tools.telemetry import log_tool_call
-
-    captured: list[object | None] = []
-
-    def _spy(call_ctx: object | None = None) -> Path | None:
-        captured.append(call_ctx)
-        return None
-
-    monkeypatch.setattr(tel_mod, "_get_cached_run_dir", _spy)
-
-    @log_tool_call
     def _fake_tool(ctx: object | None = None, payload: str = "") -> str:
         return f"ok:{payload}"
 
-    ctx = _fresh_ctx("decorator-test-session")
-    _fake_tool(ctx=ctx, payload="x")
+    ctx = _fresh_ctx("wrapper-test-session")
+    assert timing.wrap_tool(_fake_tool, tool_name="fake_tool")(ctx=ctx, payload="x") == "ok:x"
 
-    assert captured, "_get_cached_run_dir should have been invoked"
-    assert any(c is not None for c in captured), (
-        f"Decorator must build a TRWCallContext from the wrapped handler's ctx kwarg (captured: {captured!r})"
-    )
+    assert ctx in captured, f"the wrapper must resolve the run from the handler's ctx (captured: {captured!r})"
 
 
 # ---------------------------------------------------------------------------

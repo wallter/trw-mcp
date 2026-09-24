@@ -1,6 +1,6 @@
 ---
 name: trw-prd-groomer
-effort: high
+effort: medium
 model: frontier
 description: >
   PRD authoring and grooming specialist. Use when a PRD must be created, grounded in repository evidence, reviewed for
@@ -89,7 +89,10 @@ Draft only the category-specific `sections_expected` returned by validation:
 
 - Ground the problem, goals, interfaces, dependencies, and risks in inspectable evidence.
 - Give requirements unique IDs, confidence, observable behavior, and matched verification methods.
-- Use EARS or Given/When/Then only where those forms improve clarity; do not force them onto every requirement.
+- Use EARS (`When`, `While`, `Where`, `If`) or Given/When/Then only where those forms improve clarity; do not force scenario syntax onto static, structural, compliance, or analysis-based properties.
+- Choose one primary verification method per requirement — Test, Analysis, Inspection, or Demonstration — with objective pass evidence; tests are preferred when behavior is machine-observable, but not every legitimate requirement is best proven by one.
+- Calibrate NFRs: quantitative performance/reliability requirements need units, operating conditions, bounds, and a measurement procedure; never invent a percentage merely to make a requirement numeric.
+- Each requirement should be necessary, singular, unambiguous, feasible, verifiable, and consistent with its neighbors — avoid subjective adjectives, compound `and/or` obligations, and absolutes the evidence cannot support.
 - Map technical approach and tests to real seams, commands, migrations, rollback, and completion evidence when applicable.
 - Preserve unresolved decisions in Open Questions rather than inventing certainty.
 </section_guidance>

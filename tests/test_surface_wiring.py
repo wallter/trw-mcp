@@ -1,8 +1,8 @@
 """Tests for surface event wiring in recall flow (PRD-CORE-103-FR01, Sprint 83 Task 5).
 
 Verifies that ``execute_recall()`` calls ``log_surface_event()`` for each
-returned learning when the query is NOT compact/wildcard, and that surface
-logging failures never break the recall flow.
+learning shown in the stubbed response, and that surface logging failures
+never break the recall flow.
 """
 
 from __future__ import annotations
@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from trw_mcp.models.config import get_config
 
@@ -43,7 +45,6 @@ def _run_execute_recall(
     *,
     query: str = "auth middleware",
     entries: list[dict[str, object]] | None = None,
-    compact: bool | None = None,
     extra_patches: dict[str, Any] | None = None,
 ) -> tuple[Any, MagicMock]:
     """Helper: run execute_recall with standard mocks and return (result, mock_log_surface).
@@ -63,9 +64,6 @@ def _run_execute_recall(
     mock_log = MagicMock()
     patch_stack = [
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
-        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
         patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
         patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
@@ -81,7 +79,6 @@ def _run_execute_recall(
             query=query,
             trw_dir=trw_dir,
             config=config,
-            compact=compact,
             _rank_by_utility=_noop_rank,
         )
     finally:
@@ -162,34 +159,23 @@ class TestRecallLogsSurfaceEvent:
 
 
 # ---------------------------------------------------------------------------
-# Tests: compact/wildcard queries NOT logged
+# Tests: wildcard queries still surface (F-002: no more compact-gated skip)
 # ---------------------------------------------------------------------------
 
 
-class TestCompactQueriesNotLogged:
-    """Compact and wildcard queries should not generate surface events."""
+class TestWildcardQueriesNotLogged:
+    """A wildcard listing is a bulk browse, not an intentional surfacing."""
 
-    def test_compact_queries_not_logged(self, tmp_path: Path) -> None:
-        """Compact queries don't generate surface events."""
-        entries = [_make_entry("L-c1"), _make_entry("L-c2")]
-        _, mock_log = _run_execute_recall(tmp_path, entries=entries, compact=True)
-
-        assert mock_log.call_count == 0
-
-    def test_wildcard_queries_not_logged(self, tmp_path: Path) -> None:
-        """Wildcard ('*') queries auto-enable compact and skip surface logging."""
-        entries = [_make_entry("L-w1")]
-        _, mock_log = _run_execute_recall(tmp_path, query="*", entries=entries)
-
-        # Wildcard auto-enables compact, so no surface events
-        assert mock_log.call_count == 0
-
-    def test_empty_query_not_logged(self, tmp_path: Path) -> None:
-        """Empty query is treated as wildcard and skips surface logging."""
-        entries = [_make_entry("L-e1")]
-        _, mock_log = _run_execute_recall(tmp_path, query="", entries=entries)
+    @pytest.mark.parametrize("query", ["*", ""])
+    def test_wildcard_query_skips_surface_logging(self, tmp_path: Path, query: str) -> None:
+        _, mock_log = _run_execute_recall(tmp_path, query=query, entries=[_make_entry("L-w1")])
 
         assert mock_log.call_count == 0
+
+    def test_focused_query_logs_only_the_shown_entries(self, tmp_path: Path) -> None:
+        _, mock_log = _run_execute_recall(tmp_path, query="auth", entries=[_make_entry("L-a1")])
+
+        assert [call.kwargs["learning_id"] for call in mock_log.call_args_list] == ["L-a1"]
 
 
 # ---------------------------------------------------------------------------
@@ -213,9 +199,6 @@ class TestSurfaceLoggingFailOpen:
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-            patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
             patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
@@ -249,9 +232,6 @@ class TestSurfaceLoggingFailOpen:
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-            patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
             patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
@@ -277,9 +257,6 @@ class TestSurfaceLoggingFailOpen:
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-            patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
             patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch(
@@ -319,9 +296,6 @@ class TestSurfacePhaseDetection:
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-            patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
             patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),
@@ -350,9 +324,6 @@ class TestSurfacePhaseDetection:
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-            patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-            patch("trw_mcp.state.recall_search.collect_context", return_value={}),
             patch("trw_mcp.tools._recall_impl._track_recall"),
             patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(list(entries), None)),
             patch("trw_mcp.tools._recall_impl.log_surface_event", mock_log),

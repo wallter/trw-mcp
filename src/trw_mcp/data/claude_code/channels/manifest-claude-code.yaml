@@ -10,8 +10,6 @@ channels:
   lock_file:
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T2
-  tier_min: T0
   markers:
     start: ''
     end: ''
@@ -47,8 +45,6 @@ channels:
   lock_file:
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T3
-  tier_min: T2
   markers:
     start: ''
     end: ''

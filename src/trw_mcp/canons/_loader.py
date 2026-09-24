@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from enum import Enum
 from typing import Final, TypeVar
 
@@ -21,7 +20,6 @@ from trw_mcp.canons._models import (
     ArtifactKind,
     CanonArtifact,
     CanonRegistry,
-    CompiledCanon,
     InstallRole,
     InstallTarget,
     SurfaceUsage,
@@ -34,23 +32,9 @@ from trw_mcp.canons._models import (
 SUPPORTED_SCHEMA_VERSION: Final[int] = 2
 MAX_MANIFEST_BYTES: Final[int] = 256 * 1024
 
-# ``authoring_source`` MEANS TWO DIFFERENT THINGS in this manifest, and the
-# shared name has already misled a consumer.
-#
-#   artifacts[].authoring_source        -> the file ``tracked_mirrors`` are copied
-#                                          FROM. For framework/aaref that is the
-#                                          GENERATED combined output.
-#   compiled_canons[].authoring_source  -> the hand-editable body carrying the
-#                                          ``trw:span`` markers (``*.source.md``).
-#
-# To change canon CONTENT, edit the compiled_canons path and recompile. Editing
-# the artifacts path edits build output — the next compile reverts it, or it
-# fails ``check_generation`` against the frozen baseline digest, and neither
-# failure names the real cause. The refine-canon-doc workflow pointed its
-# framework and aaref presets at the generated files for exactly this reason.
-#
-# The manifest schema rejects unknown fields, so this note lives here rather
-# than in the JSON.
+# ``artifacts[].authoring_source`` is the hand-edited body that ``tracked_mirrors``
+# are copied from. For framework/aaref it is ``framework.md`` / ``aaref.md``: since
+# S4 there is no compiled view and no marked source behind it, so edit it directly.
 _ARTIFACT_FIELDS: Final[frozenset[str]] = frozenset(
     {
         "id",
@@ -65,28 +49,7 @@ _ARTIFACT_FIELDS: Final[frozenset[str]] = frozenset(
 _TARGET_FIELDS: Final[frozenset[str]] = frozenset({"path", "role", "update_policy"})
 _VERSION_FIELDS: Final[frozenset[str]] = frozenset({"extractor", "config_field"})
 _SURFACE_FIELDS: Final[frozenset[str]] = frozenset({"id", "path", "selector", "usage", "expected_value", "rationale"})
-_COMPILED_FIELDS: Final[frozenset[str]] = frozenset(
-    {
-        "id",
-        "authoring_source",
-        "obligation_inventory",
-        "compact_core",
-        "reference",
-        "combined",
-        "runtime_compact_core",
-        "runtime_reference",
-        "runtime_combined",
-        "frozen_baseline_digest",
-        "max_core_ratio",
-        "compiler_schema",
-        "core_mirrors",
-        "reference_mirrors",
-    }
-)
-_TOP_FIELDS: Final[frozenset[str]] = frozenset(
-    {"schema_version", "policy", "artifacts", "version_surfaces", "compiled_canons"}
-)
-_HEX64_RE: Final = re.compile(r"^[0-9a-f]{64}$")
+_TOP_FIELDS: Final[frozenset[str]] = frozenset({"schema_version", "policy", "artifacts", "version_surfaces"})
 
 
 def canonical_json(data: object) -> str:
@@ -262,81 +225,6 @@ def _parse_surface(raw: object, index: int, seen_ids: set[str]) -> VersionSurfac
     )
 
 
-def _parse_mirror_list(obj: dict[str, object], key: str, ctx: str, seen: set[str]) -> tuple[str, ...]:
-    raw = obj.get(key, [])
-    if not isinstance(raw, list):
-        raise CanonRegistryError(CanonErrorCode.WRONG_TYPE, f"{ctx}.{key} must be a list")
-    out: list[str] = []
-    for i, item in enumerate(raw):
-        path = _safe_path(item, f"{ctx}.{key}[{i}]")
-        if path in seen:
-            raise CanonRegistryError(
-                CanonErrorCode.DUPLICATE_PATH_ROLE, f"{ctx}: generated output declared twice: {path}"
-            )
-        seen.add(path)
-        out.append(path)
-    return tuple(out)
-
-
-def _parse_compiled(raw: object, index: int, seen_ids: set[str], seen_outputs: set[str]) -> CompiledCanon:
-    ctx = f"compiled_canons[{index}]"
-    obj = _obj(raw, CanonErrorCode.NOT_AN_OBJECT, ctx)
-    _reject_unknown(obj, _COMPILED_FIELDS, ctx)
-    canon_id = _non_empty_str(_require(obj, "id", ctx), f"{ctx}.id")
-    if canon_id in seen_ids:
-        raise CanonRegistryError(CanonErrorCode.DUPLICATE_ID, f"duplicate compiled canon id: {canon_id}")
-    seen_ids.add(canon_id)
-
-    def _output(key: str) -> str:
-        path = _safe_path(_require(obj, key, ctx), f"{ctx}.{key}")
-        if path in seen_outputs:
-            raise CanonRegistryError(
-                CanonErrorCode.DUPLICATE_PATH_ROLE, f"{ctx}: generated output declared twice: {path}"
-            )
-        seen_outputs.add(path)
-        return path
-
-    authoring_source = _safe_path(_require(obj, "authoring_source", ctx), f"{ctx}.authoring_source")
-    inventory = _output("obligation_inventory")
-    compact_core = _output("compact_core")
-    reference = _output("reference")
-    combined = _safe_path(_require(obj, "combined", ctx), f"{ctx}.combined")
-    runtime_compact_core = _output("runtime_compact_core")
-    runtime_reference = _output("runtime_reference")
-    runtime_combined = _output("runtime_combined")
-
-    digest = _non_empty_str(_require(obj, "frozen_baseline_digest", ctx), f"{ctx}.frozen_baseline_digest")
-    if not _HEX64_RE.match(digest):
-        raise CanonRegistryError(
-            CanonErrorCode.MALFORMED_VALUE, f"{ctx}.frozen_baseline_digest must be a 64-char sha256 hex"
-        )
-    ratio = _require(obj, "max_core_ratio", ctx)
-    if not isinstance(ratio, (int, float)) or isinstance(ratio, bool) or not (0.0 < float(ratio) <= 1.0):
-        raise CanonRegistryError(CanonErrorCode.MALFORMED_VALUE, f"{ctx}.max_core_ratio must be a number in (0, 1]")
-    schema = _require(obj, "compiler_schema", ctx)
-    if not isinstance(schema, int) or isinstance(schema, bool) or schema < 1:
-        raise CanonRegistryError(CanonErrorCode.MALFORMED_VALUE, f"{ctx}.compiler_schema must be a positive integer")
-    core_mirrors = _parse_mirror_list(obj, "core_mirrors", ctx, seen_outputs)
-    reference_mirrors = _parse_mirror_list(obj, "reference_mirrors", ctx, seen_outputs)
-
-    return CompiledCanon(
-        id=canon_id,
-        authoring_source=authoring_source,
-        obligation_inventory=inventory,
-        compact_core=compact_core,
-        reference=reference,
-        combined=combined,
-        runtime_compact_core=runtime_compact_core,
-        runtime_reference=runtime_reference,
-        runtime_combined=runtime_combined,
-        frozen_baseline_digest=digest,
-        max_core_ratio=float(ratio),
-        compiler_schema=schema,
-        core_mirrors=core_mirrors,
-        reference_mirrors=reference_mirrors,
-    )
-
-
 def parse_registry(raw_bytes: bytes) -> CanonRegistry:
     """Parse and strictly validate registry bytes into a frozen ``CanonRegistry``.
 
@@ -371,33 +259,11 @@ def parse_registry(raw_bytes: bytes) -> CanonRegistry:
     seen_surface_ids: set[str] = set()
     surfaces = tuple(_parse_surface(s, i, seen_surface_ids) for i, s in enumerate(surfaces_raw))
 
-    compiled_raw = obj.get("compiled_canons", [])
-    if not isinstance(compiled_raw, list):
-        raise CanonRegistryError(CanonErrorCode.WRONG_TYPE, "manifest.compiled_canons must be a list")
-    seen_compiled_ids: set[str] = set()
-    seen_outputs: set[str] = set()
-    compiled = tuple(_parse_compiled(c, i, seen_compiled_ids, seen_outputs) for i, c in enumerate(compiled_raw))
-    artifacts_by_id = {artifact.id: artifact for artifact in artifacts}
-    for canon in compiled:
-        artifact = artifacts_by_id.get(canon.id)
-        if artifact is None:
-            raise CanonRegistryError(
-                CanonErrorCode.MALFORMED_VALUE,
-                f"compiled canon {canon.id!r} has no matching artifact record",
-            )
-        declared_runtime = {target.path for target in artifact.runtime_targets}
-        if canon.runtime_combined not in declared_runtime:
-            raise CanonRegistryError(
-                CanonErrorCode.MALFORMED_VALUE,
-                f"compiled canon {canon.id!r} runtime_combined is not an artifact runtime target",
-            )
-
     return CanonRegistry(
         schema_version=SUPPORTED_SCHEMA_VERSION,
         artifacts=artifacts,
         version_surfaces=surfaces,
         digest=digest_of(data),
-        compiled_canons=compiled,
     )
 
 

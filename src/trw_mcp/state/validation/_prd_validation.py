@@ -87,9 +87,9 @@ def validate_prd_quality(
 
     .. deprecated::
         Prefer ``validate_prd_quality_v2()`` which provides the full
-        multi-dimension semantic scorer (content density, structural
-        completeness, implementation readiness, traceability) and a
-        ``total_score`` on a 0-100 scale. This V1
+        multi-dimension semantic scorer (structural completeness,
+        implementation readiness, traceability; density is diagnostic only)
+        and a ``total_score`` on a 0-100 scale. This V1
         function is retained for backward compatibility and returns a
         ``completeness_score`` (0.0-1.0) based on frontmatter field presence
         and section count only.
@@ -320,7 +320,6 @@ def generate_improvement_suggestions(
     # Stub dimensions (smell_score, readability, ears_coverage) are excluded --
     # they have no scorer and will never appear in the dimensions list.
     _messages: dict[str, str] = {
-        "content_density": "Add substantive content only where execution evidence is thin -- clarify rationale, proof, or acceptance details instead of inflating prose.",
         "structural_completeness": "Complete missing sections, frontmatter fields, and required subsections so the PRD matches its category contract.",
         "implementation_readiness": "Add executable planning evidence -- primary control points, behavior switches, key files, proof tests, and completion evidence.",
         "traceability": "Add traceability links (implements, depends_on, enables), prove each behavior switch with executable tests, and populate the Traceability Matrix with implementation plus test references.",
@@ -334,7 +333,6 @@ def generate_improvement_suggestions(
     }
 
     _thresholds: dict[str, float] = {
-        "content_density": 0.50,
         "structural_completeness": 0.70,
         "implementation_readiness": 0.75,
         "traceability": 0.75,
@@ -343,11 +341,12 @@ def generate_improvement_suggestions(
         "implementation_readiness": 0,
         "traceability": 1,
         "structural_completeness": 2,
-        "content_density": 3,
     }
 
     suggestions: list[ImprovementSuggestion] = []
     for dim in dimensions:
+        if dim.name == "content_density":  # trw:intentional never ask authors to pad prose
+            continue
         ratio = dim.score / dim.max_score if dim.max_score > 0 else 1.0
         threshold = _thresholds.get(dim.name, 0.7)
         if ratio < threshold:

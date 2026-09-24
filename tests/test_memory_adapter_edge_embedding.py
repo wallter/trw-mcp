@@ -1,4 +1,8 @@
-"""Edge-case embedding and store wiring tests for state/memory_adapter.py."""
+"""Edge-case embedding and store wiring tests for state/memory_adapter.py.
+
+What ``store_learning`` embeds is the daemon's: ``memory_store_impl`` encodes
+``"<content> <detail>"`` (``trw-memory/tests/test_hybrid_runtime_wiring.py``).
+"""
 
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ from trw_mcp.state.memory_adapter import (
 )
 
 from ._memory_adapter_edge_support import trw_dir  # noqa: F401
+from ._memory_store_fake import FakeMemoryStore
 
 
 class TestEmbedText:
@@ -142,7 +147,7 @@ class TestEmbeddingAvailable:
 
 
 class TestStoreLearningTagInference:
-    def test_inferred_tags_are_appended(self, trw_dir: Path) -> None:
+    def test_inferred_tags_are_appended(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """store_learning appends inferred topic tags to user-provided tags."""
         with patch(
             "trw_mcp.state.analytics.infer_topic_tags",
@@ -157,7 +162,7 @@ class TestStoreLearningTagInference:
         assert "user-tag" in tags
         assert "inferred-tag" in tags
 
-    def test_no_inferred_tags_keeps_original(self, trw_dir: Path) -> None:
+    def test_no_inferred_tags_keeps_original(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """When infer_topic_tags returns empty, original tags are preserved."""
         with patch(
             "trw_mcp.state.analytics.infer_topic_tags",
@@ -169,7 +174,7 @@ class TestStoreLearningTagInference:
         assert entry is not None
         assert "original" in entry["tags"]
 
-    def test_none_tags_with_inference(self, trw_dir: Path) -> None:
+    def test_none_tags_with_inference(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """When user provides no tags, inferred tags are the only tags."""
         with patch(
             "trw_mcp.state.analytics.infer_topic_tags",
@@ -180,27 +185,3 @@ class TestStoreLearningTagInference:
         entry = find_entry_by_id(trw_dir, "L-ti3")
         assert entry is not None
         assert "auto-tag" in entry["tags"]
-
-
-class TestStoreLearningEmbedding:
-    def test_embed_input_is_summary_plus_detail(self, trw_dir: Path) -> None:
-        """store_learning passes 'summary detail' to the embed helper.
-
-        PRD-FIX-COMPOUNDING-2 FR02: store_learning now calls
-        ``_embed_and_store_returning`` (which RETURNS the vector so the graph
-        scheduler can reuse it) instead of the void ``_embed_and_store``.
-        """
-        with patch(
-            "trw_mcp.state.memory_adapter._embed_and_store_returning",
-            return_value=None,
-        ) as mock_embed:
-            with patch(
-                "trw_mcp.state.analytics.infer_topic_tags",
-                return_value=[],
-            ):
-                store_learning(trw_dir, "L-ei1", "My Summary", "My Detail")
-
-            mock_embed.assert_called_once()
-            call_args = mock_embed.call_args
-            assert call_args[0][1] == "L-ei1"
-            assert call_args[0][2] == "My Summary My Detail"

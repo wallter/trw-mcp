@@ -20,6 +20,7 @@ import structlog
 from trw_mcp.models.config import get_config
 from trw_mcp.state._paths import resolve_pin_key
 from trw_mcp.state._pin_store import _iso_now, get_pin_entry, upsert_pin_entry
+from trw_mcp.state._thread_hotspot import own_thread_hotspot
 from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 from trw_mcp.tools._ceremony_runtime_helpers import (
     _compute_run_age_hours,
@@ -73,20 +74,10 @@ def compute_heartbeat_result(
     run_id = run_dir.name if run_dir is not None else ""
 
     age_hours = _compute_run_age_hours(run_dir)
-    # PRD-FIX-131 operator-visibility follow-up: surface this server's own
-    # hottest-thread CPU share in-band, so a caller sees the same signal
-    # `trw-mcp doctor`'s thread_hotspots row exists to expose without waiting
-    # for a separate doctor run. Read once (not per return branch); omitted
-    # from the response entirely when unmeasurable (non-Linux, unreadable
-    # /proc) rather than shipping a fabricated zero. Imported here, not at
-    # module level: `trw_mcp.server` eagerly registers every tool (including
-    # this one) at package-init time, so a top-level import back into
-    # `trw_mcp.server` from a tool module it is still in the middle of
-    # importing is a real circular-import hazard (reproduced via
-    # `make_test_server("ceremony")`, which imports this module directly
-    # before `trw_mcp.server` has ever loaded).
-    from trw_mcp.server._doctor_thread_hotspots import own_thread_hotspot
-
+    # PRD-FIX-131 operator-visibility follow-up: this server's own hottest-thread
+    # CPU share, in-band. Read once (not per return branch); omitted from the
+    # response when unmeasurable (non-Linux, unreadable /proc) rather than
+    # shipping a fabricated zero.
     hotspot = own_thread_hotspot()
 
     if rate_limited:

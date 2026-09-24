@@ -26,7 +26,9 @@ logger = structlog.get_logger(__name__)
 PROCESS_STARTED_AT = _PROCESS_STARTED_AT
 
 
-def _read_run_events(run_path: Path, reader: FileStateReader) -> list[dict[str, object]] | None:
+def _read_run_events(
+    run_path: Path, reader: FileStateReader, *, strict: bool = False
+) -> list[dict[str, object]] | None:
     """Read events.jsonl for a run; ``None`` when the log could not be READ.
 
     Centralised helper — called once by ``check_delivery_gates`` and passed
@@ -46,14 +48,16 @@ def _read_run_events(run_path: Path, reader: FileStateReader) -> list[dict[str, 
     delivery, without ever reaching its own fail-closed branch. ``None`` is the
     uncomputable signal those callers translate into a block.
 
-    Per-line JSON damage is NOT this case: ``FileStateReader.read_jsonl`` is
-    deliberately lenient about a torn tail line and still returns the valid
-    records, which remains the right behaviour for an append-only log.
+    Per-line JSON damage is this case only under *strict*. Lenient (the default)
+    skips a torn line and returns the valid records, which is right for readers
+    that only summarise the log. The delivery gate reads BUILD EVIDENCE from it
+    and passes ``strict=True``: a skipped malformed final row would let an
+    earlier passing build check authorise the delivery (PRD-FIX-151 review).
     """
     events_path = run_path / "meta" / "events.jsonl"
     try:
         if reader.exists(events_path):
-            return reader.read_jsonl(events_path)
+            return reader.read_jsonl(events_path, strict=strict)
     except Exception:  # justified: fail-CLOSED, an unreadable log is uncomputable, not empty
         logger.warning(
             "run_events_read_failed",
@@ -355,7 +359,7 @@ def latest_build_check_failed_for_run(run_path: Path) -> bool | None:
     holds the materialised list, and threading it through would change a public
     signature owned by another module.
     """
-    return latest_build_check_failed(_read_run_events(run_path, FileStateReader()))
+    return latest_build_check_failed(_read_run_events(run_path, FileStateReader(), strict=True))
 
 
 def _read_unpinned_ceremony_state(trw_dir: Path | None) -> dict[str, object] | None | bool:
@@ -469,9 +473,14 @@ def _file_modified_since(
             except ValueError:
                 # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
                 continue
-            if not isinstance(record, dict) or str(record.get("event", "")) != "file_modified":
+            if not isinstance(record, dict) or record.get("event") not in ("file_modified", "change_evidence_unknown"):
                 continue
-            if unscoped_since is None and str(record.get("session_id", "")) != session_id:
+            # change_evidence_unknown names no session: an edit nobody could read is anyone's (T29).
+            if (
+                unscoped_since is None
+                and record.get("event") == "file_modified"
+                and str(record.get("session_id", "")) != session_id
+            ):
                 continue
             if _stamped_at_or_after(record.get("ts"), since):
                 return True
@@ -498,6 +507,46 @@ def _stamped_at_or_after(raw_ts: object, since: datetime) -> bool:
     if stamped.tzinfo is None:
         stamped = stamped.replace(tzinfo=timezone.utc)
     return stamped >= since.replace(microsecond=0)
+
+
+def _unreadable_edit_since_start(record: object) -> bool:
+    """A hook on this host saw a tool call it could not parse, since this server started.
+
+    ``post-tool-event.sh`` has no JSON parser but jq. Without jq it cannot tell
+    which tool ran, which file it touched, or whose session it was, so it records
+    ``change_evidence_unknown`` instead of guessing. No session can then prove
+    itself code-free: the count is uncomputable, never an honest zero (T29).
+    """
+    return (
+        isinstance(record, dict)
+        and record.get("event") == "change_evidence_unknown"
+        and _stamped_at_or_after(record.get("ts"), PROCESS_STARTED_AT)
+    )
+
+
+def change_evidence_unknown(repo_root: Path | None) -> bool:
+    """True when the checkout's session stream holds an unreadable edit since this server started.
+
+    Unreadable stream: True (fail closed). Absent stream: False.
+    """
+    if repo_root is None:
+        return False
+    stream = repo_root / ".trw" / "context" / "session-events.jsonl"
+    if not stream.exists():
+        return False
+    try:
+        lines = stream.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):  # justified: fail-CLOSED, an unreadable stream cannot vouch for anything
+        logger.warning("change_evidence_stream_unreadable", outcome="fail_closed", path=str(stream))
+        return True
+    for line in lines:
+        try:
+            if _unreadable_edit_since_start(json.loads(line)):
+                return True
+        except ValueError:
+            # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
+            continue
+    return False
 
 
 def unpinned_session_changed_files(
@@ -565,6 +614,9 @@ def unpinned_session_changed_files(
                 # on the pinned path.
                 # trw-fail-silent-allow: torn tail line in an append-only log, same rule as read_jsonl
                 continue
+            if _unreadable_edit_since_start(record):
+                logger.warning("unpinned_session_changes_unknown", outcome="fail_closed", reason="jq_unavailable")
+                return None
             if not isinstance(record, dict) or str(record.get("event", "")) != "file_modified":
                 continue
             # One writer, one shape: post-tool-event.sh appends flat

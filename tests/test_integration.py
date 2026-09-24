@@ -8,8 +8,25 @@ from typing import Any
 import pytest
 
 from tests._ide_detection_isolation import isolate_ide_detection
+from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_tools_sync
 from trw_mcp.state.persistence import FileStateReader
+
+
+@pytest.fixture
+def fake_memory_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeMemoryStore:
+    """Override of ``tests._memory_fixtures.fake_memory_store`` pinned to "default".
+
+    See ``tests/test_tools_learning_recall_modes.py`` for the same workaround:
+    ``store_learning`` writes under the shared fixture's ``FAKE_NAMESPACE``,
+    which ``FakeMemoryStore.recall()`` (only searches "default") never sees --
+    several tests below keyword-search what they just stored.
+    """
+    from trw_mcp.state import _store_selection
+
+    store = FakeMemoryStore()
+    monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, "default"))
+    return store
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +76,7 @@ def _get_all_tools() -> dict[str, Any]:
 class TestFullWorkflow:
     """End-to-end: init -> work -> learn -> recall -> sync CLAUDE.md."""
 
-    def test_init_learn_recall_sync(self, tmp_path: Path) -> None:
+    def test_init_learn_recall_sync(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         tools = _get_all_tools()
 
         # Step 1: Init project
@@ -77,13 +94,13 @@ class TestFullWorkflow:
 
         # Step 3: Record learnings
         tools["trw_learn"].fn(
-            summary="Integration test convention",
+            summary="Integration testing convention",
             detail="Always use tmp_path fixtures for file operations",
             tags=["testing", "convention"],
             impact=0.85,
         )
         tools["trw_learn"].fn(
-            summary="Config override pattern",
+            summary="Config override pattern for testing",
             detail="Use monkeypatch.setenv for config testing",
             tags=["testing", "config"],
             impact=0.75,
@@ -151,7 +168,7 @@ class TestFullWorkflow:
 class TestSessionLifecycle:
     """Full session lifecycle: start -> init -> checkpoint -> deliver."""
 
-    def test_full_session_lifecycle(self, tmp_path: Path) -> None:
+    def test_full_session_lifecycle(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Complete lifecycle without errors: session_start -> init -> checkpoint -> deliver."""
         tools = _get_all_tools()
 
@@ -181,21 +198,23 @@ class TestSessionLifecycle:
         # v26.1 enforce evidence mode: pass typed command_results so a valid
         # BuildReceipt is written — bare booleans no longer satisfy the gate.
         build_result = tools["trw_build_check"].fn(
-            run_path=run_path,
             tests_passed=True,
             static_checks_clean=True,
             scope="full",
-            command_results=[
-                {
-                    "command_id": "tests",
-                    "label": "pytest",
-                    "command_class": "test",
-                    "exit_code": 0,
-                    "test_count": 1,
-                    "failure_count": 0,
-                },
-                {"command_id": "static_checks", "label": "mypy+ruff", "command_class": "static", "exit_code": 0},
-            ],
+            options={
+                "run_path": run_path,
+                "command_results": [
+                    {
+                        "command_id": "tests",
+                        "label": "pytest",
+                        "command_class": "test",
+                        "exit_code": 0,
+                        "test_count": 1,
+                        "failure_count": 0,
+                    },
+                    {"command_id": "static_checks", "label": "mypy+ruff", "command_class": "static", "exit_code": 0},
+                ],
+            },
         )
         assert build_result["tests_passed"] is True
 
@@ -208,7 +227,7 @@ class TestSessionLifecycle:
         # CORE-093 FR06: critical path is reflect + checkpoint (claude_md_sync removed)
         assert deliver_result["critical_steps_completed"] >= 2
 
-    def test_fresh_project_session_start(self, tmp_path: Path) -> None:
+    def test_fresh_project_session_start(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """session_start on empty .trw/ returns zero learnings, no active run."""
         tools = _get_all_tools()
 
@@ -221,7 +240,7 @@ class TestSessionLifecycle:
         run_info = result["run"]
         assert run_info["active_run"] is None
 
-    def test_learn_then_recall_roundtrip(self, tmp_path: Path) -> None:
+    def test_learn_then_recall_roundtrip(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """Write a learning then recall it by keyword."""
         tools = _get_all_tools()
 
@@ -239,16 +258,14 @@ class TestSessionLifecycle:
         # Recall by keyword
         recall_result = tools["trw_recall"].fn(query="roundtrip")
         assert recall_result["total_matches"] >= 1
-        summaries = [
-            entry["summary"] for entry in recall_result["learnings"] if "roundtrip" in entry["summary"].lower()
-        ]
+        summaries = [entry["claim"] for entry in recall_result["learnings"] if "roundtrip" in entry["claim"].lower()]
         assert len(summaries) >= 1
 
 
 class TestMultiSessionSimulation:
     """Simulate multiple sessions to verify knowledge accumulation."""
 
-    def test_knowledge_accumulates(self, tmp_path: Path) -> None:
+    def test_knowledge_accumulates(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         tools = _get_all_tools()
 
         # Session 1: Init and learn

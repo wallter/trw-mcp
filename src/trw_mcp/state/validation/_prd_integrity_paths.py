@@ -12,7 +12,7 @@ import structlog
 from trw_mcp.models.config import get_config
 from trw_mcp.models.requirements import ValidationFailure
 from trw_mcp.state.validation._path_exclusions import PATH_INDEX_EXCLUDE_DIRS
-from trw_mcp.state.validation._prd_path_markers import has_trailing_planned_marker
+from trw_mcp.state.validation._prd_path_markers import has_trailing_planned_marker, yaml_planned_paths
 
 logger = structlog.get_logger(__name__)
 
@@ -180,16 +180,12 @@ def _extract_repo_path_refs(content: str) -> list[str]:
 
 
 def _repo_path_ref_existence_requirements(content: str) -> dict[str, bool]:
-    """Map each normalized path to whether any occurrence requires existence.
-
-    A trailing planned marker exempts only its own occurrence. Repeated paths are
-    therefore still checked when another occurrence is unmarked.
-    """
-    requirements: dict[str, bool] = {}
+    """Map each path to existence need; one planned marker exempts every repeat."""
+    requirements: dict[str, bool] = dict.fromkeys(yaml_planned_paths(content), False)
     for match in _BACKTICK_RE.finditer(content):
         candidate = _normalize_repo_path(match.group(1))
         if candidate:
-            requirements[candidate] = requirements.get(candidate, False) or not has_trailing_planned_marker(
+            requirements[candidate] = requirements.get(candidate, True) and not has_trailing_planned_marker(
                 content, match.end()
             )
     return requirements

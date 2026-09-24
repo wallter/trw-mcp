@@ -1,13 +1,13 @@
-"""Semantic deduplication for learning entries — PRD-CORE-042.
+"""trw_learn's adapter onto trw-memory's dedup — PRD-CORE-042, PRD-CORE-291.
 
-Prevents near-duplicate learnings using embedding cosine similarity.
-Three-tier decision: skip (>=0.95), merge (>=0.85), store (<0.85).
+``trw_memory.lifecycle.dedup`` is the one dedup implementation: thresholds, the
+skip/merge/store classification and the lossless merge live there. This module
+keeps only what trw-memory cannot own: the ``.trw/learnings`` YAML sidecars, the
+backend KNN scoped to ``DEFAULT_NAMESPACE`` and to the loaded embedding space,
+the embedding-independent exact-content pre-check, and the post-merge re-embed.
 
-Uses sqlite-vec KNN search when available (sub-ms); falls back to
-linear YAML scan when the backend is unavailable.
-
-Obsolete entries are checked for skip (>=0.95) but NOT for merge,
-preventing runaway re-learning of content surfaced by session_start.
+Obsolete entries are checked for skip but NOT for merge, preventing runaway
+re-learning of content surfaced by session_start.
 """
 
 from __future__ import annotations
@@ -15,51 +15,100 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NamedTuple, cast
+from typing import cast
 
 import structlog
-from trw_memory.retrieval.dense import cosine_similarity
+from trw_memory.lifecycle.dedup import DedupResult, _validated_thresholds, check_duplicate, merge_entries
+from trw_memory.models.config import MemoryConfig
+from trw_memory.models.entry_factory import new_entry
+from trw_memory.models.memory import (
+    Assertion,
+    AssertionType,
+    Confidence,
+    MemoryEntry,
+    MemoryStatus,
+    MemoryType,
+    ProtectionTier,
+)
 
 from trw_mcp.exceptions import StateError
-from trw_mcp.models.config import TRWConfig, get_config
-from trw_mcp.models.typed_dicts import BatchDedupResult
+from trw_mcp.models.config import TRWConfig
 from trw_mcp.state._constants import DEFAULT_NAMESPACE
-from trw_mcp.state._dedup_protection import _merge_protection_fields
-from trw_mcp.state._embedding_space import comparable_hits, loaded_space_threshold
+from trw_mcp.state._embedding_space import loaded_embedding_space
 from trw_mcp.state._helpers import iter_yaml_entry_files
 from trw_mcp.state.memory_adapter import embed_text as embed
-from trw_mcp.state.memory_adapter import embedding_available
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 logger = structlog.get_logger(__name__)
 
-# Re-export so existing importers (tiers.py, consolidation.py) keep working.
-__all__ = ["DedupResult", "batch_dedup", "check_duplicate", "cosine_similarity", "is_migration_needed", "merge_entries"]
+__all__ = ["DedupResult", "dedup_verdict", "merge_into_survivor"]
+
+_CONFIDENCES = {c.value for c in Confidence}
 
 
-class DedupResult(NamedTuple):
-    """Result of a deduplication check.
+class _SeamEmbedder:
+    """trw-memory ``EmbeddingProvider`` over this module's ``embed`` seam.
 
-    Attributes:
-        action: One of "skip", "merge", or "store".
-        existing_id: ID of the matched entry (for skip/merge), None for store.
-        similarity: Highest cosine similarity found (0.0 when no match).
+    Its model id is the LOADED encoder's, so trw-memory translates the configured
+    reference-scale thresholds to the scale of the vectors actually compared.
     """
 
-    action: str  # "skip" | "merge" | "store"
-    existing_id: str | None
-    similarity: float
+    def __init__(self, text: str, vector: list[float]) -> None:
+        from trw_mcp.state import _memory_connection as conn
+
+        self.model_name = getattr(conn.get_initialized_embedder(), "model_name", None)
+        self._known = {text: vector}  # the new learning is embedded once, not twice
+
+    def available(self) -> bool:
+        return True
+
+    def embed(self, text: str) -> list[float] | None:
+        return self._known.get(text) or embed(text)
+
+    def embed_batch(self, texts: list[str]) -> list[list[float] | None]:
+        return [embed(text) for text in texts]
+
+    def dim(self) -> int:
+        return 0
 
 
-def _distance_to_similarity(distance: float) -> float:
-    """Convert sqlite-vec L2 distance to cosine similarity.
+def _strs(value: object) -> list[str]:
+    return [str(item) for item in cast("list[object]", value or [])]
 
-    For unit-normalized vectors (which the local embedder produces via
-    ``normalize_embeddings=True``), the relationship is:
-    ``distance² = 2 * (1 - cosine_similarity)``
-    so ``cosine_similarity = 1 - distance² / 2``.
+
+def _entry_view(data: dict[str, object], *, status: MemoryStatus = MemoryStatus.ACTIVE) -> MemoryEntry:
+    """The merge-relevant fields of a YAML sidecar as a ``MemoryEntry``.
+
+    Confidence values trw-memory does not model (``hypothesis``) read as its weakest
+    known level; :func:`merge_into_survivor` restores the raw value when it survives.
     """
-    return 1.0 - (distance * distance) / 2.0
+    confidence = str(data.get("confidence") or "unverified")
+    raw_assertions = data.get("assertions")
+    return new_entry(
+        entry_id=str(data.get("id") or "unknown"),
+        content=str(data.get("summary", "")),
+        namespace=DEFAULT_NAMESPACE,
+        local_node_id="trw-mcp-dedup-view",
+        fields={
+            "detail": str(data.get("detail", "")),
+            "tags": _strs(data.get("tags")),
+            "evidence": _strs(data.get("evidence")),
+            "importance": min(max(float(str(data.get("impact", 0.5))), 0.0), 1.0),
+            "recurrence": max(int(str(data.get("recurrence", 1))), 0),
+            "merged_from": _strs(data.get("merged_from")),
+            "status": status,
+            "protection_tier": ProtectionTier(str(data.get("protection_tier") or "normal")),
+            "confidence": Confidence(confidence if confidence in _CONFIDENCES else "unverified"),
+            "type": MemoryType(str(data.get("type") or "pattern")),
+            "assertions": [
+                Assertion(
+                    type=AssertionType(str(a["type"])), pattern=str(a.get("pattern", "")), target=str(a["target"])
+                )
+                for a in (raw_assertions if isinstance(raw_assertions, list) else [])
+                if isinstance(a, dict)
+            ],
+        },
+    )
 
 
 def _check_duplicate_via_backend(
@@ -68,104 +117,75 @@ def _check_duplicate_via_backend(
     skip_threshold: float,
     merge_threshold: float,
 ) -> DedupResult | None:
-    """Try KNN dedup via the sqlite-vec backend (fast path).
+    """KNN verdict from the checkout's store, or None to fall back to the YAML scan.
 
-    Returns a DedupResult if the backend is available and produces a
-    definitive answer, or None to signal the caller should fall back
-    to the YAML linear scan.
-
-    Obsolete/resolved entries trigger ``skip`` (>= skip_threshold) but
-    never ``merge``, preventing runaway re-learning of content that was
-    already recorded and later obsoleted.
+    PRD-CORE-245: the KNN is scoped to this project's namespace, and only
+    neighbours encoded in new_vector's space are comparable — ``store.similar``
+    returning None means the dense verdict would be incomplete.
     """
     try:
-        from trw_mcp.state.memory_adapter import get_backend
+        from trw_mcp.state._store_selection import selected_store
 
-        backend = get_backend(trw_dir)
-        # Ask for more candidates than we strictly need so we can
-        # filter by status and still find the best match.
-        # PRD-CORE-245: scope the KNN to this project's namespace. An unscoped
-        # dense search can surface an id whose canonical row belongs to another
-        # namespace, and a dedup verdict computed against a foreign row is both
-        # a leak and wrong.
-        hits = backend.search_vectors(new_vector, top_k=10, namespace=DEFAULT_NAMESPACE)
-        if not hits:
-            return None  # No vectors indexed yet — fall back to YAML
-        # Only neighbours encoded in new_vector's space are comparable. None: the
-        # dense verdict would be incomplete, so the exhaustive YAML scan decides.
-        admitted = comparable_hits(backend, hits, namespace=DEFAULT_NAMESPACE, surface="trw_learn_dedup")
-        if admitted is None:
-            return None
-        hits = admitted
-
-        best_similarity = 0.0
-        best_id: str | None = None
-        best_is_active = False
-
-        for entry_id, distance in hits:
-            sim = _distance_to_similarity(distance)
-            if sim <= best_similarity:
-                continue
-
-            entry = backend.get(entry_id, namespace=DEFAULT_NAMESPACE)
-            if entry is None:
-                continue
-
-            is_active = str(entry.status.value if hasattr(entry.status, "value") else entry.status) == "active"
-
-            best_similarity = sim
-            best_id = entry_id
-            best_is_active = is_active
-
-        if best_id is not None and best_similarity >= skip_threshold:
-            # Skip against both active AND obsolete entries
-            return DedupResult("skip", best_id, best_similarity)
-        if best_id is not None and best_similarity >= merge_threshold and best_is_active:
-            # Merge only into active entries
-            return DedupResult("merge", best_id, best_similarity)
-
-        return DedupResult("store", None, best_similarity)
-
+        store, namespace = selected_store(trw_dir)
+        window = store.similar(namespace, new_vector, loaded_embedding_space(), 10)
+        if window.size == 0 or window.hits is None:
+            return None  # Nothing indexed yet, or an incomplete window: the YAML scan decides
+        if not window.hits:
+            # No loaded space (nothing is comparable) or no neighbour row left: no scan either.
+            return DedupResult("store", None, 0.0)
+        best = max(window.hits, key=lambda hit: hit.similarity)
+        if best.similarity >= skip_threshold:
+            return DedupResult("skip", best.entry_id, best.similarity)
+        if best.similarity >= merge_threshold and best.active:
+            return DedupResult("merge", best.entry_id, best.similarity)
+        return DedupResult("store", None, max(best.similarity, 0.0))
     except Exception:  # trw-fail-silent-allow: fail-open to the YAML scan when the backend is unavailable
         logger.debug("dedup_backend_unavailable_fallback_to_yaml", exc_info=True)
         return None
 
 
 def _check_exact_content_duplicate(summary: str, detail: str, entries_dir: Path) -> str | None:
-    """Embedding-independent exact-content duplicate lookup.
-
-    Queries the primary backend for an ACTIVE entry whose content (summary)
-    and detail match byte-for-byte. Returns the existing id on a hit, or None
-    (no match, or backend unavailable — fail-open so storage proceeds).
-
-    ``entries_dir`` is ``.trw/learnings/entries``; the backend is resolved
-    from its grandparent (``.trw``), matching the embedding fast path.
-    """
+    """Id of an ACTIVE entry whose summary and detail match byte-for-byte (fail-open None)."""
     try:
-        from trw_mcp.state.memory_adapter import get_backend
+        from trw_mcp.state._store_selection import selected_store
 
-        trw_dir = entries_dir.parent.parent
-        backend = get_backend(trw_dir)
-        return backend.find_active_by_content(summary, detail)
-    except Exception:  # justified: fail-open, exact dedup must never block storage when backend is unavailable
+        store, namespace = selected_store(entries_dir.parent.parent)
+        return store.find_duplicate(namespace, summary, detail)
+    except Exception:  # trw-fail-silent-allow: fail-open; exact dedup must never block storage when the backend is unavailable (logged)
         logger.debug("dedup_exact_content_unavailable", exc_info=True)
         return None
 
 
-def _thresholds(skip: float, merge: float) -> tuple[float, float]:
-    """FR06-valid (skip, merge), translated to the loaded embedder's cosine scale.
+def _yaml_scan(
+    summary: str, detail: str, entries_dir: Path, reader: FileStateReader, embedder: _SeamEmbedder, config: MemoryConfig
+) -> DedupResult:
+    """Exhaustive verdict over the YAML sidecars, classified by trw-memory.
 
-    Merge must be strictly below skip, else both fall back to the defaults.
-    Configured values are on the reference-encoder scale (trw-memory's
-    ``calibrated_threshold``); the loaded embedder decides the translation.
+    Every status is offered as a candidate so an obsolete near-copy still earns
+    ``skip``; a ``merge`` into a non-active best match is refused afterwards.
     """
-    if merge >= skip:
-        logger.warning("dedup_threshold_invalid", merge=merge, skip=skip)
-        skip, merge = 0.95, 0.85
-    return loaded_space_threshold(skip), loaded_space_threshold(merge)
+    views: list[MemoryEntry] = []
+    statuses: dict[str, str] = {}
+    for yaml_file in iter_yaml_entry_files(entries_dir) if entries_dir.exists() else ():
+        try:
+            data = reader.read_yaml(yaml_file)
+            view = _entry_view(data)
+        except (
+            OSError,
+            StateError,
+            ValueError,
+            KeyError,
+        ):  # trw-fail-silent-allow: an unreadable sidecar is not a duplicate candidate
+            continue
+        views.append(view)
+        statuses[view.id] = str(data.get("status", "active"))
+    result = check_duplicate(summary, views, embedder, detail=detail, config=config)
+    if result.action == "merge" and statuses.get(result.existing_id or "") != "active":
+        return DedupResult("store", None, result.similarity)
+    return result
 
 
-def check_duplicate(
+def dedup_verdict(
     summary: str,
     detail: str,
     entries_dir: Path,
@@ -173,130 +193,50 @@ def check_duplicate(
     *,
     config: TRWConfig | None = None,
 ) -> DedupResult:
-    """Check if a new learning is a duplicate of an existing entry.
+    """Skip, merge or store for a new learning.
 
-    Two-tier strategy:
-    1. **Fast path** (sqlite-vec): KNN search via the memory backend.
-       Sub-millisecond, status-agnostic — filters status *after* retrieval.
-    2. **Fallback** (YAML scan): Linear scan of entry files when the
-       backend is unavailable.
-
-    In both paths, obsolete/resolved entries trigger ``skip`` (>= 0.95)
-    but never ``merge``, preventing the runaway re-learning loop where
-    session_start injects content → agent re-learns it → deliver
-    obsoletes it → next session repeats.
-
-    Args:
-        summary: Summary of the new learning.
-        detail: Detail of the new learning.
-        entries_dir: Path to the entries directory.
-        reader: FileStateReader for reading existing entries.
-        config: TRWConfig with dedup thresholds. Uses defaults if None.
-
-    Returns:
-        DedupResult with action ("skip", "merge", or "store"), existing_id,
-        and similarity score.
+    1. exact-content match (embedding-independent) → ``merge`` at 1.0;
+    2. embeddings disabled or unavailable → ``store``;
+    3. backend KNN when it gives a complete answer, else the YAML scan.
     """
     _t0 = time.monotonic()
     cfg = config or TRWConfig()
 
-    # --- Embedding-INDEPENDENT exact-content dedup (PRD-CORE-042) ---
-    # Runs BEFORE the embeddings gate so default installs (embeddings_enabled
-    # defaults to False) still collapse byte-identical re-learns instead of
-    # accumulating exact duplicates. Returns "merge" (not "skip") so the new
-    # entry's tags/evidence/impact still fold into the survivor.
+    # Runs BEFORE the embeddings gate so default installs (embeddings off) still
+    # collapse byte-identical re-learns. "merge", not "skip", so the new entry's
+    # tags/evidence/impact still fold into the survivor.
     exact_id = _check_exact_content_duplicate(summary, detail, entries_dir)
     if exact_id is not None:
-        logger.debug(
-            "dedup_exact_content_match",
-            duration_ms=round((time.monotonic() - _t0) * 1000, 2),
-            existing_id=exact_id,
-            path="exact",
-        )
+        logger.debug("dedup_exact_content_match", existing_id=exact_id, path="exact")
         return DedupResult("merge", exact_id, 1.0)
-
-    # Respect embeddings_enabled config — fuzzy dedup requires embeddings
     if not cfg.embeddings_enabled:
         return DedupResult("store", None, 0.0)
-
-    # Generate embedding for the new learning
     new_text = summary + " " + detail
     new_vector = embed(new_text)
-
     if new_vector is None:
         logger.debug("dedup_embed_unavailable", text_len=len(new_text))
         return DedupResult("store", None, 0.0)
-    # After embed(): the embedder that produced new_vector sets the cosine scale.
-    skip_threshold, merge_threshold = _thresholds(cfg.dedup_skip_threshold, cfg.dedup_merge_threshold)
 
-    # --- Fast path: sqlite-vec KNN search ---
-    # Resolve .trw dir from entries_dir (entries_dir = trw_dir / learnings / entries)
-    trw_dir = entries_dir.parent.parent
-    backend_result = _check_duplicate_via_backend(new_vector, trw_dir, skip_threshold, merge_threshold)
-    if backend_result is not None:
-        logger.debug(
-            "dedup_check_complete",
-            duration_ms=round((time.monotonic() - _t0) * 1000, 2),
-            action=backend_result.action,
-            similarity=round(backend_result.similarity, 4),
-            path="backend",
-        )
-        return backend_result
-
-    # --- Fallback: YAML linear scan ---
-    best_similarity = 0.0
-    best_id: str | None = None
-    best_is_active = False
-
-    if not entries_dir.exists():
-        return DedupResult("store", None, 0.0)
-
-    for yaml_file in iter_yaml_entry_files(entries_dir):
-        if yaml_file.name == "index.yaml":
-            continue
-        try:
-            data = reader.read_yaml(yaml_file)
-        except (OSError, StateError):
-            continue
-
-        entry_status = str(data.get("status", "active"))
-        is_active = entry_status == "active"
-
-        entry_summary = str(data.get("summary", ""))
-        entry_detail = str(data.get("detail", ""))
-        entry_text = entry_summary + " " + entry_detail
-
-        entry_vector = embed(entry_text)
-        if entry_vector is None:
-            continue
-
-        sim = cosine_similarity(new_vector, entry_vector)
-        if sim > best_similarity:
-            best_similarity = sim
-            best_id = str(data.get("id", ""))
-            best_is_active = is_active
-
-    # Determine action based on thresholds + status
-    if best_id is not None and best_similarity >= skip_threshold:
-        # Skip against both active AND obsolete entries
-        result = DedupResult("skip", best_id, best_similarity)
-    elif best_id is not None and best_similarity >= merge_threshold and best_is_active:
-        # Merge only into active entries
-        result = DedupResult("merge", best_id, best_similarity)
-    else:
-        result = DedupResult("store", None, best_similarity)
-
+    embedder = _SeamEmbedder(new_text, new_vector)
+    mem_cfg = MemoryConfig(
+        dedup_skip_threshold=cfg.dedup_skip_threshold, dedup_merge_threshold=cfg.dedup_merge_threshold
+    )
+    skip_threshold, merge_threshold = _validated_thresholds(mem_cfg, embedder)
+    result = _check_duplicate_via_backend(new_vector, entries_dir.parent.parent, skip_threshold, merge_threshold)
+    path = "backend"
+    if result is None:
+        result, path = _yaml_scan(summary, detail, entries_dir, reader, embedder, mem_cfg), "yaml_fallback"
     logger.debug(
         "dedup_check_complete",
         duration_ms=round((time.monotonic() - _t0) * 1000, 2),
         action=result.action,
         similarity=round(result.similarity, 4),
-        path="yaml_fallback",
+        path=path,
     )
     return result
 
 
-def merge_entries(
+def merge_into_survivor(
     existing_path: Path,
     new_entry_data: dict[str, object],
     reader: FileStateReader,
@@ -306,299 +246,57 @@ def merge_entries(
     existing_data: dict[str, object] | None = None,
     merged_out: dict[str, object] | None = None,
 ) -> Path:
-    """Merge a new learning into an existing entry.
+    """Fold *new_entry_data* into the survivor sidecar with trw-memory's lossless merge.
 
-    PRD-FIX-130-FR07 read bound: ``existing_data`` accepts the survivor body the
-    caller ALREADY parsed while resolving its path, and ``merged_out`` receives
-    the merged body so the caller does not have to read the file back. Both are
-    optional; omitting them keeps the original read-then-write behaviour.
-
-    Merge strategy:
-    - Tags: union of both sets, capped at max_merge_tags (FIX-071-FR04)
-    - Evidence: union of both sets
-    - Impact: max(existing, new)
-    - Recurrence: existing + 1
-    - Detail: append the new detail under a "Merged from" audit header that also
-      carries a differing incoming summary (CORE-042-FR03)
-    - merged_from: append new entry's ID
-    - updated: today's date
-
-    Args:
-        existing_path: Path to the existing YAML entry file.
-        new_entry_data: Dictionary of the new entry's fields.
-        reader: FileStateReader for reading the existing entry.
-        writer: FileStateWriter for writing the updated entry.
-        max_merge_tags: Maximum tags after merge (default 20). Existing tags
-            are preserved first; new tags added up to the limit.
-
-    Returns:
-        Path to the updated entry file (same as existing_path).
+    PRD-FIX-130-FR07: ``existing_data`` is the body the caller already parsed and
+    ``merged_out`` receives the merged body, so the file is read at most once.
+    Only merge-owned keys are rewritten; every other sidecar key is preserved.
+    Tags stay capped at *max_merge_tags*, existing tags first (FIX-071-FR04).
     """
     existing = reader.read_yaml(existing_path) if existing_data is None else existing_data
+    survivor = _entry_view(existing)
+    incoming = _entry_view(new_entry_data)
+    merged = merge_entries(survivor, incoming)
 
-    # Tags: union, capped at max_merge_tags (FIX-071-FR04)
-    raw_existing_tags = existing.get("tags") or []
-    raw_new_tags = new_entry_data.get("tags") or []
-    existing_tags = [str(t) for t in cast("list[object]", raw_existing_tags)]
-    new_tags = [str(t) for t in cast("list[object]", raw_new_tags)]
-    merged_tags = list(dict.fromkeys(existing_tags + [t for t in new_tags if t not in existing_tags]))
-    # FIX-071-FR04: Cap tag count — preserve existing tags, add new up to limit
-    if len(merged_tags) > max_merge_tags:
-        merged_tags = merged_tags[:max_merge_tags]
-    existing["tags"] = merged_tags
-
-    # Evidence: union
-    raw_existing_ev = existing.get("evidence") or []
-    raw_new_ev = new_entry_data.get("evidence") or []
-    existing_evidence = [str(e) for e in cast("list[object]", raw_existing_ev)]
-    new_evidence = [str(e) for e in cast("list[object]", raw_new_ev)]
-    merged_evidence = list(dict.fromkeys(existing_evidence + [e for e in new_evidence if e not in existing_evidence]))
-    existing["evidence"] = merged_evidence
-
-    # Impact: max
-    existing_impact = float(str(existing.get("impact", 0.5)))
-    new_impact = float(str(new_entry_data.get("impact", 0.5)))
-    existing["impact"] = max(existing_impact, new_impact)
-
-    # Recurrence: increment
-    existing_recurrence = int(str(existing.get("recurrence", 1)))
-    existing["recurrence"] = existing_recurrence + 1
-
-    # Detail: append if new detail is longer, with audit trail format (FR03)
-    existing_detail = str(existing.get("detail", ""))
-    new_detail = str(new_entry_data.get("detail", ""))
-    new_id = str(new_entry_data.get("id", "unknown"))
-    today = datetime.now(tz=timezone.utc).date().isoformat()
-    # PRD-CORE-042-FR03: the survivor keeps its summary; the incoming detail is
-    # always appended, whatever its length, and an incoming summary that differs
-    # rides on the audit header, so neither is lost to the merge.
-    new_summary = " ".join(str(new_entry_data.get("summary", "")).split())  # one header line
-    kept_summary = (
-        new_summary if new_summary and new_summary != " ".join(str(existing.get("summary", "")).split()) else ""
+    by_key = {
+        (str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", ""))): a
+        for a in cast("list[object]", existing.get("assertions") or [])
+        + cast("list[object]", new_entry_data.get("assertions") or [])
+        if isinstance(a, dict)
+    }
+    if new_entry_data.get("assertions"):
+        existing["assertions"] = [by_key[(str(a.type), a.pattern, a.target)] for a in merged.assertions]
+    raw_confidence = str(existing.get("confidence") or "unverified")
+    existing.update(
+        tags=merged.tags[:max_merge_tags],
+        evidence=merged.evidence,
+        impact=merged.importance,
+        recurrence=merged.recurrence,
+        detail=merged.detail,
+        merged_from=merged.merged_from,
+        protection_tier=str(merged.protection_tier),
+        confidence=raw_confidence if merged.confidence == survivor.confidence else str(merged.confidence),
+        type=str(merged.type),
+        updated=datetime.now(tz=timezone.utc).date().isoformat(),
     )
-    if new_detail and new_detail in existing_detail:
-        new_detail = ""  # already present verbatim: skipping it is lossless and stops recurrence growth
-    if new_detail or kept_summary:
-        header = f"Merged from {new_id} on {today}:" + (f" {kept_summary}" if kept_summary else "")
-        body = header + "\n" + new_detail if new_detail else header
-        if existing_detail:
-            existing["detail"] = existing_detail + "\n---\n" + body
-        else:
-            existing["detail"] = body if kept_summary else new_detail
-
-    # Assertions: union by (type, pattern, target) tuple (PRD-CORE-086 FR05)
-    raw_existing_assertions = existing.get("assertions") or []
-    raw_new_assertions = new_entry_data.get("assertions") or []
-    if raw_new_assertions and isinstance(raw_new_assertions, list):
-        existing_assertions = list(raw_existing_assertions) if isinstance(raw_existing_assertions, list) else []
-        seen_keys: set[tuple[str, str, str]] = set()
-        for a in existing_assertions:
-            if isinstance(a, dict):
-                seen_keys.add((str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", ""))))
-        for a in raw_new_assertions:
-            if isinstance(a, dict):
-                key = (str(a.get("type", "")), str(a.get("pattern", "")), str(a.get("target", "")))
-                if key not in seen_keys:
-                    existing_assertions.append(a)
-                    seen_keys.add(key)
-        existing["assertions"] = existing_assertions
-
-    # Typed fields (PRD-CORE-110): keep the STRONGER protection so merging a
-    # high-tier/verified/incident new entry into a normal/unverified/pattern
-    # survivor never silently downgrades it.
-    _merge_protection_fields(existing, new_entry_data)
-
-    # merged_from: append new entry ID
-    raw_merged_from = existing.get("merged_from") or []
-    existing_merged_from = [str(x) for x in cast("list[object]", raw_merged_from)]
-    if new_id and new_id not in existing_merged_from:
-        existing_merged_from.append(new_id)
-    existing["merged_from"] = existing_merged_from
-
-    # updated: today
-    existing["updated"] = today
-
     writer.write_yaml(existing_path, existing)
     if merged_out is not None:
         merged_out.update(existing)
-    logger.debug(
-        "dedup_merge_complete",
-        existing_id=str(existing.get("id", "")),
-        new_id=new_id,
-        recurrence=existing["recurrence"],
-    )
 
-    # FR03: Re-compute embedding for merged entry and update sqlite-vec if available
+    # CORE-042-FR03: re-embed the merged entry into the sqlite-vec index.
     try:
-        from trw_mcp.state.memory_adapter import embed_text as _embed
         from trw_mcp.state.memory_store import MemoryStore
 
         if MemoryStore.available():
-            merged_text = str(existing.get("summary", "")) + " " + str(existing.get("detail", ""))
-            new_embedding = _embed(merged_text)
+            new_embedding = embed(str(existing.get("summary", "")) + " " + merged.detail)
             if new_embedding is not None:
                 from trw_mcp.state._paths import resolve_memory_store_path
 
-                store_path = resolve_memory_store_path()
-                store = MemoryStore(store_path)
+                store = MemoryStore(resolve_memory_store_path())
                 try:
                     store.upsert(str(existing.get("id", "")), new_embedding, {})
                 finally:
                     store.close()
     except (ImportError, OSError, ValueError):
         logger.debug("dedup_reindex_skipped", exc_info=True)  # justified: fail-open, best-effort re-indexing
-
     return existing_path
-
-
-def is_migration_needed(trw_dir: Path) -> bool:
-    """Check if batch dedup migration has been run.
-
-    Args:
-        trw_dir: Path to the .trw directory.
-
-    Returns:
-        True if migration has NOT been run yet (marker missing), False otherwise.
-    """
-    cfg = get_config()
-    marker = trw_dir / cfg.learnings_dir / "dedup_migration.yaml"
-    return not marker.exists()
-
-
-def _skipped(reason: str) -> BatchDedupResult:
-    """Report a batch-dedup early return — PRD-FIX-130-FR05.
-
-    These paths decline to write the completion marker because the work did not
-    happen. Ordinary capture and journal recovery no longer schedule this
-    whole-corpus operation; an explicit maintenance caller can inspect the
-    outcome and decide whether to retry. Writing a marker for skipped work
-    would falsely claim completion, so skipped outcomes remain visible at INFO.
-    """
-    logger.info("batch_dedup_skipped", reason=reason)
-    return BatchDedupResult(status="skipped", reason=reason)
-
-
-def batch_dedup(
-    trw_dir: Path,
-    reader: FileStateReader,
-    writer: FileStateWriter,
-    *,
-    config: TRWConfig | None = None,
-) -> BatchDedupResult:
-    """One-time batch deduplication of existing learning entries — FR05.
-
-    Scans all active entries, computes pairwise similarity, merges
-    near-duplicates using the same merge strategy as check_duplicate.
-    Writes a migration marker when complete.
-
-    Args:
-        trw_dir: Path to the .trw directory.
-        reader: FileStateReader for reading entry files.
-        writer: FileStateWriter for writing updated entry files.
-        config: TRWConfig with dedup thresholds. Uses defaults if None.
-
-    Returns:
-        Dict with status, entries_scanned, entries_merged, entries_skipped.
-    """
-    _t0 = time.monotonic()
-    cfg = config or get_config()
-
-    # Respect embeddings_enabled config — batch dedup requires embeddings
-    if not cfg.embeddings_enabled:
-        return _skipped("embeddings not enabled in config")
-
-    entries_dir = trw_dir / cfg.learnings_dir / cfg.entries_dir
-    if not entries_dir.exists():
-        return _skipped("no entries directory")
-
-    if not embedding_available():
-        return _skipped("embeddings unavailable")
-
-    # Load all active entries with their embeddings
-    active_entries: list[tuple[Path, dict[str, object], list[float] | None]] = []
-    for yaml_file in iter_yaml_entry_files(entries_dir):
-        try:
-            data = reader.read_yaml(yaml_file)
-            if str(data.get("status", "active")) != "active":
-                continue
-            text = str(data.get("summary", "")) + " " + str(data.get("detail", ""))
-            vec = embed(text)
-            active_entries.append((yaml_file, data, vec))
-        except (OSError, StateError, ValueError):
-            continue
-
-    # PRD-FIX-130-FR05: announce the scan BEFORE the O(N^2) comparison, carrying
-    # the entry count it is about to run over. A 300-second scan that logs
-    # nothing at the default level is indistinguishable from a hang — which is
-    # exactly how it was misread as journal-drain cost (PC-3).
-    logger.info("batch_dedup_started", entries=len(active_entries))
-
-    merged_count = 0
-    skipped_ids: set[str] = set()
-    skip_threshold, merge_threshold = _thresholds(cfg.dedup_skip_threshold, cfg.dedup_merge_threshold)
-
-    for i in range(len(active_entries)):
-        path_i, data_i, vec_i = active_entries[i]
-        id_i = str(data_i.get("id", ""))
-        if id_i in skipped_ids or vec_i is None:
-            continue
-
-        for j in range(i + 1, len(active_entries)):
-            path_j, data_j, vec_j = active_entries[j]
-            id_j = str(data_j.get("id", ""))
-            if id_j in skipped_ids or vec_j is None:
-                continue
-
-            sim = cosine_similarity(vec_i, vec_j)
-
-            if sim >= skip_threshold:
-                # Exact duplicate — mark newer as obsolete
-                data_j["status"] = "obsolete"
-                data_j["detail"] = (
-                    str(data_j.get("detail", "")) + f"\n[Auto-obsoleted: duplicate of {id_i}, similarity={sim:.3f}]"
-                )
-                writer.write_yaml(path_j, data_j)
-                skipped_ids.add(id_j)
-                merged_count += 1
-            elif sim >= merge_threshold:
-                # Near-duplicate — merge j into i
-                merge_entries(path_i, data_j, reader, writer, max_merge_tags=cfg.max_consolidated_tags)
-                data_j["status"] = "obsolete"
-                data_j["detail"] = str(data_j.get("detail", "")) + f"\n[Auto-merged into {id_i}, similarity={sim:.3f}]"
-                writer.write_yaml(path_j, data_j)
-                skipped_ids.add(id_j)
-                # Re-read merged data for subsequent comparisons
-                try:
-                    data_i = reader.read_yaml(path_i)
-                    active_entries[i] = (path_i, data_i, vec_i)
-                except (OSError, StateError):
-                    logger.debug("merged_entry_reread_failed", path=str(path_i), exc_info=True)
-                merged_count += 1
-
-    # Write migration marker
-    marker = trw_dir / cfg.learnings_dir / "dedup_migration.yaml"
-    marker_data: dict[str, object] = {
-        "completed": True,
-        "run_at": datetime.now(timezone.utc).isoformat(),
-        "entries_scanned": len(active_entries),
-        "entries_merged": merged_count,
-        "entries_unchanged": len(active_entries) - len(skipped_ids),
-    }
-    writer.write_yaml(marker, marker_data)
-
-    # FR05: INFO, not DEBUG. A default install emits nothing below INFO, so the
-    # only record of a scan that can cost minutes was being destroyed.
-    logger.info(
-        "batch_dedup_complete",
-        duration_ms=round((time.monotonic() - _t0) * 1000, 2),
-        entries=len(active_entries),
-        merged=merged_count,
-        skipped=len(skipped_ids),
-    )
-
-    return BatchDedupResult(
-        status="completed",
-        entries_scanned=len(active_entries),
-        entries_merged=merged_count,
-        entries_skipped=len(skipped_ids),
-    )

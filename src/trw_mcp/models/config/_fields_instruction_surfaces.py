@@ -24,23 +24,8 @@ class _InstructionSurfaceFields:
     # An explicit ``warn``/``block`` here always wins over the resolved default.
     instruction_size_gate_mode: Literal["warn", "block"] | None = None
 
-    # PRD-CORE-203 FR02: externalization of the TRW auto-generated block.
-    # Instead of inlining the full block into a client instruction file, write
-    # it to a sidecar under ``.trw/`` and place a single ``@<sidecar>`` import
-    # directive in the file's marker region — for clients whose profile declares
-    # ``instruction_import_syntax == "at_path"`` (Claude Code). This keeps tracked
-    # instruction files short and moves the artifact back into ``.trw/``.
-    #   ``off``  -> always inline (legacy behaviour; byte-identical to pre-203).
-    #   ``auto`` -> externalize for import-capable clients (default).
-    #   ``on``   -> force externalization wherever the client can import.
-    # ``auto`` and ``on`` behave identically until import-incapable externalization
-    # (opencode instructions[] / codex model_instructions_file) lands in a future PRD.
-    instruction_externalize: Literal["off", "auto", "on"] = "auto"
-
-    # PRD-CORE-203 FR02: sidecar path (repo-root-relative) that holds the
-    # externalized TRW block. Overridable via ``TRW_INSTRUCTION_EXTERNAL_FILENAME``
-    # or ``.trw/config.yaml`` — never hardcoded in the write path.
-    instruction_external_filename: str = ".trw/INSTRUCTIONS.md"
+    # PRD-CORE-290-FR04: the final-report cap rendered into installed agents; 0 renders none.
+    agent_report_max_chars: int = Field(default=800, ge=0)
 
     # PRD-FIX-123-FR02: total-shrink floor. A candidate whose TOTAL byte count
     # falls below ``(1 - fraction)`` times the current file's total is refused
@@ -72,8 +57,7 @@ class _InstructionSurfaceFields:
 
     # PRD-FIX-123-FR04: project-root-relative directory holding pre-write copies
     # of every instruction file TRW writes. Refused (fail-closed) when it
-    # resolves outside the project root — the containment rule already applied to
-    # the PRD-CORE-203 sidecar.
+    # resolves outside the project root.
     instruction_backup_dir: str = ".trw/backups/instructions"
 
     # PRD-FIX-123-FR03/NFR03: upper bound on the unified diff returned by a

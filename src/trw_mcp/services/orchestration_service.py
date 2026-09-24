@@ -102,7 +102,6 @@ def scaffold_run_directory(
         (run_root / subdir).mkdir(parents=True, exist_ok=True)
 
     # Write minimal run.yaml
-    run_yaml_path = run_root / "meta" / "run.yaml"
     ts_iso = datetime.now(timezone.utc).isoformat()
     run_data: dict[str, object] = {
         "run_id": run_id,
@@ -112,9 +111,9 @@ def scaffold_run_directory(
         "created_at": ts_iso,
         "source": "local_cli",
     }
-    from trw_mcp.state.persistence import FileStateWriter
+    from trw_mcp.state._run_yaml_update import create_run_yaml
 
-    FileStateWriter().write_yaml(run_yaml_path, run_data)
+    create_run_yaml(run_root, run_data)  # N1: exclusive create under the run.yaml lock
 
     # Write initial event
     events_path = run_root / "meta" / "events.jsonl"
@@ -323,17 +322,20 @@ def mark_local_delivered(
     resolved = resolve_owned_run_path(run_path)
     meta = resolved / "meta"
     run_yaml = meta / "run.yaml"
+    from trw_mcp.exceptions import StateError
     from trw_mcp.models.run import RunStatus
-    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+    from trw_mcp.state._run_yaml_update import update_run_yaml
 
-    run_data = FileStateReader().read_yaml(run_yaml)
-    run_data["status"] = RunStatus.DELIVERED.value
-    run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
-    # Explicit False, never omitted: an absent key is indistinguishable from an
-    # older record, and "we did not check" has to be positively stated.
-    run_data["gate_evaluated"] = False
-    run_data["delivery_surface"] = "local_cli"
-    FileStateWriter().write_yaml(run_yaml, run_data)
+    def _mark_delivered(run_data: dict[str, object]) -> None:
+        run_data["status"] = RunStatus.DELIVERED.value
+        run_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
+        # Explicit False, never omitted: an absent key is indistinguishable from an
+        # older record, and "we did not check" has to be positively stated.
+        run_data["gate_evaluated"] = False
+        run_data["delivery_surface"] = "local_cli"
+
+    if not update_run_yaml(resolved, _mark_delivered):
+        raise StateError("run has no meta/run.yaml to mark delivered", path=str(run_yaml))
     write_checkpoint(message, run_path=resolved)
     _append_event(
         meta / "events.jsonl",

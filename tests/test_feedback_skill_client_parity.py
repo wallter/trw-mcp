@@ -62,12 +62,24 @@ def test_the_derived_source_list_is_not_empty_and_covers_the_known_clients() -> 
     A glob that matched nothing would make every parametrized case below vanish
     silently and the suite would still report green -- the same shape of failure
     the derivation exists to prevent. Pin the floor and the clients we know of.
+
+    codex/copilot/opencode no longer fork the skill tree on disk
+    (PRD-CORE-291-FR04) -- they render the canonical corpus -- so the
+    file-based floor drops to the two real multi-skill roots left
+    (``data/skills``, ``data/copilot/plugin/skills``); the three rendering
+    clients are covered by ``skill_names()`` non-vacuity instead.
     """
     roots = _bundled_skill_roots()
-    assert len(roots) >= 5, f"derived only {len(roots)} bundled skill root(s): {roots}"
+    assert len(roots) >= 2, f"derived only {len(roots)} bundled skill root(s): {roots}"
     found = {str(r.relative_to(_DATA_DIR)) for r in roots}
-    for expected in ("skills", "codex/skills", "copilot/skills", "opencode/skills"):
-        assert expected in found, f"{expected} missing from derived roots: {sorted(found)}"
+    assert "skills" in found, f"canonical skills root missing from derived roots: {sorted(found)}"
+
+    from trw_mcp.bootstrap._client_skills import skill_names
+
+    for client in ("codex", "copilot", "opencode"):
+        names = skill_names(client)
+        assert names, f"{client} renders no skills — derivation broke"
+        assert "trw-feedback" in names, f"{client} does not render trw-feedback"
 
 
 def test_cursor_ide_curates_the_feedback_skill() -> None:
@@ -93,15 +105,21 @@ def _assert_valid_feedback_skill(skill_md: Path) -> None:
     canonical MCP tool, and is model-invocable (behavior, not mere existence)."""
     assert skill_md.exists(), f"trw-feedback SKILL.md not installed at {skill_md}"
     content = skill_md.read_text(encoding="utf-8")
-    result = validate_skill_markdown(content, path=skill_md, mode="compat")
-    assert result.ok, f"installed SKILL.md failed validation: {[e.reason for e in result.errors]}"
+    _assert_valid_feedback_content(content, str(skill_md))
+
+
+def _assert_valid_feedback_content(content: str, label: str) -> None:
+    """Content-based variant of :func:`_assert_valid_feedback_skill` for a
+    RENDERED projection that has no on-disk path of its own."""
+    result = validate_skill_markdown(content, path=label, mode="compat")
+    assert result.ok, f"{label} failed validation: {[e.reason for e in result.errors]}"
     assert result.manifest is not None
     assert result.manifest.name == "trw-feedback"
     # The skill is only useful if it actually drives the canonical tool.
     assert "trw_submit_feedback" in content, "feedback skill must reference the trw_submit_feedback tool"
     # The whole point of the field-bug fix: agents/sub-agents MAY invoke it.
     assert "disable-model-invocation: true" not in content, (
-        f"trw-feedback at {skill_md} must be model-invocable — found disable-model-invocation: true in frontmatter"
+        f"trw-feedback at {label} must be model-invocable — found disable-model-invocation: true in frontmatter"
     )
 
 
@@ -140,3 +158,11 @@ class TestFeedbackSkillModelInvocable:
     def test_bundled_source_is_model_invocable(self, source: Path) -> None:
         assert source.exists(), f"bundled trw-feedback SKILL.md missing at {source}"
         _assert_valid_feedback_skill(source)
+
+    @pytest.mark.parametrize("client", ("codex", "copilot", "opencode"))
+    def test_rendered_client_projection_is_model_invocable(self, client: str) -> None:
+        """codex/copilot/opencode render rather than fork the file (PRD-CORE-291-FR04)."""
+        from trw_mcp.bootstrap._client_skills import render_skill_md
+
+        canonical = (_DATA_DIR / "skills" / "trw-feedback" / "SKILL.md").read_text(encoding="utf-8")
+        _assert_valid_feedback_content(render_skill_md(canonical, client), client)

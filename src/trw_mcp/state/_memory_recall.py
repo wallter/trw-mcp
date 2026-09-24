@@ -1,238 +1,45 @@
-"""Recall path for the memory adapter -- project ∪ user tier federation.
+"""Recall path for the memory adapter.
 
-Extracted from ``memory_adapter.py`` (PRD-CORE-185 FR06 + the 350 eff-LOC gate,
-NFR07). Holds:
-
-* ``recall_learnings`` -- the public recall entry point (re-exported by the
-  ``memory_adapter`` facade), now federating across the project store and the
-  machine-local user store.
-* ``_federate_user_tier`` -- the second-store merge step: query the user backend
-  (all ``user:`` entries), cap it (``recall_user_tier_cap``), de-dupe against the
-  project hits (exact id), and append. Tier is a re-rank FEATURE only -- a
-  precise project hit keeps its rank; user hits are bounded by the cap so a flood
-  of low-value user hits cannot bury project precision (D3 / R4 / NFR04).
-
-Performance (NFR01): federation is SKIPPED ENTIRELY when the user tier is
-disabled or no user backend has been constructed/has data -- the gating probe
-(``peek_user_backend``) never constructs a backend, so the session_start hot
-path pays nothing when the user store is absent/empty. Federation fails open to
-project-only recall on any error (never breaks recall).
+``recall_learnings`` is the public recall entry point (re-exported by the
+``memory_adapter`` facade). The checkout's store serves the rows
+(``MemoryStore.recall``, PRD-CORE-280 FR01); this module turns them into
+learning dicts and ranks a wildcard listing by utility.
 """
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, cast
 
 import structlog
-from trw_memory.exceptions import CorruptDatabaseUnsalvageableError, StorageError
-from trw_memory.models.config import MemoryConfig
-from trw_memory.models.memory import MemoryStatus
-from trw_memory.retrieval.temporal_selection import TemporalSelection
-from trw_memory.security.recall_filter import filter_recall_window
 
 from trw_mcp.models.typed_dicts import LearningEntryDict
+from trw_mcp.state import _store_selection
 from trw_mcp.state._constants import DEFAULT_LIST_LIMIT
-from trw_mcp.state._memory_queries import _apply_entry_filters, _search_entries
 from trw_mcp.state._memory_transforms import _memory_to_learning_dict
-from trw_mcp.state._tier_routing import user_scope_present
-from trw_mcp.state._user_tier import peek_user_backend
+from trw_mcp.state._recall_admission import RecallAdmission
+from trw_mcp.state._recall_gate import passive_learnings_allowed
+from trw_mcp.state._recall_take import apply_entry_filters
+from trw_mcp.state._store_selection import RecallSpec, StoreUnavailableError
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from trw_memory.models.memory import MemoryEntry
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 logger = structlog.get_logger(__name__)
 
-# Project namespace forced on the project-store query (unchanged from the
-# pre-federation behavior). The facade keeps a module-level ``_NAMESPACE`` that
-# tests may patch; we read it lazily through the facade to honor those patches.
+# A store that cannot be opened must not read as "no learnings". ``recall_learnings``
+# keeps its list contract for its many callers, and records the failure here for the
+# two MCP entry points to surface (``trw_recall`` field, ``trw_session_start`` error).
+_STORE_ERROR: ContextVar[str | None] = ContextVar("trw_recall_store_error", default=None)
 
 
-def _project_namespace() -> str:
-    from trw_mcp.state import memory_adapter
-
-    return memory_adapter._NAMESPACE
-
-
-def _user_recall_cap() -> int:
-    """Per-recall cap on user-tier hits (config, default 5). Fails to 5."""
-    try:
-        from trw_mcp.models.config import get_config
-
-        return max(0, int(get_config().recall_user_tier_cap))
-    except Exception:  # justified: fail-safe to the documented default
-        logger.debug("user_tier_cap_read_failed", exc_info=True)
-        return 5
-
-
-def _federate_user_tier(
-    project_entries: list[MemoryEntry],
-    query: str,
-    *,
-    tags: list[str] | None,
-    mem_status: MemoryStatus | None,
-    min_impact: float,
-    max_results: int,
-    is_wildcard: bool,
-    allow_cold_embedding_init: bool,
-    as_of: datetime | None = None,
-    include_superseded: bool = False,
-    temporal_selection: TemporalSelection | None = None,
-) -> list[MemoryEntry]:
-    """Append capped, de-duped user-tier hits to the project hits.
-
-    Skipped entirely (returns ``project_entries`` unchanged) when the user tier
-    is disabled or no user backend exists/has data. Never raises -- any failure
-    degrades to project-only (NFR04 fail-open). Tier is a feature, not an
-    override: project hits keep their order; user hits are appended (capped),
-    so the downstream utility re-rank can still float a high-value project hit
-    above the user tail and a precise project hit stays rank 1.
-    """
-    cap = _user_recall_cap()
-    if cap == 0:
-        return project_entries
-    try:
-        if not user_scope_present():
-            return project_entries
-        # Gate WITHOUT constructing a backend: if none has been built and the
-        # store file is absent, federation is a no-op (session_start hot path
-        # pays nothing). Only construct when a user store is actually present.
-        user_backend = peek_user_backend()
-        if user_backend is None:
-            from trw_mcp.state._user_paths import resolve_user_memory_dir
-
-            if not (resolve_user_memory_dir(create=False) / "memory.db").exists():
-                return project_entries
-            from trw_mcp.state._user_tier import get_user_backend
-
-            user_backend = get_user_backend()
-
-        seen = {e.id for e in project_entries}
-        user_hits = _query_user_backend(
-            user_backend,
-            query,
-            tags=tags,
-            mem_status=mem_status,
-            min_impact=min_impact,
-            max_results=max_results,
-            is_wildcard=is_wildcard,
-            allow_cold_embedding_init=allow_cold_embedding_init,
-            as_of=as_of,
-            include_superseded=include_superseded,
-            temporal_selection=temporal_selection,
-        )
-        merged = list(project_entries)
-        added = 0
-        for entry in user_hits:
-            if added >= cap:
-                break
-            if entry.id in seen:
-                continue
-            seen.add(entry.id)
-            merged.append(entry)
-            added += 1
-        if added:
-            logger.debug("recall_federated_user_tier", user_hits=added, project_hits=len(project_entries))
-        return merged
-    except Exception:  # justified: fail-open — federation must never break recall
-        logger.debug("user_tier_federation_failed", exc_info=True)
-        return project_entries
-
-
-def _query_user_backend(
-    user_backend: SQLiteBackend,
-    query: str,
-    *,
-    tags: list[str] | None,
-    mem_status: MemoryStatus | None,
-    min_impact: float,
-    max_results: int,
-    is_wildcard: bool,
-    allow_cold_embedding_init: bool,
-    as_of: datetime | None = None,
-    include_superseded: bool = False,
-    temporal_selection: TemporalSelection | None = None,
-) -> list[MemoryEntry]:
-    """Query the user store for ``user:`` entries (namespace=None = all tiers there)."""
-    if is_wildcard:
-        return user_backend.list_entries(
-            status=mem_status,
-            namespace=None,
-            temporal_selection=temporal_selection
-            or TemporalSelection(as_of=as_of, include_superseded=include_superseded, exclude_system_canaries=True),
-            tags=tags,
-            min_importance=min_impact,
-            limit=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
-        )
-    top_k = max_results if max_results > 0 else DEFAULT_LIST_LIMIT
-    # namespace=None: the user store holds only ``user:<id>`` entries; searching
-    # all namespaces returns them without needing to know the exact ``<id>``.
-    return _search_entries(
-        user_backend,
-        query,
-        top_k=top_k,
-        tags=tags,
-        mem_status=mem_status,
-        min_impact=min_impact,
-        allow_cold_embedding_init=allow_cold_embedding_init,
-        namespace=None,
-        as_of=as_of,
-        include_superseded=include_superseded,
-        temporal_selection=temporal_selection,
-    )
-
-
-def _user_store_tampered() -> bool:
-    """core185-3: return True when the USER store's canary signals tamper.
-
-    The project-tier recall path halt-checks the project canary, but the user
-    store is a SEPARATE database whose canaries were never probed before its
-    entries were federated into the result. A tampered user store would
-    otherwise flow malicious/corrupted entries into recall.
-
-    Prefers a live user backend WITHOUT constructing one (``peek_user_backend``)
-    so the session_start hot path pays nothing when no user store exists. When no
-    backend has been built yet BUT the user DB file exists on disk, the backend
-    is constructed and probed here -- this closes core185-TOCTOU-1: previously the
-    peek returned ``None`` on a fresh process, this gate reported "not tampered",
-    and ``_federate_user_tier`` then constructed + queried the backend itself with
-    NO canary check, leaking a tampered store on the very first federation call.
-    The construct-when-present condition mirrors ``_federate_user_tier``'s own
-    construction gate so the canary is checked exactly when federation would build
-    and query the backend.
-
-    The canary seams are resolved through the ``memory_adapter`` facade so the
-    established ``memory_adapter.should_halt_recalls`` / ``.initialize_canaries``
-    patch points apply. Fails OPEN (returns False): a probe error must not break
-    recall -- it just leaves federation enabled, matching the project path's
-    fail-open posture.
-    """
-    user_backend = peek_user_backend()
-    if user_backend is None:
-        try:
-            from trw_mcp.state._user_paths import resolve_user_memory_dir
-
-            if not (resolve_user_memory_dir(create=False) / "memory.db").exists():
-                return False
-            from trw_mcp.state._user_tier import get_user_backend
-
-            user_backend = get_user_backend()
-        except Exception:  # justified: fail-open — a probe/construct error must not break recall
-            logger.debug("user_store_canary_construct_failed", exc_info=True)
-            return False
-    try:
-        from trw_mcp.state import memory_adapter as _facade
-        from trw_mcp.state._user_paths import resolve_user_memory_dir
-
-        user_sec_cfg = MemoryConfig(storage_path=str(resolve_user_memory_dir(create=False)))
-        _facade.initialize_canaries(user_sec_cfg, backend=user_backend)
-        return bool(_facade.should_halt_recalls(user_sec_cfg, backend=user_backend))
-    except Exception:  # justified: fail-open — a canary-probe error must not break recall
-        logger.debug("user_store_canary_probe_failed", exc_info=True)
-        return False
+def pop_store_error() -> str | None:
+    """The store failure the last recall in this context hit, cleared on read."""
+    message = _STORE_ERROR.get()
+    _STORE_ERROR.set(None)
+    return message
 
 
 def _parse_as_of(as_of: str | None) -> datetime | None:
@@ -263,7 +70,6 @@ def recall_learnings(
     status: str | None = None,
     max_results: int = 25,
     compact: bool = False,
-    allow_cold_embedding_init: bool = True,
     include_tiers: list[str] | None = None,
     as_of: str | None = None,
     include_superseded: bool = False,
@@ -288,189 +94,40 @@ def recall_learnings(
     clean validation error). ``include_superseded=True`` appends superseded records
     AFTER every open one rather than dropping them. The defaults (``as_of=None``,
     ``include_superseded=False``) are byte-identical to the pre-194 path.
+
+    Every learning that reaches the agent passes through here, so the master
+    recall switch is enforced here: off, nothing is returned, whatever name the
+    caller imported this function under.
     """
-    as_of_dt = _parse_as_of(as_of)
-    selection = TemporalSelection(as_of=as_of_dt, include_superseded=include_superseded, exclude_system_canaries=True)
-    federate_user = include_tiers is None or "user" in include_tiers
-    is_wildcard = query.strip() in ("*", "")
-    namespace = _project_namespace()
-
-    # Resolve canary/backend seams through the ``memory_adapter`` facade so the
-    # established test-patch points (``memory_adapter.get_backend`` /
-    # ``.should_halt_recalls`` / ``.probe_canaries`` / ``.initialize_canaries`` /
-    # ``._memory_recovery_in_progress``) still take effect after the FR06 split.
-    from trw_mcp.state import memory_adapter as _facade
-
-    mem_status: MemoryStatus | None = None
-    if status is not None:
-        try:
-            mem_status = MemoryStatus(status)
-        except ValueError:
-            logger.debug("invalid_status_ignored", status=status)
-
-    from trw_memory.models.memory import MemoryEntry as _ME
-
-    entries: list[_ME] = []
-    if _facade._memory_recovery_in_progress():
-        _facade.logger.warning("memory_recall_skipped_recovery_in_progress", query=query[:80])
+    if not passive_learnings_allowed():
         return []
-    # core185-7: built ONCE before the loop. ``trw_dir`` is loop-invariant so
-    # re-constructing inside the loop was dead work; this single binding feeds
-    # the canary calls AND the post-loop recall filter.
-    sec_cfg = MemoryConfig(storage_path=str(trw_dir / "memory"))
-    for attempt in range(2):
-        try:
-            backend = _facade.get_backend(trw_dir)
-            _facade.initialize_canaries(sec_cfg, backend=backend)
-            if _facade.should_halt_recalls(sec_cfg, backend=backend):
-                from trw_memory.exceptions import CanaryTamperError
-
-                raise CanaryTamperError("recall halted after canary tamper")
-            _facade.probe_canaries(sec_cfg, backend=backend)
-            if is_wildcard:
-                entries = backend.list_entries(
-                    status=mem_status,
-                    namespace=namespace,
-                    temporal_selection=selection,
-                    tags=tags,
-                    min_importance=min_impact,
-                    limit=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
-                )
-            else:
-                top_k = max_results if max_results > 0 else DEFAULT_LIST_LIMIT
-                entries = _search_entries(
-                    backend,
-                    query,
-                    top_k=top_k,
-                    tags=tags,
-                    mem_status=mem_status,
-                    min_impact=min_impact,
-                    allow_cold_embedding_init=allow_cold_embedding_init,
-                    as_of=as_of_dt,
-                    include_superseded=include_superseded,
-                    temporal_selection=selection,
-                )
-            break
-        except Exception as exc:  # justified: boundary, corruption recovery retries recall before surfacing failure
-            # Recovery seams + the warning logger are resolved through the
-            # ``memory_adapter`` facade so existing tests patching
-            # ``memory_adapter._schedule_deferred_recovery`` /
-            # ``._memory_recovery_in_progress`` / ``.logger`` still apply after
-            # the FR06 recall-path split.
-            if isinstance(exc, CorruptDatabaseUnsalvageableError):
-                # The terminal log line is retained: an operator watching logs
-                # sees exactly what they saw before this change.
-                _facade._log_terminal_recovery(trw_dir / "memory" / "memory.db", exc)
-                # PRD-CORE-263-FR07. This branch used to re-raise, ONE branch
-                # above the scheduler below — so a database the storage layer had
-                # just classified "degraded_open_with_background_recovery" (and
-                # written that status for) got no background recovery at all
-                # through recall, and the caller received an exception instead of
-                # a degraded result. ``backup_path`` on this typed error IS the
-                # durable recovery-state locator the preflight reads on the next
-                # open, so it travels with the scheduling record.
-                #
-                # Scheduling is single-flight inside ``_schedule_deferred_recovery``
-                # (it returns False without starting a second worker), so a repeat
-                # error while recovery runs schedules nothing new.
-                try:
-                    _facade._schedule_deferred_recovery(
-                        trw_dir,
-                        reason="recall_unsalvageable_background_recovery",
-                        context={"query": query[:80], "recovery_state": exc.backup_path},
-                    )
-                except Exception:
-                    # Refuse-on-exception: if the SCHEDULING fails there is no
-                    # repair pending, so an empty list would read as "nothing
-                    # recalled". Surface the original terminal error instead.
-                    _facade.logger.exception(
-                        "memory_recall_recovery_scheduling_failed",
-                        recovery_state=exc.backup_path,
-                    )
-                    raise exc from None
-                return []
-            if attempt == 0 and _facade._is_corruption_error(exc):
-                _facade.logger.warning(
-                    "memory_recall_degraded_recovery_scheduled",
-                    query=query,
-                    attempt=attempt + 1,
-                    exc_info=True,
-                )
-                _facade._schedule_deferred_recovery(trw_dir, reason="recall_corruption", context={"query": query[:80]})
-                return []
-            if isinstance(exc, StorageError):
-                _facade.logger.warning("memory_recall_storage_error", query=query[:80], error=str(exc), exc_info=True)
-                return []
-            raise
-
-    # FR06: federate user-tier hits (capped, de-duped, fail-open) BEFORE the
-    # canary filter + transform so user entries flow through the same pipeline.
-    # FR07: skip federation entirely when the caller excluded the user tier.
-    # core185-3: a tampered USER store DISABLES federation (rather than aborting
-    # recall) so its entries never enter the result -- project recall survives.
-    if federate_user and _user_store_tampered():
-        logger.warning("user_tier_federation_disabled_canary_tamper", query=query[:80])
-        federate_user = False
-    if federate_user:
-        entries = _federate_user_tier(
-            entries,
-            query,
-            tags=tags,
-            mem_status=mem_status,
-            min_impact=min_impact,
-            max_results=max_results,
-            is_wildcard=is_wildcard,
-            allow_cold_embedding_init=allow_cold_embedding_init,
-            as_of=as_of_dt,
-            include_superseded=include_superseded,
-            temporal_selection=selection,
-        )
-
-    # PRD-CORE-202 FR02/FR05: federate operator-named EXTERNAL read-stores
-    # (``extra_read_stores`` / ``--memory-db``) as an additional, orthogonal
-    # union step. Skipped entirely (no backend constructed) when none are
-    # configured (NFR01); fail-open so a broken corpus never breaks recall
-    # (NFR03). The project's own default store is excluded by resolved path so
-    # an operator pointing ``--memory-db`` at the live DB cannot double-count
-    # (RISK-02).
-    from trw_mcp.state._external_store import federate_external_stores
-
-    entries = federate_external_stores(
-        entries,
-        query,
-        default_db_path=trw_dir / "memory" / "memory.db",
+    as_of_dt = _parse_as_of(as_of)
+    # One admission policy for search, listing and the by-id fetch (PRD-CORE-294 FR01).
+    admission = RecallAdmission.build(trw_dir, status=status, as_of=as_of_dt, include_superseded=include_superseded)
+    selection, mem_status = admission.selection, admission.mem_status
+    is_wildcard = query.strip() in ("*", "")
+    spec = RecallSpec(
+        admission=admission,
+        query=query,
         tags=tags,
-        mem_status=mem_status,
         min_impact=min_impact,
-        max_results=max_results,
-        is_wildcard=is_wildcard,
-        allow_cold_embedding_init=allow_cold_embedding_init,
-        as_of=as_of_dt,
-        include_superseded=include_superseded,
-        temporal_selection=selection,
+        top_k=max_results if max_results > 0 else DEFAULT_LIST_LIMIT,
+        include_user=include_tiers is None or "user" in include_tiers,
     )
-
-    # PRD-CORE-194 FR03: apply the validity prior on the MCP recall path so a
-    # superseded record is EXCLUDED by default here too (the wildcard list_entries
-    # branch and the keyword fallback do not pass through hybrid_search's prior).
-    # This is the same in-memory post-fetch field compare used by hybrid_search,
-    # so the MCP and MemoryClient defaults agree. The ``trw_recall`` tool threads
-    # its ``as_of`` / ``include_superseded`` kwargs here (parsed above), reaching
-    # parity with ``MemoryClient.recall``'s time-travel surface.
-    from trw_memory.retrieval.validity_prior import apply_validity_prior
-
-    entries = apply_validity_prior(
-        entries, as_of=as_of_dt, include_superseded=include_superseded, reference_time=selection.reference_time
-    )
-
-    public_entries = [entry for entry in entries if entry.metadata.get("system_canary") != "true"]
-    filter_result = (
-        filter_recall_window(public_entries, mode=sec_cfg.recall_filter_mode) if sec_cfg.enable_recall_filter else None
-    )
-    filtered_entries = filter_result.accepted if filter_result is not None else public_entries
+    # PRD-CORE-280 FR01: the checkout's store serves the rows; everything below is shared.
+    try:
+        store, _ = _store_selection.selected_store(trw_dir)
+        admitted = store.recall(spec)
+    except (
+        StoreUnavailableError
+    ) as exc:  # trw-fail-silent-allow: recorded in _STORE_ERROR, which trw_recall and trw_session_start surface
+        logger.warning("memory_recall_store_unavailable", query=query[:80], error=str(exc))
+        _STORE_ERROR.set(str(exc))
+        return []
+    filtered_entries = admission.order(admitted)
     results: list[LearningEntryDict] = []
     for entry in filtered_entries:
-        if is_wildcard and not _apply_entry_filters(entry, tags, mem_status, min_impact):
+        if is_wildcard and not apply_entry_filters(entry, tags, mem_status, min_impact):
             continue
         if not is_wildcard and entry.importance < min_impact:
             continue

@@ -11,7 +11,6 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts._ceremony import InstructionPointerSkipDict
 
 logger = structlog.get_logger(__name__)
@@ -40,18 +39,15 @@ def _capability_parity_drift(write_agents: bool, client: str) -> list[str]:
 def _cache_hit_carrier_report(
     target: Path,
     write_claude: bool,
-    config: TRWConfig,
-    scope: str,
-) -> tuple[str | None, list[InstructionPointerSkipDict] | None, str | None]:
+) -> tuple[str | None, list[InstructionPointerSkipDict] | None]:
     """Read-only carrier classification for the cache-hit path (PRD-CORE-203 FR07).
 
     No write happens on a cache hit, so this reports the carrier state of the
     CURRENT CLAUDE.md (``healed=False`` since nothing was modified). Returns
-    ``(None, None, None)`` when CLAUDE.md is not a write target.
+    ``(None, None)`` when CLAUDE.md is not a write target.
     """
     if not write_claude or not target.exists():
-        return None, None, None
-    from trw_mcp.models.config._profiles import resolve_client_profile
+        return None, None
     from trw_mcp.state.claude_md._instruction_carrier import (
         CarrierMode,
         classify_instruction_file,
@@ -59,20 +55,13 @@ def _cache_hit_carrier_report(
     )
 
     classification = classify_instruction_file(target)
-    mode = resolve_carrier_mode(
-        classification,
-        import_syntax=resolve_client_profile("claude-code").instruction_import_syntax,
-        externalize=config.instruction_externalize,
-        scope=scope,
-    )
-    if mode is CarrierMode.IMPORT:
-        return mode.value, None, config.instruction_external_filename
+    mode = resolve_carrier_mode(classification)
     if mode is CarrierMode.POINTER_SKIP:
         skips: list[InstructionPointerSkipDict] = [
             {"path": str(target), "import_targets": list(classification.import_targets), "healed": False}
         ]
-        return mode.value, skips, None
-    return mode.value, None, None
+        return mode.value, skips
+    return mode.value, None
 
 
 __all__ = ["_cache_hit_carrier_report", "_capability_parity_drift"]

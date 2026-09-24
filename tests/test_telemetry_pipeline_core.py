@@ -218,6 +218,39 @@ class TestScrubPiiAllFields:
         assert "bob@example.com" not in flat
         assert "<email>" in flat
 
+    def test_scrub_pii_scrubs_nested_dict_keys(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """codex-a R2-014 P2: a user-defined nested KEY carrying a secret is scrubbed like a value."""
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_project_root", lambda: None, raising=False)
+        secret = "sk_live_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        event: dict[str, object] = {"payload": {secret: "x", "inner": {"erin@example.com": 1}, "plain": "y"}}
+
+        pipeline_cls()._scrub_pii(event)
+
+        payload = event["payload"]
+        assert isinstance(payload, dict)
+        assert secret not in str(payload) and "erin@example.com" not in str(payload)
+        assert payload["plain"] == "y"
+
+    def test_scrub_pii_scrubs_top_level_keys(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Cross-vendor R2-014 P2: an event keyed by a secret at the top level is scrubbed too."""
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_project_root", lambda: None, raising=False)
+        secret = "sk_live_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        event: dict[str, object] = {secret: "x", "tool_name": "trw_recall"}
+
+        pipeline_cls()._scrub_pii(event)
+
+        assert secret not in str(event) and event["tool_name"] == "trw_recall"
+
+    def test_scrub_pii_recurses_into_tuples(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Cross-vendor R2-014 round 4: a tuple value is scrubbed like a list."""
+        monkeypatch.setattr("trw_mcp.telemetry.pipeline.resolve_project_root", lambda: None, raising=False)
+        secret = "sk_live_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        event: dict[str, object] = {"payload": (secret, "ok", 3)}
+
+        pipeline_cls()._scrub_pii(event)
+
+        assert secret not in str(event["payload"]) and "ok" in str(event["payload"])
+
     def test_scrub_pii_recurses_into_nested_list(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         """PII inside list elements (including dicts in lists) must be scrubbed."""
         monkeypatch.setattr(
@@ -237,3 +270,40 @@ class TestScrubPiiAllFields:
         assert "dan@example.com" not in str(payload[1])
         # Non-string scalars in the list survive untouched.
         assert payload[2] == 42
+
+
+class TestEnqueueScrubsFullCredentialSurface:
+    """R2-014: the enqueue path (not just detect_pii's email/api_key pair) must
+    scrub the full credential surface — JWT, PEM private keys, and both the
+    ``Authorization:`` and bare ``Bearer``/``Token`` forms — before an event is
+    queued for local buffering or a backend POST. Before this fix, the
+    telemetry hot path used the weakest of trw-mcp's three redactors."""
+
+    _JWT = (
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I3PlFUP0THsR8U"
+    )
+    _PEM = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"
+    _BEARER_TOKEN = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+    def test_enqueue_scrubs_jwt_pem_and_bearer(self, pipeline_cls: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "trw_mcp.telemetry.pipeline.resolve_project_root",
+            lambda: None,
+            raising=False,
+        )
+        p = pipeline_cls()
+        event: dict[str, object] = {
+            "event_type": "tool_invocation",
+            "args": (
+                f"jwt={self._JWT} pem={self._PEM} "
+                f"Authorization: Bearer {self._BEARER_TOKEN} "
+                f"Bearer {self._BEARER_TOKEN}"
+            ),
+        }
+        p.enqueue(event)
+
+        assert len(p._queue) == 1
+        queued = list(p._queue)[0]
+        serialized = str(queued)
+        for secret in (self._JWT, "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC", self._BEARER_TOKEN):
+            assert secret not in serialized

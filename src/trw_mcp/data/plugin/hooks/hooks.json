@@ -22,15 +22,6 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/validate-prd-write.sh"
-          }
-        ]
-      },
-      {
         "matcher": "mcp__trw__trw_deliver",
         "hooks": [
           {

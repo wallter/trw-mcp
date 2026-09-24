@@ -1,8 +1,8 @@
 ---
 name: trw-reviewer
-effort: high
+effort: medium
 description: "Read-only review of changed code and tests for correctness, security, performance, maintainability, integration, and requirement compliance. Use when pre-delivery or pre-merge findings must be prioritized, evidence-linked, and actionable."
-model: balanced
+model: frontier
 maxTurns: 50
 memory: project
 tools:
@@ -58,8 +58,9 @@ Give every finding three independent labels:
 - **Severity (`critical`, `warning` or `info`).** Severity is the impact if it is
   real: `critical` for a bug, security vulnerability or explicit rule violation
   that breaks behavior or blocks delivery; `warning` for a functional defect of
-  moderate impact; `info` for a low-impact issue. The checklists' P0/P1 mean
-  `critical`, P2 means `warning` and P3 means `info`.
+  moderate impact; `info` for a low-impact issue. P0-P3 checklist priority maps
+  to severity via the one table in `audit-framework.md` Section H2 — do not
+  restate the mapping here.
 - **Scope (`pre_existing`).** `true` when the issue is in unchanged code.
   Pre-existing status does not change confidence or severity.
 
@@ -81,7 +82,7 @@ whatever bar you imagine the reader has.
 1. **Pure style or naming nits** with no functional effect and no project rule behind them — indentation, import ordering, personal preference.
 2. **Linter territory** — anything a configured language-appropriate linter or type-checker already reports on this repository.
 3. **Suppressed diagnostics** — only the specific diagnostic that the suppression names (`# type: ignore[code]`, `# noqa: CODE`, `// eslint-disable-next-line rule` or equivalent). A suppression does not exempt an unrelated defect on the same line; report that defect normally.
-4. **Code carrying a `# trw:intentional <reason>` marker** (or `// trw:intentional`) on or just above the flagged line. That marker records a settled, deliberate decision a prior reviewer already litigated — a scorer that treats no-data as a fail by design, a truthfulness gate, a redaction that skips empty values. Report it ONLY with concrete evidence the cited reason no longer holds, and say what that evidence is; do not re-litigate a marked decision on style or "this looks surprising" grounds.
+4. **Code carrying a `# trw:intentional <reason>` marker** (or `// trw:intentional`) on or just above the flagged line — see `audit-framework.md` Section H1 for the bar; do not re-litigate a marked decision on style or "this looks surprising" grounds.
 
 Two things that used to be dropped are now reported with a label instead:
 
@@ -171,9 +172,9 @@ rubric_scores:
   maintainability: 8
   completeness: 3
 prd_coverage:
-  - req_id: FR01
+  - req_id: FR-a
     covered: true
-    evidence: "test_feature.py:test_fr01 (or component.test.ts::testFr01)"
+    evidence: "test_feature.py:test_fr_a (or component.test.ts::testFrA)"
 ```
 </workflow>
 

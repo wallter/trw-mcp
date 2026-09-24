@@ -153,10 +153,7 @@ def test_recall_tracking_format_unchanged_smoke(tmp_path: Path) -> None:
     cleanly and expose their public functions — proving no accidental
     dependency was introduced by the pusher rewrite.
     """
-    from trw_mcp.state.recall_tracking import (  # noqa: F401
-        get_recall_stats,
-        record_outcome,
-    )
+    from trw_mcp.state.recall_tracking import record_recall  # noqa: F401
     from trw_mcp.state.surface_tracking import (  # noqa: F401
         compute_recall_pull_rate,
         log_surface_event,

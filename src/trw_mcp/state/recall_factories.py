@@ -15,10 +15,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import structlog
-
-logger = structlog.get_logger(__name__)
-
 
 def _default_recall() -> Callable[..., list[dict[str, object]]]:
     """Lazy import to avoid a cycle on package init."""
@@ -27,54 +23,37 @@ def _default_recall() -> Callable[..., list[dict[str, object]]]:
     return recall_learnings
 
 
+def parse_entry_impact(entry: dict[str, object]) -> float:
+    """Coerce an entry's ``impact`` field to ``float``, defensively.
+
+    Used as the sort key by :func:`recall_for_review_tags` to impact-rank the
+    tag union (L-hzMb). A malformed/missing ``impact`` (``None``, ``""``, a
+    non-numeric string, or an absent key) falls back to ``0.0`` rather than
+    raising and dropping the whole recall.
+    """
+    try:
+        return float(str(entry.get("impact", 0.0) or 0.0))
+    except (ValueError, TypeError):
+        return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Session-start factories
 # ---------------------------------------------------------------------------
 
 
-def recall_baseline_high_impact(
-    trw_dir: Path,
-    *,
-    max_results: int,
-    allow_cold_embedding_init: bool = False,
-) -> list[dict[str, object]]:
-    """Wildcard recall of high-impact learnings.
-
-    Used by the session_start baseline path -- pulls universally-relevant
-    "tribal knowledge" entries to surface at the start of every session.
-    Compact mode by default; only ``id``/``summary``/``tags``/``impact``
-    are needed for the typical caller.
-    """
-    return _default_recall()(
-        trw_dir,
-        query="*",
-        min_impact=0.7,
-        max_results=max_results,
-        compact=True,
-        allow_cold_embedding_init=allow_cold_embedding_init,
-        status="active",  # exclude obsolete/archived — the wildcard path has no implicit status filter
-    )
-
-
-def recall_focused(
+def recall_session_start(
     trw_dir: Path,
     query: str,
     *,
     max_results: int,
     min_impact: float = 0.3,
-    allow_cold_embedding_init: bool = False,
 ) -> list[dict[str, object]]:
-    """Focused recall on a user-supplied query.
+    """The one session_start recall (PRD-CORE-294 FR02), focused or ``"*"``.
 
-    Used by the session_start focused path. ``allow_cold_embedding_init=False``
-    means this factory never triggers a model load, so it reaches BM25 + vector
-    hybrid search ONLY when some earlier operation in the same process already
-    initialized the embedder. When the embedder is uninitialized the search
-    degrades to IDF-weighted keyword union: unmatched tokens do not force an
-    empty result, but semantic paraphrases may still be missed. See
-    :func:`focused_recall_zero_match_advisory` for zero-row guidance.
-    Full acquisition retains body; startup projects compact scoring inputs and
-    bounded selected content without a second lookup.
+    There is no second, query-independent baseline recall to merge with it.
+    Full rows are acquired so ``verbose=True`` can return them without a
+    second lookup.
     """
     return _default_recall()(
         trw_dir,
@@ -82,79 +61,16 @@ def recall_focused(
         min_impact=min_impact,
         max_results=max_results,
         compact=False,
-        allow_cold_embedding_init=allow_cold_embedding_init,
-        status="active",  # focused recall must not surface obsolete/archived learnings
+        status="active",  # session start must not surface obsolete/archived learnings
     )
 
 
-def recall_recent_bypass(
-    trw_dir: Path,
-    *,
-    max_results: int,
-    min_impact: float,
-    allow_cold_embedding_init: bool = False,
-) -> list[dict[str, object]]:
-    """Pull recently-stored learnings that the high-impact baseline filters out.
-
-    Session_start L-fovv fix: low-impact entries from the current/recent
-    session would otherwise be invisible at the next session_start because
-    the baseline filters at min_impact=0.7. This factory uses min_impact
-    from config and returns full entries so the caller can date-filter.
-    """
-    return _default_recall()(
-        trw_dir,
-        query="*",
-        min_impact=min_impact,
-        max_results=max_results,
-        compact=False,
-        allow_cold_embedding_init=allow_cold_embedding_init,
-        status="active",  # recent-bypass must not prepend obsolete entries at top priority
-    )
-
-
-# ---------------------------------------------------------------------------
-# Zero-match advisory for the focused session-start path
-# ---------------------------------------------------------------------------
-
-# Both strings are emitted ONLY when a non-wildcard focused recall returns zero
-# rows, so they cost nothing on the normal path (token-budget rule: advisory
-# fields are omitted when they carry no signal). Without them, ``query_matched:
-# 0`` is unexplained and the caller reads the impact-ranked baseline union as if
-# it were query hits.
-_UNINITIALIZED_INDEX_ADVISORY = (
-    "Focused recall matched 0 entries: the vector index was not initialized in this "
-    "process (session_start never waits for a model load), so keyword fallback ran. The "
-    "learnings returned are the impact-ranked baseline, NOT query matches. Call "
-    "trw_recall(query=...) for explicit retrieval; inspect retrieval_warning if the semantic model is not ready."
+#: Emitted only when a focused session_start recall returns zero rows, so it costs
+#: nothing on the normal path (token-budget rule: advisory fields are omitted when
+#: they carry no signal).
+FOCUSED_ZERO_MATCH_ADVISORY = (
+    "Focused recall matched 0 entries. Broaden the query or call trw_recall(query=..., options={'min_impact': 0})."
 )
-
-_HYBRID_INDEX_ADVISORY = (
-    "Focused recall matched 0 entries via hybrid search. The learnings returned are the "
-    "impact-ranked baseline, NOT query matches. Broaden the query or call "
-    "trw_recall(query=..., min_impact=0)."
-)
-
-
-def focused_recall_zero_match_advisory() -> str:
-    """Explain a zero-row :func:`recall_focused` result to the calling agent.
-
-    Probes the embedder cache WITHOUT initializing it (``get_initialized_embedder``
-    is the same non-loading accessor the recall path itself uses), so the advisory
-    reports what actually ran. Must be called at recall time: later session_start
-    steps may initialize the embedder, which would make a deferred probe lie.
-
-    Fail-open: an import/probe failure reports the uninitialized-index wording,
-    which is the conservative reading (it tells the caller to re-run via
-    ``trw_recall``).
-    """
-    try:
-        from trw_mcp.state._memory_connection import get_initialized_embedder
-
-        initialized = get_initialized_embedder() is not None
-    except Exception:  # justified: advisory text must never break session start
-        logger.debug("focused_recall_advisory_probe_failed", exc_info=True)
-        initialized = False
-    return _HYBRID_INDEX_ADVISORY if initialized else _UNINITIALIZED_INDEX_ADVISORY
 
 
 # ---------------------------------------------------------------------------
@@ -199,26 +115,38 @@ def recall_for_review_tags(
     min_impact: float,
     max_results: int,
 ) -> list[dict[str, object]]:
-    """Tag-scoped recall of active learnings.
+    """The *max_results* highest-impact active learnings carrying ANY of *tags*.
 
-    Used by ``state/claude_md`` review/publish flow. Filters on a fixed
-    tag set, status=active, and a high min_impact threshold.
+    Used by ``state/claude_md`` review/publish flow. The store ANDs its tag
+    filter and lists newest first, so each tag is recalled in full
+    (``max_results=0``: every row past the SQL tag/impact/status filter, up to
+    ``DEFAULT_LIST_LIMIT``), unioned by id, and ranked by impact here (L-hzMb).
+
+    Serial per-tag fan-out (one SQL call per tag in ``_REVIEW_TAGS``, 6 today)
+    rather than a single query, because the store ANDs a multi-value ``tags``
+    filter. Measured on this machine (2026-09-23, ``.venv/bin/python``, a fresh
+    temp SQLite store seeded via ``backend.store()`` directly, 6 tags cycled
+    round-robin across the rows): 5,000 rows -> ~187 ms; 20,000 rows -> ~729 ms
+    for the full fan-out + union + sort. Both are well under any interactive or
+    ``trw_deliver``-path budget; REVIEW.md generation is not on a request's hot
+    path. Revisit if a store's review-tagged population reaches the ~100k range.
     """
-    return _default_recall()(
-        trw_dir,
-        query="*",
-        tags=tags,
-        min_impact=min_impact,
-        max_results=max_results,
-        status="active",
-    )
+    recall = _default_recall()
+    by_id: dict[object, dict[str, object]] = {}
+    for tag in tags:
+        for entry in recall(trw_dir, query="*", tags=[tag], min_impact=min_impact, max_results=0, status="active"):
+            by_id.setdefault(entry.get("id"), entry)
+    ranked = sorted(by_id.values(), key=parse_entry_impact, reverse=True)
+    # max_results=0 means "unlimited" throughout recall_learnings (see the
+    # max_results=0 fan-out call above); match that convention here instead of
+    # slicing to an empty list.
+    return ranked[: max_results or None]
 
 
 __all__ = [
-    "focused_recall_zero_match_advisory",
-    "recall_baseline_high_impact",
-    "recall_focused",
+    "FOCUSED_ZERO_MATCH_ADVISORY",
+    "parse_entry_impact",
     "recall_for_nudge_pool",
     "recall_for_review_tags",
-    "recall_recent_bypass",
+    "recall_session_start",
 ]

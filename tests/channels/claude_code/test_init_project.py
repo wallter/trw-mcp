@@ -40,10 +40,19 @@ def _licensed_project(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _call_install(target_dir: Path, force: bool = False) -> dict[str, list[str]]:
+    """Install with CC-03 ON: the pair ships only while enabled (PRD-INFRA-192).
+
+    Like the licence fixture above, this file asserts what an enabled install
+    produces; the disabled default is covered in ``test_bootstrap_init_content.py``.
+    """
     from trw_mcp.bootstrap._claude_code_distill_channels import (
         install_claude_code_distill_channels,
     )
 
+    config = target_dir / ".trw" / "config.yaml"
+    if not config.exists():
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text("cc03_hook_enabled: true\n", encoding="utf-8")
     return install_claude_code_distill_channels(target_dir, force=force)
 
 

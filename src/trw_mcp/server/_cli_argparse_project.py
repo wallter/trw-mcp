@@ -54,16 +54,6 @@ def _ide_choice(value: str) -> str:
     return value
 
 
-def _positive_entry_bound(value: str) -> int:
-    try:
-        bound = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("entry bound must be a positive integer") from exc
-    if bound < 1:
-        raise argparse.ArgumentTypeError("entry bound must be a positive integer")
-    return bound
-
-
 def add_project_subcommands(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
@@ -80,16 +70,6 @@ def add_project_subcommands(
         "--force",
         action="store_true",
         help="Overwrite existing files",
-    )
-    init_parser.add_argument(
-        "--source-package",
-        default="",
-        help="Source package name for build checks (e.g., myapp)",
-    )
-    init_parser.add_argument(
-        "--test-path",
-        default="",
-        help="Test directory path relative to source (e.g., tests)",
     )
     init_parser.add_argument(
         "--ide",
@@ -134,15 +114,10 @@ def add_project_subcommands(
     )
 
     update_parser.add_argument(
-        "--repair-embeddings",
-        type=_positive_entry_bound,
-        metavar="N",
-        help="Repair at most N existing project entries; run from target project. Maintenance only, no framework updates",
-    )
-    update_parser.add_argument(
-        "--embedding-after",
-        metavar="JSON",
-        help="Resume cursor with updated_at and entry_id; requires --repair-embeddings",
+        "--reprovision",
+        action="append",
+        metavar="PATH",
+        help="Clear PATH's deletion tombstone so it is written again (repeatable); 'all' clears every tombstone",
     )
 
     # audit

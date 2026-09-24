@@ -16,6 +16,7 @@ computed from full data upstream in ``prd_quality.py``.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -37,6 +38,8 @@ logger = structlog.get_logger(__name__)
 _ACTIONABLE_EARS_PATTERNS = frozenset({"non-ears", "complex"})
 # Cap on the actionable-line list in compact mode (mirrors improvement_suggestions[:5]).
 _MAX_ACTIONABLE_EARS_LINES = 10
+_MAX_COMPACT_OVERLAP_WARNINGS = 5
+_OVERLAP_PATH_RE = re.compile(r"`([^`]+)`")
 # Per-category sample-line cap for grouped smell findings.
 _MAX_SMELL_SAMPLE_LINES = 5
 # Cache sub-fields that are pure on-disk addressing plumbing — never actionable
@@ -245,6 +248,17 @@ def _dedup_wiring_warnings(payload: ValidateResultDict) -> list[str]:
     return [w for w in warnings if not (isinstance(w, str) and w in seen)]
 
 
+def _compact_integrity_warnings(warnings: list[str]) -> list[str]:
+    """Keep the five most path-specific overlaps and all non-overlap warnings."""
+    overlaps = [warning for warning in warnings if warning.startswith("Potential overlap with ")]
+    other = [warning for warning in warnings if not warning.startswith("Potential overlap with ")]
+    overlaps.sort(
+        key=lambda warning: max((len(Path(path).parts) for path in _OVERLAP_PATH_RE.findall(warning)), default=0),
+        reverse=True,
+    )
+    return [*overlaps[:_MAX_COMPACT_OVERLAP_WARNINGS], *other]
+
+
 def compact_validate_payload(payload: ValidateResultDict) -> ValidateResultDict:
     """Reshape a full validate payload into the compact default form.
 
@@ -268,6 +282,9 @@ def compact_validate_payload(payload: ValidateResultDict) -> ValidateResultDict:
                 cache.pop(key, None)
 
         payload["wiring_gate_warnings"] = _dedup_wiring_warnings(payload)
+        raw_integrity_warnings = payload.get("integrity_warnings")
+        if isinstance(raw_integrity_warnings, list):
+            payload["integrity_warnings"] = _compact_integrity_warnings(raw_integrity_warnings)
         payload["compact"] = True
         return payload
     except Exception:  # justified: fail-open, compaction must never drop a result

@@ -1,0 +1,52 @@
+{
+ "20000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 20000.0,
+   "store_mb": 483.354775,
+   "wall_s": 121.32774029090069
+  },
+  "trw-daemon-tool": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.5625,
+   "n": 16.0,
+   "p50_ms": 312.83079204149544,
+   "p95_ms": 529.8613330814987
+  },
+  "trw-framework": {
+   "complete@10": 87.5,
+   "complete@10_ci95": [
+    63.97666856325173,
+    96.50232506629428
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 87.5,
+   "mrr": 76.5625,
+   "n": 16.0,
+   "p50_ms": 220.67604190669954,
+   "p95_ms": 3577.651249943301
+  }
+ }
+}

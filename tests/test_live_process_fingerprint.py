@@ -253,7 +253,7 @@ def test_server_fingerprint_freeze_is_idempotent_after_more_modules_load() -> No
 
         # A later import changes a fresh module census, but the process startup
         # identity is immutable once frozen.
-        import trw_mcp.tools.telemetry  # noqa: F401
+        import trw_mcp.telemetry.sender  # noqa: F401
 
         second = freeze_live_process_fingerprint(server)
         assert second is first

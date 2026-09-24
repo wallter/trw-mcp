@@ -13,7 +13,7 @@ from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
 
 
 class TestRunAutoMaintenance:
-    """Auto-maintenance operations: upgrade, stale runs, embeddings."""
+    """Auto-maintenance operations: upgrade, stale runs, WAL checkpoint."""
 
     def test_returns_empty_when_nothing_needed(
         self,
@@ -24,10 +24,6 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
             patch(
                 "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
@@ -50,10 +46,6 @@ class TestRunAutoMaintenance:
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": True, "advisory": "v2.0 available"},
             ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
         ):
             result = run_auto_maintenance(trw_dir, config)
 
@@ -69,20 +61,38 @@ class TestRunAutoMaintenance:
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 side_effect=Exception("network error"),
             ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
         ):
             result = run_auto_maintenance(trw_dir, config)
 
         assert isinstance(result, dict)
 
-    def test_embeddings_advisory_included(
+    def test_never_opens_the_checkout_memory_db_for_a_wal_checkpoint(
         self,
         trw_dir: Path,
         config: TRWConfig,
     ) -> None:
+        """PRD-CORE-298: the daemon owns the checkout's WAL now (C12 finding 2).
+
+        Before the fix, an upgraded project with a leftover ``memory.db-wal``
+        made this path open a bare sqlite3 connection to the retired checkout
+        db on every session start. Proof: seed a real db + wal pair, make
+        ``sqlite3.connect`` raise, run maintenance, and require both files
+        byte-identical and ``wal_checkpoint`` absent from the result.
+        """
+        import sqlite3
+
+        memory_dir = trw_dir / "memory"
+        memory_dir.mkdir(parents=True, exist_ok=True)
+        db_path = memory_dir / "memory.db"
+        wal_path = memory_dir / "memory.db-wal"
+        db_bytes = b"sqlite-db-fixture-bytes"
+        wal_bytes = b"sqlite-wal-fixture-bytes"
+        db_path.write_bytes(db_bytes)
+        wal_path.write_bytes(wal_bytes)
+
+        def _boom(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+            raise AssertionError("sqlite3.connect must not be called against the checkout db")
+
         with (
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
@@ -90,12 +100,19 @@ class TestRunAutoMaintenance:
             ),
             patch(
                 "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"advisory": "Install anthropic SDK for embeddings"},
+                return_value={"enabled": False},
             ),
+            patch(
+                "trw_mcp.state.analytics._stale_runs.auto_close_stale_runs",
+                return_value={"runs_closed": [], "count": 0, "errors": []},
+            ),
+            patch("sqlite3.connect", side_effect=_boom),
         ):
             result = run_auto_maintenance(trw_dir, config)
 
-        assert "embeddings_advisory" in result
+        assert "wal_checkpoint" not in result
+        assert db_path.read_bytes() == db_bytes
+        assert wal_path.read_bytes() == wal_bytes
 
     def test_auto_upgrade_performed_when_enabled(
         self,
@@ -112,97 +129,12 @@ class TestRunAutoMaintenance:
                 "trw_mcp.state.auto_upgrade.perform_upgrade",
                 return_value={"applied": True, "version": "2.0.0", "details": "patch applied"},
             ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
         ):
             result = run_auto_maintenance(trw_dir, cfg)
 
         assert result["update_advisory"] == "v2.0 available"
         assert result["auto_upgrade"]["applied"] is True
         assert result["auto_upgrade"]["version"] == "2.0.0"
-
-    def test_embeddings_backfill_failopen_on_exception(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        """Lines 215-216: Embeddings block fails open on exception."""
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                side_effect=Exception("embeddings boom"),
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert isinstance(result, dict)
-        assert "embeddings_advisory" not in result
-        assert "embeddings_backfill" not in result
-
-    def test_embeddings_backfill_not_performed_on_session_start_hot_path(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        """Session startup never performs a bulk synchronous embedding backfill.
-
-        PRD-CORE-263 DEF-11: named ``embeddings_backfill_not_performed``, not
-        ``_deferred`` — nothing schedules a later bulk backfill for a healthy
-        corpus; this is the standing hot-path policy, not a deferral with a
-        consumer.
-        """
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": True, "available": True, "advisory": ""},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.backfill_embeddings",
-                side_effect=AssertionError("bulk embedding backfill must leave trw_session_start"),
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert "embeddings_backfill" not in result
-        assert result["embeddings_backfill_not_performed"]["reason"] == "session_start_hot_path"
-
-    def test_wal_checkpoint_success_is_reported(self, trw_dir: Path, config: TRWConfig) -> None:
-        with (
-            patch("trw_mcp.state.auto_upgrade.check_for_update", return_value={"available": False}),
-            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={"enabled": False}),
-            patch(
-                "trw_mcp.state.memory_adapter.maybe_checkpoint_wal",
-                return_value={"checkpointed": True, "pages": 4},
-            ),
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert result["wal_checkpoint"] == {"checkpointed": True, "pages": 4}
-
-    def test_wal_checkpoint_failure_is_isolated(self, trw_dir: Path, config: TRWConfig) -> None:
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": True, "advisory": "upgrade available"},
-            ),
-            patch("trw_mcp.state.memory_adapter.check_embeddings_status", return_value={"enabled": False}),
-            patch("trw_mcp.state.memory_adapter.maybe_checkpoint_wal", side_effect=OSError("busy")),
-            patch("trw_mcp.tools._ceremony_helpers.logger") as logger,
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        assert result["update_advisory"] == "upgrade available"
-        logger.warning.assert_any_call("maintenance_wal_checkpoint_failed", exc_info=True)
 
     def test_version_sentinel_mismatch_injects_advisory(
         self,
@@ -215,10 +147,6 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
             patch(
                 "importlib.metadata.version",
@@ -242,10 +170,6 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
             patch(
                 "importlib.metadata.version",
@@ -275,10 +199,6 @@ class TestRunAutoMaintenance:
                 return_value={"available": False},
             ),
             patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
-            patch(
                 "importlib.metadata.version",
                 return_value="0.55.14",
             ),
@@ -300,10 +220,6 @@ class TestRunAutoMaintenance:
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
             ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
         ):
             result = run_auto_maintenance(trw_dir, config)
 
@@ -321,10 +237,6 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
         ):
             result = run_auto_maintenance(trw_dir, config)
@@ -347,10 +259,6 @@ class TestRunAutoMaintenance:
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
             ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
         ):
             result = run_auto_maintenance(trw_dir, config)
 
@@ -367,10 +275,6 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
             patch(
                 "importlib.metadata.version",
@@ -394,10 +298,6 @@ class TestRunAutoMaintenance:
                 return_value={"available": True, "advisory": "upstream advisory"},
             ),
             patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
-            patch(
                 "importlib.metadata.version",
                 return_value="0.15.0",
             ),
@@ -418,10 +318,6 @@ class TestRunAutoMaintenance:
             patch(
                 "trw_mcp.state.auto_upgrade.check_for_update",
                 return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
             ),
             patch(
                 "importlib.metadata.version",
@@ -450,10 +346,6 @@ class TestRunAutoMaintenance:
                 return_value={"available": False},
             ),
             patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={"enabled": False},
-            ),
-            patch(
                 "importlib.metadata.version",
                 return_value="0.16.0",
             ),
@@ -474,110 +366,6 @@ class TestRunAutoMaintenance:
         assert "sys.platform" not in source
 
 
-class TestLowCoverageBackgroundBackfill:
-    """PRD-FIX-105-FR01: a low-coverage advisory must schedule a background
-    backfill so a post-recovery vector loss self-heals instead of crying wolf
-    every session with no remediation path."""
-
-    def test_low_coverage_advisory_schedules_background_backfill(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        """When coverage is low (advisory + ratio), a background backfill is scheduled."""
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={
-                    "enabled": True,
-                    "available": True,
-                    "advisory": "Vector coverage is low: 350/7651 entries have embeddings (4.6%).",
-                    "coverage_ratio": 0.046,
-                },
-            ),
-            patch(
-                "trw_mcp.state._memory_connection._schedule_post_recovery_backfill",
-                return_value=True,
-            ) as mock_sched,
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        mock_sched.assert_called_once_with(trw_dir)
-        assert "embeddings_advisory" in result
-        assert result["embeddings_backfill_scheduled"]["reason"] == "low_coverage"
-        assert result["embeddings_backfill_scheduled"]["thread_started"] is True
-        # Low coverage must NOT take the "nothing to do" deferred-hot-path branch.
-        assert "embeddings_backfill_deferred" not in result
-
-    def test_low_coverage_backfill_disabled_by_config_flag(
-        self,
-        trw_dir: Path,
-    ) -> None:
-        """With the kill switch off, low coverage warns but schedules no backfill."""
-        cfg = TRWConfig(embeddings_auto_backfill_on_low_coverage=False)  # type: ignore[call-arg]
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={
-                    "enabled": True,
-                    "available": True,
-                    "advisory": "Vector coverage is low: 350/7651 entries have embeddings (4.6%).",
-                    "coverage_ratio": 0.046,
-                },
-            ),
-            patch(
-                "trw_mcp.state._memory_connection._schedule_post_recovery_backfill",
-                return_value=True,
-            ) as mock_sched,
-        ):
-            result = run_auto_maintenance(trw_dir, cfg)
-
-        mock_sched.assert_not_called()
-        assert "embeddings_advisory" in result
-        assert "embeddings_backfill_scheduled" not in result
-
-    def test_healthy_coverage_does_not_schedule_backfill(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        """No advisory (healthy coverage) → no background backfill scheduled."""
-        with (
-            patch(
-                "trw_mcp.state.auto_upgrade.check_for_update",
-                return_value={"available": False},
-            ),
-            patch(
-                "trw_mcp.state.memory_adapter.check_embeddings_status",
-                return_value={
-                    "enabled": True,
-                    "available": True,
-                    "advisory": "",
-                    "coverage_ratio": 0.999,
-                },
-            ),
-            patch(
-                "trw_mcp.state._memory_connection._schedule_post_recovery_backfill",
-                return_value=True,
-            ) as mock_sched,
-        ):
-            result = run_auto_maintenance(trw_dir, config)
-
-        mock_sched.assert_not_called()
-        assert "embeddings_backfill_scheduled" not in result
-        # Healthy path still leaves the synchronous bulk backfill off the hot
-        # path (PRD-CORE-263 DEF-11: "not performed", not "deferred").
-        assert result["embeddings_backfill_not_performed"]["reason"] == "session_start_hot_path"
-
-
 # ---------------------------------------------------------------------------
 # PRD-CORE-263-FR04 — every maintenance result is propagated or declared internal
 # ---------------------------------------------------------------------------
@@ -592,11 +380,10 @@ def _declared_maintenance_keys() -> set[str]:
 def test_every_maintenance_key_is_propagated_or_declared_internal() -> None:
     """PRD-CORE-263-FR04 — totality over the declared result type.
 
-    At HEAD the propagation allowlist named 11 of the 14 declared keys, and the
-    three it omitted (``wal_checkpoint``, ``embeddings_coverage_ratio``,
-    ``embedder_warmup_scheduled``) were computed on the hot path of every session
-    and dropped. Attribution: reverting FR04 turns this red naming exactly those
-    three under ``dropped``.
+    The propagation allowlist once omitted declared keys (``wal_checkpoint`` and
+    ``embeddings_coverage_ratio`` among them) that were computed on the hot path
+    of every session and dropped. Attribution: reverting FR04 turns this red
+    naming them under ``dropped``.
     """
     from trw_mcp.tools._ceremony_step_table import (
         MAINTENANCE_INTERNAL_KEYS,
@@ -619,7 +406,12 @@ def test_every_maintenance_key_is_propagated_or_declared_internal() -> None:
     # The two classifications must not overlap — a key cannot be both.
     assert not (propagated & internal)
     # Non-vacuity: the exclusion set is the mechanism, not the documentation.
-    assert len(propagated) >= 14
+    # PRD-CORE-280 FR01 dropped the writer-pressure deferral keys, FR04 the
+    # three embedding-backfill keys, and PRD-CORE-298 FR01 `embeddings_migration`
+    # with the in-process re-embed pass, the daemon cut-over the embedder
+    # warm-up key, and 6.0.0 the embeddings advisory and coverage ratio, which
+    # session start now takes from the daemon-measured pipeline health (5 remain).
+    assert len(propagated) >= 5
 
 
 def test_unclassified_maintenance_key_fails_the_totality_check_by_name() -> None:
@@ -635,15 +427,13 @@ def test_unclassified_maintenance_key_fails_the_totality_check_by_name() -> None
 
 
 def test_dropped_maintenance_results_now_reach_the_payload() -> None:
-    """PRD-CORE-263-FR04 — the three keys arrive in the session-start payload."""
+    """PRD-CORE-263-FR04 — the once-dropped keys arrive in the session-start payload."""
     from typing import cast
 
     from trw_mcp.tools import _ceremony_step_table as table
 
     sweep = {
         "wal_checkpoint": {"checkpointed": True, "mode": "PASSIVE"},
-        "embeddings_coverage_ratio": 0.87,
-        "embedder_warmup_scheduled": {"scheduled": True},
     }
     results: dict[str, object] = {}
     sctx = table.SessionStartContext(
@@ -658,8 +448,6 @@ def test_dropped_maintenance_results_now_reach_the_payload() -> None:
         table._ss_sanitize_maintain(sctx)
 
     assert results["wal_checkpoint"] == sweep["wal_checkpoint"]
-    assert results["embeddings_coverage_ratio"] == 0.87
-    assert results["embedder_warmup_scheduled"] == sweep["embedder_warmup_scheduled"]
 
 
 # ---------------------------------------------------------------------------
@@ -730,60 +518,3 @@ def test_each_degradation_condition_emits_exactly_one_event(captured_structlog: 
     flat = " ".join(str(value) for event in captured_structlog for value in event.values())
     assert seeded_summary not in flat
     assert seeded_detail not in flat
-
-
-def test_the_recall_deferral_emits_one_event_for_one_condition() -> None:
-    """PRD-CORE-263-NFR03 — the two adjacent deferral events are collapsed.
-
-    ``record_session_start_surfaces`` used to fire ``session_start_tracking_deferred``
-    and ``session_start_surface_log_deferred`` unconditionally together, so one
-    occurrence looked like two to anything counting. It now emits one event
-    carrying the operations it covers.
-
-    This limb landed via the sibling PRD-CORE-257-FR09 change to the same
-    branch; the assertion is held here because NFR03 owns the invariant.
-
-    A second instance of the SAME defect was found across the call boundary
-    rather than within one function: ``record_session_start_surfaces`` also
-    logged ``session_start_tracking_deferred`` on its own ``defer=True``
-    branch, while its only caller that can pass ``defer=True`` —
-    ``perform_session_recalls`` — logged ``session_start_side_effects_deferred``
-    for that exact same writer-pressure condition with richer context (writer
-    counts, threshold, deferral age). One pressured recall therefore emitted
-    two deferral events. The inner one was dropped in favour of the caller's
-    richer event, so this walks BOTH functions' source and asserts exactly one
-    deferral event total across the pair.
-    """
-    import ast
-    import inspect
-
-    from trw_mcp.tools import _session_recall_helpers as recall_helpers
-    from trw_mcp.tools import _session_recall_pressure as pressure
-
-    def _deferral_events(fn: object) -> list[object]:
-        source = inspect.getsource(fn)  # type: ignore[arg-type]
-        events = [
-            node.args[0].value
-            for node in ast.walk(ast.parse(inspect.cleandoc(source)))
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"warning", "info", "error"}
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-        ]
-        return [name for name in events if "deferred" in str(name)]
-
-    inner_deferral_events = _deferral_events(pressure.record_session_start_surfaces)
-    assert len(inner_deferral_events) == 0, (
-        f"record_session_start_surfaces must not log its own deferral event — the caller's "
-        f"session_start_side_effects_deferred already covers this condition with richer "
-        f"context; found {inner_deferral_events}"
-    )
-
-    caller_deferral_events = _deferral_events(recall_helpers.perform_session_recalls)
-    assert len(caller_deferral_events) == 1, (
-        f"perform_session_recalls must be the sole emitter of the recall-deferral event; found {caller_deferral_events}"
-    )
-
-    total_deferral_events = inner_deferral_events + caller_deferral_events
-    assert len(total_deferral_events) == 1, f"one condition, one event — found {total_deferral_events}"

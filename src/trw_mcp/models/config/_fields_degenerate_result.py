@@ -83,3 +83,20 @@ class _DegenerateResultFields:
         default_factory=lambda: ["git log", "date", "ls -l", "stat", "curl", "gh api", "gh run list"],
         description="Command prefixes whose undated output cannot distinguish 'nothing there' from 'could not look'.",
     )
+    #: PRD-INFRA-194-FR04: a fourth, independent signal on the same PostToolUse
+    #: adapter (data/hooks/post-tool-degenerate-result.sh) -- a tool result whose
+    #: RENDERED size crosses this threshold is large enough that the caller should
+    #: prefer a narrower query rather than reuse it whole. Read through the same
+    #: `trw_degenerate_result_setting` accessor as key `size_warning_bytes`, with
+    #: its own per-session cooldown state file, independent of the three
+    #: degenerate-shape rules above.
+    tool_output_size_warning_bytes: int = Field(
+        default=8192,
+        gt=0,
+        le=10_485_760,
+        description=(
+            "Rendered PostToolUse tool_response byte length above which a size advisory fires "
+            "(PRD-INFRA-194-FR04). Independent of the three degenerate-shape rules; bounded gt=0 "
+            "so it cannot be a disable switch and le=10 MiB as a sanity ceiling."
+        ),
+    )

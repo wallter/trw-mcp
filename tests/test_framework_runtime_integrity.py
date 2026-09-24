@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from tests._layout import PACKAGE_ROOT
 from trw_mcp.bootstrap import _DATA_FILE_MAP
 from trw_mcp.bootstrap._template_updater import _ALWAYS_UPDATE
 from trw_mcp.framework_integrity import inspect_framework_runtime, repair_framework_runtime
@@ -82,7 +81,6 @@ def test_explicit_repair_preserves_unrelated_config_and_regenerates_runtime(tmp_
         aaref_source=AAREF_SOURCE,
         framework_version=FRAMEWORK_VERSION,
         aaref_version=AAREF_VERSION,
-        trw_mcp_version="9.9.9",
     )
 
     assert report.ok, report.errors
@@ -92,7 +90,9 @@ def test_explicit_repair_preserves_unrelated_config_and_regenerates_runtime(tmp_
     stamp = (tmp_path / ".trw/frameworks/VERSION.yaml").read_text(encoding="utf-8")
     assert "framework_version: v99.9_TRW" in stamp
     assert "aaref_version: v3.2.0" in stamp
-    assert "trw_mcp_version: 9.9.9" in stamp
+    # PRD-INFRA-192 FR12: repair strips any stale trw_mcp_version stamp
+    # rather than writing a new one — packages live in managed-artifacts.yaml.
+    assert "trw_mcp_version" not in stamp
 
 
 def test_doctor_detects_intentionally_stale_runtime_fixture(tmp_path: Path) -> None:
@@ -188,89 +188,6 @@ def test_runtime_registry_digest_mismatch_and_repair_binds_generation(tmp_path: 
     assert "registry_digest: reg-abc" in stamp
     assert "framework_digest:" in stamp
     assert "aaref_digest:" in stamp
-
-
-def _deploy_generation(target: Path):
-    """Deploy a healthy 2-canon compiled generation; return the expectations."""
-    import hashlib
-
-    from trw_mcp.canons.registry import (
-        GenerationExpectation,
-        bundled_manifest_bytes,
-        clear_cache,
-        compile_canon,
-        generation_digest,
-        load_registry,
-    )
-
-    clear_cache()
-    registry = load_registry(bundled_manifest_bytes())
-    frameworks = target / ".trw" / "frameworks"
-    frameworks.mkdir(parents=True)
-    expectations = []
-    for compiled in registry.compiled_canons:
-        source = (PACKAGE_ROOT / compiled.authoring_source.removeprefix("trw-mcp/")).read_text(encoding="utf-8")
-        result = compile_canon(compiled.id, source, source_basename="x.md")
-        bodies = {"compact_core": result.core, "reference": result.reference, "combined": result.combined}
-        role_paths = {role: f".trw/frameworks/{compiled.id}-{role}.md" for role in bodies}
-        role_digests = {}
-        for role, text in bodies.items():
-            (target / role_paths[role]).write_text(text, encoding="utf-8")
-            role_digests[role] = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        expectations.append(
-            GenerationExpectation(
-                canon_id=compiled.id,
-                role_paths=role_paths,
-                role_digests=role_digests,
-                generation_digest=generation_digest(role_digests),
-            )
-        )
-    composite = generation_digest({e.canon_id: e.generation_digest for e in tuple(expectations)})
-    return tuple(expectations), composite
-
-
-def test_runtime_integrity_checks_compiled_canon_generation(tmp_path: Path) -> None:
-    """FR06: healthy generation passes; missing/stale/cross-generation fail distinctly."""
-    from trw_mcp.canons.registry import inspect_compiled_generation
-
-    expectations, composite = _deploy_generation(tmp_path)
-
-    # Healthy generation passes.
-    healthy = inspect_compiled_generation(
-        tmp_path, expectations, stamp_path=".trw/frameworks/VERSION.yaml", stamp_generation_digest=composite
-    )
-    assert healthy.ok, healthy.errors
-
-    # Missing a compact core -> distinct "missing" error.
-    (tmp_path / expectations[0].role_paths["compact_core"]).unlink()
-    missing = inspect_compiled_generation(
-        tmp_path, expectations, stamp_path=".trw/frameworks/VERSION.yaml", stamp_generation_digest=composite
-    )
-    assert not missing.ok
-    assert any("compact_core missing" in e for e in missing.errors)
-
-    # Byte-drift one body -> distinct "stale" error.
-    expectations2, composite2 = _deploy_generation(tmp_path / "b")
-    ref = (tmp_path / "b") / expectations2[0].role_paths["reference"]
-    ref.write_text(ref.read_text(encoding="utf-8") + "DRIFT\n", encoding="utf-8")
-    stale = inspect_compiled_generation(
-        tmp_path / "b", expectations2, stamp_path=".trw/frameworks/VERSION.yaml", stamp_generation_digest=composite2
-    )
-    assert any("reference stale" in e for e in stale.errors)
-
-    # Stamp names a different generation -> distinct "cross-generation" error.
-    expectations3, _ = _deploy_generation(tmp_path / "c")
-    cross = inspect_compiled_generation(
-        tmp_path / "c", expectations3, stamp_path=".trw/frameworks/VERSION.yaml", stamp_generation_digest="deadbeef"
-    )
-    assert any("cross-generation" in e for e in cross.errors)
-
-    # Absent stamp generation_digest -> needs_upgrade (never silently current).
-    expectations4, _ = _deploy_generation(tmp_path / "d")
-    no_stamp = inspect_compiled_generation(
-        tmp_path / "d", expectations4, stamp_path=".trw/frameworks/VERSION.yaml", stamp_generation_digest=None
-    )
-    assert any("needs_upgrade" in e for e in no_stamp.errors)
 
 
 def test_bootstrap_init_and_update_regenerate_both_frameworks() -> None:

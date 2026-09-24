@@ -44,7 +44,7 @@ Never mark a checkbox from narrative confidence. Record the command/artifact and
 ## 4. Run the pre-archive eligibility gate
 
 1. Run the project-native full validation appropriate to the changed packages.
-2. Record only observed results with `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`; include `command_results` when evidence enforcement requires it.
+2. Record only observed results with `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`; include `options={"command_results": [...]}` when evidence enforcement requires it.
 3. Read coverage gates from project config and explicit accepted requirements. If they conflict, stop and surface the conflict. If no coverage threshold is configured, report measured coverage as informational and do not invent a percentage.
 4. Complete the required substantive review. Any unresolved P0/blocking finding stops closure.
 
@@ -64,7 +64,7 @@ Do not archive an incomplete sprint as completed. A partial or cancelled sprint 
 
 After the last archive mutation, run project-native validation appropriate to the final tree and record a fresh
 `trw_build_check(tests_passed=<bool>, test_count=<n>, failure_count=<n>, static_checks_clean=<bool|null>, scope="<exact command>")`;
-include typed `command_results` when enforced. Refresh substantive review if the archive mutation is inside its bound
+include typed `options={"command_results": [...]}` when enforced. Refresh substantive review if the archive mutation is inside its bound
 scope. Never reuse the pre-archive build or review result as if it covered later edits.
 
 Check `trw_status().deliver_gate_summary` before delivery. If the post-archive gate fails, do not deliver or leave the

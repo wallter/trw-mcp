@@ -54,7 +54,7 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         # COMMAND surface was experimental for six months and is superseded by
         # native client workflow features; the underlying support (formation
         # manifests, file ownership, trw_init formations, the trw-lead /
-        # trw-implementer / trw-tester agents) is retained. Every predecessor
+        # trw-implementer agents) is retained. Every predecessor
         # name maps DIRECTLY to None so update-project removes the materialized
         # copy from any existing install regardless of which name it carries
         # (see test_retirement_chains_collapse_to_direct_deletion).
@@ -77,12 +77,23 @@ PREDECESSOR_MAP: dict[str, dict[str, str | None]] = {
         "lead.md": "trw-lead.md",
         "researcher.md": "trw-researcher.md",
         "reviewer.md": "trw-reviewer.md",
-        "tester.md": "trw-tester.md",
         "adversarial-auditor.md": "trw-adversarial-auditor.md",
         "prd-groomer.md": "trw-prd-groomer.md",
         "requirement-reviewer.md": "trw-requirement-reviewer.md",
-        "requirement-writer.md": "trw-requirement-writer.md",
-        "traceability-checker.md": "trw-traceability-checker.md",
+        # PRD-CORE-291-FR05: retired 2026-09-22, content merged into a
+        # neighboring agent (tester -> implementer, requirement-writer ->
+        # prd-groomer, traceability-checker -> auditor). Both the legacy
+        # non-prefixed name and the trw- prefixed name map DIRECTLY to None
+        # (retirement chains must collapse — see
+        # test_retirement_chains_collapse_to_direct_deletion) so
+        # update-project removes the materialized copy regardless of which
+        # name an existing install carries.
+        "tester.md": None,
+        "trw-tester.md": None,
+        "requirement-writer.md": None,
+        "trw-requirement-writer.md": None,
+        "traceability-checker.md": None,
+        "trw-traceability-checker.md": None,
         # Non-prefixed reviewers: local-only, never bundled
         "reviewer-correctness.md": None,
         "reviewer-integration.md": None,
@@ -164,6 +175,8 @@ def _write_manifest(
     target_dir: Path,
     result: dict[str, list[str]],
     data_dir: Path | None = None,
+    clients: list[str] | None = None,
+    tombstones: set[str] | None = None,
 ) -> None:
     """Write the managed-artifacts manifest to the target project.
 
@@ -179,10 +192,16 @@ def _write_manifest(
     edited, so a preserved edit is never laundered into TRW's ownership baseline
     and overwritten on the following update. Inlining a fourth key producer here
     is what the FR05 totality test exists to catch — add it to the registry.
+
+    PRD-INFRA-192 FR12: *clients* is this run's resolved client set (init: the
+    targets init just recorded; update: ``update_write_targets`` evaluated by
+    the caller, by which point ``target_platforms`` has already been rewritten
+    for this run). ``None`` falls back to the recorded targets, for callers
+    (tests, a manifest-repair path) that have no run-specific set of their own.
     """
     from ._manifest_recorders import collect_manifest_content_hashes, dropped_manifest_keys
     from ._template_updater import _get_bundled_names, _get_custom_names
-    from ._version_manifest import _manifest_content_hashes
+    from ._version_manifest import MANIFEST_VERSION, _manifest_content_hashes, resolved_package_versions
 
     bundled = _get_bundled_names(data_dir)
     custom = _get_custom_names(target_dir, data_dir)
@@ -190,11 +209,23 @@ def _write_manifest(
     # are not permanently protected as false-custom entries.
     predecessor_skills = set(PREDECESSOR_MAP["skills"].keys())
     predecessor_agents = set(PREDECESSOR_MAP["agents"].keys())
-    prev_hashes = _manifest_content_hashes(_read_manifest(target_dir))
+    prev_manifest_raw = _read_manifest(target_dir)
+    prev_hashes = _manifest_content_hashes(prev_manifest_raw)
     content_hashes = collect_manifest_content_hashes(target_dir, prev_hashes, data_dir)
     result.setdefault("warnings", []).extend(dropped_manifest_keys(target_dir, prev_hashes, content_hashes))
+    from ._client_ownership import owners_for_content_hashes, update_write_targets
+
+    run_clients = clients if clients is not None else update_write_targets(target_dir, None)
+    owners = owners_for_content_hashes(content_hashes, run_clients)
+    # PRD-INFRA-192 FR10/FR12: *tombstones* is this run's resolved set (init/
+    # update already ran detection + enforcement before calling here). ``None``
+    # preserves whatever the prior manifest recorded, for callers (tests, a
+    # manifest-repair path) with no run-specific set of their own.
+    _prev_tombstones = (prev_manifest_raw or {}).get("tombstones")
+    tombstones_value = sorted(tombstones) if tombstones is not None else _coerce_manifest_list(_prev_tombstones)
     manifest = {
-        "version": 2,
+        "version": MANIFEST_VERSION,
+        "tombstones": tombstones_value,
         "skills": bundled["skills"],
         "agents": bundled["agents"],
         "hooks": bundled["hooks"],
@@ -208,6 +239,14 @@ def _write_manifest(
             n for n in bundled.get("opencode_skills", []) if (target_dir / ".opencode" / "skills" / n).is_dir()
         ],
         "content_hashes": content_hashes,
+        # PRD-INFRA-192 FR12: the client(s) whose catalog surfaces cover each
+        # content_hashes key -- the ownership baseline a per-client uninstall
+        # reads instead of re-deriving it (and risking drift) at removal time.
+        "owners": owners,
+        # PRD-INFRA-192 FR12: the ONE record of resolved package
+        # versions this install/update wrote. version-status compares
+        # importlib versions against this map rather than a VERSION.yaml stamp.
+        "packages": resolved_package_versions(),
         "custom_skills": [s for s in custom["skills"] if s not in predecessor_skills],
         "custom_agents": [a for a in custom["agents"] if a not in predecessor_agents],
         "custom_hooks": custom["hooks"],

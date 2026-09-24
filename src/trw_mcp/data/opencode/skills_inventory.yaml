@@ -2,29 +2,25 @@ version: 1
 skills:
   trw-deliver:
     disposition: portable
-    source: variant
     reason: OpenCode-safe delivery workflow without client-specific task-list or instruction-file assumptions
   trw-prd-ready:
     disposition: portable
-    source: variant
     reason: OpenCode-safe PRD pipeline without subagent assumptions
   trw-framework-check:
     disposition: portable
-    source: variant
     reason: Read-only compliance check is directly portable
   trw-test-strategy:
     disposition: portable
-    source: variant
     reason: Read-only coverage audit is directly portable
   trw-feedback:
     disposition: portable
-    source: variant
     reason: Authenticated feedback channel is model-invocable and directly portable; agents/sub-agents can submit TRW bugs without a human present
   trw-reflect:
     disposition: portable
-    source: variant
     reason: Client-agnostic end-of-session reflection; variant drops Claude-specific approval/sub-agent tool names
   trw-delegate:
     disposition: portable
-    source: variant
     reason: MCP-first read-only second-opinion dispatch is client-neutral and supports shell-less harnesses
+  trw-assess:
+    disposition: portable
+    reason: Client-neutral guidance for the opt-in trw_assess tool; installed only while assess_enabled is on

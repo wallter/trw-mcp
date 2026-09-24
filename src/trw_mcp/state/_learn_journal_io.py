@@ -54,10 +54,9 @@ def write_record_atomic(target: Path, record: dict[str, object], *, preserve_mti
         record: JSON-serialisable record body.
         preserve_mtime: Restore the pre-existing mtime after the replace. The
             drain's retry-attempt bookkeeping REWRITES a pending record in
-            place, and both the FIFO replay order and the age escape hatch
-            (:func:`~trw_mcp.state.learn_journal.aged_pending_count`) are keyed
-            on mtime — without this, every failed attempt would reset a
-            record's age and the eventual-drain guarantee would never fire.
+            place, and the FIFO replay order is keyed on mtime — without
+            this, every failed attempt would move a record to the back of
+            the queue.
     """
     try:
         target.parent.mkdir(parents=True, exist_ok=True)

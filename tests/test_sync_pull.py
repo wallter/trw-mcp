@@ -8,8 +8,55 @@ async context manager + awaitable get/post).
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+
+from trw_memory.models.memory import MemoryEntry
+
+from tests._memory_fixtures import FAKE_NAMESPACE, DaemonCheckout
+from tests._memory_store_fake import FakeMemoryStore
+
+
+def _seed(
+    store: FakeMemoryStore,
+    entry_id: str,
+    *,
+    namespace: str = FAKE_NAMESPACE,
+    content: str = "tip",
+    detail: str = "",
+    tags: list[str] | None = None,
+    importance: float = 0.5,
+    vector_clock: dict[str, int] | None = None,
+    source: str = "human",
+    metadata: dict[str, str] | None = None,
+    remote_id: str | None = None,
+    sync_seq: int = 1,
+    synced: bool = True,
+) -> MemoryEntry:
+    """Seed a fully-formed row directly (the fake route's equivalent of ``backend.store`` +
+    ``DeltaTracker.mark_synced``): pull.py reads ``last_synced_at``/``vector_clock`` straight off
+    the entry, so those fields must be real, not just the fake's own dirty bookkeeping.
+    """
+    entry = MemoryEntry(
+        id=entry_id,
+        namespace=namespace,
+        content=content,
+        detail=detail,
+        tags=list(tags or []),
+        importance=importance,
+        vector_clock=dict(vector_clock or {}),
+        source=source,
+        metadata=dict(metadata or {}),
+        remote_id=remote_id,
+        sync_seq=sync_seq,
+        last_synced_at=datetime.now(timezone.utc) if synced else None,
+    )
+    store.rows[(namespace, entry_id)] = entry
+    if synced:
+        store.synced[(namespace, entry_id)] = sync_seq
+    return entry
 
 
 def _build_async_httpx_mock(response: object) -> MagicMock:
@@ -229,54 +276,6 @@ async def test_pull_not_modified_returns_distinct_result() -> None:
     assert result.status_code == 304
 
 
-async def test_pull_team_learnings_returns_entries_from_pull_response() -> None:
-    """The convenience wrapper returns only the team-learning payload from a 200 pull."""
-    from trw_mcp.sync.pull import PullResult, SyncPuller
-
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
-
-    mock_pull = AsyncMock(
-        return_value=PullResult(
-            team_learnings=[{"source_learning_id": "remote-1"}, {"source_learning_id": "remote-2"}],
-            status_code=200,
-        )
-    )
-    with patch.object(puller, "pull_intel_state", mock_pull):
-        result = await puller.pull_team_learnings(
-            since_seq=7,
-            etag="etag-1",
-            model_family="opus",
-            trw_version="v1",
-            client_id="sync-client-2",
-        )
-
-    assert result == [{"source_learning_id": "remote-1"}, {"source_learning_id": "remote-2"}]
-    mock_pull.assert_awaited_once_with(
-        etag="etag-1",
-        since_seq=7,
-        model_family="opus",
-        trw_version="v1",
-        client_id="sync-client-2",
-    )
-
-
-async def test_pull_team_learnings_returns_empty_list_for_not_modified_or_failure() -> None:
-    """304 and transport failures both collapse to an empty delta for callers."""
-    from trw_mcp.sync.pull import PullResult, SyncPuller
-
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1")
-
-    with patch.object(
-        puller,
-        "pull_intel_state",
-        AsyncMock(return_value=PullResult(not_modified=True, status_code=304)),
-    ):
-        assert await puller.pull_team_learnings(since_seq=7) == []
-
-    with patch.object(puller, "pull_intel_state", AsyncMock(return_value=None)):
-        assert await puller.pull_team_learnings(since_seq=7) == []
-
-
 def test_sync_modules_follow_structlog_conventions() -> None:
     """Sync modules keep the established structlog naming/keyword conventions."""
     import trw_mcp.sync.cache as cache_module
@@ -303,14 +302,10 @@ def test_sync_modules_follow_structlog_conventions() -> None:
                 assert "-" not in event_name
 
 
-def test_merge_team_learnings_inserts_team_sync_entries(tmp_path) -> None:
+def test_merge_team_learnings_inserts_team_sync_entries(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
     """Pulled team learnings are inserted locally with attribution metadata."""
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-    from trw_memory.sync.delta import DeltaTracker
-
     from trw_mcp.sync.pull import SyncPuller
 
-    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
     puller = SyncPuller(
         backend_url="http://example.com",
         api_key="key",
@@ -318,58 +313,86 @@ def test_merge_team_learnings_inserts_team_sync_entries(tmp_path) -> None:
         trw_dir=tmp_path,
     )
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        merged = puller.merge_team_learnings(
-            [
-                {
-                    "source_learning_id": "remote-1",
-                    "summary": "shared tip",
-                    "detail": "backend detail",
-                    "impact": 0.8,
-                    "tags": ["sync"],
-                    "type": "pattern",
-                    "status": "active",
-                    "sync_seq": 7,
-                    "vector_clock": {"remote-a": 2},
-                    "metadata": {"origin": "backend"},
-                }
-            ]
-        )
+    merged = puller.merge_team_learnings(
+        [
+            {
+                "source_learning_id": "remote-1",
+                "summary": "shared tip",
+                "detail": "backend detail",
+                "impact": 0.8,
+                "tags": ["sync"],
+                "type": "pattern",
+                "status": "active",
+                "sync_seq": 7,
+                "vector_clock": {"remote-a": 2},
+                "metadata": {"origin": "backend"},
+            }
+        ]
+    )
 
     assert merged.applied == 1
-    stored = backend.get("team-sync-remote-1", namespace="default")
+    stored = fake_memory_store.get("team-sync-remote-1")
     assert stored is not None
     assert stored.source == "team_sync"
     assert stored.remote_id == "remote-1"
     assert stored.metadata["origin"] == "backend"
     assert stored.metadata["team_sync_pull_seq"] == "7"
     assert stored.vector_clock == {"remote-a": 2}
-    assert DeltaTracker.get_dirty_entries(backend) == []
+    assert fake_memory_store.page_dirty(FAKE_NAMESPACE, 100) == []
 
 
-def test_merge_team_learnings_resolves_conflicts(tmp_path) -> None:
-    """Existing pulled entries are merged with vector-clock conflict resolution."""
-    from trw_memory.models.memory import MemoryEntry
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-    from trw_memory.sync.delta import DeltaTracker
-
+def test_re_pulling_an_applied_revision_changes_nothing(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
+    """The same remote revision offered again (equal vector clock) is not merged a second time."""
     from trw_mcp.sync.pull import SyncPuller
 
-    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
-    backend.store(
-        MemoryEntry(
-            id="team-sync-remote-1",
-            remote_id="remote-1",
-            content="shared tip",
-            detail="local detail",
-            tags=["local"],
-            importance=0.4,
-            vector_clock={"local-a": 1},
-            source="team_sync",
-            metadata={"team_sync_pull_seq": "5"},
-        )
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="c", trw_dir=tmp_path)
+    learning = {"source_learning_id": "remote-9", "summary": "tip", "detail": "d", "vector_clock": {"peer": 3}}
+
+    first = puller.merge_team_learnings([learning])
+    before = fake_memory_store.get("team-sync-remote-9")
+    again = puller.merge_team_learnings([dict(learning, sync_seq=11)])
+    after = fake_memory_store.get("team-sync-remote-9")
+
+    assert (first.inserted, again.unchanged, again.applied, again.rejected) == (1, 1, 0, 0)
+    assert before is not None and after is not None
+    assert (after.outcome_history, after.detail, after.sync_seq) == (before.outcome_history, "d", before.sync_seq)
+
+
+def test_a_pull_older_than_an_unpushed_local_edit_leaves_the_edit_to_push(
+    fake_memory_store: FakeMemoryStore, tmp_path
+) -> None:
+    """push -> local edit -> pull of the pushed revision: the edit must still reach the next push."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    # The push landed vector_clock {"me": 1}; the local edit that followed bumped
+    # the clock but has not been pushed (last_synced_at is None).
+    _seed(fake_memory_store, "L-own", detail="v2", vector_clock={"me": 2}, sync_seq=2, synced=False)
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="me", trw_dir=tmp_path)
+
+    merged = puller.merge_team_learnings(
+        [{"source_learning_id": "L-own", "summary": "tip", "detail": "v1", "vector_clock": {"me": 1}}]
     )
-    DeltaTracker.mark_synced(["team-sync-remote-1"], backend, namespace="default")
+
+    assert (merged.unchanged, merged.applied) == (1, 0)
+    assert [(e.id, e.detail) for e in fake_memory_store.page_dirty(FAKE_NAMESPACE, 100)] == [("L-own", "v2")]
+
+
+def test_merge_team_learnings_resolves_conflicts(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
+    """Existing pulled entries are merged with vector-clock conflict resolution."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    _seed(
+        fake_memory_store,
+        "team-sync-remote-1",
+        remote_id="remote-1",
+        content="shared tip",
+        detail="local detail",
+        tags=["local"],
+        importance=0.4,
+        vector_clock={"local-a": 1},
+        source="team_sync",
+        metadata={"team_sync_pull_seq": "5"},
+    )
 
     puller = SyncPuller(
         backend_url="http://example.com",
@@ -378,26 +401,25 @@ def test_merge_team_learnings_resolves_conflicts(tmp_path) -> None:
         trw_dir=tmp_path,
     )
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        merged = puller.merge_team_learnings(
-            [
-                {
-                    "source_learning_id": "remote-1",
-                    "summary": "shared tip",
-                    "detail": "remote detail",
-                    "impact": 0.9,
-                    "tags": ["remote"],
-                    "type": "pattern",
-                    "status": "active",
-                    "sync_seq": 9,
-                    "vector_clock": {"remote-b": 1},
-                    "metadata": {"origin": "backend"},
-                }
-            ]
-        )
+    merged = puller.merge_team_learnings(
+        [
+            {
+                "source_learning_id": "remote-1",
+                "summary": "shared tip",
+                "detail": "remote detail",
+                "impact": 0.9,
+                "tags": ["remote"],
+                "type": "pattern",
+                "status": "active",
+                "sync_seq": 9,
+                "vector_clock": {"remote-b": 1},
+                "metadata": {"origin": "backend"},
+            }
+        ]
+    )
 
     assert merged.applied == 1
-    stored = backend.get("team-sync-remote-1", namespace="default")
+    stored = fake_memory_store.get("team-sync-remote-1")
     assert stored is not None
     assert stored.source == "team_sync"
     assert "local detail" in stored.detail
@@ -405,18 +427,64 @@ def test_merge_team_learnings_resolves_conflicts(tmp_path) -> None:
     assert stored.tags == ["local", "remote"]
     assert stored.importance == 0.9
     assert stored.metadata["team_sync_pull_seq"] == "9"
-    assert DeltaTracker.get_dirty_entries(backend) == []
+    # The merge holds local content the server lacks, so the next push carries it.
+    assert [(e.id, e.detail) for e in fake_memory_store.page_dirty(FAKE_NAMESPACE, 100)] == [
+        ("team-sync-remote-1", stored.detail)
+    ]
 
 
-def test_merge_company_sync_learnings_tagged_distinctly(tmp_path) -> None:
+def test_an_unpushed_local_edit_survives_a_teammates_newer_revision(
+    fake_memory_store: FakeMemoryStore, tmp_path
+) -> None:
+    """push -> local edit (no clock tick) -> pull of a teammate's edit: both reach the next push."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    # The pushed revision carried vector_clock {"me": 1}; the local edit that followed
+    # changed content without ticking the clock (an un-pushed edit, per real `update()`).
+    _seed(fake_memory_store, "L-mine", detail="my edit", vector_clock={"me": 1}, sync_seq=2, synced=False)
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="me", trw_dir=tmp_path)
+
+    puller.merge_team_learnings(
+        [
+            {
+                "source_learning_id": "L-mine",
+                "summary": "tip",
+                "detail": "their edit",
+                "vector_clock": {"me": 1, "b": 1},
+            }
+        ]
+    )
+
+    dirty = fake_memory_store.page_dirty(FAKE_NAMESPACE, 100)
+    assert [e.id for e in dirty] == ["L-mine"]
+    assert "my edit" in dirty[0].detail and "their edit" in dirty[0].detail
+
+
+def test_a_pulled_revision_never_lowers_the_local_write_counter(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
+    """The next local edit must carry a counter above every one this client already pushed for the entry."""
+    from trw_mcp.sync.pull import SyncPuller
+
+    # Five local writes (initial store + 4 edits), all pushed: sync_seq=5, synced.
+    pushed = _seed(fake_memory_store, "L-seq", detail="v5", vector_clock={"me": 1}, sync_seq=5, synced=True)
+    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="me", trw_dir=tmp_path)
+
+    puller.merge_team_learnings(
+        [{"source_learning_id": "L-seq", "summary": "tip", "detail": "theirs", "vector_clock": {"me": 1, "b": 1}}]
+    )
+    pulled = fake_memory_store.get("L-seq")
+
+    assert pulled is not None and pulled.detail == "theirs"
+    assert pulled.sync_seq > pushed.sync_seq
+    # The teammate's revision is what the server holds, so it lands clean.
+    assert fake_memory_store.page_dirty(FAKE_NAMESPACE, 100) == []
+
+
+def test_merge_company_sync_learnings_tagged_distinctly(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
     """PRD-INFRA-139 FR06: company-tier learnings tagged source=company_sync in
     metadata are merged via the same team-learnings path but stored with the
     company_sync source so they stay distinguishable from team learnings."""
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
     from trw_mcp.sync.pull import SyncPuller
 
-    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
     puller = SyncPuller(
         backend_url="http://example.com",
         api_key="key",
@@ -424,34 +492,33 @@ def test_merge_company_sync_learnings_tagged_distinctly(tmp_path) -> None:
         trw_dir=tmp_path,
     )
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        merged = puller.merge_team_learnings(
-            [
-                {
-                    "source_learning_id": "company-1",
-                    "summary": "company-wide lesson",
-                    "detail": "portable detail",
-                    "impact": 0.9,
-                    "tags": ["sync"],
-                    "type": "pattern",
-                    "status": "active",
-                    "sync_seq": 3,
-                    "vector_clock": {},
-                    # Server tags company-tier learnings distinctly.
-                    "metadata": {"source": "company_sync"},
-                }
-            ]
-        )
+    merged = puller.merge_team_learnings(
+        [
+            {
+                "source_learning_id": "company-1",
+                "summary": "company-wide lesson",
+                "detail": "portable detail",
+                "impact": 0.9,
+                "tags": ["sync"],
+                "type": "pattern",
+                "status": "active",
+                "sync_seq": 3,
+                "vector_clock": {},
+                # Server tags company-tier learnings distinctly.
+                "metadata": {"source": "company_sync"},
+            }
+        ]
+    )
 
     assert merged.applied == 1
-    stored = backend.get("team-sync-company-1", namespace="default")
+    stored = fake_memory_store.get("team-sync-company-1")
     assert stored is not None
     assert stored.source == "company_sync"
     assert stored.metadata["source"] == "company_sync"
     assert stored.remote_id == "company-1"
 
 
-def test_two_peers_sharing_a_source_learning_id_stay_two_rows(tmp_path) -> None:
+def test_two_peers_sharing_a_source_learning_id_stay_two_rows(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
     """PRD-CORE-245 FR03: the pull path resolves an existing row WITHIN its namespace.
 
     ``_local_team_learning_id`` mints the local id from a PEER-SUPPLIED string, so
@@ -459,11 +526,8 @@ def test_two_peers_sharing_a_source_learning_id_stay_two_rows(tmp_path) -> None:
     ``source_learning_id`` into two namespaces matched each other's row and the
     merge collapsed them into one.
     """
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
     from trw_mcp.sync.pull import SyncPuller
 
-    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
     puller = SyncPuller(
         backend_url="http://example.com",
         api_key="key",
@@ -478,29 +542,24 @@ def test_two_peers_sharing_a_source_learning_id_stay_two_rows(tmp_path) -> None:
         "status": "active",
     }
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        assert puller.merge_team_learnings([dict(payload)], namespace="project:alpha").applied == 1
-        assert puller.merge_team_learnings([dict(payload)], namespace="project:beta").applied == 1
+    assert puller.merge_team_learnings([dict(payload)], namespace="project:alpha").applied == 1
+    assert puller.merge_team_learnings([dict(payload)], namespace="project:beta").applied == 1
 
-    rows = backend._conn.execute(
-        "SELECT namespace FROM memories WHERE id = ? ORDER BY namespace",
-        ("team-sync-remote-collide",),
-    ).fetchall()
-    assert [str(row[0]) for row in rows] == ["project:alpha", "project:beta"]
+    namespaces = sorted(ns for (ns, entry_id) in fake_memory_store.rows if entry_id == "team-sync-remote-collide")
+    assert namespaces == ["project:alpha", "project:beta"]
 
 
-def test_pulled_entry_lands_in_the_named_namespace_with_the_peers_clock(tmp_path) -> None:
+def test_pulled_entry_lands_in_the_named_namespace_with_the_peers_clock(
+    fake_memory_store: FakeMemoryStore, tmp_path
+) -> None:
     """PRD-CORE-245 FR08: built through the factory, but the PEER's clock survives.
 
     A deserialiser of remote state must reproduce the causality the payload
     carries; stamping a local clock over it is the same corruption FR08 exists to
     prevent, only inverted.
     """
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
     from trw_mcp.sync.pull import SyncPuller
 
-    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
     puller = SyncPuller(
         backend_url="http://example.com",
         api_key="key",
@@ -508,42 +567,48 @@ def test_pulled_entry_lands_in_the_named_namespace_with_the_peers_clock(tmp_path
         trw_dir=tmp_path,
     )
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        merged = puller.merge_team_learnings(
-            [
-                {
-                    "source_learning_id": "remote-ns",
-                    "summary": "namespaced tip",
-                    "impact": 0.5,
-                    "type": "pattern",
-                    "status": "active",
-                    "vector_clock": {"peer-node": 4},
-                }
-            ],
-            namespace="project:alpha",
-        )
+    merged = puller.merge_team_learnings(
+        [
+            {
+                "source_learning_id": "remote-ns",
+                "summary": "namespaced tip",
+                "impact": 0.5,
+                "type": "pattern",
+                "status": "active",
+                "vector_clock": {"peer-node": 4},
+            }
+        ],
+        namespace="project:alpha",
+    )
 
     assert merged.applied == 1
-    stored = backend.get("team-sync-remote-ns", namespace="project:alpha")
+    stored = fake_memory_store.rows.get(("project:alpha", "team-sync-remote-ns"))
     assert stored is not None, "the pulled entry must land in the namespace the caller named"
     assert stored.namespace == "project:alpha"
     assert stored.vector_clock == {"peer-node": 4}
-    assert backend.get("team-sync-remote-ns", namespace="default") is None
+    assert ("default", "team-sync-remote-ns") not in fake_memory_store.rows
 
 
-def test_merge_team_learnings_books_a_security_refusal_as_blocked_not_failed(tmp_path) -> None:
+def test_merge_team_learnings_books_a_security_refusal_as_blocked_not_failed(
+    daemon_checkout: DaemonCheckout,
+) -> None:
     """PRD-FIX-138-FR01: a write-time PoisoningError is a judged decision.
 
     Booked as ``failed`` it held the pull cursor on the item forever (the cycle
     treats ``failed`` as "never judged"); one poisoned team learning then stalled
     sync for the whole install — observed 2026-09-16 with 399 of 1330 rows pulled.
-    """
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
 
+    This needs the REAL write gate (the fake store's ``apply_synced`` runs no gate
+    at all), so it routes through the daemon rather than ``fake_memory_store``.
+    """
     from trw_mcp.sync.pull import SyncPuller
 
-    backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
-    puller = SyncPuller(backend_url="http://example.com", api_key="key", client_id="sync-client-1", trw_dir=tmp_path)
+    puller = SyncPuller(
+        backend_url="http://example.com",
+        api_key="key",
+        client_id="sync-client-1",
+        trw_dir=daemon_checkout.trw_dir,
+    )
     poisoned = {
         "source_learning_id": "remote-poison",
         "summary": "retry wrapper",
@@ -558,14 +623,15 @@ def test_merge_team_learnings_books_a_security_refusal_as_blocked_not_failed(tmp
     }
     clean = dict(poisoned, source_learning_id="remote-clean", detail="plain detail", sync_seq=10)
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        result = puller.merge_team_learnings([poisoned, clean])
+    result = puller.merge_team_learnings([poisoned, clean])
 
     assert result.blocked == 1
     assert result.failed == 0
     assert result.applied == 1
     assert result.rejected == 1
     assert result.status == "partial"
-    assert backend.get("team-sync-remote-poison", namespace="default") is None
-    assert backend.get("team-sync-remote-clean", namespace="default") is not None
+    poisoned_row = asyncio.run(daemon_checkout.client.get("team-sync-remote-poison", daemon_checkout.namespace))
+    assert poisoned_row["status"] == "not_found"
+    clean_row = asyncio.run(daemon_checkout.client.get("team-sync-remote-clean", daemon_checkout.namespace))
+    assert clean_row["status"] == "ok"
     assert result.as_log_fields()["blocked"] == 1

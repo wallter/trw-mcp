@@ -87,15 +87,15 @@ class TestLearningEffectiveness:
         # 2 out of 4 accessed
         assert result["components"]["access_ratio"] == 0.5
 
-    def test_q_activation_rate(self, trw_dir: Path) -> None:
+    def test_no_q_activation_component(self, trw_dir: Path) -> None:
         entries = trw_dir / "learnings" / "entries"
         _write_learning(entries, "a", q_observations=5)
         _write_learning(entries, "b", q_observations=0)
         _write_learning(entries, "c", q_observations=3)
         _write_learning(entries, "d", q_observations=0)
         result = compute_reflection_quality(trw_dir)
-        # 2 out of 4 activated
-        assert result["components"]["q_activation_rate"] == 0.5
+        # PRD-CORE-293: the dead Q-activation component is gone.
+        assert "q_activation_rate" not in result["components"]
 
     def test_diversity_with_many_tags(self, trw_dir: Path) -> None:
         entries = trw_dir / "learnings" / "entries"

@@ -198,28 +198,11 @@ def _review_message(context: NudgeContext) -> str:
     return "If the work is complete, use trw_deliver() under existing evidence gates; otherwise preserve material progress with a next-read pointer."
 
 
-def _checkpoint_message() -> str:
-    """Return the checkpoint reminder message."""
-    return (
-        "Progress saved. If you found a non-obvious reusable insight, trw_learn() "
-        "persists it across sessions. Do not manufacture a learning for routine work."
-    )
-
-
-def _learn_message(ceremony_mode: str) -> str:
-    """Return the learning follow-up message."""
-    if ceremony_mode == "light":
-        return "Learning persisted. Continue the work, then call trw_deliver() when done."
-    return "Learning persisted. NEXT: trw_checkpoint() at the next milestone."
-
-
-def _session_start_message(ceremony_mode: str) -> str:
-    """Return the session-start guidance message."""
-    if ceremony_mode == "light":
-        return "State your approach before editing, then call trw_init() for new work or trw_status() to resume."
-    return (
-        "State your approach after reading FRAMEWORK.md, then call trw_init() for new work or trw_status() to resume."
-    )
+# _checkpoint_message/_learn_message/_session_start_message removed
+# (PRD-QUAL-143 FR06 / R2-011): their static, ceremony_mode-keyed text moved
+# to data/surfaces/nudge_template.yaml (ctx:checkpoint / ctx:learn:* /
+# ctx:session_start:*), read directly by _context_reactive_message via the
+# existing load_pool_message loader.
 
 
 def _deliver_message(state: CeremonyState) -> str:

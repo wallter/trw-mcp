@@ -86,8 +86,6 @@ def _stub_non_target_steps() -> dict[str, Any]:
         "_do_index_sync",
         "_step_auto_progress",
         "_step_publish_learnings",
-        "_step_outcome_correlation",
-        "_step_recall_outcome",
         "_step_batch_send",
         "_step_trust_increment",
         "_step_delivery_metrics",

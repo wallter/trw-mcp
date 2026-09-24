@@ -7,12 +7,15 @@ FR03: Instruction fallback guidance
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from tests._memory_fixtures import DaemonCheckout
 
 # ---------------------------------------------------------------------------
 # FR02 — Shared service layer
@@ -284,26 +287,28 @@ class TestOrchestrationServiceLearnParity:
         assert result["status"] == "rejected"
         assert result["reason"] == "invalid_type"
 
-    def test_verified_without_evidence_is_refused(self, tmp_path: Path) -> None:
+    def test_verified_without_evidence_is_refused(self, daemon_checkout: DaemonCheckout) -> None:
         """confidence='verified' still requires substantiation (reused validation).
 
-        Enforced by trw-memory's own write-time schema contract
-        (SchemaValidationError), the same gate the MCP tool goes through --
-        not re-implemented in the offline path.
+        Enforced by trw-memory's own write-time schema contract, the same gate
+        the MCP tool goes through -- not re-implemented in the offline path.
+        This is a write-gate case (PRD-CORE-280 slice e1 contract), so it runs
+        against the real daemon store rather than the fake, which does no
+        schema validation. The daemon reports the refusal as a status
+        (PRD-CORE-280 e3), so the offline path answers ``rejected`` with the
+        rule it broke.
         """
-        from trw_memory.exceptions import SchemaValidationError
-
         from trw_mcp.services.orchestration_service import write_local_learning
 
-        trw_dir = tmp_path / ".trw"
-        trw_dir.mkdir()
-        with pytest.raises(SchemaValidationError):
-            write_local_learning(
-                "summary text long enough to pass the noise filter",
-                "detail text",
-                trw_dir=trw_dir,
-                confidence="verified",
-            )
+        result = write_local_learning(
+            "summary text long enough to pass the noise filter",
+            "detail text",
+            trw_dir=daemon_checkout.trw_dir,
+            confidence="verified",
+        )
+
+        assert result["status"] == "rejected"
+        assert "confidence='verified' requires a substantiating artifact" in str(result["message"])
 
 
 # ---------------------------------------------------------------------------
@@ -412,7 +417,7 @@ class TestLocalCLISubcommand:
         )
         assert "Status: delivered" in after.stdout
 
-    def test_local_learn_persists_without_transport(self, tmp_path: Path) -> None:
+    def test_local_learn_persists_without_transport(self, daemon_checkout: DaemonCheckout) -> None:
         """trw-mcp local learn writes through the learning implementation."""
         result = subprocess.run(
             [
@@ -430,14 +435,15 @@ class TestLocalCLISubcommand:
             ],
             capture_output=True,
             text=True,
-            cwd=str(tmp_path),
+            cwd=str(daemon_checkout.trw_dir.parent),
         )
 
         assert result.returncode == 0, result.stderr
         assert "Learning" in result.stdout
-        assert any((tmp_path / ".trw" / "memory").glob("**/*.yaml"))
+        page = asyncio.run(daemon_checkout.client.list_page(daemon_checkout.namespace, 10, None))
+        assert [row["content"] for row in page["entries"]] == ["Local fallback test learning"]
 
-    def test_local_learn_records_type_confidence_impact_and_evidence(self, tmp_path: Path) -> None:
+    def test_local_learn_records_type_confidence_impact_and_evidence(self, daemon_checkout: DaemonCheckout) -> None:
         """The trw_learn-parity flags round-trip through the offline CLI (PRD-CORE-247)."""
         result = subprocess.run(
             [
@@ -463,19 +469,19 @@ class TestLocalCLISubcommand:
             ],
             capture_output=True,
             text=True,
-            cwd=str(tmp_path),
+            cwd=str(daemon_checkout.trw_dir.parent),
         )
 
         assert result.returncode == 0, result.stderr
         assert "Learning" in result.stdout
-        entry_files = list((tmp_path / ".trw" / "learnings" / "entries").glob("*.yaml"))
+        entry_files = list((daemon_checkout.trw_dir / "learnings" / "entries").glob("*.yaml"))
         assert entry_files, "no learning entry sidecar was written"
         entry_text = entry_files[0].read_text(encoding="utf-8")
         assert "type: incident" in entry_text
         assert "confidence: high" in entry_text
         assert "second evidence item" in entry_text
 
-    def test_local_learn_verified_without_evidence_fails_cleanly(self, tmp_path: Path) -> None:
+    def test_local_learn_verified_without_evidence_fails_cleanly(self, daemon_checkout: DaemonCheckout) -> None:
         """confidence=verified with no evidence is a clean error, not a traceback."""
         result = subprocess.run(
             [
@@ -493,7 +499,7 @@ class TestLocalCLISubcommand:
             ],
             capture_output=True,
             text=True,
-            cwd=str(tmp_path),
+            cwd=str(daemon_checkout.trw_dir.parent),
         )
 
         # A clean, structured rejection message on stdout with a non-zero exit —
@@ -503,6 +509,19 @@ class TestLocalCLISubcommand:
         assert result.returncode != 0
         assert "Error:" in result.stdout
         assert "verified" in result.stdout
+        assert "TRW MCP CRASH" not in result.stderr
+
+    def test_local_learn_on_an_unpinned_checkout_names_the_fix_without_a_traceback(self, tmp_path: Path) -> None:
+        """The store selection's fail-closed refusal is a clean CLI error (PRD-CORE-280 FR06)."""
+        result = subprocess.run(
+            [sys.executable, "-m", "trw_mcp.server", "local", "learn", "--summary", "Unpinned", "--detail", "x"],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+        )
+
+        assert result.returncode == 1
+        assert "trw-mcp update-project" in result.stdout
         assert "TRW MCP CRASH" not in result.stderr
 
     def test_local_no_subcommand_shows_help(self) -> None:

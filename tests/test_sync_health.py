@@ -11,11 +11,9 @@ import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools._ceremony_helpers import step_sync_health
 
@@ -197,7 +195,6 @@ def test_advisory_includes_remediation(tmp_path: Path) -> None:
     assert "config.yaml" in advisory
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_latency_under_budget(tmp_path: Path) -> None:
     """NFR01: step adds <= 5ms p95. Single file read is O(1)."""
@@ -212,7 +209,7 @@ def test_latency_under_budget(tmp_path: Path) -> None:
         durations.append((time.monotonic() - start) * 1000.0)
     durations.sort()
     p95 = durations[int(len(durations) * 0.95)]
-    assert p95 <= 5.0, f"p95 {p95:.2f}ms exceeds 5ms budget"
+    assert_budget("sync_health_p95", p95, 5.0, "ms")
 
 
 def test_config_fields_defaults() -> None:
@@ -242,29 +239,6 @@ def test_sync_health_in_session_start_typed_dict() -> None:
     from trw_mcp.models.typed_dicts import SessionStartResultDict
 
     assert "sync_health" in SessionStartResultDict.__annotations__
-
-
-def test_step_embed_health_still_present() -> None:
-    """Regression: step_embed_health not accidentally removed."""
-    from trw_mcp.tools._ceremony_helpers import step_embed_health
-
-    result = step_embed_health()
-    assert "advisory" in result
-
-
-def test_embed_health_failure_uses_noncritical_degradation_path() -> None:
-    import pytest
-
-    from trw_mcp.tools._ceremony_helpers import step_embed_health
-    from trw_mcp.tools._ceremony_step_table import SESSION_START_STEPS
-
-    embed_step = next(step for step in SESSION_START_STEPS if step.key == "embed_health")
-    assert embed_step.critical is False
-    with (
-        patch("trw_mcp.state.memory_adapter.check_embeddings_status", side_effect=RuntimeError("health failed")),
-        pytest.raises(RuntimeError, match="health failed"),
-    ):
-        step_embed_health()
 
 
 def test_session_start_contains_sync_health(tmp_path: Path) -> None:

@@ -123,6 +123,34 @@ def test_mutation_during_read(
     assert reader.verification_artifact_is_current(receipt, root).state is ReceiptState.UNSTABLE_READ
 
 
+def test_same_tick_rewrite_is_still_caught_by_content(
+    artifact: tuple[Path, VerificationReceipt], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T16: a same-tick rewrite must be caught even when the stat-based
+    ``_signature`` cannot see it at all (coarse filesystem clock resolution).
+
+    This does not depend on the host's real clock granularity -- it forces
+    ``_signature`` to report the SAME value for before/after/named regardless of
+    the real mtime, which is exactly what a ~1ms-resolution filesystem clock does
+    for a rewrite completing inside one tick. Content (a second independent read)
+    must still detect the mutation.
+    """
+    root, receipt = artifact
+    original = reader._read_digest
+
+    def mutate(fd: int, size: int) -> str | None:
+        digest = original(fd, size)
+        path = root / "proof/result"
+        before = path.stat()
+        path.write_bytes(b"FAIL")
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        return digest
+
+    monkeypatch.setattr(reader, "_read_digest", mutate)
+    monkeypatch.setattr(reader, "_signature", lambda value: (0, 0, 0, 0, 0, 0))
+    assert reader.verification_artifact_is_current(receipt, root).state is ReceiptState.UNSTABLE_READ
+
+
 def test_size_limit_before_hash(artifact: tuple[Path, VerificationReceipt], monkeypatch: pytest.MonkeyPatch) -> None:
     root, receipt = artifact
     monkeypatch.setattr(EvidenceLimits, "MAX_BOUND_FILE_BYTES", 3)

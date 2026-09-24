@@ -110,7 +110,7 @@ severity: P0|P1|P2
 category: spec_gap|impl_gap|test_gap|integration_gap|traceability_gap
 legacy_category: prd-ambiguity|spec-gap|type-safety|dry|error-handling|observability|test-quality|integration|null
 evidence_tier: direct|inferential|speculative
-location: "path/to/file.py:42"   # or "PRD-CORE-123 FR05" for spec findings
+location: "path/to/file.py:42"   # or "PRD-ID FR-id" for spec findings
 issue: "One-line description of the gap"
 evidence: "What the code does vs. what the spec requires — include command output or cited line"
 fix: "Specific recommendation with file path and line"
@@ -124,7 +124,7 @@ fix: "Specific recommendation with file path and line"
 | P1 | FR partially implemented, key behavior missing, or significant quality gap | Pagination exists but no max limit, response missing required fields, blanket error suppression |
 | P2 | Minor gap, edge case not covered, or style/quality nit | Missing negative test, cosmetic field wrong, minor type imprecision |
 
-**Security PRD escalation (PRD-QUAL-044-FR04)**: If the PRD has `tags: [security]` or its title contains "security"/"hardening"/"vulnerability", any FAIL or MISSING verdict is automatically escalated to P0. Security PRDs cannot be left incomplete.
+**Security PRD escalation**: If the PRD has `tags: [security]` or its title contains "security"/"hardening"/"vulnerability", any FAIL or MISSING verdict is automatically escalated to P0. Security PRDs cannot be left incomplete.
 
 ### Audit Verdict Criteria (overall)
 
@@ -134,7 +134,7 @@ fix: "Specific recommendation with file path and line"
 | **CONDITIONAL** | Zero P0 findings AND 1-2 P1 findings that are fixable without architectural change | PRD holds; implementer fixes P1s; re-audit only affected FRs |
 | **FAIL** | Any P0 finding OR 3+ P1 findings OR any FR with verdict MISSING | PRD reverts to IMPLEMENT; full review required |
 
-Maximum audit cycles before escalation: 3. The value's owner is the `max_audit_cycles` field declared in `trw_mcp/models/config/_fields_ceremony.py` and overridable in `.trw/config.yaml`; the number above restates that field's declared default and nothing else may restate it. After that many consecutive FAIL verdicts, escalate to the orchestrator for replan or scope reduction.
+Maximum audit cycles before escalation: 3. This is now a fixed protocol constant, not a config restatement -- the `max_audit_cycles` TRWConfig field that used to own this number was removed as unread dead config -- so this sentence is the sole source and nothing else may restate it. After that many consecutive FAIL verdicts, escalate to the orchestrator for replan or scope reduction.
 
 ---
 
@@ -164,7 +164,7 @@ auditor: "{your-name}"
 timestamp: "{ISO 8601}"
 
 fr_verdicts:
-  - fr_id: FR01
+  - fr_id: FR-a
     title: "{FR title}"
     acceptance_criterion: "{exact text from PRD}"
     verdict: PASS|PARTIAL|FAIL|MISSING
@@ -240,6 +240,23 @@ summary:
 The `prior_learning_verification` mapping is populated from the prior-learning recall step: `known_patterns` are the patterns recall surfaced, `verified_patterns` are those you explicitly confirmed against this implementation, and `missed_patterns` are those the implementation still exhibits.
 
 ---
+
+## Section H1. The `trw:intentional` Bar
+
+Code carrying a `# trw:intentional <reason>` (or `// trw:intentional <reason>`) comment on or just above the flagged line records a settled, deliberate decision a prior reviewer or auditor already litigated — a scorer that treats no-data as a fail by design, a truthfulness gate, a redaction that skips empty values. Treat the marker as strong evidence the code is correct: do NOT raise a finding against it on "this looks wrong/surprising" grounds. Raise one ONLY with concrete evidence the cited reason no longer holds, and state that evidence. Full convention: `docs/documentation/intentional-marker.md`.
+
+## Section H2. Reviewer Severity Mapping (P0-P3 -> critical/warning/info)
+
+`trw-reviewer` and other finding-emitting agents use a 4-level checklist priority (P0-P3), but the review verdict only understands three severities. This is the single mapping:
+
+| Checklist priority | Severity |
+|---|---|
+| P0 | `critical` |
+| P1 | `warning` |
+| P2 | `info` |
+| P3 | `info` |
+
+The 4-to-3 collapse (P2 and P3 both land on `info`) is deliberate: `_compute_verdict` in `trw-mcp/src/trw_mcp/tools/_review_helpers.py` returns `block`, `warn`, or `pass` and reads only the `critical` and `warning` counts to decide it, so a finer split below `warning` would change nothing about the verdict. Every severity emitted anywhere in the audit/review surface MUST be one of the literal strings `critical`, `warning`, `info`.
 
 ## Section H. Report Delivery
 

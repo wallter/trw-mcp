@@ -41,7 +41,7 @@ Initial authoring preserves lifecycle/status and version unless separately autho
 
 1. **Resolve PRD path**: Find the PRD file from `$ARGUMENTS[0]`:
    - If a file path, use directly
-   - If a PRD ID (e.g., `PRD-CORE-020`), read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) and search in that directory and its sibling `archive/prds/`
+   - If a PRD ID, read `prds_relative_path` from `.trw/config.yaml` (default: `docs/requirements-aare-f/prds`) and search in that directory and its sibling `archive/prds/`
    - If the caller supplies review findings as refinement context, retain them as targeted repair inputs; verify them
      against the PRD and repository evidence rather than accepting them blindly
 
@@ -96,7 +96,7 @@ If you catch yourself thinking any of these, stop and follow the process:
 | "I can fabricate this requirement to fill the gap" | Fabricated requirements create false confidence and wrong implementations | Agents implement the fabricated requirement faithfully — wrong code that passes all tests |
 | "The traceability matrix can be filled in later" | Traceability is how the lead validates FR coverage during REVIEW | Missing traceability means the lead can't verify implementation — delays delivery by a full review cycle |
 
-## Assertion Suggestions (PRD-CORE-086)
+## Assertion Suggestions
 
 For FRs that reference code patterns, conventions, or structural requirements, suggest executable assertions:
 

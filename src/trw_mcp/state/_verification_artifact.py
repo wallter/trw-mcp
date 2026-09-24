@@ -87,6 +87,20 @@ def _check_artifact(root: Path, parts: list[str], expected: str) -> BindingOutco
                 return _result(ReceiptState.UNSTABLE_READ, "artifact_path_changed")
         if _identity(os.stat(root, follow_symlinks=False)) != _identity(os.fstat(root_fd)):
             return _result(ReceiptState.UNSTABLE_READ, "artifact_path_changed")
+        # T16: os.stat's mtime/ctime resolution is coarse on some filesystems
+        # (~1ms on Linux ext4/tmpfs; hidden on macOS APFS's true nanoseconds), so
+        # a rewrite-then-restore-mtime that completes within one clock tick can
+        # leave _signature(before) == _signature(after) == _signature(named) even
+        # though the bytes changed underneath the read. A second independent read
+        # of the same descriptor is not subject to clock resolution at all: any
+        # content mutation between the two reads changes the digest regardless of
+        # how coarse the filesystem's timestamps are. Placed after the identity
+        # checks above so a path/parent/root swap (already content-stable at the
+        # byte level) is still reported as the more specific artifact_path_changed.
+        os.lseek(fd, 0, os.SEEK_SET)
+        reread_digest = _read_digest(fd, before.st_size)
+        if reread_digest is None or reread_digest != digest:
+            return _result(ReceiptState.UNSTABLE_READ, "artifact_unstable_read")
         if digest != expected:
             return _result(ReceiptState.STALE_CONTENT, "artifact_content_changed")
         return _result(ReceiptState.VALID, "artifact_current")

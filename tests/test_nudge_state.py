@@ -133,24 +133,24 @@ class TestNudgeHistorySerialization:
 class TestFromDictDeserialization:
     def test_missing_nudge_history_defaults_empty(self) -> None:
         """Missing nudge_history field defaults to empty dict."""
-        state = _from_dict({"session_started": True})
+        state = _from_dict({"session_started": True, "pool_cooldowns": {}})
         assert state.nudge_history == {}
         assert state.session_started is True
 
     def test_nudge_history_not_a_dict_failopen(self) -> None:
         """Non-dict nudge_history deserializes to empty dict (fail-open)."""
-        state = _from_dict({"nudge_history": "not_a_dict", "session_started": True})
+        state = _from_dict({"nudge_history": "not_a_dict", "session_started": True, "pool_cooldowns": {}})
         assert state.nudge_history == {}
         assert state.session_started is True
 
     def test_nudge_history_null_failopen(self) -> None:
         """null nudge_history deserializes to empty dict (fail-open)."""
-        state = _from_dict({"nudge_history": None})
+        state = _from_dict({"nudge_history": None, "pool_cooldowns": {}})
         assert state.nudge_history == {}
 
     def test_nudge_history_list_failopen(self) -> None:
         """list nudge_history deserializes to empty dict (fail-open)."""
-        state = _from_dict({"nudge_history": [1, 2, 3]})
+        state = _from_dict({"nudge_history": [1, 2, 3], "pool_cooldowns": {}})
         assert state.nudge_history == {}
 
     def test_malformed_entry_skipped(self) -> None:
@@ -165,7 +165,8 @@ class TestFromDictDeserialization:
                     },
                     "L-bad-val": "not_a_dict",
                     123: {"phases_shown": ["X"]},  # non-str key
-                }
+                },
+                "pool_cooldowns": {},
             }
         )
         assert len(state.nudge_history) == 1
@@ -181,7 +182,8 @@ class TestFromDictDeserialization:
                         "turn_first_shown": 1,
                         "last_shown_turn": 2,
                     },
-                }
+                },
+                "pool_cooldowns": {},
             }
         )
         assert state.nudge_history["L-mix"]["phases_shown"] == ["IMPLEMENT", "VALIDATE"]
@@ -194,7 +196,8 @@ class TestFromDictDeserialization:
                     "L-no-turns": {
                         "phases_shown": ["DELIVER"],
                     },
-                }
+                },
+                "pool_cooldowns": {},
             }
         )
         entry = state.nudge_history["L-no-turns"]

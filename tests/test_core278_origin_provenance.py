@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._layout import MONOREPO_ROOT, requires_monorepo
+from tests._memory_fixtures import DaemonCheckout
 from trw_mcp.state._origin_project import (
     ORIGIN_PROJECT_KEY,
     UNKNOWN_ORIGIN_PROJECT,
@@ -45,45 +46,58 @@ def _synced(entry_id: str = "team-sync-L-remote", **extra: Any) -> dict[str, Any
 
 
 class TestOriginProjectIsRecordedNeverInferred:
-    def test_payload_origin_is_recorded_verbatim(self, tmp_path: Path) -> None:
-        stored = self._merge(tmp_path, {"origin_project": "acme-web", "origin": "backend"})
+    def test_payload_origin_is_recorded_verbatim(self, daemon_checkout: DaemonCheckout) -> None:
+        stored = self._merge(daemon_checkout, {"origin_project": "acme-web", "origin": "backend"})
         assert stored.metadata[ORIGIN_PROJECT_KEY] == "acme-web"
         assert stored.metadata["origin"] == "backend"
 
-    def test_missing_origin_becomes_the_literal_unknown(self, tmp_path: Path) -> None:
-        stored = self._merge(tmp_path, {"origin": "backend"})
+    def test_missing_origin_becomes_the_literal_unknown(self, daemon_checkout: DaemonCheckout) -> None:
+        stored = self._merge(daemon_checkout, {"origin": "backend"})
         assert stored.metadata[ORIGIN_PROJECT_KEY] == UNKNOWN_ORIGIN_PROJECT
 
-    def test_namespace_and_tags_are_never_read_as_origin(self, tmp_path: Path) -> None:
+    def test_namespace_and_tags_are_never_read_as_origin(self, daemon_checkout: DaemonCheckout) -> None:
         """A guess written into durable metadata is indistinguishable from a fact."""
-        stored = self._merge(tmp_path, {"project": "acme-web", "repo": "acme/web"}, tags=["acme-web", "project:acme"])
+        stored = self._merge(
+            daemon_checkout, {"project": "acme-web", "repo": "acme/web"}, tags=["acme-web", "project:acme"]
+        )
         assert stored.metadata[ORIGIN_PROJECT_KEY] == UNKNOWN_ORIGIN_PROJECT
 
-    def _merge(self, tmp_path: Path, metadata: dict[str, Any], tags: list[str] | None = None) -> Any:
-        from trw_memory.storage.sqlite_backend import SQLiteBackend
-
+    def _merge(self, daemon_checkout: DaemonCheckout, metadata: dict[str, Any], tags: list[str] | None = None) -> Any:
+        # PRD-CORE-280 slice e1: merge_team_learnings already routes through
+        # ``selected_store`` (PRD-CORE-298 FR01), so a migrated checkout merges
+        # over the daemon with no production change needed — read back through
+        # the same store instead of a raw ``SQLiteBackend``.
+        from tests._path_isolation import set_current_root
+        from trw_mcp.state._store_selection import selected_store
         from trw_mcp.sync.pull import SyncPuller
 
-        backend = SQLiteBackend(tmp_path / "memory.db", dim=8)
-        puller = SyncPuller(backend_url="http://example.com", api_key="key", trw_dir=tmp_path)
-        with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-            result = puller.merge_team_learnings(
-                [
-                    {
-                        "source_learning_id": "remote-1",
-                        "summary": "team learning",
-                        "detail": "detail",
-                        "impact": 0.8,
-                        "tags": tags or [],
-                        "type": "pattern",
-                        "status": "active",
-                        "sync_seq": 7,
-                        "metadata": metadata,
-                    }
-                ]
-            )
+        trw_dir = daemon_checkout.trw_dir
+        # PRD-CORE-280 slice e1: `_isolate_trw_dir` points the isolated
+        # resolve_trw_dir() stand-in at tmp_path, but `daemon_checkout` lives at
+        # tmp_path/repo/.trw. A lazily-resolving background thread (e.g. a
+        # telemetry flush timer) would otherwise land on the wrong -- or a
+        # LATER test's -- directory. Re-point it to keep this test's window
+        # internally consistent.
+        set_current_root(trw_dir.parent)
+        puller = SyncPuller(backend_url="http://example.com", api_key="key", trw_dir=trw_dir)
+        result = puller.merge_team_learnings(
+            [
+                {
+                    "source_learning_id": "remote-1",
+                    "summary": "team learning",
+                    "detail": "detail",
+                    "impact": 0.8,
+                    "tags": tags or [],
+                    "type": "pattern",
+                    "status": "active",
+                    "sync_seq": 7,
+                    "metadata": metadata,
+                }
+            ]
+        )
         assert result.applied == 1
-        stored = backend.get("team-sync-remote-1", namespace="default")
+        store, _namespace = selected_store(trw_dir)
+        stored = store.get("team-sync-remote-1")
         assert stored is not None
         return stored
 
@@ -126,15 +140,21 @@ class TestProvenanceFailsOpen:
             result = _recall(tmp_path, rows)
         assert [row["id"] for row in result["learnings"]] == ["team-sync-1", "L-1", "team-sync-2"]
 
-    def test_unclassifiable_rows_are_attributable_in_phase_recall(self, tmp_path: Path) -> None:
-        pool = _phase_rows(["team-sync-1", "L-1", "team-sync-2", "L-2"])
+    # PRD-CORE-294 FR02 removed the auto-recall phase (`_phase_contextual_recall`);
+    # the same partition now runs inside the surviving session-start recall
+    # (`perform_session_recalls`). These two migrate the equivalent phase-level
+    # coverage onto that path.
+    def test_unclassifiable_rows_are_attributable_in_session_recall(self, tmp_path: Path) -> None:
+        pool = _session_rows(["team-sync-1", "L-1", "team-sync-2", "L-2"])
         with patch("trw_mcp.state._origin_project.origin_project", side_effect=RuntimeError("broken")):
-            assert _phase_recall(tmp_path, pool) == ["team-sync-1", "L-1", "team-sync-2"]
+            # config.recall_max_results caps the final result at 3; ordering is
+            # unchanged because the fail-open partition returns the input as-is.
+            assert _session_recall(tmp_path, pool) == ["team-sync-1", "L-1", "team-sync-2"]
 
-    def test_a_raising_partition_leaves_phase_recall_order_unchanged(self, tmp_path: Path) -> None:
-        pool = _phase_rows(["team-sync-1", "L-1", "team-sync-2", "L-2"])
+    def test_a_raising_partition_leaves_session_recall_order_unchanged(self, tmp_path: Path) -> None:
+        pool = _session_rows(["team-sync-1", "L-1", "team-sync-2", "L-2"])
         with patch("trw_mcp.state._origin_project.is_attributable_to_this_project", side_effect=RuntimeError("broken")):
-            assert _phase_recall(tmp_path, pool) == ["team-sync-1", "L-1", "team-sync-2"]
+            assert _session_recall(tmp_path, pool) == ["team-sync-1", "L-1", "team-sync-2"]
 
 
 class TestProjectScopedSurfacesDownweightForeignRows:
@@ -186,14 +206,15 @@ class TestProjectScopedSurfacesDownweightForeignRows:
         config.recall_max_results = 3
 
         with (
-            patch("trw_mcp.state.recall_factories.recall_baseline_high_impact", return_value=[*foreign, local]),
-            patch("trw_mcp.state.recall_factories.recall_recent_bypass", return_value=[]),
+            patch("trw_mcp.state.recall_factories.recall_session_start", return_value=[*foreign, local]),
             patch(
                 "trw_mcp.tools._recall_assertion_verification._verify_assertions",
                 side_effect=lambda rows, *_a, **_k: rows,
             ),
         ):
-            learnings, _auto, _extra = helpers.perform_session_recalls(tmp_path, "*", config, helpers.FileStateReader())
+            learnings, _extra = helpers.perform_session_recalls(
+                tmp_path, "*", config, helpers.FileStateReader(), verbose=True
+            )
 
         assert learnings, "session recall returned nothing"
         assert learnings[0]["id"] == "L-mine"
@@ -263,17 +284,23 @@ class TestNudgePoolPrecedence:
 
 class TestTotalAvailableIsUntouched:
     def test_attribution_reorders_but_never_changes_the_counts(self, tmp_path: Path) -> None:
-        """CORE-278 NFR02 / CORE-282 FR01: total_available and candidate_count keep their meaning.
+        """CORE-278 NFR02 / CORE-282 FR01: the candidate pool keeps its size.
 
         CORE-278 pinned this by asserting ``_recall_impl.py`` did not mention
         attribution at all. CORE-282 wires attribution into that file on purpose,
         so the pin is now behavioural: the partition reorders, it never adds or
-        drops a candidate.
+        drops a candidate. PRD-CORE-294 FR01 moved ``candidate_count`` and
+        ``total_available`` out of the response and into the
+        ``trw_recall_searched`` structlog event (counters a caller cannot act
+        on); this asserts the same invariant through that event.
         """
+        import structlog
+
         rows = [*[_synced(f"team-sync-{index}") for index in range(6)], *[_local(f"L-{index}") for index in range(2)]]
-        result = _recall(tmp_path, rows, max_results=3)
-        assert result["candidate_count"] == len(rows)
-        assert result["total_available"] == len(rows)
+        with structlog.testing.capture_logs() as logs:
+            result = _recall(tmp_path, rows, max_results=3)
+        searched = next(log for log in logs if log.get("event") == "trw_recall_searched")
+        assert searched["candidate_count"] == len(rows)
         assert [row["id"] for row in result["learnings"]] == ["L-0", "L-1", "team-sync-0"]
 
 
@@ -287,7 +314,6 @@ def _recall(
     rows: list[dict[str, Any]],
     *,
     max_results: int | None = None,
-    token_budget: int | None = None,
     deprioritized_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     """Run the real ``execute_recall`` over *rows*, ranked exactly as given."""
@@ -306,13 +332,9 @@ def _recall(
             trw_dir,
             TRWConfig(),
             max_results=max_results,
-            token_budget=token_budget,
             deprioritized_ids=deprioritized_ids,
             _adapter_recall=lambda _dir, **_kw: _distinct(rows),
-            _adapter_update_access=lambda *_a, **_k: None,
-            _search_patterns=lambda *_a, **_k: [],
             _rank_by_utility=lambda matches, *_a, **_k: list(matches),
-            _collect_context=lambda *_a, **_k: {},
         )
     return dict(result)
 
@@ -336,7 +358,9 @@ class TestExplicitRecallAttribution:
         ids = _ids(result)
         assert ids[:3] == ["L-c", "L-a", "L-b"]
         assert ids[3:] == [f"team-sync-{index}" for index in range(20)]
-        assert result["candidate_count"] == 23
+        # candidate_count moved to the trw_recall_searched structlog event
+        # (PRD-CORE-294 FR01); the full 23-id membership check above already
+        # proves nothing was dropped pre-cap.
 
     def test_fill_up_returns_the_local_row_then_the_top_foreign_rows(self, tmp_path: Path) -> None:
         foreign = [_scored(f"team-sync-{index}", 0.8 - index * 0.01) for index in range(10)]
@@ -375,101 +399,89 @@ class TestExplicitRecallAttribution:
         assert _ids(result) == ["team-sync-fresh", "L-seen"]
 
     def test_real_store_ranks_local_rows_above_twenty_synced_rows(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Integration: real execute_recall -> memory_adapter -> SQLite, no ranker replaced."""
-        from trw_memory.models.memory import MemoryEntry
+        """Integration: real execute_recall -> selected_store -> daemon, no ranker replaced.
 
+        PRD-CORE-280 slice e1: seeded through the checkout's store (``put``,
+        with an explicit ``entry_id``) instead of a raw ``backend.store(MemoryEntry(...))``
+        call, since a migrated checkout has no in-process backend to poke directly.
+        """
+        from tests._path_isolation import set_current_root
         from trw_mcp.models.config import get_config
-        from trw_mcp.state import _memory_connection, memory_adapter
+        from trw_mcp.state._store_selection import selected_store
         from trw_mcp.tools import _recall_impl
 
-        monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         monkeypatch.setenv("TRW_SURFACE_ROLE", "reviewer")
-        monkeypatch.setattr(_memory_connection, "get_embedder", lambda: None)
-        monkeypatch.setattr(_memory_connection, "get_initialized_embedder", lambda: None)
         monkeypatch.setattr(_recall_impl, "_augment_with_remote", lambda _q, rows: (rows, None))
         monkeypatch.setattr(_recall_impl, "build_recall_context", lambda *_a, **_k: None)
-        memory_adapter.reset_backend()
-        trw_dir = tmp_path / ".trw"
-        (trw_dir / "memory").mkdir(parents=True)
-        backend = memory_adapter.get_backend(trw_dir)
-        try:
-            for index in range(20):
-                backend.store(
-                    MemoryEntry(
-                        id=f"team-sync-L-{index:02d}",
-                        content=f"sqlite wal checkpoint lock contention observed in service {index}",
-                        namespace=memory_adapter._NAMESPACE,
-                        importance=0.9,
-                        source="team_sync",
-                    )
-                )
-            for index in range(3):
-                backend.store(
-                    MemoryEntry(
-                        id=f"L-own{index}",
-                        content=f"sqlite wal checkpoint lock contention in memory.db writer {index}",
-                        namespace=memory_adapter._NAMESPACE,
-                        importance=0.5,
-                    )
-                )
+        trw_dir = daemon_checkout.trw_dir
+        # PRD-CORE-280 slice e1: see the identical note in `_merge` above.
+        set_current_root(trw_dir.parent)
+        store, namespace = selected_store(trw_dir)
+        for index in range(20):
+            store.put(
+                f"sqlite wal checkpoint lock contention observed in service {index}",
+                namespace,
+                {
+                    "entry_id": f"team-sync-L-{index:02d}",
+                    "importance": 0.9,
+                    "source": "team_sync",
+                    "detail": "detail",
+                },
+            )
+        for index in range(3):
+            store.put(
+                f"sqlite wal checkpoint lock contention in memory.db writer {index}",
+                namespace,
+                {"entry_id": f"L-own{index}", "importance": 0.5, "detail": "detail"},
+            )
+        import structlog
+
+        with structlog.testing.capture_logs() as logs:
             result = _recall_impl.execute_recall(
                 "sqlite wal checkpoint lock",
                 trw_dir,
                 get_config(),
                 max_results=5,
                 include_tiers=["project"],
-                _search_patterns=lambda *_a: [],
-                _collect_context=lambda *_a: {},
             )
-        finally:
-            memory_adapter.reset_backend()
         ids = [str(row["id"]) for row in result["learnings"]]
         assert sorted(ids[:3]) == ["L-own0", "L-own1", "L-own2"]
         assert all(i.startswith("team-sync-") for i in ids[3:])
-        assert result["candidate_count"] == 23
+        # PRD-CORE-294 FR01: candidate_count moved from the response to the
+        # trw_recall_searched structlog event.
+        searched = next(log for log in logs if log.get("event") == "trw_recall_searched")
+        assert searched["candidate_count"] == 23
 
 
-def _phase_rows(ids: list[str]) -> list[dict[str, Any]]:
+def _session_rows(ids: list[str]) -> list[dict[str, Any]]:
     rows = [_synced(i) if i.startswith("team-sync-") else _local(i) for i in ids]
     return [{**row, "verification_evidence": {"observation": "unknown"}} for row in rows]
 
 
-def _phase_recall(tmp_path: Path, pool: list[dict[str, Any]]) -> list[str]:
-    """Run the real ``_phase_contextual_recall`` over a pool ranked exactly as given."""
+def _session_recall(tmp_path: Path, pool: list[dict[str, Any]]) -> list[str]:
+    """Run the real session-start recall (``perform_session_recalls``, PRD-CORE-294
+    FR02) over a pool ranked exactly as given. This replaces the deleted
+    ``_phase_contextual_recall`` phase helper this test used to exercise.
+    """
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._session_recall_phase import _phase_contextual_recall
+    from trw_mcp.state.persistence import FileStateReader
+    from trw_mcp.tools._session_recall_helpers import perform_session_recalls
 
     config = TRWConfig()
-    config.auto_recall_max_results = 3
+    config.recall_max_results = 3
     with (
-        patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=pool) as fetch,
+        patch("trw_mcp.state.recall_factories.recall_session_start", return_value=pool) as fetch,
         patch(
             "trw_mcp.tools._recall_assertion_verification._verify_assertions",
             side_effect=lambda rows, *_a, **_k: list(rows),
         ),
     ):
-        items = _phase_contextual_recall(tmp_path, "shared query", config, None, None)
+        items, _extra = perform_session_recalls(tmp_path, "shared query", config, FileStateReader(), verbose=True)
     # The over-fetch is what lets the partition recover a local row the cap would cut.
-    assert fetch.call_args.kwargs["max_results"] == 9
+    assert fetch.call_args.kwargs["max_results"] == 6
     return [str(item["id"]) for item in items]
-
-
-class TestPhaseAutoRecallAttribution:
-    """PRD-CORE-282 FR02: this project's rows first, THEN the cap of 3."""
-
-    def test_local_rows_outrank_higher_ranked_foreign_rows(self, tmp_path: Path) -> None:
-        pool = _phase_rows([*[f"team-sync-{index}" for index in range(6)], "L-a", "L-b"])
-        assert _phase_recall(tmp_path, pool) == ["L-a", "L-b", "team-sync-0"]
-
-    def test_foreign_rows_still_fill_a_pool_with_no_local_row(self, tmp_path: Path) -> None:
-        pool = _phase_rows([f"team-sync-{index}" for index in range(5)])
-        assert _phase_recall(tmp_path, pool) == ["team-sync-0", "team-sync-1", "team-sync-2"]
-
-    def test_an_all_local_pool_keeps_its_ranked_order(self, tmp_path: Path) -> None:
-        pool = _phase_rows(["L-c", "L-a", "L-b", "L-d"])
-        assert _phase_recall(tmp_path, pool) == ["L-c", "L-a", "L-b"]
 
 
 @requires_monorepo

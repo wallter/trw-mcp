@@ -31,10 +31,9 @@ _session_id="${TRW_SESSION_ID:-}"
 if [ -z "$_session_id" ] && ! [ -t 0 ]; then
   _stdin_payload=$(cat 2>/dev/null) || _stdin_payload=""
   if [ -n "$_stdin_payload" ]; then
-    _session_id=$(printf '%s' "$_stdin_payload" \
-      | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | head -1 \
-      | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/') || _session_id=""
+    # jq only (T29): without it the id stays unknown, and one diagnostic says why.
+    _session_id=$(_json_str_field "$_stdin_payload" session_id) || _session_id=""
+    command -v jq >/dev/null 2>&1 || log_hook_execution "Stop" "unknown" "0" "jq_unavailable=1"
   fi
 fi
 
@@ -49,7 +48,7 @@ _project_root="$(get_repo_root)" || exit 0
 #   - identity unknown                             -> legacy global-newest fallback
 # The session-scoped check is two-shaped on purpose (PRD-FIX-117 FR01): an
 # unpinned delivery lands in session-events.jsonl as
-# {"event":"tool_invocation","tool_name":"trw_deliver","success":true}, never as
+# {"event":"tool_call","tool_name":"trw_deliver","success":true}, never as
 # the trw_deliver_complete type the first predicate greps for.
 # PRD-FIX-117 FR02: consume PRD-FIX-118's single run-ownership primitive rather
 # than reading the pin store directly. resolve_owned_run adds the project-root
@@ -101,7 +100,7 @@ elif has_recent_session_deliver 240; then
 elif has_recent_session_tool_deliver; then
   # PRD-FIX-117 FR01. The branch above greps session-events.jsonl for the event
   # type "trw_deliver_complete", which the unpinned write path never emits: it
-  # writes {"event":"tool_invocation","tool_name":"trw_deliver","success":true}.
+  # writes {"event":"tool_call","tool_name":"trw_deliver","success":true}.
   # Match the shape the writer actually emits, bounded by the row's own ts.
   _deliver_found=true
 elif has_recent_deliver 240; then

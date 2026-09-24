@@ -1,0 +1,66 @@
+# Nudge template pool — step/urgency-tiered ceremony reminders and
+# context-reactive tool-outcome messages.
+# PRD-QUAL-143 FR06 (R2-011): extracted from the inline case-dispatch that
+# used to live in _nudge_template_select.py so the selector keeps only
+# selection and `{n}`/`{elapsed}` substitution. Keyed with composite
+# "<step>:<case>:<urgency>" strings for direct dict-mode lookup via the
+# existing `load_pool_message` loader (see _nudge_content.py).
+messages:
+  session_start:with:low:
+    text: "⚡ {n} prior learnings load in 1s for {client_display_name} — past discoveries become active context. Call trw_session_start() to begin."
+  session_start:with:medium:
+    text: "⚡ {n} prior learnings load in 1s — each skipped loading costs future agents {n} re-discoveries. Call trw_session_start() to begin."
+  session_start:with:high:
+    text: "⚡ {n} learnings from prior sessions — skipping means re-discovering known gotchas from scratch. trw_session_start() takes <1s."
+  session_start:without:low:
+    text: "⚡ Session tracking starts with trw_session_start() — progress, checkpoints, and learnings attach to this run."
+  session_start:without:medium:
+    text: "⚡ Session tracking not started — progress and learnings won't persist without it. trw_session_start() wires them to this run."
+  session_start:without:high:
+    text: "⚡ Session tracking not started — progress, checkpoints, and learnings are unattached to this run. Without it, this session's work is invisible to future agents. trw_session_start() takes 1s."
+  checkpoint:with:low:
+    text: "⚡ {n} files modified since last checkpoint{elapsed} — context compaction would lose this progress. trw_checkpoint() saves it in under 2s."
+  checkpoint:with:medium:
+    text: "⚡ {n} files modified since last checkpoint{elapsed} — compaction risk: {n} file(s) of progress lost with no recovery path. trw_checkpoint() saves it in under 2s."
+  checkpoint:with:high:
+    text: "⚡ {n} files modified since last checkpoint{elapsed} — context compaction erases all {n} changes permanently. trw_checkpoint() saves everything in 2 seconds."
+  checkpoint:without:low:
+    text: "⚡ No checkpoint in this session yet{elapsed} — a checkpoint saves state so context compaction can resume here. trw_checkpoint() takes under 2s."
+  checkpoint:without:medium:
+    text: "⚡ No checkpoint yet this session{elapsed} — context compaction would lose all progress with no recovery path. trw_checkpoint() takes under 2s."
+  checkpoint:without:high:
+    text: "⚡ No checkpoint in this session{elapsed} — all session progress is unrecoverable if context compacts. trw_checkpoint() anchors it in 2 seconds."
+  build_check:low:
+    text: "⚡ Verification not run yet — project-native checks catch integration issues before delivery. Run the repo's validation command, then record it with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)."
+  build_check:medium:
+    text: "⚡ Verification not run — test, build, lint, type, or schema failures may be undetected; delivery ships them as-is. Run project-native validation, then record it with trw_build_check(tests_passed, test_count, failure_count, static_checks_clean, scope)."
+  build_check:high:
+    text: "⚡ Verification not run — integration issues delivered without verification stay embedded in the result. Run the narrowest meaningful project-native check now and record the result."
+  review:low:
+    text: "⚡ Independent review not yet called — trw_review() catches spec drift that passing tests miss."
+  review:medium:
+    text: "⚡ Review skipped — delivering without review ships unverified changes. trw_review() takes under 1 minute."
+  review:high:
+    text: "⚡ Independent review has not been called — spec drift and architectural issues go undetected. trw_review() is required before trw_deliver()."
+  deliver:
+    text: "If you have material unfinished work, preserve it in a checkpoint or durable native handoff with a next-read pointer. Use trw_deliver() for completed work under existing evidence gates; recorded learnings remain recorded."
+  ctx:checkpoint:
+    text: "Progress saved. If you found a non-obvious reusable insight, trw_learn() persists it across sessions. Do not manufacture a learning for routine work."
+  ctx:learn:light:
+    text: "Learning persisted. Continue the work, then call trw_deliver() when done."
+  ctx:learn:full:
+    text: "Learning persisted. NEXT: trw_checkpoint() at the next milestone."
+  ctx:session_start:light:
+    text: "State your approach before editing, then call trw_init() for new work or trw_status() to resume."
+  ctx:session_start:full:
+    text: "State your approach after reading FRAMEWORK.md, then call trw_init() for new work or trw_status() to resume."
+  ctx:init:
+    text: "Run bootstrapped. Begin the planned work; checkpoint at the first milestone."
+  ctx:recall:
+    text: "Learnings recalled. Review them for relevant patterns before proceeding."
+  ctx:status:
+    text: "Run status loaded. Resume from last checkpoint rather than re-implementing."
+  ctx:prd_create:
+    text: "PRD created. NEXT: trw_prd_validate() — catches ambiguity and gaps before the work starts."
+  ctx:prd_validate:
+    text: "PRD validated. NEXT: trw_init() to bootstrap the governed run."

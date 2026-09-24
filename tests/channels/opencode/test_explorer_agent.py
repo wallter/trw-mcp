@@ -115,26 +115,33 @@ def test_install_explorer_agent_user_modified_preserved(tmp_path: Path) -> None:
     target.write_text(user_content, encoding="utf-8")
 
     # Re-install with original SHA — should preserve user edits
-    result2 = install_explorer_agent(tmp_path, existing_sha256=original_sha)
+    result2 = install_explorer_agent(tmp_path, manifest_hashes={EXPLORER_AGENT_RELPATH: original_sha})
     assert result2["status"] == "preserved"
     assert target.read_text(encoding="utf-8") == user_content
 
 
-def test_install_explorer_agent_no_existing_sha_overwrites(tmp_path: Path) -> None:
-    """FR23: When no existing_sha256, file is (re)written."""
+def test_install_explorer_agent_unrecorded_foreign_content_preserved(tmp_path: Path) -> None:
+    """PRD-INFRA-192 FR12: with no manifest record, content that is not TRW's bundle is kept.
+
+    Until FR12 this overwrote it: the installer's own hash never survived
+    ``_write_manifest``, so every update ran with no record and destroyed the edit.
+    """
+    import hashlib
+
     from trw_mcp.channels.opencode._explorer_agent import (
         EXPLORER_AGENT_RELPATH,
         install_explorer_agent,
     )
 
-    # Write some content manually
     target = tmp_path / EXPLORER_AGENT_RELPATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("old content", encoding="utf-8")
 
-    # Install without hash — should overwrite
-    result = install_explorer_agent(tmp_path, existing_sha256=None)
-    assert result["status"] == "written"
+    assert install_explorer_agent(tmp_path, manifest_hashes=None)["status"] == "preserved"
+    assert target.read_text(encoding="utf-8") == "old content"
+
+    recorded = {EXPLORER_AGENT_RELPATH: hashlib.sha256(b"old content").hexdigest()}
+    assert install_explorer_agent(tmp_path, manifest_hashes=recorded)["status"] == "written"
     assert "old content" not in target.read_text(encoding="utf-8")
 
 

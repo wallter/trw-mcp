@@ -292,3 +292,21 @@ class TestBeforeEditHintTierWiring:
         result = self._call_tool_with_env_tier("codex", monkeypatch, tmp_path)
         assert result["file_path"] == "src.py"
         assert result["distill_status"] == "hint_available"
+
+
+def test_tier_without_a_builder_warns_and_returns_unenriched() -> None:
+    """RC-012: a client tier with no builder (T3 was promised as an opt-in and never
+    built) must be visible at WARNING, not buried in a debug log."""
+    from structlog.testing import capture_logs
+
+    from trw_mcp.channels._tool_return_tiers import enrich_response
+
+    payload: dict[str, object] = {"target_path": "src/foo.py"}
+    with capture_logs() as logs:
+        result = enrich_response(payload, client_tier="T3")
+
+    assert result == payload
+    assert "enrichment" not in result
+    events = [e for e in logs if e.get("event") == "tool_return_tier_unknown"]
+    assert events and events[0]["log_level"] == "warning", logs
+    assert events[0]["client_tier"] == "T3"

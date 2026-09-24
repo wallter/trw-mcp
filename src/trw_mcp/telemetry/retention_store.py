@@ -2,8 +2,8 @@
 
 One immutable payload per digest under ``.trw/retention/store/<aa>/<digest>``;
 repeated snapshots/receipts reference the canonical blob instead of copying
-it. Every uncertain case — collision (same digest, different bytes), unstable
-read, partial write, missing reference target, authority lookup failure — is
+it. Every uncertain case — collision (same digest, different bytes), partial
+write, missing reference target, authority lookup failure — is
 NON-DESTRUCTIVE and blocks collection. This store never alters
 ``SurfaceRegistry`` snapshot semantics (it does not import it).
 """
@@ -30,7 +30,6 @@ class StoreOutcome(str, Enum):
     STORED = "stored"  # new canonical blob written
     DEDUPLICATED = "deduplicated"  # identical bytes already canonical
     COLLISION_BLOCKED = "collision_blocked"  # same digest, different bytes — retain both, no write
-    UNSTABLE_READ = "unstable_read"  # source changed while reading — nothing written
 
 
 class StoreReceipt(BaseModel):
@@ -80,19 +79,6 @@ def store_payload(root: Path, payload: bytes) -> StoreReceipt:
         tmp.unlink(missing_ok=True)
         raise
     return StoreReceipt(digest=digest, outcome=StoreOutcome.STORED, blob_path=str(target), collectible=False)
-
-
-def store_file(root: Path, source: Path) -> StoreReceipt:
-    """Stable-read a file into the store; a mid-read change stores NOTHING."""
-    try:
-        before = source.stat()
-        payload = source.read_bytes()
-        after = source.stat()
-    except OSError:
-        return StoreReceipt(digest="", outcome=StoreOutcome.UNSTABLE_READ)
-    if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-        return StoreReceipt(digest="", outcome=StoreOutcome.UNSTABLE_READ)
-    return store_payload(root, payload)
 
 
 def add_reference(root: Path, digest: str, reference_id: str) -> Path:

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._dispatch_host import unconfined_off_darwin
 from trw_mcp.dispatch import dispatch
 from trw_mcp.dispatch._types import DispatchRequest
 
@@ -27,7 +28,8 @@ def _write_stub(tmp_path: Path, name: str, body: str) -> Path:
 
 
 def _patch_argv(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
-    """Make the runner execute *argv* regardless of the request's client."""
+    """Make the runner execute *argv* regardless of the request's client, unconfined off macOS."""
+    unconfined_off_darwin(monkeypatch)
 
     def _fixed(_req: DispatchRequest, *, confined: bool = False) -> list[str]:
         # Keyword-only ``confined`` mirrors the real builder (PRD-CORE-277-FR02):
@@ -197,7 +199,8 @@ def test_missing_binary_returns_clean_failure_no_exception(
     assert result.exit_code == -127
     assert result.timed_out is False
     assert "Failed to launch" in result.raw_stderr
-    assert result.read_only_enforced is True
+    # No child ran, so nothing was enforced (CORE-291 xv review P1).
+    assert result.read_only_enforced is False
 
 
 # --- timeout kills the whole process tree (P1-3) ------------------------------

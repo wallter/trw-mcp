@@ -8,60 +8,57 @@ import pytest
 
 from trw_mcp.models.config._client_profile import NudgePoolWeights
 from trw_mcp.state._ceremony_progress_state import CeremonyState
+from trw_mcp.state._ceremony_state_model import PoolCooldown
 from trw_mcp.state._nudge_rules import (
     _select_nudge_pool,
     apply_pool_cooldown,
-    is_pool_in_cooldown,
+    resolve_pool_cooldown,
 )
 
 
 def _state_with_cooldown(pool: str, hours_ago: float) -> CeremonyState:
     state = CeremonyState()
     state.tool_call_counter = 5
-    state.pool_cooldown_until[pool] = 100  # still in tool-call cooldown
     entered = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours_ago)
-    state.pool_cooldown_set_at[pool] = entered.isoformat()
+    state.pool_cooldowns[pool] = PoolCooldown(until_counter=100, set_at=entered.isoformat())
     return state
 
 
 class TestWallClockCap:
     def test_pool_still_cooled_within_cap(self) -> None:
         state = _state_with_cooldown("learnings", hours_ago=3.0)
-        assert is_pool_in_cooldown(state, "learnings", wall_clock_max_hours=24) is True
+        assert resolve_pool_cooldown(state, "learnings", wall_clock_max_hours=24) is True
 
     def test_pool_force_expired_after_cap(self) -> None:
         state = _state_with_cooldown("learnings", hours_ago=25.0)
-        assert is_pool_in_cooldown(state, "learnings", wall_clock_max_hours=24) is False
+        assert resolve_pool_cooldown(state, "learnings", wall_clock_max_hours=24) is False
         # State was reset in place
-        assert state.pool_cooldown_until.get("learnings", 0) == 0
-        assert "learnings" not in state.pool_cooldown_set_at
+        assert state.pool_cooldowns["learnings"] == PoolCooldown()
 
     def test_missing_set_at_treated_as_never_cooled(self) -> None:
-        """NFR03: missing pool_cooldown_set_at must NOT be treated as 'always cooled'."""
+        """NFR03: missing set_at must NOT be treated as 'always cooled'."""
         state = CeremonyState()
         state.tool_call_counter = 5
-        state.pool_cooldown_until["learnings"] = 100
-        # no pool_cooldown_set_at entry
+        state.pool_cooldowns["learnings"] = PoolCooldown(until_counter=100)
         # Falls through to legacy tool-call check (still in cooldown).
-        assert is_pool_in_cooldown(state, "learnings", wall_clock_max_hours=24) is True
+        assert resolve_pool_cooldown(state, "learnings", wall_clock_max_hours=24) is True
 
     def test_corrupt_timestamp_treated_as_expired(self) -> None:
         state = CeremonyState()
         state.tool_call_counter = 5
-        state.pool_cooldown_until["learnings"] = 100
-        state.pool_cooldown_set_at["learnings"] = "not-a-real-timestamp"
-        assert is_pool_in_cooldown(state, "learnings", wall_clock_max_hours=24) is False
-        assert "learnings" not in state.pool_cooldown_set_at
+        state.pool_cooldowns["learnings"] = PoolCooldown(until_counter=100, set_at="not-a-real-timestamp")
+        assert resolve_pool_cooldown(state, "learnings", wall_clock_max_hours=24) is False
+        assert state.pool_cooldowns["learnings"].set_at == ""
 
     def test_apply_pool_cooldown_stamps_set_at(self) -> None:
         state = CeremonyState()
         state.tool_call_counter = 0
-        state.pool_ignore_counts["learnings"] = 5
+        state.pool_cooldowns["learnings"] = PoolCooldown(ignore_count=5)
         activated = apply_pool_cooldown(state, "learnings", cooldown_after=3, cooldown_calls=10)
         assert activated is True
-        assert "learnings" in state.pool_cooldown_set_at
+        assert state.pool_cooldowns["learnings"].set_at
         # Stamp parses as ISO-8601 with tz
-        parsed = dt.datetime.fromisoformat(state.pool_cooldown_set_at["learnings"])
+        parsed = dt.datetime.fromisoformat(state.pool_cooldowns["learnings"].set_at)
         assert parsed.tzinfo is not None
 
     def test_rotation_still_eligible_for_non_cooled_pools(self) -> None:

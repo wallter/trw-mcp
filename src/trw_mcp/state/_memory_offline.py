@@ -1,14 +1,13 @@
 """Embeddings offline-switch detection (PRD-QUAL-110-FR04).
 
-Belongs to the ``_memory_connection.py`` facade. Re-exported there
-(``_embeddings_offline``) for back-compat so the warm-up path and tests keep a
-single import point.
+Belongs to the ``_memory_connection.py`` facade, whose embedder load discloses
+its egress through :func:`disclose_download`.
 
 ``TRW_OFFLINE`` is the TRW master offline switch; ``HF_HUB_OFFLINE`` is the
 upstream huggingface_hub convention (also honored by trw-memory's embedding
-init via ``local_files_only``). Any truthy value engages offline mode and
-suppresses the embedding-model download so an air-gapped deployer can prove
-zero huggingface.co egress at ``session_start``.
+init via ``local_files_only``, which trw-memory forces for either switch). Any
+truthy value engages offline mode, so an air-gapped deployer can prove zero
+huggingface.co egress.
 """
 
 import os
@@ -26,31 +25,18 @@ def embeddings_offline(env: dict[str, str]) -> bool:
     return any(env.get(name, "").strip().lower() in _TRUTHY for name in _OFFLINE_ENV_VARS)
 
 
-def _configured_model() -> str:
-    """The retrieval model the warm-up will load (``retrieval_embedding_model``)."""
-    from trw_mcp.models.config import get_config
+def disclose_download(logger: Any, model: str) -> None:
+    """Log the huggingface.co egress *model*'s first load may cause (PRD-QUAL-110-FR04).
 
-    return get_config().retrieval_embedding_model
-
-
-def warmup_suppressed_by_offline(logger: Any) -> bool:
-    """Gate the embedder warm-up on the offline switch (PRD-QUAL-110-FR04).
-
-    Returns True (suppress warm-up — no download) when an offline switch is
-    engaged, logging ``embedder_warmup_skipped_offline``. Otherwise returns
-    False after emitting the first-run ``embedder_download_disclosure`` log line
-    that discloses the huggingface.co egress BEFORE the download thread starts.
+    Emitted before the load, and only when no offline switch is engaged: with one
+    engaged, trw-memory loads from the local cache only, so there is no egress to
+    disclose.
     """
     if embeddings_offline(dict(os.environ)):
-        logger.info(
-            "embedder_warmup_skipped_offline",
-            reason="offline_switch",
-            switches=_OFFLINE_ENV_VARS,
-        )
-        return True
+        return
     logger.info(
         "embedder_download_disclosure",
-        model=_configured_model(),
+        model=model,
         source="huggingface.co",
         detail=(
             "Embeddings are enabled; the local embedding model may be downloaded "
@@ -58,4 +44,3 @@ def warmup_suppressed_by_offline(logger: Any) -> bool:
             "HF_HUB_OFFLINE=1) to suppress this network egress."
         ),
     )
-    return False

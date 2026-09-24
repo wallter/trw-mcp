@@ -14,27 +14,18 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.models.config import TRWConfig
-
 logger = structlog.get_logger(__name__)
 
 # FR04 (PRD-FIX-053): Hash file name within .trw/context/
 _HASH_FILE_NAME = "claude_md_hash.txt"
 
 
-def _compute_sync_hash(config: TRWConfig | None = None) -> str:
+def _compute_sync_hash() -> str:
     """Compute a stable SHA-256 hash of the sync inputs.
 
     PRD-CORE-093 FR05: Hash excludes learning content — only template version
     (via package version) determines whether CLAUDE.md needs re-rendering.
     This ensures consecutive trw_deliver calls produce identical CLAUDE.md.
-
-    PRD-CORE-203 FR08: when *config* is supplied, fold the carrier-affecting
-    knobs (``instruction_externalize`` + ``instruction_external_filename``) into
-    the digest. Without this, toggling externalization on the same ``trw-mcp``
-    version would be a silent no-op — the cache-hit path returns ``unchanged``
-    and never rewrites CLAUDE.md. ``config=None`` preserves the legacy
-    version-only digest for callers that do not change rendered structure.
 
     Returns:
         64-character hex SHA-256 digest.
@@ -51,13 +42,6 @@ def _compute_sync_hash(config: TRWConfig | None = None) -> str:
         logger.warning("claude_md_hash_version_unknown")
     h.update(pkg_version.encode("utf-8"))
     h.update(b"\x00")
-
-    # PRD-CORE-203 FR08: carrier-mode-affecting config.
-    if config is not None:
-        h.update(str(config.instruction_externalize).encode("utf-8"))
-        h.update(b"\x00")
-        h.update(config.instruction_external_filename.encode("utf-8"))
-        h.update(b"\x00")
 
     return h.hexdigest()
 

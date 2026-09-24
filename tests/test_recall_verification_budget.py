@@ -16,12 +16,11 @@ def test_recall_never_scans_writes_or_schedules_verification(monkeypatch: pytest
         pytest.fail("implicit verification work on recall")
 
     for path in (
-        "trw_mcp.tools._verification_pass.run_verification_pass",
-        "trw_mcp.tools._verification_pass.persist_verification_outcome",
+        "trw_memory.lifecycle.verification_pass.run_verification_pass",
+        "trw_memory.lifecycle.verification_pass.persist_verification_outcome",
         "trw_mcp.tools._verification_cache.warm_verified_verdict",
         "trw_memory.lifecycle.verification.verify_assertions",
         "trw_memory.lifecycle.anchor_validation.compute_anchor_validity",
-        "trw_mcp.scoring.apply_contradiction_penalty",
     ):
         monkeypatch.setattr(path, forbidden)
     rows = [

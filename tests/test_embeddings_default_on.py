@@ -9,14 +9,13 @@ warm-up is incomplete.
 
 These tests pin:
   - the new default value on a fresh ``TRWConfig``
-  - that ``trw_session_start`` stays cold-load-free (the hot path uses
-    ``get_initialized_embedder`` / ``allow_cold_embedding_init=False`` and must
-    NOT trigger a synchronous model load even when embeddings are enabled).
+  - that ``trw_session_start`` stays cold-load-free: probing the embedder with
+    ``get_initialized_embedder`` never loads a model, even with embeddings on.
 """
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from trw_mcp.models.config import TRWConfig
 
@@ -43,9 +42,8 @@ class TestSessionStartStaysColdLoadFree:
 
         This is the guard that keeps trw_session_start from blocking on a
         sentence-transformers download/load even with embeddings_enabled=True:
-        the hot path uses allow_cold_embedding_init=False, which routes through
-        get_initialized_embedder(), which returns None until an explicit
-        embedding op (or the background warm-up) has initialized the singleton.
+        get_initialized_embedder() returns None until an explicit embedding op
+        (learn-time dedup) has initialized the singleton.
         """
         from trw_mcp.state import _memory_connection
 
@@ -58,39 +56,5 @@ class TestSessionStartStaysColdLoadFree:
                 return_value=TRWConfig(embeddings_enabled=True),
             ):
                 assert _memory_connection.get_initialized_embedder() is None
-        finally:
-            _memory_connection.reset_embedder()
-
-    def test_recall_degrades_to_keyword_when_embedder_uninitialized(self) -> None:
-        """With embeddings ON but embedder not yet warmed, recall falls back.
-
-        allow_cold_embedding_init=False must take the keyword fallback path
-        rather than block on a cold load.
-        """
-        from trw_mcp.state import _memory_connection, _memory_queries
-
-        _memory_connection.reset_embedder()
-        backend = MagicMock()
-        sentinel: list[object] = ["kw-result"]
-        try:
-            with (
-                patch(
-                    "trw_mcp.models.config.get_config",
-                    return_value=TRWConfig(embeddings_enabled=True),
-                ),
-                patch.object(
-                    _memory_queries,
-                    "_keyword_search",
-                    return_value=sentinel,
-                ) as kw,
-            ):
-                result = _memory_queries._search_entries(
-                    backend,
-                    "natural language query",
-                    top_k=5,
-                    allow_cold_embedding_init=False,
-                )
-            assert result is sentinel
-            assert kw.called
         finally:
             _memory_connection.reset_embedder()

@@ -132,8 +132,6 @@ def test_tool_channel_entry_has_expected_keys(tmp_path: Path) -> None:
         "raw_rate",
         "adjusted_rate",
         "n_events",
-        "tier_current",
-        "throttle_status",
     }
     assert expected_keys.issubset(ch.keys())
 

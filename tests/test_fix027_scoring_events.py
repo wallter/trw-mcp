@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 
-from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring import EVENT_ALIASES, REWARD_MAP
-from trw_mcp.state.persistence import FileStateWriter
 
 
 class TestDeliverCompleteEventType:
@@ -37,41 +31,6 @@ class TestDeliverCompleteEventType:
         """Delivery is the goal — reward should be 1.0."""
         reward = REWARD_MAP[EventType.DELIVER_COMPLETE]
         assert reward == 1.0, f"Expected 1.0, got {reward}"
-
-    def test_process_outcome_returns_nonempty_for_deliver_complete(self, tmp_path: Path) -> None:
-        """process_outcome_for_event("trw_deliver_complete") must not silently fail.
-
-        Without DELIVER_COMPLETE in EventType/REWARD_MAP, the function returns []
-        which means no Q-learning update ever fires on delivery.
-        """
-        from trw_mcp.scoring import process_outcome_for_event
-
-        trw_dir = tmp_path / ".trw"
-        learnings_dir = trw_dir / "learnings" / "entries"
-        learnings_dir.mkdir(parents=True)
-
-        writer = FileStateWriter()
-
-        entry = {
-            "id": "L-test0001",
-            "summary": "Test learning for Q-learning reward",
-            "detail": "Detail text",
-            "impact": 0.7,
-            "status": "active",
-            "q_value": 0.7,
-            "q_observations": 0,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "tags": [],
-        }
-        writer.write_yaml(learnings_dir / "test-learning.yaml", entry)
-
-        mock_config = TRWConfig(trw_dir=str(trw_dir))
-        with (
-            patch("trw_mcp.scoring._correlation.get_config", return_value=mock_config),
-            patch("trw_mcp.scoring._utils.resolve_trw_dir", return_value=trw_dir),
-        ):
-            result = process_outcome_for_event("trw_deliver_complete")
-            assert isinstance(result, list)
 
     def test_deliver_complete_resolve_from_string(self) -> None:
         """EventType.resolve('trw_deliver_complete') must return the enum member."""

@@ -30,6 +30,9 @@ import pytest
 import structlog
 from fastmcp import FastMCP
 
+from tests._daemon_reaper import reap_daemons_under
+from tests._timing import apply_timing_policy, pytest_runtest_logreport  # noqa: F401
+from tests._timing import pytest_sessionfinish as _timing_sessionfinish
 from tests._trw_home import (
     isolated_trw_home,  # noqa: F401  (shared HOME/XDG/TRW_USER_DIR floor; see that module's docstring)
 )
@@ -42,7 +45,7 @@ from tests._trw_home import (
 for _git_var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_PREFIX"):
     os.environ.pop(_git_var, None)
 
-pytest_plugins = ("tests._ceremony_helpers_support",)
+pytest_plugins = ("tests._ceremony_helpers_support", "tests._memory_fixtures")
 
 
 # --------------------------------------------------------------------------
@@ -79,6 +82,45 @@ def _xdist_fanout_violation(numprocesses: object, allow_wide: bool) -> str | Non
     if worker_count > _MAX_XDIST_WORKERS:
         return f"xdist fan-out -n {worker_count} exceeds the cap of {_MAX_XDIST_WORKERS}"
     return None
+
+
+@pytest.fixture(autouse=True)
+def _reap_isolated_home_daemons(isolated_trw_home: None) -> Iterator[None]:
+    """Stop the memory daemon a test auto-started under its isolated HOME.
+
+    Kept here, not in the shared ``_trw_home.py`` (byte-identical across packages),
+    because only trw-mcp's store calls auto-start a daemon. Depending on
+    ``isolated_trw_home`` sets this up after it, so HOME is already the test's.
+    """
+    home = Path(os.environ["HOME"])
+    yield
+    reap_daemons_under(home)
+
+
+@pytest.fixture(autouse=True)
+def _skip_installer_index_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the installer's regional preflight off the network in tests.
+
+    ``index_preflight`` queries cloudflare.com and ipinfo.io and refuses a clock
+    outside US offsets, so an installer test would depend on the host's egress
+    and timezone (a UTC container refuses every install). The bypass is the
+    installer's own documented switch.
+    """
+    monkeypatch.setenv("TRW_SKIP_INDEX_PREFLIGHT", "1")
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Stop every memory daemon still published under this run's basetemp.
+
+    The per-test reap covers a test's own tmp tree; this also catches daemons
+    started for module- or session-scoped tmp dirs and by subprocesses.
+    """
+    try:
+        _timing_sessionfinish(session, exitstatus)
+    finally:
+        factory = getattr(session.config, "_tmp_path_factory", None)
+        if factory is not None:
+            reap_daemons_under(factory.getbasetemp(), wait=True, by_cwd=True)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -272,8 +314,6 @@ _UNIT_FILES: frozenset[str] = frozenset(
         "test_bayesian_calibration.py",
         "test_clients_llm.py",
         "test_middleware_ceremony.py",
-        "test_middleware_context_budget.py",
-        "test_middleware_compression.py",
         "test_middleware_response_optimizer.py",
         "test_prompts_messaging.py",
         "test_telemetry_embeddings.py",
@@ -368,6 +408,7 @@ def pytest_collection_modifyitems(
     items: list[pytest.Item],
 ) -> None:
     """Auto-assign unit/integration/e2e/slow markers to tests without explicit markers."""
+    apply_timing_policy(items)
     for item in items:
         has_tier = any(m.name in ("unit", "integration", "e2e") for m in item.iter_markers())
         if has_tier:
@@ -441,7 +482,7 @@ def _isolate_trw_user_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     covered by the session-scoped ``_isolate_trw_user_dir_floor`` above.
 
     Pairs with ``_reset_memory_backend`` (function-scoped autouse) which
-    calls ``reset_user_backend()`` + ``reset_user_scope_cache()`` between
+    calls ``reset_user_backend()`` between
     tests — this fixture provides the directory boundary, that one discards the
     backend singleton already bound to the previous directory.
     """
@@ -450,6 +491,8 @@ def _isolate_trw_user_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     # slip through on Linux when TRW_USER_DIR is absent from getenv().
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     yield
+    # A store call with no daemon auto-starts one in this test's user dir; stop it.
+    reap_daemons_under(tmp_path)
 
 
 @pytest.fixture(autouse=True)
@@ -513,7 +556,7 @@ def _isolate_client_session_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     from trw_mcp.client_profiles.session_identity import known_session_id_env_vars
 
-    for name in known_session_id_env_vars():
+    for name in (*known_session_id_env_vars(), "TRW_SESSION_ID"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -576,24 +619,6 @@ def _reset_auto_close_throttle_fixture() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_low_coverage_advisory_guard() -> Iterator[None]:
-    """Reset the one-time low-vector-coverage advisory guard between tests.
-
-    Option A+ (2026-06-10): ``run_embeddings_maintenance`` surfaces the
-    low-coverage backfill nudge once per PROCESS so it doesn't cry wolf every
-    session while the background self-heal runs. Tests that exercise the
-    first-surfacing path need a fresh guard per case.
-    """
-    from trw_mcp.tools._ceremony_embeddings_maintenance import (
-        reset_low_coverage_advisory_guard,
-    )
-
-    reset_low_coverage_advisory_guard()
-    yield
-    reset_low_coverage_advisory_guard()
-
-
-@pytest.fixture(autouse=True)
 def _reset_deferred_delivery_state() -> Iterator[None]:
     """Reset deferred-delivery throttle + cancel event between tests.
 
@@ -641,38 +666,6 @@ def _join_and_reset_deferred() -> None:
         pass
 
 
-def _join_and_reset_q_learning() -> None:
-    """PRD-FIX-088 FR01: reset the Q-learning bg worker between tests.
-
-    Joins any running ``_q_thread``, drains the coalescing queue, and
-    clears the ``_q_thread`` reference so the next test starts fresh.
-    Prevents use-after-close segfaults on the SQLite backend the same
-    way ``_join_and_reset_deferred`` does for the deliver-deferred thread.
-    """
-    try:
-        import queue as _queue
-
-        import trw_mcp.tools._q_learning_state as _qls
-
-        with _qls._q_lock:
-            t = _qls._q_thread
-        if t is not None and t.is_alive():
-            t.join(timeout=15)
-        with _qls._q_lock:
-            _qls._q_thread = None
-            # Drain any leftover events.
-            try:
-                while True:
-                    _qls._q_queue.get_nowait()
-            except _queue.Empty:  # trw-fail-silent-allow: drain loop ends when the queue is empty
-                pass
-        # PRD-FIX-088 P1.5 Fix 9: zero the worker-health dataclass so the
-        # next test starts with a clean error_count / last_error.
-        _qls.reset_health()
-    except Exception:  # trw-fail-silent-allow: test-isolation reset; module may not be loaded
-        pass
-
-
 @pytest.fixture(autouse=True)
 def _reset_memory_backend() -> Iterator[None]:
     """Reset the project AND user memory-adapter singletons for test isolation.
@@ -682,40 +675,20 @@ def _reset_memory_backend() -> Iterator[None]:
 
     ``reset_user_backend()`` is as load-bearing as ``reset_backend()``:
     ``_user_tier._user_backend`` is a SEPARATE module-global singleton, and
-    ``_federate_user_tier`` only skips user-tier federation when
-    ``peek_user_backend()`` returns ``None`` *and* no user ``memory.db`` exists
-    on disk. Leaving the singleton bound made ``peek_user_backend()`` return a
-    backend rooted at an EARLIER test's ``TRW_USER_DIR`` (this fixture's sibling
-    ``_isolate_trw_user_dir`` re-points the env var, but not the already-built
-    object), so that stale store's entries were federated into every later
-    recall — inflating every count by up to ``recall_user_tier_cap`` (5).
-    ``reset_user_backend()`` also re-arms the memoized user-scope probe, so the
-    separate ``reset_user_scope_cache()`` call below is only needed for tests
-    that never construct a user backend at all.
+    leaving it bound returns a backend rooted at an EARLIER test's
+    ``TRW_USER_DIR`` (this fixture's sibling ``_isolate_trw_user_dir``
+    re-points the env var, but not the already-built object).
     """
-    from trw_mcp.state._embedding_migration_schedule import wait_for_migration
-    from trw_mcp.state._tier_routing import reset_user_scope_cache
     from trw_mcp.state._user_tier import reset_user_backend
     from trw_mcp.state.memory_adapter import reset_backend
 
     _join_and_reset_deferred()
-    _join_and_reset_q_learning()
-    # A session_start in the previous test may have started the background
-    # embedding migration; let it finish before its store is torn down.
-    wait_for_migration(timeout=15)
     reset_backend()
     reset_user_backend()
-    # core185-8: the user-scope presence probe is memoized; clear it between
-    # tests so a prior test that set TRW_USER_TIER_ENABLED cannot leak a stale
-    # "user scope present" verdict into a later, unconfigured test.
-    reset_user_scope_cache()
     yield
     _join_and_reset_deferred()
-    _join_and_reset_q_learning()
-    wait_for_migration(timeout=15)
     reset_backend()
     reset_user_backend()
-    reset_user_scope_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -727,29 +700,6 @@ def _reset_telemetry_pipeline() -> Iterator[None]:
 
         TelemetryPipeline.reset()
     except Exception:  # trw-fail-silent-allow: test-isolation reset; pipeline may not be importable
-        pass
-
-
-@pytest.fixture(autouse=True)
-def _reset_telemetry_run_cache() -> Iterator[None]:
-    """Reset the cached run directory in telemetry between tests.
-
-    The telemetry module caches find_active_run() results with a 5-second
-    TTL. Without this reset, a stale cached path from a previous test's
-    tmp_path leaks into subsequent tests.
-    """
-    try:
-        import trw_mcp.tools.telemetry as tel_mod
-
-        tel_mod._cached_run_dir = (0.0, None)
-    except Exception:  # trw-fail-silent-allow: test-isolation reset; telemetry module may not be imported
-        pass
-    yield
-    try:
-        import trw_mcp.tools.telemetry as tel_mod
-
-        tel_mod._cached_run_dir = (0.0, None)
-    except Exception:  # trw-fail-silent-allow: test-isolation reset; telemetry module may not be imported
         pass
 
 
@@ -807,17 +757,6 @@ def _isolate_trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterato
     """
     _path_isolation.set_current_root(tmp_path)
     _path_isolation.install()
-
-    # Not a path resolver, so it is not covered by the sweep: tools/telemetry
-    # binds find_active_run at import and a real scan would walk the tmp tree
-    # (and cache a stale run dir) on every test.
-    try:
-        monkeypatch.setattr(
-            "trw_mcp.tools.telemetry.find_active_run",
-            lambda session_id=None: None,
-        )
-    except AttributeError:  # trw-fail-silent-allow: optional attribute absent in this build; nothing to patch
-        pass  # Not yet imported
 
     yield
 
@@ -920,6 +859,12 @@ def build_check_invoke(tmp_project: Path) -> Any:
     Any kwarg supplied overrides the default.
     """
 
+    # PRD-CORE-291-FR03: mypy_clean/failures/run_path/min_coverage/command_results
+    # moved into trw_build_check's ``options`` mapping. Callers of this fixture
+    # still pass them flat; route them into ``options`` here so every existing
+    # call site keeps working without a per-test rewrite.
+    _OPTION_KEYS = {"mypy_clean", "failures", "run_path", "min_coverage", "command_results"}
+
     def _invoke(**kwargs: Any) -> dict[str, Any]:
         import trw_mcp.tools.build._registration as reg_mod
 
@@ -934,8 +879,43 @@ def build_check_invoke(tmp_project: Path) -> Any:
                 "scope": "full",
             }
             defaults.update(kwargs)
+            options = dict(defaults.pop("options", {}) or {})
+            for key in _OPTION_KEYS:
+                if key in defaults:
+                    options[key] = defaults.pop(key)
+            if options:
+                defaults["options"] = options
             return fn(**defaults)  # type: ignore[no-any-return]
         finally:
             reg_mod.resolve_trw_dir = original_resolve
 
     return _invoke
+
+
+def _require_this_checkout(module_name: str, src: Path) -> None:
+    """Stop collection when ``module_name`` comes from a DIFFERENT source checkout.
+
+    The shared ``.venv`` holds editable installs of the main checkout, so tests run from a git
+    worktree silently exercise main's code unless the worktree's ``src`` is on the path; then
+    passes and failures both mislead (three agents hit it on 2026-09-22). An installed wheel
+    (no ``src/`` under a ``pyproject.toml``) is not a checkout mix-up and passes.
+    """
+    import importlib
+
+    origin = Path(importlib.import_module(module_name).__file__ or "").resolve()
+    if origin.is_relative_to(src.resolve()):
+        return
+    other = next((p for p in origin.parents if p.name == "src" and (p.parent / "pyproject.toml").is_file()), None)
+    if other is not None:
+        pytest.exit(
+            f"{module_name} is imported from {other}, not from this checkout's {src}. Run with "
+            f"PYTHONPATH={src} (plus any sibling package src you changed), or install this checkout editable.",
+            returncode=4,
+        )
+
+
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+_require_this_checkout("trw_mcp", _PACKAGE_ROOT / "src")
+# trw-mcp's tests import trw_memory too; in the monorepo it must be this checkout's sibling.
+if (_PACKAGE_ROOT.parent / "trw-memory" / "src").is_dir():
+    _require_this_checkout("trw_memory", _PACKAGE_ROOT.parent / "trw-memory" / "src")

@@ -53,12 +53,12 @@ def test_version_stamp_refresh_preserves_generation_binding_fields(installer_pat
     assert f"registry_digest: {_REGISTRY_DIGEST}" in stamp
     assert "framework_digest: aaaa" in stamp
     assert "aaref_digest: bbbb" in stamp
-    # The installer is authoritative only for the version it just installed.
-    assert f"trw_mcp_version: {module.TRW_VERSION}" in stamp
-    assert "trw_mcp_version: 1.0.0" not in stamp
+    # PRD-INFRA-192 FR12: a pre-existing trw_mcp_version stamp is
+    # stripped, never rewritten — package versions live in managed-artifacts.yaml.
+    assert "trw_mcp_version" not in stamp
     assert "deployed_at: '2026-01-01T00:00:00+00:00'" not in stamp
     # Exactly one line per key — a merge must never duplicate a field.
-    for field in ("framework_version", "aaref_version", "trw_mcp_version", "registry_digest", "deployed_at"):
+    for field in ("framework_version", "aaref_version", "registry_digest", "deployed_at"):
         assert sum(1 for line in stamp.splitlines() if line.startswith(f"{field}:")) == 1
 
 
@@ -72,7 +72,7 @@ def test_version_stamp_refresh_creates_stamp_when_absent(installer_path: Path, t
     stamp = version_path.read_text(encoding="utf-8")
     assert "framework_version: v99.9_TRW" in stamp
     assert "aaref_version: v3.2.1" in stamp
-    assert f"trw_mcp_version: {module.TRW_VERSION}" in stamp
+    assert "trw_mcp_version" not in stamp
 
 
 @pytest.mark.parametrize("installer_path", _INSTALLER_PATHS, ids=["template", "artifact"])

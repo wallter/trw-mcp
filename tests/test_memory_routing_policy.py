@@ -66,10 +66,10 @@ def test_renderer_portable_policy(monkeypatch: pytest.MonkeyPatch, fallback: boo
         "native",
         "trw_recall",
         "trw_learn()",
-        "trw_learn_update",
+        "trw_learn(learning_id=",  # correction path, merged from trw_learn_update by PRD-CORE-291
         'scope="project"',
         'scope="user"',
-        'include_tiers=["project"]',
+        'options={"include_tiers": ["project"]}',
         "delivery obligations",
     ):
         assert required in rendered

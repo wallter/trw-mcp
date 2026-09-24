@@ -1,7 +1,7 @@
 """Server-side ceremony enforcement middleware.
 
 PRD-INFRA-007 + PRD-CORE-098-FR06: Tracks per-session ceremony state.
-When `.trw/context/pre_compact_state.json` indicates recovery is pending,
+When this session's pre-compaction marker indicates recovery is pending,
 ``trw_session_start`` is required before other ``trw_*`` tools may run. Outside
 that post-compaction state, tools execute normally and the middleware only adds
 advisory warnings for sessions that skipped ceremony.
@@ -38,10 +38,6 @@ from fastmcp.server.middleware.middleware import (
 from fastmcp.tools import ToolResult
 from mcp.types import CallToolRequestParams, TextContent
 
-from trw_mcp.middleware._compaction_gate_owner import (
-    MarkerOwnership as MarkerOwnership,
-)
-from trw_mcp.middleware._compaction_gate_owner import marker_owner_exempts, marker_ownership
 from trw_mcp.middleware._compaction_gate_payload import build_compaction_block
 
 # Bound on per-session tracking maps. In stdio mode connections are short-lived
@@ -278,18 +274,11 @@ def _is_compaction_gate_required() -> bool:
         return False
 
 
-# PRD-CORE-258-FR10 ownership lives in its own module (LOC ratchet); the
-# underscore names are kept here so existing tests and call sites keep working.
-_marker_ownership = marker_ownership
-_marker_owner_exempts = marker_owner_exempts
+def _clear_compaction_gate_safe() -> None:
+    """Clear this session's pre-compaction marker once session_start succeeds.
 
-
-def _clear_compaction_gate_safe(ctx: object | None = None) -> None:
-    """Clear the pre-compaction marker once session_start succeeds.
-
-    PRD-CORE-258-FR10: an owned marker is cleared only by its owner — a session
-    that never compacted owes nothing and must not destroy somebody else's
-    recovery obligation. An ownerless marker keeps today's behaviour.
+    The marker path is per session (``pre_compact_marker_path``), so the file
+    unlinked here is this session's own obligation and never another's.
 
     PRD-CORE-258-FR08: a failure to unlink is an OPERATOR condition, not a
     routine one — a read-only filesystem or a directory occupying the name means
@@ -308,25 +297,7 @@ def _clear_compaction_gate_safe(ctx: object | None = None) -> None:
 
         resolved = pre_compact_marker_path()
         marker_path = str(resolved)
-        if not resolved.exists():
-            return
-        # Ownership is read ONCE, immediately before the unlink, to keep the
-        # check-then-delete window as small as a single-file design allows
-        # (codex audit 2026-09-05 row 2; owner-keyed markers are the full fix).
-        # Deleting is the irreversible act, so the fail direction here is the
-        # opposite of the arm site: an owner we could not resolve is treated
-        # as somebody else's obligation and left on disk.
-        ownership = _marker_ownership(ctx)
-        if ownership in ("foreign", "unknown"):
-            logger.info(
-                "compaction_gate_clear_skipped_foreign_owner",
-                component="ceremony",
-                op="clear_compaction_gate",
-                marker_path=marker_path,
-                outcome="not_the_owner" if ownership == "foreign" else "owner_unknown",
-            )
-            return
-        resolved.unlink()
+        resolved.unlink(missing_ok=True)
     except Exception as exc:  # justified: fail-open, marker cleanup must not break session start
         logger.warning(
             "compaction_gate_clear_failed",
@@ -437,7 +408,7 @@ def _is_reviewer_role() -> bool:
         return False
 
 
-def _is_compaction_gate_required_for_session(session_id: str, ctx: object | None = None) -> bool:
+def _is_compaction_gate_required_for_session(session_id: str) -> bool:
     """Return True when this session still owes post-compaction recovery.
 
     The blanket gate is scoped to the gate generation: only sessions that
@@ -446,10 +417,8 @@ def _is_compaction_gate_required_for_session(session_id: str, ctx: object | None
     trw_* calls pass through — otherwise a sub-agent whose toolset omits
     ``trw_session_start`` would be permanently unable to clear its own gate.
 
-    PRD-CORE-258-FR10 adds a second scope on top of the generation: a marker that
-    NAMES an owner arms only the session whose resolved pin key matches it. The
-    read happens only for a session the generation already gated, so the
-    pass-through hot path still costs one ``Path.exists``.
+    The marker itself is per session (``pre_compact_marker_path``), so a session
+    only ever observes the signal its own compaction raised.
 
     Fail-open: any bookkeeping failure returns False rather than hard-blocking
     a tool call.
@@ -488,18 +457,7 @@ def _is_compaction_gate_required_for_session(session_id: str, ctx: object | None
         )
         return False
 
-    gated = _compaction_gate_sessions.get(session_id, False)
-    if gated and _marker_owner_exempts(ctx):
-        logger.info(
-            "compaction_gate_owner_scoped",
-            op="ceremony",
-            component="ceremony",
-            session_id=session_id,
-            generation=_compaction_gate_generation,
-            outcome="marker_owned_by_another_session",
-        )
-        return False
-    return gated
+    return _compaction_gate_sessions.get(session_id, False)
 
 
 class CeremonyMiddleware(Middleware):
@@ -530,7 +488,7 @@ class CeremonyMiddleware(Middleware):
         session_id = ctx.session_id
         _register_session(session_id)
 
-        compaction_gate_required = _is_compaction_gate_required_for_session(session_id, ctx)
+        compaction_gate_required = _is_compaction_gate_required_for_session(session_id)
 
         # Ceremony tool called — mark session as active after a successful session_start
         if tool_name in CEREMONY_TOOLS:
@@ -542,7 +500,7 @@ class CeremonyMiddleware(Middleware):
                 # The in-memory pop above precedes the unlink DELIBERATELY: an
                 # unlink that can never succeed must not re-arm the session that
                 # just recovered (PRD-CORE-258-FR08 pins this ordering).
-                _clear_compaction_gate_safe(ctx)
+                _clear_compaction_gate_safe()
                 logger.debug(
                     "ceremony_activated",
                     op="ceremony",

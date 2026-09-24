@@ -5,7 +5,7 @@ description: >
   Read-only red-team adapter for the standard TRW audit protocol. Use when an
   independent pass after or alongside trw-auditor should challenge generous
   verdicts, Potemkin gates, unreachable safety logic, or unsupported exclusions.
-model: balanced
+model: frontier
 maxTurns: 200
 memory: project
 tools:

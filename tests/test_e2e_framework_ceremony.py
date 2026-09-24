@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from tests.conftest import extract_tool_fn, make_test_server
 
 # ---------------------------------------------------------------------------
@@ -31,6 +32,25 @@ def _full_server() -> Any:
         "review",
         "ceremony_feedback",
     )
+
+
+@pytest.fixture
+def pinned_project(tmp_project: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """``tmp_project`` pinned to the session daemon: memory tool calls route through it, never ``memory.db``."""
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    monkeypatch.delenv("TRW_PROJECT_NAMESPACE", raising=False)
+
+    def _no_autostart(_paths: object) -> None:
+        raise AssertionError("a test tried to start a second memory daemon")
+
+    monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _no_autostart)
+    attach_checkout(tmp_project / ".trw", memory_daemon)
+
+    from trw_mcp.models.config import reload_config
+
+    reload_config()
+    yield tmp_project
+    reload_config()
 
 
 # ── 1. Phase Model ────────────────────────────────────────────────────────
@@ -91,7 +111,7 @@ class TestPhaseModel:
         result = status_fn()
         assert result["phase"] == "research"
 
-    def test_full_lifecycle_phase_progression(self, tmp_project: Path) -> None:
+    def test_full_lifecycle_phase_progression(self, pinned_project: Path) -> None:
         """1.3: Full 6-phase progression from RESEARCH to DELIVER."""
         server = _full_server()
         init_fn = extract_tool_fn(server, "trw_init")
@@ -238,7 +258,7 @@ class TestQualityGates:
             tests_passed=True,
             test_count=100,
             coverage_pct=85.0,
-            min_coverage=80.0,
+            options={"min_coverage": 80.0},
         )
         assert result["tests_passed"] is True
         assert result.get("coverage_threshold_failed") is not True
@@ -254,7 +274,7 @@ class TestQualityGates:
             tests_passed=True,
             test_count=100,
             coverage_pct=60.0,
-            min_coverage=80.0,
+            options={"min_coverage": 80.0},
         )
         # Coverage threshold enforcement overrides tests_passed
         assert result["tests_passed"] is False
@@ -350,15 +370,17 @@ class TestRunLifecycle:
             test_count=1,
             static_checks_clean=True,
             scope="full",
-            command_results=[
-                {"command_id": "tests", "label": "pytest", "command_class": "test", "exit_code": 0},
-                {
-                    "command_id": "static_checks",
-                    "label": "ruff+mypy",
-                    "command_class": "static",
-                    "exit_code": 0,
-                },
-            ],
+            options={
+                "command_results": [
+                    {"command_id": "tests", "label": "pytest", "command_class": "test", "exit_code": 0},
+                    {
+                        "command_id": "static_checks",
+                        "label": "ruff+mypy",
+                        "command_class": "static",
+                        "exit_code": 0,
+                    },
+                ],
+            },
         )
 
         result = deliver_fn()
@@ -379,7 +401,7 @@ class TestRunLifecycle:
 class TestMultiSessionContinuity:
     """E2E 10.1, 10.3: Learning persistence and ceremony state reset."""
 
-    def test_learning_persists_across_sessions(self, tmp_project: Path) -> None:
+    def test_learning_persists_across_sessions(self, pinned_project: Path) -> None:
         """10.1: Learning created in session 1 is recallable in session 2."""
         server = _full_server()
         session_fn = extract_tool_fn(server, "trw_session_start")
@@ -490,7 +512,7 @@ class TestErrorScenarios:
 class TestEventLogging:
     """E2E 7.1, 7.3: Event structure and completeness."""
 
-    def test_events_are_valid_jsonl(self, tmp_project: Path) -> None:
+    def test_events_are_valid_jsonl(self, pinned_project: Path) -> None:
         """7.1: Each line in events.jsonl is valid JSON with required fields."""
         server = make_test_server("orchestration", "learning")
         init_fn = extract_tool_fn(server, "trw_init")
@@ -559,7 +581,7 @@ class TestBuildCheckDetailed:
             test_count=50,
             failure_count=3,
             coverage_pct=40.0,
-            failures=["test_a failed", "test_b failed"],
+            options={"failures": ["test_a failed", "test_b failed"]},
         )
 
         # Verify the build result reflects failure

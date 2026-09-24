@@ -84,7 +84,10 @@ PHASE_INPUT_CRITERIA: dict[str, list[str]] = {
     ],
 }
 
-# Phase exit criteria descriptions (from FRAMEWORK.md sections)
+# Phase exit criteria descriptions (from FRAMEWORK.md sections).
+# Entries without a checker are display-only: nothing in this module enforces
+# most of the strings below against run state, so treat an unimplemented
+# criterion as documentation of intent, not a gate.
 PHASE_EXIT_CRITERIA: dict[str, list[str]] = {
     "research": [
         "All research shards complete or partial with findings",

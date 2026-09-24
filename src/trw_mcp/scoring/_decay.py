@@ -73,7 +73,6 @@ def utility_params_for(cfg: TRWConfig) -> UtilityParams:
     return UtilityParams(
         half_life_days=cfg.learning_decay_half_life_days,
         use_exponent=cfg.learning_decay_use_exponent,
-        cold_start_threshold=cfg.q_cold_start_threshold,
         access_count_boost_cap=cfg.access_count_utility_boost_cap,
         source_human_boost=cfg.source_human_utility_boost,
     )

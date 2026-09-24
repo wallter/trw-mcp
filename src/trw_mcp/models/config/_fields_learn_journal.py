@@ -24,17 +24,6 @@ class _LearnJournalFields:
     # Max pending records replayed per session_start sweep. Bounds the recovery
     # cost so a large backlog cannot stall boot; the remainder drains next sweep.
     learn_journal_drain_limit: int = Field(default=50, ge=1)
-    # Drain liveness (PRD-INFRA-171 FR06): that sweep is the journal's ONLY
-    # consumer and used to be skipped whenever ONE peer MCP writer existed, so
-    # 42 records were journaled and ZERO ever drained across 122 log files.
-    # Records replayed per sweep EVEN under pressure, clamped to drain_limit - 1
-    # so a pressured sweep stays strictly smaller (0 = pre-FR06 defer-always):
-    learn_journal_drain_min_batch: int = Field(default=2, ge=0)
-    # A pending record at or past this age (file mtime, INCLUSIVE) drains
-    # regardless of pressure, making eventual drain a guarantee (0 disables).
-    # PRD-FIX-130-FR06: raises only the per-sweep COUNT budget, never the
-    # wall-clock budget below — age admits a record, the clock still stops it:
-    learn_journal_pending_max_age_hours: float = Field(default=6.0, ge=0.0)
     # Retry budget for a TRANSIENTLY failing replay (backend down, DB lock);
     # past it the record moves to `.trw/learnings/dead_letter/` instead of being
     # re-attempted forever. A DETERMINISTIC refusal (accept-gate rejection,

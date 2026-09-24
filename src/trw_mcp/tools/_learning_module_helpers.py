@@ -6,7 +6,7 @@ Extracted from ``tools/learning.py`` to keep that module under the
 - ``_SOLUTION_PATTERNS`` + ``_is_solution_summary`` (PRD-FIX-052 FR05)
 - ``_build_call_ctx`` (PRD-CORE-141 FR03 — re-exports shared
   ``state._call_context.build_call_context`` cycle 23)
-- ``_read_injected_ids`` + ``_annotate_injected_learnings`` (PRD-CORE-095 FR15)
+- ``_read_injected_ids`` (PRD-CORE-095 FR15; ordering happens in ``_recall_order``)
 - ``_create_llm_client`` (LLMClient factory; routes usage log via config)
 
 The module-level ``__getattr__`` shim in ``tools/learning.py`` STAYS
@@ -31,7 +31,6 @@ from trw_mcp.state.persistence import FileStateWriter
 __all__ = [
     "_LEARN_TYPE_ALIASES",
     "_SOLUTION_PATTERNS",
-    "_annotate_injected_learnings",
     "_build_call_ctx",
     "_coerce_learn_type",
     "_coerce_tags",
@@ -40,10 +39,9 @@ __all__ = [
     "_read_injected_ids",
     "_sync_learning_yaml_backup",
     "_validate_learn_enums",
-    "_validate_learn_update_fields",
 ]
 
-#: YAML sidecar keys that ``trw_learn_update`` mirrors, in write order. Kept as
+#: YAML sidecar keys a learning update mirrors, in write order. Kept as
 #: an explicit tuple rather than ``dict`` iteration order so a caller-supplied
 #: mapping cannot change which keys are written or in what order.
 _YAML_SYNC_KEYS: tuple[str, ...] = (
@@ -75,7 +73,7 @@ logger = structlog.get_logger(__name__)
 # raw ``ValueError`` that is neither a ``StorageError`` nor caught by the recovery
 # branches, so it escapes ``store_learning`` to the MCP caller as an unhandled
 # exception -- violating the stable ``LearnResultDict`` return-shape contract.
-# ``trw_learn_update`` already guards these; ``trw_learn`` did not. These sets
+# The update mode already guarded these; the create mode did not. These sets
 # mirror the enum members in ``trw_memory.models.memory``.
 _VALID_LEARN_TYPES: frozenset[str] = frozenset({"incident", "pattern", "convention", "hypothesis", "workaround"})
 _VALID_LEARN_CONFIDENCES: frozenset[str] = frozenset({"unverified", "low", "medium", "high", "verified"})
@@ -108,56 +106,6 @@ def _validate_learn_enums(*, type: str, confidence: str, protection_tier: str) -
             "reason": "invalid_protection_tier",
             "message": (f"Invalid protection_tier '{protection_tier}'. Must be one of: {sorted(_VALID_LEARN_TIERS)}"),
         }
-    return None
-
-
-def _validate_learn_update_fields(
-    *,
-    type: str | None,
-    confidence: str | None,
-    protection_tier: str | None,
-    phase_origin: str | None,
-    nudge_line: str | None,
-    feedback: str | None,
-    tags: list[str] | None,
-) -> dict[str, str] | None:
-    """Validate ``trw_learn_update`` enum/shape args; return a rejection or None.
-
-    Extracted verbatim from ``trw_learn_update`` (PRD-CORE-110) to keep
-    ``tools/learning.py`` under the 350-effective-LOC gate. ``type`` is expected
-    to already be coerced by :func:`_coerce_learn_type` in the caller, matching
-    the prior in-line ordering exactly — this is a behavior-preserving move.
-    Uses ``set`` literals (not ``frozenset``) so the interpolated error messages
-    render identically to the original in-line checks.
-    """
-    _valid_types = {"incident", "pattern", "convention", "hypothesis", "workaround"}
-    if type is not None and type not in _valid_types:
-        return {"error": f"Invalid type '{type}'. Must be one of: {_valid_types}", "status": "invalid"}
-    _valid_confidences = {"unverified", "low", "medium", "high", "verified"}
-    if confidence is not None and confidence not in _valid_confidences:
-        return {
-            "error": f"Invalid confidence '{confidence}'. Must be one of: {_valid_confidences}",
-            "status": "invalid",
-        }
-    _valid_tiers = {"critical", "high", "normal", "low", "protected", "permanent"}
-    if protection_tier is not None and protection_tier not in _valid_tiers:
-        return {
-            "error": f"Invalid protection_tier '{protection_tier}'. Must be one of: {_valid_tiers}",
-            "status": "invalid",
-        }
-    _valid_phases = {"", "RESEARCH", "PLAN", "IMPLEMENT", "VALIDATE", "REVIEW", "DELIVER"}
-    if phase_origin is not None and phase_origin not in _valid_phases:
-        return {
-            "error": f"Invalid phase_origin '{phase_origin}'. Must be one of: {_valid_phases}",
-            "status": "invalid",
-        }
-    if nudge_line is not None and len(nudge_line) > 80:
-        return {"error": f"nudge_line exceeds 80 chars ({len(nudge_line)})", "status": "invalid"}
-    _valid_feedback = {"helpful", "unhelpful"}
-    if feedback is not None and feedback not in _valid_feedback:
-        return {"error": f"Invalid feedback '{feedback}'. Must be one of: {_valid_feedback}", "status": "invalid"}
-    if tags is not None and (not isinstance(tags, list) or any(not isinstance(t, str) for t in tags)):
-        return {"error": "tags must be a list of strings", "status": "invalid"}
     return None
 
 
@@ -254,34 +202,6 @@ def _read_injected_ids(trw_dir: Path) -> set[str]:
         return set()
 
 
-def _annotate_injected_learnings(
-    result: dict[str, object],
-    trw_dir: Path,
-) -> None:
-    """Annotate and deprioritize already-injected learnings in recall results.
-
-    PRD-CORE-095 FR15: Reads injected IDs from state file and moves
-    already-injected learnings to the end of the list with an annotation.
-    Fresh results fill the primary slots.
-    """
-    injected_ids = _read_injected_ids(trw_dir)
-    if not injected_ids:
-        return
-    learnings = result.get("learnings")
-    if not learnings or not isinstance(learnings, list):
-        return
-    fresh: list[dict[str, object]] = []
-    already: list[dict[str, object]] = []
-    for entry in learnings:
-        lid = str(entry.get("id", ""))
-        if lid in injected_ids:
-            entry["already_in_context"] = True
-            already.append(entry)
-        else:
-            fresh.append(entry)
-    result["learnings"] = fresh + already
-
-
 def _sync_learning_yaml_backup(
     trw_dir: Path,
     config: TRWConfig,
@@ -289,7 +209,7 @@ def _sync_learning_yaml_backup(
     learning_id: str,
     updates: dict[str, object | None],
 ) -> None:
-    """Mirror an applied ``trw_learn_update`` into the YAML sidecar.
+    """Mirror an applied learning update into the YAML sidecar.
 
     The SQLite row is the source of truth; the sidecar exists for rollback, so
     this is best-effort and never raises into the tool. ``None`` means "the

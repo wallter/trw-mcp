@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader
 from trw_mcp.tools._ceremony_helpers import (
@@ -665,51 +667,59 @@ def test_qual_120_happy_path_complete_manifest(tmp_path: Path, monkeypatch: pyte
 
 @pytest.mark.integration
 class TestUnretractedContradictionNudge:
-    """CORE268: delivery names unresolved dated observations, never historical Q."""
+    """CORE268: delivery names unresolved dated observations, never historical Q.
+
+    Uses ``fake_memory_store``: this class is about the nudge's OWN read-side
+    decision logic given known entry states, not about real store behaviour,
+    so the contract's default route applies. (The daemon route was tried
+    first and hit a real, pre-existing defect unrelated to this migration:
+    ``DaemonMemoryStore._entry`` reconstructs ``MemoryEntry`` via
+    ``model_validate_json``, and a nested strict ``Assertion`` submodel
+    rejects its own ``last_verified_at`` string once round-tripped through
+    JSON -- a bug in the daemon store's JSON reconstruction, not in these
+    tests. Left unfixed: it is production code, out of this batch's scope.)
+    """
 
     @staticmethod
-    def _session(tmp_path: Path, *, entry_ids: list[str], penalise: list[str]) -> Path:
-        """A recall receipt and real explicitly refreshed failing assertion evidence."""
-        from trw_memory.models.memory import Assertion, AssertionType, MemoryEntry
+    def _session(
+        fake_memory_store: FakeMemoryStore, tmp_path: Path, *, entry_ids: list[str], penalise: list[str]
+    ) -> Path:
+        """A recall receipt and pre-seeded failing assertion evidence.
 
-        from trw_mcp.models.config import get_config
-        from trw_mcp.state.memory_adapter import get_backend
-        from trw_mcp.tools._maintain_verify import run_maintain_verify
+        The original version ran the real ``run_maintain_verify`` sweep against a
+        raw backend to produce the penalised state. ``stored_claim_evidence``
+        (the nudge's own read side) only inspects ``assertion.last_result`` /
+        ``last_verified_at``, so seeding those fields directly reproduces
+        exactly the state a real sweep would have left, without touching a
+        backend or a sweep implementation this batch does not own.
+        """
+        from trw_memory.models.memory import Assertion, AssertionType
 
-        cfg = get_config()
         trw_dir = tmp_path / ".trw"
         (trw_dir / "logs").mkdir(parents=True, exist_ok=True)
-        backend = get_backend(trw_dir)
         now = datetime.now(timezone.utc)
         for entry_id in entry_ids:
-            backend.store(
-                MemoryEntry(
-                    id=entry_id,
-                    content="a claim under test",
-                    importance=0.6,
-                    created_at=now,
-                    updated_at=now,
-                    q_value=0.6,
-                    q_observations=4,
-                    assertions=[Assertion(type=AssertionType.GREP_PRESENT, pattern="missing_claim", target="claim.py")]
+            fake_memory_store.put(
+                "a claim under test",
+                FAKE_NAMESPACE,
+                {
+                    "entry_id": entry_id,
+                    "importance": 0.6,
+                    "assertions": [
+                        Assertion(
+                            type=AssertionType.GREP_PRESENT,
+                            pattern="missing_claim",
+                            target="claim.py",
+                            last_result=False,
+                            last_verified_at=now,
+                        )
+                    ]
                     if entry_id in penalise
                     else [],
-                )
+                },
             )
         (tmp_path / "claim.py").write_text("present = True\n")
-        if penalise:
-            result = run_maintain_verify(
-                backend,
-                project_root=tmp_path,
-                namespace="default",
-                batch_limit=10,
-                assertion_failure_penalty=cfg.assertion_failure_penalty,
-                assertion_stale_threshold_days=cfg.assertion_stale_threshold_days,
-                anchor_validity_verified_floor=cfg.anchor_validity_verified_floor,
-            )
-            assert result.entries_processed == len(penalise)
 
-        now = datetime.now(timezone.utc)
         (trw_dir / "logs" / "recall_tracking.jsonl").write_text(
             json.dumps({"ts": now.isoformat(), "matched_ids": entry_ids}) + "\n",
             encoding="utf-8",
@@ -717,51 +727,57 @@ class TestUnretractedContradictionNudge:
         return trw_dir
 
     @staticmethod
-    def _supersede(trw_dir: Path, entry_id: str, by: str) -> None:
-        """Close the entry's validity window the way trw_learn_update(supersedes=) does."""
-        from datetime import datetime as _dt
+    def _supersede(fake_memory_store: FakeMemoryStore, entry_id: str, by: str) -> None:
+        """Close the entry's validity window the way trw_learn's update mode
+        (``metadata={"supersedes": ...}``) does: a new entry names the old one
+        via ``supersedes``, and the correction closes the prior's window
+        (contract addition: ``FakeMemoryStore.correct`` supersedes-closing,
+        covered for all three stores by
+        ``test_a_correction_naming_supersedes_closes_the_prior_entry`` in
+        ``tests/test_store_contract.py``)."""
+        from trw_memory.lifecycle.correction import LearningPatch
 
-        from trw_mcp.state.memory_adapter import get_backend
+        fake_memory_store.put("the replacement claim", FAKE_NAMESPACE, {"entry_id": by})
+        fake_memory_store.correct(by, LearningPatch(supersedes=entry_id))
 
-        get_backend(trw_dir).update(
-            entry_id, invalid_from=_dt.now(timezone.utc), invalidated_by=by, namespace="default"
-        )
-
-    def test_unretracted_contradiction_surfaces_nudge(self, tmp_path: Path) -> None:
+    def test_unretracted_contradiction_surfaces_nudge(self, fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
         from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
 
-        trw_dir = self._session(tmp_path, entry_ids=["L-broken"], penalise=["L-broken"])
+        trw_dir = self._session(fake_memory_store, tmp_path, entry_ids=["L-broken"], penalise=["L-broken"])
 
         nudge = unretracted_contradiction_nudge(trw_dir)
 
         assert "L-broken" in nudge
         assert "Last-known dated assertion failures" in nudge
         assert "This session disproved" not in nudge
-        assert "trw_learn_update(learning_id='L-broken'" in nudge
+        # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode.
+        assert "trw_learn(learning_id='L-broken'" in nudge
 
-    def test_superseded_entry_produces_no_nudge(self, tmp_path: Path) -> None:
+    def test_superseded_entry_produces_no_nudge(self, fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
         """FR06 AC2: once the window is closed, the obligation is settled."""
         from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
 
-        trw_dir = self._session(tmp_path, entry_ids=["L-settled"], penalise=["L-settled"])
+        trw_dir = self._session(fake_memory_store, tmp_path, entry_ids=["L-settled"], penalise=["L-settled"])
         assert "L-settled" in unretracted_contradiction_nudge(trw_dir)
 
-        self._supersede(trw_dir, "L-settled", by="L-replacement")
+        self._supersede(fake_memory_store, "L-settled", by="L-replacement")
 
         assert unretracted_contradiction_nudge(trw_dir) == ""
 
-    def test_session_without_contradictions_produces_no_nudge(self, tmp_path: Path) -> None:
+    def test_session_without_contradictions_produces_no_nudge(
+        self, fake_memory_store: FakeMemoryStore, tmp_path: Path
+    ) -> None:
         from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
 
-        trw_dir = self._session(tmp_path, entry_ids=["L-fine"], penalise=[])
+        trw_dir = self._session(fake_memory_store, tmp_path, entry_ids=["L-fine"], penalise=[])
 
         assert unretracted_contradiction_nudge(trw_dir) == ""
 
-    def test_only_the_contradicted_sibling_is_named(self, tmp_path: Path) -> None:
+    def test_only_the_contradicted_sibling_is_named(self, fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
         """The nudge names a SPECIFIC entry, not every entry in the recall."""
         from trw_mcp.tools._retraction_nudge import unretracted_contradiction_nudge
 
-        trw_dir = self._session(tmp_path, entry_ids=["L-bad", "L-ok"], penalise=["L-bad"])
+        trw_dir = self._session(fake_memory_store, tmp_path, entry_ids=["L-bad", "L-ok"], penalise=["L-bad"])
 
         nudge = unretracted_contradiction_nudge(trw_dir)
 
@@ -770,13 +786,14 @@ class TestUnretractedContradictionNudge:
 
     def test_gate_result_is_unchanged_when_nothing_was_contradicted(
         self,
+        fake_memory_store: FakeMemoryStore,
         tmp_path: Path,
         reader: FileStateReader,
     ) -> None:
         """FR06 AC3: no contradiction -> the gate result is what it is today."""
         run_dir = tmp_path / "run"
         _write_run_yaml(run_dir, complexity_class="MINIMAL", files_affected=1)
-        trw_dir = self._session(tmp_path, entry_ids=["L-fine"], penalise=[])
+        trw_dir = self._session(fake_memory_store, tmp_path, entry_ids=["L-fine"], penalise=[])
 
         result = check_delivery_gates(run_dir, reader, trw_dir)
 
@@ -784,13 +801,14 @@ class TestUnretractedContradictionNudge:
 
     def test_nudge_reaches_the_gate_result_and_never_blocks(
         self,
+        fake_memory_store: FakeMemoryStore,
         tmp_path: Path,
         reader: FileStateReader,
     ) -> None:
         """Wiring assertion: the nudge is produced BY check_delivery_gates."""
         run_dir = tmp_path / "run"
         _write_run_yaml(run_dir, complexity_class="MINIMAL", files_affected=1)
-        trw_dir = self._session(tmp_path, entry_ids=["L-broken"], penalise=["L-broken"])
+        trw_dir = self._session(fake_memory_store, tmp_path, entry_ids=["L-broken"], penalise=["L-broken"])
 
         result = check_delivery_gates(run_dir, reader, trw_dir)
 

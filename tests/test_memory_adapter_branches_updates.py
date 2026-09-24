@@ -1,59 +1,65 @@
-"""Targeted memory adapter update and path branch tests."""
+"""Targeted memory adapter update and path branch tests.
+
+PRD-CORE-280 slice e1: ``TestRecallLearningsStatusParsing`` and
+``TestUpdateLearningBranches`` route through ``fake_memory_store``; the recall
+case seeds the fake directly at the ``"default"`` namespace the fake's
+``recall()`` searches (``store_learning`` itself writes under the fixture's
+``FAKE_NAMESPACE``, which the fake's ``recall()`` does not consult — see
+``tests/test_memory_adapter_wildcard_ranking.py`` for the same workaround).
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 from trw_mcp.state.memory_adapter import (
     find_yaml_path_for_entry,
-    get_backend,
     recall_learnings,
     store_learning,
-    update_access_tracking,
     update_learning,
 )
 
 from ._memory_adapter_branches_support import trw_dir  # noqa: F401
+from ._memory_store_fake import FakeMemoryStore
 
 
 class TestRecallLearningsStatusParsing:
-    def test_invalid_status_string_ignored(self, trw_dir: Path) -> None:
+    def test_invalid_status_string_ignored(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """Invalid status string is silently ignored (lines 531-534)."""
-        store_learning(trw_dir, "L-is1", "Status test", "d")
+        fake_memory_store.put("Status test", "default", {"entry_id": "L-is1", "detail": "d"})
         results = recall_learnings(trw_dir, "*", status="bogus_status")
-        assert isinstance(results, list)
+        assert [r["id"] for r in results] == ["L-is1"], "an invalid status must not filter the row out"
 
-    def test_valid_status_active(self, trw_dir: Path) -> None:
+    def test_valid_status_active(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """Valid status='active' filters correctly."""
-        store_learning(trw_dir, "L-va1", "Active entry", "d")
+        fake_memory_store.put("Active entry", "default", {"entry_id": "L-va1", "detail": "d"})
         results = recall_learnings(trw_dir, "*", status="active")
         assert len(results) >= 1
 
 
 class TestUpdateLearningBranches:
-    def test_detail_update(self, trw_dir: Path) -> None:
+    def test_detail_update(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """detail= kwarg updates the detail field (lines 599-600)."""
         store_learning(trw_dir, "L-du1", "Summary", "Old detail")
         result = update_learning(trw_dir, "L-du1", detail="New detail")
         assert result["status"] == "updated"
         assert "detail updated" in result["changes"]
 
-    def test_summary_update(self, trw_dir: Path) -> None:
+    def test_summary_update(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """summary= kwarg updates the content field (lines 603-604)."""
         store_learning(trw_dir, "L-su1", "Old Summary", "d")
         result = update_learning(trw_dir, "L-su1", summary="New Summary")
         assert result["status"] == "updated"
         assert "summary updated" in result["changes"]
 
-    def test_impact_out_of_range(self, trw_dir: Path) -> None:
+    def test_impact_out_of_range(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """Impact outside [0.0, 1.0] returns invalid (line 608)."""
         store_learning(trw_dir, "L-ir1", "s", "d")
         result = update_learning(trw_dir, "L-ir1", impact=1.5)
         assert result["status"] == "invalid"
-        assert "Impact must be" in result["error"]
+        assert result["error"].startswith("Invalid impact 1.5")
 
-    def test_impact_negative(self, trw_dir: Path) -> None:
+    def test_impact_negative(self, fake_memory_store: FakeMemoryStore, trw_dir: Path) -> None:
         """Negative impact returns invalid."""
         store_learning(trw_dir, "L-ir2", "s", "d")
         result = update_learning(trw_dir, "L-ir2", impact=-0.1)
@@ -98,27 +104,3 @@ class TestFindYamlPathIndexSkip:
         assert result is not None
         assert result.name != "index.yaml"
         assert "L-idx001" in result.name
-
-
-class TestAccessTrackingException:
-    def test_exception_during_update_continues(self, trw_dir: Path) -> None:
-        """Exception during backend.update is caught and skipped (lines 736-737)."""
-        store_learning(trw_dir, "L-ae1", "s", "d")
-        store_learning(trw_dir, "L-ae2", "s2", "d2")
-
-        backend = get_backend(trw_dir)
-        original_update = backend.update
-        call_count = 0
-
-        def failing_update(lid: str, **kwargs: Any) -> None:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("update failed")
-            return original_update(lid, **kwargs)
-
-        backend.update = failing_update  # type: ignore[assignment]
-        try:
-            update_access_tracking(trw_dir, ["L-ae1", "L-ae2"])
-        finally:
-            backend.update = original_update

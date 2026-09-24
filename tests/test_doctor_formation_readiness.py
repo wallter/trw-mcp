@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.server._doctor_formation_readiness import formation_readiness_report
@@ -129,15 +130,16 @@ def test_probe_exiting_zero_but_silent_reports_not_measured(tmp_path: Path, monk
 
 def test_working_binary_reports_ready_with_its_own_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Non-vacuity for every negative case above: the ready verdict IS reachable,
-    # and it carries the probe's own output and the argv used.
+    # and it carries the probe's own output and the argv used. The version is the
+    # current floor (2.1.280, Opus 5.5): an older one is now correctly a WARN.
     bin_dir = tmp_path / "bin"
-    _plant(bin_dir, "claude", "#!/bin/sh\necho '2.1.261 (Claude Code)'\n")
+    _plant(bin_dir, "claude", "#!/bin/sh\necho '2.1.280 (Claude Code)'\n")
     _empty_path(monkeypatch, bin_dir)
 
     status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["claude"]))
     row = rows[0]
     assert row["verdict"] == "ready"
-    assert row["version"] == "2.1.261 (Claude Code)"
+    assert row["version"] == "2.1.280 (Claude Code)"
     assert row["probe_argv"] == ["claude", "--version"]
     assert row["binary_resolved"] == "claude"
     assert status == "PASS"
@@ -165,8 +167,6 @@ def test_binary_alias_is_reported_by_the_name_that_actually_answered(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_a_hanging_probe_is_bounded_and_reports_not_measured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     bin_dir = tmp_path / "bin"
     # /bin/sleep by absolute path: PATH is pinned to the fixture dir, so a bare
@@ -174,18 +174,34 @@ def test_a_hanging_probe_is_bounded_and_reports_not_measured(tmp_path: Path, mon
     _plant(bin_dir, "claude", "#!/bin/sh\nexec /bin/sleep 30\n")
     _empty_path(monkeypatch, bin_dir)
 
-    started = time.monotonic()
     _status, _message, rows = formation_readiness_report(
         _config(tmp_path, dispatch_enabled_clients=["claude"], dispatch_version_probe_timeout_s=1)
     )
-    elapsed = time.monotonic() - started
 
     row = rows[0]
     assert row["verdict"] == "not_measured"
     # The configured value is named in the reason, so the row proves WHICH bound
     # applied rather than merely that something timed out.
     assert "1s" in str(row["reason"])
-    assert elapsed < 10, f"the 1 s knob did not bound the probe ({elapsed:.1f}s elapsed)"
+
+
+@requires_local_timing
+def test_a_hanging_probe_is_bounded_and_reports_not_measured_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    # /bin/sleep by absolute path: PATH is pinned to the fixture dir, so a bare
+    # `sleep` would exit 127 and the test would pass for the WRONG reason.
+    _plant(bin_dir, "claude", "#!/bin/sh\nexec /bin/sleep 30\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    started = time.monotonic()
+    formation_readiness_report(
+        _config(tmp_path, dispatch_enabled_clients=["claude"], dispatch_version_probe_timeout_s=1)
+    )
+    elapsed = time.monotonic() - started
+
+    assert_budget("hanging_probe_bound", elapsed, 10, "s")
 
 
 def test_the_timeout_default_comes_from_the_config_field_not_a_literal(tmp_path: Path) -> None:
@@ -283,7 +299,6 @@ def test_empty_enabled_list_skips_rather_than_passing_vacuously(
     assert "NOT MEASURED" in message
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_check_completes_quickly_when_no_binary_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # NFR01: a PATH lookup that fails costs no subprocess, so seven absent
@@ -296,7 +311,7 @@ def test_check_completes_quickly_when_no_binary_resolves(tmp_path: Path, monkeyp
         formation_readiness_report(config)
         samples.append(time.monotonic() - started)
     samples.sort()
-    assert samples[len(samples) // 2] < 2.0
+    assert_budget("no_binary_resolves_median", samples[len(samples) // 2], 2.0, "s")
 
 
 def test_formation_readiness_is_registered_in_the_doctor_catalogue() -> None:
@@ -305,7 +320,12 @@ def test_formation_readiness_is_registered_in_the_doctor_catalogue() -> None:
     names = [name for name, _fn in doctor._CHECKS]
     assert "formation_readiness" in names
     # Appended after every pre-existing row; only later additions follow it.
-    assert names[names.index("formation_readiness") + 1 :] == ["gnu_timeout", "foreign_client_paths"]
+    assert names[names.index("formation_readiness") + 1 :] == [
+        "gnu_timeout",
+        "foreign_client_paths",
+        "version_status",
+        "jev",
+    ]
     assert hasattr(doctor, "_check_formation_readiness")
 
 
@@ -463,3 +483,106 @@ def test_absent_binary_and_probe_failure_never_produce_a_ready_verdict(
     _plant(bin_dir, "grok", "#!/bin/sh\necho 'grok 1.0'\n")
     row = formation_readiness_report(_enabled("grok"))[2][0]
     assert row["verdict"] == "unverified"
+
+
+# --------------------------------------------------------------------------- #
+# Version floor: Claude Code 2.1.280 is the first release that runs Opus 5.5.
+# --------------------------------------------------------------------------- #
+
+
+# 2.1.99 is the case that separates numeric from string comparison: it is below
+# the floor, but "2.1.99" > "2.1.280" as a string.
+@pytest.mark.parametrize("version", ["2.1.279 (Claude Code)", "2.1.99 (Claude Code)", "2.0.999", "1.9.400"])
+def test_a_claude_older_than_the_floor_warns_but_stays_dispatchable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    """Outdated is actionable, not broken: the verdict stays ready, the report warns."""
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "claude", f"#!/bin/sh\necho '{version}'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    status, message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["claude"]))
+
+    assert rows[0]["verdict"] == "ready"
+    assert "2.1.280" in str(rows[0]["advisory"]) and "Opus 5.5" in str(rows[0]["advisory"])
+    assert status == "WARN"
+    assert "2.1.280" in message
+
+
+@pytest.mark.parametrize("version", ["2.1.280 (Claude Code)", "2.1.281", "2.2.0", "3.0.0", "10.0.0"])
+def test_a_claude_at_or_above_the_floor_passes_without_an_advisory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    """Compared as numbers, not strings: 10.0.0 is above 2.1.280 but sorts below it as text."""
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "claude", f"#!/bin/sh\necho '{version}'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["claude"]))
+
+    assert "advisory" not in rows[0]
+    assert status == "PASS"
+
+
+def test_an_unparseable_version_is_not_called_outdated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Claiming 'outdated' about a string TRW could not read would be a guess presented as a finding."""
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "claude", "#!/bin/sh\necho 'Claude Code (nightly)'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["claude"]))
+
+    assert rows[0]["verdict"] == "ready"
+    assert "advisory" not in rows[0]
+    assert status == "PASS"
+
+
+def test_the_floor_applies_only_to_the_client_it_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A low version number on another client is that client's own scheme, not a claude floor."""
+    bin_dir = tmp_path / "bin"
+    _plant(bin_dir, "codex", "#!/bin/sh\necho 'codex-cli 0.1.0'\n")
+    _empty_path(monkeypatch, bin_dir)
+
+    status, _message, rows = formation_readiness_report(_config(tmp_path, dispatch_enabled_clients=["codex"]))
+
+    assert "advisory" not in rows[0]
+    assert status == "PASS"
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 FR07: doctor cannot silently disagree with version-status
+# --------------------------------------------------------------------------- #
+
+
+def test_doctor_warns_on_version_status_incompatible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``compatible: false`` version-status read produces a named WARN row, not silence."""
+    import trw_mcp.server._subcommands_release as release_mod
+    from trw_mcp.server._doctor_version_status import version_status_row
+
+    fabricated = {"compatible": False, "mismatches": ["trw_mcp_installed_vs_manifest"]}
+    monkeypatch.setattr(release_mod, "collect_version_status", lambda project_root=None: fabricated)
+
+    status, message = version_status_row(tmp_path)
+
+    assert status == "WARN"
+    assert "trw_mcp_installed_vs_manifest" in message
+
+
+def test_doctor_is_silent_when_version_status_is_compatible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The common path (compatible=true) adds no noise: PASS, not a row nobody reads."""
+    import trw_mcp.server._subcommands_release as release_mod
+    from trw_mcp.server._doctor_version_status import version_status_row
+
+    fabricated = {"compatible": True, "mismatches": []}
+    monkeypatch.setattr(release_mod, "collect_version_status", lambda project_root=None: fabricated)
+
+    status, _message = version_status_row(tmp_path)
+
+    assert status == "PASS"
+
+
+def test_doctor_registers_the_version_status_check(tmp_path: Path) -> None:
+    """The row is actually wired into the doctor catalogue, not merely importable."""
+    from trw_mcp.server._subcommands_doctor import _CHECKS
+
+    assert ("version_status", "_check_version_status_compatible") in _CHECKS

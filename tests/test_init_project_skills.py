@@ -46,14 +46,13 @@ def _read_model_line(agent_path: Path) -> str | None:
 class TestInstallAgentsResolvesClaudeCodeTiers:
     """FR-03 + FR-07: the installer rewrites tiers via the resolver."""
 
-    def test_implementer_resolves_to_opus(self, empty_target: Path) -> None:
-        """The trw-implementer bundle pins ``frontier`` (post-FR-05); the
-        Claude Code installer resolves it to ``opus``."""
+    def test_frontier_agent_resolves_to_opus(self, empty_target: Path) -> None:
+        """A ``frontier`` bundle agent (trw-lead, per the task-class table) resolves to ``opus``."""
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
 
-        impl = empty_target / ".claude" / "agents" / "trw-implementer.md"
-        assert impl.exists(), "trw-implementer.md must be installed"
+        impl = empty_target / ".claude" / "agents" / "trw-lead.md"
+        assert impl.exists(), "trw-lead.md must be installed"
         # FR-05 restored ``model: frontier`` in the bundle. After rewrite,
         # the destination MUST carry ``opus``, not ``frontier``.
         model_value = _read_model_line(impl)
@@ -61,32 +60,44 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
         # accept ``None``; otherwise the rewrite must produce ``opus``.
         if model_value is not None:
             assert model_value == "opus", (
-                f"trw-implementer.md model field should resolve to 'opus' under client=claude-code, got {model_value!r}"
+                f"trw-lead.md model field should resolve to 'opus' under client=claude-code, got {model_value!r}"
             )
 
-    def test_traceability_checker_resolves_to_haiku(self, empty_target: Path) -> None:
-        """``local-small`` resolves to ``haiku`` for Claude Code."""
+    def test_local_small_tier_resolves_to_haiku(
+        self, empty_target: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``local-small`` resolves to ``haiku`` for Claude Code.
+
+        No bundled agent carries ``model: local-small`` after PRD-CORE-291-FR05
+        (the sole ``local-small`` agent, trw-traceability-checker, merged into
+        trw-auditor), so the tier is exercised end-to-end through a synthetic
+        single-agent bundle rather than a real bundled agent name.
+        """
+        bogus_bundle = tmp_path / "bundle"
+        (bogus_bundle / "agents").mkdir(parents=True)
+        (bogus_bundle / "agents" / "trw-sweeper.md").write_text(
+            "---\nname: trw-sweeper\nmodel: local-small\n---\n\nbody\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("trw_mcp.bootstrap._init_project._DATA_DIR", bogus_bundle)
+
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
 
-        path = empty_target / ".claude" / "agents" / "trw-traceability-checker.md"
+        path = empty_target / ".claude" / "agents" / "trw-sweeper.md"
         assert path.exists()
         assert _read_model_line(path) == "haiku"
 
     def test_balanced_agents_resolve_to_sonnet(self, empty_target: Path) -> None:
-        """All bundle agents pinned to ``balanced`` resolve to ``sonnet``."""
+        """All bundle agents pinned to ``balanced`` resolve to ``sonnet`` (the set comes from the task-class table)."""
+        from trw_mcp.agents.task_policy import AGENT_TASK_CLASS, TASK_POLICY
+
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result)
 
-        for agent in [
-            "trw-auditor.md",
-            "trw-adversarial-auditor.md",
-            "trw-researcher.md",
-            "trw-reviewer.md",
-            "trw-tester.md",
-            "trw-requirement-reviewer.md",
-            "trw-requirement-writer.md",
-        ]:
+        balanced = [f"{a}.md" for a, c in sorted(AGENT_TASK_CLASS.items()) if TASK_POLICY[c].tier == "balanced"]
+        assert balanced, "the table assigns no agent to balanced; this test would be vacuous"
+        for agent in balanced:
             path = empty_target / ".claude" / "agents" / agent
             assert path.exists(), f"{agent} not installed"
             assert _read_model_line(path) == "sonnet", f"{agent} should resolve balanced->sonnet"
@@ -124,7 +135,7 @@ class TestInstallAgentsResolvesClaudeCodeTiers:
 
     def test_force_overwrites_with_resolved_value(self, empty_target: Path) -> None:
         """A pre-existing file with a stale tier is overwritten on force."""
-        impl = empty_target / ".claude" / "agents" / "trw-implementer.md"
+        impl = empty_target / ".claude" / "agents" / "trw-lead.md"
         impl.parent.mkdir(parents=True, exist_ok=True)
         impl.write_text("---\nname: stale\nmodel: frontier\n---\n", encoding="utf-8")
 
@@ -148,11 +159,17 @@ class TestInstallAgentsBytePreservation:
 
         from trw_mcp.bootstrap._init_project import _DATA_DIR
 
-        bundle = (_DATA_DIR / "agents" / "trw-traceability-checker.md").read_text(encoding="utf-8")
-        installed = (empty_target / ".claude" / "agents" / "trw-traceability-checker.md").read_text(encoding="utf-8")
+        bundle = (_DATA_DIR / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
+        installed = (empty_target / ".claude" / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
 
-        bundle_lines = bundle.splitlines()
-        installed_lines = installed.splitlines()
+        from trw_mcp.agents._report_cap import report_block
+
+        # PRD-CORE-290-FR04: the final-report block is appended, never interleaved.
+        block = report_block()
+        assert installed.endswith(block), "the rendered report cap must close the installed agent"
+        installed = installed[: -len(block)]
+        bundle_lines = bundle.rstrip("\n").splitlines()
+        installed_lines = installed.rstrip("\n").splitlines()
         assert len(bundle_lines) == len(installed_lines), (
             "rewrite changed line count -- byte-preservation contract broken"
         )
@@ -245,9 +262,9 @@ class TestInstallAgentsClientPassthrough:
         _install_agents(empty_target, force=False, result=result, clients=["cursor-ide"])
 
         for agent in [
-            "trw-traceability-checker.md",
             "trw-auditor.md",
             "trw-reviewer.md",
+            "trw-prd-groomer.md",
         ]:
             path = empty_target / ".cursor" / "agents" / agent
             block = path.read_text(encoding="utf-8")[4:].split("\n---\n", 1)[0]
@@ -258,7 +275,7 @@ class TestInstallAgentsClientPassthrough:
         result = _empty_result()
         _install_agents(empty_target, force=False, result=result, clients=["opencode"])
 
-        assert (empty_target / ".opencode" / "agents" / "trw-traceability-checker.md").is_file()
+        assert (empty_target / ".opencode" / "agents" / "trw-auditor.md").is_file()
         # The fixture pre-creates `.claude/agents`, so absence of the DIRECTORY
         # proves nothing; absence of any agent inside it is the assertion.
         assert not list((empty_target / ".claude" / "agents").iterdir()), (

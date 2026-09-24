@@ -12,11 +12,11 @@ import os
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
+from tests._dispatch_host import unconfined_off_darwin
 from trw_mcp.dispatch._client_specs import CLIENT_SPECS
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._confine import confinement_prefix
@@ -199,6 +199,7 @@ class TestHostConfinement:
         assert not target.exists()
         assert proc.returncode != 0
 
+    @pytest.mark.skipif(sys.platform != "darwin", reason="sandbox-exec is the only wrapper implemented")
     def test_a_missing_binary_still_reports_the_launch_failure_under_the_wrapper(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -347,6 +348,7 @@ class TestSilenceReason:
             "that headless mode cannot prompt for' >&2\n",
         )
         _patch_argv(monkeypatch, [str(stub)])
+        unconfined_off_darwin(monkeypatch)
 
         result = dispatch(DispatchRequest(client="agy", prompt="review"))
 
@@ -453,8 +455,8 @@ class TestVersionStatusNamesEveryMismatch:
         assert any("installed_asset_manifest_missing" in line for line in warnings)
 
         unexplained: list[str] = []
-        _explain_mismatches(["trw_mcp_package_vs_installed_asset"], warnings=unexplained, errors=[])
-        assert any("trw_mcp_package_vs_installed_asset" in line for line in unexplained)
+        _explain_mismatches(["trw_mcp_installed_vs_manifest"], warnings=unexplained, errors=[])
+        assert any("trw_mcp_installed_vs_manifest" in line for line in unexplained)
 
     def test_a_compatible_status_invents_no_diagnostic(self) -> None:
         from trw_mcp.server._subcommands_release import _explain_mismatches
@@ -463,110 +465,6 @@ class TestVersionStatusNamesEveryMismatch:
         errors: list[str] = []
         _explain_mismatches([], warnings=warnings, errors=errors)
         assert (warnings, errors) == ([], [])
-
-
-# --- FR09: older live writers are reported, never killed ---------------------
-
-
-class TestPredatingWriters:
-    #: A registration epoch must postdate the process's own birth or the writer
-    #: census discards the lock as a recycled pid -- Linux reads the birth time
-    #: from ``/proc/<pid>/stat``, so a 1970 epoch is never classified there.
-    _NOW = time.time()
-
-    @staticmethod
-    def _registry(trw_dir: Path, pid: int, epoch: float) -> None:
-        writers = trw_dir / "memory" / "memory.db.writers"
-        writers.mkdir(parents=True, exist_ok=True)
-        (writers / f"{pid}.lock").write_text(f"{pid}\n{epoch}\n", encoding="utf-8")
-
-    def test_an_older_registration_warns_and_names_the_pid(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from trw_mcp.server import _doctor_predating_writers as module
-
-        self._registry(tmp_path, os.getpid(), epoch=self._NOW)
-        monkeypatch.setattr(module, "_install_epoch", lambda: (self._NOW + 1000.0, "dist_info_mtime"))
-
-        status, message = module.predating_writers_row(tmp_path)
-
-        assert status == "WARN"
-        assert str(os.getpid()) in message
-        # The claim must stay inside what a lock file can prove.
-        assert "loaded versions are unknown" in message
-        assert "Nothing was signalled." in message
-
-    def test_a_newer_registration_passes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.server import _doctor_predating_writers as module
-
-        self._registry(tmp_path, os.getpid(), epoch=self._NOW + 1000.0)
-        monkeypatch.setattr(module, "_install_epoch", lambda: (self._NOW, "dist_info_mtime"))
-
-        status, _message = module.predating_writers_row(tmp_path)
-
-        assert status == "PASS"
-
-    def test_an_unreadable_install_receipt_claims_nothing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        from trw_mcp.server import _doctor_predating_writers as module
-
-        self._registry(tmp_path, os.getpid(), epoch=self._NOW)
-        monkeypatch.setattr(module, "_install_epoch", lambda: (None, "unavailable"))
-
-        status, message = module.predating_writers_row(tmp_path)
-
-        assert status == "SKIP"
-        assert module.predating_writers(tmp_path)["pids"] == []
-        assert "not run" in message
-
-    def test_the_known_false_directions_are_reported(self, tmp_path: Path) -> None:
-        from trw_mcp.server._doctor_predating_writers import predating_writers
-
-        caveats = " ".join(predating_writers(tmp_path)["caveats"])
-        assert "reinstall" in caveats
-        assert "editable" in caveats
-
-    def test_detection_sends_no_terminating_signal(self) -> None:
-        """Detection is not permission to kill another session's process.
-
-        An AST check rather than a substring scan: the module's own docstring
-        explains the rule and would trip a text search, which is how a guard
-        ends up loosened to make itself pass.
-        """
-        import ast
-
-        source = (Path(__file__).resolve().parents[1] / "src/trw_mcp/server/_doctor_predating_writers.py").read_text(
-            encoding="utf-8"
-        )
-        called = {
-            node.func.attr
-            for node in ast.walk(ast.parse(source))
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        }
-        assert not called & {"kill", "killpg", "terminate", "send_signal"}
-
-    def test_version_status_reports_it_without_flipping_compatible(self, tmp_path: Path) -> None:
-        from trw_mcp.server import _subcommands_release as release
-
-        self._registry(tmp_path / ".trw", os.getpid(), epoch=1000.0)
-        monkeypatch_target = release.predating_writers
-
-        def _older(_trw_dir: Path) -> dict[str, object]:
-            measurement = monkeypatch_target(_trw_dir)
-            return {**measurement, "pids": [4242]}
-
-        release.predating_writers = _older  # type: ignore[assignment]
-        try:
-            status = release.collect_version_status(tmp_path)
-        finally:
-            release.predating_writers = monkeypatch_target  # type: ignore[assignment]
-
-        assert any("4242" in warning for warning in status["warnings"])
-        # A timestamp heuristic must never gate a release: mismatches feed
-        # `compatible`, which `assert_version_status_compatible` turns into a
-        # SystemExit.
-        assert not any("predating" in mismatch for mismatch in status["mismatches"])
 
 
 # --- Cross-model code review of the FR01-FR10 diff (2026-09-17) ---------------

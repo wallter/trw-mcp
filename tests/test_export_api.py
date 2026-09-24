@@ -4,8 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests._test_export_support import _make_entry, _setup_project
+import pytest
+
+from tests._memory_store_fake import FakeMemoryStore
+from tests._test_export_support import _setup_project, _store_entry
 from trw_mcp.export import export_data
+
+
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """Export reads ``selected_store``; the fake is this checkout's store (PRD-CORE-280 e1)."""
+    return fake_memory_store
 
 
 class TestExportLearningsJson:
@@ -13,10 +22,9 @@ class TestExportLearningsJson:
 
     def test_exports_all_entries(self, tmp_path: Path) -> None:
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Learning one")
-        _make_entry(entries_dir, summary="Learning two")
-        _make_entry(entries_dir, summary="Learning three")
+        _store_entry(project / ".trw", summary="Learning one")
+        _store_entry(project / ".trw", summary="Learning two")
+        _store_entry(project / ".trw", summary="Learning three")
 
         result = export_data(project, "learnings")
         assert result["status"] == "ok"
@@ -26,9 +34,8 @@ class TestExportLearningsJson:
 
     def test_min_impact_filter(self, tmp_path: Path) -> None:
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="High impact", impact=0.9)
-        _make_entry(entries_dir, summary="Low impact", impact=0.3)
+        _store_entry(project / ".trw", summary="High impact", impact=0.9)
+        _store_entry(project / ".trw", summary="Low impact", impact=0.3)
 
         result = export_data(project, "learnings", min_impact=0.7)
         learnings = result.get("learnings")
@@ -47,8 +54,7 @@ class TestExportLearningsCsv:
 
     def test_csv_has_headers_and_data(self, tmp_path: Path) -> None:
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="CSV test entry", tags=["tag1", "tag2"])
+        _store_entry(project / ".trw", summary="CSV test entry", tags=["tag1", "tag2"])
 
         result = export_data(project, "learnings", fmt="csv")
         csv_str = result.get("learnings_csv")
@@ -67,8 +73,7 @@ class TestExportMetadata:
 
     def test_all_scope_has_metadata(self, tmp_path: Path) -> None:
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Metadata test")
+        _store_entry(project / ".trw", summary="Metadata test")
 
         result = export_data(project, "all")
         assert result["status"] == "ok"
@@ -86,8 +91,7 @@ class TestExportDataScopes:
     def test_csv_format_only_applies_to_learnings_scope(self, tmp_path: Path) -> None:
         """CSV format is only used when scope is exactly 'learnings', not 'all'."""
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="CSV scope test")
+        _store_entry(project / ".trw", summary="CSV scope test")
 
         result = export_data(project, "all", fmt="csv")
         assert "learnings" in result
@@ -103,9 +107,8 @@ class TestExportDataScopes:
     def test_metadata_includes_learnings_count(self, tmp_path: Path) -> None:
         """Metadata includes learnings_count when scope includes learnings."""
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Count test one")
-        _make_entry(entries_dir, summary="Count test two")
+        _store_entry(project / ".trw", summary="Count test one")
+        _store_entry(project / ".trw", summary="Count test two")
 
         result = export_data(project, "learnings")
         meta = result["metadata"]

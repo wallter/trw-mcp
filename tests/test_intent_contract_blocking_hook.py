@@ -15,6 +15,8 @@ from tests._intent_contract_hooks import (
     make_project,
     payload,
 )
+from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.models.config._sub_models import IntentContractConfig
 from trw_mcp.security.intent_contract import _falsifier, check_write, post_edit_check
 from trw_mcp.security.intent_contract._hook_common import ALLOW, BLOCK
@@ -161,14 +163,31 @@ def test_unreadable_payload_fails_closed(tmp_path: Path, intent_env: IntentContr
     assert root.exists()
 
 
-@pytest.mark.perf
 def test_hook_latency_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, intent_env: IntentContractConfig) -> None:
-    """NFR02 evidence artifact: FR05 <= 1s (no falsifier), FR07 <= 5s (with one)."""
+    """NFR02 evidence artifact: FR05 (no falsifier) and FR07 (with one) both allow."""
+    root = make_project(tmp_path, contract=fifty_claim_contract())
+
+    assert check_write.run(payload(root)).code == ALLOW
+
+    # One anchored falsifier averaging ~1s wall clock, per NFR02's wording.
+    monkeypatch.setattr(
+        post_edit_check,
+        "run_falsifier",
+        lambda *a, **k: (time.sleep(1.0), _falsifier.FalsifierResult("pass", ""))[1],
+    )
+    assert post_edit_check.run(payload(root)).code == ALLOW
+
+
+@requires_local_timing
+def test_hook_latency_budget_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, intent_env: IntentContractConfig
+) -> None:
+    """NFR02: FR05 <= 1s (no falsifier), FR07 <= 5s (with one)."""
     root = make_project(tmp_path, contract=fifty_claim_contract())
 
     start = time.monotonic()
-    assert check_write.run(payload(root)).code == ALLOW
-    assert time.monotonic() - start <= intent_env.pre_write_hook_budget_seconds
+    check_write.run(payload(root))
+    assert_budget("pre_write_hook", time.monotonic() - start, intent_env.pre_write_hook_budget_seconds, "s")
 
     # One anchored falsifier averaging ~1s wall clock, per NFR02's wording.
     monkeypatch.setattr(
@@ -177,8 +196,8 @@ def test_hook_latency_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, in
         lambda *a, **k: (time.sleep(1.0), _falsifier.FalsifierResult("pass", ""))[1],
     )
     start = time.monotonic()
-    assert post_edit_check.run(payload(root)).code == ALLOW
-    assert time.monotonic() - start <= intent_env.post_edit_hook_budget_seconds
+    post_edit_check.run(payload(root))
+    assert_budget("post_edit_hook", time.monotonic() - start, intent_env.post_edit_hook_budget_seconds, "s")
 
 
 def test_pre_write_never_reads_the_target_file_contents(tmp_path: Path, intent_env: IntentContractConfig) -> None:

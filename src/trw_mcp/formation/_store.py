@@ -34,6 +34,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import structlog
 import yaml
@@ -46,12 +47,16 @@ logger = structlog.get_logger(__name__)
 __all__ = [
     "MANIFEST_FILENAME",
     "FormationContext",
+    "canonical_path",
     "manifest_path_for_run",
+    "own_slot_if_caller",
+    "read_json_store",
     "read_manifest",
     "register_formation",
     "resolve_active",
     "resolve_manifest_path",
     "rewrite_manifest",
+    "write_json_store",
     "write_manifest_locked",
 ]
 
@@ -69,9 +74,97 @@ class FormationContext:
 
     manifest: FormationManifest
     manifest_path: Path
-    #: ``None`` when the resolving run is the orchestrator itself.
+    #: The run's own slot. For the orchestrator it is the slot it joined as a
+    #: member of its own formation, and ``None`` when it did not (PRD-FIX-149).
     member_id: str | None
     is_orchestrator: bool
+
+
+def canonical_path(path: Path) -> Path:
+    """Refuse broken resolution, preserving non-existent ordinary peer paths.
+
+    THE one canonicalizer (PRD-FIX-149 review R1): ``comms/_identity.py``'s
+    ``_canonical`` used to be a byte-identical second copy of this exact
+    function, reached only through the ``trw_mcp.formation`` facade so the
+    package-boundary test (``test_no_adapter_imports_a_private_formation_module``)
+    stays honest. Strict resolution detects loops on Python 3.13+, whose
+    non-strict resolver no longer raises for them. Missing ordinary paths
+    retain prior semantics.
+    """
+    try:
+        try:
+            return path.resolve(strict=True)
+        except FileNotFoundError:
+            return path.resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise FormationError(f"path {path} cannot be canonically resolved: {exc}") from exc
+
+
+def _own_slot(manifest: FormationManifest, run_path: Path) -> str | None:
+    """The member id an OWNING run holds in its own formation, if it joined one.
+
+    An orchestrator's ``run.yaml`` is never stamped -- it owns the manifest
+    instead -- so its slot is found the only way it can be: by the run path that
+    joined it, compared exactly as ``mark_member_delivered`` authenticates a
+    reporter. Resolving it HERE, once, is what lets the deliver gate exclude the
+    caller's own slot and the self-report write it; before, both keyed on a
+    ``member_id`` that was always ``None`` for an orchestrator, so its own slot
+    blocked its own delivery and nothing could ever mark it delivered (T22).
+    Two slots on one run name nobody rather than guessing.
+
+    STRUCTURAL ONLY. This answers "which member recorded *run_path* as its
+    own", nothing about who is actually calling right now -- a caller can pass
+    an arbitrary ``run_path`` to ``trw_deliver`` and get a structural match for
+    a slot it does not own. Excluding a slot from a gate, or writing a
+    self-report on its behalf, must go through :func:`own_slot_if_caller`
+    instead, which additionally verifies the CALLING SESSION (PRD-FIX-149
+    review R1, ledger: a peer supplying ``run_path=<orchestrator run>`` got the
+    orchestrator's own slot excluded and stamped delivered).
+    """
+    here = canonical_path(run_path)
+    slots = [m.member_id for m in manifest.members if m.run_path and canonical_path(Path(m.run_path)) == here]
+    return slots[0] if len(slots) == 1 else None
+
+
+def own_slot_if_caller(
+    context: FormationContext,
+    run_path: Path,
+    *,
+    pinned_run: Path | None,
+    session_id: str | None,
+) -> str | None:
+    """*context*'s structural own-slot id, but ONLY when THIS CALL is verified as that session's.
+
+    ``_own_slot`` (via :func:`resolve_active`) answers a purely structural
+    question and is safe for a read-only projection, but NOT for a gate
+    exclusion or a self-report write: a caller can pass an arbitrary
+    ``run_path`` to ``trw_deliver`` and borrow a structurally-matching slot to
+    skip a peer's completion evidence, or mark it delivered on the peer's
+    behalf (PRD-FIX-149 review R1 -- a peer supplying
+    ``run_path=<orchestrator run>`` got the orchestrator's own slot excluded
+    and stamped delivered). Trust the match only when BOTH hold:
+
+    - *pinned_run* -- read by the caller from ITS OWN pin store entry before
+      this call, never from the ``run_path`` argument -- canonically equals
+      *run_path*, proving the calling session did not merely name a path it
+      does not own; and
+    - the matched member's recorded ``pin_key`` equals *session_id*, proving
+      the join that created the slot belongs to the SAME session, not merely
+      the same run directory (a run directory alone is guessable/enumerable).
+
+    Returns ``None`` (never the caller's *actual* slot) on any missing input,
+    so an unauthenticated caller (no pin, no session id) is always treated as
+    an ordinary peer rather than trusted by default.
+    """
+    member_id = context.member_id
+    if member_id is None or pinned_run is None or session_id is None:
+        return None
+    if canonical_path(pinned_run) != canonical_path(run_path):
+        return None
+    member = next((m for m in context.manifest.members if m.member_id == member_id), None)
+    if member is None or member.pin_key != session_id:
+        return None
+    return member_id
 
 
 def manifest_path_for_run(run_path: Path) -> Path:
@@ -161,6 +254,11 @@ def render_manifest(manifest: FormationManifest) -> str:
     # members with extra="forbid", so an unconditional `open_join: false` would make
     # every manifest this build rewrites unreadable to them (a silent schema
     # migration of a live formation). An unset field round-trips as its default.
+    if payload.get("schema_version") is None:
+        # N4: same rule as the FR18 fields below. The key appears only in a
+        # manifest that already had one, so a reader-only release never makes a
+        # manifest that an older peer cannot load.
+        payload.pop("schema_version", None)
     for member in payload.get("members", []):
         for key, default in _FR18_DEFAULTS.items():
             if member.get(key, default) == default:
@@ -179,6 +277,41 @@ def write_manifest_locked(manifest_path: Path, manifest: FormationManifest) -> N
     # paths, which other local users must not read (0644 was observed 2026-09-19).
     write_owner_only(tmp, render_manifest(manifest).encode("utf-8"))
     os.replace(tmp, manifest_path)
+
+
+def read_json_store(path: Path, *, section: str, label: str) -> dict[str, Any]:
+    """Read one owner-only JSON store, or refuse (ledger N12).
+
+    The candidate registry and the worktree-membership records are the same
+    artifact twice: a ``{<section>: {key: record}}`` JSON file under
+    ``.trw/runtime/``, read with an unreadable-is-a-refusal rule and written
+    owner-only through a temp file. They had two copies of that shape, so a fix
+    to one (a permission, an encoding, an atomicity detail) reached only half
+    the stores. *label* names the artifact in the refusal, because a caller can
+    act on "candidate registry" and cannot act on a path alone.
+
+    An absent file is an EMPTY store, not an error: nothing has been recorded
+    yet. A present but unparseable one raises, because silently treating it as
+    empty would drop live records and re-admit whatever they were guarding.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FormationError(f"{label} {path} is unreadable: {exc}") from exc
+    records = raw.get(section) if isinstance(raw, dict) else None
+    if not isinstance(records, dict):
+        raise FormationError(f"{label} {path} is malformed")
+    return {str(key): value for key, value in records.items()}
+
+
+def write_json_store(path: Path, *, section: str, records: dict[str, Any]) -> None:
+    """Write-temp-then-replace one owner-only JSON store. The caller holds the lock."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    write_owner_only(tmp, (json.dumps({section: records}, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+    os.replace(tmp, path)
 
 
 def write_owner_only(path: Path, data: bytes) -> None:
@@ -261,7 +394,8 @@ def resolve_active(trw_dir: Path, run_path: Path | None) -> FormationContext | N
         return None
     own = manifest_path_for_run(run_path)
     if own.is_file():
-        return FormationContext(read_manifest(own), own, None, True)
+        manifest = read_manifest(own)
+        return FormationContext(manifest, own, _own_slot(manifest, run_path), True)
     stamped = stamped_ids(run_path)
     if stamped is None:
         return None

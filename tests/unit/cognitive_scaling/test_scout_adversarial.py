@@ -20,10 +20,10 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
 from ruamel.yaml import YAML
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.cognitive_scaling import scout
 from trw_mcp.cognitive_scaling._scout_signals import _extract_symbols
 from trw_mcp.models.cognitive_scaling import (
@@ -41,14 +41,21 @@ _NUL = chr(0)
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.perf
-@requires_local_timing
+def _huge_symbol_text() -> str:
+    return "Symbol%d " % 0 + " ".join(f"Sym{i}" for i in range(500_000))
+
+
 def test_extract_symbols_is_bounded_and_fast() -> None:
-    huge = "Symbol%d " % 0 + " ".join(f"Sym{i}" for i in range(500_000))
-    start = time.monotonic()
-    symbols = _extract_symbols(huge)
-    assert time.monotonic() - start < 2.0
+    symbols = _extract_symbols(_huge_symbol_text())
     assert len(symbols) <= 12  # capped
+
+
+@requires_local_timing
+def test_extract_symbols_is_bounded_and_fast_budget() -> None:
+    huge = _huge_symbol_text()
+    start = time.monotonic()
+    _extract_symbols(huge)
+    assert_budget("extract_symbols_elapsed", time.monotonic() - start, 2.0, "s")
 
 
 def test_extract_symbols_strips_control_and_shell_metacharacters() -> None:

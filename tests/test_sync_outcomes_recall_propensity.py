@@ -1,10 +1,11 @@
 """P1 F8: per-learning recall outcomes must reach the bandit propensity_data.
 
-Defect: ``_step_recall_outcome`` writes recall events + outcome rows to
-``.trw/logs/recall_tracking.jsonl``, but ``_build_outcome_payload`` previously
-only emitted ``composite_outcome`` / ``normalized_reward`` propensity_data —
-the recall signals never reached the backend IPS / bandit arm-update loop, so
-the recall -> weight learning loop could not close.
+Defect: the (now-retired, PRD-CORE-293) recall-outcome deferred step wrote
+recall events + outcome rows to ``.trw/logs/recall_tracking.jsonl``, but
+``_build_outcome_payload`` previously only emitted ``composite_outcome`` /
+``normalized_reward`` propensity_data — the recall signals never reached the
+backend IPS / bandit arm-update loop, so the recall -> weight learning loop
+could not close.
 
 These tests drive the REAL ``_build_outcome_payload`` /
 ``_aggregate_recall_outcomes`` against a fixture recall_tracking.jsonl and
@@ -340,7 +341,6 @@ def test_load_pending_outcomes_aggregates_recall_log_once(tmp_path: Path, monkey
 
 def test_only_receipts_count_as_recalls(tmp_path: Path) -> None:
     """FR05: 3 receipts, 1 positive, 1 negative, 1 unknown -> recall_count 3."""
-    from trw_mcp.state.recall_tracking import get_recall_stats
     from trw_mcp.sync.outcomes import _aggregate_recall_outcomes
 
     trw_dir = tmp_path / ".trw"
@@ -361,21 +361,18 @@ def test_only_receipts_count_as_recalls(tmp_path: Path) -> None:
     assert agg["L-1"]["positive"] == 1
     assert agg["L-1"]["negative"] == 1
     assert agg["L-1"]["neutral"] == 0
-    # get_recall_stats resolves the same .trw through the test path isolation.
-    assert get_recall_stats()["total_recalls"] == 3
 
 
 def test_sync_payload_after_session_carries_no_session_keys_or_observations(tmp_path: Path) -> None:
     """NFR04: new join keys and the session observation log never reach sync."""
     from trw_mcp.models.build import BuildStatus
-    from trw_mcp.state.recall_tracking import record_outcome, record_recall
+    from trw_mcp.state.recall_tracking import record_recall
     from trw_mcp.sync.outcomes import load_pending_outcomes
     from trw_mcp.tools.build._registration import _record_session_observation
 
     trw_dir = tmp_path / ".trw"
     query = 'how does "auth" work — ünïcode & <tags>'
     assert record_recall("L-1", query) is True
-    assert record_outcome("L-1", "positive", source="explicit_feedback") is True
     status = BuildStatus(tests_passed=True, test_count=4, timestamp="2026-09-18T00:00:00+00:00", scope="full")
     _record_session_observation(trw_dir, status)
     logs = trw_dir / "logs"

@@ -201,14 +201,17 @@ def test_ctx_isolation_disabled_reverts_to_process_uuid(monkeypatch: pytest.Monk
 
 
 def test_config_sweep_fields_round_trip() -> None:
-    """All seven new PRD-CORE-141 config fields exist with documented defaults."""
+    """The surviving PRD-CORE-141 config fields exist with documented defaults.
+
+    run_archive_hours was removed under PRD-CORE-291 (slice 2): reserved for a
+    future archive PRD that never materialized, no production reader.
+    """
     from trw_mcp.models.config import TRWConfig
 
     cfg = TRWConfig()
     assert cfg.run_staleness_hours == 48
     assert cfg.run_staleness_grace_hours == 12
     assert cfg.pin_ttl_hours == 24
-    assert cfg.run_archive_hours == 720
     assert cfg.cleanup_on_boot is True
     assert cfg.checkpoint_suggest_hours == 4
     assert cfg.ctx_isolation_enabled is True

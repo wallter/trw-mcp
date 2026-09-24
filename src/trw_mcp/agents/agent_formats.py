@@ -338,6 +338,10 @@ _REGISTRY: dict[str, AgentFormat] = {
     # (exit 0). ``tools: Read`` DOES constrain (no shell). Claude ``mcp__trw__*``
     # names therefore must not be copied — they would allowlist tools Grok does
     # not have. Drop model/tools rather than mistranslate.
+    # 2026-09-22: grok-4.6 above is the literal probed that day, kept as the
+    # historical record — not re-run against grok-4.7. The `model` key stays
+    # dropped for this client regardless of which grok model is current; see
+    # GROK-4-7-RESEARCH-2026-09-22.md for the now-current default.
     "grok": AgentFormat(
         client_id="grok",
         destination_dir=".grok/agents",

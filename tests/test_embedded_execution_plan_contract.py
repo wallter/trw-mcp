@@ -1,5 +1,6 @@
 """Static default-policy contract checks, not proof an agent follows the embedded workflow."""
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -7,39 +8,63 @@ import pytest
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 
 ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
+
+#: Codex installs these as `trw-prd-ready/{name}-contract.md` resources, not
+#: their own directory (PRD-CORE-291-FR04 install behavior; see also
+#: tests/test_bootstrap_codex_split.py).
+_READINESS_PHASES = frozenset({"trw-prd-groom", "trw-prd-review", "trw-exec-plan"})
+
+
+def _fresh_codex_skills_root() -> Path:
+    """A live codex render, installed fresh rather than read from the monorepo's
+    ``.agents/skills`` mirror -- that mirror still reflects pre-migration bytes
+    (PRD-CORE-291-FR04 deleted the ``data/codex/skills`` fork it used to be
+    generated from) pending its own regeneration, which is out of this test's
+    scope. Installing into a throwaway directory exercises the real
+    ``install_codex_skills`` production path instead of stale fixture bytes.
+    """
+    from trw_mcp.bootstrap._codex import install_codex_skills
+
+    tmp = Path(tempfile.mkdtemp(prefix="codex-skills-fresh-"))
+    install_codex_skills(tmp)
+    return tmp / ".agents" / "skills"
+
+
+def _skill_text(surface: Path, skill: str) -> str:
+    """The SKILL.md body for *skill* installed at *surface*."""
+    if surface == _CODEX_SURFACE and skill in _READINESS_PHASES:
+        return (surface / "trw-prd-ready" / f"{skill}-contract.md").read_text()
+    return (surface / skill / "SKILL.md").read_text()
+
+
+_CODEX_SURFACE = _fresh_codex_skills_root()
 SURFACE_PATHS = (
     PACKAGE_ROOT / "src/trw_mcp/data/skills",
-    PACKAGE_ROOT / "src/trw_mcp/data/codex/skills",
     ROOT / ".claude/skills",
-    ROOT / ".agents/skills",
+    _CODEX_SURFACE,
 )
 SURFACES = (
     SURFACE_PATHS[0],
-    SURFACE_PATHS[1],
-    pytest.param(SURFACE_PATHS[2], marks=requires_monorepo),
-    pytest.param(SURFACE_PATHS[3], marks=requires_monorepo),
+    pytest.param(SURFACE_PATHS[1], marks=requires_monorepo),
+    SURFACE_PATHS[2],
 )
 
 
 @requires_monorepo
-def test_combined_authoring_policy_is_in_compiled_aaref_not_only_mirrors() -> None:
-    """Exercise the authoring-source compiler, not a hand-edited visible copy."""
-    from trw_mcp.canons.registry import bundled_manifest_bytes, compile_registry_canon, load_registry
-
-    registry = load_registry(bundled_manifest_bytes())
-    canon = next(item for item in registry.compiled_canons if item.id == "aaref")
-    compiled = compile_registry_canon(ROOT, canon)
-    assert "groom requirements + plan" in compiled.core
-    assert "new PRDs default to an `## Execution Plan` section in the same PRD" in compiled.reference
-    assert "Existing reviewed PRDs and separate plans retain their authority" in compiled.reference
-    assert "does not combine author and independent reviewer roles" in compiled.reference
-    for path in (canon.combined, "AARE-F-FRAMEWORK.md", canon.runtime_combined):
-        assert (ROOT / path).read_text() == compiled.combined
+def test_combined_authoring_policy_is_in_aaref_and_every_mirror() -> None:
+    """The policy is in the AARE-F body itself, and every mirror matches it."""
+    body = (ROOT / "trw-mcp/src/trw_mcp/data/aaref.md").read_text(encoding="utf-8")
+    assert "groom requirements + plan" in body
+    assert "new PRDs default to an `## Execution Plan` section in the same PRD" in body
+    assert "Existing reviewed PRDs and separate plans retain their authority" in body
+    assert "does not combine author and independent reviewer roles" in body
+    for path in ("AARE-F-FRAMEWORK.md", ".trw/frameworks/AARE-F-FRAMEWORK.md"):
+        assert (ROOT / path).read_text(encoding="utf-8") == body
 
 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_public_entry_resolves_default_without_changing_mcp_schema(surface: Path) -> None:
-    text = (surface / "trw-prd-ready/SKILL.md").read_text()
+    text = _skill_text(surface, "trw-prd-ready")
     for fragment in (
         "exact standalone `--embedded-plan` option",
         "Require\nnonempty remaining input",
@@ -59,7 +84,7 @@ def test_public_entry_resolves_default_without_changing_mcp_schema(surface: Path
 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_embedded_contract_keeps_authority_proof_and_outcome_boundaries(surface: Path) -> None:
-    text = (surface / "trw-exec-plan/SKILL.md").read_text()
+    text = _skill_text(surface, "trw-exec-plan")
     for fragment in (
         "resolved selected mode from `trw-prd-ready`",
         "competing authority paths",
@@ -85,9 +110,15 @@ def test_embedded_contract_keeps_authority_proof_and_outcome_boundaries(surface:
         assert fragment in text, (surface, fragment)
 
 
+@requires_monorepo
 @pytest.mark.parametrize("skill", ("trw-exec-plan", "trw-prd-groom"))
 def test_packaged_embedded_pilot_bodies_match(skill: str) -> None:
-    bodies = [(surface / skill / "SKILL.md").read_text().split("\n# ", 1)[1] for surface in SURFACE_PATHS[:2]]
+    """Compares the bundled package copy against the .claude/skills monorepo mirror.
+
+    The second surface (``ROOT / ".claude/skills"``) only exists in the
+    monorepo checkout — the public repo IS the package alone.
+    """
+    bodies = [_skill_text(surface, skill).split("\n# ", 1)[1] for surface in SURFACE_PATHS[:2]]
     assert bodies[0] == bodies[1]
 
 
@@ -95,22 +126,21 @@ def test_packaged_embedded_pilot_bodies_match(skill: str) -> None:
 @requires_monorepo
 def test_embedded_pilot_bodies_match_across_clients(skill: str) -> None:
     # Client-specific frontmatter and adaptation guidance intentionally differ.
-    bodies = [(surface / skill / "SKILL.md").read_text().split("\n# ", 1)[1] for surface in SURFACE_PATHS]
+    bodies = [_skill_text(surface, skill).split("\n# ", 1)[1] for surface in SURFACE_PATHS]
     if skill == "trw-prd-ready":
         # Codex installs internal phases as resources, unlike shared/Claude.
-        for surface, body in zip(SURFACE_PATHS, bodies, strict=True):
-            if surface in (SURFACE_PATHS[3], SURFACE_PATHS[1]):
-                assert "trw-prd-review-contract.md" in body
-        assert bodies[0] == bodies[2]
-        assert bodies[1] == bodies[3]
+        assert "trw-prd-review-contract.md" in bodies[2]
+        assert bodies[0] == bodies[1]
     else:
+        # Readiness-phase bodies render byte-identical everywhere; codex's
+        # `-contract.md` filename is an install-time rename, not a body edit.
         assert len(set(bodies)) == 1
 
 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_experimental_admission_does_not_require_score_padding(surface: Path) -> None:
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
-    plan = (surface / "trw-exec-plan/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
+    plan = _skill_text(surface, "trw-exec-plan")
     for fragment in (
         "**Legacy skip if:**",
         "**Embedded route:**",
@@ -146,7 +176,7 @@ def test_experimental_admission_does_not_require_score_padding(surface: Path) ->
 @pytest.mark.parametrize("surface", SURFACES)
 def test_reconciliation_scope_has_bounded_reuse_and_renewal_guards(surface: Path) -> None:
     """Instruction regression only; fresh-actor trials must establish adherence."""
-    plan = (surface / "trw-exec-plan/SKILL.md").read_text()
+    plan = _skill_text(surface, "trw-exec-plan")
     for fragment in (
         "Missing explicit reconciliation permission retains V1",
         "initial independent review explicitly permits",
@@ -178,7 +208,7 @@ def test_reconciliation_scope_has_bounded_reuse_and_renewal_guards(surface: Path
 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_caller_routes_allow_only_explicit_reuse_without_conflicting_v1_rule(surface: Path) -> None:
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
     phases = ready.split("### Phase ")
     groom, review, execution = phases[3:6]
     assert "require valid/nonpartial" in groom
@@ -190,16 +220,16 @@ def test_caller_routes_allow_only_explicit_reuse_without_conflicting_v1_rule(sur
     assert "selected admission" in execution
     assert "including its permitted reuse checks" in execution
     # The caller delegates mechanics; the owner still carries the substantive guard.
-    owner = (surface / "trw-exec-plan/SKILL.md").read_text()
+    owner = _skill_text(surface, "trw-exec-plan")
     assert "Independent evidence assessment is required" in owner
-    for text in (ready, (surface / "trw-exec-plan/SKILL.md").read_text()):
+    for text in (ready, _skill_text(surface, "trw-exec-plan")):
         assert "before any subsequent slice/resume" not in text
         assert "an earlier receipt does not authorize reuse after the digest changes" not in text
 
 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_installed_section_updater_consumer_keeps_permission_boundaries(surface: Path) -> None:
-    text = (surface / "trw-exec-plan/SKILL.md").read_text()
+    text = _skill_text(surface, "trw-exec-plan")
     for fragment in (
         "trw_mcp.state.prd_sections.update_execution_plan",
         "expected_sha256",
@@ -214,9 +244,9 @@ def test_installed_section_updater_consumer_keeps_permission_boundaries(surface:
 @pytest.mark.parametrize("surface", SURFACES)
 def test_initial_authoring_requires_live_creation_and_bounded_reviewed_repairs(surface: Path) -> None:
     """Static ownership guards, not actor-level proof of provenance or consumption."""
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
-    groom = (surface / "trw-prd-groom/SKILL.md").read_text()
-    plan = (surface / "trw-exec-plan/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
+    groom = _skill_text(surface, "trw-prd-groom")
+    plan = _skill_text(surface, "trw-exec-plan")
     for fragment in (
         "successful creation result and its exact output",
         "path as this invocation's initial-authoring provenance",
@@ -265,9 +295,9 @@ def test_initial_authoring_requires_live_creation_and_bounded_reviewed_repairs(s
 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_new_embedded_drafts_whole_artifact_before_one_review(surface: Path) -> None:
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
-    groom = (surface / "trw-prd-groom/SKILL.md").read_text()
-    plan = (surface / "trw-exec-plan/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
+    groom = _skill_text(surface, "trw-prd-groom")
+    plan = _skill_text(surface, "trw-exec-plan")
     authoring = ready.split("### Phase 2:", 1)[1].split("### Phase 3:", 1)[0]
     review = ready.split("### Phase 3:", 1)[1].split("### Phase 4:", 1)[0]
     handoff = ready.split("### Phase 4:", 1)[1].split("## Final Report", 1)[0]
@@ -300,7 +330,7 @@ def test_new_embedded_drafts_whole_artifact_before_one_review(surface: Path) -> 
 @pytest.mark.parametrize("surface", SURFACES)
 def test_default_is_resolved_before_creation_and_not_reclassified(surface: Path) -> None:
     """Static policy guards only, not an executed argument parser or actor trial."""
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
     detection = ready.split("## Input Detection", 1)[1].split("## Pipeline Phases", 1)[0]
     assert "classify the original remaining input once" in detection
     assert "Do not reclassify a newly created path as existing input" in detection
@@ -315,14 +345,14 @@ def test_default_is_resolved_before_creation_and_not_reclassified(surface: Path)
 @pytest.mark.parametrize("surface", SURFACES)
 def test_input_identity_is_not_a_reference_inside_feature_prose(surface: Path) -> None:
     """Text-only classifier contract; this does not execute a parser or model."""
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
     detection = ready.split("## Input Detection", 1)[1].split("## Pipeline Phases", 1)[0]
     for fragment in (
         "entire remaining argument identifies one PRD ID",
         "entire remaining argument is an explicit document path",
         "Mentioning an ID or path inside a feature description does not select existing input",
         "Add validation to scripts/check_exec_plan_paths.py",
-        "Add export support compatible with PRD-CORE-020",
+        "Add export support compatible with PRD-CORE-EXAMPLE",
         "an explicitly selected existing path is missing, stop and report it",
         "do not infer new-creation authority",
     ):
@@ -333,7 +363,7 @@ def test_input_identity_is_not_a_reference_inside_feature_prose(surface: Path) -
 @pytest.mark.parametrize("surface", SURFACES)
 def test_new_creation_has_bounded_finding_directed_repair(surface: Path) -> None:
     """Static policy regressions, not evidence an actor obeys the repair loop."""
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
     for fragment in (
         "up to two NEEDS WORK repair cycles",
         "within the original user scope",
@@ -347,7 +377,7 @@ def test_new_creation_has_bounded_finding_directed_repair(surface: Path) -> None
     ):
         assert fragment in ready, (surface, fragment)
     for skill in ("trw-prd-groom", "trw-exec-plan"):
-        body = (surface / skill / "SKILL.md").read_text()
+        body = _skill_text(surface, skill)
         assert "up to two NEEDS WORK repair cycles" in body
         assert "within the original user scope" in body
         assert "fresh author-independent review" in body
@@ -356,7 +386,7 @@ def test_new_creation_has_bounded_finding_directed_repair(surface: Path) -> None
 @pytest.mark.parametrize("surface", SURFACES)
 def test_existing_recall_precedes_preflight_decisions_and_is_reused(surface: Path) -> None:
     """Instruction ordering only; not proof of actor adherence or useful memory."""
-    text = (surface / "trw-prd-ready/SKILL.md").read_text()
+    text = _skill_text(surface, "trw-prd-ready")
     preflight = text.split("### Phase 0: PREFLIGHT", 1)[1].split("### Phase 1: CREATE", 1)[0]
     create = text.split("### Phase 1: CREATE", 1)[1].split("### Phase 2: GROOM", 1)[0]
     assert preflight.index("Before framing questions or assumptions") < preflight.index("Ask unresolved questions")
@@ -371,7 +401,7 @@ def test_existing_recall_precedes_preflight_decisions_and_is_reused(surface: Pat
 @pytest.mark.parametrize("surface", SURFACES)
 def test_progress_recording_does_not_reopen_readiness(surface: Path) -> None:
     """Policy wiring, not proof of actor adherence or machine authorization."""
-    plan = (surface / "trw-exec-plan/SKILL.md").read_text()
+    plan = _skill_text(surface, "trw-exec-plan")
     progress = plan.split("## Recording progress is not planning admission", 1)[1].split("## Readiness gate", 1)[0]
     for fragment in (
         "already authorized work",
@@ -391,7 +421,7 @@ def test_progress_recording_does_not_reopen_readiness(surface: Path) -> None:
         "actual delivery\ngates remain required",
     ):
         assert fragment in progress, (surface, fragment)
-    ready = (surface / "trw-prd-ready/SKILL.md").read_text()
+    ready = _skill_text(surface, "trw-prd-ready")
     routing = ready.split("## Progress-only requests", 1)[1].split("## Input Detection", 1)[0]
     assert "without running CREATE/GROOM/REVIEW again" in routing
     assert "substantive changes still use the readiness route" in routing

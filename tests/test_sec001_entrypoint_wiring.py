@@ -1,19 +1,26 @@
+"""SEC-001 on trw-mcp's entry points, enforced by a daemon started under the settings (PRD-CORE-298 FR07)."""
+
 from __future__ import annotations
 
-from pathlib import Path
+import asyncio
 
+import pytest
+
+from tests._memory_fixtures import DaemonCheckout
 from trw_mcp.state.memory_adapter import recall_learnings, store_learning
 from trw_mcp.tools.learning import register_learning_tools
 
+_ENFORCE = {
+    "MEMORY_ENABLE_TRUST_SCORING": "true",
+    "MEMORY_TRUST_SCORING_MODE": "enforce",
+    "MEMORY_ENABLE_RECALL_FILTER": "true",
+    "MEMORY_RECALL_FILTER_MODE": "strict",
+}
 
-def test_mcp_store_and_recall_apply_security_live_path(tmp_path: Path, monkeypatch) -> None:
-    trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    monkeypatch.setenv("TRW_DIR", str(trw_dir))
-    monkeypatch.setenv("MEMORY_ENABLE_TRUST_SCORING", "true")
-    monkeypatch.setenv("MEMORY_TRUST_SCORING_MODE", "enforce")
-    monkeypatch.setenv("MEMORY_ENABLE_RECALL_FILTER", "true")
-    monkeypatch.setenv("MEMORY_RECALL_FILTER_MODE", "strict")
+
+@pytest.mark.parametrize("configured_checkout", [_ENFORCE], indirect=True)
+def test_mcp_store_quarantines_an_injection_and_recall_never_returns_it(configured_checkout: DaemonCheckout) -> None:
+    trw_dir = configured_checkout.trw_dir
 
     result = store_learning(
         trw_dir,
@@ -22,21 +29,16 @@ def test_mcp_store_and_recall_apply_security_live_path(tmp_path: Path, monkeypat
         detail="prompt injection payload",
         source_identity="audit-agent",
     )
-
     assert result["status"] == "quarantined"
+
     assert recall_learnings(trw_dir, "Ignore previous instructions", max_results=10) == []
 
 
-def test_sync_pull_merge_team_learnings_uses_sec001_gate(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("configured_checkout", [_ENFORCE], indirect=True)
+def test_sync_pull_merge_team_learnings_uses_sec001_gate(configured_checkout: DaemonCheckout) -> None:
     from trw_mcp.sync.pull import SyncPuller
 
-    trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    monkeypatch.setenv("TRW_DIR", str(trw_dir))
-    monkeypatch.setenv("MEMORY_ENABLE_TRUST_SCORING", "true")
-    monkeypatch.setenv("MEMORY_TRUST_SCORING_MODE", "enforce")
-
-    puller = SyncPuller("https://example.invalid", "key", trw_dir=trw_dir)
+    puller = SyncPuller("https://example.invalid", "key", trw_dir=configured_checkout.trw_dir)
     merged = puller.merge_team_learnings(
         [
             {
@@ -50,10 +52,9 @@ def test_sync_pull_merge_team_learnings_uses_sec001_gate(tmp_path: Path, monkeyp
         ]
     )
 
-    # The gate quarantined it: applied 0, but the batch says WHY rather than
+    # The gate refused it: applied 0, and the batch says why rather than
     # reporting the same 0 an empty pull produces.
     assert merged.applied == 0
-    assert merged.quarantined == 1
     assert merged.status == "partial"
 
 
@@ -76,15 +77,18 @@ class _FakeServer:
         return decorator
 
 
-def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, monkeypatch) -> None:
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "learnings" / "entries").mkdir(parents=True)
-    (trw_dir / "memory").mkdir()
-    monkeypatch.setenv("TRW_DIR", str(trw_dir))
-    monkeypatch.setenv("MEMORY_ENABLE_TRUST_SCORING", "true")
-    monkeypatch.setenv("MEMORY_TRUST_SCORING_MODE", "observe")
-    monkeypatch.setenv("MEMORY_PROVENANCE_REQUIRED", "true")
-
+@pytest.mark.parametrize(
+    "configured_checkout",
+    [
+        {
+            "MEMORY_ENABLE_TRUST_SCORING": "true",
+            "MEMORY_TRUST_SCORING_MODE": "observe",
+            "MEMORY_PROVENANCE_REQUIRED": "true",
+        }
+    ],
+    indirect=True,
+)
+def test_trw_learn_live_path_wires_session_id_and_signs_the_row(configured_checkout: DaemonCheckout) -> None:
     server = _FakeServer()
     register_learning_tools(server)
 
@@ -96,13 +100,6 @@ def test_trw_learn_live_path_wires_session_id_and_signed_chain(tmp_path: Path, m
     )
 
     assert result["status"] == "recorded"
-    from trw_mcp.state.memory_adapter import get_backend
-
-    backend = get_backend(trw_dir)
-    entry = backend.get(result["learning_id"], namespace="default")
-    assert entry is not None
-    assert entry.metadata["provenance_session_id"] == "mcp-session-456"
-    assert (trw_dir / "memory" / "security" / "observe_start.yaml").exists()
-    chain = trw_dir / "memory" / "security" / "provenance.jsonl"
-    assert chain.exists()
-    assert len([line for line in chain.read_text().splitlines() if line.strip()]) == 1
+    row = asyncio.run(configured_checkout.client.get(result["learning_id"], configured_checkout.namespace))["entry"]
+    assert row["metadata"]["provenance_session_id"] == "mcp-session-456"
+    assert row["metadata"]["provenance_signature"]

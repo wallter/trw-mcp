@@ -22,14 +22,25 @@ FAIL-CLOSED (NFR02). An unreadable or schema-invalid manifest BLOCKS and names
 the file and the parse error. "I could not read the coordination artifact" must
 never resolve to "everyone is finished" — that is the reassuring fallback this
 PRD was written to remove.
+
+CALLER-VERIFIED SELF-EXCLUSION (PRD-FIX-149 review R1). The caller's own slot
+is excluded only when THIS CALL is verified as the owning session's — see
+:func:`trw_mcp.formation.own_slot_if_caller`. Without ``call_ctx`` (or without
+a matching pin), the structural ``context.member_id`` match is NOT trusted:
+a peer that passes ``run_path=<orchestrator run>`` explicitly must be treated
+as an ordinary, blockable, non-terminal member, not as the orchestrator itself.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from trw_mcp.state._paths import TRWCallContext
 
 logger = structlog.get_logger(__name__)
 
@@ -45,11 +56,23 @@ class FormationGateOutcome:
     warning: str = ""
 
 
-def evaluate_formation_gate(resolved_run: Path | None) -> FormationGateOutcome:
-    """Decide the formation gate for *resolved_run*."""
+def evaluate_formation_gate(
+    resolved_run: Path | None,
+    *,
+    call_ctx: TRWCallContext | None = None,
+) -> FormationGateOutcome:
+    """Decide the formation gate for *resolved_run*.
+
+    *call_ctx* is the CALLING session's own resolved identity (never derived
+    from ``resolved_run`` itself, which may be an explicit, caller-supplied
+    ``run_path``) — see the module docstring's R1 note. Omitting it is safe:
+    the caller's own slot then simply never qualifies for exclusion, which is
+    the conservative (fail-closed) answer, never the permissive one.
+    """
     if resolved_run is None:
         return FormationGateOutcome()
-    from trw_mcp.formation import FormationError, load, settings, status
+    from trw_mcp.formation import FormationError, load, own_slot_if_caller, settings, status
+    from trw_mcp.state._paths_pin_mgmt import get_pinned_run
 
     try:
         context = load(resolved_run)
@@ -64,8 +87,18 @@ def evaluate_formation_gate(resolved_run: Path | None) -> FormationGateOutcome:
     if context is None or not context.is_orchestrator:
         return FormationGateOutcome()
 
+    pinned_run = get_pinned_run(context=call_ctx) if call_ctx is not None else None
+    verified_self_id = own_slot_if_caller(
+        context,
+        resolved_run,
+        pinned_run=pinned_run,
+        session_id=call_ctx.session_id if call_ctx is not None else None,
+    )
     board = status(context=context)
-    pending = board.non_terminal if board is not None else []
+    # The caller's own slot never blocks the caller: it is the delivery in
+    # progress, stamped right after this gate passes (PRD-FIX-149 FR01/FR02),
+    # but ONLY once verified as this session's own (review R1, above).
+    pending = [row for row in (board.non_terminal if board else []) if row[0] != verified_self_id]
     if not pending:
         return FormationGateOutcome()
     listed = "; ".join(f"{member_id} ({member_status})" for member_id, member_status in pending)

@@ -5,9 +5,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-import pytest
-
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.wiring.detector import DetectorResult, run_detector
 
 BUDGET_SECONDS = 10.0
@@ -20,23 +19,21 @@ BUDGET_SECONDS = 10.0
 _MAX_SCAN_ATTEMPTS = 3
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_full_scan_under_ten_seconds(repo_root: Path) -> None:
     """A check people are tempted to disable is a check that gets disabled."""
-    elapsed = None
-    result = None
+    best_elapsed = float("inf")
+    best_duration = float("inf")
     for _attempt in range(_MAX_SCAN_ATTEMPTS):
         started = time.monotonic()
         result = run_detector(repo_root)
         elapsed = time.monotonic() - started
+        best_elapsed = min(best_elapsed, elapsed)
+        best_duration = min(best_duration, result.duration_seconds)
         if elapsed < BUDGET_SECONDS and result.duration_seconds < BUDGET_SECONDS:
-            return
-    assert elapsed is not None and result is not None
-    assert elapsed < BUDGET_SECONDS, (
-        f"repo-wide scan took {elapsed:.2f}s on every one of {_MAX_SCAN_ATTEMPTS} attempts (budget {BUDGET_SECONDS}s)"
-    )
-    assert result.duration_seconds < BUDGET_SECONDS
+            break
+    assert_budget("repo_wide_scan_wall_time", best_elapsed, BUDGET_SECONDS, "s")
+    assert_budget("repo_wide_scan_reported_duration", best_duration, BUDGET_SECONDS, "s")
 
 
 def test_identical_input_yields_identical_findings(repo_root: Path, live_result: DetectorResult) -> None:

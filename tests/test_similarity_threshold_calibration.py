@@ -12,13 +12,17 @@ import math
 from pathlib import Path
 from unittest.mock import patch
 
+from trw_memory.embeddings.provenance import EmbeddingSpace
+
 from tests._dedup_test_support import write_entry
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 BGE = "BAAI/bge-small-en-v1.5"
 MINILM = "all-MiniLM-L6-v2"
 _LOADED = "trw_mcp.state._memory_connection.get_initialized_embedder"
+_SPACE = EmbeddingSpace("c" * 64, "test-encoder:c", 4)
 
 
 class _Loaded:
@@ -43,7 +47,7 @@ def test_loaded_space_threshold_follows_the_loaded_model() -> None:
 
 
 def _learn_dedup_action(tmp_path: Path, model_name: str, similarity: float) -> str:
-    from trw_mcp.state.dedup import check_duplicate
+    from trw_mcp.state.dedup import dedup_verdict
 
     entries_dir = tmp_path / "entries"
     entries_dir.mkdir(parents=True)
@@ -55,7 +59,7 @@ def _learn_dedup_action(tmp_path: Path, model_name: str, similarity: float) -> s
         patch("trw_mcp.state.dedup._check_duplicate_via_backend", return_value=None),
         patch("trw_mcp.state.dedup._check_exact_content_duplicate", return_value=None),
     ):
-        return check_duplicate("new", "", entries_dir, FileStateReader(), config=TRWConfig()).action
+        return dedup_verdict("new", "", entries_dir, FileStateReader(), config=TRWConfig()).action
 
 
 def test_learn_dedup_merges_by_the_loaded_models_scale(tmp_path: Path) -> None:
@@ -71,14 +75,14 @@ def test_recall_dedup_collapses_by_the_loaded_models_scale(tmp_path: Path) -> No
     first, second = _pair(0.92)
     ranked: list[dict[str, object]] = [{"id": "a", "summary": "a"}, {"id": "b", "summary": "b"}]
 
+    store = FakeMemoryStore()
+    store.stored_vectors = {"a": first, "b": second}
+
     def _survivors(model_name: str) -> list[object]:
         with (
             patch(_LOADED, return_value=_Loaded(model_name)),
-            patch("trw_mcp.state.memory_adapter.get_backend"),
-            patch(
-                "trw_mcp.state._embedding_space.space_gated_reader",
-                return_value=lambda ids: {"a": first, "b": second},
-            ),
+            patch("trw_mcp.state._embedding_space.loaded_embedding_space", return_value=_SPACE),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(store, "default")),
         ):
             kept, _ = _dedup_ranked_learnings(tmp_path, ranked)
         return [entry["id"] for entry in kept]

@@ -23,6 +23,8 @@ from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import DaemonCheckout
+
 _SRC = Path(__file__).resolve().parent.parent / "src" / "trw_mcp"
 
 
@@ -88,8 +90,8 @@ def test_local_feedback_and_recall_call_the_shared_implementations(
     assert recall_calls[0][0] == "degraded mode"
 
 
-def test_local_recall_and_feedback_exit_zero_through_the_real_cli(tmp_path: Path) -> None:
-    """FR03 acceptance: both subcommands exit 0 against a live ``.trw``.
+def test_local_recall_and_feedback_exit_zero_through_the_real_cli(daemon_checkout: DaemonCheckout) -> None:
+    """FR03 acceptance: both subcommands exit 0 against a live ``.trw`` (a pinned checkout).
 
     Real argparse dispatch in a subprocess, so a subparser that was declared but
     never routed would fail here even though the unit test above passes.
@@ -98,7 +100,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(tmp_path: Path
         [sys.executable, "-m", "trw_mcp.server", "local", "learn", "--summary", "seed", "--detail", "seeded row"],
         capture_output=True,
         text=True,
-        cwd=str(tmp_path),
+        cwd=str(daemon_checkout.trw_dir.parent),
         check=True,
     )
 
@@ -106,7 +108,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(tmp_path: Path
         [sys.executable, "-m", "trw_mcp.server", "local", "recall", "--query", "seed"],
         capture_output=True,
         text=True,
-        cwd=str(tmp_path),
+        cwd=str(daemon_checkout.trw_dir.parent),
     )
     assert recall.returncode == 0, recall.stderr
 
@@ -126,7 +128,7 @@ def test_local_recall_and_feedback_exit_zero_through_the_real_cli(tmp_path: Path
         ],
         capture_output=True,
         text=True,
-        cwd=str(tmp_path),
+        cwd=str(daemon_checkout.trw_dir.parent),
     )
     # An unconfigured backend is a reported result, never a traceback: the CLI
     # inherits submit_feedback's never-raises contract.
@@ -158,7 +160,7 @@ def test_no_redaction_ranking_or_persistence_logic_is_duplicated() -> None:
     those subsystems.
     """
     forbidden_names = {
-        "_redact_pii",
+        "redact_secrets",
         "rank_targeted_by_utility",
         "store_learning",
         "search_patterns",

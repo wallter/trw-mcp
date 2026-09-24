@@ -77,7 +77,10 @@ def _selected_clients(target: Path) -> tuple[list[str], str | None]:
             return [], f"{type(exc).__name__} reading {config_path}"
         if isinstance(data, dict):
             platforms = data.get("target_platforms")
-            if isinstance(platforms, list) and platforms:
+            # An explicit empty list means every client was removed (uninstall
+            # --ide on the last one, PRD-INFRA-192 FR09): no client is selected,
+            # so the default must not be substituted and re-measured.
+            if isinstance(platforms, list):
                 return [str(item) for item in platforms], None
     return list(TRWConfig().target_platforms) or ["claude-code"], None
 
@@ -99,6 +102,20 @@ def _bundled_agent_stems() -> list[str] | None:
         return None
     stems = sorted(path.stem for path in source.glob("*.md"))
     return stems or None
+
+
+def _tombstoned_paths(target: Path) -> frozenset[str]:
+    """Repo-relative paths the user deleted on purpose (manifest ``tombstones``, PRD-INFRA-192 FR10).
+
+    update-project keeps these absent, so a missing tombstoned agent is an
+    intentional removal, not damage (FR09). An unreadable manifest yields none.
+    """
+    from trw_mcp.bootstrap._version_manifest import _manifest_key_path, _read_manifest
+
+    tombstones = (_read_manifest(target) or {}).get("tombstones")
+    if not isinstance(tombstones, list):
+        return frozenset()
+    return frozenset(_manifest_key_path(str(key)) for key in tombstones)
 
 
 def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
@@ -142,6 +159,8 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
     rows: list[AgentParityRow] = []
     shortfalls: list[str] = []
     unsupported: list[str] = []
+    tombstoned = _tombstoned_paths(target)
+    removed_total = 0
 
     for client in dict.fromkeys(clients):
         try:
@@ -169,24 +188,41 @@ def agent_parity_report(target: Path) -> tuple[str, str, list[AgentParityRow]]:
         # A user-authored agent in the destination is ignored rather than
         # reported as surplus: the check answers "is anything TRW ships
         # missing", not "is anything here unfamiliar".
-        missing = [stem for stem in expected if not (dest / f"{stem}{fmt.filename_suffix}").is_file()]
+        absent = [stem for stem in expected if not (dest / f"{stem}{fmt.filename_suffix}").is_file()]
+        removed = [stem for stem in absent if fmt.destination_for(stem) in tombstoned]
+        missing = [stem for stem in absent if stem not in removed]
+        removed_total += len(removed)
         rows.append(
             AgentParityRow(
                 client=client,
                 supported=True,
                 destination=fmt.destination_dir,
-                installed=len(expected) - len(missing),
+                installed=len(expected) - len(absent),
                 expected=len(expected),
                 missing=missing,
+                removed=removed,
             )
         )
         if missing:
             shortfalls.append(f"{client} is missing {', '.join(missing)} from {fmt.destination_dir}/")
 
+    if not clients:
+        return "SKIP", "no client is selected in target_platforms; no agents are expected on disk.", rows
     if not any(row.get("supported") for row in rows):
         named = ", ".join(unsupported) or "no client"
         return "SKIP", f"{named} has no agent surface; no agents are expected on disk.", rows
+    removed_note = (
+        f" {removed_total} removed on purpose (trw-mcp update-project --reprovision <path> restores one)."
+        if removed_total
+        else ""
+    )
     if shortfalls:
-        return "WARN", "; ".join(shortfalls) + ". Run 'trw-mcp update-project' to reinstall them.", rows
+        return "WARN", "; ".join(shortfalls) + ". Run 'trw-mcp update-project' to reinstall them." + removed_note, rows
     installed_clients = ", ".join(str(row["client"]) for row in rows if row.get("supported"))
+    if removed_total:
+        return (
+            "PASS",
+            f"every bundled agent not removed on purpose is present for {installed_clients}.{removed_note}",
+            rows,
+        )
     return "PASS", f"all {len(expected)} bundled agents present for {installed_clients}.", rows

@@ -5,7 +5,6 @@ Each function encapsulates a single concern previously inlined in the
 reducing the tool body to ~50 lines of orchestration.
 
 PRD lineage:
-- calibrate_impact: preserve raw caller impact (no attributed calibration evidence)
 - check_soft_cap: PRD-CORE-034-FR01 (distribution soft-cap)
 - check_and_handle_dedup: PRD-CORE-042 (semantic dedup)
 - enforce_distribution: PRD-CORE-034 (forced distribution enforcement)
@@ -83,18 +82,8 @@ class LearningParams:
 
 # PRD-FIX-061-FR01: Canonical definition moved to state/analytics/core.py.
 # Re-exported here for backward compatibility with existing consumers.
-from trw_mcp.state._constants import DEFAULT_NAMESPACE
 from trw_mcp.state.analytics.core import _NOISE_PREFIXES as _NOISE_PREFIXES
 from trw_mcp.state.analytics.core import is_noise_summary as is_noise_summary
-
-
-def calibrate_impact(impact: float, config: TRWConfig) -> float:
-    """Preserve caller impact; pooled exposure outcomes do not measure caller accuracy.
-
-    Kept at the existing learn-call boundary for compatibility. Shared statistical
-    primitives remain available, but this path has no owned calibration evidence.
-    """
-    return impact
 
 
 def check_soft_cap(
@@ -155,7 +144,7 @@ def _resolve_merge_survivor(
 
     Returns ``(path, parsed body)``. Handing the BODY back is what makes the
     FR07 bound real: the resolver has already read and validated the file, so a
-    caller that only took the path made ``merge_entries`` read it a second time
+    caller that only took the path made ``merge_into_survivor`` read it a second time
     and the backend sync read it a third — three reads under a "at most one"
     requirement.
 
@@ -214,9 +203,9 @@ def check_and_handle_dedup(
         return None
 
     try:
-        from trw_mcp.state.dedup import check_duplicate, merge_entries
+        from trw_mcp.state.dedup import dedup_verdict, merge_into_survivor
 
-        dedup_result = check_duplicate(
+        dedup_result = dedup_verdict(
             params.summary,
             params.detail,
             entries_dir,
@@ -257,60 +246,26 @@ def check_and_handle_dedup(
                 )
             else:
                 try:
-                    from trw_mcp.models.learning import (
-                        LearningConfidence,
-                        LearningEntry,
-                        LearningProtectionTier,
-                        LearningType,
-                    )
-                    from trw_mcp.state.persistence import model_to_dict
-
-                    entry = LearningEntry(
-                        id=params.learning_id,
-                        summary=params.summary,
-                        detail=params.detail,
-                        tags=params.tags,
-                        evidence=params.evidence,
-                        impact=params.impact,
-                        shard_id=params.shard_id,
-                        source_type=_validate_source_type(params.source_type),
-                        source_identity=params.source_identity,
-                        client_profile=params.client_profile,
-                        model_id=params.model_id,
-                        # PRD-CORE-110: typed fields — preserve protection on merge
-                        # (str→enum coercion mirrors _learn_side_effects.py).
-                        type=LearningType(params.type) if isinstance(params.type, str) else params.type,
-                        nudge_line=params.nudge_line,
-                        expires=params.expires,
-                        confidence=LearningConfidence(params.confidence)
-                        if isinstance(params.confidence, str)
-                        else params.confidence,
-                        task_type=params.task_type,
-                        domain=params.domain or [],
-                        phase_origin=params.phase_origin,
-                        phase_affinity=params.phase_affinity or [],
-                        team_origin=params.team_origin,
-                        protection_tier=LearningProtectionTier(params.protection_tier)
-                        if isinstance(params.protection_tier, str)
-                        else params.protection_tier,
-                        # PRD-CORE-111: code-grounded anchors
-                        anchors=params.anchors or [],
-                    )
-                    # PRD-CORE-244 FR01: an unassessed learning carries no
-                    # score at all, so the field is written only when one
-                    # was actually computed.
-                    if params.anchor_validity is not None:
-                        entry = entry.model_copy(update={"anchor_validity": params.anchor_validity})
-                    entry_dict = model_to_dict(entry)
-                    # PRD-CORE-086 FR05: Include assertions in merge data
-                    if params.assertions:
-                        entry_dict["assertions"] = params.assertions
+                    # Only the fields the merge folds in: the survivor keeps its own
+                    # provenance, so the incoming entry's is not built at all.
+                    entry_dict: dict[str, object] = {
+                        "id": params.learning_id,
+                        "summary": params.summary,
+                        "detail": params.detail,
+                        "tags": params.tags,
+                        "evidence": params.evidence,
+                        "impact": params.impact,
+                        "type": getattr(params.type, "value", params.type),
+                        "confidence": getattr(params.confidence, "value", params.confidence),
+                        "protection_tier": getattr(params.protection_tier, "value", params.protection_tier),
+                        "assertions": params.assertions or [],  # PRD-CORE-086 FR05
+                    }
                     yaml_file, survivor_data = survivor
                     # FR07: the survivor was parsed once, during resolution. Both
                     # the merge and the backend sync ride that single read —
                     # neither reopens the file.
                     merged_body: dict[str, object] = {}
-                    merge_entries(
+                    merge_into_survivor(
                         yaml_file,
                         entry_dict,
                         reader,
@@ -372,32 +327,37 @@ def _resolve_dedup_trw_dir(entries_dir: Path) -> Path:
 def _sync_merged_entry_to_backend(entries_dir: Path, merged_entry: dict[str, object]) -> None:
     """Best-effort sync of merged YAML fields into the primary backend."""
     try:
-        from trw_mcp.state.memory_adapter import get_backend
+        from trw_memory.lifecycle.correction import LearningPatch
+
+        from trw_mcp.state._store_selection import selected_store
 
         learning_id = str(merged_entry.get("id", ""))
         if not learning_id:
             return
 
-        backend = get_backend(_resolve_dedup_trw_dir(entries_dir))
-        backend.update(
+        store, _namespace = selected_store(_resolve_dedup_trw_dir(entries_dir))
+        store.correct(
             learning_id,
-            namespace=str(merged_entry.get("namespace") or DEFAULT_NAMESPACE),
-            detail=str(merged_entry.get("detail", "")),
-            tags=[str(tag) for tag in cast("list[object]", merged_entry.get("tags") or [])],
-            evidence=[str(item) for item in cast("list[object]", merged_entry.get("evidence") or [])],
-            importance=float(str(merged_entry.get("impact", 0.5))),
-            recurrence=int(str(merged_entry.get("recurrence", 1))),
-            merged_from=[str(item) for item in cast("list[object]", merged_entry.get("merged_from") or [])],
-            assertions=[
-                dict(item)
-                for item in cast("list[object]", merged_entry.get("assertions") or [])
-                if isinstance(item, dict)
-            ],
-            # PRD-CORE-110: propagate the protection-preserving merge result so
-            # the primary backend (recall source of truth) keeps the stronger tier.
-            protection_tier=str(merged_entry.get("protection_tier") or "normal"),
-            confidence=str(merged_entry.get("confidence") or "unverified"),
-            type=str(merged_entry.get("type") or "pattern"),
+            LearningPatch.model_validate(
+                {
+                    "detail": str(merged_entry.get("detail", "")),
+                    "tags": [str(tag) for tag in cast("list[object]", merged_entry.get("tags") or [])],
+                    "evidence": [str(item) for item in cast("list[object]", merged_entry.get("evidence") or [])],
+                    "impact": float(str(merged_entry.get("impact", 0.5))),
+                    "recurrence": int(str(merged_entry.get("recurrence", 1))),
+                    "merged_from": [str(item) for item in cast("list[object]", merged_entry.get("merged_from") or [])],
+                    "assertions": [
+                        dict(item)
+                        for item in cast("list[object]", merged_entry.get("assertions") or [])
+                        if isinstance(item, dict)
+                    ],
+                    # PRD-CORE-110: propagate the protection-preserving merge result so
+                    # the primary backend (recall source of truth) keeps the stronger tier.
+                    "protection_tier": str(merged_entry.get("protection_tier") or "normal"),
+                    "confidence": str(merged_entry.get("confidence") or "unverified"),
+                    "type": str(merged_entry.get("type") or "pattern"),
+                }
+            ),
         )
     except Exception:  # justified: fail-open, merged-entry backend sync is best-effort after YAML updates
         logger.debug("dedup_backend_sync_failed", exc_info=True)

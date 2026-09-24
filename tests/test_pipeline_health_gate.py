@@ -18,11 +18,14 @@ Uses tmp_path filesystem fixtures (integration tier).
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from trw_memory.models.memory import MemoryEntry
+
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -45,42 +48,24 @@ def _iso_ago(hours: float) -> str:
     return (datetime.now(tz=timezone.utc) - timedelta(hours=hours)).isoformat()
 
 
-def _make_memory_db(trw_dir: Path, *, corpus: int = 0, edges: int = 0, vec: int | None = None) -> Path:
-    """A minimal memory.db the graph probe can actually READ.
+@pytest.fixture(autouse=True)
+def _pinned(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """Every checkout here is pinned to the fake store, so the store-reading probes measure."""
+    return fake_memory_store
 
-    ``memories`` carries ``namespace``/``updated_at`` because every real store
-    does — the column predates schema 5, which only made it NOT NULL. Without
-    them the probe raises ``no such column: namespace`` and reports itself
-    not-measured, so these gate tests were asserting a "dead graph" verdict
-    against a store no migration path produces. Mirrors the helper in
-    ``test_pipeline_health.py``.
+
+def _stock_store(store: FakeMemoryStore, *, corpus: int = 0, edges: int = 0, vec: int | None = None) -> None:
+    """Stock the fake store's namespace; every entry recalled once and, by default, embedded.
+
+    Full vector coverage keeps embedding_coverage healthy unless the caller
+    deliberately under-fills it. Entries share no tag, so ``edges`` alone decides
+    whether the graph holds a relation.
     """
-    db_path = trw_dir / "memory" / "memory.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memories ("
-        "id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0, "
-        "namespace TEXT DEFAULT 'default', updated_at TEXT DEFAULT '')"
-    )
-    conn.execute("CREATE TABLE IF NOT EXISTS vec_memories (id TEXT PRIMARY KEY)")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memory_graph_edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
-    )
     for i in range(corpus):
-        conn.execute("INSERT INTO memories (id, recall_count) VALUES (?, ?)", (f"m{i}", 1))
-    # Default to full vec coverage so embedding_coverage stays healthy unless the
-    # caller deliberately under-fills it.
-    vec_count = corpus if vec is None else vec
-    for i in range(vec_count):
-        conn.execute("INSERT INTO vec_memories (id) VALUES (?)", (f"m{i}",))
-    for i in range(edges):
-        conn.execute(
-            "INSERT INTO memory_graph_edges (source_id, target_id) VALUES (?, ?)",
-            (f"m{i}", f"m{i + 1}"),
-        )
-    conn.commit()
-    conn.close()
-    return db_path
+        entry = MemoryEntry(id=f"m{i}", content=f"entry {i}", namespace=FAKE_NAMESPACE, tags=[f"t{i}"], recall_count=1)
+        store.rows[(FAKE_NAMESPACE, entry.id)] = entry
+    store.stored_vectors.update({f"m{i}": [1.0] for i in range(corpus if vec is None else vec)})
+    store.edges[FAKE_NAMESPACE] = edges
 
 
 def _make_config(*, platform_urls: list[str] | None = None, **overrides: object):
@@ -103,8 +88,7 @@ def _healthy_pipeline(trw_dir: Path) -> None:
     DEF-05 unmeasured advisory.
     """
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    # Small corpus so graph/recall probes are suppressed (not degraded).
-    _make_memory_db(trw_dir, corpus=10, edges=0)
+    # The pinned store is empty, so graph/recall probes are suppressed (not degraded).
     meta_dir = trw_dir / "meta"
     meta_dir.mkdir(parents=True, exist_ok=True)
     (meta_dir / "bandit_state.json").write_text(json.dumps({"updated_at": _iso_ago(0.1)}), encoding="utf-8")
@@ -115,7 +99,7 @@ def _healthy_pipeline(trw_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gate_fails_on_push_staleness_consecutive_failures(tmp_path: Path) -> None:
+def test_gate_fails_on_push_staleness_consecutive_failures(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """High consecutive_failures (with a remote configured) => gate degraded.
 
     The staleness arm only applies when sync is actually configured (a remote
@@ -126,7 +110,7 @@ def test_gate_fails_on_push_staleness_consecutive_failures(tmp_path: Path) -> No
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _make_config(platform_urls=["https://api.trwframework.com"]))
 
@@ -136,13 +120,13 @@ def test_gate_fails_on_push_staleness_consecutive_failures(tmp_path: Path) -> No
     assert "sync" in joined or "push" in joined
 
 
-def test_gate_fails_on_push_staleness_stale_last_push(tmp_path: Path) -> None:
+def test_gate_fails_on_push_staleness_stale_last_push(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Stale last_push_at (older than the window, remote configured) => gate degraded."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(72)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _make_config(platform_urls=["https://api.trwframework.com"]))
 
@@ -155,13 +139,15 @@ def _remote_config(**overrides: object):
     return _make_config(platform_urls=["https://api.trwframework.com"], **overrides)
 
 
-def test_gate_fails_on_push_staleness_consecutive_failures_with_remote(tmp_path: Path) -> None:
+def test_gate_fails_on_push_staleness_consecutive_failures_with_remote(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path
+) -> None:
     """High consecutive_failures with a remote configured => degraded."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _remote_config())
 
@@ -169,13 +155,13 @@ def test_gate_fails_on_push_staleness_consecutive_failures_with_remote(tmp_path:
     assert any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
 
 
-def test_gate_fails_on_genuinely_stale_push_with_remote(tmp_path: Path) -> None:
+def test_gate_fails_on_genuinely_stale_push_with_remote(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """A real old last_push_at with a remote configured => degraded."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(72)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _remote_config())
 
@@ -188,7 +174,7 @@ def test_gate_fails_on_genuinely_stale_push_with_remote(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gate_healthy_on_fresh_install_no_sync_state_file(tmp_path: Path) -> None:
+def test_gate_healthy_on_fresh_install_no_sync_state_file(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Fresh install: NO sync-state.json at all => push-staleness must NOT trip.
 
     DEF-04: the DEGRADATION verdict must still never trip here (``healthy`` is
@@ -202,7 +188,7 @@ def test_gate_healthy_on_fresh_install_no_sync_state_file(tmp_path: Path) -> Non
 
     trw_dir = _make_trw_dir(tmp_path)
     # Deliberately do NOT write sync-state.json.
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _remote_config())
 
@@ -211,13 +197,13 @@ def test_gate_healthy_on_fresh_install_no_sync_state_file(tmp_path: Path) -> Non
     assert any("sync_push" in r for r in result["reasons"])
 
 
-def test_gate_healthy_when_last_push_at_none(tmp_path: Path) -> None:
+def test_gate_healthy_when_last_push_at_none(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """sync-state.json present but last_push_at is None (never pushed) => not degraded."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": None})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _remote_config())
 
@@ -225,7 +211,7 @@ def test_gate_healthy_when_last_push_at_none(tmp_path: Path) -> None:
     assert not any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
 
 
-def test_gate_healthy_when_sync_off_empty_platform_urls(tmp_path: Path) -> None:
+def test_gate_healthy_when_sync_off_empty_platform_urls(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Sync OFF (empty platform_urls): even an absent/never-pushed state => not degraded.
 
     Mirrors the empty-urls guard the localhost check already uses.
@@ -234,7 +220,7 @@ def test_gate_healthy_when_sync_off_empty_platform_urls(tmp_path: Path) -> None:
 
     trw_dir = _make_trw_dir(tmp_path)
     # No sync-state file + no remote configured = legitimately-off install.
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _make_config(platform_urls=[]))
 
@@ -242,13 +228,13 @@ def test_gate_healthy_when_sync_off_empty_platform_urls(tmp_path: Path) -> None:
     assert not any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
 
 
-def test_gate_healthy_when_sync_off_even_with_stale_state(tmp_path: Path) -> None:
+def test_gate_healthy_when_sync_off_even_with_stale_state(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Sync OFF: a stale last_push_at left on disk must NOT trip the gate (sync not active)."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(99)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, _make_config(platform_urls=[]))
 
@@ -256,13 +242,13 @@ def test_gate_healthy_when_sync_off_even_with_stale_state(tmp_path: Path) -> Non
     assert not any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
 
 
-def test_gate_healthy_when_config_none_no_remote(tmp_path: Path) -> None:
+def test_gate_healthy_when_config_none_no_remote(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """config=None means no remote known => push-staleness arm stays silent."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(99)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = check_pipeline_health(trw_dir, None)
 
@@ -270,7 +256,9 @@ def test_gate_healthy_when_config_none_no_remote(tmp_path: Path) -> None:
     assert not any("push" in r.lower() or "sync" in r.lower() for r in result["reasons"])
 
 
-def test_gate_silent_when_sync_push_probe_is_unmeasured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gate_silent_when_sync_push_probe_is_unmeasured(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """An unreadable sync-state.json (``measured: False``) must not read as staleness.
 
     Mirrors the identical guard on ``_check_empty_graph``: a probe that could
@@ -289,7 +277,7 @@ def test_gate_silent_when_sync_push_probe_is_unmeasured(tmp_path: Path, monkeypa
     from trw_mcp.tools import _pipeline_health_gate
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
     unmeasured_health = {
         "sync_push": {
             "degraded": False,
@@ -316,13 +304,13 @@ def test_gate_silent_when_sync_push_probe_is_unmeasured(tmp_path: Path, monkeypa
 # ---------------------------------------------------------------------------
 
 
-def test_gate_fails_on_empty_graph(tmp_path: Path) -> None:
+def test_gate_fails_on_empty_graph(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """graph_edges == 0 while memories > N => gate degraded with a graph reason."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=150, edges=0)
+    _stock_store(fake_memory_store, corpus=150, edges=0)
 
     result = check_pipeline_health(trw_dir, _make_config())
 
@@ -330,13 +318,13 @@ def test_gate_fails_on_empty_graph(tmp_path: Path) -> None:
     assert any("graph" in r.lower() for r in result["reasons"])
 
 
-def test_gate_silent_on_populated_graph(tmp_path: Path) -> None:
+def test_gate_silent_on_populated_graph(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """A populated graph does NOT trip the graph reason."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=150, edges=50)
+    _stock_store(fake_memory_store, corpus=150, edges=50)
 
     result = check_pipeline_health(trw_dir, _make_config())
 
@@ -450,14 +438,14 @@ def test_gate_passes_when_healthy(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_kill_switch_disables_gate(tmp_path: Path) -> None:
+def test_kill_switch_disables_gate(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """pipeline_health_gate_enabled=False => always healthy, even when broken."""
     from trw_mcp.tools._pipeline_health_gate import check_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     # Maximally broken: stale push, empty graph, localhost-only.
     _write_sync_state(trw_dir, {"consecutive_failures": 99, "last_push_at": _iso_ago(99)})
-    _make_memory_db(trw_dir, corpus=200, edges=0)
+    _stock_store(fake_memory_store, corpus=200, edges=0)
     config = _make_config(
         platform_urls=["http://127.0.0.1:5002"],
         pipeline_health_gate_enabled=False,
@@ -506,7 +494,9 @@ def test_gate_fail_open_on_internal_error(tmp_path: Path, monkeypatch: pytest.Mo
 # ---------------------------------------------------------------------------
 
 
-def test_session_start_escalates_to_prominent_warning_when_gate_trips(tmp_path: Path) -> None:
+def test_session_start_escalates_to_prominent_warning_when_gate_trips(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path
+) -> None:
     """When the gate trips, session_start surfaces a PROMINENT (escalated) warning,
     not merely the buried compact advisory string."""
     from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
@@ -514,7 +504,7 @@ def test_session_start_escalates_to_prominent_warning_when_gate_trips(tmp_path: 
     trw_dir = _make_trw_dir(tmp_path)
     # Empty graph with a large corpus => gate trips.
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=150, edges=0)
+    _stock_store(fake_memory_store, corpus=150, edges=0)
 
     results: dict[str, object] = {}
     config = _make_config(platform_urls=["https://api.trwframework.com"])
@@ -551,8 +541,6 @@ def test_session_start_silent_when_healthy(tmp_path: Path, monkeypatch) -> None:
 
     trw_dir = _make_trw_dir(tmp_path)
     _healthy_pipeline(trw_dir)
-    # This fixture's vec table is ordinary SQL, not an extension-loading probe.
-    monkeypatch.setattr("trw_mcp.tools._pipeline_health._load_sqlite_vec", lambda _conn: None)
 
     results: dict[str, object] = {}
     config = _make_config(platform_urls=["https://api.trwframework.com"])
@@ -562,13 +550,13 @@ def test_session_start_silent_when_healthy(tmp_path: Path, monkeypatch) -> None:
     assert "pipeline_health_warning" not in results
 
 
-def test_session_start_advisory_accepts_no_config(tmp_path: Path) -> None:
+def test_session_start_advisory_accepts_no_config(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Back-compat: step_pipeline_health_advisory still works when config is omitted."""
     from trw_mcp.tools._ceremony_session_start_steps import step_pipeline_health_advisory
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=150, edges=0)
+    _stock_store(fake_memory_store, corpus=150, edges=0)
 
     results: dict[str, object] = {}
     # No config argument — must not raise.

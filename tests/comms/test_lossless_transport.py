@@ -7,7 +7,6 @@ real response middleware and MCP serialization, not inbox storage or authority.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -17,21 +16,9 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.tools import ToolResult
 from mcp.types import TextContent
 
-from trw_mcp.middleware import context_budget
-from trw_mcp.middleware.context_budget import ContextBudgetMiddleware
 from trw_mcp.middleware.response_optimizer import ResponseOptimizerMiddleware
-from trw_mcp.models.config import TRWConfig
 
 COMMS_NAMES = ("trw_peers", "trw_send", "trw_inbox")
-
-
-@pytest.fixture(autouse=True)
-def enabled_masking(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    config = TRWConfig(observation_masking=True, compact_after_turns=10, minimal_after_turns=30)
-    monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: config)
-    context_budget.reset_state()
-    yield
-    context_budget.reset_state()
 
 
 def envelope(index: int, *, empty: bool = False) -> dict[str, Any]:
@@ -51,10 +38,7 @@ def canonical(payload: dict[str, Any]) -> str:
 
 
 def server_for(name: str) -> tuple[FastMCP, list[int]]:
-    # Same relative ordering as server._app._build_middleware: observation
-    # masking wraps response optimization on the return path.
     server = FastMCP("synthetic-lossless-transport")
-    server.add_middleware(ContextBudgetMiddleware())
     server.add_middleware(ResponseOptimizerMiddleware())
     calls: list[int] = []
 
@@ -85,15 +69,13 @@ async def test_discarded_response_retry_and_long_session_are_lossless(
     async with Client(server) as client:
         await client.call_tool(name, {"index": 0})  # caller discards first response; no ACK implied
         assert_exact(await client.call_tool(name, {"index": 0}), envelope(0))
-        for index in range(1, 33):  # cross both configured masking thresholds
+        for index in range(1, 33):  # a long session
             assert_exact(await client.call_tool(name, {"index": index}), envelope(index))
         assert_exact(await client.call_tool(name, {"empty": True}), envelope(0, empty=True))
     assert len(calls) == 35  # bypass is output-only; every producer still executes
-    assert list(context_budget._turn_counts.values()) == [35]
-    assert context_budget._response_hashes == {}  # no hash retention of comms bodies
 
 
-async def test_other_tools_still_optimize_deduplicate_and_compress(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_other_tools_still_optimize_and_a_repeat_arrives_whole(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRW_RESPONSE_FORMAT", "json")
     # A similar prefix is deliberately not a member of the exact exception set.
     name = "trw_inbox_preview"
@@ -103,17 +85,13 @@ async def test_other_tools_still_optimize_deduplicate_and_compress(monkeypatch: 
         assert first.structured_content["items"][0]["admitted_at"] == 123.46
         assert "next_cursor" not in first.structured_content
         repeated = await client.call_tool(name, {"index": 0})
-        assert repeated.content[0].text == "[No changes since turn 1]"
+        # Nothing downstream elides a repeat: the server cannot know the client still holds the first.
+        assert repeated.content[0].text == first.content[0].text
         for index in range(1, 33):
             result = await client.call_tool(name, {"index": index})
-            if index >= 9:
-                text_payload = json.loads(result.content[0].text)
-                assert len(text_payload["summary"]) < 250
-                assert text_payload["summary"] != result.structured_content["summary"]
-                if index >= 29:
-                    assert len(text_payload["summary"]) < 150
+            # No call-count-dependent cut: a late response reads exactly what the tool returned.
+            assert json.loads(result.content[0].text)["summary"] == result.structured_content["summary"]
     assert len(calls) == 34
-    assert any(name in hashes for hashes in context_budget._response_hashes.values())
 
 
 @pytest.mark.parametrize("name", COMMS_NAMES)
@@ -142,22 +120,3 @@ async def test_process_local_optimizer_exception_disabled_restores_mutation(monk
             assert "empty_metadata" not in result.structured_content
             assert json.loads(result.content[0].text) == result.structured_content
     assert calls == [0, 0]
-    assert context_budget._response_hashes == {}  # masking exception remains active
-
-
-async def test_process_local_masking_exception_disabled_restores_loss(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("trw_mcp.middleware.context_budget.LOSSLESS_COMMS_TOOLS", frozenset())
-    server, calls = server_for("trw_inbox")
-    async with Client(server) as client:
-        assert_exact(await client.call_tool("trw_inbox"), envelope(0))
-        duplicate = await client.call_tool("trw_inbox")
-        assert duplicate.content[0].text == "[No changes since turn 1]"
-        assert duplicate.structured_content == envelope(0)  # optimizer exception remains active
-        for index in range(1, 33):
-            result = await client.call_tool("trw_inbox", {"index": index})
-            assert result.structured_content == envelope(index)
-            if index >= 9:
-                assert len(json.loads(result.content[0].text)["summary"]) < 250
-            if index >= 29:
-                assert len(json.loads(result.content[0].text)["summary"]) < 150
-    assert len(calls) == 34

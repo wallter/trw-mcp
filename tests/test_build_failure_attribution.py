@@ -234,9 +234,8 @@ class TestBuildCheckIntegration:
                 tests_passed=tests_passed,
                 test_count=10,
                 failure_count=len(failures),
-                failures=failures,
-                mypy_clean=True,
                 scope="full",
+                options={"failures": failures, "mypy_clean": True},
             )
 
     def test_failure_surfaces_attribution_pre_existing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

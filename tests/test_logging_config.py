@@ -86,7 +86,13 @@ class TestRedactSecrets:
     def test_redacts_authorization_header(self) -> None:
         result = self._call({"header": "Bearer abc123xyz"})
         assert "abc123xyz" not in result["header"]
-        assert "***REDACTED***" in result["header"]
+        assert "<REDACTED:bearer>" in result["header"]
+
+    def test_redacts_a_credential_in_an_ordinary_field(self) -> None:
+        """Cross-vendor R2-014 P2: the log processor uses the one redactor, not only Bearer/Basic/Token."""
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.c2lnbmF0dXJlMTIzNDU2"
+        result = self._call({"error": f"upstream rejected {jwt}", "tool": "trw_sync"})
+        assert jwt not in result["error"] and result["tool"] == "trw_sync"
 
     @pytest.mark.parametrize("key", ["client_secret", "refresh_token", "jwt", "id_token"])
     def test_redacts_oauth_oidc_keys(self, key: str) -> None:

@@ -2,6 +2,24 @@
 
 Verifies that assertions flow from trw_learn parameters through LearningParams,
 store_learning, and the delegated store into MemoryEntry.assertions.
+
+PRD-CORE-280 slice e1: ``TestStoredEntryHasAssertions`` only cares that
+assertions round-trip through ``store_learning`` -> ``store.put`` ->
+``MemoryEntry.assertions``, so it routes through ``fake_memory_store``.
+
+``TestStoreLearningThreadsAssertions.test_store_learning_with_assertions`` was
+DELETED (batch 23b): it asserted the SqliteMemoryStore-specific delegation
+from ``store_learning`` to ``memory_adapter.memory_store_impl``, a call that
+now only happens inside the memory daemon's own process -- unreachable to
+patch or observe from this process once a checkout is migrated (PRD-CORE-280
+e3: every migrated checkout goes through ``_daemon_store``, never an
+in-process ``SqliteMemoryStore``). ``memory_store_impl`` itself lives in
+trw-memory now and its assertions-threading is covered there
+(``tests/test_client_store_entry_builder.py``,
+``tests/test_client_store_basic.py``); the round trip through a real daemon
+checkout is covered by ``TestStoredEntryHasAssertions`` above plus the
+``daemon_checkout``-based assertion tests in ``test_core268_recall_evidence.py``,
+``test_recall_assertion_verification.py`` and ``test_trw_recall_verification.py``.
 """
 
 from __future__ import annotations
@@ -11,6 +29,7 @@ from typing import Any
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.tools._learning_helpers import LearningParams
 
 
@@ -69,17 +88,17 @@ class TestStoredEntryHasAssertions:
     objects reach SQLite.
     """
 
-    def _store(self, tmp_path: Path, entry_id: str, **kwargs: Any) -> Any:
-        from trw_mcp.state.memory_adapter import get_backend, store_learning
+    def _store(self, tmp_path: Path, fake_memory_store: FakeMemoryStore, entry_id: str, **kwargs: Any) -> Any:
+        from trw_mcp.state.memory_adapter import store_learning
 
         trw_dir = tmp_path / ".trw"
         (trw_dir / "memory").mkdir(parents=True, exist_ok=True)
         result = store_learning(trw_dir, entry_id, "test summary", "test detail", **kwargs)
         assert result["status"] == "recorded", result
-        return get_backend(trw_dir).get(entry_id, namespace="default")
+        return fake_memory_store.get(entry_id)
 
-    def test_memory_entry_has_assertions(self, tmp_path: Path) -> None:
-        entry = self._store(tmp_path, "L-test3", assertions=SAMPLE_ASSERTIONS)
+    def test_memory_entry_has_assertions(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
+        entry = self._store(tmp_path, fake_memory_store, "L-test3", assertions=SAMPLE_ASSERTIONS)
 
         assert entry is not None
         assert len(entry.assertions) == 2
@@ -88,53 +107,17 @@ class TestStoredEntryHasAssertions:
         assert entry.assertions[1].type == "glob_exists"
         assert entry.assertions[1].target == "src/main.py"
 
-    def test_memory_entry_no_assertions(self, tmp_path: Path) -> None:
-        entry = self._store(tmp_path, "L-test4")
+    def test_memory_entry_no_assertions(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
+        entry = self._store(tmp_path, fake_memory_store, "L-test4")
 
         assert entry is not None
         assert entry.assertions == []
 
-    def test_memory_entry_assertions_none(self, tmp_path: Path) -> None:
-        entry = self._store(tmp_path, "L-test5", assertions=None)
+    def test_memory_entry_assertions_none(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
+        entry = self._store(tmp_path, fake_memory_store, "L-test5", assertions=None)
 
         assert entry is not None
         assert entry.assertions == []
-
-
-class TestStoreLearningThreadsAssertions:
-    """FR05: store_learning threads assertions into the delegated store call."""
-
-    def test_store_learning_with_assertions(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The assertions reach ``memory_store_impl`` as validated objects.
-
-        PRD-CORE-251 FR03: the seam this captures moved from the retired
-        ``_learning_to_memory_entry`` to the one write path both servers use.
-        """
-        from trw_mcp.state import memory_adapter
-
-        seen: dict[str, Any] = {}
-
-        def tracking_store(*args: Any, **kwargs: Any) -> dict[str, object]:
-            seen["kwargs"] = kwargs
-            return {"memory_id": kwargs["entry_id"], "status": "stored", "namespace": kwargs.get("namespace", "")}
-
-        monkeypatch.setattr(memory_adapter, "memory_store_impl", tracking_store)
-        monkeypatch.setattr("trw_mcp.state.analytics.infer_topic_tags", lambda *a, **kw: [])
-
-        trw_dir = tmp_path / ".trw"
-        (trw_dir / "memory").mkdir(parents=True)
-
-        result = memory_adapter.store_learning(
-            trw_dir,
-            "L-test-assert",
-            "test summary",
-            "test detail",
-            assertions=SAMPLE_ASSERTIONS,
-        )
-
-        assert result["status"] == "recorded"
-        threaded = seen["kwargs"]["assertions"]
-        assert [(a.type, a.target) for a in threaded] == [(raw["type"], raw["target"]) for raw in SAMPLE_ASSERTIONS]
 
 
 class TestTrwLearnStoresAssertions:

@@ -62,10 +62,7 @@ from trw_mcp.tools._learn_side_effects import (
 from trw_mcp.tools._learn_side_effects import (
     _store_accepts_positional_trw_dir as _store_accepts_positional_trw_dir,
 )
-from trw_mcp.tools._learning_helpers import (
-    LearningParams,
-    calibrate_impact,
-)
+from trw_mcp.tools._learning_helpers import LearningParams
 from trw_mcp.tools._state_assertion_hint import (
     propose_validity_window,
     validity_window_nudge,
@@ -154,8 +151,7 @@ def execute_learn(
         _check_and_handle_dedup: Injected dedup checker.
     """
     # Snapshot the replayable original args BEFORE any local mutation so the
-    # write-ahead journal persists raw caller inputs (calibrate_impact etc. are
-    # not idempotent). Captured now; written only once the entry is ACCEPTED.
+    # write-ahead journal persists raw caller inputs (later stages mutate them). Captured now; written only once the entry is ACCEPTED.
     advance("preflight")
     _journal_payload = capture_journal_payload(dict(locals()))
 
@@ -175,7 +171,7 @@ def execute_learn(
     # Acceptance gates — noise filter, then content policy, then the opt-in LLM
     # utility filter. These MUST stay ahead of the journal write below: a
     # rejected learning must never become a durable, replayable record.
-    rejection = run_accept_gates(summary, detail, config, logger)
+    rejection = run_accept_gates(summary, detail, logger)
     if rejection is not None:
         return rejection
 
@@ -254,9 +250,6 @@ def execute_learn(
             module_path=getattr(_analytics_core, "__file__", "<unknown>"),
         )
 
-    # Preserve clamped caller impact; historical scoring APIs remain explicit.
-    calibrated_impact = calibrate_impact(impact, config)
-
     # Capture preserves clamped caller impact; no corpus-wide quota work.
     advance("active_set_dedup")  # historical stage name; now dedup only
 
@@ -269,7 +262,7 @@ def execute_learn(
             learning_id=learning_id,
             tags=safe_tags,
             evidence=safe_evidence,
-            impact=calibrated_impact,
+            impact=impact,
             shard_id=shard_id,
             source_type=source_type,
             source_identity=source_identity,
@@ -323,7 +316,7 @@ def execute_learn(
         "detail": detail,
         "tags": safe_tags,
         "evidence": safe_evidence,
-        "impact": calibrated_impact,
+        "impact": impact,
         "shard_id": shard_id,
         "source_type": source_type,
         "source_identity": source_identity,
@@ -373,7 +366,16 @@ def execute_learn(
     # appear precisely when trw_memory is unavailable — the same condition that
     # makes the store fail). Returning here keeps the sidecar strictly downstream
     # of a confirmed DB write, so YAML never survives a store the DB rejected.
-    if store_result_dict.get("status") == "error":
+    if store_result_dict.get("status") == "rejected":
+        # The store refused the content itself (schema, PII, poisoning): no row, no
+        # sidecar, and the journal record stays for the drain to dead-letter.
+        return {
+            "learning_id": learning_id,
+            "status": "rejected",
+            "reason": str(store_result_dict.get("reason", "")),
+            "message": str(store_result_dict.get("message", "")),
+        }
+    if store_result_dict.get("status") in ("error", "rate_limited"):
         logger.warning(
             "learn_store_failed_no_sidecar",
             learning_id=learning_id,
@@ -382,7 +384,7 @@ def execute_learn(
         return {
             "learning_id": learning_id,
             "path": str(store_result_dict.get("path", f"sqlite://{learning_id}")),
-            "status": "error",
+            "status": str(store_result_dict["status"]),
             "distribution_warning": "",
         }
     # The SQLite row is now durable (source of truth per D8). The write-ahead
@@ -406,7 +408,7 @@ def execute_learn(
         learning_id=learning_id,
         tags=safe_tags,
         evidence=safe_evidence,
-        impact=calibrated_impact,
+        impact=impact,
         shard_id=shard_id,
         source_type=source_type,
         source_identity=source_identity,
@@ -439,7 +441,7 @@ def execute_learn(
         "learn_ok",
         summary_len=len(summary),
         tags=safe_tags,
-        impact=calibrated_impact,
+        impact=impact,
         id=learning_id,
     )
     result_dict = _build_learn_result(

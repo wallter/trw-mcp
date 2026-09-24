@@ -16,7 +16,21 @@ from typing import Any
 
 import pytest
 
-__all__ = ["FormationFixture", "formation_env", "make_run_dir", "write_pin"]
+__all__ = ["FormationFixture", "formation_env", "make_run_dir", "open_slot", "write_pin"]
+
+
+def open_slot(member_id: str, client: str = "codex", **overrides: Any) -> dict[str, Any]:
+    """A member payload a test can actually join (ledger N8).
+
+    FR18 made ``open_join`` mandatory for a first-come join, and every test that
+    builds a member inline had to remember it: a slot without it refuses
+    ``join_not_admitted``, which reads as a broken fixture rather than as the
+    admission rule doing its job. Whatever FR18 requires next belongs here, once.
+
+    Use it for slots a test JOINS. A test about admission itself should keep
+    writing the dict by hand, because its subject is the field this helper hides.
+    """
+    return {"member_id": member_id, "client": client, "open_join": True, **overrides}
 
 
 @dataclass(frozen=True)
@@ -36,25 +50,21 @@ class FormationFixture:
             "formation_id": "release-train",
             "shared_rules_ref": "docs/rules.md",
             "members": [
-                {
-                    "member_id": "impl-1",
-                    "client": "claude-code",
-                    "role": "implementer",
-                    "owned_paths": ["src/alpha"],
-                    "test_owned_paths": ["tests/test_alpha.py"],
-                    "prd_ids": ["PRD-CORE-900"],
-                    # PRD-CORE-274-FR18: first-come join needs an explicitly open slot.
-                    "open_join": True,
-                },
-                {
-                    "member_id": "impl-2",
-                    "client": "codex",
-                    "role": "implementer",
-                    "owned_paths": ["src/beta"],
-                    "test_owned_paths": ["tests/test_beta.py"],
-                    "prd_ids": ["PRD-CORE-901"],
-                    "open_join": True,
-                },
+                open_slot(
+                    "impl-1",
+                    "claude-code",
+                    role="implementer",
+                    owned_paths=["src/alpha"],
+                    test_owned_paths=["tests/test_alpha.py"],
+                    prd_ids=["PRD-CORE-900"],
+                ),
+                open_slot(
+                    "impl-2",
+                    role="implementer",
+                    owned_paths=["src/beta"],
+                    test_owned_paths=["tests/test_beta.py"],
+                    prd_ids=["PRD-CORE-901"],
+                ),
             ],
         }
         base.update(overrides)
@@ -110,3 +120,12 @@ def write_pin(fixture: FormationFixture, pin_key: str, run_path: Path, *, age_ho
         "last_heartbeat_ts": heartbeat.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
     }
     pins_path.write_text(json.dumps(store), encoding="utf-8")
+
+
+def pin_session(monkeypatch: pytest.MonkeyPatch, run: Path, key: str = "orchestrator-session") -> None:
+    """Make this process the session pinned to *run*: the formation CLI's authority (T29)."""
+    from trw_mcp.state._call_context import build_call_context
+    from trw_mcp.state._paths_pin_mgmt import pin_active_run
+
+    monkeypatch.setenv("TRW_SESSION_ID", key)
+    pin_active_run(run, context=build_call_context(None))

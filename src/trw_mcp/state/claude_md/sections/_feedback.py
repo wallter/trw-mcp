@@ -89,7 +89,7 @@ def render_feedback_reporting(profile: ClientProfile) -> str:
         "subject, the body, and every metadata key and value. The covered shapes are "
         "deliberately not enumerated here -- the same hand-copied list lived in nine "
         "files and went stale the moment the redactor learned a new one; "
-        "`_redact_pii` in `trw_mcp/tools/submit_feedback.py` is the source of truth. "
+        "`redact_secrets` in `trw_mcp/telemetry/anonymizer.py` is the source of truth. "
         f"Canonical operator-facing description: {_LLMS_TXT_ANCHOR}.\n"
         f"{FEEDBACK_MARKER_END}\n"
     )

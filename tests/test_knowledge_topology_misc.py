@@ -53,7 +53,7 @@ class TestEdgeCases:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=10),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             result = execute_knowledge_sync(trw_dir, config)
 
@@ -106,7 +106,7 @@ class TestEdgeCases:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             execute_knowledge_sync(trw_dir, config)
 
@@ -115,7 +115,7 @@ class TestEdgeCases:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
             patch.object(
                 type(md_files[0]),
                 "read_text",

@@ -131,6 +131,58 @@ def _update_config_target_platforms(
         )
 
 
+def _remove_config_target_platform(
+    target_dir: Path,
+    client_id: str,
+    result: dict[str, list[str]],
+) -> None:
+    """Drop *client_id* from ``target_platforms`` in ``.trw/config.yaml``.
+
+    CLIENT-REMOVE (installer refinement 5.1.0): the one deliberate NARROWING
+    counterpart to :func:`_update_config_target_platforms`'s append-only
+    contract (PRD-FIX-076) — a user who explicitly asked to remove a client's
+    surfaces must not see it come back on the next bare ``update-project``,
+    which reads this list. A missing config, or a client not currently
+    listed, is a no-op (not an error): removal is idempotent.
+
+    Fail-open: errors go to ``result["warnings"]``; a config update failure
+    here never blocks the surface removal it accompanies.
+    """
+    import yaml
+
+    config_path = target_dir / ".trw" / "config.yaml"
+    if not config_path.exists():
+        return
+    try:
+        content = config_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(content) or {}
+        existing: list[str] = list(data.get("target_platforms", []))
+        if client_id not in existing:
+            return
+        data["target_platforms"] = [entry for entry in existing if entry != client_id]
+        config_path.write_text(
+            yaml.safe_dump(data, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        result["updated"].append(str(config_path))
+        logger.info(
+            "config_target_platform_removed",
+            outcome="success",
+            client=client_id,
+            remaining=data["target_platforms"],
+        )
+    except (OSError, yaml.YAMLError) as exc:  # justified: fail-open, config update is best-effort
+        result.setdefault("warnings", []).append(
+            f"target_platforms removal of {client_id!r} skipped: {type(exc).__name__}: {exc}"
+        )
+        logger.warning(
+            "config_target_platform_removal_failed",
+            client=client_id,
+            error_class=type(exc).__name__,
+            error=str(exc),
+        )
+
+
 #: Human-readable gloss per ``InstructionRefusalReason``. A refusal reaches an
 #: operator who is watching an installer, not a maintainer reading the PRD, so
 #: the bare enum value ("non_generated_shrink") is not a message on its own.
@@ -225,7 +277,7 @@ def _run_claude_md_sync(
         # normal case for a Claude Code *subscription* user. On that path
         # update-project ran only the carrier-unaware writer
         # (_update_project.py -> _template_updater -> _update_claude_md_trw_section)
-        # and silently reverted CLAUDE.md externalization on every run, reporting
+        # and silently bypassed the profile sync on every run, reporting
         # success with the warning buried in result["warnings"]. Gating a
         # deterministic write on an unrelated credential is what made the
         # deterministic half unreachable. Pinned by TestSyncRunsWithoutApiKey.

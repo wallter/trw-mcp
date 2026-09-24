@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import re
 
+from trw_mcp.models.requirements import DimensionScore, ImprovementSuggestion
+
 # Explicit false-y frontmatter values for the ``ai_operational`` opt-out key.
 _AI_OPT_OUT_VALUES: frozenset[str] = frozenset({"false", "no", "off", "0"})
 
@@ -45,6 +47,32 @@ _AI_OPERATIONAL_HEADINGS = (
     "Risk Register",
     "Failure Class",
 )
+
+
+def missing_ai_operational_suggestion(
+    dimensions: list[DimensionScore], suggestions: list[ImprovementSuggestion]
+) -> ImprovementSuggestion | None:
+    """Advise on absent AI gates even if aggregate structure clears its threshold."""
+    for dim in dimensions:
+        if dim.name != "structural_completeness" or not dim.details.get("ai_section_detected"):
+            continue
+        found = dim.details.get("ai_operational_sections_found")
+        expected = dim.details.get("ai_operational_sections_expected")
+        if (
+            isinstance(found, int)
+            and isinstance(expected, int)
+            and found < expected
+            and not any(item.dimension == dim.name for item in suggestions)
+        ):
+            return ImprovementSuggestion(
+                dimension=dim.name,
+                priority="medium",
+                message="Add AI/LLM operational gates: provenance, failure modes, oversight, evaluation, release, monitoring, and risk register.",
+                current_score=round(dim.score, 2),
+                potential_gain=round(dim.max_score - dim.score, 2),
+            )
+        break
+    return None
 
 
 def _ai_operational_opt_out(frontmatter: dict[str, object]) -> bool:

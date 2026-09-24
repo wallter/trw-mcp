@@ -35,6 +35,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         (tmp_path / ".opencode").mkdir()
 
         # Patch heavy update internals so we focus on opencode branch
@@ -52,6 +53,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         # Create existing opencode.json (triggers detection)
         (tmp_path / "opencode.json").write_text(json.dumps({"model": "custom-model", "mcp": {}}))
 
@@ -69,6 +71,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         (tmp_path / ".codex").mkdir()
 
         with patch_update_project_internals():
@@ -104,6 +107,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n", encoding="utf-8")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         codex_dir = tmp_path / ".codex"
         codex_dir.mkdir()
         (codex_dir / "config.toml").write_text("[features]\ncodex_hooks = true\n", encoding="utf-8")
@@ -145,6 +149,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         # Only Claude Code present
         (tmp_path / ".claude").mkdir()
 
@@ -158,6 +163,7 @@ class TestUpdateProjectMultiIDE:
         (tmp_path / ".git").mkdir()  # update_project now requires a real git repo
         (tmp_path / ".trw").mkdir()
         (tmp_path / ".trw" / "config.yaml").write_text("task_root: docs\n")
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text("version: 2\ncontent_hashes: {}\n", encoding="utf-8")
         # No .opencode/ dir, but explicit override
 
         with patch_update_project_internals():

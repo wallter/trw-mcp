@@ -3,7 +3,7 @@ name: trw-audit
 context: fork
 agent: trw-auditor
 description: >-
-  Run /trw-audit to verify code against PRD acceptance criteria, enforce the mandatory NFR checklist, and assess test quality. Use this skill when an independent, bias-breaking audit is required, invoking the command /trw-audit PRD-CORE-055 to generate the adversarial spec-vs-code report.
+  Run /trw-audit to verify code against PRD acceptance criteria, enforce the mandatory NFR checklist, and assess test quality. Use this skill when an independent, bias-breaking audit is required, invoking the command /trw-audit against a PRD id to generate the adversarial spec-vs-code report.
 user-invocable: true
 argument-hint: "[PRD-ID or file path]"
 ---
@@ -48,7 +48,7 @@ a self-review artifact.
 ### Step 1: Resolve PRD
 
 Check `$ARGUMENTS` for a PRD ID or file path:
-- If a PRD ID (e.g., `PRD-CORE-055`), resolve to file path via `prds_relative_path`
+- If a PRD ID, resolve to file path via `prds_relative_path`
 - If a file path, use directly
 - Read the full PRD file
 - Extract ALL functional requirements (FRs) with their acceptance criteria
@@ -68,7 +68,7 @@ Verify implementation exists:
 - Infer source/test roots and test naming from repo config and existing files; do not assume `src/` + `tests/` unless that is the scoped package convention
 - If no implementation files found: abort with "No implementation found for {PRD-ID}. Nothing to audit."
 
-### Step 2a: AC Keyword Extraction (PRD-QUAL-045-FR01/FR02)
+### Step 2a: AC Keyword Extraction
 
 From each FR's acceptance criteria, regardless of requirement syntax or verification method, extract useful search terms:
 - Function/class/method/component/command/schema/event/API names mentioned in the spec
@@ -90,7 +90,7 @@ Apply the PRD's declared verification method. Machine-observable behavior withou
 UNTESTED (P1) unless the PRD explicitly justifies another method; evaluate Analysis, Inspection, or Demonstration
 evidence on its own terms.
 
-### Step 3a: Wiring Check (PRD-QUAL-045-FR03)
+### Step 3a: Wiring Check
 
 For each new public symbol, exported component, command, endpoint, schema, event, or adapter defined in the implementation:
 1. Verify it is actually wired through at least one production caller, route, registry, export, command table, or integration path
@@ -142,7 +142,7 @@ table. This file defines none of those three; read them.
 
 ### Step 7.5: Spec Reconciliation
 
-1. Call `trw_review(mode="reconcile", prd_ids=["PRD-{ID}"])` with the audited PRD ID
+1. Call `trw_review(mode="reconcile", options={"prd_ids": ["PRD-{ID}"]})` with the audited PRD ID
 2. If mismatches found: include mismatched identifiers as P1 findings with `update_spec` recommendation, note as spec drift
 3. If clean: note "Spec reconciliation: clean" in the summary
 
@@ -158,7 +158,7 @@ Output a markdown summary:
 
 Call `trw_learn` only when findings reveal a non-obvious reusable pattern, not for routine audit status.
 
-## Assertion Verification (PRD-CORE-086)
+## Assertion Verification
 
 When auditing FRs that include `Assertions:` blocks, use them as objective evidence:
 

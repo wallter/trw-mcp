@@ -22,7 +22,6 @@ from trw_mcp.models.learning import (
     LearningStatus,
     LearningType,
 )
-from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.state._helpers import is_active_entry
 from trw_mcp.state.analytics.core import is_noise_summary
 from trw_mcp.state.persistence import (
@@ -38,77 +37,6 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 # Learning queries
 # ---------------------------------------------------------------------------
-
-
-def surface_validated_learnings(
-    trw_dir: Path,
-    q_threshold: float = 0.6,
-    cold_start_threshold: int = 3,
-) -> list[dict[str, object]]:
-    """Surface learnings with high positive Q-values as validated success patterns.
-
-    Scans active learnings for entries with ``q_value >= q_threshold`` and
-    ``q_observations >= cold_start_threshold``.
-
-    Args:
-        trw_dir: Path to .trw directory.
-        q_threshold: Minimum Q-value for inclusion.
-        cold_start_threshold: Minimum observation count for inclusion.
-
-    Returns:
-        List of dicts with ``learning_id``, ``summary``, ``q_value``,
-        ``q_observations``, and ``tags`` keys.
-    """
-    validated: list[dict[str, object]] = []
-
-    # Primary: read from SQLite via adapter
-    try:
-        from trw_mcp.state.memory_adapter import list_active_learnings
-
-        all_active = list_active_learnings(trw_dir)
-        for entry in all_active:
-            q_value = float(str(entry.get("q_value", 0.0)))
-            q_observations = int(str(entry.get("q_observations", 0)))
-            if q_value >= q_threshold and q_observations >= cold_start_threshold:
-                validated.append(
-                    {
-                        "learning_id": str(entry.get("id", "")),
-                        "summary": str(entry.get("summary", "")),
-                        "q_value": q_value,
-                        "q_observations": q_observations,
-                        "tags": entry.get("tags", []),
-                    }
-                )
-        validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
-        return validated
-    except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
-        logger.warning("sqlite_fallback_to_yaml", op="surface_validated_learnings", exc_info=True)
-
-    # Fallback: YAML scan
-    entries_dir = _ac._entries_path(trw_dir)
-    if not entries_dir.exists():
-        return []
-
-    for _path, data in _ac._iter_entry_files(entries_dir, sorted_order=True):
-        if not is_active_entry(data):
-            continue
-
-        q_value = _ac._safe_float(data, "q_value")
-        q_observations = _ac._safe_int(data, "q_observations")
-
-        if q_value >= q_threshold and q_observations >= cold_start_threshold:
-            validated.append(
-                {
-                    "learning_id": str(data.get("id", "")),
-                    "summary": str(data.get("summary", "")),
-                    "q_value": q_value,
-                    "q_observations": q_observations,
-                    "tags": data.get("tags", []),
-                }
-            )
-
-    validated.sort(key=lambda x: float(str(x.get("q_value", 0))), reverse=True)
-    return validated
 
 
 def has_existing_success_learning(
@@ -133,7 +61,7 @@ def has_existing_success_learning(
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
 
-        all_active = list_active_learnings(trw_dir)
+        all_active = list_active_learnings(trw_dir, purpose="maintenance")
         for entry in all_active:
             if str(entry.get("summary", ""))[:50].lower() == target:
                 return True
@@ -170,7 +98,7 @@ def has_existing_mechanical_learning(
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
 
-        all_active = list_active_learnings(trw_dir)
+        all_active = list_active_learnings(trw_dir, purpose="maintenance")
         target = prefix.lower()
         for entry in all_active:
             summary = str(entry.get("summary", "")).lower()
@@ -359,14 +287,12 @@ def mark_promoted(trw_dir: Path, learning_id: str) -> None:
     """
     # Primary: update in SQLite
     try:
-        from trw_mcp.state.memory_adapter import get_backend
+        from trw_memory.lifecycle.correction import LearningPatch
 
-        backend = get_backend(trw_dir)
-        entry = resolve_entry_in_backend(backend, learning_id)
-        if entry is not None:
-            metadata = dict(entry.metadata) if entry.metadata else {}
-            metadata["promoted_to_claude_md"] = "true"
-            backend.update(learning_id, namespace=entry.namespace, metadata=metadata)
+        from trw_mcp.state._store_selection import selected_store
+
+        store, _namespace = selected_store(trw_dir)
+        store.correct(learning_id, LearningPatch(metadata_add={"promoted_to_claude_md": "true"}))
     except Exception:  # justified: fail-open, promotion metadata update must not block caller
         logger.warning("promotion_metadata_update_failed", learning_id=learning_id, exc_info=True)
 

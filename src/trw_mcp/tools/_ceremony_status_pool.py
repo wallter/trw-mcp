@@ -43,18 +43,23 @@ def select_pool(
 
     Returns the resolved pool name, or ``None`` when no pool fires.
     Override: when ``_has_cached_learning_weights`` is set the pool is
-    forced to ``"learnings"`` regardless of the weighted-random pick.
+    forced to ``"learnings"`` regardless of the weighted-random pick. Never
+    ``"learnings"`` on a session_start response, which already carries them.
     """
+    from trw_mcp.state._ceremony_nudge_selectors import nudge_may_recall
     from trw_mcp.state.ceremony_nudge import _select_nudge_pool
 
     weights = cfg.client_profile.nudge_pool_weights
+    learnings_allowed = nudge_may_recall(context)
+    if not learnings_allowed:
+        weights = weights.model_copy(update={"learnings": 0})
     cooldown_after = cfg.nudge_pool_cooldown_after
     cooldown_calls = cfg.nudge_pool_cooldown_calls
 
     pool = _select_nudge_pool(state, weights, context, cooldown_after, cooldown_calls)
     if not pool:
         return None
-    if pool != "learnings" and _has_cached_learning_weights(effective_dir):
+    if pool != "learnings" and learnings_allowed and _has_cached_learning_weights(effective_dir):
         return "learnings"
     return pool
 

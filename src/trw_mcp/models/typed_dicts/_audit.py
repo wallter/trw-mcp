@@ -86,7 +86,6 @@ class AuditReflectionComponentsDict(TypedDict):
     productivity: float
     diversity: float
     access_ratio: float
-    q_activation_rate: float
 
 
 class AuditReflectionDiagnosticsDict(TypedDict):
@@ -97,7 +96,6 @@ class AuditReflectionDiagnosticsDict(TypedDict):
     total_entries: int
     active_entries: int
     accessed_entries: int
-    q_activated_entries: int
     unique_tags: int
     source_types: list[str]
 

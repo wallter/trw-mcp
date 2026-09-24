@@ -1,4 +1,4 @@
-"""Branch tests for calibration and event reward resolution."""
+"""Branch tests for event reward resolution."""
 
 from __future__ import annotations
 
@@ -7,96 +7,6 @@ import pytest
 import trw_mcp.scoring as scoring_mod
 from trw_mcp.models.run import EventType
 from trw_mcp.scoring import REWARD_MAP
-
-
-class TestBayesianCalibrate:
-    """Tests for bayesian_calibrate — Bayesian posterior impact score."""
-
-    def test_zero_weights_returns_user_impact(self) -> None:
-        """Both weights=0 returns user_impact as fallback."""
-        result = scoring_mod.bayesian_calibrate(0.7, user_weight=0.0, org_weight=0.0)
-        assert result == pytest.approx(0.7)
-
-    def test_equal_weights(self) -> None:
-        """Equal weights average user and org mean."""
-        result = scoring_mod.bayesian_calibrate(0.8, org_mean=0.4, user_weight=1.0, org_weight=1.0)
-        assert result == pytest.approx(0.6)
-
-    def test_user_heavy_weighting(self) -> None:
-        """High user_weight keeps result close to user_impact."""
-        result = scoring_mod.bayesian_calibrate(0.9, org_mean=0.3, user_weight=10.0, org_weight=1.0)
-        assert result > 0.8
-
-    def test_org_heavy_weighting(self) -> None:
-        """High org_weight pulls result toward org_mean."""
-        result = scoring_mod.bayesian_calibrate(0.9, org_mean=0.3, user_weight=0.5, org_weight=10.0)
-        assert result < 0.5
-
-    def test_org_weight_capped_at_two(self) -> None:
-        """org_weight is capped at 2.0 internally."""
-        result_high = scoring_mod.bayesian_calibrate(0.8, org_mean=0.2, user_weight=1.0, org_weight=100.0)
-        result_capped = scoring_mod.bayesian_calibrate(0.8, org_mean=0.2, user_weight=1.0, org_weight=2.0)
-        assert result_high == pytest.approx(result_capped)
-
-    def test_result_clamped_to_unit_range(self) -> None:
-        """Result is always in [0.0, 1.0]."""
-        result = scoring_mod.bayesian_calibrate(1.0, org_mean=1.0, user_weight=1.0, org_weight=1.0)
-        assert 0.0 <= result <= 1.0
-
-    def test_default_org_mean(self) -> None:
-        """Default org_mean is 0.5 (regression toward center)."""
-        result = scoring_mod.bayesian_calibrate(0.8, user_weight=1.0, org_weight=0.5)
-        assert result == pytest.approx((0.8 * 1.0 + 0.5 * 0.5) / 1.5, abs=0.01)
-
-    @pytest.mark.parametrize("impact", [0.0, 0.25, 0.5, 0.75, 1.0])
-    def test_various_user_impacts(self, impact: float) -> None:
-        """All user impact values produce valid output in [0, 1]."""
-        result = scoring_mod.bayesian_calibrate(impact)
-        assert 0.0 <= result <= 1.0
-
-
-class TestComputeCalibrationAccuracy:
-    """Tests for compute_calibration_accuracy — weight based on recall history."""
-
-    def test_no_recalls_returns_default(self) -> None:
-        """Zero total recalls returns default weight of 1.0."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 0, "positive_outcomes": 0})
-        assert result == pytest.approx(1.0)
-
-    def test_empty_dict_returns_default(self) -> None:
-        """Missing keys treated as 0, returns 1.0 default."""
-        result = scoring_mod.compute_calibration_accuracy({})
-        assert result == pytest.approx(1.0)
-
-    def test_all_positive_returns_high_weight(self) -> None:
-        """100% positive → weight 2.0."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 10, "positive_outcomes": 10})
-        assert result == pytest.approx(2.0)
-
-    def test_seventy_five_percent_positive(self) -> None:
-        """75% positive → weight 2.0."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 8, "positive_outcomes": 6})
-        assert result == pytest.approx(2.0)
-
-    def test_fifty_percent_positive(self) -> None:
-        """50% positive → weight 1.5."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 10, "positive_outcomes": 5})
-        assert result == pytest.approx(1.5)
-
-    def test_twenty_five_percent_positive(self) -> None:
-        """25% positive → weight 1.0."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 8, "positive_outcomes": 2})
-        assert result == pytest.approx(1.0)
-
-    def test_below_twenty_five_percent(self) -> None:
-        """<25% positive → weight 0.5."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 10, "positive_outcomes": 1})
-        assert result == pytest.approx(0.5)
-
-    def test_zero_positive_outcomes(self) -> None:
-        """0 positive outcomes → weight 0.5 (below 25% threshold)."""
-        result = scoring_mod.compute_calibration_accuracy({"total_recalls": 5, "positive_outcomes": 0})
-        assert result == pytest.approx(0.5)
 
 
 class TestResolveEventReward:

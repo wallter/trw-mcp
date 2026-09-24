@@ -166,3 +166,144 @@ def test_output_file_nested_dir_is_created(monkeypatch: pytest.MonkeyPatch, tmp_
         run_dispatch(_ns(output_file=str(nested)))
     assert nested.exists()
     assert json.loads(nested.read_text())["text"] == "X"
+
+
+# --- PRD-CORE-299-FR04: --variant-of writes a named, provenance-stamped variant ---
+
+
+def _variant_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    base = tmp_path / "docs" / "research" / "design.md"
+    base.parent.mkdir(parents=True)
+    base.write_text("# design\n")
+    return base
+
+
+def test_variant_of_writes_next_free_round_without_overwrite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = _variant_env(monkeypatch, tmp_path)
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", lambda _req: _fake_result("Finding one."))
+    for _ in range(2):
+        with pytest.raises(SystemExit) as exc:
+            run_dispatch(_ns(variant_of=str(base), role="code-review"))
+        assert exc.value.code == 0
+    first = base.parent / "design.review-codex-r1.md"
+    second = base.parent / "design.review-codex-r2.md"
+    assert first.is_file() and second.is_file()
+    text = first.read_text()
+    assert "producer: codex" in text and "role: code-review" in text and "ok: true" in text
+    assert text.rstrip().endswith("Finding one.")
+    assert second.name in capsys.readouterr().err
+
+
+def test_variant_of_without_role_is_notes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    base = _variant_env(monkeypatch, tmp_path)
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", lambda _req: _fake_result("x"))
+    with pytest.raises(SystemExit):
+        run_dispatch(_ns(variant_of=str(base)))
+    assert (base.parent / "design.notes-codex-r1.md").is_file()
+
+
+def test_failed_dispatch_still_leaves_a_variant_marked_failed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    base = _variant_env(monkeypatch, tmp_path)
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", lambda _req: _fake_result("", ok_exit=1))
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(variant_of=str(base), role="adversarial-audit"))
+    assert exc.value.code == 1
+    text = (base.parent / "design.audit-codex-r1.md").read_text()
+    assert "ok: false" in text
+    assert "dispatch failed" in text.lower()
+
+
+def test_variant_of_discovery_directory_exits_2_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    rule = tmp_path / ".claude" / "rules" / "testing.md"
+    rule.parent.mkdir(parents=True)
+    rule.write_text("x")
+    called: list[object] = []
+
+    def _record(req: object) -> DispatchResult:
+        called.append(req)
+        return _fake_result("x")
+
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", _record)
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(variant_of=str(rule)))
+    assert exc.value.code == 2
+    assert called == []
+    assert ".claude/rules" in capsys.readouterr().err
+    assert sorted(p.name for p in rule.parent.iterdir()) == ["testing.md"]
+
+
+def test_variant_of_base_that_reads_as_a_variant_exits_2_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    base = tmp_path / "design.review.md"
+    base.write_text("x")
+    called: list[object] = []
+
+    def _record(req: object) -> DispatchResult:
+        called.append(req)
+        return _fake_result("x")
+
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", _record)
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(variant_of=str(base)))
+    assert exc.value.code == 2
+    assert called == []
+    assert "already reads as a variant" in capsys.readouterr().err
+    assert [p.name for p in tmp_path.iterdir()] == ["design.review.md"]
+
+
+def test_variant_of_symlink_to_a_variant_named_base_exits_2_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    (tmp_path / "design.review.md").write_text("x")
+    alias = tmp_path / "alias.md"
+    alias.symlink_to(tmp_path / "design.review.md")
+    called: list[object] = []
+
+    def _record(req: object) -> DispatchResult:
+        called.append(req)
+        return _fake_result("x")
+
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", _record)
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(variant_of=str(alias)))
+    assert exc.value.code == 2
+    assert called == []
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["alias.md", "design.review.md"]
+
+
+def test_variant_write_rejecting_the_producer_exits_2_with_write_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = _variant_env(monkeypatch, tmp_path)
+    # model_copy skips validation, so an id the slug grammar refuses reaches write_variant.
+    bad = _fake_result("answer").model_copy(update={"client": "Bad_Client"})
+    monkeypatch.setattr("trw_mcp.dispatch._cli.dispatch", lambda _req: bad)
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(variant_of=str(base)))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "--variant-of write failed" in err and "Bad_Client" in err
+    assert [p.name for p in base.parent.iterdir()] == ["design.md"]
+
+
+def test_variant_of_missing_base_exits_2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
+    with pytest.raises(SystemExit) as exc:
+        run_dispatch(_ns(variant_of=str(tmp_path / "nope.md")))
+    assert exc.value.code == 2
+
+
+def test_variant_of_parses_from_argv() -> None:
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+
+    args = _build_arg_parser().parse_args(["dispatch", "--prompt", "p", "--variant-of", "docs/x.md"])
+    assert args.variant_of == "docs/x.md"

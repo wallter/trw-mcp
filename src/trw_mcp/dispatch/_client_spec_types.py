@@ -27,6 +27,7 @@ __all__ = [
     "ClientSpec",
     "ClientVerification",
     "DispatchPosture",
+    "IsolatedReviewSpec",
     "OutputShape",
     "SandboxPosture",
     "SubAgentSupport",
@@ -68,6 +69,13 @@ SandboxPosture = Literal["enforced", "available_default_off", "unavailable_on_ho
 #: Whether the client can drive sub-agents. ``unknown`` is a RECORDED state, not
 #: a ``False`` — "we have not established this" and "this client cannot" are
 #: different facts and an operator planning a formation needs to tell them apart.
+#: Portable effort levels a dispatch request may carry, ordered weakest to
+#: strongest. A client that accepts only a prefix of this scale is CLAMPED down to
+#: its strongest supported level (see ``_commands._client_effort``); the order is
+#: what makes that clamp well-defined, so it is a tuple, not a set.
+EFFORT_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+DispatchEffort = Literal["low", "medium", "high", "xhigh", "max"]
+
 SubAgentSupport = Literal["yes", "no", "unknown"]
 
 #: Which SHAPE a client's stdout has, so the output parsers can be keyed on the
@@ -110,7 +118,12 @@ OutputShape = Literal[
 #:                whose spec carries no ``reviewer_argv_template`` — the bound
 #:                must be a mechanism, never a sentence in a prompt
 #:                (PRD-SEC-015-FR06/FR07, OD-6).
-DispatchPosture = Literal["default", "reviewer"]
+#: ``isolated-review`` — no TRW server at all: the child runs MCP-off on a
+#:                standalone snapshot of the tree under the host write-denial
+#:                wrapper, and the result reports contamination. Admitted only
+#:                for a spec with ``isolated_review`` (PRD-CORE-297); it never
+#:                sets ``posture_enforced``.
+DispatchPosture = Literal["default", "reviewer", "isolated-review"]
 
 #: The substitution vocabulary a ``reviewer_argv_template`` may reference.
 #: Declared HERE, beside the field it constrains, so a malformed template fails
@@ -177,6 +190,16 @@ class ClientVerification(BaseModel):
         return self
 
 
+class IsolatedReviewSpec(BaseModel):
+    """How one client runs the ``isolated-review`` lane (PRD-CORE-297-FR02)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mcp_list_argv: tuple[str, ...] = Field(min_length=1, description="Lists the child's MCP servers.")
+    mcp_empty_marker: str = Field(min_length=1, description="The exact (stripped) stdout of an empty listing.")
+    strip_paths: tuple[str, ...] = Field(default=(), description="Repo-relative files removed from the snapshot.")
+
+
 class ClientSpec(BaseModel):
     """One client's dispatch policy, as data.
 
@@ -228,14 +251,16 @@ class ClientSpec(BaseModel):
     confined_read_only_argv: tuple[str, ...] = Field(
         default=(),
         description=(
-            "Emitted on the read-only path ONLY while a HOST write-denial wrapper is "
-            "actually applied to the child (PRD-CORE-277-FR02). It exists for a client "
-            "whose own headless permission layer denies READS as well as writes, so the "
-            "only way to obtain a usable read-only run is to relax the client's permission "
-            "prompt and let the operating system deny the writes instead. It is a "
-            "permission bypass by itself, which is why the builder refuses to emit it "
-            "unless the caller proves the wrapper was built: an empty tuple is the correct "
-            "value for every client that can already read under read_only."
+            "Emitted on EVERY read-only dispatch to a client whose own headless permission "
+            "layer denies READS as well as writes (PRD-CORE-277-FR02, sharpened by "
+            "PRD-CORE-291): without it a read-only run to such a client can read nothing at "
+            "all, which is the defect this field exists to prevent, not a bonus reserved for "
+            "a confined run. Emitting the flag is therefore NOT itself a write-denial claim -- "
+            "it is a permission bypass by itself, and the client's own write protection comes "
+            "only from the host wrapper named by host_confinement below. read_only_enforced "
+            "(``_runner.py``) is what stays honest about whether that wrapper actually ran; "
+            "an empty tuple is the correct value for every client that can already read under "
+            "read_only without it."
         ),
     )
     host_confinement: bool = Field(
@@ -302,7 +327,46 @@ class ClientSpec(BaseModel):
             "either path. Applied on top of the credential allowlist, never instead of it."
         ),
     )
+    isolated_review: IsolatedReviewSpec | None = None
     model_flag: str | None = None
+    tier_profile: str | None = Field(
+        default=None,
+        description=(
+            "Client profile whose verified tier -> model map (agents/tier_resolver.py) turns a "
+            "task-class tier into this client's --model value (PRD-CORE-290-FR03). None: no "
+            "verified map, so a table tier is never passed as a model name."
+        ),
+    )
+    max_turns_flag: str | None = Field(
+        default=None,
+        description=(
+            "Flag carrying a turn limit, when the client's own --help documents one "
+            "(PRD-CORE-290-FR04). None: TRW applies no turn cap and records 'unsupported'."
+        ),
+    )
+    max_turns_exhausted_marker: str | None = Field(
+        default=None,
+        description=(
+            "Text the client writes to stderr when the turn limit stopped it, as measured. "
+            "Lets a cap hit read as incomplete work rather than a generic failure."
+        ),
+    )
+    effort_flag: str | None = Field(
+        default=None,
+        description=(
+            "Flag carrying the reasoning-effort level, when the client's own --help "
+            "documents one. None means TRW passes no effort and the child runs at its "
+            "own default; a flag is never inferred from a sibling client."
+        ),
+    )
+    effort_levels: tuple[str, ...] = Field(
+        default=(),
+        description=(
+            "The effort values this client's flag accepts, as its --help enumerates them. "
+            "Required with effort_flag: a flag whose value vocabulary is unknown is not "
+            "emitted (a guessed value fails at argv parse)."
+        ),
+    )
     cwd_flag: str | None = Field(
         default=None,
         description="Flag carrying the working directory, when the client needs it in argv.",
@@ -450,6 +514,18 @@ class ClientSpec(BaseModel):
                 "is empty; a residue describes what survives a with_trw launch this client can never "
                 "have, so the two statements contradict each other"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _effort_flag_has_a_vocabulary(self) -> ClientSpec:
+        if bool(self.effort_flag) != bool(self.effort_levels):
+            raise ValueError(
+                f"{self.client_id!r}: effort_flag and effort_levels must be set together; a flag "
+                "with no known values cannot be emitted, and values with no flag have no carrier"
+            )
+        unknown = [level for level in self.effort_levels if level not in EFFORT_LEVELS]
+        if unknown:
+            raise ValueError(f"{self.client_id!r}: effort_levels {unknown} are not in {EFFORT_LEVELS}")
         return self
 
     @model_validator(mode="after")

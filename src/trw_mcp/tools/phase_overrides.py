@@ -283,9 +283,9 @@ def register_phase_override_tools(server: FastMCP) -> None:
         the phase masks — every grant is logged.
 
         Output: {"granted": bool}; on denial also "error". "client_notified"
-        reports notification emission, not acknowledgement of a client refresh.
-        "action_required" means refresh tools/list in the same session before the grant expires;
-        restarting the server loses the grant.
+        reports notification emission (not a client refresh ack); "action_required"
+        means refresh tools/list before the grant expires — a server restart
+        loses the grant.
 
         Args:
             tool_name: masked tool; must be a registered MCP tool.

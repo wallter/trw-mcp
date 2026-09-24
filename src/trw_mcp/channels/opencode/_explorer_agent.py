@@ -115,17 +115,12 @@ def get_explorer_agent_content() -> str:
 def install_explorer_agent(
     repo_root: Path,
     *,
-    existing_sha256: str | None = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, object]:
     """Write ``.opencode/agents/trw-distill-explorer.md`` if not user-modified.
 
-    If *existing_sha256* matches the on-disk file's SHA-256, the file is
-    considered user-modified and is preserved unchanged.
-
-    Args:
-        repo_root: Repository root directory.
-        existing_sha256: SHA-256 of the previously-installed content
-            (from ``.trw/managed-artifacts.yaml``), or None for first install.
+    *manifest_hashes* is ``content_hashes`` from ``.trw/managed-artifacts.yaml``
+    (None on a first install); the shared ``artifact_user_edited`` guard decides.
 
     Returns:
         Dict with keys ``status`` (``"written"`` / ``"preserved"`` / ``"error"``)
@@ -147,16 +142,12 @@ def install_explorer_agent(
     new_sha = hashlib.sha256(content_bytes).hexdigest()
 
     try:
+        from trw_mcp.bootstrap._managed_client_artifacts import artifact_user_edited
+
         # Detect user modification (FR23)
-        if existing_sha256 and target.exists():
-            on_disk_sha = hashlib.sha256(target.read_bytes()).hexdigest()
-            if on_disk_sha != existing_sha256:
-                log.debug(
-                    "opencode_explorer_agent_user_modified",
-                    path=str(target),
-                    outcome="preserved",
-                )
-                return {"status": "preserved", "sha256": on_disk_sha}
+        if target.exists() and artifact_user_edited(target, EXPLORER_AGENT_RELPATH, content_bytes, manifest_hashes):
+            log.debug("opencode_explorer_agent_user_modified", path=str(target), outcome="preserved")
+            return {"status": "preserved", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
 
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")

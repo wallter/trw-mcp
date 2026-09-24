@@ -99,28 +99,6 @@ def test_manifest_entries_written(tmp_path: Path) -> None:
     }
 
 
-def test_manifest_entries_have_correct_default_tier() -> None:
-    """FR16: opencode-tool-return-enrichment has default_tier T2."""
-    import tempfile
-    from pathlib import Path as _Path
-
-    from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
-
-    with tempfile.TemporaryDirectory() as tmp:
-        p = _Path(tmp)
-        bootstrap_channel_manifest(p)
-
-        from trw_mcp.channels._manifest_loader import load
-
-        manifest = load(p / ".trw" / "channels" / "manifest.yaml")
-        enrichment = next(
-            (e for e in manifest.channels if e.id == "opencode-tool-return-enrichment"),
-            None,
-        )
-        assert enrichment is not None
-        assert enrichment.tier_default == "T2"
-
-
 # ---------------------------------------------------------------------------
 # FR28 — Gitignore entries
 # ---------------------------------------------------------------------------
@@ -151,19 +129,11 @@ def test_manifest_all_or_nothing_on_validation_error(tmp_path: Path) -> None:
     from trw_mcp.bootstrap._opencode_distill_channels import bootstrap_channel_manifest
     from trw_mcp.channels._manifest_loader import ManifestValidationError
 
-    # Patch the manifest data to include a bad entry
     bad_yaml = "channels:\n  - id: bad-entry\n    missing_required_field: true\n"
 
-    with patch("trw_mcp.bootstrap._opencode_distill_channels.YAML") as _:
-        # Patch the actual file read instead
-
-        # We patch the manifest data file path's read_text
-        with patch("pathlib.Path.read_text", return_value=bad_yaml):
-            try:
-                bootstrap_channel_manifest(tmp_path)
-                # If no error, check manifest wasn't partially written
-            except (ManifestValidationError, Exception):
-                pass  # Expected — bad entry rejected
+    with patch("pathlib.Path.read_text", return_value=bad_yaml), pytest.raises(ManifestValidationError):
+        bootstrap_channel_manifest(tmp_path)
+    assert not (tmp_path / ".trw" / "channels" / "manifest.yaml").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -280,26 +250,6 @@ def test_opencode_json_untouched_by_distill_install(tmp_path: Path) -> None:
 
     result = json.loads(oc_json.read_text(encoding="utf-8"))
     assert result == original
-
-
-def test_load_managed_artifacts_returns_empty_when_absent(tmp_path: Path) -> None:
-    """_load_managed_artifacts returns empty dict when file does not exist."""
-    from trw_mcp.bootstrap._opencode_distill_channels import _load_managed_artifacts
-
-    result = _load_managed_artifacts(tmp_path)
-    assert result == {}
-
-
-def test_load_managed_artifacts_returns_empty_on_parse_error(tmp_path: Path) -> None:
-    """_load_managed_artifacts returns empty dict on YAML parse error (fail-open)."""
-    from trw_mcp.bootstrap._opencode_distill_channels import _load_managed_artifacts
-
-    artifact_path = tmp_path / ".trw" / "managed-artifacts.yaml"
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text(": invalid: yaml: content: [", encoding="utf-8")
-
-    result = _load_managed_artifacts(tmp_path)
-    assert result == {}
 
 
 def test_manifest_validation_error_propagates(tmp_path: Path) -> None:

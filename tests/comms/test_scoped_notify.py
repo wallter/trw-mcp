@@ -16,7 +16,13 @@ from typing import Any
 import pytest
 from fastmcp import FastMCP
 
-from tests._formation_test_support import FormationFixture, formation_env, make_run_dir, write_pin  # noqa: F401
+from tests._formation_test_support import (  # noqa: F401
+    FormationFixture,
+    formation_env,
+    make_run_dir,
+    open_slot,
+    write_pin,
+)
 from tests.comms.conftest import call_peers, enable_comms
 
 COMMS = "trw-mcp/src/trw_mcp/comms"
@@ -102,27 +108,9 @@ def scene(
     runs["impl-3"] = make_run_dir(runs_root, "impl-3")
     payload = formation_env.payload(
         members=[
-            {
-                "member_id": "impl-1",
-                "client": "claude-code",
-                "role": "implementer",
-                "owned_paths": ["src/alpha/**"],
-                "open_join": True,
-            },
-            {
-                "member_id": "impl-2",
-                "client": "codex",
-                "role": "implementer",
-                "owned_paths": [f"{COMMS}/**"],
-                "open_join": True,
-            },
-            {
-                "member_id": "impl-3",
-                "client": "antigravity-cli",
-                "role": "reviewer",
-                "owned_paths": ["trw-mcp/docs/**"],
-                "open_join": True,
-            },
+            open_slot("impl-1", "claude-code", role="implementer", owned_paths=["src/alpha/**"]),
+            open_slot("impl-2", role="implementer", owned_paths=[f"{COMMS}/**"]),
+            open_slot("impl-3", "antigravity-cli", role="reviewer", owned_paths=["trw-mcp/docs/**"]),
         ]
     )
     formation_id = create(formation_env.orchestrator_run, payload, trw_dir=formation_env.trw_dir).formation_id

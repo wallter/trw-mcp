@@ -34,6 +34,114 @@ logger = structlog.get_logger(__name__)
 _MANIFEST_FILE = "managed-artifacts.yaml"
 
 
+#: The one schema version this build reads and writes; there is no old-schema reader.
+MANIFEST_VERSION = 2
+_CLEAN_REINSTALL = "clean reinstall: `trw-mcp uninstall --keep-memory` then `trw-mcp init-project`"
+
+#: Distributions whose resolved version is recorded in the manifest's ``packages``
+#: map (PRD-INFRA-192 FR12). The manifest is the ONE record of what was
+#: installed; ``version-status`` reads it back rather than a VERSION.yaml stamp.
+_MANIFEST_PACKAGE_DISTRIBUTIONS: tuple[str, ...] = ("trw-mcp", "trw-memory")
+
+
+def resolved_package_versions() -> dict[str, str]:
+    """Resolve each managed distribution's version in THIS interpreter.
+
+    Uses ``importlib.metadata`` against the interpreter running init-project/
+    update-project — the target's own interpreter — so the recorded version is
+    what is actually installed there, not a bundle constant. A distribution
+    that is not installed (``PackageNotFoundError``) is omitted rather than
+    recorded as ``"unknown"``, so a caller can distinguish "not installed" from
+    "installed but the manifest is stale".
+    """
+    import importlib.metadata
+
+    versions: dict[str, str] = {}
+    for distribution in _MANIFEST_PACKAGE_DISTRIBUTIONS:
+        try:
+            versions[distribution] = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:  # trw-fail-silent-allow: an uninstalled distribution is omitted, which version-status reads as "not installed"
+            continue
+    return versions
+
+
+def manifest_refusal(target_dir: Path) -> str | None:
+    """Why an existing installation must not be updated, or ``None`` when its manifest is usable.
+
+    Without a readable current-schema manifest TRW cannot tell which files it
+    wrote, so an update would guess ownership. It refuses instead and names the
+    clean reinstall, which keeps the learning corpus (PRD-INFRA-192-NFR02).
+    """
+    from trw_mcp.state.persistence import FileStateReader
+
+    manifest_path = target_dir / ".trw" / _MANIFEST_FILE
+    try:
+        data = FileStateReader().read_yaml(manifest_path)
+    except StateError as exc:
+        why = "is missing" if not manifest_path.is_file() else f"is unreadable ({exc})"
+    else:
+        # ``type() is int``: YAML ``2.0`` and ``true`` compare equal to an int but are not one.
+        if type(data.get("version")) is not int or data.get("version") != MANIFEST_VERSION:
+            why = f"has unsupported schema version {data.get('version')!r} (expected {MANIFEST_VERSION})"
+        elif (field := _malformed_manifest_field(data)) is None:
+            return None
+        else:
+            why = f"has a malformed {field!r} field"
+    return f"refusing to update: {manifest_path} {why}, so TRW cannot tell which files it owns; {_CLEAN_REINSTALL}"
+
+
+_MANIFEST_LIST_FIELDS = (
+    "skills",
+    "agents",
+    "hooks",
+    "opencode_commands",
+    "opencode_agents",
+    "opencode_skills",
+    "custom_skills",
+    "custom_agents",
+    "custom_hooks",
+    "custom_opencode_commands",
+    "custom_opencode_agents",
+    "custom_opencode_skills",
+)
+
+
+def _is_str_map(value: object) -> bool:
+    return isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in value.items())
+
+
+def _is_owners_map(value: object) -> bool:
+    """True for ``dict[str, list[str]]`` -- the ``owners`` field's required shape."""
+    return isinstance(value, dict) and all(
+        isinstance(k, str) and isinstance(v, list) and all(isinstance(item, str) for item in v)
+        for k, v in value.items()
+    )
+
+
+def _is_str_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _malformed_manifest_field(data: dict[str, object]) -> str | None:
+    """The first field whose type is wrong, or ``None``; the reader would otherwise coerce it to empty.
+
+    ``content_hashes`` is required by schema 2. A list field, ``packages``,
+    ``owners``, or ``tombstones`` (PRD-INFRA-192 FR12) may be absent (older
+    writers omitted them) but never the wrong type.
+    """
+    if not _is_str_map(data.get("content_hashes")):
+        return "content_hashes"
+    for field in _MANIFEST_LIST_FIELDS:
+        value = data.get(field, [])
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            return field
+    if "packages" in data and not _is_str_map(data["packages"]):
+        return "packages"
+    if "owners" in data and not _is_owners_map(data["owners"]):
+        return "owners"
+    return "tombstones" if "tombstones" in data and not _is_str_list(data["tombstones"]) else None
+
+
 def _coerce_manifest_list(value: object) -> list[str]:
     """Coerce a manifest field to ``list[str]``, returning ``[]`` for non-lists."""
     return [str(item) for item in value] if isinstance(value, list) else []
@@ -55,36 +163,28 @@ def _read_manifest(target_dir: Path) -> dict[str, object] | None:
         data = reader.read_yaml(manifest_path)
         if not isinstance(data, dict):
             return None
-        result: dict[str, object] = {
-            key: _coerce_manifest_list(data.get(key, []))
-            for key in (
-                "skills",
-                "agents",
-                "hooks",
-                "opencode_commands",
-                "opencode_agents",
-                "opencode_skills",
-                "custom_skills",
-                "custom_agents",
-                "custom_hooks",
-                "custom_opencode_commands",
-                "custom_opencode_agents",
-                "custom_opencode_skills",
-            )
-        }
+        result: dict[str, object] = {key: _coerce_manifest_list(data.get(key, [])) for key in _MANIFEST_LIST_FIELDS}
         raw_version = data.get("version", 1)
-        result["version"] = int(str(raw_version))
+        result["version"] = raw_version if type(raw_version) is int else 0
         raw_hashes = data.get("content_hashes")
         if isinstance(raw_hashes, dict):
             result["content_hashes"] = {str(k): str(v) for k, v in raw_hashes.items()}
         else:
             result["content_hashes"] = {}
+        raw_owners = data.get("owners")
+        if isinstance(raw_owners, dict):
+            result["owners"] = {
+                str(k): ([str(item) for item in v] if isinstance(v, list) else []) for k, v in raw_owners.items()
+            }
+        else:
+            result["owners"] = {}
+        raw_tombstones = data.get("tombstones")
+        result["tombstones"] = [str(item) for item in raw_tombstones] if isinstance(raw_tombstones, list) else []
         return result
-    except (OSError, StateError):
-        # A corrupted/malformed managed-artifacts.yaml (StateError from
-        # FileStateReader.read_yaml) must NOT crash update_project — degrade to
-        # "no prior manifest" so the update proceeds (agents self-heal, hooks/
-        # skills fall back to the framework-baseline guard). P2-3 round-2 audit.
+    except (OSError, StateError):  # trw-fail-silent-allow: logged; update refuses before reaching here
+        # update_project never gets here with an invalid manifest: manifest_refusal
+        # stops it first (PRD-INFRA-192-NFR02). This path is init_project over a
+        # target whose old manifest it is about to replace.
         logger.warning("manifest_read_failed", path=str(manifest_path))
         return None
 
@@ -175,14 +275,7 @@ def _core_artifact_baselines(
             )
             for name in bundled.get(f"opencode_{kind}", [])
         ]
-    entries += [
-        (
-            f".opencode/skills/{name}/SKILL.md",
-            opencode / "skills" / name / "SKILL.md",
-            _framework_content_hashes(opencode_src / "skills" / name / "SKILL.md"),
-        )
-        for name in bundled.get("opencode_skills", [])
-    ]
+    entries += _opencode_skill_baselines(opencode / "skills", effective / "skills", bundled.get("opencode_skills", []))
     return entries + _instruction_file_baselines(target_dir)
 
 
@@ -291,6 +384,25 @@ def _framework_agent_hashes(src: Path, *, client: str) -> set[str]:
     if resolved is not None:
         hashes.add(hashlib.sha256(resolved.encode("utf-8")).hexdigest())
     return hashes
+
+
+def _opencode_skill_baselines(installed: Path, corpus: Path, names: list[str]) -> list[tuple[str, Path, set[str]]]:
+    """Every file ``install_opencode_skills`` writes for *names* -- ``skill_files``, the writer's own list."""
+    from ._client_skills import skill_files
+
+    entries: list[tuple[str, Path, set[str]]] = []
+    for name in names:
+        try:
+            files = skill_files("opencode", name, root=corpus)
+        except (
+            OSError
+        ):  # trw-fail-silent-allow: an unreadable bundled skill has no baseline, like _framework_content_hashes
+            continue
+        entries += [
+            (f".opencode/skills/{name}/{filename}", installed / name / filename, {hashlib.sha256(data).hexdigest()})
+            for filename, data in files
+        ]
+    return entries
 
 
 def _framework_content_hashes(src: Path) -> set[str]:

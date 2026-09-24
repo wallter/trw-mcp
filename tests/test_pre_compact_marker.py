@@ -211,51 +211,17 @@ def test_a_failed_write_leaves_the_previous_marker_intact(tmp_path: Path, monkey
     assert list(path.parent.glob("*.tmp")) == [], "a failed write must leave no temporary sibling"
 
 
-# --- PRD-CORE-258-FR10: the writer stamps the marker's owner ---
+# --- The checkpoint writer targets THIS session's marker ---
 
 
-def test_the_writer_stamps_the_owner_pin_key_and_a_diagnostic_pid(tmp_path: Path) -> None:
-    """The marker names WHO compacted, so only that session is armed by it.
-
-    The identity is a pin key, not a FastMCP ``session_id``: PRD-FIX-118 built
-    ``resolve_pin_key`` and the hook helper ``trw_pin_key`` to resolve the same
-    string, which is the one identifier an MCP server and a shell hook can both
-    observe.
-    """
-    import os
-
+def test_the_checkpoint_writer_writes_this_sessions_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ownership is the path: the checkpoint tool's marker lands in the session's own file."""
     from trw_mcp.state.pre_compact_marker import read_pre_compact_marker
     from trw_mcp.tools.checkpoint import _write_compact_state
 
+    monkeypatch.setenv("TRW_SESSION_ID", "session-a")
     run_dir = tmp_path / "run" / "abc"
     (run_dir / "meta").mkdir(parents=True)
-    (tmp_path / ".trw" / "context").mkdir(parents=True)
-    _write_compact_state(
-        tmp_path,
-        run_dir,
-        run_dir / "meta" / "events.jsonl",
-        prd_scope=[],
-        phase="implement",
-        formation="none active",
-        failing_tests=[],
-        ceremony_state={},
-        owner_pin_key="pin-owner",
-    )
-
-    marker = read_pre_compact_marker(tmp_path / ".trw")
-    assert marker is not None
-    assert marker.owner_pin_key == "pin-owner"
-    assert marker.owner_pid == os.getpid()
-
-
-def test_an_omitted_owner_writes_no_owner_field_at_all(tmp_path: Path) -> None:
-    """RISK-006: an ownerless marker keeps the fail-safe blanket behaviour."""
-    from trw_mcp.state.pre_compact_marker import pre_compact_marker_path, read_pre_compact_marker
-    from trw_mcp.tools.checkpoint import _write_compact_state
-
-    run_dir = tmp_path / "run" / "abc"
-    (run_dir / "meta").mkdir(parents=True)
-    (tmp_path / ".trw" / "context").mkdir(parents=True)
     _write_compact_state(
         tmp_path,
         run_dir,
@@ -267,9 +233,7 @@ def test_an_omitted_owner_writes_no_owner_field_at_all(tmp_path: Path) -> None:
         ceremony_state={},
     )
 
-    raw = json.loads(pre_compact_marker_path(tmp_path / ".trw").read_text(encoding="utf-8"))
-    assert "owner_pin_key" not in raw
-    assert "owner_pid" not in raw
+    assert (tmp_path / ".trw" / "context" / "pre_compact" / f"{b'session-a'.hex()}.json").is_file()
+    assert not (tmp_path / ".trw" / "context" / "pre_compact_state.json").exists()
     marker = read_pre_compact_marker(tmp_path / ".trw")
-    assert marker is not None
-    assert marker.owner_pin_key == ""
+    assert marker is not None and marker.phase == "implement"

@@ -271,20 +271,37 @@ class ProtocolRenderer:
         from trw_mcp.bootstrap._client_integration_appendix import (
             render_client_integration_appendix,
         )
+        from trw_mcp.state.claude_md.sections._feedback import render_feedback_reporting
+        from trw_mcp.state.claude_md.sections._memory_routing import render_memory_harmonization
         from trw_mcp.state.claude_md.sections._tool_lifecycle import (
+            DELEGATION_RULE,
             render_deliver_gate_statement,
+            render_offline_substitutes,
         )
 
         # PRD-CORE-215-FR06 + PRD-CORE-218-FR06: the light-ceremony AGENTS.md is
         # the only protocol carrier, so it must still ship the transport-loss
         # retry protocol and the live three-class capability listing.
+        # PRD-QUAL-143-FR01: plus memory routing, feedback and the offline table.
         appendix = render_client_integration_appendix(self.client_profile.client_id or "agents")
         return (
             "TRW tools persist your work across sessions:\n"
             "- **Start**: call `trw_session_start()` to load prior learnings\n"
             "- **Accept completed work**: `trw_deliver()` under the delivery gates\n"
             "- **Verify**: Run project-native checks after meaningful changes \u2014 fix failures before moving on.\n"
-            "\n" + render_deliver_gate_statement() + "\n" + SESSION_BOUNDARY_TEXT + "\n\n" + appendix
+            "\n"
+            + DELEGATION_RULE
+            + "\n"
+            + render_memory_harmonization()
+            + render_feedback_reporting(self.client_profile)
+            + "\n"
+            + render_deliver_gate_statement()
+            + "\n"
+            + SESSION_BOUNDARY_TEXT
+            + "\n"
+            + render_offline_substitutes()
+            + "\n"
+            + appendix
         )
 
     # ------------------------------------------------------------------

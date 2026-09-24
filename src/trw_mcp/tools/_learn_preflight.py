@@ -9,7 +9,7 @@ crash-replayed) once every gate here has ACCEPTED it. Extracted so
 Both helpers deliberately keep their default/collaborator imports function-local
 so they resolve off the SOURCE module at call time — suites that patch
 ``trw_mcp.state.analytics.*``, ``trw_mcp.state.memory_adapter.*``,
-``trw_mcp.clients.llm.LLMClient`` or ``trw_mcp.tools._learn_validator.*`` keep
+or ``trw_mcp.clients.llm.LLMClient`` keep
 seeing their patch through this indirection.
 """
 
@@ -23,7 +23,6 @@ from trw_mcp.tools._learn_side_effects import _content_policy_reject
 from trw_mcp.tools._learning_helpers import is_noise_summary
 
 if TYPE_CHECKING:
-    from trw_mcp.models.config import TRWConfig
     from trw_mcp.models.typed_dicts import LearnResultDict
 
 
@@ -77,13 +76,12 @@ def resolve_learn_deps(
 def run_accept_gates(
     summary: str,
     detail: str,
-    config: TRWConfig,
     log: _LearnLogger,
 ) -> LearnResultDict | None:
     """Run every write-time acceptance gate; return a rejection or ``None``.
 
     Gate order is load-bearing: empty-content check, deterministic noise filter, then the
-    content policy, then the opt-in LLM utility filter. A non-``None`` result is
+    content policy. A non-``None`` result is
     terminal — the caller must return it WITHOUT journaling, because a rejected
     learning must never be durably recorded or replayed.
     """
@@ -117,40 +115,6 @@ def run_accept_gates(
         )
         return cast("LearnResultDict", policy_reject)
 
-    return _llm_utility_gate(summary, detail, config, log)
-
-
-def _llm_utility_gate(
-    summary: str,
-    detail: str,
-    config: TRWConfig,
-    log: _LearnLogger,
-) -> LearnResultDict | None:
-    """PRD-QUAL-062: LLM-based utility scoring (opt-in).
-
-    Gated behind ``config.llm_utility_filter_enabled`` (default False):
-    unconditionally constructing an LLMClient + calling is_high_utility fires a
-    live Claude Haiku API call on every trw_learn with no operator kill-switch,
-    adding undisclosed latency + cost. Only build the client when the operator
-    has explicitly enabled the filter.
-    """
-    if not config.llm_utility_filter_enabled:
-        return None
-    try:
-        from trw_mcp.clients.llm import LLMClient
-        from trw_mcp.tools._learn_validator import is_high_utility
-
-        llm = LLMClient(model="haiku", system_prompt="")
-        if getattr(llm, "_available", True):
-            is_valid, reject_reason = is_high_utility(summary, detail, llm)
-            if not is_valid:
-                return {
-                    "status": "rejected",
-                    "reason": "llm_utility_filter",
-                    "message": f"Rejected by utility filter: {reject_reason}",
-                }
-    except Exception as exc:  # justified: fail-open, LLM utility filter is advisory only
-        log.warning("llm_utility_filter_failed", error=str(exc))
     return None
 
 

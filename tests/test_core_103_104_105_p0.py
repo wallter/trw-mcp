@@ -12,17 +12,6 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
-def _bandit_available() -> bool:
-    """Check if trw-memory bandit module is available."""
-    try:
-        from trw_memory.bandit import BanditSelector  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
 # ---------------------------------------------------------------------------
 # CORE-103: Metadata fields on SurfaceEvent
 # ---------------------------------------------------------------------------
@@ -302,7 +291,7 @@ class TestCeremonyStatePreviousPhase:
         """_from_dict loads previous_phase from dict data."""
         from trw_mcp.state._nudge_state import _from_dict
 
-        state = _from_dict({"phase": "validate", "previous_phase": "implement"})
+        state = _from_dict({"phase": "validate", "previous_phase": "implement", "pool_cooldowns": {}})
         assert state.phase == "validate"
         assert state.previous_phase == "implement"
 
@@ -310,7 +299,7 @@ class TestCeremonyStatePreviousPhase:
         """_from_dict defaults previous_phase to empty when missing."""
         from trw_mcp.state._nudge_state import _from_dict
 
-        state = _from_dict({"phase": "validate"})
+        state = _from_dict({"phase": "validate", "pool_cooldowns": {}})
         assert state.previous_phase == ""
 
 

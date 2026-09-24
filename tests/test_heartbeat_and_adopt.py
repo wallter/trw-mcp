@@ -238,6 +238,37 @@ def test_heartbeat_rate_limit_survives_restart(isolated_project: Path) -> None:
     assert second.get("rate_limited") is True
 
 
+@pytest.mark.parametrize("hotspot", [{"share": 0.8, "cpu_seconds": 900.0}, None], ids=["measured", "unmeasurable"])
+def test_heartbeat_carries_the_servers_own_thread_hotspot(
+    isolated_project: Path, monkeypatch: pytest.MonkeyPatch, hotspot: dict[str, float] | None
+) -> None:
+    """Both return branches carry ``thread_hotspot`` when measured and omit it when not."""
+    import json
+
+    from trw_mcp.state._paths import TRWCallContext, pin_active_run
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache, pin_store_path
+
+    run = _seed_run(isolated_project, "alpha", "20260101T000000Z-aaaa1111")
+    pin_active_run(
+        run, context=TRWCallContext(session_id="sess-hot", client_hint=None, explicit=False, fastmcp_session=None)
+    )
+    monkeypatch.setattr("trw_mcp.tools._ceremony_heartbeat.own_thread_hotspot", lambda: hotspot)
+    hb, sns = _heartbeat(_make_server()), SimpleNamespace(session_id="sess-hot")
+
+    rate_limited = hb(ctx=sns, message="just pinned")
+    raw = json.loads(pin_store_path().read_text())
+    raw["sess-hot"]["last_heartbeat_ts"] = (
+        (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat().replace("+00:00", "Z")
+    )
+    pin_store_path().write_text(json.dumps(raw))
+    invalidate_pin_store_cache()
+    beat = hb(ctx=sns, message="two minutes later")
+
+    assert (rate_limited["rate_limited"], beat["rate_limited"]) == (True, False)
+    assert [result.get("thread_hotspot") for result in (rate_limited, beat)] == [hotspot, hotspot]
+    assert ("thread_hotspot" in beat) is (hotspot is not None)
+
+
 def test_heartbeat_no_pin_returns_error_without_creating_pin(
     isolated_project: Path,
 ) -> None:

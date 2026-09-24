@@ -102,7 +102,6 @@ def test_codex_profile_contract_is_explicit() -> None:
     assert profile.include_delegation is True
     assert profile.skills_enabled is False
     assert profile.mcp_instructions_enabled is False
-    assert profile.learning_recall_enabled is True
 
 
 @pytest.mark.unit
@@ -411,4 +410,63 @@ def test_profile_explain_delegation_enabled_matches_rendered_surface(client_id: 
     assert row.delegation_enabled == (_DELEGATION_HEADING in rendered), (
         f"{client_id}: delegation_enabled={row.delegation_enabled} but rendered "
         f"presence={_DELEGATION_HEADING in rendered}"
+    )
+
+
+# PRD-QUAL-143-FR05 (R2-013, R2-023): golden ``write_target_label`` captured
+# on main before ``catalog.py`` was changed to read ``WriteTargets``'
+# declared precedence instead of its own hand-written if/elif chain.
+_FR05_WRITE_TARGET_LABEL_GOLDEN: dict[str, str] = {
+    "claude-code": "CLAUDE.md",
+    "opencode": "AGENTS.md",
+    "cursor-ide": ".cursor/rules/",
+    "cursor-cli": "AGENTS.md",
+    "codex": "AGENTS.md",
+    "copilot": ".github/copilot-instructions.md",
+    "antigravity-cli": "ANTIGRAVITY.md",
+    "grok": "AGENTS.md",
+}
+
+
+@pytest.mark.unit
+def test_write_target_label_matches_golden_for_every_bundled_profile() -> None:
+    """Catalog rows for every bundled profile stay byte-identical to the
+    golden captured on main before FR05's refactor.
+    """
+    from trw_mcp.client_profiles.catalog import build_client_profile_rows
+
+    rows = {row.client_id: row for row in build_client_profile_rows()}
+    assert set(rows) == set(_FR05_WRITE_TARGET_LABEL_GOLDEN)
+    for client_id, expected_label in _FR05_WRITE_TARGET_LABEL_GOLDEN.items():
+        assert rows[client_id].write_target_label == expected_label, (
+            f"{client_id}: write_target_label changed from golden {expected_label!r} "
+            f"to {rows[client_id].write_target_label!r}"
+        )
+
+
+@pytest.mark.unit
+def test_catalog_write_target_label_has_no_hand_coded_precedence_chain() -> None:
+    """``catalog.py`` SHALL iterate ``WriteTargets``' declared precedence
+    order rather than encoding its own if/elif chain (R2-013, R2-023).
+
+    Red on unchanged code: ``_write_target_label`` hard-codes four
+    sequential ``if targets.<flag>`` checks instead of reading an order
+    declared once on ``WriteTargets``.
+    """
+    import inspect
+
+    from trw_mcp.client_profiles.catalog import _write_target_label
+    from trw_mcp.models.config._client_profile import WriteTargets
+
+    assert hasattr(WriteTargets, "PRECEDENCE"), (
+        "WriteTargets must declare its write-target precedence order once, as data on the model"
+    )
+
+    source = inspect.getsource(_write_target_label)
+    assert "WriteTargets.PRECEDENCE" in source, (
+        "_write_target_label must iterate WriteTargets.PRECEDENCE rather than encoding its own chain"
+    )
+    assert source.count("if targets.") <= 1, (
+        "_write_target_label still hand-codes a per-flag if/elif chain instead of looping "
+        "over the declared WriteTargets.PRECEDENCE order"
     )

@@ -17,7 +17,6 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from trw_mcp.code_index.search import lexical_search, response_to_dict, symbol_search
-from trw_mcp.tools.telemetry import log_tool_call
 
 
 def _with_unmask_hint(payload: dict[str, object]) -> dict[str, object]:
@@ -67,7 +66,6 @@ def register_code_search_tools(server: FastMCP) -> None:
     """Register code-search MCP tools."""
 
     @server.tool(name="trw_code_search", output_schema=None)
-    @log_tool_call
     def trw_code_search_tool(
         repo_root: str,
         query: str,
@@ -83,7 +81,6 @@ def register_code_search_tools(server: FastMCP) -> None:
         return trw_code_search(repo_root=repo_root, query=query, top_k=top_k, path=path)
 
     @server.tool(name="trw_code_symbol", output_schema=None)
-    @log_tool_call
     def trw_code_symbol_tool(
         repo_root: str,
         symbol: str,

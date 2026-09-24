@@ -222,6 +222,41 @@ def test_cli_prepare_then_commit_end_to_end(tmp_path: Path, capsys: pytest.Captu
     assert str(result["candidate_ref"]).startswith("refs/trw/commit-candidates/run-cli/")
 
 
+def test_cli_recover_candidate_reconciles_planted_journals(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from trw_mcp.models.git_commit_transaction import TransactionJournal, TransactionState
+    from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+    from trw_mcp.state.git_commit_transaction import write_journal
+
+    repo = _init_repo(tmp_path)
+    recover = SUBCOMMAND_HANDLERS["recover-candidate"]
+    write_journal(repo, TransactionJournal(transaction_id="txn-crash", state=TransactionState.REVIEWED))
+    lost = "refs/trw/commit-candidates/run-cli/txn-lost"
+    write_journal(
+        repo,
+        TransactionJournal(
+            transaction_id="txn-lost",
+            state=TransactionState.CANDIDATE_PUBLISHED,
+            candidate_ref=lost,
+            candidate_oid="a" * 40,
+        ),
+    )
+
+    recover(argparse.Namespace(transaction_id="txn-crash", repo_root=str(repo)))
+    assert _last_json(capsys.readouterr().out) == {
+        "transaction_id": "txn-crash",
+        "state": "recovered",
+        "reason": "",
+        "recovery_action": "safe_to_rebuild_and_re_review",
+    }
+    recover(argparse.Namespace(transaction_id="txn-lost", repo_root=str(repo)))
+    failed = _last_json(capsys.readouterr().out)
+    assert (failed["state"], failed["reason"]) == ("failed", "published_candidate_ref_missing")
+    with pytest.raises(SystemExit) as exit_info:
+        recover(argparse.Namespace(transaction_id="txn-absent", repo_root=str(repo)))
+    assert exit_info.value.code == 1
+    assert "no journal" in str(_last_json(capsys.readouterr().out)["error"])
+
+
 def test_cli_missing_message_file_exits_two(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
 

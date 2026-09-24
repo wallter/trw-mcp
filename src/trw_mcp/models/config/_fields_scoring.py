@@ -9,8 +9,6 @@ Covers sections 8-10, 12 of the original _main_fields.py:
 
 from __future__ import annotations
 
-from pydantic import Field
-
 from trw_mcp.models.config._defaults import DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
 
 
@@ -31,18 +29,8 @@ class _ScoringFields:
     learning_decay_use_exponent: float = 0.6
     learning_utility_prune_threshold: float = 0.10
     learning_utility_delete_threshold: float = 0.05
-    q_learning_rate: float = 0.15
-    q_recurrence_bonus: float = 0.02
-    q_cold_start_threshold: int = 3
     source_human_utility_boost: float = 0.1
     access_count_utility_boost_cap: float = 0.15
-
-    # -- Explicit historical contradiction API (CORE268 compatibility) --
-    # Read by apply_contradiction_penalty, which the delivery gate calls automatically
-    # (PRD-CORE-244-FR04, restored 2026-09-11) and explicit callers may also invoke.
-    # Default recall and maintenance no longer settle Q observations. Their
-    # stored-evidence ranking penalty is assertion_failure_penalty instead.
-    contradiction_penalty_reward: float = Field(default=0.4, ge=0.0, le=1.0)
 
     # -- Outcome correlation --
 
@@ -54,7 +42,6 @@ class _ScoringFields:
     # ``.trw/config.yaml`` override are unaffected (env > yaml > default).
     learning_outcome_correlation_window_minutes: int = 7
     learning_outcome_correlation_scope: str = "session"
-    learning_outcome_history_cap: int = 20
     # CORE-116 RA2: targeted recall uses this only to enable (>0) or disable
     # (=0) secondary utility preferences; it cannot override query relevance.
     # Wildcard recall retains the historical relevance/utility blend.
@@ -72,7 +59,8 @@ class _ScoringFields:
     outcome_weight_p0_defects: float = -1.5
     outcome_weight_velocity: float = 0.5
     outcome_weight_learning_rate: float = 0.3
-    proximal_reward_weight: float = 0.3
+    # proximal_reward_weight removed under PRD-CORE-291 (slice 2): no
+    # production reader.
 
     # -- Skill lifecycle (PRD-QUAL-111) --
     # DEFAULT-OFF / no-op (NFR01): with every field at its default,

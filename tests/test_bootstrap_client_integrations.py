@@ -145,5 +145,5 @@ class TestInitProjectExceptionBoundary:
         assert any("not a git repository" in w for w in result.get("warnings", []))
         # The framework bodies deployed despite the missing .git/.
         frameworks = tmp_path / ".trw" / "frameworks"
-        assert (frameworks / "FRAMEWORK-CORE.md").is_file()
+        assert (frameworks / "FRAMEWORK.md").is_file()
         assert (frameworks / "DEPLOYMENT.json").is_file()

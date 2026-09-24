@@ -27,14 +27,19 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 init_hook_timer
 
 _payload=$(cat) || exit 0
-_tool_name=""
-if command -v jq >/dev/null 2>&1; then
-  _tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
-fi
+# jq only -- no shell JSON parser fallback (PRD-FIX-149 FR06 binding decision).
+_tool_name=$(_json_str_field "$_payload" tool_name) || true
 
 case "$_tool_name" in
   *trw_deliver*) ;;
-  *) exit 0 ;;
+  *)
+    # Without jq, tool_name could not be read, so a genuine trw_deliver call is
+    # indistinguishable from any other tool here. This hook never blocks either
+    # way; log ONE diagnostic disclosing the gap instead of silently guessing
+    # "not a deliver call" (PRD-FIX-149 FR06).
+    command -v jq >/dev/null 2>&1 || log_hook_execution "PreToolUse:deliver-gate" "unknown" "0" "jq_unavailable=1"
+    exit 0
+    ;;
 esac
 
 _project_root="$(get_repo_root)" || exit 0

@@ -342,6 +342,26 @@ def _has_ide_appendix(rules_file: Path) -> bool:
         return False
 
 
+def cursor_rules_mdc_body(trw_section: str, client_id: str) -> str:
+    """Pure content builder for ``.cursor/rules/trw-ceremony.mdc``.
+
+    Extracted from :func:`generate_cursor_rules_mdc` so the manifest recorder
+    (``_managed_client_artifacts.py``) can compute the exact bytes either
+    client would write without touching disk -- a second copy of this string
+    is how a recorder drifts from what the installer actually produces.
+    """
+    appendix = _CURSOR_IDE_APPENDIX if client_id == "cursor-ide" else ""
+    return (
+        "---\n"
+        'description: "TRW ceremony enforcement — ensures learnings persist across sessions"\n'
+        "globs: []\n"
+        "alwaysApply: true\n"
+        "---\n\n"
+        f"{trw_section}\n"
+        f"{appendix}"
+    )
+
+
 def generate_cursor_rules_mdc(
     target_dir: Path,
     trw_section: str,
@@ -384,15 +404,7 @@ def generate_cursor_rules_mdc(
     rules_file = rules_dir / "trw-ceremony.mdc"
 
     appendix = _CURSOR_IDE_APPENDIX if client_id == "cursor-ide" else ""
-    content = (
-        "---\n"
-        'description: "TRW ceremony enforcement — ensures learnings persist across sessions"\n'
-        "globs: []\n"
-        "alwaysApply: true\n"
-        "---\n\n"
-        f"{trw_section}\n"
-        f"{appendix}"
-    )
+    content = cursor_rules_mdc_body(trw_section, client_id)
 
     # Existence check determines create-vs-update classification.
     # ``force`` is reserved for future smart-merge variants; here the file is

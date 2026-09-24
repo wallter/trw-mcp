@@ -30,6 +30,15 @@ from trw_mcp.state._recall_signals import current_recall_signals
 logger = structlog.get_logger(__name__)
 
 
+def is_system_canary(entry: MemoryEntry) -> bool:
+    """A pinned tamper-detection decoy (``trw_memory.security._runtime_canary``), not a learning.
+
+    The first write to a store seeds these into ``default`` as ACTIVE rows, so a
+    reader that lists or counts learnings must skip them.
+    """
+    return entry.metadata.get("system_canary") == "true"
+
+
 def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> LearningEntryDict:
     """Convert a :class:`MemoryEntry` to the dict shape returned by trw_recall.
 
@@ -85,11 +94,7 @@ def _memory_to_learning_dict(entry: MemoryEntry, *, compact: bool = False) -> Le
             "access_count": entry.access_count,
             # PRD-FIX-104: expose recall_count so feedback_decay_score can fire in entry_utility
             "recall_count": entry.recall_count,
-            "helpful_count": entry.helpful_count,
-            "unhelpful_count": entry.unhelpful_count,
             "last_accessed_at": (entry.last_accessed_at.date().isoformat() if entry.last_accessed_at else None),
-            "q_value": entry.q_value,
-            "q_observations": entry.q_observations,
             "recurrence": entry.recurrence,
             "outcome_history": entry.outcome_history,
             "shard_id": entry.metadata.get("shard_id", None),

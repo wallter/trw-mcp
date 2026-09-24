@@ -95,11 +95,14 @@ def _normalize_aliases(entry_dict: dict[str, Any]) -> dict[str, Any]:
         elif alias in d:
             d.pop(alias)
 
-    # tier_default: default_tier
-    if "default_tier" in d and "tier_default" not in d:
-        d["tier_default"] = d.pop("default_tier")
-    elif "default_tier" in d:
-        d.pop("default_tier")
+    # tier_default / tier_min / default_tier were removed from ChannelEntry
+    # 2026-09-22 (RC-014): nothing read them to change behavior. Deliberately
+    # NOT normalized here (unlike the aliases above) — the operator's
+    # standing "no compat shims" policy applies, and ChannelEntry's
+    # extra="forbid" means an old on-disk manifest that still carries any of
+    # these three keys will fail to load with a clear validation error. The
+    # upgrade path is a clean reinstall (`trw-mcp update-project` regenerates
+    # manifests from the bundled templates, which no longer emit these keys).
 
     # file: path | target_path  (when string, not to be confused with surface enum)
     for alias in ("path", "target_path"):

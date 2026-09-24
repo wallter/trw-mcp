@@ -117,11 +117,10 @@ class TestDimensionWeights:
         )
         assert total == 100.0
 
-    def test_stub_weight_defaults_are_zero(self) -> None:
-        config = TRWConfig()
-        assert config.validation_smell_weight == 0.0
-        assert config.validation_readability_weight == 0.0
-        assert config.validation_ears_weight == 0.0
+    def test_stub_weights_are_removed(self) -> None:
+        """The zero-weight stub dimensions had no reader and were deleted (PRD-CORE-291)."""
+        fields = TRWConfig.model_fields
+        assert not {"validation_smell_weight", "validation_readability_weight", "validation_ears_weight"} & set(fields)
 
     def test_active_weights_values(self) -> None:
         config = TRWConfig()

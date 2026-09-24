@@ -19,6 +19,7 @@ and job record only carry the prompt-redacted ``argv_redacted``.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 import structlog
@@ -29,6 +30,7 @@ from trw_mcp.dispatch._jobs import _TERMINAL_STATUSES, get_status, start_backgro
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
 from trw_mcp.dispatch._runner import dispatch
 from trw_mcp.dispatch._types import DispatchResult
+from trw_mcp.dispatch._usage import record_child_usage, record_dispatch_policy
 from trw_mcp.models.config import get_config
 
 logger = structlog.get_logger(__name__)
@@ -125,31 +127,30 @@ def register_dispatch_tools(server: FastMCP) -> None:
         client: str | None = None,
         role: str | None = None,
         model: str | None = None,
+        effort: str = "",
         timeout_s: int | None = None,
         read_only: bool | None = None,
         allow_writes: bool = False,
         cwd: str | None = None,
         isolate: bool = True,
-        use_pty: bool = False,
         posture: str = "default",
         with_trw: bool | None = None,
         wait: bool = False,
         verbose: bool = False,
     ) -> dict[str, object]:
-        """Delegate a prompt to a sub-agent — another coding-agent CLI, client
-        in {clients}. Use when you need an independent
-        agent's review. Async by default (job_id; poll trw_dispatch_status),
-        or wait=True (<=120s) for an inline result. Read-only unless
-        allow_writes=True.
+        """Delegate a prompt to a sub-agent CLI in {clients}.
+        Use when you need an independent agent's review. Async by default
+        (job_id; poll trw_dispatch_status), or wait=True (<=120s) inline.
+        Read-only unless allow_writes=True.
 
-        Output: job_id + status to poll; inline result when wait=True; error + exit_code if rejected.
+        Output: job_id+status to poll, or an inline result if wait=True; error+exit_code if rejected.
 
         Args:
             prompt: instruction for the child; never echoed back.
-            posture: "reviewer" bounds the child's own TRW tools to nine
-                read-only ones; never with allow_writes.
-            with_trw: give the child a TRW session on this project (claude,
-                codex only); never with posture="reviewer".
+            posture: "reviewer" limits the child to nine read-only TRW
+                tools; excludes allow_writes.
+            with_trw: gives the child a TRW session on this project (claude,
+                codex only); excludes posture="reviewer".
             verbose: raw streams on success.
         """
         # Nested-launch guard (PRD-CORE-281): FIRST, ahead of config, so a server
@@ -240,11 +241,12 @@ def register_dispatch_tools(server: FastMCP) -> None:
                 prompt=prompt,
                 role=role,
                 model=model,
+                effort=effort or None,  # "" = not requested; the smallest schema under the signature budget
                 cwd=resolved_cwd,
                 timeout_s=timeout_s,
                 read_only=resolved_read_only,
                 isolate=isolate,
-                use_pty=use_pty,
+                use_pty=False,  # MCP launches no PTY; the CLI keeps --pty (PRD-CORE-290-FR03 budget)
                 posture=posture,
                 with_trw=with_trw,
                 dispatch_cfg=dispatch_cfg,
@@ -264,10 +266,14 @@ def register_dispatch_tools(server: FastMCP) -> None:
                     ),
                     "exit_code": 2,
                 }
+            child_id = f"sync-{uuid.uuid4().hex}"
+            policy = record_dispatch_policy(req, child_id)  # PRD-CORE-290-FR03
             result = dispatch(req)
+            record_child_usage(result, child_id=child_id)  # PRD-CORE-290-FR01
             return {
                 "job_id": None,
                 "status": "succeeded" if result.ok else "failed",
+                "policy": policy,
                 "result": _result_payload_capped(result, verbose=verbose),
             }
 
@@ -277,6 +283,7 @@ def register_dispatch_tools(server: FastMCP) -> None:
             "status": job.status,
             "client": job.client,
             "argv_redacted": job.argv_redacted,
+            "policy": record_dispatch_policy(req, job.job_id),
         }
 
     @server.tool(output_schema=None)
@@ -308,11 +315,13 @@ def register_dispatch_tools(server: FastMCP) -> None:
 
             result = get_result(job_id)
             if result is not None:
+                record_child_usage(result, child_id=job_id)  # PRD-CORE-290-FR01; a re-poll counts once
                 result_payload = _result_payload_capped(result, verbose=verbose, result_path=job.result_path)
 
         return {
             "job_id": job.job_id,
             "status": job.status,
             "terminal": terminal,
+            "policy": job.policy,
             "result": result_payload,
         }

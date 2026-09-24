@@ -104,10 +104,13 @@ def test_length_caps_preserved() -> None:
     assert _content_policy_reject(summary="s", detail="y" * 4001)["reason"] == "detail_too_long"  # type: ignore[index]
 
 
-# --- FR1 rollout parity: trw_learn_update and trw_recall accept the same shapes ---
-# The coercion shipped on trw_learn only. The asymmetry was a live trap: a caller
-# that recorded a learning with tags="a,b" then hit a pydantic list_type rejection
-# on the update path for the identical value (observed 2026-09-10).
+# --- FR1 rollout parity: trw_learn's update mode and trw_recall accept the same
+# shapes as create mode --- The coercion shipped on trw_learn only. The
+# asymmetry was a live trap: a caller that recorded a learning with tags="a,b"
+# then hit a pydantic list_type rejection on the update path for the identical
+# value (observed 2026-09-10). PRD-CORE-291 merged the standalone
+# trw_learn_update tool into trw_learn's update mode (learning_id set), so both
+# modes now share the SAME registered function and signature.
 
 
 def _tool_params(name: str) -> dict[str, object]:
@@ -130,9 +133,13 @@ def _tool_params(name: str) -> dict[str, object]:
     return dict(inspect.signature(captured[name]).parameters)
 
 
-@pytest.mark.parametrize("tool", ["trw_learn", "trw_learn_update", "trw_recall"])
+@pytest.mark.parametrize("tool", ["trw_learn", "trw_recall"])
 def test_tags_annotation_accepts_bare_str_on_every_learning_tool(tool: str) -> None:
-    """All three tools advertise ``list[str] | str | None``, not just trw_learn.
+    """Both registered tools advertise ``list[str] | str | None``, not just trw_learn.
+
+    ``trw_learn`` covers both create and update mode (learning_id set) since
+    PRD-CORE-291 merged the standalone ``trw_learn_update`` tool into it — one
+    signature, so this no longer needs a third parametrization.
 
     The module uses ``from __future__ import annotations``, so the signature
     carries the annotation as a STRING — hence union members are parsed by
@@ -149,5 +156,5 @@ def test_tags_annotation_accepts_bare_str_on_every_learning_tool(tool: str) -> N
 
 
 def test_coerce_tags_empty_list_is_preserved_not_nulled() -> None:
-    """trw_learn_update documents ``[] clears it`` — coercion must not turn [] into None."""
+    """trw_learn's update mode documents ``[] clears it`` — coercion must not turn [] into None."""
     assert _coerce_tags([]) == []

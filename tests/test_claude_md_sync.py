@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from tests._ide_detection_isolation import isolate_ide_detection
+from tests._layout import requires_monorepo
 from trw_mcp.state.claude_md._parser import TRW_MARKER_END, TRW_MARKER_START
 
 # ---------------------------------------------------------------------------
@@ -317,8 +318,6 @@ class TestInstructionsSync:
         (tmp_path / ".opencode").mkdir()
         (tmp_path / "CLAUDE.md").write_text("# My Project\n", encoding="utf-8")
 
-        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
-        # so pin instruction_externalize="off" to keep exercising the inline path.
         from trw_mcp.models.config import TRWConfig
 
         trw_dir = tmp_path / ".trw"
@@ -327,7 +326,7 @@ class TestInstructionsSync:
         (trw_dir / "reflections").mkdir(exist_ok=True)
         (trw_dir / "context").mkdir(exist_ok=True)
         (trw_dir / "patterns").mkdir(exist_ok=True)
-        config = TRWConfig(trw_dir=str(trw_dir), instruction_externalize="off")
+        config = TRWConfig(trw_dir=str(trw_dir))
 
         _run_sync(tmp_path, client="all", config=config)
 
@@ -569,3 +568,142 @@ class TestCanonicalEditPropagates:
             "Canonical edit did not propagate to rendered CLAUDE.md — "
             "renderer still reads from static strings (expected until PRD-QUAL-076)."
         )
+
+
+# ---------------------------------------------------------------------------
+# PRD-CORE-291-FR09: phantom ``build_check_result`` field claim corrected
+# ---------------------------------------------------------------------------
+
+
+def test_deliver_gate_text_uses_real_fields() -> None:
+    """The deliver-gate condition names real trw_build_check response fields.
+
+    ``trw_build_check`` (trw-mcp/src/trw_mcp/tools/build/_registration.py)
+    never returns a ``build_check_result`` field — that name is an internal
+    ceremony-state attribute (``_ceremony_state_model.py``), not part of the
+    tool's typed response. The deliver-gate prose (both the generator source
+    and every file it regenerates) must instead cite ``tests_passed`` /
+    ``static_checks_clean``, the fields the tool actually returns. A prior
+    audit found the phantom field string still live in
+    ``docs/documentation/tool-lifecycle.md``; this is the regression guard
+    that keeps it from coming back.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    phantom = "build_check_result=pass"
+    real_fields = ("tests_passed", "static_checks_clean")
+
+    checked = [
+        repo_root / "docs" / "documentation" / "tool-lifecycle.md",
+        repo_root / "trw-mcp" / "src" / "trw_mcp" / "state" / "claude_md" / "sections" / "_tool_lifecycle.py",
+        repo_root / "trw-mcp" / "src" / "trw_mcp" / "state" / "claude_md" / "renderers" / "_review_and_opencode.py",
+        repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "surfaces" / "tool-lifecycle.md",
+    ]
+
+    offenders_with_phantom: list[str] = []
+    offenders_missing_real_fields: list[str] = []
+    for path in checked:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        if phantom in text:
+            offenders_with_phantom.append(str(path))
+        if "Do NOT call `trw_deliver` unless" in text and not all(field in text for field in real_fields):
+            offenders_missing_real_fields.append(str(path))
+
+    assert not offenders_with_phantom, f"Phantom field string {phantom!r} still present in: {offenders_with_phantom}"
+    assert not offenders_missing_real_fields, (
+        "Deliver-gate condition text does not cite the real trw_build_check "
+        f"response fields {real_fields}: {offenders_missing_real_fields}"
+    )
+
+
+@requires_monorepo
+def test_tool_lifecycle_doc_mirror_regenerated_matches_committed_copy() -> None:
+    """Regenerate-and-diff: the docs/ mirror is byte-identical to a fresh render.
+
+    ``docs/documentation/tool-lifecycle.md`` is a monorepo-only path — the
+    public trw-mcp package does not ship ``docs/``.
+
+    FR09's own pass_condition calls for "a regenerate-and-diff test", not a
+    static grep of already-committed files — a grep cannot catch the doc
+    mirror drifting from its canonical source if someone hand-edits
+    ``docs/documentation/tool-lifecycle.md`` without regenerating it.
+    ``docs/documentation/tool-lifecycle.md`` is a byte mirror of the bundled
+    canonical ``trw-mcp/src/trw_mcp/data/surfaces/tool-lifecycle.md``
+    (direction flipped under PRD-QUAL-104 FR02, see
+    ``scripts/sync-instruction-surfaces.py``'s module docstring) -- this test
+    regenerates the mirror the same way that script does (read the canonical
+    bundled source through the production loader, not a second copy of the
+    read logic) and diffs it against the tracked mirror.
+    """
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import load_tool_lifecycle
+
+    repo_root = Path(__file__).resolve().parents[2]
+    mirror_path = repo_root / "docs" / "documentation" / "tool-lifecycle.md"
+
+    regenerated = load_tool_lifecycle()
+    committed = mirror_path.read_text(encoding="utf-8")
+
+    assert regenerated == committed, (
+        "docs/documentation/tool-lifecycle.md has drifted from the canonical bundled source "
+        "(trw-mcp/src/trw_mcp/data/surfaces/tool-lifecycle.md) it should be a byte mirror of. "
+        "Run scripts/sync-instruction-surfaces.py and commit both."
+    )
+    assert "build_check_result=pass" not in regenerated, (
+        "The regenerated (not just the committed) tool-lifecycle body still carries the "
+        "phantom build_check_result field."
+    )
+    assert "tests_passed" in regenerated and "static_checks_clean" in regenerated
+
+
+def test_deliver_gate_statement_regenerated_from_canonical_source() -> None:
+    """The two named generator functions, called fresh, never emit the phantom field.
+
+    Calls the actual production renderers -- ``render_deliver_gate_statement``
+    (``_tool_lifecycle.py``, sourced from the bundled canonical file at
+    runtime) and ``render_antigravity_instructions`` (``_review_and_opencode.py``,
+    which carries its own literal deliver-gate block) -- rather than grepping
+    their source text, so a future edit that reintroduces the phantom field
+    through either path is caught even if it does not touch the string this
+    test's grep-based sibling checks for verbatim.
+    """
+    from trw_mcp.state.claude_md.renderers._review_and_opencode import render_antigravity_instructions
+    from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
+
+    for rendered in (render_deliver_gate_statement(), render_antigravity_instructions()):
+        assert "build_check_result=pass" not in rendered
+        assert "tests_passed" in rendered
+        assert "static_checks_clean" in rendered
+
+
+def test_deliver_gate_phantom_field_grep_repo_wide() -> None:
+    """A repo-wide grep for the literal phantom string returns zero matches.
+
+    Acceptance criterion (PRD-CORE-291-FR09): "a grep for the literal string
+    build_check_result=pass across docs/documentation and
+    trw-mcp/src/trw_mcp/state/claude_md returns zero matches."
+
+    ``docs/documentation`` is monorepo-only (the public package ships no
+    ``docs/``); ``src/trw_mcp/state/claude_md`` ships in the package and is
+    addressed from :data:`PACKAGE_ROOT` so this still runs in the public
+    layout. A missing grep target previously made ``grep`` exit 2 (usage
+    error, not "no matches") and the assertion misread that as a finding.
+    """
+    import subprocess
+
+    from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT
+
+    targets = [PACKAGE_ROOT / "src" / "trw_mcp" / "state" / "claude_md"]
+    if MONOREPO_ROOT is not None:
+        targets.append(MONOREPO_ROOT / "docs" / "documentation")
+    targets = [t for t in targets if t.is_dir()]
+    assert targets, "no grep targets resolved (package layout changed?)"
+
+    result = subprocess.run(
+        ["grep", "-r", "-l", "build_check_result=pass", *(str(t) for t in targets)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # grep exit code 1 means "no matches" — that is the passing case.
+    assert result.returncode == 1, f"Found phantom field references: {result.stdout}"

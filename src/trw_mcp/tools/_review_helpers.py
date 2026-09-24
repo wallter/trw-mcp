@@ -409,6 +409,8 @@ def _persist_review_artifact(
     review_payload["review_plan_id"] = receipt_outcome.plan_id
     review_payload["typed_receipt_state"] = receipt_outcome.state
     review_payload["typed_receipt_reason"] = receipt_outcome.reason_code
+    if receipt_outcome.detail:
+        review_payload["typed_receipt_detail"] = receipt_outcome.detail
     if evidence_mode == "enforce" and not receipt_outcome.ok:
         review_payload["substantive"] = False
         review_payload["non_substantive_reason"] = receipt_outcome.reason_code
@@ -422,6 +424,8 @@ def _persist_review_artifact(
         result_payload["review_plan_id"] = receipt_outcome.plan_id
         result_payload["typed_receipt_state"] = receipt_outcome.state
         result_payload["typed_receipt_reason"] = receipt_outcome.reason_code
+        if receipt_outcome.detail:
+            result_payload["typed_receipt_detail"] = receipt_outcome.detail
         if evidence_mode == "enforce" and not receipt_outcome.ok:
             result_payload["substantive"] = False
             result_payload["non_substantive_reason"] = receipt_outcome.reason_code

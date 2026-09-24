@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 from tests._consolidation_test_helpers import make_vec, write_entry
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.consolidation import consolidate_cycle
-from trw_mcp.state.dedup import merge_entries
+from trw_mcp.state.dedup import merge_into_survivor
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
@@ -35,7 +35,7 @@ class TestMergeKeepsIncomingContent:
             existing_detail="a long existing detail that is certainly longer than the new one",
             new_detail="short but distinct fact",
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         detail = str(reader.read_yaml(path)["detail"])
         assert detail.endswith(f"\n---\nMerged from L-new01 on {_today()}:\nshort but distinct fact")
 
@@ -44,7 +44,7 @@ class TestMergeKeepsIncomingContent:
 
         path, new_data, reader, writer = make_merge_scenario(tmp_path)
         new_data["summary"] = "incoming summary that says something new"
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         merged = reader.read_yaml(path)
         assert merged["summary"] == "summary"  # the survivor's summary is unchanged
         assert str(merged["detail"]).endswith(
@@ -59,7 +59,7 @@ class TestMergeKeepsIncomingContent:
             tmp_path, existing_detail="alpha. beta gamma.", new_detail="beta gamma."
         )
         new_data["summary"] = "summary"
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         assert reader.read_yaml(path)["detail"] == "alpha. beta gamma."
 
     def test_a_multiline_incoming_summary_stays_on_one_header_line(self, tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ class TestMergeKeepsIncomingContent:
 
         path, new_data, reader, writer = make_merge_scenario(tmp_path, new_detail="body")
         new_data["summary"] = "first line\nsecond line"
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         detail = str(reader.read_yaml(path)["detail"])
         assert detail.endswith(f"\n---\nMerged from L-new01 on {_today()}: first line second line\nbody")
 
@@ -76,7 +76,7 @@ class TestMergeKeepsIncomingContent:
 
         path, new_data, reader, writer = make_merge_scenario(tmp_path)
         new_data["summary"] = "summary"
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         detail = str(reader.read_yaml(path)["detail"])
         assert detail.endswith(f"\n---\nMerged from L-new01 on {_today()}:\nlonger new detail with more info")
 

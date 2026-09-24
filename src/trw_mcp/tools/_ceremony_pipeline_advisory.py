@@ -111,6 +111,13 @@ def step_pipeline_health_advisory(
         # so the compact advisory and the escalated warning cannot rest on two
         # different thresholds for the same store.
         health = _parent.step_pipeline_health(trw_dir, config)
+        # The daemon owns the vectors, so its measured coverage is the only one
+        # session start reports; an unmeasured probe reports no ratio at all.
+        coverage = health.get("embedding_coverage")
+        if isinstance(coverage, dict) and coverage.get("measured", True):
+            ratio = coverage.get("coverage_ratio")
+            if isinstance(ratio, float):
+                results["embeddings_coverage_ratio"] = ratio
         if bool(health.get("degraded")):
             advisory = str(health.get("advisory", ""))
             if advisory:

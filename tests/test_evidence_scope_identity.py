@@ -205,7 +205,7 @@ def test_unrelated_normal_events_do_not_invalidate_complete_scope(tmp_path: Path
     run = _journal(tmp_path, ["valid"])
     journal = run / "meta" / "events.jsonl"
     with journal.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps({"event": "tool_invocation", "data": {"tool_name": "trw_recall"}}) + "\n")
+        handle.write(json.dumps({"event": "tool_call", "data": {"tool_name": "trw_recall"}}) + "\n")
     scope = mint_run_owned_scope(run, tmp_path, scope_id="scope")
     assert scope.confidence is ScopeConfidence.VERIFIED
     assert scope.required_paths == ("valid",)

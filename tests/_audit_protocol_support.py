@@ -29,13 +29,19 @@ ADAPTER_PATH = _DATA / "agents" / "trw-adversarial-auditor.md"
 IMPLEMENTER_PATH = _DATA / "agents" / "trw-implementer.md"
 SKILL_PATH = _DATA / "skills" / "trw-audit" / "SKILL.md"
 
-#: All seven authored ``trw-audit/SKILL.md`` projections. Four were guarded
-#: before PRD-QUAL-128; ``.cursor``, ``.github`` and ``.agents`` were not, and
-#: all three carried the drifted 10-row NFR table.
+#: The five authored ``trw-audit/SKILL.md`` projections that still exist as
+#: real files on disk. Before PRD-CORE-291-FR04 this held seven -- the
+#: canonical source, two now-deleted per-client forks
+#: (``data/codex/skills``, ``data/copilot/skills``), and four repo mirrors.
+#: Codex and copilot no longer fork the file (they render the canonical body
+#: at install time, see ``trw_mcp.bootstrap._client_skills``); the deployed
+#: repo-root mirrors for those two clients (``.agents/skills`` for codex,
+#: ``.github/skills`` for copilot) are unaffected by that source-tree deletion
+#: and stay real files here. ``test_rendered_codex_and_copilot_projections``
+#: below covers the two clients' RENDERED text the same way this list covers
+#: the file-based ones.
 SKILL_PROJECTIONS: tuple[Path, ...] = (
     _DATA / "skills" / "trw-audit" / "SKILL.md",
-    _DATA / "codex" / "skills" / "trw-audit" / "SKILL.md",
-    _DATA / "copilot" / "skills" / "trw-audit" / "SKILL.md",
     REPO_ROOT / ".claude" / "skills" / "trw-audit" / "SKILL.md",
     REPO_ROOT / ".cursor" / "skills" / "trw-audit" / "SKILL.md",
     REPO_ROOT / ".github" / "skills" / "trw-audit" / "SKILL.md",
@@ -216,10 +222,10 @@ def report_schema(protocol: Protocol) -> dict[str, Any]:
     return blocks[0]
 
 
-def config_max_audit_cycles() -> int:
-    """The declared default of ``TRWConfig.max_audit_cycles`` (its real owner)."""
-    from trw_mcp.models.config import TRWConfig
-
-    default = TRWConfig.model_fields["max_audit_cycles"].default
-    assert isinstance(default, int)
-    return default
+#: TRWConfig.max_audit_cycles (this constant's former "real owner") was
+#: deleted under PRD-CORE-291 (slice 2): no production reader. Kept here as a
+#: plain constant, not read from config, purely so the FR11 negative-fixture
+#: regression (C21) can still prove the single-source doc check fails closed
+#: when "Maximum audit cycles before escalation: N" is planted with a
+#: different N.
+AUDIT_MAX_CYCLES = 3

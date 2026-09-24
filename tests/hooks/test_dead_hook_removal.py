@@ -50,7 +50,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 #: absent from ALL of them: a stale bundle-hashes entry makes an install verify
 #: content that no longer exists, and a stale manifest entry is what the update
 #: sweep reads.
-_DELETED = ("completion-gate.sh", "helper-idle.sh", "phase-cycle-stop.sh", "lib-ide-adapter.sh")
+#: ``validate-prd-write.sh`` joined them under the rule "a bundled hook ships only when
+#: it is registered, or sourced by a registered hook": it denied every write outside
+#: PRD/run/memory paths, so the only carrier that registered it (the plugin, on an
+#: unscoped Write|Edit matcher) denied ordinary source edits, and a PRD-scoped matcher
+#: would make it vacuous -- on PRD paths it always allows.
+_DELETED = (
+    "completion-gate.sh",
+    "helper-idle.sh",
+    "phase-cycle-stop.sh",
+    "lib-ide-adapter.sh",
+    "validate-prd-write.sh",
+)
 
 
 def _bundle_hash_keys() -> set[str]:

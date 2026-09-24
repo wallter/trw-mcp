@@ -22,12 +22,15 @@ _CODEX_SKILL_KEYS = {"name", "description", "allowed-tools", "license", "metadat
 
 
 def _skill_frontmatter(path: Path) -> dict[str, object]:
-    content = path.read_text(encoding="utf-8")
-    assert content.startswith("---\n"), f"missing frontmatter: {path}"
+    return _skill_frontmatter_text(path.read_text(encoding="utf-8"), str(path))
+
+
+def _skill_frontmatter_text(content: str, label: str) -> dict[str, object]:
+    assert content.startswith("---\n"), f"missing frontmatter: {label}"
     closing = content.find("\n---", 4)
-    assert closing != -1, f"unterminated frontmatter: {path}"
+    assert closing != -1, f"unterminated frontmatter: {label}"
     parsed = YAML(typ="safe").load(content[4:closing])
-    assert isinstance(parsed, dict), f"frontmatter must be a mapping: {path}"
+    assert isinstance(parsed, dict), f"frontmatter must be a mapping: {label}"
     return parsed
 
 
@@ -195,32 +198,66 @@ class TestCodexBootstrap:
         assert "model: claude-" not in content
 
     def test_all_packaged_and_installed_codex_skills_use_supported_frontmatter(self, tmp_path: Path) -> None:
-        """Every Codex skill uses only fields accepted by the current skill schema."""
-        packaged_root = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data" / "codex" / "skills"
-        packaged = sorted(packaged_root.glob("*/SKILL.md"))
-        assert packaged
+        """Every Codex skill uses only fields accepted by the current skill schema.
+
+        Codex no longer forks the skill tree on disk (PRD-CORE-291-FR04); it
+        renders the canonical corpus, so "packaged" is now the rendered text
+        per ``skill_names("codex")`` rather than a glob over a deleted path.
+        Three names (``trw-prd-groom``, ``trw-prd-review``, ``trw-exec-plan``)
+        are internal readiness phases merged into a shared ``trw-prd-ready``
+        directory instead of getting their own installed dir -- unchanged
+        from before, just no longer expressed as "3 fewer packaged dirs".
+        """
+        from trw_mcp.bootstrap._client_skills import canonical_skills_dir, render_skill_md, skill_names
+
+        names = skill_names("codex")
+        assert names
+        canonical_root = canonical_skills_dir()
+        packaged_rendered = [
+            (name, render_skill_md((canonical_root / name / "SKILL.md").read_text(encoding="utf-8"), "codex"))
+            for name in names
+        ]
 
         install_codex_skills(tmp_path)
         installed_root = tmp_path / ".agents" / "skills"
         installed = sorted(installed_root.glob("*/SKILL.md"))
-        assert len(installed) == len(packaged) - 3
+        merged_phase_count = 3  # trw-prd-groom, trw-prd-review, trw-exec-plan fold into trw-prd-ready
+        assert len(installed) == len(names) - merged_phase_count
 
-        for path in (*packaged, *installed):
+        for name, content in packaged_rendered:
+            unsupported = set(_skill_frontmatter_text(content, name)) - _CODEX_SKILL_KEYS
+            assert not unsupported, f"{name} (rendered) has unsupported Codex skill keys: {sorted(unsupported)}"
+        for path in installed:
             unsupported = set(_skill_frontmatter(path)) - _CODEX_SKILL_KEYS
             assert not unsupported, f"{path} has unsupported Codex skill keys: {sorted(unsupported)}"
 
     def test_repo_codex_skill_projection_matches_packaged_source(self) -> None:
-        """The monorepo `.agents` projection stays byte-identical to packaged Codex skills."""
+        """The monorepo `.agents` projection stays byte-identical to the rendered Codex skill.
+
+        Repo-root mirror parity: expected to fail until mirrors are
+        regenerated (PRD-CORE-291-FR04 deleted the codex fork this test used
+        to compare against; the canonical corpus plus its codex rendering is
+        the new comparison basis, but the on-disk ``.agents/skills`` mirror
+        itself still reflects the pre-migration bytes).
+        """
+        from trw_mcp.bootstrap._client_skills import canonical_skills_dir, render_skill_md, skill_names
+
         repo_root = Path(__file__).resolve().parents[2]
         installed_root = repo_root / ".agents" / "skills"
         if not installed_root.is_dir():
             pytest.skip("monorepo .agents projection not present")
 
-        packaged_root = repo_root / "trw-mcp" / "src" / "trw_mcp" / "data" / "codex" / "skills"
-        for packaged in sorted(packaged_root.glob("*/SKILL.md")):
-            installed = installed_root / packaged.parent.name / "SKILL.md"
+        canonical_root = canonical_skills_dir()
+        readiness_phases = {"trw-prd-groom", "trw-prd-review", "trw-exec-plan"}
+        for name in skill_names("codex"):
+            if name in readiness_phases:
+                continue  # merged into trw-prd-ready/{name}-contract.md, not their own dir
+            expected = render_skill_md(
+                (canonical_root / name / "SKILL.md").read_text(encoding="utf-8"), "codex"
+            ).encode("utf-8")
+            installed = installed_root / name / "SKILL.md"
             assert installed.is_file(), f"missing Codex projection: {installed}"
-            assert installed.read_bytes() == packaged.read_bytes(), f"Codex projection drift: {installed}"
+            assert installed.read_bytes() == expected, f"Codex projection drift: {installed}"
 
     def test_codex_skills_preserve_existing_edits_without_force(self, tmp_path: Path) -> None:
         install_codex_skills(tmp_path)
@@ -473,12 +510,20 @@ class TestCodexInitScaffoldContainment:
     """
 
     def test_codex_init_creates_no_claude_scaffold(self, tmp_path: Path) -> None:
-        """FR05 attribution test: three properties, one run.
+        """FR05/INFRA-192-FR09 attribution test: three properties, one run.
 
-        Measured before the fix on 2026-09-04: 47 files under ``.claude``, a
+        Measured before the FR05 fix on 2026-09-04: 47 files under ``.claude``, a
         17-line root ``CLAUDE.md``, and a doctor profile row reading
         ``claude-code`` for a project whose ``target_platforms`` said ``codex``.
         Reverting either half of the fix turns this red.
+
+        Updated for PRD-INFRA-192 FR09 (C7): ``.claude/hooks`` is now
+        DELIBERATELY kept for an explicit codex-only install -- codex's own
+        hook commands run scripts from there (``bootstrap/_codex_hooks.py``),
+        so dropping it entirely was itself a bug (a codex project whose
+        hooks.json pointed at scripts that were never copied). Only the
+        claude-code-EXCLUSIVE surfaces (skills, agents, settings.json,
+        .mcp.json) stay absent.
         """
         from tests.test_init_scaffold_containment import (
             claude_scaffold_paths,
@@ -489,7 +534,16 @@ class TestCodexInitScaffoldContainment:
 
         init_single_client_project(tmp_path, "codex")
 
-        assert claude_scaffold_paths(tmp_path) == [], "a codex-only install scaffolded a .claude tree"
+        scaffold = claude_scaffold_paths(tmp_path)
+        assert scaffold, "codex's shared .claude/hooks surface must still be created"
+        assert all(p == ".claude/hooks" or p.startswith(".claude/hooks/") for p in scaffold), (
+            f"a codex-only install scaffolded claude-code-exclusive surfaces: {scaffold}"
+        )
+        assert list((tmp_path / ".claude" / "hooks").glob("*.sh")), "codex's hooks.json needs these scripts on disk"
+        assert not (tmp_path / ".claude" / "skills").exists()
+        assert not (tmp_path / ".claude" / "agents").exists()
+        assert not (tmp_path / ".claude" / "settings.json").exists()
+        assert not (tmp_path / ".mcp.json").exists(), "a codex-only install must not create claude-code's .mcp.json"
         assert not (tmp_path / "CLAUDE.md").exists(), "a codex-only install scaffolded a root CLAUDE.md"
 
         platforms = recorded_target_platforms(tmp_path)
@@ -635,6 +689,38 @@ class TestCodexManagedBlock:
         # The move is disclosed, and as info rather than as an error.
         assert any("moved mcp_servers" in line for line in result.get("info", []))
         assert result["errors"] == []
+
+    def test_the_assess_backend_env_is_forwarded_and_the_users_own_env_vars_are_kept(self, tmp_path: Path) -> None:
+        """Codex passes a server only an allow-list of env; TRW_JEV_ENABLED=false must still reach it."""
+        merged = merge_codex_config(
+            {"mcp_servers": {"trw": {"env_vars": ["MY_TOKEN", "TRW_JEV_ENABLED"]}}}, target_dir=tmp_path
+        )
+
+        assert merged["mcp_servers"]["trw"]["env_vars"] == [
+            "MY_TOKEN",
+            "TRW_JEV_ENABLED",
+            "OPENROUTER_API_KEY",
+            "TRW_JEV_BASE_URL",
+            "TRW_JEV_MODEL",
+        ]
+
+        generate_codex_config(tmp_path)
+        path = tmp_path / ".codex" / "config.toml"
+        first = path.read_text(encoding="utf-8")
+        generate_codex_config(tmp_path)
+        assert path.read_text(encoding="utf-8") == first, "regeneration is not idempotent"
+        assert "TRW_JEV_ENABLED" in tomllib.loads(first)["mcp_servers"]["trw"]["env_vars"]
+
+    def test_every_forwarded_name_is_one_the_assess_backend_reads(self) -> None:
+        """``TRW_JEV_ENABLED`` resolution lives in ``_enablement``, everything else in ``_env``."""
+        import inspect
+
+        from trw_memory.decisions import _enablement, _env
+
+        from trw_mcp.bootstrap._codex import _TRW_FORWARDED_ENV
+
+        source = inspect.getsource(_env) + inspect.getsource(_enablement)
+        assert [name for name in _TRW_FORWARDED_ENV if f'"{name}"' not in source] == []
 
     def test_a_markerless_config_keeps_the_users_own_keys_out_of_the_managed_block(self, tmp_path: Path) -> None:
         codex_dir = tmp_path / ".codex"

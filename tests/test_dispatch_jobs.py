@@ -579,7 +579,10 @@ def test_start_background_runs_real_child_against_stub(tmp_path: Path, monkeypat
     stub = bin_dir / "codex"
     # codex argv is ["codex", "exec", ...flags..., "<prompt>"] — the stub ignores
     # everything and prints a stable answer (codex normalize-output reads stdout).
-    stub.write_text("#!/usr/bin/env bash\necho 'STUB ANSWER FROM CODEX'\n", encoding="utf-8")
+    # Its ``--help`` prints nothing, so the flag pre-flight has no verdict.
+    stub.write_text(
+        "#!/usr/bin/env bash\n[ \"${@: -1}\" = --help ] && exit 0\necho 'STUB ANSWER FROM CODEX'\n", encoding="utf-8"
+    )
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 

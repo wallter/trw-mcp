@@ -164,6 +164,20 @@ class ToolCallEvent(HPOTelemetryEvent):
     emitter: str = "tool_call_timing"
 
 
+class DispatchUsageEvent(HPOTelemetryEvent):
+    """A dispatched child's own token report, recorded once per child (PRD-CORE-290-FR01)."""
+
+    event_type: str = "dispatch_usage"
+    emitter: str = "dispatch"
+
+
+class DispatchPolicyEvent(HPOTelemetryEvent):
+    """What a dispatch asked for versus what the child was given (PRD-CORE-290-FR03)."""
+
+    event_type: str = "dispatch_policy"
+    emitter: str = "dispatch"
+
+
 class HPOSessionStartEvent(HPOTelemetryEvent):
     """Emitted at ``trw_session_start``.
 
@@ -338,6 +352,8 @@ EVENT_TYPE_REGISTRY: dict[str, type[HPOTelemetryEvent]] = {
     H1ObserveModeWarning.model_fields["event_type"].default: H1ObserveModeWarning,
     SurfaceRegistered.model_fields["event_type"].default: SurfaceRegistered,
     ProbeEvent.model_fields["event_type"].default: ProbeEvent,
+    DispatchUsageEvent.model_fields["event_type"].default: DispatchUsageEvent,
+    DispatchPolicyEvent.model_fields["event_type"].default: DispatchPolicyEvent,
 }
 
 
@@ -386,6 +402,8 @@ EVENT_PAYLOAD_KEY_REGISTRY: dict[str, tuple[str, ...]] = {
         "confidence",
         "decisive",
     ),
+    "dispatch_usage": ("child_id", "client"),
+    "dispatch_policy": ("child_id", "client", "effort", "model", "turns"),
 }
 
 

@@ -105,3 +105,25 @@ class TestEmitToolSpan:
             # Should NOT raise
             emit_tool_span("test_tool", 1.0)
             assert mock_cfg.call_count == 1
+
+
+@pytest.mark.unit
+class TestAnonymizeMessageWiring:
+    """R2-014: the OTEL message-body path routes through the same chokepoint
+    as telemetry/pipeline.py and clients/llm.py — trw_mcp.telemetry.anonymizer.redact_secrets."""
+
+    def test_anonymize_message_redacts_jwt_via_shared_chokepoint(self) -> None:
+        from trw_mcp.state.otel_wrapper import _anonymize_message
+
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I3PlFUP0THsR8U"
+        result = _anonymize_message(f"call failed with token {jwt}", project_root=None)
+        assert jwt not in result
+
+    def test_anonymize_message_calls_redact_secrets(self) -> None:
+        """Wiring proof: patching the shared redactor changes _anonymize_message's output."""
+        from trw_mcp.state import otel_wrapper
+
+        with patch("trw_mcp.telemetry.anonymizer.redact_secrets", return_value="<patched>") as mock_redact:
+            result = otel_wrapper._anonymize_message("anything", project_root=None)
+        mock_redact.assert_called_once_with("anything")
+        assert result == "<patched>"

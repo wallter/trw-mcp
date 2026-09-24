@@ -12,8 +12,9 @@ Design constraints (from the PRD-INFRA-068 lesson):
   so a probe that died on a locked database and one that measured a healthy
   corpus produced byte-identical payload entries.
 - The aggregator (step_pipeline_health) is also fail-open to the caller.
-- Uses own short-lived sqlite3 connection (NOT get_backend singleton) to
-  avoid WAL-lock contention with the running backend.
+- The graph, embedding and recall probes read the store's own ``health``
+  block (``memory_status``, via ``state._store_counts.store_health``); no probe
+  opens a checkout's ``memory.db`` (PRD-CORE-280).
 - Module stays under the 350 effective-LOC gate.
 """
 
@@ -21,13 +22,14 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import structlog
+
+from trw_mcp.state._store_counts import store_health
 
 logger = structlog.get_logger(__name__)
 
@@ -89,26 +91,6 @@ def _resolve_config(config: Any | None) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# sqlite_vec loader (isolated so tests can patch it)
-# ---------------------------------------------------------------------------
-
-
-def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
-    """Attempt to load the sqlite_vec extension.
-
-    Raises if sqlite_vec is not available.
-    """
-    try:
-        import sqlite_vec
-
-        conn.enable_load_extension(True)
-        sqlite_vec.load(conn)
-        conn.enable_load_extension(False)
-    except (ImportError, AttributeError, sqlite3.OperationalError) as exc:
-        raise RuntimeError(f"sqlite_vec unavailable: {exc}") from exc
-
-
-# ---------------------------------------------------------------------------
 # Individual probes
 # ---------------------------------------------------------------------------
 
@@ -131,11 +113,7 @@ def probe_sync_push(trw_dir: Path) -> SignalResult:
         if not state_path.is_file():
             # DEF-07: an absent state file used to report the SAME
             # ``measured: True`` shape as a genuinely healthy push, even
-            # though nothing was read. Unlike a probe that counts rows in a
-            # database that legitimately has none (``graph_edges``,
-            # ``embedding_coverage``, ``recall_feedback`` — see their own
-            # ``not db_path.is_file()`` branches), a missing sync-state.json
-            # means the push subsystem has left no trace at all: it could be
+            # though nothing was read. A missing sync-state.json means the push subsystem has left no trace at all: it could be
             # "sync was never configured" or "sync ran and never wrote
             # state", and this probe cannot tell which. Report not-measured.
             return _unmeasured("sync_push", "state_file_missing", consecutive_failures=0, last_push_at=None)
@@ -184,216 +162,103 @@ def probe_sync_push(trw_dir: Path) -> SignalResult:
 def probe_graph_edges(trw_dir: Path, config: Any | None = None) -> SignalResult:
     """Report whether the corpus holds any knowledge-graph relation.
 
-    ``edge_count`` still reports the MATERIALISED half alone, because that is
-    what the number means and a derived relation has no row to count. The
-    ``degraded`` verdict does not: after PRD-CORE-245 FR07 tag co-occurrence is
-    derived from ``memory_tags`` at query time, so a healthy tag-related corpus
-    with no embeddings reads ``edge_count == 0`` and this probe would have
-    reported it degraded forever. It asks
-    :func:`trw_mcp.state._graph_relations.graph_has_relations` instead.
-
-    ``measured`` states whether the store was actually read. A probe that could
-    not read the store used to return the same ``degraded=False, edge_count=0``
-    shape as a healthy one, so "we did not look" and "we looked and it is fine"
-    were the same answer. ``degraded`` stays ``False`` when unmeasured — an
-    unreadable store is not evidence of a dead graph — but the advisory now says
-    so instead of being empty.
+    ``edge_count`` reports the MATERIALISED half alone, because that is what the
+    number means and a derived relation has no row to count. The ``degraded``
+    verdict does not: after PRD-CORE-245 FR07 tag co-occurrence is derived from
+    ``memory_tags`` at query time, so a healthy tag-related corpus reads
+    ``edge_count == 0``. The store's ``has_relations`` answers for both halves.
 
     Returns:
         ``{"degraded": bool, "measured": bool, "edge_count": int,
-        "corpus_count": int, "advisory": str}``
+        "corpus_count": int, "has_relations": bool, "min_corpus": int, "advisory": str}``
     """
-
     min_corpus = int(getattr(_resolve_config(config), "pipeline_health_gate_graph_min_corpus", 10))
     try:
-        from trw_memory.models.config import MemoryConfig
-
-        from trw_mcp.state._constants import DEFAULT_NAMESPACE
-        from trw_mcp.state._graph_relations import graph_has_relations
-
-        db_path = trw_dir / "memory" / "memory.db"
-        if not db_path.is_file():
-            # A store that does not exist yet is a MEASURED empty corpus, not an
-            # unreadable one: there is nothing to read and nothing to warn about.
-            return {
-                "degraded": False,
-                "measured": True,
-                "edge_count": 0,
-                "corpus_count": 0,
-                "has_relations": False,
-                "min_corpus": min_corpus,
-                "advisory": "",
-            }
-
-        with sqlite3.connect(str(db_path), check_same_thread=False, timeout=2.0) as conn:
-            edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
-            # Counted in the SAME namespace ``graph_has_relations`` inspects: a
-            # corpus size taken over the whole file and a relation verdict taken
-            # over one namespace are not two views of one population, and
-            # dividing them produced the "dead graph for N memories" claim about
-            # entries the relation probe never looked at.
-            corpus_count = conn.execute(
-                "SELECT COUNT(*) FROM memories WHERE namespace = ?", (DEFAULT_NAMESPACE,)
-            ).fetchone()[0]
-            has_relations = graph_has_relations(
-                conn,
-                namespace=DEFAULT_NAMESPACE,
-                config=MemoryConfig(storage_path=str(trw_dir / "memory")),
-            )
-
-        degraded = not has_relations and corpus_count > min_corpus
-        advisory = ""
-        if degraded:
-            advisory = (
-                f"knowledge graph dead: no materialised edge and no derived tag relation "
-                f"for {corpus_count} memories (min corpus {min_corpus})"
-            )
-
-        return {
-            "degraded": degraded,
-            "measured": True,
-            "edge_count": edge_count,
-            "corpus_count": corpus_count,
-            "has_relations": has_relations,
-            "min_corpus": min_corpus,
-            "advisory": advisory,
-        }
+        health = store_health(trw_dir)
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
         logger.warning("pipeline_probe_graph_edges_failed", error=type(exc).__name__, exc_info=True)
         return _unmeasured("graph_edges", type(exc).__name__, edge_count=0, corpus_count=0, has_relations=False)
+    corpus_count = health["entries"]
+    degraded = not health["has_relations"] and corpus_count > min_corpus
+    advisory = ""
+    if degraded:
+        advisory = (
+            f"knowledge graph dead: no materialised edge and no derived tag relation "
+            f"for {corpus_count} memories (min corpus {min_corpus})"
+        )
+    return {
+        "degraded": degraded,
+        "measured": True,
+        "edge_count": health["edges"],
+        "corpus_count": corpus_count,
+        "has_relations": health["has_relations"],
+        "min_corpus": min_corpus,
+        "advisory": advisory,
+    }
 
 
 def probe_embedding_coverage(trw_dir: Path, config: Any | None = None) -> SignalResult:
-    """Query vec_memories vs memories ratio via a short-lived connection.
+    """Report the share of the namespace's entries the store holds a vector for.
 
     Returns:
-        ``{"degraded": bool, "coverage_ratio": float|None, "embedded": int, "total": int, "advisory": str}``
+        ``{"degraded": bool, "measured": bool, "coverage_ratio": float|None,
+        "embedded": int, "total": int, "coverage_threshold": float, "advisory": str}``
     """
     threshold = float(getattr(_resolve_config(config), "embeddings_coverage_warn_threshold", 0.10))
-    safe_default: SignalResult = {
-        "degraded": False,
-        "measured": True,
-        "coverage_ratio": None,
-        "embedded": 0,
-        "total": 0,
-        "coverage_threshold": threshold,
-        "advisory": "",
-    }
-    # sqlite_vec missing means the coverage ratio was never computed — the
-    # advisory said so, but ``measured`` is what a caller can branch on.
+    unmeasured = {"coverage_ratio": None, "embedded": 0, "total": 0, "coverage_threshold": threshold}
     try:
-        db_path = trw_dir / "memory" / "memory.db"
-        if not db_path.is_file():
-            # DEF-09 (audited, then REFUTED on re-verification): a database
-            # that does not exist yet has genuinely zero embedded and zero
-            # total entries — the same "measured: True, count: 0" shape
-            # ``probe_graph_edges`` uses for the identical condition, which
-            # FR03's own text names as the in-repo precedent this PRD
-            # generalises rather than a defect. The repo's own
-            # ``_healthy_trw_dir`` test fixture (no ``memory.db`` created)
-            # confirms this is the established, deliberate contract: it is
-            # asserted healthy/measured across the whole probe suite.
-            return safe_default
-
-        conn = sqlite3.connect(str(db_path), check_same_thread=False, timeout=2.0)
-        try:
-            try:
-                _load_sqlite_vec(conn)
-            except Exception:  # justified: fail-open, but the failure is REPORTED, not erased
-                # sqlite_vec missing means the coverage ratio was never computed.
-                conn.close()
-                return _unmeasured(
-                    "embedding_coverage",
-                    "sqlite_vec_unavailable",
-                    coverage_ratio=None,
-                    embedded=0,
-                    total=0,
-                    coverage_threshold=threshold,
-                )
-
-            embedded = conn.execute("SELECT COUNT(*) FROM vec_memories").fetchone()[0]
-            total = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        finally:
-            conn.close()
-
-        if total == 0:
-            return safe_default
-
-        coverage_ratio = embedded / total
-        degraded = coverage_ratio < threshold
-        advisory = ""
-        if degraded:
-            advisory = (
-                f"embedding_coverage degraded: {embedded}/{total} entries embedded "
-                f"({coverage_ratio:.1%}, threshold {threshold:.1%})"
-            )
-
-        return {
-            "degraded": degraded,
-            "measured": True,
-            "coverage_ratio": coverage_ratio,
-            "embedded": embedded,
-            "total": total,
-            "coverage_threshold": threshold,
-            "advisory": advisory,
-        }
+        health = store_health(trw_dir)
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
         logger.warning("pipeline_probe_embedding_coverage_failed", error=type(exc).__name__, exc_info=True)
-        return _unmeasured(
-            "embedding_coverage",
-            type(exc).__name__,
-            coverage_ratio=None,
-            embedded=0,
-            total=0,
-            coverage_threshold=threshold,
+        return _unmeasured("embedding_coverage", type(exc).__name__, **unmeasured)
+    embedded, total = health["embedded"], health["entries"]
+    if embedded is None:
+        # A store that keeps no vectors never computed a ratio: not measured, never zero.
+        return _unmeasured("embedding_coverage", "store_keeps_no_vectors", **unmeasured)
+    coverage_ratio = embedded / total if total else None
+    degraded = coverage_ratio is not None and coverage_ratio < threshold
+    advisory = ""
+    if degraded:
+        advisory = (
+            f"embedding_coverage degraded: {embedded}/{total} entries embedded "
+            f"({coverage_ratio:.1%}, threshold {threshold:.1%})"
         )
+    return {
+        "degraded": degraded,
+        "measured": True,
+        "coverage_ratio": coverage_ratio,
+        "embedded": embedded,
+        "total": total,
+        "coverage_threshold": threshold,
+        "advisory": advisory,
+    }
 
 
 def probe_recall_feedback(trw_dir: Path) -> SignalResult:
-    """Query MAX(recall_count) from memories via a short-lived connection.
+    """Report whether recall ever fed back: the namespace's highest ``recall_count``.
 
     Returns:
-        ``{"degraded": bool, "max_recall_count": int, "corpus_count": int, "advisory": str}``
+        ``{"degraded": bool, "measured": bool, "max_recall_count": int, "corpus_count": int, "advisory": str}``
     """
-    safe_default: SignalResult = {
-        "degraded": False,
-        "measured": True,
-        "max_recall_count": 0,
-        "corpus_count": 0,
-        "advisory": "",
-    }
     try:
-        db_path = trw_dir / "memory" / "memory.db"
-        if not db_path.is_file():
-            # DEF-09 (audited, then REFUTED on re-verification): see the
-            # identical rationale in ``probe_embedding_coverage`` — a missing
-            # database is a genuinely measured zero, matching the
-            # ``graph_edges`` precedent FR03 generalises.
-            return safe_default
-
-        with sqlite3.connect(str(db_path), check_same_thread=False, timeout=2.0) as conn:
-            max_recall_row = conn.execute("SELECT MAX(recall_count) FROM memories").fetchone()
-            max_recall = int(max_recall_row[0]) if max_recall_row[0] is not None else 0
-            corpus_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-
-        degraded = max_recall == 0 and corpus_count >= _RECALL_MIN_CORPUS
-        advisory = ""
-        if degraded:
-            advisory = (
-                f"recall_feedback degraded: all {corpus_count} entries have recall_count=0 — "
-                "recall feedback loop is dead"
-            )
-
-        return {
-            "degraded": degraded,
-            "measured": True,
-            "max_recall_count": max_recall,
-            "corpus_count": corpus_count,
-            "advisory": advisory,
-        }
+        health = store_health(trw_dir)
     except Exception as exc:  # justified: fail-open, but the failure is REPORTED, not erased
         logger.warning("pipeline_probe_recall_feedback_failed", error=type(exc).__name__, exc_info=True)
         return _unmeasured("recall_feedback", type(exc).__name__, max_recall_count=0, corpus_count=0)
+    max_recall, corpus_count = health["max_recall_count"], health["entries"]
+    degraded = max_recall == 0 and corpus_count >= _RECALL_MIN_CORPUS
+    advisory = ""
+    if degraded:
+        advisory = (
+            f"recall_feedback degraded: all {corpus_count} entries have recall_count=0 — recall feedback loop is dead"
+        )
+    return {
+        "degraded": degraded,
+        "measured": True,
+        "max_recall_count": max_recall,
+        "corpus_count": corpus_count,
+        "advisory": advisory,
+    }
 
 
 def _bandit_probe_config() -> tuple[bool, float]:

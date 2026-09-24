@@ -82,15 +82,11 @@ class TestIntegration:
 
         with context_managers[0]:
             if len(context_managers) == 1:
-                result = tools["trw_review"].fn(
-                    prd_ids=["PRD-CORE-104", "PRD-CORE-125"],
-                    **tool_kwargs,
-                )
+                result = tools["trw_review"].fn(**tool_kwargs, options={"prd_ids": ["PRD-CORE-104", "PRD-CORE-125"]})
             else:
                 with context_managers[1]:
                     result = tools["trw_review"].fn(
-                        prd_ids=["PRD-CORE-104", "PRD-CORE-125"],
-                        **tool_kwargs,
+                        **tool_kwargs, options={"prd_ids": ["PRD-CORE-104", "PRD-CORE-125"]}
                     )
 
         assert result["review_yaml"]
@@ -126,7 +122,7 @@ class TestIntegration:
 
         result = tools["trw_review"].fn(
             findings=[{"category": "correctness", "severity": "warning", "description": "Warning"}],
-            run_path=str(run_dir),
+            options={"run_path": str(run_dir)},
         )
 
         assert result["run_path"] == str(run_dir)
@@ -143,10 +139,7 @@ class TestIntegration:
         _reset_config(TRWConfig(cross_model_review_enabled=False))
 
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
-            result = tools["trw_review"].fn(
-                mode="cross_model",
-                run_path=str(run_dir),
-            )
+            result = tools["trw_review"].fn(mode="cross_model", options={"run_path": str(run_dir)})
 
         assert result["run_path"] == str(run_dir)
         review_path = run_dir / "meta" / "review.yaml"
@@ -163,10 +156,7 @@ class TestIntegration:
         _reset_config(TRWConfig(cross_model_review_enabled=False))
 
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
-            result = tools["trw_review"].fn(
-                mode="cross_model",
-                run_path=str(run_dir),
-            )
+            result = tools["trw_review"].fn(mode="cross_model", options={"run_path": str(run_dir)})
 
         assert result["review_family_coverage"] == "single_family"
         assert result["auto_analysis_limited"] is True
@@ -213,10 +203,7 @@ class TestIntegration:
         _reset_config(TRWConfig(review_confidence_threshold=0))
 
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value="diff content"):
-            result = tools["trw_review"].fn(
-                reviewer_findings=reviewer_findings,
-                run_path=str(run_dir),
-            )
+            result = tools["trw_review"].fn(reviewer_findings=reviewer_findings, options={"run_path": str(run_dir)})
 
         assert result["total_findings_count"] == 0
         assert result["surfaced_findings_count"] == 0
@@ -243,10 +230,7 @@ class TestIntegration:
         _reset_config(TRWConfig(review_confidence_threshold=0))
 
         with patch("trw_mcp.tools._review_helpers._get_git_diff", return_value=""):
-            result = tools["trw_review"].fn(
-                mode="auto",
-                run_path=str(run_dir),
-            )
+            result = tools["trw_review"].fn(mode="auto", options={"run_path": str(run_dir)})
 
         assert result["run_path"] == str(run_dir)
         review_path = run_dir / "meta" / "review.yaml"

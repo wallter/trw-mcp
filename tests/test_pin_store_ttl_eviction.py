@@ -213,6 +213,7 @@ def test_candidate_hints_filter_survives_a_warm_read_cache(run_dirs: dict[str, P
     _pin_store._pin_store_cache = {"expired": expired}
     _pin_store._pin_store_cache_ts = __import__("time").monotonic()
     _pin_store._pin_store_cache_mtime_ns = _pin_store.pin_store_path().stat().st_mtime_ns
+    _pin_store._pin_store_cache_path = _pin_store.pin_store_path()
     try:
         assert _candidate_run_hints(limit=10) == []
     finally:
@@ -286,7 +287,91 @@ def test_formation_member_with_missing_or_expired_pin_is_stale(
 
     # A live pin is not stale.
     write_pin(formation_env, "pin-live", formation_env.member_runs["impl-1"], age_hours=0.0)
-    monkeypatch.setattr("trw_mcp.state._pin_ttl._pid_is_alive", lambda pid: False)
+    monkeypatch.setattr("trw_mcp.state._pin_ttl.pid_is_alive", lambda pid: False)
     fresh = status(run_path=formation_env.orchestrator_run)
     assert fresh is not None
     assert {row.member_id: row.stale for row in fresh.rows}["impl-1"] is False
+
+
+# --- PRD-CORE-296-FR08 / ledger N11: a managed restart re-stamps the pin it resumes ---
+
+
+def _restarted_server_resumes(
+    monkeypatch: pytest.MonkeyPatch, run: Path, resume: Any
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """A relaunched child finds its pin written by its dead predecessor, calls *resume*, and works on.
+
+    Returns (written, stored right after *resume*); the pin then goes unrefreshed past the TTL.
+    """
+    from trw_mcp.state._pin_store import invalidate_pin_store_cache
+
+    monkeypatch.setenv("TRW_SESSION_ID", "managed-peer")
+    written = _entry(run, pid=DEAD_PID, heartbeat=_iso(1))
+    pins_path = _write_pins({"managed-peer": written})
+    resume()
+    store = json.loads(pins_path.read_text(encoding="utf-8"))
+    resumed = dict(store["managed-peer"])
+    # Hours of tool calls pass with no trw_heartbeat: only the stored heartbeat ages.
+    store["managed-peer"]["last_heartbeat_ts"] = _iso(72)
+    pins_path.write_text(json.dumps(store), encoding="utf-8")
+    invalidate_pin_store_cache()
+    return written, resumed
+
+
+def test_a_live_restarted_server_keeps_the_pin_it_resumed(
+    run_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """N11. The predecessor's PID is dead by construction, so without a re-stamp the heartbeat alone
+    decides and a live, working server loses its pin mid-session. The boot claim takes the creator PID."""
+    from trw_mcp.state._paths_pin_mgmt import claim_resumed_pin, run_path_for_pin
+
+    run = run_dirs["fresh-heartbeat"]
+    _, entry = _restarted_server_resumes(monkeypatch, run, lambda: claim_resumed_pin("managed-peer"))
+
+    assert entry["pid"] == os.getpid()
+    assert run_path_for_pin("managed-peer") == run
+
+
+@pytest.mark.parametrize("lookup", ["offline-cli", "hook"])
+def test_an_offline_lookup_never_extends_a_pins_ttl(
+    lookup: str, run_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lookup is read-only: the CLI (get_pinned_run) and a hook (run_path_for_pin) are transient
+    processes, and stamping their PID or heartbeat would keep a dead server's pin alive."""
+    from trw_mcp.state._paths_pin_mgmt import get_pinned_run, run_path_for_pin
+
+    resolve = {
+        "offline-cli": lambda: get_pinned_run(session_id="managed-peer"),
+        "hook": lambda: run_path_for_pin("managed-peer"),
+    }
+    written, entry = _restarted_server_resumes(monkeypatch, run_dirs["fresh-heartbeat"], resolve[lookup])
+
+    assert entry == written
+    assert resolve[lookup]() is None, "the dead server's pin expired on schedule"
+
+
+def test_the_server_boot_sequence_claims_the_resumed_pin(
+    run_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch, config: Any
+) -> None:
+    """The claim is wired at boot, and runs even when the boot sweep is disabled."""
+    import structlog
+
+    from trw_mcp.server._cli import _boot_sequence
+
+    boot_config = config.model_copy(update={"cleanup_on_boot": False})
+    _, entry = _restarted_server_resumes(
+        monkeypatch, run_dirs["fresh-heartbeat"], lambda: _boot_sequence(boot_config, structlog.get_logger())
+    )
+    assert entry["pid"] == os.getpid()
+
+
+def test_a_live_predecessor_keeps_its_pin_stamp(run_dirs: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
+    """After /mcp the older server may still be alive beside the new one: never re-stamp a live creator."""
+    from trw_mcp.state._paths_pin_mgmt import claim_resumed_pin
+
+    monkeypatch.setenv("TRW_SESSION_ID", "managed-peer")
+    live_other = os.getppid()
+    pins_path = _write_pins({"managed-peer": _entry(run_dirs["live-pid"], pid=live_other, heartbeat=_iso(1))})
+
+    claim_resumed_pin("managed-peer")
+    assert json.loads(pins_path.read_text(encoding="utf-8"))["managed-peer"]["pid"] == live_other

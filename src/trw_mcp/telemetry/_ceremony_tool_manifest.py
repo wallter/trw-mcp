@@ -188,13 +188,6 @@ _CEREMONY_TOOL_SPECS: tuple[CeremonyToolSpec, ...] = (
         "learning store",
     ),
     CeremonyToolSpec(
-        "trw_learn_update",
-        CeremonyExecutionClass.SYNCHRONOUS_ONLY,
-        _BUDGET_SYNC_MUTATION_S,
-        RequestIdentityPolicy.REQUIRED,
-        "learning store",
-    ),
-    CeremonyToolSpec(
         "trw_checkpoint",
         CeremonyExecutionClass.SYNCHRONOUS_ONLY,
         _BUDGET_SYNC_MUTATION_S,

@@ -50,6 +50,7 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     """
     from trw_mcp.tools._pipeline_health_tool import register_pipeline_health_tools
     from trw_mcp.tools.agent_work_evidence import register_agent_work_evidence_tools
+    from trw_mcp.tools.assess import register_assess_tools
     from trw_mcp.tools.before_edit_hint import register_before_edit_hint_tools
     from trw_mcp.tools.before_edit_hint_batch import (
         register_before_edit_hint_batch_tools,
@@ -63,7 +64,6 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
     from trw_mcp.tools.code_search import register_code_search_tools
     from trw_mcp.tools.codebase_risk_report import register_codebase_risk_report_tools
     from trw_mcp.tools.cross_repo_ordering import register_cross_repo_ordering_tools
-    from trw_mcp.tools.decision import register_decision_tools
     from trw_mcp.tools.delivery_ops import register_delivery_tools
     from trw_mcp.tools.dispatch import register_dispatch_tools
     from trw_mcp.tools.knowledge import register_knowledge_tools
@@ -98,8 +98,8 @@ def _tool_registrars() -> tuple[ToolRegistrar, ...]:
         # unconditionally; execution is gated by comms_enabled=false.
         register_swarm_comms_tools,
         # trw-jev slice 1: opt-in decision seam. Registered unconditionally;
-        # execution is gated by decision_enabled=false (PRD-CORE-288).
-        register_decision_tools,
+        # execution is gated by assess_enabled=false (PRD-CORE-288).
+        register_assess_tools,
         register_requirements_tools,
         register_replay_tools,
         register_review_tools,
@@ -285,12 +285,14 @@ def _apply_always_load_meta() -> None:
     """Apply the deferral opt-out to the ceremony floor (fail-open at boot).
 
     See ``server/_always_load.py`` for which tools qualify and why the set is
-    capped at five. Failure here costs a ToolSearch round-trip, never a boot.
+    capped at five (plus ``trw_assess`` when ``assess_enabled``). Failure here costs a ToolSearch round-trip, never a boot.
     """
     try:
+        from trw_mcp.models.config import get_config
         from trw_mcp.server._always_load import apply_always_load_meta
 
-        applied = _run_async(apply_always_load_meta(mcp))
+        assess_enabled = bool(getattr(get_config(), "assess_enabled", False))
+        applied = _run_async(apply_always_load_meta(mcp, assess_enabled=assess_enabled))
         logger.debug("always_load_meta_applied", tools=list(applied))
     except Exception:  # justified: fail-open, deferral metadata is an optimization
         logger.info("always_load_meta_failed", reason="deferral opt-out not applied")

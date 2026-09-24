@@ -28,7 +28,7 @@ from trw_mcp.models.task_profile_types import ExecutionEffort
 # Bump when entries change so adapter decision identities change with it.
 # Date-precise (not month-precise): two entry changes inside one calendar
 # month must still produce two distinct decision identities.
-ANTHROPIC_MODEL_CATALOG_VERSION = "anthropic-models-2026-09-10"
+ANTHROPIC_MODEL_CATALOG_VERSION = "anthropic-models-2026-09-22"
 
 _FULL_EFFORT: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "xhigh", "max"})
 _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max"})
@@ -54,7 +54,14 @@ _NO_XHIGH: frozenset[ExecutionEffort] = frozenset({"low", "medium", "high", "max
 # than being ignored. Declare each point release deliberately.
 # Verified 2026-09-10: both support the full low..max ladder, default `high`.
 # Source: platform.claude.com/docs/en/build-with-claude/effort
+#
+# trw:intentional `claude-opus-5-5` is explicit for the same reason: without it
+# the boundary match resolves it onto `claude-opus-5`. Verified 2026-09-22:
+# full low..max ladder, but the API DEFAULT is `medium` (Opus 5 was `high`), so
+# an omitted effort now means less thinking -- set it explicitly.
+# Source: platform.claude.com/docs/en/models/opus-5-5/migration-guide
 _ANTHROPIC_EFFORT_CAPABILITIES: dict[str, frozenset[ExecutionEffort]] = {
+    "claude-opus-5-5": _FULL_EFFORT,
     "claude-fable-5-1": _FULL_EFFORT,
     "claude-mythos-5-1": _FULL_EFFORT,
     "claude-fable-5": _FULL_EFFORT,

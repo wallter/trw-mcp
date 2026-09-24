@@ -9,7 +9,6 @@ import pytest
 from trw_mcp.canons import registry as reg
 from trw_mcp.canons._errors import CanonErrorCode, CanonRegistryError
 from trw_mcp.canons._loader import MAX_MANIFEST_BYTES, parse_registry
-from trw_mcp.canons.fingerprint import RealizedSurface, freeze_fingerprint
 
 
 def _manifest() -> dict[str, object]:
@@ -52,32 +51,3 @@ def test_error_messages_are_secret_and_abspath_free() -> None:
     # and the message is a single stable line, not a resolved checkout path.
     assert exc.value.code is CanonErrorCode.ABSOLUTE_PATH
     assert "\n" not in str(exc.value)
-
-
-def test_fingerprint_public_payload_is_bounded_allowlist() -> None:
-    fp = freeze_fingerprint(
-        trw_mcp_version="1.2.3",
-        framework_version="v99.9_TRW",
-        aaref_version="v3.2.0",
-        template_version="3.2",
-        registry_digest="deadbeef",
-        source_digests={"framework": "aa", "aaref": "bb"},
-        surface=RealizedSurface(tools=(), resources=(), prompts=()),
-    )
-    payload = fp.public_payload()
-    assert set(payload) == {
-        "schema_version",
-        "trw_mcp_version",
-        "framework_version",
-        "aaref_version",
-        "template_version",
-        "registry_digest",
-        "source_digests",
-        "loaded_module_digest",
-        "surface_digest",
-        "digest",
-    }
-    # No environment/secret/absolute-path field leaks in.
-    serialized = json.dumps(payload)
-    for banned in ("/home/", "TRW_", "token", "secret", "password", "PID", "pid"):
-        assert banned not in serialized

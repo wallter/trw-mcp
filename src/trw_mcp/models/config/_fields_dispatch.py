@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from pydantic import Field
 
+from trw_mcp.dispatch._client_spec_types import DispatchEffort
 from trw_mcp.dispatch._types import SUPPORTED_CLIENTS, DispatchClient
 
 # The dispatch layer's hard wall-clock timeout default (seconds). Mirrors the
 # inline ``DispatchRequest.timeout_s`` default so the config-resolved and
 # API-direct paths agree on the same documented ceiling.
 DEFAULT_DISPATCH_TIMEOUT_SECS: int = 600
+#: PRD-CORE-290-FR04 default turn cap for dispatched children.
+DEFAULT_DISPATCH_MAX_TURNS: int = 30
 
 # Per-probe bound for the doctor readiness version probe (seconds). 5 s is an
 # order of magnitude above the ~0.3 s a warm CLI takes to print a banner, and an
@@ -58,6 +61,21 @@ class _DispatchFields:
     dispatch_default_models: dict[str, str] = Field(
         default_factory=dict,
         description="Per-client model override applied when --model is omitted (e.g. {'codex': 'gpt-5.5'}).",
+    )
+    # PRD-CORE-290-FR03: operator effort override for dispatched children, applied
+    # when the request names none; it outranks the role's task-class row. None
+    # leaves the table in charge. Typed to the portable ladder so a typo fails at
+    # config load, not at launch.
+    dispatch_default_effort: DispatchEffort | None = Field(
+        default=None,
+        description="Effort for dispatched children when the request names none; overrides the role's table row.",
+    )
+    # PRD-CORE-290-FR04: turn cap for dispatched children, passed only through a
+    # client's verified turn-limit flag. 0 disables it.
+    dispatch_default_max_turns: int = Field(
+        default=DEFAULT_DISPATCH_MAX_TURNS,
+        ge=0,
+        description="Turn cap for dispatched children (clients with a verified flag only); 0 disables it.",
     )
     # Per-probe wall-clock bound for the doctor ``formation_readiness`` version
     # probe (PRD-CORE-266-NFR01). A typed field rather than a literal because it

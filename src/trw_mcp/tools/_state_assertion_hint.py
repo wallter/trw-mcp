@@ -100,7 +100,7 @@ def propose_validity_window(
 def validity_window_nudge(learning_id: str, window: timedelta) -> str:
     """Render the advisory text naming the window and the call that sets it.
 
-    Naming the exact ``trw_learn_update`` call matters: ``expires`` was removed
+    Naming the exact update call matters: ``expires`` was removed
     from the public ``trw_learn`` signature on 2026-07-28, so an author told only
     "consider setting a window" has no reachable way to act on it.
     """
@@ -108,7 +108,7 @@ def validity_window_nudge(learning_id: str, window: timedelta) -> str:
     return (
         f"This reads like a claim about current state, which is true today and silently "
         f"false later. If it is, give it a window ({days} days is the default for this "
-        f"type): trw_learn_update(learning_id='{learning_id}', fields={{'expires': "
+        f"type): trw_learn(learning_id='{learning_id}', metadata={{'expires': "
         f"'<YYYY-MM-DD>'}}). If it states a durable invariant instead, restate it as one "
         f"and ignore this."
     )

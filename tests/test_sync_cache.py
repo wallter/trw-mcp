@@ -8,9 +8,8 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 
 def _build_large_state() -> dict[str, object]:
@@ -74,7 +73,6 @@ def test_cache_missing_returns_none(tmp_path: Path) -> None:
     cache = IntelligenceCache(trw_dir=tmp_path)
     assert cache.get_bandit_params() is None
     assert cache.get_attribution_results() is None
-    assert cache.get_synthesis_overlay() is None
     assert cache.etag is None
     assert not cache.is_fresh
 
@@ -213,7 +211,6 @@ def test_cache_read_logs_freshness_metadata(tmp_path: Path) -> None:
     assert read_call.kwargs["age_seconds"] >= 0
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_cache_update_p99_under_50ms_for_large_payload(tmp_path: Path) -> None:
     """Large cache writes stay within the PRD latency budget."""
@@ -229,12 +226,29 @@ def test_cache_update_p99_under_50ms_for_large_payload(tmp_path: Path) -> None:
         cache.update(state, etag=f"etag-{idx}")
         samples.append(time.perf_counter() - started_at)
 
-    assert _p99_ms(samples) < 50
+    assert_budget("cache_update_p99_large_payload", _p99_ms(samples), 50.0, "ms")
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_cache_read_p99_under_10ms_for_large_payload(tmp_path: Path) -> None:
+    """Large cache reads return valid data.
+
+    The p99 latency budget is a host-resource measurement, moved to
+    ``test_cache_read_p99_under_10ms_for_large_payload_budget``
+    (``requires_local_timing``, skipped on CI). This test keeps the
+    deterministic non-None assertion gating.
+    """
+    from trw_mcp.sync.cache import IntelligenceCache
+
+    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
+    state = _build_large_state()
+    cache.update(state, etag="etag-v1")
+
+    params = cache.get_bandit_params()
+    assert params is not None
+
+
+@requires_local_timing
+def test_cache_read_p99_under_10ms_for_large_payload_budget(tmp_path: Path) -> None:
     """Large cache reads stay within the PRD latency budget."""
     from trw_mcp.sync.cache import IntelligenceCache
 
@@ -245,10 +259,9 @@ def test_cache_read_p99_under_10ms_for_large_payload(tmp_path: Path) -> None:
     samples: list[float] = []
     for _ in range(100):
         started_at = time.perf_counter()
-        params = cache.get_bandit_params()
+        cache.get_bandit_params()
         samples.append(time.perf_counter() - started_at)
-    assert params is not None
-    assert _p99_ms(samples) < 10
+    assert_budget("cache_read_p99_large_payload", _p99_ms(samples), 10.0, "ms")
 
 
 def test_cache_get_attribution_results(tmp_path: Path) -> None:
@@ -263,20 +276,6 @@ def test_cache_get_attribution_results(tmp_path: Path) -> None:
     results = cache.get_attribution_results()
     assert results is not None
     assert results["L-1"]["causal_score"] == 0.9
-
-
-def test_cache_get_synthesis_overlay(tmp_path: Path) -> None:
-    """Write and read synthesis_overlay."""
-    from trw_mcp.sync.cache import IntelligenceCache
-
-    cache = IntelligenceCache(trw_dir=tmp_path, ttl_seconds=3600)
-    cache.update(
-        {"synthesis_overlay": {"cluster_count": 5, "top_topics": ["testing", "auth"]}},
-        etag="v1",
-    )
-    overlay = cache.get_synthesis_overlay()
-    assert overlay is not None
-    assert overlay["cluster_count"] == 5
 
 
 def test_cache_corrupt_file_returns_none(tmp_path: Path) -> None:

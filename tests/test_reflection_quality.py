@@ -187,7 +187,7 @@ class TestReflectionQuality:
         diag = result["diagnostics"]
         assert diag["total_entries"] == 2
         assert diag["accessed_entries"] == 1
-        assert diag["q_activated_entries"] == 1
+        assert "q_activated_entries" not in diag  # PRD-CORE-293
 
     def test_score_range(self, trw_dir: Path) -> None:
         result = compute_reflection_quality(trw_dir)
@@ -246,14 +246,6 @@ class TestAnalyticsExtended:
         assert data["success_rate"] == 0.5
         assert data["total_outcomes"] == 2
         assert data["successful_outcomes"] == 1
-
-    def test_populates_q_learning_activations(self, trw_dir: Path) -> None:
-        entries = trw_dir / "learnings" / "entries"
-        _write_learning(entries, "a", q_observations=3)
-        _write_learning(entries, "b", q_observations=0)
-        update_analytics_extended(trw_dir, 0)
-        data = _reader.read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert data["q_learning_activations"] == 1
 
     def test_populates_high_impact(self, trw_dir: Path) -> None:
         entries = trw_dir / "learnings" / "entries"

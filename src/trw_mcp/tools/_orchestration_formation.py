@@ -14,10 +14,14 @@ two, and picking for them would silently produce the other.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.exceptions import StateError
+
+if TYPE_CHECKING:
+    from trw_mcp.state._paths import TRWCallContext
 
 logger = structlog.get_logger(__name__)
 
@@ -92,7 +96,12 @@ def _resolve_pin_key(ctx: object | None) -> str | None:
         return None
 
 
-def record_member_delivery(run_path: Path, results: dict[str, object]) -> None:
+def record_member_delivery(
+    run_path: Path,
+    results: dict[str, object],
+    *,
+    call_ctx: TRWCallContext | None = None,
+) -> None:
     """A member's own successful ``trw_deliver`` self-reports completion (FR11).
 
     Two writes, in this order and for two different readers: a
@@ -108,12 +117,34 @@ def record_member_delivery(run_path: Path, results: dict[str, object]) -> None:
     Fail-open: a member is not blocked from delivering because its formation
     could not be updated. The failure is surfaced on the result so the operator
     can retire the member by revision instead of discovering silence.
+
+    EVERY SELF-REPORT IS CALLER-VERIFIED (PRD-FIX-149 review R1, extended R8).
+    ``trw_deliver`` accepts a caller-supplied ``run_path`` for ANY valid run
+    under the project root, not only the caller's own -- so this is written
+    only when *call_ctx* proves THIS CALL belongs to the session that joined
+    *run_path*'s slot, via :func:`trw_mcp.formation.own_slot_if_caller`. That
+    check was originally applied only to the orchestrator's self-registered
+    slot; R8 found a peer could still call ``trw_deliver(run_path=<member B's
+    run>)`` and mark ORDINARY member B delivered, because an ordinary member's
+    branch skipped the check entirely. It now applies uniformly: without a pin
+    match, nothing is written, whether the named slot is the orchestrator's own
+    or an ordinary member's.
     """
-    from trw_mcp.formation import FormationError, load, mark_member_delivered
+    from trw_mcp.formation import FormationError, load, mark_member_delivered, own_slot_if_caller
+    from trw_mcp.state._paths_pin_mgmt import get_pinned_run
 
     try:
         context = load(run_path)
         if context is None or context.member_id is None:
+            return
+        pinned_run = get_pinned_run(context=call_ctx) if call_ctx is not None else None
+        verified = own_slot_if_caller(
+            context,
+            run_path,
+            pinned_run=pinned_run,
+            session_id=call_ctx.session_id if call_ctx is not None else None,
+        )
+        if verified != context.member_id:
             return
         from trw_mcp.state.persistence import FileEventLogger, FileStateWriter
 

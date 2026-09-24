@@ -11,7 +11,7 @@ from trw_mcp.bootstrap._codex import generate_codex_config, install_codex_skills
 
 @pytest.mark.parametrize("legacy_enabled", [None, False, True])
 def test_readiness_phase_resources_in_nongit_install(tmp_path, legacy_enabled):
-    from trw_mcp.bootstrap._codex import _codex_skills_source_dir
+    from trw_mcp.bootstrap._client_skills import canonical_skills_dir, render_skill_md
 
     names = ("trw-prd-groom", "trw-prd-review", "trw-exec-plan")
     skills = tmp_path / ".agents" / "skills"
@@ -32,7 +32,16 @@ def test_readiness_phase_resources_in_nongit_install(tmp_path, legacy_enabled):
     ready = skills / "trw-prd-ready"
     for name in names:
         resource = ready / f"{name}-contract.md"
-        assert resource.read_bytes() == (_codex_skills_source_dir() / name / "SKILL.md").read_bytes()
+        canonical_text = (canonical_skills_dir() / name / "SKILL.md").read_text(encoding="utf-8")
+        assert resource.read_bytes() == render_skill_md(canonical_text, "codex").encode("utf-8")
+        # CANONICAL-SKILL CONTENT GAP CLOSED (PRD-CORE-291-FR04): the canonical
+        # body (src/trw_mcp/data/skills/trw-prd-ready/SKILL.md) now names each
+        # sibling contract by its installed filename as one of three equally
+        # valid resolution paths ("the packaged internal `trw-prd-groom`
+        # contract (the `trw-prd-groom` skill, or `trw-prd-groom-contract.md`
+        # beside this skill) (inline if unavailable)", lines ~141/163/207). A
+        # codex agent reading trw-prd-ready/SKILL.md now has a textual pointer
+        # to the sibling files this same install call materializes beside it.
         assert f"{name}-contract.md" in (ready / "SKILL.md").read_text()
         if name == "trw-prd-groom" and legacy_enabled is not None:
             assert configured[f".agents/skills/{name}"] is legacy_enabled
@@ -51,8 +60,17 @@ def test_readiness_phase_resources_in_nongit_install(tmp_path, legacy_enabled):
 
 @requires_monorepo
 def test_repo_ready_resources_match_canonical_codex_bodies():
+    """Repo-root mirror parity: expected to fail until mirrors are regenerated.
+
+    Codex no longer forks these skills on disk (PRD-CORE-291-FR04); the
+    canonical source plus its codex rendering replaces the deleted
+    ``data/codex/skills`` fork as the comparison basis.
+    """
+    from trw_mcp.bootstrap._client_skills import canonical_skills_dir, render_skill_md
+
     root = Path(__file__).resolve().parents[2]
     for name in ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
-        source = root / "trw-mcp/src/trw_mcp/data/codex/skills" / name / "SKILL.md"
+        canonical_text = (canonical_skills_dir() / name / "SKILL.md").read_text(encoding="utf-8")
+        expected = render_skill_md(canonical_text, "codex").encode("utf-8")
         resource = root / ".agents/skills/trw-prd-ready" / f"{name}-contract.md"
-        assert resource.read_bytes() == source.read_bytes()
+        assert resource.read_bytes() == expected

@@ -1,15 +1,15 @@
-v27.2_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
+v27.3_TRW — MODEL-AGNOSTIC ENGINEERING MEMORY FRAMEWORK
 Slim-Persist | Evidence-First | Harness-Neutral | Client-Portable | Language-Agnostic | Schema-First | Sensible Defaults | MCP-Integrated | Nudge-Aware | Future-Model-Ready
-Version date: 2026-09-19 | Model policy: capability-based, never provider-bound
+Version date: 2026-09-23 | Model policy: capability-based, never provider-bound
 
-> **v27.2 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 was a generation-integrity release: the compact core defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. It was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`. v27.1 moved the version stamp forward on that same generation, and v27.2 does the same again; no obligation changed and the compact views are NOT yet the default reading path.
+> **v27.3 mandate** — TRW is a method, not a model prompt. It MUST work under any capable coding harness: frontier cloud models, balanced everyday models, local/open-weight models, domain-specialized models, future step-function models, or human-operated CLI workflows. Client-, provider-, and language-specific affordances are optional adapters; the core protocol is phases, evidence, tools, checks, persistence, nudges, and learning. v26.1 refined enforcement honesty (what tools actually gate vs what discipline you must apply yourself), ceremony tiers, context engineering, and autonomous-operation rules. v26.2 was a generation-integrity release: the compact core defines what it references and names what it advertises, and the combined view is regenerated and parity-checked rather than assumed immutable. It was promoted under a recorded operator override while four behavioural promotion gates were unmet — see `.trw/overrides/` and `docs/evidence/v26.2-independent-audit-2026-07-27.md`. v27.1 and v27.2 moved the version stamp forward on that same generation with no obligation changed. The compact core/reference views have since been retired: this document is the single installed canon.
 
 <trw-framework>
 
 <execution-summary>
 ## EXECUTION MODEL SUMMARY
 
-**v27.2_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
+**v27.3_TRW | model-agnostic | language-agnostic | 6 phases | 3 ceremony tiers | 4 formations | 3 confidence levels | MCP-first tools | optional skills | optional delegates | adaptive nudges**
 
 Core loop: load memory → understand evidence → plan only as needed → implement → verify with project-native checks → review → deliver.
 **Deliver gate (no fourth path)**: call `trw_deliver` only with (1) a recorded passing `trw_build_check`; (2) a durable acceptable-failure record naming the failed check, residual risk, owner, and expiry, passed through `allow_unverified=true` + `unverified_reason`; or (3) an authorized operator/config override recorded with technical rationale. An override permits delivery; it never turns unverified work into verified work.
@@ -107,10 +107,10 @@ Write important state to disk before relying on it. Treat failure of a required 
 ### Inline Comment Markers
 
 A learning can be anchored to the code it describes by leaving a marker in a
-comment. When a learning's anchors are re-validated, a marker referencing that
-learning's ID is counted as corroborating evidence that the learning is still
-live — so a marker keeps a learning from decaying while the code it explains
-still exists.
+comment. Markers are a convention read by humans and agents (and extracted
+programmatically via `extract_marker_ids`) — they do not affect anchor
+validity scoring, which is computed only from the learning's own declared
+anchors.
 
 Pattern (`MARKER_PATTERN`, PRD-CORE-111 FR05):
 
@@ -216,7 +216,7 @@ Rigid obligations apply within scope; flexible tools MUST run when triggered. Ne
 - `trw_checkpoint()` — at milestones and before risky context changes
 - `trw_pre_compact_checkpoint()` — when context compaction is imminent; persists a recovery directive the next `trw_session_start` surfaces for you to apply (admin-preset tool — when not exposed, fall back to `trw_checkpoint` with resume notes)
 - `trw_learn()` — on non-obvious discoveries, gotchas, or validated patterns
-- `trw_learn_update()` — when a prior learning is stale or wrong; update instead of stacking duplicates
+- `trw_learn(learning_id=...)` — when a prior learning is stale or wrong; correct it in place instead of stacking duplicates
 - `trw_recall(query)` — at start or before unfamiliar/high-risk areas; prefer narrow queries over wildcard dumps
 - Phase reversion — when evidence invalidates the current phase
 
@@ -278,6 +278,7 @@ Stopping rule: after two consecutive failed reverts on the same failure, or when
 
 `reports/plan.md` is a living artifact, not a contract to preserve a bad idea. Update on: new evidence, scope +20%, approach failure, user feedback, validation failure, or ownership conflict. Record what changed, why, and how verification changes.
 Low-delta stop: two consecutive research/implement iterations with materially no new findings or unchanged results SHOULD trigger an immediate re-plan or DELIVER, not more iteration.
+The Dynamic Research >30% `open_questions` threshold (see PHASES) is agent-estimated, not machine-computed — no tool counts `open_questions` for you.
 
 For STANDARD+ scope, structure the plan as three parts — requirements (verifiable acceptance criteria), design (interfaces, decisions, trade-offs), tasks (dependency-ordered, individually verifiable units). The spec-driven split is the convergent industry shape and measurably improves handoff fidelity; one artifact with three sections is fine.
 
@@ -293,7 +294,7 @@ The method is canonical; MCP is its preferred TRW realization. If MCP is unavail
 | `trw_deliver(run_path?)` | Completed-work delivery | MUST for acceptance, not stopping | Reflect, checkpoint, sync instructions/index state; launches background memory maintenance |
 | `trw_recall(query, min_impact?)` | Any | SHOULD | Focused memory search (federates project + user tiers) |
 | `trw_learn(summary, detail, impact?)` | Any | SHOULD | Persist reusable discoveries |
-| `trw_learn_update(id, ...)` | Any | SHOULD | Correct or refresh a stale learning instead of duplicating it |
+| `trw_learn(learning_id=...)` | Any | SHOULD | Correct or refresh a stale learning instead of duplicating it |
 | `trw_checkpoint(message?)` | Any | SHOULD | Atomic progress snapshot |
 | `trw_pre_compact_checkpoint()` | Any | SHOULD before compaction † | Persist a recovery directive surfaced by the next session start |
 | `trw_init(task_name, prd_scope?)` | RESEARCH | TASK-DEPENDENT | Bootstrap a run; classifies the ceremony tier |
@@ -641,7 +642,7 @@ When TRW governs unattended loops or campaigns (repeated deliver → session_sta
 | Workaround >2 retries | `trw_learn` with root cause and fallback |
 | Non-obvious API/runtime behavior | `trw_learn` |
 | Environment-specific issue | `trw_learn` + update relevant client instructions if durable |
-| Prior learning found stale or wrong | `trw_learn_update` — correct in place, never stack duplicates |
+| Prior learning found stale or wrong | `trw_learn(learning_id=...)` — correct in place, never stack duplicates |
 | Task/sprint completion | `trw_deliver` |
 | Repeated noisy/duplicate memory | memory audit/optimization workflow when requested |
 
@@ -674,7 +675,7 @@ Delegate prompts SHOULD include: context, task, constraints, output contract, an
 
 ## FRAMEWORK ADHERENCE
 
-**This document is the methodology TRW tools implement.** Reading it is not optional when the task is non-trivial: without it, tools become disconnected rituals. It ships in three views under `.trw/frameworks/`: `FRAMEWORK-CORE.md` (the compact normative core), `FRAMEWORK-REFERENCE.md` (matrices, examples, rationale), and `FRAMEWORK.md` (both, combined).
+**This document is the methodology TRW tools implement.** Reading it is not optional when the task is non-trivial: without it, tools become disconnected rituals. It ships as one document, `.trw/frameworks/FRAMEWORK.md`; read the sections your phase needs (EXECUTION MODEL SUMMARY first), not the whole file.
 
 | Trigger | Action |
 |---------|--------|
@@ -687,6 +688,8 @@ Delegate prompts SHOULD include: context, task, constraints, output contract, an
 On compact: `trw_pre_compact_checkpoint` (or `trw_checkpoint` with resume notes) → commit green work when safe → reload the execution summary + relevant phase/gate sections + active client instructions → `trw_session_start(query=...)` (it replays the recovery directive) → resume from persisted state. Reload the full framework when explicitly required; do not pull 40KB of unrelated detail into a narrow continuation by reflex.
 
 ### Mid-Stream User Input
+
+A **safe switch point** is the nearest point where checkpointed state and observable side effects agree — not necessarily the end of the current shard or task.
 
 | Input | Action |
 |-------|--------|

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
 import structlog
 
@@ -95,25 +94,6 @@ def derive_reflection_action_state(
 
 
 DEFAULT_RECONCILE_MAX_ACTIONS = 500  # NFR04 bound — large ledgers terminate visibly
-
-
-def reconcile_debt(
-    actions: list[dict[str, str]],
-    prds_dir: Path,
-    *,
-    max_actions: int = DEFAULT_RECONCILE_MAX_ACTIONS,
-) -> tuple[list[FollowThroughResult], list[FollowThroughResult]]:
-    """Join approved actions to target truth; return (open_debt, closed).
-
-    Bounded (NFR04): only the provided actions and their named targets are
-    read — no unrelated artifact trees are scanned. Prefer
-    :func:`reconcile_debt_bounded` when the caller needs the typed
-    counts/truncation report; this wrapper keeps the FR07 signature.
-    """
-    report = reconcile_debt_bounded(actions, prds_dir, max_actions=max_actions)
-    open_debt = cast("list[FollowThroughResult]", report["open"])
-    closed = cast("list[FollowThroughResult]", report["closed"])
-    return open_debt, closed
 
 
 def reconcile_debt_bounded(

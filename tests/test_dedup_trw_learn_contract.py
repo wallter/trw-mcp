@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._dedup_test_support import mock_embed, write_entry
+from tests._memory_store_fake import FakeMemoryStore
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -91,6 +92,7 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
         dedup_enabled: bool = True,
     ) -> object:
         from fastmcp import FastMCP
@@ -124,9 +126,10 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """FR04: Normal store ('recorded') result has learning_id and path."""
-        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
+        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer, fake_memory_store)
 
         result = tool_fn(
             summary="unique brand new learning for key test abc123",
@@ -144,9 +147,10 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """FR04: Skip ('skipped') result has learning_id and duplicate_of per PRD spec."""
-        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
+        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer, fake_memory_store)
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
 
         summary = "pytest fixture isolation pattern for key test"
@@ -184,9 +188,10 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """FR03: Merge ('merged') result has learning_id and merged_into per PRD spec."""
-        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
+        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer, fake_memory_store)
         entries_dir = tmp_path / ".trw" / "learnings" / "entries"
 
         existing_summary = "pytest fixture autouse yield pattern"
@@ -229,6 +234,7 @@ class TestTrwLearnReturnDictKeys:
         monkeypatch: pytest.MonkeyPatch,
         reader: FileStateReader,
         writer: FileStateWriter,
+        fake_memory_store: FakeMemoryStore,
     ) -> None:
         """FR04: Every trw_learn response contains 'learning_id' regardless of path.
 
@@ -236,7 +242,7 @@ class TestTrwLearnReturnDictKeys:
         of whether the entry was recorded, merged, or skipped.
         """
         # Test recorded path (no dedup match)
-        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer)
+        tool_fn = self._setup_tool(tmp_path, monkeypatch, reader, writer, fake_memory_store)
 
         result = tool_fn(
             summary="completely unique entry zzzz999",
@@ -246,7 +252,7 @@ class TestTrwLearnReturnDictKeys:
 
     def test_skip_threshold_boundary(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FR04/CORE-042 AC: skip_threshold >= 0.95 means >=0.95 similarity triggers skip."""
-        from trw_mcp.state.dedup import check_duplicate as cd
+        from trw_mcp.state.dedup import dedup_verdict as cd
 
         entries_dir = tmp_path / "entries"
         entries_dir.mkdir()

@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tests._memory_fixtures import DaemonCheckout
 from trw_mcp.models.config import TRWConfig
 
 
@@ -244,11 +245,11 @@ class TestAnchorsSurviveTheStorePath:
     class proves is that the marshalled anchors survive all the way into SQLite.
     """
 
-    def test_anchors_reach_the_stored_entry(self, tmp_path: Path) -> None:
-        from trw_mcp.state.memory_adapter import get_backend, store_learning
+    def test_anchors_reach_the_stored_entry(self, daemon_checkout: DaemonCheckout) -> None:
+        import asyncio
 
-        trw_dir = tmp_path / ".trw"
-        (trw_dir / "memory").mkdir(parents=True)
+        from trw_mcp.state.memory_adapter import store_learning
+
         anchor_dict: dict[str, object] = {
             "file": "src/mod.py",
             "symbol_name": "my_func",
@@ -257,25 +258,24 @@ class TestAnchorsSurviveTheStorePath:
             "line_range": (1, 1),
         }
 
-        result = store_learning(trw_dir, "L-test", "test summary", "test detail", anchors=[anchor_dict])
+        result = store_learning(daemon_checkout.trw_dir, "L-test", "test summary", "test detail", anchors=[anchor_dict])
 
         assert result["status"] == "recorded"
-        entry = get_backend(trw_dir).get("L-test", namespace="default")
-        assert entry is not None
-        assert len(entry.anchors) == 1
-        assert entry.anchors[0].symbol_name == "my_func"
-        assert entry.anchors[0].symbol_type == "function"
-        assert entry.anchors[0].file == "src/mod.py"
+        row = asyncio.run(daemon_checkout.client.get("L-test", daemon_checkout.namespace))
+        anchors = row["entry"]["anchors"]
+        assert len(anchors) == 1
+        assert anchors[0]["symbol_name"] == "my_func"
+        assert anchors[0]["symbol_type"] == "function"
+        assert anchors[0]["file"] == "src/mod.py"
 
-    def test_a_malformed_anchor_does_not_fail_the_store(self, tmp_path: Path) -> None:
+    def test_a_malformed_anchor_does_not_fail_the_store(self, daemon_checkout: DaemonCheckout) -> None:
         """Fail-open: the learning is worth more than the anchor."""
-        from trw_mcp.state.memory_adapter import get_backend, store_learning
+        import asyncio
 
-        trw_dir = tmp_path / ".trw"
-        (trw_dir / "memory").mkdir(parents=True)
+        from trw_mcp.state.memory_adapter import store_learning
 
         result = store_learning(
-            trw_dir,
+            daemon_checkout.trw_dir,
             "L-bad",
             "malformed anchor",
             "detail",
@@ -283,9 +283,8 @@ class TestAnchorsSurviveTheStorePath:
         )
 
         assert result["status"] == "recorded"
-        entry = get_backend(trw_dir).get("L-bad", namespace="default")
-        assert entry is not None
-        assert entry.anchors == []
+        row = asyncio.run(daemon_checkout.client.get("L-bad", daemon_checkout.namespace))
+        assert row["entry"]["anchors"] == []
 
 
 class TestModifiedFilesForRun:
@@ -436,14 +435,17 @@ class TestAnchorStoredInSqliteAndYaml:
     """FR04 (PRD :467): a learning created via execute_learn persists anchors to
     BOTH the SQLite entry and the YAML backup file."""
 
-    def test_anchor_stored_in_sqlite_and_yaml(self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_anchor_stored_in_sqlite_and_yaml(
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
         import subprocess as _sp
 
         from trw_mcp.models.config import TRWConfig
-        from trw_mcp.state._memory_connection import get_backend
         from trw_mcp.tools._learn_impl import execute_learn
 
-        trw_dir = tmp_project / ".trw"
+        trw_dir = daemon_checkout.trw_dir
+        tmp_project = trw_dir.parent
         config = TRWConfig(trw_dir=str(trw_dir))
 
         # Real git repo with a committed baseline + an uncommitted change so
@@ -476,13 +478,13 @@ class TestAnchorStoredInSqliteAndYaml:
         )
         learning_id = str(result["learning_id"])
 
-        # --- SQLite side ---
-        backend = get_backend(trw_dir)
-        entry = backend.get(learning_id, namespace="default")
-        assert entry is not None, "learning must be stored in SQLite"
-        assert len(entry.anchors) >= 1, "anchors must be persisted to SQLite"
-        assert entry.anchors[0].symbol_name == "handle"
-        assert entry.anchor_validity == 1.0
+        # --- store side ---
+        row = asyncio.run(daemon_checkout.client.get(learning_id, daemon_checkout.namespace))
+        entry = row["entry"]
+        assert entry is not None, "learning must be stored"
+        assert len(entry["anchors"]) >= 1, "anchors must be persisted to the store"
+        assert entry["anchors"][0]["symbol_name"] == "handle"
+        assert entry["anchor_validity"] == 1.0
 
         # --- YAML backup side ---
         yaml_path = Path(str(result["path"]))
@@ -516,17 +518,18 @@ class TestUnanchoredLearningHasNoValidity:
         assert anchors == []
         assert validity is None
 
-    def test_learn_without_anchors_persists_null_validity(self, tmp_project: Path) -> None:
+    def test_learn_without_anchors_persists_null_validity(self, daemon_checkout: DaemonCheckout) -> None:
         """End of the real learn path: the stored entry claims no anchor score.
 
         No git repo and no run events, so nothing can be anchored — exactly the
         shape of the majority of stored learnings.
         """
+        import asyncio
+
         from trw_mcp.models.config import TRWConfig
-        from trw_mcp.state._memory_connection import get_backend
         from trw_mcp.tools._learn_impl import execute_learn
 
-        trw_dir = tmp_project / ".trw"
+        trw_dir = daemon_checkout.trw_dir
         config = TRWConfig(trw_dir=str(trw_dir))
 
         result = execute_learn(
@@ -537,8 +540,8 @@ class TestUnanchoredLearningHasNoValidity:
         )
         learning_id = str(result["learning_id"])
 
-        backend = get_backend(trw_dir)
-        entry = backend.get(learning_id, namespace="default")
+        row = asyncio.run(daemon_checkout.client.get(learning_id, daemon_checkout.namespace))
+        entry = row["entry"]
         assert entry is not None
-        assert entry.anchors == []
-        assert entry.anchor_validity is None
+        assert entry["anchors"] == []
+        assert entry["anchor_validity"] is None

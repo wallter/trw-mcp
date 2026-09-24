@@ -26,9 +26,8 @@ from typing import Any
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.tools._ceremony_status import append_ceremony_status
-
-pytestmark = pytest.mark.perf
 
 
 def _build_warm_state(nudge_history_size: int = 50) -> dict[str, Any]:
@@ -68,12 +67,10 @@ def _build_warm_state(nudge_history_size: int = 50) -> dict[str, Any]:
             "ceremony": 1,
             "context": 0,
         },
-        "pool_ignore_counts": {
-            "context": 1,
-            "ceremony": 0,
+        "pool_cooldowns": {
+            "context": {"ignore_count": 1, "until_counter": 0, "set_at": ""},
+            "ceremony": {"ignore_count": 0, "until_counter": 18, "set_at": ""},
         },
-        "pool_cooldown_until": {"ceremony": 18},
-        "pool_cooldown_set_at": {"ceremony": 12},
         "tool_call_counter": 15,
         "last_nudge_pool": "workflow",
     }
@@ -130,15 +127,11 @@ def test_append_ceremony_status_p95_under_5ms(warm_trw_dir: Path) -> None:
         append_ceremony_status(response={}, trw_dir=warm_trw_dir)
         samples.append((time.perf_counter() - start) * 1000.0)  # ms
 
-    p50 = _percentile(samples, 50)
     p95 = _percentile(samples, 95)
     p99 = _percentile(samples, 99)
 
     # The requirement is the gate: do not silently weaken it in CI. The
     # disabled-nudge path returns before process census and writer-pressure
     # bookkeeping, keeping this deterministic on shared runners.
-    assert p95 < 5.0, f"p95 latency {p95:.3f}ms exceeds NFR01 threshold 5ms. p50={p50:.3f}ms p99={p99:.3f}ms"
-    assert p99 < 25.0, (
-        f"p99 latency {p99:.3f}ms exceeds CI threshold 25ms "
-        f"(NFR01 rollback trigger 10ms). p50={p50:.3f}ms p95={p95:.3f}ms"
-    )
+    assert_budget("append_ceremony_status_p95", p95, 5.0, "ms")
+    assert_budget("append_ceremony_status_p99", p99, 25.0, "ms")

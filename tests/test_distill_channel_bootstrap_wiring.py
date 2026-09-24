@@ -115,13 +115,17 @@ def test_claude_code_subagent_withheld_without_a_licence(tmp_path: Path) -> None
         install_claude_code_distill_channels,
     )
 
-    # conftest's _default_distill_absent already pins the gate closed.
+    # conftest's _default_distill_absent already pins the licence gate closed.
+    # CC-03 ships only while enabled (PRD-INFRA-192), so enable it to show the
+    # licence is not what gates it.
+    (tmp_path / ".trw").mkdir()
+    (tmp_path / ".trw" / "config.yaml").write_text("cc03_hook_enabled: true\n", encoding="utf-8")
     install_claude_code_distill_channels(tmp_path)
 
     assert not (tmp_path / ".claude" / "agents" / "trw-distill-explorer.md").exists()
     # ...while the distill-FREE hooks still install.
     assert (tmp_path / ".claude" / "hooks" / "pre-tool-distill-hint.sh").exists(), (
-        "the CC-03 hint hooks call the free MCP tools and must NOT be gated"
+        "the CC-03 hint hooks call the free MCP tools and must NOT be licence-gated"
     )
 
 

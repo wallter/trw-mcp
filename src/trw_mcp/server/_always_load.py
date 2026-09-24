@@ -51,6 +51,13 @@ Deliberately EXCLUDED, and why the exclusion holds:
   ``trw_profile_explain`` — kernel, but each is reached deliberately, when the
   agent has already decided it wants them. On-demand is the correct cost.
 
+Opt-in (outside the floor and its cap):
+
+* ``trw_assess`` — only when ``assess_enabled`` is set. A project that opted into
+  the advisory judge wants it used at decision points, and a deferred tool was
+  the reason two lanes gave for not reaching for it. With ``assess_enabled`` off it is hidden and
+  stays deferred, so no default install pays for it.
+
 The per-server ``alwaysLoad`` in ``.mcp.json`` is the WRONG lever for this and is
 not used: it exempts the entire server from deferral, which restores the whole
 ~15.7k-token definition surface and discards the benefit this module exists to
@@ -89,8 +96,12 @@ ALWAYS_LOAD_TOOLS: Final[frozenset[str]] = frozenset(
 )
 
 
-async def apply_always_load_meta(server: FastMCP) -> tuple[str, ...]:
-    """Mark every :data:`ALWAYS_LOAD_TOOLS` entry as always-loaded on ``server``.
+#: Always-loaded only when the project enabled it (``assess_enabled``).
+ASSESS_TOOL: Final[str] = "trw_assess"
+
+
+async def apply_always_load_meta(server: FastMCP, *, assess_enabled: bool = False) -> tuple[str, ...]:
+    """Mark every :data:`ALWAYS_LOAD_TOOLS` entry, plus ``trw_assess`` when enabled, as always-loaded.
 
     Mutates the registered tool objects in place. That is intentional and safe
     here, and only here: ``get_tool`` returns the registry singleton, so the
@@ -108,7 +119,7 @@ async def apply_always_load_meta(server: FastMCP) -> tuple[str, ...]:
     applied: list[str] = []
     missing: list[str] = []
 
-    for name in sorted(ALWAYS_LOAD_TOOLS):
+    for name in sorted(ALWAYS_LOAD_TOOLS | ({ASSESS_TOOL} if assess_enabled else set())):
         tool: Any = None
         try:
             tool = await server.get_tool(name)
@@ -133,5 +144,6 @@ async def apply_always_load_meta(server: FastMCP) -> tuple[str, ...]:
 __all__ = [
     "ALWAYS_LOAD_META_KEY",
     "ALWAYS_LOAD_TOOLS",
+    "ASSESS_TOOL",
     "apply_always_load_meta",
 ]

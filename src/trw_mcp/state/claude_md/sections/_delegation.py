@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import trw_mcp.state.claude_md._static_sections as _facade
 from trw_mcp.state.claude_md._renderer import SESSION_BOUNDARY_TEXT as _SESSION_BOUNDARY_TEXT
 from trw_mcp.state.claude_md.sections._memory_routing import _format_learning_session_claim
+from trw_mcp.state.claude_md.sections._tool_lifecycle import DELEGATION_RULE
 
 if TYPE_CHECKING:
     from trw_mcp.models.config._client_profile import ClientProfile
@@ -127,12 +128,16 @@ def render_agents_trw_section(
         render_client_integration_appendix,
     )
     from trw_mcp.state.claude_md._tool_manifest import render_tool_list
+    from trw_mcp.state.claude_md.sections._feedback import render_feedback_reporting
+    from trw_mcp.state.claude_md.sections._memory_routing import render_memory_harmonization
     from trw_mcp.state.claude_md.sections._tool_lifecycle import (
         render_deliver_gate_statement,
+        render_offline_substitutes,
     )
 
     tool_list = render_tool_list(exposed_tools)
     delegation_block = "\n\n" + render_delegation_protocol(client_profile) if client_profile is not None else ""
+    profile = client_profile if client_profile is not None else _facade.get_config().client_profile
 
     return (
         "TRW (The Real Work) is an engineering memory framework that persists "
@@ -153,11 +158,22 @@ def render_agents_trw_section(
         "2. **During**: call `trw_learn()` when you discover gotchas, patterns, or errors\n"
         "3. **During**: call `trw_checkpoint()` after milestones to save progress\n"
         "4. Preserve material unfinished work with a checkpoint or durable native handoff and next-read pointer; nothing material to preserve: no artifact needed. Use `trw_deliver()` only for completed-work acceptance under the delivery gates\n"
-        "\n" + render_deliver_gate_statement() + "\n"
+        "\n"
+        + DELEGATION_RULE
+        + "\n"
+        # PRD-QUAL-143-FR01: the sidecar's memory routing, feedback reporting and
+        # offline table now live in this block, once each.
+        + render_memory_harmonization()
+        + render_feedback_reporting(profile)
+        + "\n"
+        + render_deliver_gate_statement()
+        + "\n"
         "## Session Boundaries\n"
         "\n"
         + _SESSION_BOUNDARY_TEXT
-        + "\n\n"
+        + "\n"
+        + render_offline_substitutes()
+        + "\n"
         # PRD-CORE-215-FR06 + PRD-CORE-218-FR06: every supported client's
         # generated AGENTS.md carries the transport-loss retry protocol and the
         # live three-class capability listing.

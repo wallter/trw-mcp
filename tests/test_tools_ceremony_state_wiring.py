@@ -18,6 +18,7 @@ class TestCeremonyStateMutationWiring:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        fake_memory_store: object,
     ) -> None:
         """trw_session_start must set session_started=True in ceremony state."""
         from trw_mcp.state.ceremony_nudge import read_ceremony_state

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 __all__ = ["CONFINEMENT_MECHANISM", "confinement_prefix", "confinement_unavailable_reason"]
 
@@ -47,18 +48,27 @@ _WRITE_DENY_PROFILE = '(version 1)(allow default)(deny file-write*)(allow file-w
 CONFINEMENT_MECHANISM = "macos-seatbelt(sandbox-exec) filesystem write denial"
 
 
-def confinement_prefix() -> list[str]:
+def confinement_prefix(writable: Path | None = None) -> list[str]:
     """Return the argv prefix that confines a child's writes, or ``[]``.
 
     ``[]`` means TRW cannot confine writes on this host. The caller MUST then
     withhold the client's ``confined_read_only_argv``: the permission bypass is
     only acceptable while the denial is in force.
+
+    *writable* re-allows one directory, and only the isolated-review lane passes
+    it: that lane's per-run temp HOME, created and removed around one run
+    (PRD-CORE-297-FR05; agy cannot start without writing its HOME).
     """
     if sys.platform != "darwin":
         return []
     if not os.path.isfile(_SANDBOX_EXEC) or not os.access(_SANDBOX_EXEC, os.X_OK):
         return []
-    return [_SANDBOX_EXEC, "-p", _WRITE_DENY_PROFILE]
+    if writable is None:
+        return [_SANDBOX_EXEC, "-p", _WRITE_DENY_PROFILE]
+    path = str(writable.resolve())  # seatbelt matches the real path (/var -> /private/var)
+    if '"' in path or "\\" in path:
+        raise ValueError(f"writable path {path!r} cannot be quoted into the sandbox profile")
+    return [_SANDBOX_EXEC, "-p", f'{_WRITE_DENY_PROFILE}(allow file-write* (subpath "{path}"))']
 
 
 def confinement_unavailable_reason() -> str:

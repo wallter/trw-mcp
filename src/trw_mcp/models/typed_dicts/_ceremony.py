@@ -95,35 +95,10 @@ class AutoMaintenanceDict(TypedDict, total=False):
     update_advisory: str
     auto_upgrade: dict[str, object]
     stale_runs_closed: dict[str, object]
-    stale_runs_deferred: dict[str, object]
-    embeddings_advisory: str
-    embeddings_backfill: dict[str, int]
-    embeddings_backfill_deferred: dict[str, object]
-    # PRD-CORE-263 DEF-11: NOT a deferral — the standing hot-path policy that
-    # session start never runs bulk embedding backfill; nothing schedules it
-    # for later, so it is named "not performed" rather than "deferred".
-    embeddings_backfill_not_performed: dict[str, object]
-    embeddings_backfill_scheduled: dict[str, object]  # PRD-FIX-105-FR01: background backfill on low coverage
-    embedder_warmup_scheduled: dict[str, object]  # Option A+ (2026-06-10): first-recall download warm-up guard
-    # Automatic re-embedding of stored vectors outside the configured model's
-    # space: ``{status, message}``, present only while there is work or a block.
-    embeddings_migration: dict[str, object]
-    embeddings_coverage_ratio: float  # PRD-FIX-COMPOUNDING-3-FR02: vector coverage ratio (0.0-1.0)
     wal_checkpoint: WalCheckpointResultDict  # PRD-QUAL-050-FR05
-    auto_upgrade_check_deferred: dict[str, object]
     # Learn write-ahead-journal recovery: only present when a prior interrupted
     # session left accepted-but-unstored learnings to replay (omit-when-empty).
     pending_learns_replayed: dict[str, object]
-    pending_learns_deferred: dict[str, object]
-    # PRD-CORE-257-FR03: covered steps whose deferral streak reached
-    # session_start_max_deferral_hours and ran anyway, this process winning the
-    # single-winner claim. Omitted when empty.
-    deferral_expired_ran: list[str]
-    # PRD-CORE-257-FR12: one outcome per covered step, from the closed
-    # vocabulary executed | deferred | expired_ran | failed. The aggregate event
-    # is auto_maintenance_evaluated precisely because this map can be all
-    # "deferred" — "complete" is reserved for a pass in which every step ran.
-    step_outcomes: dict[str, str]
 
 
 class ReconciledLocalWritesDict(TypedDict):
@@ -381,18 +356,16 @@ class ClaudeMdSyncResultDict(_ClaudeMdSyncResultRequired, total=False):
     """Optional metadata returned by ``execute_claude_md_sync()``.
 
     ``hash`` is present on the ``"unchanged"`` (cache-hit) path. The PRD-CORE-203
-    FR07 carrier-detectability fields (``carrier_mode``, ``pointer_skips``,
-    ``external_path``) are present on the render path when CLAUDE.md is written.
+    FR07 carrier-detectability fields (``carrier_mode``, ``pointer_skips``) are
+    present on the render path when CLAUDE.md is written.
     """
 
     hash: str
     # PRD-CORE-203 FR07: how the TRW block was delivered into CLAUDE.md
-    # (``"inline"`` | ``"import"`` | ``"pointer_skip"``).
+    # (``"inline"`` | ``"pointer_skip"``).
     carrier_mode: str
     # Single-source pointer files left un-clobbered (with their import targets).
     pointer_skips: list[InstructionPointerSkipDict]
-    # Repo-root-relative sidecar path when the block was externalized.
-    external_path: str | None
     # PRD-CORE-218-FR06: capability-projection parity drift detail strings.
     # Present (possibly empty) whenever AGENTS.md is a write target. A non-empty
     # list means the generated capability listing diverged from the resolved
@@ -517,36 +490,19 @@ class CeremonyRevertResult(TypedDict):
     restored_tier: str
 
 
-class AutoRecalledItemDict(TypedDict, total=False):
-    """Single entry in the phase-contextual auto-recall result list.
-
-    Returned by ``_phase_contextual_recall()`` — a ranked subset of
-    ``LearningEntryDict`` projected down to summary fields only.
-    """
-
-    id: str | None
-    summary: str | None
-    impact: float | None
-    verification_evidence: dict[str, object]
-
-
 class SessionRecallExtrasDict(TypedDict, total=False):
     """Extra metadata fields returned alongside learnings by ``perform_session_recalls()``.
 
-    Keys present on the focused-query path: ``query``, ``query_matched``,
-    ``total_available``.  Only ``total_available`` is always populated.
-    ``query_advisory`` appears only when a focused recall matched zero entries.
+    ``query`` appears on the focused path, ``query_advisory`` only when a
+    focused recall matched zero entries, ``learnings_omitted`` only when the
+    presenter left ranked rows out (PRD-CORE-294 FR02).
     """
 
     query: str
-    query_matched: int
     query_advisory: str
-    total_available: int
-    # PRD-FIX-141-FR05: the project store's inventory, which ``total_available``
-    # (the returned set) was mistaken for. Omitted, never zeroed, when unread.
+    learnings_omitted: int
+    # PRD-FIX-141-FR05: the project store's inventory. Omitted, never zeroed, when unread.
     store_count: int
-    response_compacted: bool
-    side_effects_deferred: dict[str, object]
 
 
 class FinalizeRunResult(TypedDict, total=False):

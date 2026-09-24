@@ -55,25 +55,6 @@ def test_yaml_index_helpers_build_cache_and_backfill(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.unit
-def test_resolve_scoring_config_prefers_patched_correlation_hook(monkeypatch: pytest.MonkeyPatch) -> None:
-    original = io_boundary.sys.modules.get("trw_mcp.scoring._correlation")
-    monkeypatch.setitem(
-        io_boundary.sys.modules,
-        "trw_mcp.scoring._correlation",
-        SimpleNamespace(get_config=lambda: SimpleNamespace(runs_root=".trw/custom-runs")),
-    )
-    try:
-        config = io_boundary._resolve_scoring_config()
-    finally:
-        if original is None:
-            io_boundary.sys.modules.pop("trw_mcp.scoring._correlation", None)
-        else:
-            io_boundary.sys.modules["trw_mcp.scoring._correlation"] = original
-
-    assert config.runs_root == ".trw/custom-runs"
-
-
-@pytest.mark.unit
 def test_read_recent_session_records_and_find_session_start_ts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -140,75 +121,6 @@ def test_default_lookup_entry_uses_sqlite_yaml_and_scan_fallbacks(
     fallback_path, fallback_data = io_boundary._default_lookup_entry("L3", tmp_path / ".trw", entries_dir)
     assert fallback_path == yaml_path
     assert fallback_data == {"id": "L3"}
-
-
-@pytest.mark.unit
-def test_sqlite_sync_and_yaml_write_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    class FakeBackend:
-        def __init__(self) -> None:
-            self.updated: list[str] = []
-
-        class DummyTransaction:
-            def __enter__(self) -> None:
-                pass
-
-            def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
-                pass
-
-        def transaction(self) -> DummyTransaction:
-            return self.DummyTransaction()
-
-        def update(
-            self,
-            lid: str,
-            *,
-            namespace: str,
-            q_value: float,
-            q_observations: int,
-            outcome_history: list[str],
-        ) -> None:
-            if lid == "bad":
-                raise RuntimeError("boom")
-            self.updated.append(f"{lid}:{q_value}:{q_observations}:{len(outcome_history)}")
-
-    backend = FakeBackend()
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda _trw_dir: backend)
-
-    io_boundary._sync_to_sqlite("good", 1.23456, 4, ["ok"], tmp_path / ".trw")
-    io_boundary._batch_sync_to_sqlite(
-        [
-            ("good", None, {}, 2.5, 5, ["ok"]),
-            ("bad", None, {}, 3.0, 6, ["fail"]),
-        ],
-        tmp_path / ".trw",
-    )
-    assert backend.updated == ["good:1.2346:4:1", "good:2.5:5:1"]
-
-    written: list[Path] = []
-
-    class FakeWriter:
-        def write_yaml(self, path: Path, data: dict[str, object]) -> None:
-            if path.name == "bad.yaml":
-                raise OSError("cannot write")
-            written.append(path)
-
-    monkeypatch.setattr("trw_mcp.state.persistence.FileStateWriter", FakeWriter)
-    ok_path = tmp_path / "ok.yaml"
-    bad_path = tmp_path / "bad.yaml"
-    updated = io_boundary._write_pending_entries(
-        [
-            ("ok", ok_path, {"id": "ok"}, 1.0, 1, []),
-            ("bad", bad_path, {"id": "bad"}, 1.0, 1, []),
-            # entry_path=None means SQLite-only — no YAML write occurs, so
-            # "skip" must NOT appear in updated_ids (was a bug before fix).
-            ("skip", None, {"id": "skip"}, 1.0, 1, []),
-        ]
-    )
-    assert written == [ok_path]
-    # Regression: only "ok" was written successfully; "bad" failed the YAML
-    # write; "skip" had no YAML path and must NOT be falsely reported as
-    # written (PRD truthfulness invariant: never claim a write that did not happen).
-    assert updated == ["ok"]
 
 
 @pytest.mark.unit
@@ -373,32 +285,3 @@ def test_read_recall_tracking_read_failure_warns_and_returns_empty(
     assert fail_events[0]["error_class"] == "OSError"
     # The OSError message body must not leak into observability.
     assert "SENSITIVE_ERR_BODY" not in _all_log_values(captured)
-
-
-def test_q_learning_sync_namespace_matches_the_lookup() -> None:
-    """PRD-CORE-245: the Q-sync write and the entry lookup name the SAME namespace.
-
-    ``_io_sqlite_sync`` writes at ``DEFAULT_NAMESPACE``. That is only correct
-    because ``find_entry_by_id`` — the read that decides which ids become
-    pending updates — is pinned to the same namespace on the project backend, so
-    an entry in ``user:<id>`` never reaches the write at all.
-
-    This pins the coupling. If the lookup is ever federated across tiers (as
-    ``update_access_tracking`` already is), this goes red, and the sync must
-    carry the entry's real namespace rather than the constant.
-    """
-    import inspect
-
-    from trw_mcp.scoring import _io_sqlite_sync
-    from trw_mcp.state import _memory_lookups
-
-    lookup_src = inspect.getsource(_memory_lookups.find_entry_by_id)
-    assert "namespace=_NAMESPACE" in lookup_src, (
-        "find_entry_by_id no longer reads a single fixed namespace; the Q-learning "
-        "sync's DEFAULT_NAMESPACE write is no longer guaranteed to match it"
-    )
-    assert "peek_user_backend" not in lookup_src and "get_user_backend" not in lookup_src, (
-        "find_entry_by_id now federates across tiers, so a user-tier id can reach "
-        "_sync_to_sqlite; thread the entry's real namespace instead of the constant"
-    )
-    assert _memory_lookups._NAMESPACE == _io_sqlite_sync.DEFAULT_NAMESPACE

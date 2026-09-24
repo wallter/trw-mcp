@@ -1,8 +1,6 @@
 """Atomic cross-process claims for learn-journal work units.
 
-Belongs to ``state/learn_journal.py`` (per-record replay claims) and to the
-``tools/_learn_journal_background.py`` continuation (the one-time batch-dedup
-migration claim).
+Belongs to ``state/learn_journal.py`` (per-record replay claims).
 
 **The defect this closes.** ``drain_pending`` materialises the pending list and
 then replays each record, and nothing between those two steps says "this record
@@ -11,9 +9,7 @@ consumes the file first wins, and the other's ``_iter_pending_records`` simply
 never yields it — only covers SEQUENTIAL arrival. Two stdio server processes
 (the repository's normal architecture), or one process whose next session_start
 sweep overlaps the background continuation of the previous one, both materialise
-the SAME list and both enter ``execute_learn`` for the same id. The same shape
-applies to the batch-dedup migration: every process independently stats the same
-absent marker, so two can run the quadratic scan against the same sidecars.
+the SAME list and both enter ``execute_learn`` for the same id.
 
 **The mechanism.** One claim file per work unit, created atomically. The content
 is written to a temp file FIRST and ``os.link``-ed into place, so a claim file is
@@ -21,11 +17,10 @@ never observed half-written: link(2) either creates the name or fails with
 ``EEXIST``, and there is no window in which the name exists without its owner
 recorded. That holds only if each writer has its OWN temp file: the temp name was
 keyed on the PID alone until 2026-09-17, so two THREADS of one process — the
-shape ``run_batch_dedup_migration`` exists to guard, and the shape a server whose
-sweep overlaps its own continuation produces — wrote the same temp path, and
+shape a server whose sweep overlaps its own continuation produces — wrote the same temp path, and
 ``os.link`` published an INODE the loser was still rewriting. The winner's claim
 then read as illegible JSON, the staleness rule below reclaimed a LIVE claim, and
-both threads ran the quadratic migration (reproduced 2026-09-17: the test logs
+both threads ran the same work unit (reproduced 2026-09-17: the test logs
 ``learn_journal_claim_unreadable outcome=reclaimable`` in the failing run). The
 temp name is now per THREAD as well as per process. (``os.link`` is unavailable on a few exotic filesystems; the O_EXCL
 fallback keeps the atomicity and only re-opens the half-written window, which the
@@ -56,11 +51,7 @@ from pathlib import Path
 
 import structlog
 
-from trw_mcp.state._writer_census_identity import (
-    _BIRTH_EPOCH_SLACK_SECONDS,
-    process_birth_epoch,
-)
-from trw_mcp.state.memory_pressure import _pid_is_alive
+from trw_mcp.state._process_identity import BIRTH_EPOCH_SLACK_SECONDS, pid_is_alive, process_start_epoch
 
 logger = structlog.get_logger(__name__)
 
@@ -92,7 +83,7 @@ def claim_path_for(target: Path) -> Path:
 
 def _owner_record() -> dict[str, object]:
     pid = os.getpid()
-    return {"pid": pid, "epoch": process_birth_epoch(pid), "claimed_at": time.time()}
+    return {"pid": pid, "epoch": process_start_epoch(pid), "claimed_at": time.time()}
 
 
 def _is_stale(path: Path) -> bool:
@@ -127,15 +118,15 @@ def _is_stale(path: Path) -> bool:
     if not isinstance(data, dict):
         return True
     pid = data.get("pid")
-    if not isinstance(pid, int) or not _pid_is_alive(pid):
+    if not isinstance(pid, int) or not pid_is_alive(pid):
         return True
     recorded = data.get("epoch")
-    birth = process_birth_epoch(pid)
+    birth = process_start_epoch(pid)
     if not isinstance(recorded, (int, float)) or birth is None:
         # Identity unverifiable: assume the owner is live. Deferring one record
         # is cheap; replaying one twice is the defect this module exists to fix.
         return False
-    return bool(birth > float(recorded) + _BIRTH_EPOCH_SLACK_SECONDS)
+    return bool(birth > float(recorded) + BIRTH_EPOCH_SLACK_SECONDS)
 
 
 def _publish(claim: Path, payload: bytes) -> bool:

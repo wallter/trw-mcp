@@ -239,7 +239,16 @@ channels:
     assert manifest.channels[0].lock_file == ".trw/channels/ch.lock"
 
 
-def test_default_tier_alias_normalized(tmp_path: Path) -> None:
+def test_tier_default_key_raises_no_compat_shim(tmp_path: Path) -> None:
+    """``tier_default``/``tier_min`` were removed with no normalization (RC-014).
+
+    Unlike ``default_tier`` -> ``tier_default`` before it, these two keys are
+    NOT dropped or renamed on load: the standing "no compat shims" policy
+    means an old manifest that still carries them must fail loudly via
+    ChannelEntry's extra="forbid" rather than silently lose the field. The
+    merge never replaces such a file (test_distill_channel_manifest_merge.py);
+    the operator removes the two keys or deletes the file to regenerate it.
+    """
     yaml_str = """\
 format_version: "manifest/v1"
 channels:
@@ -247,12 +256,12 @@ channels:
     client: codex
     surface: agents_md_segment
     telemetry_tag: t
-    default_tier: "T3"
+    tier_default: "T2"
 """
     p = tmp_path / "manifest.yaml"
     _write_yaml(p, yaml_str)
-    manifest = load(p)
-    assert manifest.channels[0].tier_default == "T3"
+    with pytest.raises(ManifestValidationError):
+        load(p)
 
 
 def test_content_types_is_dropped_not_renamed(tmp_path: Path) -> None:

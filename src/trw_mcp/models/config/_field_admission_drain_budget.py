@@ -31,12 +31,10 @@ DRAIN_BUDGET_ADMISSIONS: dict[str, ConfigAdmission] = {
             "le=120000 keeps the value below that same client bound by construction."
         ),
         interaction_analysis=(
-            "Bounds WALL TIME over the count the pressure path already decided, so it composes with "
-            "rather than replaces learn_journal_drain_limit, learn_journal_drain_min_batch, and "
-            "learn_journal_pending_max_age_hours: those three answer 'how many records may this sweep "
-            "attempt', this one answers 'for how long'. The age hatch therefore raises only the count "
-            "budget and can never raise elapsed time (FR06), which is what turned an overnight backlog "
-            "into a 200-350 s first call before this field existed. Gated behind learn_journal_enabled. "
+            "Bounds WALL TIME over the sweep's count, so it composes with rather than replaces "
+            "learn_journal_drain_limit: that one answers 'how many records may this sweep attempt', "
+            "this one answers 'for how long'. A count alone is what turned an overnight backlog into a "
+            "200-350 s first call before this field existed. Gated behind learn_journal_enabled. "
             "Read ONLY on the session_start hot path — the operator CLI drain "
             "(server/_subcommands_learn_drain.py) passes no budget and stays unbounded, because an "
             "operator-invoked drain is not a hot path. It is a SOFT budget by construction: the check "

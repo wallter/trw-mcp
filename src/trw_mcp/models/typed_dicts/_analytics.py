@@ -95,42 +95,9 @@ class AnalyticsReport(TypedDict):
     parse_errors: list[str]
 
 
-class RecallStats(TypedDict):
-    """Return shape of ``get_recall_stats()``."""
-
-    total_recalls: int
-    unique_learnings: int
-    positive_outcomes: int
-    negative_outcomes: int
-    neutral_outcomes: int
-
-
 class EmbedHealthStatus(TypedDict):
     """Return shape of ``check_embeddings_status()``."""
 
     enabled: bool
     available: bool
     advisory: str
-    recent_failures: int
-
-
-class BatchDedupResult(TypedDict, total=False):
-    """Return shape of ``batch_dedup()``.
-
-    ``status`` is always present.
-
-    Success path::
-
-        {"status": "completed", "entries_scanned": int, "entries_merged": int,
-         "entries_skipped": int}
-
-    Skipped / unavailable path::
-
-        {"status": "skipped", "reason": str}
-    """
-
-    status: str
-    reason: str
-    entries_scanned: int
-    entries_merged: int
-    entries_skipped: int

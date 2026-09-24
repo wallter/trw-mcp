@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_jq
 from trw_mcp.bootstrap._copilot import (
     _COPILOT_ADAPTER_INSTALL_PATH,
     _COPILOT_ADAPTER_SCRIPT_NAME,
@@ -362,8 +363,9 @@ class TestCopilotAdapterScriptBehavior:
             text=True,
         )
 
-    def test_tool_name_extracted_via_grep_fallback(self, adapter: Path, echo_tool_name_hook: Path) -> None:
-        """toolName is correctly extracted from the Copilot JSON payload."""
+    @requires_jq
+    def test_tool_name_extracted_with_jq(self, adapter: Path, echo_tool_name_hook: Path) -> None:
+        """toolName is extracted from the Copilot JSON payload (jq only since T29; empty without it)."""
         payload = '{"toolName":"str_replace_editor","tool_input":{"path":"foo.py"}}'
         result = self._run_adapter(adapter, echo_tool_name_hook, "postToolUse", payload)
         assert result.returncode == 0

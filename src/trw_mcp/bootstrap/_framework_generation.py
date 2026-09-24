@@ -12,15 +12,15 @@ import json
 from pathlib import Path
 
 
-def framework_generation_current(
-    target_dir: Path, expected: dict[Path, bytes], registry_digest: str, pkg_version: str
-) -> bool:
+def framework_generation_current(target_dir: Path, expected: dict[Path, bytes], registry_digest: str) -> bool:
     """True when a redeploy would write exactly what is deployed (PRD-INFRA-190 FR03).
 
     Redeploying anyway only moves ``deployed_at`` and leaves a ``.rollback``
     snapshot behind, so a no-op update would never be a no-op. "Current" needs
-    the integrity check clean, the stamp on this package version, and the
-    receipt recording exactly the bundle's digests.
+    the integrity check clean and the receipt recording exactly the bundle's
+    digests. PRD-INFRA-192 FR12: currentness no longer depends on a
+    ``trw_mcp_version`` stamp in VERSION.yaml — the manifest's ``packages`` map
+    is the one record of resolved package versions now.
     """
     from trw_mcp.framework_deployment import DEPLOYMENT_RELATIVE_PATH
     from trw_mcp.framework_integrity import inspect_framework_runtime
@@ -38,7 +38,6 @@ def framework_generation_current(
     if report.errors or report.warnings:
         return False
     try:
-        stamp = (target_dir / ".trw" / "frameworks" / "VERSION.yaml").read_text(encoding="utf-8")
         receipt = json.loads((target_dir / DEPLOYMENT_RELATIVE_PATH).read_text(encoding="utf-8"))
     except (
         OSError,
@@ -46,5 +45,4 @@ def framework_generation_current(
     ):  # trw-fail-silent-allow: unreadable means "not current", which redeploys (the safe direction)
         return False
     digests = {str(rel): hashlib.sha256(data).hexdigest() for rel, data in expected.items()}
-    current_stamp = f"trw_mcp_version: {pkg_version}" in stamp.splitlines()
-    return current_stamp and isinstance(receipt, dict) and receipt.get("artifact_digests") == digests
+    return isinstance(receipt, dict) and receipt.get("artifact_digests") == digests

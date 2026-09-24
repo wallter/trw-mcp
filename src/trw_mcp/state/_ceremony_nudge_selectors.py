@@ -26,14 +26,129 @@ from trw_mcp.state._nudge_state import CeremonyState, NudgeContext
 logger = structlog.get_logger(__name__)
 _LEARNING_INJECTION_MIN_SCORE = 0.70
 
+# PRD-CORE-294 FR04/FR06: per-session budget and cooldown for the
+# transition-nudge selector (distinct from the learning-injection pool
+# above, which has only phase-scoped dedup).
+_TRANSITION_BUDGET = 6
+_TRANSITION_COOLDOWN_CALLS = 3
+_TRANSITION_SESSION_CAP = 2048
+
+
+def nudge_may_recall(context: NudgeContext | None) -> bool:
+    """False for the nudge on a ``trw_session_start`` or ``trw_recall`` response (PRD-CORE-294 FR02).
+
+    Either response already carries the call's one recall, so a learning drawn
+    by the nudge would repeat it at the cost of a second recall.
+    """
+    from trw_mcp.state._ceremony_state_model import ToolName
+
+    return context is None or context.tool_name not in (ToolName.SESSION_START, ToolName.RECALL)
+
+
+def transition_selector_enabled(trw_dir: Path) -> bool:
+    """``transition_nudges_enabled`` for this workspace: the one gate over every FR04/FR06 line (FR05's off arm)."""
+    from trw_mcp.state._helpers import load_project_config
+
+    return load_project_config(trw_dir).transition_nudges_enabled
+
+
+def select_transition_line(
+    trw_dir: Path,
+    *,
+    session_key: str,
+    candidates: list[tuple[str, str]],
+) -> str | None:
+    """Pick the first not-yet-shown candidate line for ``session_key``.
+
+    ``candidates`` is an ordered ``(nudge_id, line)`` list — the caller may
+    prepend higher-priority ids ahead of lower-priority ones. Returns
+    ``None`` when ``transition_nudges_enabled`` is off, when the session's budget (``_TRANSITION_BUDGET`` lines) is
+    exhausted, when fewer than ``_TRANSITION_COOLDOWN_CALLS`` tool calls have
+    elapsed since this session's last transition line, or when every
+    candidate id has already been shown to this session. Fail-open: any
+    exception (state I/O, malformed persisted entry) returns ``None``.
+    """
+    if not session_key or not candidates or not transition_selector_enabled(trw_dir):
+        return None
+    try:
+        from trw_mcp.state._ceremony_progress_state import (
+            _state_rmw,
+            read_ceremony_state,
+            write_ceremony_state,
+        )
+
+        with _state_rmw(trw_dir):
+            state = read_ceremony_state(trw_dir)
+            entry = state.transition_nudges.get(session_key)
+            shown_ids_raw = entry.get("shown_ids", []) if entry else []
+            shown_ids = (
+                {item for item in shown_ids_raw if isinstance(item, str)} if isinstance(shown_ids_raw, list) else set()
+            )
+            count_raw = entry.get("count", 0) if entry else 0
+            count = int(count_raw) if isinstance(count_raw, (int, float)) else 0
+            if count >= _TRANSITION_BUDGET:
+                return None
+            if entry is not None:
+                last_counter_raw = entry.get("last_counter", 0)
+                last_counter = int(last_counter_raw) if isinstance(last_counter_raw, (int, float)) else 0
+                if state.tool_call_counter - last_counter < _TRANSITION_COOLDOWN_CALLS:
+                    return None
+
+            selected: tuple[str, str] | None = None
+            for nudge_id, line in candidates:
+                if nudge_id not in shown_ids:
+                    selected = (nudge_id, line)
+                    break
+            if selected is None:
+                return None
+
+            nudge_id, line = selected
+            shown_ids.add(nudge_id)
+            state.transition_nudges[session_key] = {
+                "shown_ids": sorted(shown_ids),
+                "count": count + 1,
+                "last_counter": state.tool_call_counter,
+            }
+            while len(state.transition_nudges) > _TRANSITION_SESSION_CAP:
+                oldest_key = next(iter(state.transition_nudges))
+                state.transition_nudges.pop(oldest_key)
+            write_ceremony_state(trw_dir, state)
+            return line
+    except Exception:  # trw-fail-silent-allow: fail-open -- selector state issues must not break tool responses
+        logger.debug("select_transition_line_failed", exc_info=True)
+        return None
+
+
+def get_shown_transition_ids(trw_dir: Path, *, session_key: str) -> set[str]:
+    """Return the transition-nudge ids already shown to this session.
+
+    Read-only counterpart to :func:`select_transition_line`'s bookkeeping --
+    used by PRD-CORE-294 FR04(c) to drop deliver-time learning candidates
+    this session already saw via an earlier transition. Fail-open: any
+    exception (state I/O, malformed persisted entry) returns an empty set.
+    """
+    if not session_key:
+        return set()
+    try:
+        from trw_mcp.state._ceremony_progress_state import read_ceremony_state
+
+        state = read_ceremony_state(trw_dir)
+        entry = state.transition_nudges.get(session_key)
+        shown_ids_raw = entry.get("shown_ids", []) if entry else []
+        return {item for item in shown_ids_raw if isinstance(item, str)} if isinstance(shown_ids_raw, list) else set()
+    except Exception:  # trw-fail-silent-allow: fail-open -- selector state issues must not break tool responses
+        logger.debug("get_shown_transition_ids_failed", exc_info=True)
+        return set()
+
 
 def _select_learning_injection_candidate(
     state: CeremonyState,
     trw_dir: Path,
     *,
     skip_phase_duplicates: bool = False,
+    recall: bool = True,
 ) -> tuple[dict[str, object] | None, str | None]:
-    """Return the selected learning entry and active target filename."""
+    """Return the selected learning entry and active target filename; ``recall=False`` returns only the filename."""
     # Lazy-import parent helpers to avoid circular dep with ceremony_nudge.py.
     from trw_mcp.state.ceremony_nudge import _emit_debug_capture_event
     from trw_mcp.state.learning_injection import infer_domain_tags
@@ -47,6 +162,8 @@ def _select_learning_injection_candidate(
 
     target_path = Path(modified_files[0])
     target_label = target_path.name
+    if not recall:
+        return None, target_label
     query = " ".join(
         part
         for part in (
@@ -182,6 +299,7 @@ def select_contextual_nudge_content(
             state,
             trw_dir,
             skip_phase_duplicates=skip_phase_duplicates,
+            recall=nudge_may_recall(context),
         )
         action_line = _contextual_next_step_message(state, target_label=target_label, context=context)
         status_line = _build_minimal_status_line(state)

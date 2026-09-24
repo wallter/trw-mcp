@@ -25,6 +25,7 @@ from trw_mcp.state.validation.prd_integrity import (
 from trw_mcp.state.validation.prd_quality import (
     _build_smell_suggestion,
     _check_sprint_deferral,
+    _score_actionable_dimensions,
     classify_quality_tier,
     generate_improvement_suggestions,
     map_grade,
@@ -171,16 +172,16 @@ def refresh_dynamic_prd_validation(
                     dimensions.append(DimensionScore(name=dimension.name, score=0.0, max_score=dimension.max_score))
     result.dimensions = dimensions
 
-    max_possible = sum(dimension.max_score for dimension in dimensions)
-    result.total_score = (
-        round(min(sum(dimension.score for dimension in dimensions) / max_possible * 100.0, 100.0), 2)
-        if max_possible > 0
-        else 0.0
-    )
+    result.total_score = _score_actionable_dimensions(dimensions)
     result.quality_tier = classify_quality_tier(result.total_score, scaled_config)
     result.grade = map_grade(result.quality_tier)
 
     suggestions = generate_improvement_suggestions(dimensions)
+    from trw_mcp.state.validation._prd_scoring_ai import missing_ai_operational_suggestion
+
+    ai_gap = missing_ai_operational_suggestion(dimensions, suggestions)
+    if ai_gap is not None:
+        suggestions.append(ai_gap)
     smell_suggestion = _build_smell_suggestion(result.smell_findings)
     if smell_suggestion is not None:
         suggestions.append(smell_suggestion)

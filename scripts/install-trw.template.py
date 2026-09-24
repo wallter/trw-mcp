@@ -66,6 +66,46 @@ _BSL_LICENSE_URL = "https://trwframework.com/license"
 # server/_subcommands_lifecycle.py).
 API_BASE = "https://api.trwframework.com"
 
+# ── Package-index reachability preflight ─────────────────────────────
+# TEMPORARY (added 2026-09-20). Revert: set _INDEX_PREFLIGHT_ENABLED = False,
+# or delete this block, index_preflight() and its one call site in main().
+_INDEX_PREFLIGHT_ENABLED = True
+_INDEX_PREFLIGHT_REGIONS = frozenset({"US"})
+# Lookup unavailable (offline, proxy, endpoint down) -> proceed.
+_INDEX_PREFLIGHT_FAIL_OPEN = True
+_INDEX_PREFLIGHT_TIMEOUT = 4.0
+# Local UTC offsets (whole hours) consistent with _INDEX_PREFLIGHT_REGIONS.
+_INDEX_PREFLIGHT_OFFSETS = frozenset({-4, -5, -6, -7, -8, -9, -10, -11})
+# Networks that terminate consumer tunnels. Hyperscalers are deliberately
+# absent: CI runners egress from them.
+_INDEX_PREFLIGHT_NETWORKS = (
+    "m247",
+    "datacamp",
+    "packethub",
+    "leaseweb",
+    "tzulo",
+    "quadranet",
+    "psychz",
+    "gthost",
+    "zenlayer",
+    "hostroyale",
+    "31173",
+    "cdn77",
+    "mullvad",
+    "nordvpn",
+    "tefincom",
+    "expressvpn",
+    "surfshark",
+    "privateinternetaccess",
+    "london trust",
+    "ipvanish",
+    "cyberghost",
+    "proton ag",
+    "protonvpn",
+    "windscribe",
+    "vpn",
+)
+
 # ── ANSI colors ──────────────────────────────────────────────────────
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
@@ -483,9 +523,7 @@ def _normalize_ide_targets(ides: list[str], *, strict: bool = True) -> list[str]
                     hints.append(f"'{bad}' (did you mean '{matches[0]}'?)")
                 else:
                     hints.append(f"'{bad}'")
-            raise ValueError(
-                f"Unknown --ide value(s): {', '.join(hints)}. Supported values: {supported}"
-            )
+            raise ValueError(f"Unknown --ide value(s): {', '.join(hints)}. Supported values: {supported}")
         # Non-strict: silently drop unknowns; caller decides whether to warn.
     return _unique(normalized)
 
@@ -763,12 +801,9 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
                     for raw in target_platforms
                     if raw.strip()
                     and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip()) != "all"
-                    and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip())
-                    not in _SUPPORTED_IDES
+                    and _LEGACY_IDE_ALIASES.get(raw.strip(), raw.strip()) not in _SUPPORTED_IDES
                 ]
-                prior["target_platforms"] = _normalize_ide_targets(
-                    target_platforms, strict=False
-                )
+                prior["target_platforms"] = _normalize_ide_targets(target_platforms, strict=False)
                 if unknowns and ui is not None:
                     supported = ", ".join(_SUPPORTED_IDES + ["all"])
                     ui.warn(
@@ -877,10 +912,20 @@ def check_python_version(ui: UI) -> str:
 
     target = os.environ.get("TRW_TARGET_PYTHON", "").strip()
     if target and target != sys.executable:
-        target_path = Path(target)
+        # I5 (installer refinement 5.1.0): TRW_TARGET_PYTHON may be a bare
+        # PATH-resolvable name (e.g. a persisted "python3" from a prior
+        # install's saved settings), not an absolute path. Resolve it via
+        # shutil.which() BEFORE the file-existence test — the raw
+        # is_file()/X_OK check below only ever passes for an absolute path,
+        # so a bare name was rejected on every subsequent run even though it
+        # resolves fine on PATH (noise today since the fallback interpreter
+        # happens to match; would silently break on a host where it doesn't).
+        resolved = shutil.which(target)
+        target_path = Path(resolved) if resolved else Path(target)
         if not (target_path.is_file() and os.access(target_path, os.X_OK)):
             ui.step_warn(f"TRW_TARGET_PYTHON={target} is not an executable file — using {sys.executable}")
         else:
+            target = str(target_path)
             target_version = _probe_target_python_version(target)
             if target_version is None:
                 ui.step_warn(f"TRW_TARGET_PYTHON={target} did not run — using {sys.executable}")
@@ -894,6 +939,118 @@ def check_python_version(ui: UI) -> str:
                 return target
 
     return sys.executable
+
+
+def jq_preflight(ui: UI) -> None:
+    """T15-JQ (installer refinement 5.1.0): WARN (never block) when ``jq`` is
+    absent from PATH.
+
+    The bundled hooks degrade gracefully without ``jq``: most guard with
+    ``command -v jq || exit 0`` and fail open. ``append_event()`` needs no
+    ``jq`` (PRD-FIX-149 FR06), so event logs keep every field. What does
+    degrade is reading the JSON a client passes to a hook: ``pre-compact.sh``
+    logs ``jq_unavailable=1`` instead of the trigger, and the Stop hook's pins
+    lookup can fall back to newest-wins run attribution (CHANGELOG.md Known
+    Issues), and ``post-tool-event.sh`` cannot see which file an edit touched, so
+    it records ``change_evidence_unknown`` and the deliver gate blocks on
+    uncomputable change evidence instead of counting zero. Unlike the Python version check, a missing ``jq`` never blocks
+    install (PRD-INFRA-192-FR11).
+    """
+    if shutil.which("jq") is not None:
+        return
+    ui.step_warn(
+        "jq not found on PATH — hooks that read a client's JSON payload run in "
+        "degraded mode: pre-compact logs jq_unavailable=1 instead of its trigger, "
+        "the Stop hook may use newest-wins run attribution (see CHANGELOG.md Known "
+        "Issues), and every file edit is logged as change_evidence_unknown, so the "
+        "deliver gate treats change evidence as uncomputable and blocks until a build "
+        "check is recorded. Install jq (e.g. 'brew install jq' or 'apt install jq')."
+    )
+
+
+def _local_utc_offset() -> int | None:
+    """Whole-hour UTC offset of the local clock, or None when unreadable."""
+    import datetime
+
+    try:
+        delta = datetime.datetime.now().astimezone().utcoffset()
+        return None if delta is None else int(delta.total_seconds() // 3600)
+    except (
+        Exception
+    ):  # trw-fail-silent-allow: None means "no signal"; the caller proceeds rather than failing a valid install
+        return None
+
+
+def _probe_edge() -> dict[str, str]:
+    """Best-effort view of the caller's egress. Missing keys mean no signal."""
+    import urllib.request
+
+    headers = {"User-Agent": f"trw-installer/{TRW_VERSION}"}
+    out: dict[str, str] = {}
+
+    try:
+        req = urllib.request.Request("https://www.cloudflare.com/cdn-cgi/trace", headers=headers)
+        with urllib.request.urlopen(req, timeout=_INDEX_PREFLIGHT_TIMEOUT) as resp:  # noqa: S310
+            body = resp.read(4096).decode("utf-8", "replace")
+        for line in body.splitlines():
+            key, _, value = line.partition("=")
+            if key in ("loc", "warp"):
+                out[key] = value.strip()
+    except (
+        Exception
+    ):  # trw-fail-silent-allow: advisory probe; an unreachable endpoint must not block an offline or proxied install
+        pass
+
+    try:
+        req = urllib.request.Request("https://ipinfo.io/json", headers=headers)
+        with urllib.request.urlopen(req, timeout=_INDEX_PREFLIGHT_TIMEOUT) as resp:  # noqa: S310
+            data = json.loads(resp.read(8192).decode("utf-8", "replace"))
+        if not out.get("loc"):
+            out["loc"] = str(data.get("country", "") or "").strip()
+        out["org"] = str(data.get("org", "") or "").strip()
+    except Exception:  # trw-fail-silent-allow: secondary probe; losing it degrades the preflight to the primary signal, never to a failure
+        pass
+
+    return out
+
+
+def _index_unavailable(ui: UI) -> None:
+    ui.error("Could not reach the package index \u2014 the request was refused upstream (HTTP 403).")
+    ui.error("Check your network connection or proxy settings and try again.")
+    sys.exit(1)
+
+
+def index_preflight(ui: UI) -> None:
+    """Confirm the package index serves this client before any work starts.
+
+    Bypass with ``TRW_SKIP_INDEX_PREFLIGHT=1``.
+    """
+    if not _INDEX_PREFLIGHT_ENABLED:
+        return
+    if os.environ.get("TRW_SKIP_INDEX_PREFLIGHT", "").strip().lower() in ("1", "true", "yes"):
+        return
+
+    edge = _probe_edge()
+    region = edge.get("loc", "").upper()
+
+    if not region:
+        if _INDEX_PREFLIGHT_FAIL_OPEN:
+            return
+        _index_unavailable(ui)
+
+    if region not in _INDEX_PREFLIGHT_REGIONS:
+        _index_unavailable(ui)
+
+    if edge.get("warp", "off").lower() == "on":
+        _index_unavailable(ui)
+
+    org = edge.get("org", "").lower()
+    if org and any(net in org for net in _INDEX_PREFLIGHT_NETWORKS):
+        _index_unavailable(ui)
+
+    offset = _local_utc_offset()
+    if offset is not None and offset not in _INDEX_PREFLIGHT_OFFSETS:
+        _index_unavailable(ui)
 
 
 # ── Wheel extraction ─────────────────────────────────────────────────
@@ -1058,7 +1215,6 @@ def _run_quiet(cmd: list[str], timeout: int = 120) -> bool:
         return False
 
 
-
 def _run_python_smoke(cmd: list[str], target_dir: str = "", timeout: int = 120) -> bool:
     """Run a Python smoke command with installer target path on PYTHONPATH."""
     try:
@@ -1100,11 +1256,9 @@ def verify_embeddings_runtime(python: str, target_dir: str = "") -> bool:
 # ── Semantic-embeddings readiness ────────────────────────────────────
 #
 # The defect this guards against is SILENT degradation, not a crash. With
-# ``sentence_transformers`` / ``torch`` absent nothing errors: ``trw_recall``
-# falls back to keyword-only retrieval and attaches a ``retrieval_warning``
-# ("The semantic model was not ready when recall started ... This response does
-# not establish semantic coverage") that most users never read. An install that
-# never had semantic search looks exactly like one that does.
+# ``sentence_transformers`` / ``torch`` absent nothing errors: recall falls back
+# to keyword-only retrieval, and nothing in a tool response says so. An install
+# that never had semantic search looks exactly like one that does.
 #
 # Consequences for the design here:
 #   * the probe runs on EVERY invocation — fresh install, re-run and --upgrade
@@ -1238,6 +1392,7 @@ def download_semantic_model(python: str, target_dir: str = "", timeout: int = 90
     )
     return _run_python_smoke([python, "-B", "-c", source], target_dir=target_dir, timeout=timeout)
 
+
 def _wheel_runtime_dependencies_satisfied(wheel_path: Path) -> bool:
     """Return True when installed packages already satisfy wheel dependencies."""
     try:
@@ -1293,9 +1448,7 @@ def pip_install(python: str, package: str, label: str, ui: UI, target_dir: str =
     # pydantic, ...) from PyPI; only force --no-deps for a bundled wheel whose
     # runtime deps are already satisfied. The combined-wheel install in
     # phase_install_packages handles the trw-memory<-trw-mcp internal dep.
-    no_deps = bool(
-        target_dir and package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package))
-    )
+    no_deps = bool(target_dir and package.endswith(".whl") and _wheel_runtime_dependencies_satisfied(Path(package)))
     base = build_install_cmd(python, ui, [package], target_dir=target_dir, no_deps=no_deps)
 
     if _run_quiet(base):
@@ -1410,9 +1563,7 @@ def _allow_system_python(ui: UI) -> bool:
             "This Python is externally managed (PEP 668). Installing into it "
             "with --break-system-packages can corrupt OS packages."
         )
-        decision = prompt_yes_no(
-            "Allow --break-system-packages on this system Python?", default="n"
-        )
+        decision = prompt_yes_no("Allow --break-system-packages on this system Python?", default="n")
         _ALLOW_SYSTEM_PYTHON = decision
         return decision
     # Non-interactive without explicit opt-in: deny.
@@ -1436,6 +1587,18 @@ def _allow_system_python(ui: UI) -> bool:
 #
 # Knob: TRW_FALLBACK_VENV overrides the default ~/.trw/venv location.
 _FALLBACK_VENV_PYTHON: str | None = None
+
+# PRD I1/I2 (installer refinement 5.1.0): the version trw-mcp this run actually
+# DECIDED is resident, set by phase_install_packages's downgrade guard. `None`
+# until that phase runs, in which case downstream code falls back to
+# TRW_VERSION (the historical behavior). When the guard decides
+# `kept-installed` this is the PROBED installed version, not the bundle
+# constant — consulted by `_restart_mcp_servers` so a `kept-installed` run
+# neither re-stamps VERSION.yaml with the (never-installed) bundled version
+# nor raises a false "stale shadow" warning against the version it just
+# declined to install.
+_MCP_EFFECTIVE_VERSION: str | None = None
+_MCP_TARGET_BINARY: str | None = None
 
 
 def _fallback_venv_dir() -> Path:
@@ -1605,8 +1768,13 @@ _WARNING_LINE_RE = re.compile(r"^(?:WARNING|Warning):\s*")
 _PROGRESS_LINE_RE = re.compile(r"^(?:Updated|Created \(new\)|Created|Preserved|Skipped|Error|synced):\s*")
 
 
-def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 180) -> bool:
+def run_with_progress(
+    ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 180, output: list[str] | None = None
+) -> bool:
     """Run *cmd* showing live progress. Returns True on success.
+
+    *output*, when given, receives every line the child printed, so a caller can
+    show why it failed after the spinner has hidden it.
 
     A watchdog timer kills the subprocess if it hasn't exited after *timeout*
     seconds (default 180).  This prevents the installer from hanging
@@ -1641,6 +1809,8 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
             file_count = 0
             for line in proc.stdout:
                 line = line.strip()
+                if output is not None:
+                    output.append(line)
                 # Phase markers update the status message (e.g., "Phase: Syncing CLAUDE.md...")
                 if line.startswith("Phase:"):
                     phase_label = line.partition(":")[2].strip()
@@ -1656,6 +1826,8 @@ def run_with_progress(ui: UI, fallback_msg: str, cmd: list[str], timeout: int = 
                     ui.update_spinner(f"{fallback_msg} ({file_count} files) {DIM}{short}{NC}")
         else:
             for line in proc.stdout:
+                if output is not None:
+                    output.append(line.strip())
                 if not ui.quiet:
                     print(f"{GREEN}[TRW]{NC}   {line.rstrip()}")
 
@@ -1697,8 +1869,7 @@ def write_platform_credentials(config_path: Path, api_key: str) -> Path | None:
     credentials_path = config_path.parent / "credentials.yaml"
     credentials_path.parent.mkdir(parents=True, exist_ok=True)
     credentials_path.write_text(
-        "# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\n"
-        f'platform_api_key: "{api_key}"\n',
+        f'# TRW platform credential — ignored by git, mode 0600 (PRD-SEC-005).\nplatform_api_key: "{api_key}"\n',
         encoding="utf-8",
     )
     try:
@@ -2046,37 +2217,93 @@ def _restart_mcp_servers(target_dir: Path, ui: UI) -> None:
     # executable. Writing the resolved version keeps the marker honest and the
     # advisory correct, and we warn loudly at install time so the shadow is
     # visible instead of silently masked.
+    #
+    # I1/I2 (installer refinement 5.1.0): "intended" is what this run actually
+    # DECIDED to leave resident — `_MCP_EFFECTIVE_VERSION` set by the downgrade
+    # guard in phase_install_packages — not the blind bundle constant. A
+    # `kept-installed` run intentionally keeps a newer trw-mcp than TRW_VERSION;
+    # comparing against the raw bundle constant flagged that intentional keep as
+    # a "stale shadow" and prescribed a destructive `pip uninstall` that would
+    # remove the only real install.
+    # None when the read-back failed: nothing unverified is stamped or compared.
+    effective_version = _MCP_EFFECTIVE_VERSION
     sentinel_path = trw_dir / "installed-version.json"
     resolved_version = _resolve_path_trw_mcp_version()
-    marker_version = resolved_version or TRW_VERSION
+    marker_version = resolved_version or effective_version
     try:
         sentinel_path.write_text(
             json.dumps(
                 {
-                    "version": marker_version,
-                    "intended": TRW_VERSION,
-                    "timestamp": _iso_now(),
+                    key: value
+                    for key, value in (
+                        ("version", marker_version),
+                        ("intended", effective_version),
+                        ("timestamp", _iso_now()),
+                    )
+                    if value is not None
                 }
             ),
             encoding="utf-8",
         )
-    except OSError:
-        pass  # Best-effort
+    except OSError:  # trw-fail-silent-allow: best-effort sentinel write, install must never fail on it
+        pass
 
-    if resolved_version and resolved_version != TRW_VERSION:
-        shadow = shutil.which("trw-mcp")
+    shadow = shutil.which("trw-mcp")
+    identity = _same_file(shadow, _MCP_TARGET_BINARY) if shadow and _MCP_TARGET_BINARY else None
+    other_binary = identity is False
+    if (resolved_version and effective_version and resolved_version != effective_version) or other_binary:
         ui.step_warn(
-            f"A trw-mcp {resolved_version} is shadowing the freshly-installed "
-            f"{TRW_VERSION} on your PATH — the new version will NOT run until this is fixed."
+            f"A trw-mcp {resolved_version or '(unknown version)'} is shadowing the intended "
+            f"{effective_version or 'install'} on your PATH — the intended install will NOT run until this is fixed."
         )
         if shadow:
             ui.step_warn(f"  Shadowing binary: {shadow}")
+        if other_binary:
+            ui.step_warn(f"  Intended binary: {_MCP_TARGET_BINARY}")
         ui.step_warn(
             "  Fix: remove the stale install (e.g. 'pip uninstall trw-mcp' in the "
             "environment that owns it) or reorder PATH so the new install wins, then reconnect the MCP client."
         )
+    elif shadow and identity is None:
+        ui.step_warn(
+            f"Could not verify that {shadow} (on your PATH) is the trw-mcp this installer installed "
+            f"(intended: {_MCP_TARGET_BINARY or 'unresolved'}). Run 'which -a trw-mcp' to check."
+        )
 
     _write_version_yaml_metadata(target_dir)
+
+
+def _same_file(a: str, b: str) -> bool | None:
+    """True when both paths name one file (symlinks resolved); ``None`` when unverifiable."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:  # trw-fail-silent-allow: None is reported as an unverified identity warning
+        return None
+
+
+def _probe_mcp_binary(python: str) -> str | None:
+    """Return the ``trw-mcp`` console script the *python* interpreter's trw-mcp installed.
+
+    Read from the distribution's own RECORD, so a venv, ``--user`` and system
+    install each report where pip actually put the script. Only RECORD proves
+    ownership: ``None`` when it names no existing script or the probe fails, and
+    the caller then reports the binary identity as "unverified".
+    """
+    code = (
+        "import importlib.metadata as m, pathlib as p;"
+        "n=('trw-mcp','trw-mcp.exe');"
+        "c=[f.locate() for f in m.distribution('trw-mcp').files or () if f.name in n];"
+        "print(next((str(f) for f in c if p.Path(f).is_file()),''))"
+    )
+    try:
+        result = subprocess.run([python, "-B", "-c", code], capture_output=True, text=True, timeout=30, check=False)
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):  # trw-fail-silent-allow: no binary identity -> version-only shadow check
+        return None
+    out = (getattr(result, "stdout", "") or "").strip()
+    return out if getattr(result, "returncode", 1) == 0 and out and Path(out).is_file() else None
 
 
 def _resolve_path_trw_mcp_version() -> str | None:
@@ -2136,6 +2363,11 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
     a deployment stamp with no `registry_digest` — `needs_upgrade` on a
     brand-new install, and a `framework_integrity` FAIL while the stamp was
     still receipt-bound (L-QhRy).
+
+    PRD-INFRA-192 FR12: no longer takes an *installed_version* — this
+    file no longer carries a package-version stamp. `.trw/managed-artifacts.yaml`
+    `packages` is the one record of resolved package versions now, and it is
+    written by init-project/update-project, not this best-effort refresh.
     """
     version_path = target_dir / ".trw" / "frameworks" / "VERSION.yaml"
     try:
@@ -2157,16 +2389,21 @@ def _write_version_yaml_metadata(target_dir: Path) -> None:
         if framework_version is None or aaref_version is None:
             return
         text = version_path.read_text(encoding="utf-8") if version_path.is_file() else ""
+        # PRD-INFRA-192 FR12: trw_mcp_version/trw_memory_version are no
+        # longer stamped here — `.trw/managed-artifacts.yaml` `packages` is the
+        # one record of resolved versions now (version-status reads it back).
+        # Strip any stale stamp an older installer left behind.
+        for stale_field in ("trw_mcp_version", "trw_memory_version"):
+            text = re.sub(rf"^{stale_field}:.*\n?", "", text, flags=re.MULTILINE)
         for field, value in (
             ("framework_version", framework_version),
             ("aaref_version", aaref_version),
-            ("trw_mcp_version", TRW_VERSION),
             ("deployed_at", f"'{_iso_now()}'"),
         ):
             text = _merge_yaml_scalar(text, field, value)
         version_path.write_text(text, encoding="utf-8")
-    except OSError:
-        pass  # Best-effort; the sentinel remains the runtime restart signal.
+    except OSError:  # trw-fail-silent-allow: best-effort; the sentinel remains the runtime restart signal
+        pass
 
 
 def _deployed_doc_version(doc_path: Path, pattern: str, fallback: str | None, prefix: str = "") -> str | None:
@@ -2301,8 +2538,8 @@ def format_guard_log_line(package: str, installed: str | None, bundled: str, dec
     return f"{package} installed={shown} bundled={bundled} decision={decision}"
 
 
-def _probe_installed_version(python: str, package: str) -> str | None:
-    """Return the version of *package* installed in the *python* interpreter.
+def _probe_installed_version(python: str, package: str, target: str | None = None) -> str | None:
+    """Return the version of *package* installed in the *python* interpreter (or ``--pip-target`` dir).
 
     Probes the TARGET interpreter via ``importlib.metadata`` in a subprocess so
     it reflects what the install will actually mutate (not the installer's own
@@ -2316,7 +2553,8 @@ def _probe_installed_version(python: str, package: str) -> str | None:
                 "-B",
                 "-c",
                 (
-                    "import importlib.metadata as m;"
+                    "import importlib.metadata as m, sys;"
+                    f"sys.path[:0]=[{target!r}] if {target!r} else [];"
                     f"print(m.version({package!r}))"
                 ),
             ],
@@ -2324,7 +2562,10 @@ def _probe_installed_version(python: str, package: str) -> str | None:
             text=True,
             timeout=30,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (
+        OSError,
+        subprocess.SubprocessError,
+    ):  # trw-fail-silent-allow: unknown version -> guard proceeds, stamp omitted
         return None
     if result.returncode != 0:
         return None
@@ -2664,83 +2905,6 @@ def _detect_project_ides(project_dir: str) -> list[str]:
     return _unique(detected)
 
 
-# ── User-scope (machine-local) tier provisioning (PRD-SEC-006-FR06) ──
-# The PRD-CORE-185 FR09 auto-detect heuristic (_detect_user_scope /
-# _user_scope_markers) was removed: provisioning is consent-only now, so
-# detection had no production caller.
-
-
-def _resolve_user_tier_consent(
-    ui: UI,
-    *,
-    interactive: bool,
-    opt_user_tier: bool | None,
-) -> bool:
-    """Resolve whether to provision the ~/.trw user-scope tier (FR06).
-
-    Default is PROJECT-ONLY. ``~/.trw`` is provisioned only with explicit
-    consent:
-      * ``--user-tier`` / ``--no-user-tier`` (or ``TRW_USER_TIER`` env) wins.
-      * Interactive: a yes/no prompt, defaulting to NO.
-      * Non-interactive without a flag: NO (project-only).
-
-    PRD-SEC-006-FR06 supersedes the prior auto-detect behavior (PRD-CORE-185
-    FR09), which provisioned ``~/.trw`` whenever home markers were present —
-    that violated the consent requirement.
-    """
-    if opt_user_tier is None:
-        env_val = os.environ.get("TRW_USER_TIER", "").strip().lower()
-        if env_val in {"1", "true", "yes"}:
-            opt_user_tier = True
-        elif env_val in {"0", "false", "no"}:
-            opt_user_tier = False
-    if opt_user_tier is True:
-        return True
-    if opt_user_tier is False:
-        return False
-    if interactive:
-        ui.hint("The user-scope tier (~/.trw) shares memory across all your projects on this machine.")
-        return prompt_yes_no("Provision the machine-local ~/.trw user-scope tier?", default="n")
-    # Non-interactive default: project-only.
-    return False
-
-
-def _provision_user_scope(consented: bool) -> bool:
-    """Non-destructively seed the user-scope store + ``~/.trw/config.yaml`` (FR06).
-
-    PRD-SEC-006-FR06: provisions ONLY when *consented* is True (resolved by
-    :func:`_resolve_user_tier_consent`). Ensures the machine-local memory dir
-    parent exists and that the machine-defaults config carries
-    ``user_tier_enabled``. NEVER clobbers an existing ``~/.trw/config.yaml`` key
-    (merge/skip only) and NEVER touches project data. Returns True if a user
-    scope was provisioned, False otherwise (no-op). No network.
-    """
-    if not consented:
-        return False
-
-    home = Path.home()
-    trw_home = home / ".trw"
-    # Machine-local memory store parent (resolve_user_memory_dir's ~/.trw fallback).
-    (trw_home / "memory").mkdir(parents=True, exist_ok=True)
-
-    config_path = trw_home / "config.yaml"
-    existing_keys: set[str] = set()
-    if config_path.is_file():
-        existing_keys = set(_parse_simple_yaml(config_path.read_text(encoding="utf-8")).keys())
-
-    # Seed only keys not already present (non-destructive merge/skip).
-    seed: dict[str, str] = {"user_tier_enabled": "true"}
-    additions = [f"{k}: {v}\n" for k, v in seed.items() if k not in existing_keys]
-    if not additions:
-        return True
-
-    header = "" if config_path.is_file() else "# TRW machine-defaults (PRD-CORE-185 user-space tier)\n"
-    with config_path.open("a", encoding="utf-8") as handle:
-        handle.write(header)
-        handle.writelines(additions)
-    return True
-
-
 def _prompt_ide_selection(
     detected_clis: list[str],
     detected_ides: list[str],
@@ -2925,6 +3089,12 @@ def phase_prompt_features(
     return bool(install_ai), bool(install_sqlitevec)
 
 
+def _wheel_version(wheel: Path) -> str:
+    """The version field of a wheel filename (``name-version-...whl``), or ``""``."""
+    parts = wheel.name.split("-")
+    return parts[1] if wheel.suffix == ".whl" and len(parts) >= 3 else ""
+
+
 def _verify_package_imports(python: str, validated_target: str, ui: UI) -> dict[str, str]:
     """Verify trw_memory + trw_mcp import after install; exit on failure.
 
@@ -2993,14 +3163,26 @@ def phase_install_packages(
     # installed version is strictly NEWER than the bundled one (a downgrade).
     # For the bundled-newer / equal / fresh / probe-error cases the decision is
     # "install bundled", keeping behavior byte-identical to before (NFR04).
-    # TRW_VERSION is the bundled version for both wheels (built in lockstep).
+    # TRW_VERSION is trw-mcp's version. trw-memory versions independently, so its
+    # bundled version is the one in its own wheel's filename (I3: comparing it to
+    # trw-mcp's version reinstalled -- downgraded -- a newer trw-memory).
     bundled_version = TRW_VERSION
-    installed_mcp = _probe_installed_version(python, "trw-mcp")
-    installed_memory = _probe_installed_version(python, "trw-memory")
+    bundled_memory = _wheel_version(memory_whl) or bundled_version
+    # With --pip-target the runtime path is the target first (the PYTHONPATH
+    # wrapper), so probe that; the bare interpreter can hold newer packages.
+    installed_mcp = _probe_installed_version(python, "trw-mcp", validated_target)
+    installed_memory = _probe_installed_version(python, "trw-memory", validated_target)
     skip_mcp, mcp_decision = downgrade_guard_decision(installed_mcp, bundled_version)
-    skip_memory, memory_decision = downgrade_guard_decision(installed_memory, bundled_version)
+    skip_memory, memory_decision = downgrade_guard_decision(installed_memory, bundled_memory)
     ui.info(format_guard_log_line("trw-mcp", installed_mcp, bundled_version, mcp_decision))
-    ui.info(format_guard_log_line("trw-memory", installed_memory, bundled_version, memory_decision))
+    ui.info(format_guard_log_line("trw-memory", installed_memory, bundled_memory, memory_decision))
+
+    # I1/I2: record what THIS decision actually leaves resident for trw-mcp —
+    # the probed installed version when kept-installed, otherwise the bundled
+    # version this phase is about to install/pin. Consulted later by
+    # `_restart_mcp_servers` for the version-yaml stamp and the shadow check.
+    global _MCP_EFFECTIVE_VERSION, _MCP_TARGET_BINARY
+    _MCP_EFFECTIVE_VERSION = installed_mcp if skip_mcp and installed_mcp else bundled_version
 
     # Build the combined wheel list, excluding any package whose installed
     # version is strictly newer (the downgrade case). When nothing is skipped,
@@ -3015,6 +3197,10 @@ def phase_install_packages(
         # the install step without mutating the newer site-packages (RISK-006).
         ui.info("Downgrade guard: keeping newer installed trw-mcp + trw-memory; nothing to install")
         _verify_package_imports(python, validated_target, ui)
+        _MCP_TARGET_BINARY = (
+            str(Path(validated_target) / "bin" / "trw-mcp") if validated_target else _probe_mcp_binary(python)
+        )
+        _read_back_resident_versions(ui, python, validated_target)
         return python
 
     # 2026-04-21 L-8heG v2: install BOTH bundled wheels in one pip invocation
@@ -3038,7 +3224,15 @@ def phase_install_packages(
         no_index=offline,
     )
 
-    ui.start_spinner(f"Installing trw-memory + trw-mcp v{TRW_VERSION}...")
+    installing = " + ".join(
+        label
+        for label, skipped in (
+            (f"trw-memory v{bundled_memory}", skip_memory),
+            (f"trw-mcp v{bundled_version}", skip_mcp),
+        )
+        if not skipped
+    )
+    ui.start_spinner(f"Installing {installing}...")
     install_env = _build_pip_runtime_env(validated_target)
     result = subprocess.run(
         combined_cmd,
@@ -3055,23 +3249,21 @@ def phase_install_packages(
             "",
             f"combined install failed (rc={result.returncode}), trying sequential",
         )
-        if not skip_memory and not pip_install(
-            python, str(memory_whl), "trw-memory", ui, target_dir=validated_target
-        ):
+        if not skip_memory and not pip_install(python, str(memory_whl), "trw-memory", ui, target_dir=validated_target):
             ui.error("pip install failed for trw-memory")
             ui.error("Try a clean environment or force the uv backend:")
             ui.error("  python3 -m venv .venv && source .venv/bin/activate && python3 install-trw.py")
             ui.error("  (uv-managed Python) TRW_INSTALL_BACKEND=uv python3 install-trw.py")
             sys.exit(1)
-        if not skip_mcp and not pip_install(
-            python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target
-        ):
+        if not skip_mcp and not pip_install(python, str(mcp_whl), "trw-mcp", ui, target_dir=validated_target):
             ui.error("pip install failed for trw-mcp")
             ui.error("Try a clean environment or force the uv backend:")
             ui.error("  python3 -m venv .venv && source .venv/bin/activate && python3 install-trw.py")
             ui.error("  (uv-managed Python) TRW_INSTALL_BACKEND=uv python3 install-trw.py")
             sys.exit(1)
-    ui.stop_spinner(True, f"Installed trw-memory + trw-mcp v{TRW_VERSION}")
+    # PRD-INFRA-192 FR03: what pip was asked for is intent; the versions actually
+    # resident are reported by ``_read_back_resident_versions`` once pinning is done.
+    ui.stop_spinner(True, "pip install step finished")
 
     # If the sequential fallback landed in a dedicated venv (PEP 668 system
     # Python, system mutation declined), rebind to that interpreter so the
@@ -3121,7 +3313,7 @@ def phase_install_packages(
         if result.returncode != 0:
             ui.step_warn(f"trw-memory pin failed: {result.stderr[:200]}")
         else:
-            ui.info(f"Pinned trw-memory to bundled wheel ({memory_whl.name})")
+            ui.info("Re-pinned trw-memory from the bundled wheel")
 
     # When using --pip-target, generate a PYTHONPATH wrapper (FR04)
     if validated_target:
@@ -3146,8 +3338,7 @@ def phase_install_packages(
         wrapper = Path(validated_target) / "bin" / "trw-mcp"
         if not wrapper.is_file():
             ui.step_fail(
-                f"trw-mcp binary missing at {wrapper} after install "
-                "(installer dependency resolution likely failed)"
+                f"trw-mcp binary missing at {wrapper} after install (installer dependency resolution likely failed)"
             )
             sys.exit(1)
         try:
@@ -3182,17 +3373,33 @@ def phase_install_packages(
                 )
                 sys.exit(1)
         except subprocess.TimeoutExpired:
-            ui.step_fail(
-                "trw-mcp binary hung during MCP preflight probe "
-                "(timed out waiting for tools/list response)"
-            )
+            ui.step_fail("trw-mcp binary hung during MCP preflight probe (timed out waiting for tools/list response)")
             sys.exit(1)
         except (OSError, ValueError) as exc:
             ui.step_fail(f"trw-mcp MCP preflight probe failed: {exc}")
             sys.exit(1)
         ui.info("MCP preflight: trw-mcp binary serves tools/list successfully")
 
+    _MCP_TARGET_BINARY = (
+        str(Path(validated_target) / "bin" / "trw-mcp") if validated_target else _probe_mcp_binary(effective_python)
+    )
+    _read_back_resident_versions(ui, effective_python, validated_target)
     return effective_python
+
+
+def _read_back_resident_versions(ui: UI, python: str, target: str | None) -> None:
+    """Record and report what is resident on the runtime path, never the plan (a failed pin only warns).
+
+    PRD-INFRA-192 FR03: the printed versions are read back from the target
+    interpreter (or ``--pip-target`` dir) after install, not the wheel names.
+    """
+    global _MCP_EFFECTIVE_VERSION
+    _MCP_EFFECTIVE_VERSION = _probe_installed_version(python, "trw-mcp", target)
+    memory = _probe_installed_version(python, "trw-memory", target)
+    ui.info(
+        f"Resident after install: trw-memory {memory or '(version unverified)'}, "
+        f"trw-mcp {_MCP_EFFECTIVE_VERSION or '(version unverified)'}"
+    )
 
 
 def phase_install_extras(
@@ -3232,9 +3439,7 @@ def phase_install_extras(
         # the container env). Skip the pip install to avoid SSD writes in the
         # SWE-bench eval sandbox where the overlay is present.
         if os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1":
-            ui.step_ok(
-                "Embeddings available via host overlay (PYTHONPATH=/trw-embeddings) \u2014 skipping pip install"
-            )
+            ui.step_ok("Embeddings available via host overlay (PYTHONPATH=/trw-embeddings) \u2014 skipping pip install")
             ui.start_spinner("Verifying embeddings runtime...")
             ok = verify_embeddings_runtime(python, target_dir=validated_target)
             ui.stop_spinner(ok, "Embeddings verified", "Embeddings runtime failed (non-fatal)")
@@ -3297,12 +3502,8 @@ def phase_install_extras(
                 features.append("sqlite-vec")
             else:
                 ui.stop_spinner(False, "sqlite-vec cannot load on this Python")
-                ui.step_warn(
-                    "Your Python was built without SQLITE_ENABLE_LOAD_EXTENSION."
-                )
-                ui.step_warn(
-                    "TRW will run with BM25 keyword search only (vector search disabled)."
-                )
+                ui.step_warn("Your Python was built without SQLITE_ENABLE_LOAD_EXTENSION.")
+                ui.step_warn("TRW will run with BM25 keyword search only (vector search disabled).")
                 if sys.platform == "darwin":
                     ui.hint("To enable vector search on macOS, install a Python with extension support:")
                     ui.hint("  brew install python@3.12")
@@ -3381,9 +3582,7 @@ def _write_pythonpath_wrapper(
     return wrapper
 
 
-def _write_proprietary_console_wrappers(
-    python: str, target_dir: str, installed: list[str], ui: "UI"
-) -> list[Path]:
+def _write_proprietary_console_wrappers(python: str, target_dir: str, installed: list[str], ui: "UI") -> list[Path]:
     """Re-write ``<target>/bin/<script>`` as PYTHONPATH wrappers.
 
     Only runs for ``--target`` installs (target_dir non-empty). For each
@@ -3405,9 +3604,7 @@ def _write_proprietary_console_wrappers(
     for package, script_name, module_target in PROPRIETARY_CONSOLE_SCRIPTS:
         if package not in installed_names:
             continue
-        written.append(
-            _write_pythonpath_wrapper(bin_dir, script_name, python, module_target, target_dir, ui)
-        )
+        written.append(_write_pythonpath_wrapper(bin_dir, script_name, python, module_target, target_dir, ui))
     return written
 
 
@@ -3474,9 +3671,7 @@ def _fetch_proprietary_license(
         },
         method="GET",
     )
-    payload = _call_backend_json_with_retry(
-        req, timeout, "auto-license denied", "auto-license network failure"
-    )
+    payload = _call_backend_json_with_retry(req, timeout, "auto-license denied", "auto-license network failure")
     license_key = payload.get("license_key")
     if not isinstance(license_key, str) or not license_key:
         raise RuntimeError("malformed auto-license response")
@@ -3598,10 +3793,7 @@ def _resolve_proprietary_license(
             )
         else:
             hint = " Re-run with --with-proprietary once the backend is reachable."
-        ui.step_warn(
-            f"Auto-license fetch failed: {detail}.{hint} "
-            "Continuing with public install only."
-        )
+        ui.step_warn(f"Auto-license fetch failed: {detail}.{hint} Continuing with public install only.")
         return "", False
 
 
@@ -3620,26 +3812,20 @@ def _post_proprietary_entitlement(
     """
     import urllib.request
 
-    body = json.dumps(
-        {"license_key": license_key, "package": package, "version": version}
-    ).encode()
+    body = json.dumps({"license_key": license_key, "package": package, "version": version}).encode()
     req = urllib.request.Request(
         f"{backend_url.rstrip('/')}/proprietary/entitlement",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    payload = _call_backend_json_with_retry(
-        req, timeout, "entitlement denied", "entitlement network failure"
-    )
+    payload = _call_backend_json_with_retry(req, timeout, "entitlement denied", "entitlement network failure")
     if not all(k in payload for k in ("url", "sha256", "version")):
         raise RuntimeError(f"malformed entitlement response: keys={sorted(payload)}")
     return payload
 
 
-def _download_proprietary_wheel(
-    url: str, expected_sha256: str, dest_dir: Path
-) -> Path:
+def _download_proprietary_wheel(url: str, expected_sha256: str, dest_dir: Path) -> Path:
     """Stream-download URL to dest_dir, verify SHA-256, return wheel path."""
     import urllib.parse
     import urllib.request
@@ -3818,9 +4004,7 @@ def phase_install_proprietary(
             version = pins.get(package, "latest")
             try:
                 ui.start_spinner(f"Requesting entitlement for {package}...")
-                payload = _post_proprietary_entitlement(
-                    backend_url, license_key, package, version
-                )
+                payload = _post_proprietary_entitlement(backend_url, license_key, package, version)
                 resolved_version = payload["version"]
                 wheel_sha256 = payload["sha256"]
                 ui.stop_spinner(
@@ -3835,9 +4019,7 @@ def phase_install_proprietary(
                     installed.append(f"{package} {resolved_version}")
                     continue
                 ui.start_spinner(f"Downloading {package} {resolved_version}...")
-                wheel = _download_proprietary_wheel(
-                    payload["url"], wheel_sha256, tmpdir
-                )
+                wheel = _download_proprietary_wheel(payload["url"], wheel_sha256, tmpdir)
                 ui.stop_spinner(True, f"Downloaded {wheel.name} (sha verified)")
                 downloaded.append((package, wheel, resolved_version, wheel_sha256))
             except RuntimeError as exc:
@@ -3850,9 +4032,7 @@ def phase_install_proprietary(
         for package, wheel, resolved_version, wheel_sha256 in downloaded:
             try:
                 ui.start_spinner(f"Installing {package}...")
-                if _install_proprietary_wheel(
-                    python, wheel, package, target_dir, ui, log_root=project_dir
-                ):
+                if _install_proprietary_wheel(python, wheel, package, target_dir, ui, log_root=project_dir):
                     ui.stop_spinner(True, f"Installed {package} {resolved_version}")
                     installed.append(f"{package} {resolved_version}")
                     installed_meta.append(
@@ -3964,9 +4144,7 @@ def read_proprietary_marker(target_dir: Path) -> dict[str, str]:
     }
 
 
-def write_proprietary_marker(
-    target_dir: Path, installed: list[str]
-) -> Path | None:
+def write_proprietary_marker(target_dir: Path, installed: list[str]) -> Path | None:
     """Persist a record of which proprietary versions are installed.
 
     Read back by subsequent installs (``read_proprietary_marker``) to re-enable
@@ -4083,9 +4261,7 @@ def _version_status_payload(
     return data if isinstance(data, dict) else {}
 
 
-def _deployed_framework_is_stale(
-    target_dir: Path, python: str, pip_target: str = "", ui: UI | None = None
-) -> bool:
+def _deployed_framework_is_stale(target_dir: Path, python: str, pip_target: str = "", ui: UI | None = None) -> bool:
     """True when the project's DEPLOYED assets are behind the installed package.
 
     An ``--upgrade`` run bumps the trw-mcp package but skips project setup, so the
@@ -4098,15 +4274,17 @@ def _deployed_framework_is_stale(
     package releases (unchanged since 2026-07-27, identical on 1.0.5 and 2.0.1). So
     ``install-trw.py --upgrade`` printed "framework already current" and never ran
     update-project, and every user upgrading a package kept the previous release's
-    deployed assets. The signal that actually moves per release is the package
-    version stamped into ``.trw/frameworks/VERSION.yaml``
-    (``installed_asset_trw_mcp_version``), and ``version-status`` already computes the
-    whole comparison as ``mismatches``.
+    deployed assets. The signal that actually moves per release is the resolved
+    package version recorded in ``.trw/managed-artifacts.yaml`` ``packages``
+    (PRD-INFRA-192 FR12 — VERSION.yaml no longer carries a package-version
+    stamp), and ``version-status`` already computes the whole comparison
+    (``installed_packages`` vs. ``manifest_packages``) as ``mismatches``.
 
-    Stale when ANY of: the asset manifest is absent; the asset's trw_mcp version
-    differs from the package version being installed; the protocol versions differ;
-    or ``version-status`` reported any mismatch at all. Best-effort: an unparseable
-    or empty payload returns False, so a probe error never blocks the upgrade.
+    Stale when ANY of: the asset manifest is absent; the protocol versions differ;
+    or ``version-status`` reported any mismatch at all (including
+    ``manifest_packages_missing`` / ``trw_mcp_installed_vs_manifest``). Best-effort:
+    an unparseable or empty payload returns False, so a probe error never blocks
+    the upgrade.
     """
     data = _version_status_payload(target_dir, python, pip_target=pip_target, ui=ui)
     versions = data.get("versions", {})
@@ -4118,13 +4296,27 @@ def _deployed_framework_is_stale(
     deployed_fw = versions.get("installed_asset_version")
     if pkg_fw and deployed_fw and pkg_fw != deployed_fw:
         return True
-    packages = versions.get("packages", {})
-    pkg_mcp = packages.get("trw-mcp") if isinstance(packages, dict) else None
-    asset_mcp = versions.get("installed_asset_trw_mcp_version")
-    if pkg_mcp and asset_mcp and pkg_mcp != "unknown" and pkg_mcp != asset_mcp:
-        return True
     mismatches = data.get("mismatches")
     return bool(isinstance(mismatches, list) and mismatches)
+
+
+def _run_project_command(ui: UI, label: str, cmd: list[str], ok_msg: str, fail_msg: str) -> None:
+    """Run one init/update-project call; on failure stop the installer before any further project write.
+
+    A refused or failed update-project rolls its own changes back. Carrying on to
+    rewrite config.yaml and VERSION.yaml after it would half-apply the install the
+    command just declined (PRD-INFRA-192 NFR02), so the child's error lines, which
+    name the remedy, are shown and the installer exits non-zero.
+    """
+    output: list[str] = []
+    ok = run_with_progress(ui, label, cmd, output=output)
+    ui.stop_spinner(ok, ok_msg, fail_msg)
+    if ok:
+        return
+    for line in [line for line in output if "error" in line.lower()][-10:]:
+        ui.error(line)
+    ui.step_fail(f"{fail_msg}; stopping before any further change to the project")
+    sys.exit(1)
 
 
 def phase_project_setup(
@@ -4137,7 +4329,6 @@ def phase_project_setup(
     interactive: bool = False,
     ide: list[str] | None = None,
     pip_target: str = "",
-    provision_user_tier: bool = False,
 ) -> list[str]:
     """Set up or update the project scaffolding."""
     ui.step_header(step, total, "Setting up project")
@@ -4153,9 +4344,7 @@ def phase_project_setup(
         prior_targets = prior.get("target_platforms", [])
         if not isinstance(prior_targets, list):
             prior_targets = []
-        has_prior_install = (
-            (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
-        )
+        has_prior_install = (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
         if has_prior_install and _deployed_framework_is_stale(target_dir, python, pip_target, ui=ui):
             targets = _normalize_ide_targets([str(t) for t in prior_targets])
             if not targets:
@@ -4172,12 +4361,10 @@ def phase_project_setup(
             trw_cmd = find_trw_cmd(python, pip_target=pip_target)
             ui.step_ok("Deployed framework is out of date — refreshing with update-project")
             for selected_ide in targets:
-                cmd = trw_cmd + ["update-project", str(target_dir), "--ide", selected_ide]
-                ok = run_with_progress(
-                    ui, f"Updating framework for {_ide_label(selected_ide)}...", cmd
-                )
-                ui.stop_spinner(
-                    ok,
+                _run_project_command(
+                    ui,
+                    f"Updating framework for {_ide_label(selected_ide)}...",
+                    [*trw_cmd, "update-project", str(target_dir), "--ide", selected_ide],
                     f"{_ide_label(selected_ide)} framework updated",
                     f"update-project failed for {_ide_label(selected_ide)}",
                 )
@@ -4208,10 +4395,7 @@ def phase_project_setup(
     # config.yaml, which would otherwise trip the update branch and silently
     # auto-select detected clients without prompting (see install-trw.py
     # phase_project_setup PRD-FIX-???).
-    has_prior_install = (
-        (target_dir / ".trw" / "installer-meta.yaml").is_file()
-        or bool(prior_targets)
-    )
+    has_prior_install = (target_dir / ".trw" / "installer-meta.yaml").is_file() or bool(prior_targets)
 
     resolved_targets: list[str] | None = ide
     is_update = (target_dir / ".trw").is_dir() and has_prior_install
@@ -4240,14 +4424,18 @@ def phase_project_setup(
     for idx, selected_ide in enumerate(resolved_targets):
         action = first_action if idx == 0 else "update-project"
         label = "Updating" if action == "update-project" else "Initializing"
-        cmd = trw_cmd + [action, str(target_dir), "--ide", selected_ide]
-        ok = run_with_progress(ui, f"{label} project for {_ide_label(selected_ide)}...", cmd)
         success_message = (
             f"{_ide_label(selected_ide)} configured"
             if len(resolved_targets) > 1
             else f"Project {'updated' if is_update else 'initialized'}"
         )
-        ui.stop_spinner(ok, success_message, f"Project {action} failed for {_ide_label(selected_ide)}")
+        _run_project_command(
+            ui,
+            f"{label} project for {_ide_label(selected_ide)}...",
+            [*trw_cmd, action, str(target_dir), "--ide", selected_ide],
+            success_message,
+            f"Project {action} failed for {_ide_label(selected_ide)}",
+        )
 
     config_path = target_dir / ".trw" / "config.yaml"
     refreshed_config = _load_prior_config(target_dir, ui)
@@ -4276,17 +4464,6 @@ def phase_project_setup(
     # PRD-SEC-005-FR01: persist the bearer credential to the ignored, 0600
     # credentials.yaml — config.yaml never receives the secret.
     write_platform_credentials(config_path, api_key)
-
-    # PRD-SEC-006-FR06: provision the machine-local user-scope tier
-    # (~/.trw/config.yaml + memory dir) ONLY with explicit consent
-    # (``provision_user_tier``). Default install is project-only. This replaces
-    # the prior PRD-CORE-185 FR09 auto-detect, which provisioned ~/.trw whenever
-    # home markers were present (a consent violation).
-    try:
-        if _provision_user_scope(provision_user_tier):
-            ui.step_ok("User-space memory tier provisioned (~/.trw machine layer)")
-    except OSError:  # justified: fail-open — provisioning must never break install
-        ui.step_warn("Skipped user-scope provisioning (filesystem error)")
 
     return resolved_targets
 
@@ -4318,9 +4495,7 @@ def run_install_doctor(
         ui.step_warn("Could not parse 'trw-mcp doctor' output; verify the install manually.")
         return False
     failed = [
-        str(check.get("name", "?"))
-        for check in checks
-        if isinstance(check, dict) and check.get("status") == "FAIL"
+        str(check.get("name", "?")) for check in checks if isinstance(check, dict) and check.get("status") == "FAIL"
     ]
     if failed:
         ui.step_warn("trw-mcp doctor reported problems with the installed framework:")
@@ -4390,7 +4565,7 @@ def phase_semantic_readiness(
             "matching until the weights are downloaded."
         )
         fix = (
-            f"{python} -c \"from huggingface_hub import snapshot_download; "
+            f'{python} -c "from huggingface_hub import snapshot_download; '
             f"snapshot_download(repo_id='{SEMANTIC_MODEL_REPO_ID}', "
             f"revision='{SEMANTIC_MODEL_REVISION}')\""
         )
@@ -4473,9 +4648,7 @@ def _resolve_interactive_telemetry(
     ui.doc_link_url(_PRIVACY_DOC_URL)
     if prior_default == "n" and "telemetry" in prior_config:
         ui.hint("Your prior choice was OFF — leaving it off unless you opt in.")
-    telemetry_enabled = prompt_yes_no(
-        "Enable pseudonymous usage telemetry?", default=prior_default
-    )
+    telemetry_enabled = prompt_yes_no("Enable pseudonymous usage telemetry?", default=prior_default)
     ui.step_ok("Telemetry enabled" if telemetry_enabled else "Telemetry disabled")
     return telemetry_enabled
 
@@ -4539,15 +4712,11 @@ def phase_configure(
         # must NEVER force-enable telemetry — the consent prompt is reachable on
         # every interactive path. PRD-SEC-004-FR07: a prior opt-out is the
         # default and is never silently re-enabled.
-        telemetry_enabled = _resolve_interactive_telemetry(
-            ui, opt_telemetry=opt_telemetry, prior_config=prior_config
-        )
+        telemetry_enabled = _resolve_interactive_telemetry(ui, opt_telemetry=opt_telemetry, prior_config=prior_config)
     else:
         # Script mode: use flags
         project_name = (
-            sanitize_project_name(opt_name)
-            if opt_name
-            else str(prior_config.get("project_name") or default_name)
+            sanitize_project_name(opt_name) if opt_name else str(prior_config.get("project_name") or default_name)
         )
         # PRD-FIX-067-FR02: Check prior_config before opt_api_key
         if prior_config.get("api_key"):
@@ -4589,9 +4758,7 @@ def phase_configure(
         # check_embeddings_status() short-circuits before attempting the import,
         # so embed_health reports False despite sentence-transformers being
         # importable via the overlay's PYTHONPATH.
-        embeddings_enabled=(
-            install_ai or (os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1") or None
-        ),
+        embeddings_enabled=(install_ai or (os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1") or None),
         sqlite_vec_enabled=install_vec or None,
         target_platforms=target_platforms or None,
         rewrite_platform_urls=not preserve_prior_platform_urls,
@@ -4657,7 +4824,9 @@ def _prompt_api_key(ui: UI) -> str:
             return raw
         remaining = max_attempts - attempt - 1
         if remaining > 0:
-            ui.step_warn("Invalid format (must start with trw_ or trw_dk_, then base64url chars: letters, digits, _ or -). Try again:")
+            ui.step_warn(
+                "Invalid format (must start with trw_ or trw_dk_, then base64url chars: letters, digits, _ or -). Try again:"
+            )
         else:
             ui.step_warn("Invalid format -- skipping API key")
     return ""
@@ -4799,8 +4968,7 @@ def main() -> None:
             "  python3 install-trw.py --ide cursor-ide,codex,antigravity-cli\n"
             "  python3 install-trw.py --script --no-ai      # Headless\n"
             "  python3 install-trw.py --upgrade             # Upgrade only\n"
-            "  python3 install-trw.py --script --no-telemetry  # Headless, telemetry off\n"
-            "  python3 install-trw.py --user-tier           # Provision ~/.trw user tier\n\n"
+            "  python3 install-trw.py --script --no-telemetry  # Headless, telemetry off\n\n"
             "Air-gapped / proxy install:\n"
             "  Proxy: export HTTPS_PROXY / HTTP_PROXY / NO_PROXY (and CA bundle via\n"
             "         SSL_CERT_FILE / REQUESTS_CA_BUNDLE) before running.\n"
@@ -4853,21 +5021,6 @@ def main() -> None:
         "--allow-system-python",
         action="store_true",
         help="Allow --break-system-packages on an externally-managed system Python (not recommended; prefer a venv/pipx)",
-    )
-    # PRD-SEC-006-FR06: ~/.trw user-scope (machine-local memory tier) is
-    # provisioned only with explicit consent. Default is project-only.
-    parser.add_argument(
-        "--user-tier",
-        dest="user_tier",
-        action="store_true",
-        default=None,
-        help="Provision the machine-local ~/.trw user-scope memory tier (default: project-only)",
-    )
-    parser.add_argument(
-        "--no-user-tier",
-        dest="user_tier",
-        action="store_false",
-        help="Never provision the ~/.trw user-scope tier (project-only)",
     )
     # PRD-SEC-006-FR02 / US-002: pin a specific release. Forwarded to the
     # bootstrap by install.sh; recorded here for parity + --help discoverability.
@@ -4940,9 +5093,11 @@ def main() -> None:
         parser.error(str(exc))
 
     # ── Proprietary install env-var fallback + pin validation ────────
-    with_proprietary = bool(args.with_proprietary) or os.environ.get(
-        "TRW_WITH_PROPRIETARY", ""
-    ).strip().lower() in {"1", "true", "yes"}
+    with_proprietary = bool(args.with_proprietary) or os.environ.get("TRW_WITH_PROPRIETARY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
     # PRD-INFRA-129 FR02 — auto-derive license from the configured
     # platform_api_key when --with-proprietary is given without an
@@ -4957,13 +5112,10 @@ def main() -> None:
         pkg_name, pkg_ver = pin.split("==", 1)
         if pkg_name not in PROPRIETARY_PACKAGES_TUPLE:
             parser.error(
-                f"Unknown --proprietary-version package: {pkg_name} "
-                f"(allowed: {', '.join(PROPRIETARY_PACKAGES_TUPLE)})"
+                f"Unknown --proprietary-version package: {pkg_name} (allowed: {', '.join(PROPRIETARY_PACKAGES_TUPLE)})"
             )
         proprietary_pins[pkg_name] = pkg_ver
-    backend_url = args.backend_url or os.environ.get(
-        "TRW_BACKEND_URL", "https://api.trwframework.com/v1"
-    )
+    backend_url = args.backend_url or os.environ.get("TRW_BACKEND_URL", "https://api.trwframework.com/v1")
     if args.offline and with_proprietary:
         # The offline contract is "no network access"; the proprietary path is
         # entitlement POST + wheel download. Fail fast rather than silently
@@ -5019,6 +5171,8 @@ def main() -> None:
         sys.exit(1)
 
     ui = UI(interactive=interactive, quiet=args.quiet)
+
+    index_preflight(ui)
 
     show_banner(ui)
 
@@ -5081,6 +5235,9 @@ def main() -> None:
     else:
         ui.info(f"Python {major}.{minor} ({python})")
 
+    # jq preflight (T15-JQ, installer refinement 5.1.0) — WARN only, never blocks.
+    jq_preflight(ui)
+
     # Detect already-installed extras via runtime imports
     prior_extras: dict[str, bool] = _detect_installed_extras(python) if is_reinstall else {}
     # Also honour config-level feature flags (user's prior choice persists
@@ -5127,16 +5284,19 @@ def main() -> None:
         # every later phase (extras, project setup, emitted client MCP config)
         # targets the interpreter where trw_mcp is importable.
         step += 1
-        python = phase_install_packages(
-            ui,
-            step,
-            total,
-            python,
-            memory_whl,
-            mcp_whl,
-            pip_target=args.pip_target,
-            offline=args.offline,
-        ) or python
+        python = (
+            phase_install_packages(
+                ui,
+                step,
+                total,
+                python,
+                memory_whl,
+                mcp_whl,
+                pip_target=args.pip_target,
+                offline=args.offline,
+            )
+            or python
+        )
 
         # Step 3 (conditional): Install extras
         features: list[str] = []
@@ -5172,11 +5332,6 @@ def main() -> None:
             write_proprietary_marker(target_dir, proprietary_installed)
             features.extend(proprietary_installed)
 
-        # PRD-SEC-006-FR06: resolve ~/.trw user-scope consent (default off).
-        provision_user_tier = _resolve_user_tier_consent(
-            ui, interactive=interactive, opt_user_tier=args.user_tier
-        )
-
         # Step N: Project setup
         step += 1
         selected_targets = phase_project_setup(
@@ -5189,7 +5344,6 @@ def main() -> None:
             interactive=interactive,
             ide=ide_targets,
             pip_target=args.pip_target,
-            provision_user_tier=provision_user_tier,
         )
 
         # PRD-INFRA-170-FR06: run doctor at install end. A residual framework
@@ -5203,8 +5357,7 @@ def main() -> None:
         # Semantic-retrieval readiness. Unconditional and marker-free: it must
         # re-offer the fix on EVERY run, because an install predating this check
         # has no other way to learn that its recall has always been keyword-only
-        # (the failure is a `retrieval_warning` inside a tool response, not an
-        # install error).
+        # (the failure is silent in every tool response, not an install error).
         phase_semantic_readiness(
             ui,
             python,

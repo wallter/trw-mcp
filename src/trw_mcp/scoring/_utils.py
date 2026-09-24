@@ -18,16 +18,7 @@ from trw_memory.lifecycle.scoring import (
     apply_time_decay as apply_time_decay,
 )
 from trw_memory.lifecycle.scoring import (
-    bayesian_calibrate as bayesian_calibrate,
-)
-from trw_memory.lifecycle.scoring import (
-    compute_calibration_accuracy as compute_calibration_accuracy,
-)
-from trw_memory.lifecycle.scoring import (
     compute_utility_score as compute_utility_score,
-)
-from trw_memory.lifecycle.scoring import (
-    update_q_value as update_q_value,
 )
 
 from trw_mcp.models.config import TRWConfig, get_config
@@ -55,14 +46,11 @@ __all__ = [
     "_clamp01",
     "_ensure_utc",
     "apply_time_decay",
-    "bayesian_calibrate",
-    "compute_calibration_accuracy",
     "compute_utility_score",
     "get_config",
     "logger",
     "safe_float",
     "safe_int",
-    "update_q_value",
 ]
 # NOTE: FileStateReader, FileStateWriter, and resolve_trw_dir are still
 # importable from this module (used by sibling scoring sub-modules), but

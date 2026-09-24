@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 from trw_memory.models.memory import MemoryEntry
 
+from tests._memory_store_fake import FakeMemoryStore
+
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 T2 = datetime(2026, 1, 3, tzinfo=timezone.utc)
@@ -45,9 +47,8 @@ def test_transform_open_entry_has_no_validity_keys() -> None:
 
 
 @pytest.fixture()
-def trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def trw_dir(tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch) -> Path:
     trw = tmp_path / ".trw"
-    (trw / "memory").mkdir(parents=True)
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     from trw_mcp.state.memory_adapter import reset_backend
 
@@ -55,12 +56,17 @@ def trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return trw
 
 
-def test_recall_learnings_excludes_superseded_by_default(trw_dir: Path) -> None:
-    from trw_mcp.state._memory_recall import recall_learnings
-    from trw_mcp.state.memory_adapter import get_backend
+def _store(fake_memory_store: FakeMemoryStore, entry: MemoryEntry) -> None:
+    """Write straight into the fake's rows dict: bi-temporal fields (valid_from/
+    invalid_from/invalidated_by) have no public store-API equivalent."""
+    fake_memory_store.rows[(entry.namespace, entry.id)] = entry
 
-    backend = get_backend(trw_dir)
-    backend.store(
+
+def test_recall_learnings_excludes_superseded_by_default(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
+    from trw_mcp.state._memory_recall import recall_learnings
+
+    _store(
+        fake_memory_store,
         MemoryEntry(
             id="L-aaaa",
             content="git rollback stash workflow",
@@ -69,16 +75,17 @@ def test_recall_learnings_excludes_superseded_by_default(trw_dir: Path) -> None:
             valid_from=T0,
             invalid_from=T2,
             invalidated_by="L-bbbb",
-        )
+        ),
     )
-    backend.store(
+    _store(
+        fake_memory_store,
         MemoryEntry(
             id="L-bbbb",
             content="git rollback stash workflow",
             namespace="default",
             created_at=T2,
             valid_from=T2,
-        )
+        ),
     )
 
     results = recall_learnings(trw_dir, "git rollback stash", max_results=10)
@@ -92,9 +99,10 @@ def test_recall_learnings_excludes_superseded_by_default(trw_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _store_superseded_pair(backend: object) -> None:
+def _store_superseded_pair(fake_memory_store: FakeMemoryStore) -> None:
     """A superseded record L-aaaa (window [T0,T2)) replaced by open L-bbbb."""
-    backend.store(  # type: ignore[attr-defined]
+    _store(
+        fake_memory_store,
         MemoryEntry(
             id="L-aaaa",
             content="git rollback stash workflow",
@@ -103,25 +111,25 @@ def _store_superseded_pair(backend: object) -> None:
             valid_from=T0,
             invalid_from=T2,
             invalidated_by="L-bbbb",
-        )
+        ),
     )
-    backend.store(  # type: ignore[attr-defined]
+    _store(
+        fake_memory_store,
         MemoryEntry(
             id="L-bbbb",
             content="git rollback stash workflow",
             namespace="default",
             created_at=T2,
             valid_from=T2,
-        )
+        ),
     )
 
 
-def test_recall_as_of_none_default_is_unchanged(trw_dir: Path) -> None:
+def test_recall_as_of_none_default_is_unchanged(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
     """as_of=None (the default) excludes the superseded record — bit-identical."""
     from trw_mcp.state._memory_recall import recall_learnings
-    from trw_mcp.state.memory_adapter import get_backend
 
-    _store_superseded_pair(get_backend(trw_dir))
+    _store_superseded_pair(fake_memory_store)
 
     explicit_default = recall_learnings(trw_dir, "git rollback stash", max_results=10, as_of=None)
     implicit_default = recall_learnings(trw_dir, "git rollback stash", max_results=10)
@@ -131,13 +139,14 @@ def test_recall_as_of_none_default_is_unchanged(trw_dir: Path) -> None:
     assert "L-bbbb" in {r["id"] for r in explicit_default}
 
 
-def test_recall_as_of_reincludes_record_superseded_after_that_time(trw_dir: Path) -> None:
+def test_recall_as_of_reincludes_record_superseded_after_that_time(
+    trw_dir: Path, fake_memory_store: FakeMemoryStore
+) -> None:
     """as_of=T1 (inside [T0,T2)): the superseded record is eligible; the open one
     (opens at T2) is excluded because its window had not begun."""
     from trw_mcp.state._memory_recall import recall_learnings
-    from trw_mcp.state.memory_adapter import get_backend
 
-    _store_superseded_pair(get_backend(trw_dir))
+    _store_superseded_pair(fake_memory_store)
 
     results = recall_learnings(trw_dir, "git rollback stash", max_results=10, as_of=T1.isoformat())
     ids = {r["id"] for r in results}
@@ -145,36 +154,33 @@ def test_recall_as_of_reincludes_record_superseded_after_that_time(trw_dir: Path
     assert "L-bbbb" not in ids
 
 
-def test_recall_as_of_accepts_trailing_z(trw_dir: Path) -> None:
+def test_recall_as_of_accepts_trailing_z(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
     """A trailing 'Z' (UTC) is accepted, matching the +00:00 form."""
     from trw_mcp.state._memory_recall import recall_learnings
-    from trw_mcp.state.memory_adapter import get_backend
 
-    _store_superseded_pair(get_backend(trw_dir))
+    _store_superseded_pair(fake_memory_store)
 
     results = recall_learnings(trw_dir, "git rollback stash", max_results=10, as_of="2026-01-02T00:00:00Z")
     assert "L-aaaa" in {r["id"] for r in results}
 
 
-def test_recall_malformed_as_of_raises_clean_value_error(trw_dir: Path) -> None:
+def test_recall_malformed_as_of_raises_clean_value_error(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
     """A malformed as_of surfaces a ValueError (clean validation error), not a
     bare traceback from deep inside datetime parsing."""
     from trw_mcp.state._memory_recall import recall_learnings
-    from trw_mcp.state.memory_adapter import get_backend
 
-    _store_superseded_pair(get_backend(trw_dir))
+    _store_superseded_pair(fake_memory_store)
 
     with pytest.raises(ValueError, match="ISO-8601"):
         recall_learnings(trw_dir, "git rollback stash", max_results=10, as_of="not-a-date")
 
 
-def test_recall_include_superseded_surfaces_with_flags(trw_dir: Path) -> None:
+def test_recall_include_superseded_surfaces_with_flags(trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
     """include_superseded=True returns the superseded record (ranked below the open
     one) carrying its superseded / invalidated_by flags from the transform."""
     from trw_mcp.state._memory_recall import recall_learnings
-    from trw_mcp.state.memory_adapter import get_backend
 
-    _store_superseded_pair(get_backend(trw_dir))
+    _store_superseded_pair(fake_memory_store)
 
     results = recall_learnings(trw_dir, "git rollback stash", max_results=10, include_superseded=True)
     by_id = {r["id"]: r for r in results}
@@ -206,10 +212,7 @@ def test_execute_recall_forwards_as_of_and_include_superseded() -> None:
         as_of="2026-01-02T00:00:00Z",
         include_superseded=True,
         _adapter_recall=_fake_recall,
-        _adapter_update_access=lambda *a, **k: None,
-        _search_patterns=lambda *a, **k: [],
         _rank_by_utility=lambda items, *a, **k: list(items),
-        _collect_context=lambda *a, **k: {},
     )
     assert captured["as_of"] == "2026-01-02T00:00:00Z"
     assert captured["include_superseded"] is True
@@ -232,10 +235,7 @@ def test_execute_recall_omits_validity_kwargs_by_default() -> None:
         trw_dir=Path("/nonexistent"),
         config=get_config(),
         _adapter_recall=_fake_recall,
-        _adapter_update_access=lambda *a, **k: None,
-        _search_patterns=lambda *a, **k: [],
         _rank_by_utility=lambda items, *a, **k: list(items),
-        _collect_context=lambda *a, **k: {},
     )
     assert "as_of" not in captured
     assert "include_superseded" not in captured

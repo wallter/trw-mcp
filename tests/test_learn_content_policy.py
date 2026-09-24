@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.tools._learn_impl import (
     _MAX_DETAIL_CHARS,
     _MAX_SUMMARY_CHARS,
@@ -298,7 +299,9 @@ class TestAuxiliaryGateIsWiredAheadOfTheJournal:
         assert result["status"] == "rejected"
         assert result["reason"] == "injection_pattern"
 
-    def test_a_rejected_entry_is_never_journalled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_a_rejected_entry_is_never_journalled(
+        self, monkeypatch: pytest.MonkeyPatch, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """The gate runs strictly BEFORE ``journal_accepted``.
 
         Asserted by spying on the journal write rather than by looking for

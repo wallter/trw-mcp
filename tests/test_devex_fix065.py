@@ -118,7 +118,7 @@ class TestToolDocstringSeeAlso:
         desc = tools["trw_learn"].description or ""
         assert "See Also:" in desc
         assert "trw_recall" in desc
-        assert "trw_learn_update" in desc
+        assert "trw_learn_update" not in desc  # merged into trw_learn (PRD-CORE-291-FR02)
 
     def test_trw_recall_see_also(self) -> None:
         from tests.conftest import get_tools_sync, make_test_server

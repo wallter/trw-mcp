@@ -26,8 +26,10 @@ from trw_mcp.tools._delivery_effect_registry import (
 # a checked-in file that outlives the run), and by PRD-FIX-127 FR05 with S23 (the
 # gate decision-set receipt writes) and D26 (the meta-tune rollout linkage event
 # append) -- two durable delivery mutations that had NO descriptor at all until the
-# input/output tracer observed them on a live deliver.
-_EXPECTED_IDS = frozenset([f"S{n:02d}" for n in range(1, 24)] + [f"D{n:02d}" for n in range(27)])
+# input/output tracer observed them on a live deliver. PRD-CORE-293 retired D09
+# (outcome/Q correlation) and D10 (recall positive-outcome append) along with the
+# dead outcome-correlation roster steps -- the D-range below excludes them.
+_EXPECTED_IDS = frozenset([f"S{n:02d}" for n in range(1, 24)] + [f"D{n:02d}" for n in range(27) if n not in (9, 10)])
 
 # Every ``owner_call_point`` value that appears in the census, mapped to the
 # fully-qualified module it is DEFINED in (verified 2026-09-03, diagnostic
@@ -68,8 +70,6 @@ _OWNER_MODULES: dict[str, str] = {
     "_step_auto_progress": "trw_mcp.tools._deferred_steps_learning",
     "_step_publish_learnings": "trw_mcp.tools._deferred_steps_learning",
     "publish_learnings": "trw_mcp.telemetry.publisher",
-    "_step_outcome_correlation": "trw_mcp.tools._deferred_steps_learning",
-    "_step_recall_outcome": "trw_mcp.tools._deferred_steps_learning",
     "_step_telemetry": "trw_mcp.tools._deferred_steps_telemetry",
     "_step_batch_send": "trw_mcp.tools._deferred_steps_telemetry",
     "BatchSender.send": "trw_mcp.telemetry.sender",
@@ -119,7 +119,7 @@ def _resolve_owner_symbol(owner_call_point: str) -> object:
 def test_current_delivery_side_effect_inventory_is_exhaustive() -> None:
     """FR03: registry equals the approved §6.6 census with no gaps or duplicates."""
     assert all_effect_ids() == _EXPECTED_IDS
-    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 50
+    assert len(DELIVERY_EFFECT_REGISTRY) == len(_EXPECTED_IDS) == 48
     # Every descriptor's own effect_id matches its dict key (no duplicate/orphan).
     for effect_id, descriptor in DELIVERY_EFFECT_REGISTRY.items():
         assert descriptor.effect_id == effect_id
@@ -168,10 +168,12 @@ def test_owner_call_point_is_never_a_top_level_tool_entry_point() -> None:
 
 
 def test_thirteen_deferred_roster_and_post_batch_ids_present() -> None:
-    """FR03 acceptance: 14 roster entries + post-batch + D00 lock are represented."""
-    # D01-D13 roster, D14-D24 post-batch/nested, D25 memory decay, D26 meta-tune
-    # rollout linkage, D00 lock.
+    """FR03 acceptance: 11 roster entries + post-batch + D00 lock are represented."""
+    # D01-D08 and D11-D13 roster (D09/D10 retired by PRD-CORE-293), D14-D24
+    # post-batch/nested, D25 memory decay, D26 meta-tune rollout linkage, D00 lock.
     for n in range(27):
+        if n in (9, 10):
+            continue
         assert f"D{n:02d}" in DEFERRED_ROSTER_IDS
 
 

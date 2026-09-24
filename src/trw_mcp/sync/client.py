@@ -199,13 +199,6 @@ class BackendSyncClient:
                 self._reset_poll_schedule()
                 logger.warning("sync_loop_error", client_id=self._client_id, exc_info=True)
 
-    async def trigger_sync(self) -> None:
-        """Force an immediate sync cycle (e.g., on deliver)."""
-        try:
-            await self._run_one_cycle(force=True)
-        except Exception:  # justified: fail-open, manual sync trigger errors must not break caller workflows
-            logger.warning("sync_trigger_error", client_id=self._client_id, exc_info=True)
-
     async def _run_one_cycle(self, force: bool = False) -> None:
         """Execute one push+pull sync cycle, fanning out pushes to every target."""
         await _run_one_cycle_impl(self, force=force)
@@ -318,8 +311,8 @@ class BackendSyncClient:
         return _coerce_positive_number_impl(raw)
 
     def _get_dirty_entries(self) -> list[MemoryEntry]:
-        return _get_dirty_entries_impl(client_id=self._client_id)
+        return _get_dirty_entries_impl(client_id=self._client_id, trw_dir=self._trw_dir)
 
     def _mark_synced(self, entries: list[MemoryEntry]) -> None:
         """Mark entries as synced in local storage."""
-        _mark_synced_impl(client_id=self._client_id, entries=entries)
+        _mark_synced_impl(client_id=self._client_id, trw_dir=self._trw_dir, entries=entries)

@@ -2,15 +2,14 @@
 
 Belongs to the ``ceremony.py`` facade. Re-exported there for back-compat.
 
-Seven step helpers covering the trw_session_start flow:
+Step helpers covering the trw_session_start flow:
 
 - ``_write_session_start_ids`` — populate injected_learning_ids.txt
   (PRD-CORE-095 FR16) so auto-injection doesn't re-surface learnings.
-- ``step_recall_learnings`` — step 1 recall via SQLite + extras-promotion.
+- ``step_recall_learnings`` — step 1: the one recall, presented as the learning
+  block (PRD-CORE-294 FR02).
 - ``step_surface_stamp`` — step 2c surface-snapshot stamp (PRD-HPO-MEAS-001
   FR-1/FR-2).
-- ``step_phase_auto_recall`` — step 6 phase-contextual auto-recall
-  (PRD-CORE-049).
 - ``step_assertion_health`` — assertion-health summary (PRD-CORE-086 FR07).
 - ``step_pipeline_health_advisory`` — compact pipeline-health advisory injected
   when any compounding-pipeline signal is degraded (PRD-FIX-COMPOUNDING-6 FR03).
@@ -25,14 +24,12 @@ from __future__ import annotations
 
 import stat
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import structlog
 
 from trw_mcp.models.typed_dicts import (
-    AutoRecalledItemDict,
     RunStatusDict,
     SessionStartResultDict,
 )
@@ -145,13 +142,16 @@ def step_recall_learnings(
     config: TRWConfig,
     results: SessionStartResultDict,
     errors: list[str],
+    *,
+    verbose: bool = False,
 ) -> None:
-    """Step 1 — recall learnings via SQLite adapter and update results in-place.
+    """Step 1 — the one session_start recall, presented as the learning block (PRD-CORE-294 FR02).
 
     Looks up ``resolve_trw_dir`` via the parent ``ceremony`` module so test
     monkeypatches on ``trw_mcp.tools.ceremony.resolve_trw_dir`` propagate
     correctly (per the test-monkeypatch indirection pattern).
     """
+    from trw_mcp.state._memory_recall import pop_store_error
     from trw_mcp.state.persistence import FileStateReader
     from trw_mcp.tools import ceremony as _ceremony
     from trw_mcp.tools._ceremony_helpers import perform_session_recalls
@@ -159,28 +159,29 @@ def step_recall_learnings(
     reader = FileStateReader()
     try:
         trw_dir = _ceremony.resolve_trw_dir()
-        learnings, _auto_recalled, extra = perform_session_recalls(trw_dir, query, config, reader)
+        # Clear first: the slot is context-scoped, and a failure left by an earlier recall in the
+        # same context (another tool, a test in the same worker) is not THIS session's recall.
+        pop_store_error()
+        learnings, extra = perform_session_recalls(trw_dir, query, config, reader, verbose=verbose)
+        store_error = pop_store_error()
+        if store_error:
+            # Recall returned nothing because the store could not be opened; route it
+            # through this step's critical-failure handling instead of a silent empty list.
+            from trw_memory.exceptions import StorageError
+
+            raise StorageError(store_error)
         results["learnings"] = learnings
         results["learnings_count"] = len(learnings)
         if "query" in extra:
             results["query"] = str(extra["query"])
-        if "query_matched" in extra:
-            results["query_matched"] = int(str(extra["query_matched"]))
         if "query_advisory" in extra:
             results["query_advisory"] = str(extra["query_advisory"])
-        if "total_available" in extra:
-            results["total_available"] = int(str(extra["total_available"]))
+        if "learnings_omitted" in extra:
+            results["learnings_omitted"] = int(str(extra["learnings_omitted"]))
         if "store_count" in extra:
             results["store_count"] = int(str(extra["store_count"]))
-        if "response_compacted" in extra:
-            results["response_compacted"] = bool(extra["response_compacted"])
-        if "side_effects_deferred" in extra:
-            results["side_effects_deferred"] = extra["side_effects_deferred"]
-        # PRD-CORE-257-FR09: NOT gated on the deferral advisory. This writes a
-        # bounded, de-duplicated text file under the context directory and opens
-        # no SQLite connection, so writer pressure is not a reason to skip it —
-        # skipping it let the auto-injection hook re-inject learnings this
-        # session had already surfaced, paying correctness to save nothing.
+        # This writes a bounded, de-duplicated text file under the context
+        # directory and opens no SQLite connection.
         _write_session_start_ids(trw_dir, learnings, cast("MutableMapping[str, object]", results))
     except Exception as exc:
         # PRD-CORE-263-FR01. This handler used to swallow into a warning and a
@@ -247,98 +248,12 @@ def step_surface_stamp(run_dir: Path | None, session_id: str, degradations: Degr
         raise SessionStartStepError("surface_stamp", exc) from exc
 
 
-def step_auto_recall_orchestrated(
-    query: str,
-    config: TRWConfig,
-    run_dir: Path | None,
-    results: SessionStartResultDict,
-) -> None:
-    """Orchestrate step 6: response-compacted check + primary_ids + auto_recall + surfaces.
-
-    Looks up ``resolve_trw_dir`` and ``record_session_start_surfaces``
-    via the parent ``ceremony`` module so test monkeypatches propagate.
-
-    PRD-CORE-263-FR01: ``phase_recall`` is declared critical, so this body no
-    longer swallows into a degradation entry beside a ``success: true`` verdict.
-    It raises a typed :class:`SessionStartStepError` and the runner decides.
-
-    DEF-03: ``step_phase_auto_recall`` below already wraps ITS OWN failures in
-    ``SessionStartStepError("phase_recall", exc)`` before returning control
-    here. This handler used to catch that already-typed error with the same
-    broad ``except Exception`` and wrap it a SECOND time, so
-    ``run_steps``'s single ``exc.cause`` unwrap landed on the inner
-    ``SessionStartStepError`` instance instead of the real failure —
-    corrupting ``degradations[].error_class`` to ``SessionStartStepError`` on
-    every entry, which is the one field an operator triages by. A
-    ``SessionStartStepError`` raised from below is now re-raised AS-IS.
-    """
-    from trw_mcp.tools import ceremony as _ceremony
-    from trw_mcp.tools._ceremony_helpers import record_session_start_surfaces
-
-    try:
-        if bool(results.get("response_compacted")):
-            # DEF-12: named ``*_deferred`` until this fix, with no ledger entry
-            # and no consumer that ever runs phase auto-recall for a compacted
-            # session later — "deferred" implied a resumption nothing provides.
-            # A compacted session simply never gets phase auto-recall; the key
-            # says so plainly instead of promising a catch-up that never comes.
-            results["auto_recall_skipped"] = {
-                "reason": "session_start_compacted",
-                "detail": "Phase auto-recall is optional and was left off the hot response path.",
-            }
-            return
-        trw_dir_ar = _ceremony.resolve_trw_dir()
-        primary_ids = {str(entry.get("id", "")) for entry in results.get("learnings", []) if entry.get("id")}
-        outcome = step_phase_auto_recall(trw_dir_ar, query, config, run_dir, results.get("run"), primary_ids)
-        if outcome is None:
-            return
-        phase_recalled, auto_ids = outcome
-        record_session_start_surfaces(trw_dir_ar, auto_ids)
-        results["auto_recalled"] = phase_recalled
-        results["auto_recall_count"] = len(phase_recalled)
-    except SessionStartStepError:
-        # DEF-03: already typed by step_phase_auto_recall — do not re-wrap.
-        raise
-    except Exception as exc:
-        raise SessionStartStepError("phase_recall", exc) from exc
-
-
-def step_phase_auto_recall(
-    trw_dir: Path,
-    query: str,
-    config: TRWConfig,
-    run_dir: Path | None,
-    run_status: RunStatusDict | None,
-    primary_ids: set[str],
-) -> tuple[list[AutoRecalledItemDict], list[str]] | None:
-    """PRD-CORE-049 — phase-contextual auto-recall on session_start."""
-    from trw_mcp.tools._ceremony_helpers import _phase_contextual_recall
-
-    if not config.auto_recall_enabled:
-        return None
-    try:
-        phase_recalled = _phase_contextual_recall(trw_dir, query, config, run_dir, run_status)
-        if not phase_recalled:
-            return None
-        auto_ids = [
-            str(entry.get("id", ""))
-            for entry in phase_recalled
-            if entry.get("id") and str(entry.get("id", "")) not in primary_ids
-        ]
-        return phase_recalled, auto_ids
-    except Exception as exc:
-        # PRD-CORE-263-FR01. This is inside the ``phase_recall`` critical step:
-        # swallowing here made the outer raise unreachable for every failure
-        # originating in the recall itself, which is most of them.
-        raise SessionStartStepError("phase_recall", exc) from exc
-
-
 def _resolve_assertion_stale_days(config: TRWConfig | None) -> int:
     """The configured assertion staleness window, or a raise (PRD-CORE-263-FR08).
 
     Refuse-on-exception: there is deliberately no numeric fallback here. A
     hardcoded default would put this surface back out of step with
-    ``_verification_pass``, which is the whole defect.
+    ``lifecycle.verification_pass``, which is the whole defect.
     """
     if config is None:
         from trw_mcp.models.config import get_config
@@ -365,8 +280,7 @@ def step_assertion_health(
     be resolved records a degradation and returns no summary rather than falling
     back to a hardcoded window, which would recreate the defect one layer down.
     """
-    from trw_mcp.state._constants import DEFAULT_NAMESPACE
-    from trw_mcp.state.memory_adapter import get_backend
+    from trw_mcp.state._store_selection import selected_store
 
     started = time.monotonic()
     try:
@@ -375,39 +289,12 @@ def step_assertion_health(
         _record_or_debug(degradations, "assertion_health", exc, "assertion_health_config_unresolved")
         return None
     try:
-        backend = get_backend(trw_dir)
-        if not hasattr(backend, "entries_with_assertions"):
-            return None
-        # Scope to the project namespace so a shared/federated store cannot leak
-        # another namespace's assertions into this session's health summary
-        # (memory-storage-1). Fall back to the unscoped call for an older
-        # trw-memory whose signature predates the namespace kwarg.
-        try:
-            entries = backend.entries_with_assertions(namespace=DEFAULT_NAMESPACE)
-        except TypeError:
-            entries = backend.entries_with_assertions()
-        if not entries:
-            return None
-        stale_threshold = datetime.now(timezone.utc) - timedelta(days=stale_days)
-        passing = failing = stale = unverifiable = 0
-        for entry in entries:
-            for a in entry.assertions:
-                if a.last_verified_at is None or a.last_verified_at < stale_threshold:
-                    stale += 1
-                elif a.last_result is True:
-                    passing += 1
-                elif a.last_result is False:
-                    failing += 1
-                else:
-                    unverifiable += 1
-        return {
-            "passing": passing,
-            "failing": failing,
-            "stale": stale,
-            "unverifiable": unverifiable,
-            "total": len(entries),
-        }
+        # The store counts its own project namespace, so a shared store never
+        # leaks another namespace's assertions into this summary (memory-storage-1).
+        store, namespace = selected_store(trw_dir)
+        return store.assertion_health(namespace, stale_days)
     except Exception as exc:  # justified: fail-open per PRD-CORE-086 NFR
+        # trw-fail-silent-allow: the failure is recorded as a typed assertion_health degradation, and the summary is omitted rather than zeroed
         _record_or_debug(degradations, "assertion_health", exc, "assertion_health_failed")
         return None
     finally:
@@ -484,17 +371,17 @@ def finalize_session_start(
     # written through a MutableMapping cast (same pattern as record_into).
     cast("MutableMapping[str, object]", results)["connection_fingerprint"] = build_connection_fingerprint()
 
-    if bool(results.get("response_compacted")) or config.effective_ceremony_mode == "light":
+    if config.effective_ceremony_mode == "light":
         results["framework_reminder"] = (
             "Preserve unfinished work with trw_checkpoint() or a durable handoff. "
             "Use trw_deliver() only to accept completed work under delivery gates."
         )
     else:
         results["framework_reminder"] = (
-            "Read .trw/frameworks/FRAMEWORK-CORE.md — it defines the methodology "
-            "your tools implement (6-phase execution model, exit criteria, "
-            "formations, quality gates, phase reversion). Re-read after "
-            "context compaction."
+            "Read your phase's sections of .trw/frameworks/FRAMEWORK.md (start "
+            "with EXECUTION MODEL SUMMARY) — it defines the methodology your tools "
+            "implement (6-phase execution model, exit criteria, formations, quality "
+            "gates, phase reversion). Re-read them after context compaction."
         )
 
     try:
@@ -503,16 +390,7 @@ def finalize_session_start(
         record_into(cast("MutableMapping[str, object]", results), "mark_session_started", exc)
 
     try:
-        if bool(results.get("response_compacted")):
-            # DEF-12: same rename as ``auto_recall_skipped`` above — nothing
-            # journals or later performs nudge decoration for a session that
-            # skipped it while compacted, so it is not a deferral.
-            results["ceremony_status_skipped"] = {
-                "reason": "session_start_compacted",
-                "detail": "Nudge decoration is optional and was left off the hot response path.",
-            }
-        else:
-            step_ceremony_status(cast("dict[str, object]", results))
+        step_ceremony_status(cast("dict[str, object]", results))
     except Exception as exc:  # justified: fail-open, status decoration must not block session start
         record_into(cast("MutableMapping[str, object]", results), "ceremony_status", exc)
 

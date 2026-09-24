@@ -72,17 +72,3 @@ class _VerificationFields:
         le=600_000,
         description="Deprecated compatibility input; inline recall verification is retired and this value has no effect.",
     )
-
-    # -- PRD-CORE-267-FR03: the shared-anchor-set migration ------------------
-    #: Minimum number of entries sharing one IDENTICAL anchor set before that
-    #: set is treated as derivation noise rather than topical convergence. On
-    #: the development store (2,006 anchored rows, 370 distinct sets) 344 sets
-    #: hold 7 members or fewer and the distribution is empty at 9, so 10 sits
-    #: below every fabricated cluster and above every plausible case of several
-    #: learnings genuinely concerning the same symbols.
-    anchor_shared_set_migration_threshold: int = Field(
-        default=10,
-        ge=2,
-        le=10_000,
-        description="Entries sharing one identical anchor set before the clear-shared-anchors migration selects it.",
-    )

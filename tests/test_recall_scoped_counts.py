@@ -1,14 +1,15 @@
 """PRD-FIX-141-FR05 — ``trw_recall`` names each of its count populations.
 
-``total_available=25`` over a 1,346-entry store (learning L-Rikf) is a correct
-number for a question nobody asked: it is the BOUNDED PRE-CAP match population,
-capped by ``max_results * PREFETCH_MULTIPLIER``, and its own source comment
-already says so. The defect was never the value — it was that the response
-offered exactly one count and a reader had no way to learn which population it
-described.
+PRD-CORE-294 FR01 replaced ``trw_recall``'s response with the stub/budget shape
+({query, learnings, total_matches} + advisories): ``store_count``,
+``candidate_count``, ``total_available``, and ``ultra_compact`` no longer exist
+on ``execute_recall``'s return value, so the tests that pinned them there are
+deleted. ``candidate_count`` survives only as a structlog field on the
+``trw_recall_searched`` event (see ``trw_mcp.tools._recall_impl``).
 
-``total_available`` therefore keeps its meaning and its value (NFR03), and the
-two counts it was mistaken for are reported alongside it.
+``perform_session_recalls`` (the session_start recall path) is a separate
+surface with its own ``extra`` dict that still carries ``store_count`` and
+``total_available`` — that coverage is unaffected and kept below.
 """
 
 from __future__ import annotations
@@ -17,10 +18,28 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
+
 
 def _trw(project_root: Path) -> Path:
     """The ``.trw`` directory inside the ``tmp_project`` fixture's root."""
     return project_root / ".trw"
+
+
+@pytest.fixture
+def fake_memory_store(monkeypatch: pytest.MonkeyPatch) -> FakeMemoryStore:
+    """Override of ``tests._memory_fixtures.fake_memory_store`` pinned to "default".
+
+    These tests seed through ``store_learning`` and then keyword-search the same
+    rows, so the fake's ``recall()`` (which only searches "default") needs the
+    namespace ``selected_store`` returns to match where the rows were written —
+    see ``tests/test_tools_learning_recall_modes.py`` for the same workaround.
+    """
+    from trw_mcp.state import _store_selection
+
+    store = FakeMemoryStore()
+    monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, "default"))
+    return store
 
 
 def _seed(trw_dir: Path, count: int, *, prefix: str = "seed") -> None:
@@ -38,96 +57,44 @@ def _seed(trw_dir: Path, count: int, *, prefix: str = "seed") -> None:
         )
 
 
-def test_recall_reports_store_count_over_the_whole_store(tmp_project: Path) -> None:
-    """``store_count`` is the inventory — independent of the query and the cap."""
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._recall_impl import execute_recall
-
-    _seed(_trw(tmp_project), 12)
-
-    result = execute_recall("widget", _trw(tmp_project), TRWConfig(), max_results=3)
-
-    assert result["store_count"] == 12
-    assert len(result["learnings"]) <= 3
-
-
-def test_candidate_count_is_the_pre_rank_population(tmp_project: Path) -> None:
-    """``candidate_count`` counts what the backend returned before ranking and capping."""
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._recall_impl import execute_recall
-
-    _seed(_trw(tmp_project), 12)
-
-    result = execute_recall("widget", _trw(tmp_project), TRWConfig(), max_results=3)
-
-    assert result["candidate_count"] >= len(result["learnings"])
-    assert result["candidate_count"] <= result["store_count"]
-
-
-def test_total_available_keeps_its_pre_change_meaning(tmp_project: Path) -> None:
-    """NFR03: the field a consumer already reads is neither removed nor redefined.
-
-    ``total_available`` is learnings-plus-patterns from the bounded pre-cap set,
-    so it is at least the returned count and never the store inventory once the
-    fetch cap bites.
-    """
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools._recall_impl import execute_recall
-
-    _seed(_trw(tmp_project), 12)
-
-    result = execute_recall("widget", _trw(tmp_project), TRWConfig(), max_results=3)
-
-    assert result["total_available"] >= result["total_matches"]
-    assert "total_available" in result and "total_matches" in result
-
-
-def test_store_count_is_omitted_rather_than_zeroed_when_unmeasured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_candidate_count_is_logged_as_structured_telemetry(
+    tmp_project: Path, fake_memory_store: FakeMemoryStore
 ) -> None:
-    """A store that could not be read must not be reported as an inventory of zero."""
-    from trw_mcp.models.config import TRWConfig
-    from trw_mcp.tools import _recall_impl
+    """``candidate_count`` is no longer a response field: it's a structlog event
+    field on ``trw_recall_searched`` (PRD-CORE-236 diagnostics-to-structlog rule)."""
+    import structlog.testing
 
-    trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    monkeypatch.setattr(_recall_impl, "store_entry_count", lambda *a, **k: None)
-
-    result = _recall_impl.execute_recall("widget", trw_dir, TRWConfig())
-
-    assert "store_count" not in result
-
-
-def test_ultra_compact_stays_a_minimal_payload(tmp_project: Path) -> None:
-    """The ultra-compact contract is exactly three keys — the counts do not join it.
-
-    ``tests/test_tools_learning_recall_modes.py`` pins that key set because
-    ultra-compact exists to be the cheapest possible response; widening it here
-    would have been an unannounced contract change on the surface least able to
-    afford one.
-    """
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.tools._recall_impl import execute_recall
 
-    _seed(_trw(tmp_project), 4)
+    _seed(_trw(tmp_project), 12)
 
-    result = execute_recall("widget", _trw(tmp_project), TRWConfig(), ultra_compact=True)
+    with structlog.testing.capture_logs() as logs:
+        result = execute_recall("widget", _trw(tmp_project), TRWConfig(), max_results=3)
 
-    assert "store_count" not in result
     assert "candidate_count" not in result
+    assert "store_count" not in result
+    assert "total_available" not in result
+
+    searched = [log for log in logs if log.get("event") == "trw_recall_searched"]
+    assert len(searched) == 1
+    assert searched[0]["candidate_count"] >= len(result["learnings"])
+    assert searched[0]["candidate_count"] <= 12
 
 
-def test_session_start_recall_extras_carry_the_store_count(tmp_project: Path) -> None:
-    """session_start's ``total_available`` is the RETURNED set; the corpus is separate."""
+def test_session_start_recall_extras_carry_the_store_count(
+    tmp_project: Path, fake_memory_store: FakeMemoryStore
+) -> None:
+    """session_start's block counts what it SHOWS; the corpus is ``store_count``, separately."""
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state.persistence import FileStateReader
     from trw_mcp.tools._session_recall_helpers import perform_session_recalls
 
     _seed(_trw(tmp_project), 7)
 
-    _learnings, _items, extra = perform_session_recalls(
+    _learnings, extra = perform_session_recalls(
         _trw(tmp_project), "widget", TRWConfig(), FileStateReader(base_dir=_trw(tmp_project))
     )
 
     assert extra["store_count"] == 7
-    assert extra["total_available"] <= extra["store_count"]
+    assert len(_learnings) + int(extra.get("learnings_omitted", 0)) <= extra["store_count"]

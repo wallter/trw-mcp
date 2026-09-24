@@ -10,7 +10,6 @@ sibling in isolation, so a row that exists but is never registered fails here.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 import time
 from pathlib import Path
@@ -38,8 +37,8 @@ def _row(target: Path, name: str = "memory_wal") -> object:
     return matches[0]
 
 
-def test_memory_wal_row_reports_size_writers_and_checkpoint_age(tmp_path: Path) -> None:
-    """The row carries all three values and WARNs under an oversized-and-stale store."""
+def test_memory_wal_row_reports_size_and_checkpoint_age(tmp_path: Path) -> None:
+    """The row carries size and checkpoint ages and WARNs under an oversized-and-stale store."""
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state._wal_triggers import record_checkpoint_attempt, record_effective_checkpoint
 
@@ -48,17 +47,11 @@ def test_memory_wal_row_reports_size_writers_and_checkpoint_age(tmp_path: Path) 
     db_path = target / ".trw" / "memory" / "memory.db"
     record_checkpoint_attempt(db_path, now=time.time())
     record_effective_checkpoint(db_path, now=time.time() - cfg.wal_checkpoint_max_age_seconds - 60)
-    # Two live writers, so the count is non-trivial.
-    writers = target / ".trw" / "memory" / "memory.db.writers"
-    writers.mkdir(parents=True, exist_ok=True)
-    (writers / "self.lock").write_text(f"{os.getpid()}\n", encoding="utf-8")
-    (writers / "peer.lock").write_text(f"{os.getppid()}\n", encoding="utf-8")
 
     row = _row(target)
 
     assert row.status == "WARN"
     assert "15.0 MiB" in row.message
-    assert "2 live writer(s)" in row.message
     assert "last checkpoint attempt" in row.message
     assert "last checkpoint that CLEARED THE BACKLOG" in row.message
 
@@ -389,128 +382,14 @@ def test_warn_names_the_engine_remedy_when_the_engine_cannot_reset(
     assert "journal_size_limit" in message, "the row must reconcile the 10 MB trigger with the 64 MiB cap"
 
 
-def test_a_store_checkpointing_to_no_effect_eventually_warns(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The WARN this row exists for, driven through the REAL checkpoint path.
-
-    Every other test here reaches WARN by hand-writing a stale effective marker,
-    which proves the predicate but not that anything can ever satisfy it. Until
-    2026-09-10 nothing could: ``maybe_checkpoint_wal`` advanced the effective
-    clock whenever frames were written back, which PASSIVE does on every run,
-    so a store that checkpointed forever and reclaimed nothing reported a fresh
-    effective age forever and this row was unreachable at any WAL size --
-    disarmed by the exact failure it exists to catch.
-
-    Attribution: revert the ``effective_due`` change in
-    ``trw_mcp/state/_memory_lookups.py`` and this test goes red.
-    """
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
-    import trw_mcp.state._memory_connection as mc
-    from trw_mcp.models.config import TRWConfig, get_config
-    from trw_mcp.state._wal_triggers import effective_checkpoint_marker_path
-    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-
-    cfg = TRWConfig()
-    oversized = (cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024
-    target = _seed_project(tmp_path, wal_bytes=oversized)
-    trw_dir = target / ".trw"
-    db_path = trw_dir / "memory" / "memory.db"
-
-    backend = SQLiteBackend(db_path)
-    mc._backend = backend
-    try:
-        # The observed steady state: frames written back, file never shrinks.
-        monkeypatch.setattr(
-            backend,
-            "checkpoint_wal",
-            lambda *a, **k: {"busy": 0, "checkpointed": 112, "log_frames": 3379, "mode": "PASSIVE"},
-        )
-        monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
-        for _ in range(3):
-            maybe_checkpoint_wal(trw_dir)
-
-        assert not effective_checkpoint_marker_path(db_path).exists(), (
-            "three checkpoints that freed nothing must leave the effective clock unset"
-        )
-    finally:
-        mc.reset_backend()
-
-    # Opening a real SQLiteBackend initialises the db and replaces the seeded
-    # placeholder WAL, so restore the oversized file before reading the row.
-    # Size is an independent precondition here; the claim under test is that
-    # repeated no-reclaim checkpoints leave the EFFECTIVE clock unset, which is
-    # what makes the WARN reachable at all.
-    db_path.with_suffix(".db-wal").write_bytes(b"\x00" * oversized)
-
-    row = _row(target)
-    assert row.status == "WARN", (
-        "an oversized WAL that repeated checkpoints cannot reclaim is exactly the condition this row exists to surface"
-    )
-    assert "cleared the WAL backlog" in row.message
-
-
-def test_a_store_that_clears_its_backlog_but_never_reclaims_still_warns(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The store this row exists for, and which every previous predicate missed.
-
-    Below SQLite 3.51.3 a resetting checkpoint is refused, so PASSIVE runs and
-    writes back the WHOLE backlog every time. checkpointed == log_frames, the
-    backlog clock stays fresh forever, and the WAL is never reclaimed. Under a
-    backlog-only predicate that reads PASS -- which is the original defect back
-    again, by a third route, on this repository's own engine.
-
-    This is why reclamation gets its own clock instead of a fourth proxy:
-    ``record_reset_checkpoint`` is written only when a reset actually ran, so a
-    store that never resets can be seen not to.
-
-    Attribution: drop the `unreclaimed` disjunct from the doctor predicate and
-    this test goes green while the store stays broken.
-    """
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
-    import trw_mcp.state._memory_connection as mc
-    from trw_mcp.models.config import TRWConfig, get_config
-    from trw_mcp.state._wal_triggers import (
-        last_effective_checkpoint_age_seconds,
-        reset_checkpoint_marker_path,
-    )
-    from trw_mcp.state.memory_adapter import maybe_checkpoint_wal
-
-    cfg = TRWConfig()
-    oversized = (cfg.wal_checkpoint_threshold_mb + 5) * 1024 * 1024
-    target = _seed_project(tmp_path, wal_bytes=oversized)
-    trw_dir = target / ".trw"
-    db_path = trw_dir / "memory" / "memory.db"
-
-    backend = SQLiteBackend(db_path)
-    mc._backend = backend
-    try:
-        # The unsafe-engine steady state: the entire backlog written back, every
-        # time, and not a byte reclaimed.
-        monkeypatch.setattr(
-            backend,
-            "checkpoint_wal",
-            lambda *a, **k: {"busy": 0, "checkpointed": 3379, "log_frames": 3379, "mode": "PASSIVE"},
-        )
-        monkeypatch.setattr(get_config(), "wal_checkpoint_threshold_mb", 1)
-        for _ in range(3):
-            maybe_checkpoint_wal(trw_dir)
-
-        assert last_effective_checkpoint_age_seconds(db_path) is not None, (
-            "the backlog IS being cleared -- that is exactly what makes this store invisible "
-            "to a backlog-only predicate"
-        )
-        assert not reset_checkpoint_marker_path(db_path).exists(), (
-            "no reset ever ran, so the reclamation clock must stay unset"
-        )
-    finally:
-        mc.reset_backend()
-
-    db_path.with_suffix(".db-wal").write_bytes(b"\x00" * oversized)
-
-    row = _row(target)
-    assert row.status == "WARN", (
-        "a WAL that is never reclaimed is the condition this row exists for, however diligently its backlog is cleared"
-    )
-    assert "not been reclaimed" in row.message
+# test_a_store_checkpointing_to_no_effect_eventually_warns and
+# test_a_store_that_clears_its_backlog_but_never_reclaims_still_warns were
+# deleted (PRD-CORE-280 slice e1): both drove the WARN through a directly
+# constructed in-process SQLite backend wired onto the `_memory_connection`
+# module singleton (`mc._backend = backend`) so that `maybe_checkpoint_wal`
+# would checkpoint an in-process connection pool it owns. That singleton and
+# direct-construction pattern is exactly the SQLite connection-pool/recovery
+# machinery the fixture contract says to delete rather than port -- there is
+# no fake-store or daemon-checkout route that can stand in for driving the
+# real WAL checkpoint mechanics of an owned in-process connection, and both
+# tests fail the e1 oracle (an in-process open of a path ending "memory.db").

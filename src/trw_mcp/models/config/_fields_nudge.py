@@ -26,6 +26,9 @@ class _NudgeFields:
     """Nudge-engine domain mixin -- mixed into _TRWConfigFields via MI."""
 
     nudge_enabled: bool | None = None
+    # PRD-CORE-294 FR05: the one switch over the FR04/FR06 transition selector,
+    # independent of nudge_enabled so no client profile turns it off by default.
+    transition_nudges_enabled: bool = True
     nudge_budget_chars: int = Field(default=600, ge=100, le=2000)
     nudge_messenger: NudgeMessengerLiteral | None = None
 

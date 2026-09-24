@@ -1,7 +1,7 @@
 """Risk-based validation scaling (PRD-QUAL-013).
 
-Risk profiles adjust quality tier thresholds, content density minimums,
-and dimension weight distributions based on PRD priority or explicit risk.
+Risk profiles adjust quality tier thresholds, diagnostic content density
+minimums, and dimension weights based on PRD priority or explicit risk.
 """
 
 from __future__ import annotations
@@ -16,18 +16,20 @@ class RiskProfile:
     """Risk-scaled thresholds and dimension weights for PRD validation.
 
     Each risk level gets a distinct profile that adjusts quality tier
-    thresholds, content density minimums, and dimension weight distribution.
+    thresholds, diagnostic density minimums, and dimension weight distribution.
     """
 
     approved_threshold: float
     review_threshold: float
     draft_threshold: float
     min_content_density: float
-    weights: tuple[float, ...]  # (density, structure, readiness, traceability) — active dimensions, sum=100
+    weights: tuple[
+        float, ...
+    ]  # (diagnostic density, structure, readiness, traceability); total=100, score renormalizes latter three
 
 
 RISK_PROFILES: dict[str, RiskProfile] = {
-    # weights: (density, structure, readiness, traceability) — must sum to 100
+    # weights: (diagnostic density, structure, readiness, traceability) — sum=100; score excludes density
     "critical": RiskProfile(92.0, 75.0, 45.0, 0.50, (15, 20, 30, 35)),
     "high": RiskProfile(88.0, 70.0, 35.0, 0.40, (18, 20, 27, 35)),
     "medium": RiskProfile(85.0, 60.0, 30.0, 0.30, (20, 20, 25, 35)),
@@ -87,7 +89,7 @@ def get_risk_scaled_config(config: TRWConfig, risk_level: str) -> TRWConfig:
             "validation_skeleton_threshold": profile.draft_threshold,
             # Content density minimum
             "prd_min_content_density": profile.min_content_density,
-            # Active dimension weights (density, structure, readiness, traceability)
+            # Diagnostic density plus substantive dimensions; scorer excludes density.
             "validation_density_weight": weights[0],
             "validation_structure_weight": weights[1],
             "validation_implementation_readiness_weight": weights[2],

@@ -191,7 +191,14 @@ def run_trw_deliver(
 
     with bind_journal(journal):  # S06/S07 live inside the gate dispatcher
         gate_blocked = evaluate_delivery_gates(
-            gate_result, results, errors, resolved_run, trw_dir, allow_unverified, unverified_reason
+            gate_result,
+            results,
+            errors,
+            resolved_run,
+            trw_dir,
+            allow_unverified,
+            unverified_reason,
+            call_ctx=call_ctx,
         )
     if gate_blocked:
         # A blocked gate is a durable operation terminal/provisional state, not an
@@ -233,7 +240,7 @@ def run_trw_deliver(
     if resolved_run is not None:
         from trw_mcp.tools._orchestration_formation import record_member_delivery
 
-        record_member_delivery(resolved_run, results_view)
+        record_member_delivery(resolved_run, results_view, call_ctx=call_ctx)
 
     critical_elapsed = round(time.monotonic() - t0, 2)
     results["critical_elapsed_seconds"] = critical_elapsed
@@ -336,12 +343,12 @@ def _probe_integrity(trw_dir: Path, resolved_run: Path | None, results: DeliverR
         from trw_mcp.tools._deliver_integrity import check_memory_integrity_on_deliver
 
         integrity_result = check_memory_integrity_on_deliver(trw_dir, resolved_run)
-        # The full record (incl. db_path/checked_at) still persists to
+        # The full record (incl. namespace/checked_at) still persists to
         # events.jsonl for the audit trail inside the probe. On the happy path
-        # (ok=True) the response dict is pure diagnostic noise — a static db_path
-        # plus a checked_at that duplicates the top-level timestamp — so it is
-        # surfaced in the compact response ONLY on a real corruption event, and
-        # then only the actionable {ok, detail}.
+        # (ok=True) the response dict is pure diagnostic noise — a static
+        # namespace plus a checked_at that duplicates the top-level timestamp —
+        # so it is surfaced in the compact response ONLY on a real regression
+        # (including "not measured"), and then only the actionable {ok, detail}.
         if not integrity_result["ok"]:
             results["db_integrity"] = {
                 "ok": integrity_result["ok"],

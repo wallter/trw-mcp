@@ -34,9 +34,6 @@ def test_rank_fn_receives_context_in_execute_recall(tmp_path: Path) -> None:
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context") as mock_ctx_builder,
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry()]),
-        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
         patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry()], None)),
     ):
@@ -81,9 +78,6 @@ def test_execute_recall_threads_live_intel_cache_context(tmp_path: Path) -> None
         patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value=""),
         patch("subprocess.run") as mock_run,
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry("L-boosted")]),
-        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
         patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry("L-boosted")], None)),
     ):
@@ -123,9 +117,6 @@ def test_recall_no_context_regression(tmp_path: Path) -> None:
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[_make_entry()]),
-        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
         patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=([_make_entry()], None)),
     ):
@@ -138,51 +129,6 @@ def test_recall_no_context_regression(tmp_path: Path) -> None:
 
     assert "learnings" in result
     assert rank_calls[0]["context"] is None
-
-
-def test_execute_recall_contains_pattern_symlinks_and_context_traversal(tmp_path: Path) -> None:
-    """Recall never returns YAML content from outside its `.trw` root."""
-    from trw_mcp.models.config import get_config
-    from trw_mcp.tools._recall_impl import execute_recall
-
-    trw_dir = tmp_path / ".trw"
-    patterns_dir = trw_dir / "patterns"
-    patterns_dir.mkdir(parents=True)
-    (patterns_dir / "safe.yaml").write_text(
-        "name: safe external guidance\ndescription: internal pattern\n",
-        encoding="utf-8",
-    )
-    outside_pattern = tmp_path / "outside-secret.yaml"
-    outside_pattern.write_text(
-        "name: exfiltrated external guidance\ndescription: external pattern\nsecret: TOP-SECRET\n",
-        encoding="utf-8",
-    )
-    (patterns_dir / "evil.yaml").symlink_to(outside_pattern)
-
-    outside_context = tmp_path / "outside-context"
-    outside_context.mkdir()
-    (outside_context / "architecture.yaml").write_text("secret: TOP-SECRET\n", encoding="utf-8")
-    config = get_config().model_copy(update={"context_dir": "../outside-context"})
-
-    with (
-        patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
-        patch("trw_mcp.tools._recall_impl._track_recall"),
-        patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda _query, entries: (entries, None)),
-    ):
-        result = execute_recall(
-            query="external",
-            trw_dir=trw_dir,
-            config=config,
-            compact=False,
-            max_results=5,
-            _adapter_recall=lambda *_args, **_kwargs: [],
-            _adapter_update_access=lambda *_args, **_kwargs: None,
-            _rank_by_utility=lambda entries, *_args, **_kwargs: entries,
-        )
-
-    assert [pattern["name"] for pattern in result["patterns"]] == ["safe external guidance"]
-    assert result["context"] == {}
-    assert "TOP-SECRET" not in json.dumps(result)
 
 
 def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
@@ -200,9 +146,6 @@ def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
     with (
         patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None),
         patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=ranked_entries),
-        patch("trw_mcp.state.memory_adapter.update_access_tracking"),
-        patch("trw_mcp.state.recall_search.search_patterns", return_value=[]),
-        patch("trw_mcp.state.recall_search.collect_context", return_value={}),
         patch("trw_mcp.tools._recall_impl._track_recall"),
         patch("trw_mcp.tools._recall_impl._augment_with_remote", return_value=(ranked_entries, None)),
         patch("trw_mcp.tools._recall_impl._detect_surface_phase", return_value="IMPLEMENT"),
@@ -211,8 +154,6 @@ def test_execute_recall_writes_propensity_log(tmp_path: Path) -> None:
             query="auth",
             trw_dir=trw_dir,
             config=config,
-            # Small cap keeps the recall in non-compact mode (F-003 auto-compacts
-            # broad recalls) so surface/propensity logging runs for this test.
             max_results=5,
             _rank_by_utility=lambda matches, *_args, **_kwargs: matches,
         )
@@ -266,7 +207,7 @@ def test_assertion_reranking_preserves_context(tmp_path: Path) -> None:
     with (
         patch("trw_memory.lifecycle.verification.verify_assertions", side_effect=AssertionError("unexpected scan")),
         patch(
-            "trw_mcp.tools._verification_pass.persist_verification_outcome",
+            "trw_memory.lifecycle.verification_pass.persist_verification_outcome",
             side_effect=AssertionError("unexpected write"),
         ),
     ):

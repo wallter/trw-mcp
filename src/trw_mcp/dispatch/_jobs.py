@@ -42,6 +42,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from trw_mcp.dispatch._env import build_runner_env
+from trw_mcp.dispatch._policy import policy_record
 from trw_mcp.dispatch._private_io import write_private_atomic
 from trw_mcp.dispatch._process_identity import capture_identity, signal_group
 from trw_mcp.dispatch._runner import _redact_argv
@@ -95,6 +96,9 @@ class DispatchJob(BaseModel):
     )
     result_path: str = Field(description="Absolute path to the result JSON file.")
     job_path: str = Field(description="Absolute path to this job's record file.")
+    policy: dict[str, dict[str, object]] | None = Field(
+        default=None, description="Requested vs applied effort/model/turns (PRD-CORE-290-FR03)."
+    )
 
 
 def _jobs_dir(trw_dir: Path | None) -> Path:
@@ -252,6 +256,7 @@ def start_background(req: DispatchRequest, *, trw_dir: Path | None = None) -> Di
         argv_redacted=argv_redacted,
         result_path=str(result_path),
         job_path=str(job_path),
+        policy=policy_record(req),
     )
     _persist(job, jobs_dir)
     logger.info(

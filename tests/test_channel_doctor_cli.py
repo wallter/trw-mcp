@@ -39,7 +39,6 @@ channels:
     surface: agents_md_segment
     telemetry_tag: codex-01
     file: AGENTS.md
-    tier_default: T2
 """,
         encoding="utf-8",
     )
@@ -280,7 +279,6 @@ channels:
     client: codex
     surface: hook_script
     telemetry_tag: t
-    tier_default: T2
     lock_file: ".trw/channels/codex-posttooluse-telemetry.lock"
 """,
             encoding="utf-8",
@@ -345,7 +343,6 @@ channels:
     surface: agents_md_segment
     telemetry_tag: codex-01
     file: AGENTS.md
-    tier_default: T2
     lock_file: ".trw/channels/cc-02.lock"
 """,
             encoding="utf-8",
@@ -397,18 +394,14 @@ class TestChannelDoctorNoSubcommand:
         assert "Usage" in out or "channel-doctor" in out
 
 
-class TestStatsAndThrottleDispatch:
-    """The ~90 lines of CLI dispatch that had zero coverage.
+class TestStatsDispatch:
+    """The CLI dispatch for `stats`, exercised end to end.
 
-    An adversarial audit found `_run_stats` and `_run_throttle` were never
-    invoked by any test: the suite exercised `init`, `validate`, `scan`, `clean`
-    and the no-subcommand path only, and `test_cli_argparse_subcommands.py`
-    covers argument PARSING without ever calling `run_channel_doctor`.
-
-    The library functions beneath them were well tested; the wiring — `--json`,
-    the `--apply` vs dry-run branch, and a broad `except Exception: sys.exit(1)`
-    — was not. `--apply` mutates tier values in `manifest.yaml` and writes, so
-    it is a destructive path that nothing exercised.
+    An adversarial audit found `_run_stats` was never invoked by any test: the
+    suite exercised `init`, `validate`, `scan`, `clean` and the no-subcommand
+    path only, and `test_cli_argparse_subcommands.py` covers argument PARSING
+    without ever calling `run_channel_doctor`. The `throttle` sub-command this
+    class used to also cover was removed 2026-09-22 (RC-014) as dead code.
     """
 
     def _repo_with_events(self, tmp_path: Path) -> Path:
@@ -444,53 +437,3 @@ class TestStatsAndThrottleDispatch:
         )
         payload = _json.loads(capsys.readouterr().out)
         assert "channels" in payload and "total_events" in payload
-
-    def test_throttle_dry_run_does_not_touch_the_manifest(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """The destructive path's safe branch: nothing on disk may change."""
-        repo = self._repo_with_events(tmp_path)
-        manifest = repo / ".trw" / "channels" / "manifest.yaml"
-        before = manifest.read_text(encoding="utf-8")
-
-        run_channel_doctor(
-            _make_namespace(project_dir=str(repo), channel_doctor_command="throttle", window_hours=1, apply=False)
-        )
-
-        assert manifest.read_text(encoding="utf-8") == before, "throttle without --apply must not write to the manifest"
-
-    def test_throttle_apply_holds_when_the_rate_is_unmeasured(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """--apply is exercised, and must NOT demote on an unmeasured rate.
-
-        This is the destructive branch. With a push and no outcome event the
-        correlation rate is unmeasured, not zero, so the honest verdict is
-        INSUFFICIENT_DATA and the manifest must be left alone. Before the
-        correlator fix this same input produced a fabricated 0.0 and a real tier
-        demotion, so this test pins the two fixes together at the CLI boundary.
-        """
-        repo = self._repo_with_events(tmp_path)
-        manifest = repo / ".trw" / "channels" / "manifest.yaml"
-        before = manifest.read_text(encoding="utf-8")
-
-        run_channel_doctor(
-            _make_namespace(project_dir=str(repo), channel_doctor_command="throttle", window_hours=1, apply=True)
-        )
-
-        assert manifest.read_text(encoding="utf-8") == before, (
-            "an unmeasured correlation rate must never drive a tier change, even under --apply"
-        )
-
-    def test_throttle_reports_no_data_rather_than_silence(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        channels_dir = tmp_path / ".trw" / "channels"
-        channels_dir.mkdir(parents=True)
-        _write_valid_manifest(channels_dir)
-
-        run_channel_doctor(
-            _make_namespace(project_dir=str(tmp_path), channel_doctor_command="throttle", window_hours=1, apply=False)
-        )
-
-        assert "nothing to throttle" in capsys.readouterr().out.lower()

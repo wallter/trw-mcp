@@ -1,4 +1,11 @@
-"""Tests for extraction, collection, search, and success-pattern utilities."""
+"""Tests for extraction, collection, search, and success-pattern utilities.
+
+PRD-CORE-280 slice e1: ``collect_promotable_learnings`` reads through
+``list_active_learnings`` -> ``selected_store``, so its test routes through
+``fake_memory_store`` rather than the in-process SQLite store the unpinned
+``tmp_project`` checkout would otherwise open. Everything else here is pure
+YAML/analytics and never touches the memory store.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +14,8 @@ from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.analytics import (
     extract_learnings_from_llm,
@@ -16,26 +25,11 @@ from trw_mcp.state.analytics import (
 )
 from trw_mcp.state.claude_md import collect_context_data, collect_patterns, collect_promotable_learnings
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-from trw_mcp.state.recall_search import search_patterns
 
-
-class TestRecallSearch:
-    """Unit tests for state.recall_search functions."""
-
-    def test_search_patterns_finds_matching(
-        self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter
-    ) -> None:
-        """search_patterns returns patterns matching query."""
-        patterns_dir = tmp_project / ".trw" / "patterns"
-        writer.write_yaml(
-            patterns_dir / "p1.yaml",
-            {
-                "name": "research-map-reduce",
-                "description": "3-wave research pattern",
-            },
-        )
-        matches = search_patterns(patterns_dir, ["research"], reader)
-        assert len(matches) == 1
+# PRD-CORE-294 FR01 deleted trw_mcp.state.recall_search (search_patterns /
+# collect_context) along with the execute_recall knobs that consumed it — the
+# module no longer exists, so its coverage (formerly TestRecallSearch here) is
+# deleted with it.
 
 
 class TestAnalyticsExtraction:
@@ -135,33 +129,21 @@ class TestClaudeMdCollection:
     """Unit tests for claude_md collection helpers."""
 
     def test_collect_promotable_learnings(
-        self, tmp_project: Path, reader: FileStateReader, writer: FileStateWriter
+        self, tmp_project: Path, reader: FileStateReader, fake_memory_store: FakeMemoryStore
     ) -> None:
-        """collect_promotable_learnings returns high-impact active entries."""
+        """collect_promotable_learnings returns high-impact active entries.
+
+        PRD-CORE-280 slice e1: ``collect_promotable_learnings`` reads through
+        ``list_active_learnings`` -> ``selected_store`` -> ``store.list_entries``
+        (see module docstring). At baseline this test relied on the unmigrated
+        SQLite backend's one-time YAML-to-SQLite auto-migration to pick up
+        directly-written YAML files; the fake store has no such migration, so
+        entries are seeded with ``store.put`` directly instead -- same shape
+        the store would hold after that migration ran.
+        """
         config = TRWConfig()
-        entries_dir = tmp_project / ".trw" / "learnings" / "entries"
-        writer.write_yaml(
-            entries_dir / "high.yaml",
-            {
-                "id": "L-high",
-                "summary": "important",
-                "status": "active",
-                "impact": 0.9,
-                "q_observations": 0,
-                "q_value": 0.5,
-            },
-        )
-        writer.write_yaml(
-            entries_dir / "low.yaml",
-            {
-                "id": "L-low",
-                "summary": "trivial",
-                "status": "active",
-                "impact": 0.2,
-                "q_observations": 0,
-                "q_value": 0.1,
-            },
-        )
+        fake_memory_store.put("important", FAKE_NAMESPACE, {"entry_id": "L-high", "importance": 0.9})
+        fake_memory_store.put("trivial", FAKE_NAMESPACE, {"entry_id": "L-low", "importance": 0.2})
         with pytest.warns(DeprecationWarning, match="collect_promotable_learnings is deprecated"):
             result = collect_promotable_learnings(tmp_project / ".trw", config, reader)
         assert any(d["id"] == "L-high" for d in result)

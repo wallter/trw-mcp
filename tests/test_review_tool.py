@@ -458,7 +458,7 @@ class TestReviewAutoDetectRun:
     ) -> None:
         tools = _make_ceremony_server(monkeypatch, tmp_path)
 
-        result = tools["trw_review"].fn(run_path=str(run_dir))
+        result = tools["trw_review"].fn(options={"run_path": str(run_dir)})
 
         assert result["run_path"] == str(run_dir)
         assert (run_dir / "meta" / "review.yaml").exists()

@@ -38,18 +38,12 @@ _file_path=""
 _tool_name=""
 _agent_type=""
 
-if command -v jq >/dev/null 2>&1; then
-    _tool_use_id=$(printf '%s' "$_payload" | jq -r '.tool_use_id // empty' 2>/dev/null) || true
-    _file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || true
-    _tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
-    _agent_type=$(printf '%s' "$_payload" | jq -r '.agent_name // empty' 2>/dev/null) || true
-else
-    # grep/sed fallback (FR25)
-    _tool_use_id=$(printf '%s' "$_payload" | grep -o '"tool_use_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tool_use_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    _file_path=$(printf '%s' "$_payload" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"file_path"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    _tool_name=$(printf '%s' "$_payload" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tool_name"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    _agent_type=$(printf '%s' "$_payload" | grep -o '"agent_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"agent_name"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-fi
+# jq only (T29): the hint is advisory, so a jq-less host emits nothing.
+command -v jq >/dev/null 2>&1 || exit 0
+_tool_use_id=$(printf '%s' "$_payload" | jq -r '.tool_use_id // empty' 2>/dev/null) || true
+_file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || true
+_tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
+_agent_type=$(printf '%s' "$_payload" | jq -r '.agent_name // empty' 2>/dev/null) || true
 
 # --- Skip 1: opt-in gate (FR09) ---
 if ! _get_cc03_enabled; then

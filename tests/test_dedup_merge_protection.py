@@ -1,8 +1,8 @@
-"""Behavior tests: merge_entries preserves typed protection fields (PRD-CORE-110).
+"""Behavior tests: merge_into_survivor preserves typed protection fields (PRD-CORE-110).
 
 Before the fix, merging a high-tier/verified/incident entry into a
 normal/unverified/pattern survivor silently dropped the stronger protection
-because merge_entries never folded the typed fields. These tests assert the
+because merge_into_survivor never folded the typed fields. These tests assert the
 stronger tier/confidence/type wins.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from trw_mcp.state.dedup import merge_entries
+from trw_mcp.state.dedup import merge_into_survivor
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
@@ -72,7 +72,7 @@ class TestMergePreservesProtection:
             "type": "incident",
         }
 
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
 
         assert updated["protection_tier"] == "critical"
@@ -105,7 +105,7 @@ class TestMergePreservesProtection:
             "type": "pattern",
         }
 
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
 
         assert updated["protection_tier"] == "critical"

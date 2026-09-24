@@ -38,22 +38,15 @@ class TestRecallCappingLightMode:
             max_results: int = 25,
             compact: bool = False,
             status: str | None = None,
-            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             """Return learnings capped to max_results."""
             return all_learnings[:max_results]
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
             patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
-            learnings, _auto, _extra = perform_session_recalls(
-                trw_dir,
-                "",
-                config,
-                reader,
-            )
+            learnings, _extra = perform_session_recalls(trw_dir, "", config, reader, verbose=True)
 
         assert len(learnings) <= LIGHT_MODE_RECALL_CAP
 
@@ -83,22 +76,15 @@ class TestRecallCappingLightMode:
             max_results: int = 25,
             compact: bool = False,
             status: str | None = None,
-            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             """Return learnings capped to max_results."""
             return all_learnings[:max_results]
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
             patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
-            learnings, _auto, _extra = perform_session_recalls(
-                trw_dir,
-                "",
-                config,
-                reader,
-            )
+            learnings, _extra = perform_session_recalls(trw_dir, "", config, reader, verbose=True)
 
         assert len(learnings) == 25
 
@@ -141,22 +127,15 @@ class TestRecallCappingLightMode:
             max_results: int = 25,
             compact: bool = False,
             status: str | None = None,
-            allow_cold_embedding_init: bool = True,
         ) -> list[dict[str, object]]:
             captured_max_results.append(max_results)
             return all_learnings[:max_results]
 
         with (
             patch("trw_mcp.state.memory_adapter.recall_learnings", side_effect=mock_recall),
-            patch("trw_mcp.state.memory_adapter.update_access_tracking"),
             patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
         ):
-            learnings, _auto, _extra = perform_session_recalls(
-                trw_dir,
-                "testing query",
-                config,
-                reader,
-            )
+            learnings, _extra = perform_session_recalls(trw_dir, "testing query", config, reader, verbose=True)
 
         # PRD-CORE-084 bounds the session-start PAYLOAD; that assertion is
         # unchanged. PRD-CORE-278 FR09 over-fetches by a bounded factor before

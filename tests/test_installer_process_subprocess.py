@@ -7,8 +7,6 @@ import sys
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from tests._installer_process_support import (
     _detect_installed_extras,
     _run_quiet,
@@ -51,9 +49,13 @@ class TestDetectInstalledExtras:
         assert "sqlite_vec" in result
         assert all(isinstance(v, bool) for v in result.values())
 
-    @pytest.mark.perf
     def test_uses_short_timeout(self) -> None:
-        """Import checks use 10s timeout, not the default 120s."""
+        """Import checks use 10s timeout, not the default 120s.
+
+        Correctness deadline (PRD-QUAL-141): proves the short timeout is
+        actually applied — the call returns quickly instead of hanging on the
+        default 120s — not a host-machine performance budget.
+        """
         start = time.monotonic()
         result = _detect_installed_extras("/nonexistent/python3", timeout=1)
         elapsed = time.monotonic() - start

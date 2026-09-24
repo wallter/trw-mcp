@@ -181,9 +181,13 @@ def test_persisted_stale_timestamp_does_not_throttle(
     assert not result.get("throttled")
 
 
-@pytest.mark.perf
 def test_first_real_call_persists_timestamp(trw_dir: Path) -> None:
-    """A non-throttled call writes auto_close_last_ts.json atomically."""
+    """A non-throttled call writes auto_close_last_ts.json atomically.
+
+    Correctness deadline (PRD-QUAL-141): the persisted timestamp must be
+    within 5s of "now", proving the write recorded the current time rather
+    than a stale one — not a host-machine performance budget.
+    """
     from trw_mcp.state.analytics._stale_runs import (
         _reset_auto_close_throttle,
         auto_close_stale_runs,

@@ -11,6 +11,5 @@ def test_exec_plan_includes_verification_commands() -> None:
     )
     content = skill_path.read_text(encoding="utf-8")
 
-    assert "Pre-Implementation Checklist (PRD-QUAL-056-FR03)" in content
     assert "Pre-Implementation Checklist" in content
     assert "PASSED" in content

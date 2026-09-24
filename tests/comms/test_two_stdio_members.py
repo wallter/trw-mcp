@@ -46,7 +46,6 @@ from typing import Any
 
 import pytest
 
-from tests._layout import requires_local_timing
 from tests._stdio_harness import ServerProcess, stdio_import_skip_reason
 from tests.comms._two_member_support import (
     Coordination,
@@ -346,7 +345,6 @@ def test_undeclared_third_session_cannot_join_or_use_the_mailbox(bench: Bench) -
     assert members[_MEMBER_B]["status"] == "pending"
 
 
-@requires_local_timing
 def test_bounded_wait_on_one_real_process_observes_a_message_sent_by_another(bench: Bench) -> None:
     """PRD-CORE-274 Amendment 01 (FR11), T12: B calls trw_inbox(wait_seconds=10)
     on its OWN real stdio server; ~2s later A sends on ITS OWN real stdio

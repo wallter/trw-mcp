@@ -153,10 +153,6 @@ class ChannelEntry(BaseModel):
     status: ChannelStatus = ChannelStatus.ACTIVE
     write_strategy: WriteStrategy = WriteStrategy.MARKER_REPLACE
 
-    # --- Tier configuration ---
-    tier_default: str = "T2"
-    tier_min: str = "T0"
-
     # --- Marker configuration ---
     markers: MarkersConfig = Field(default_factory=MarkersConfig)
 
@@ -303,20 +299,3 @@ CLIENT_CORRECTION_FACTORS: dict[str, float] = {
     # incomparable (the default fall-through this table exists to prevent).
     "grok": 0.50,
 }
-
-# Values are (threshold, window_count)
-CLIENT_THROTTLE_THRESHOLDS: dict[str, tuple[float, int]] = {
-    "claude-code": (0.25, 3),
-    "codex": (0.20, 3),
-    "antigravity-cli": (0.15, 5),
-    "opencode": (0.15, 5),
-    "cursor-ide": (0.20, 3),
-    "cursor-cli": (0.20, 3),
-    "copilot": (0.15, 5),
-    # Unmeasured placeholder, same band as other newly-added clients.
-    "grok": (0.15, 5),
-}
-
-# Copilot requires minimum N=50 before throttle applies (not the default 30)
-COPILOT_THROTTLE_MIN_N: int = 50
-DEFAULT_THROTTLE_MIN_N: int = 30

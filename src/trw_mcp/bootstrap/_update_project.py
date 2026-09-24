@@ -18,9 +18,12 @@ from pathlib import Path
 
 import structlog
 
+from trw_mcp.agents._report_cap import project_report_cap
+
 from trw_mcp.state.claude_md._write_guard import with_instruction_write_trigger
 
 from ._client_integrations import run_update_integrations
+from ._namespace_pin import pin_empty_checkout
 
 # ---------------------------------------------------------------------------
 # Re-exports from sub-modules — REQUIRED for backward compatibility.
@@ -43,8 +46,6 @@ from ._template_updater import (
     _TRW_HEADER_MARKER as _TRW_HEADER_MARKER,
     _TRW_START_MARKER as _TRW_START_MARKER,
 )
-
-_logger = structlog.get_logger(__name__)
 
 # Effects outside the managed surface (PRD-INFRA-190 FR02: named, never diffed).
 from ._update_external import _run_auto_maintenance as _run_auto_maintenance
@@ -98,8 +99,10 @@ from ._version_migration import (
 )
 from ._version_manifest import (
     _manifest_content_hashes as _manifest_content_hashes,
+    manifest_refusal,
     preserve_uncommitted_changes,
 )
+from ._tombstones import enforce_and_write_manifest, prepare_update_manifest_state
 from ._update_transaction import (
     _TRANSACTION_DIRS as _TRANSACTION_DIRS,
     _TRANSACTION_FILES as _TRANSACTION_FILES,
@@ -155,9 +158,7 @@ def _generate_behavioral_protocol_md(target_dir: Path, result: dict[str, list[st
     """
     dest = target_dir / ".trw" / "context" / "behavioral_protocol.md"
     try:
-        from trw_mcp.state.claude_md._static_sections import (
-            generate_behavioral_protocol_md,
-        )
+        from trw_mcp.state.claude_md._static_sections import generate_behavioral_protocol_md
 
         content = generate_behavioral_protocol_md()
         if dest.is_file() and dest.read_text(encoding="utf-8") == content:
@@ -165,7 +166,7 @@ def _generate_behavioral_protocol_md(target_dir: Path, result: dict[str, list[st
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content, encoding="utf-8")
     except Exception as exc:  # justified: fail-open — protocol file generation must not block update
-        _logger.warning("behavioral_protocol_md_generation_failed", error=str(exc))
+        logger.warning("behavioral_protocol_md_generation_failed", error=str(exc))
         result["warnings"].append(f"behavioral_protocol.md generation failed: {exc}")
 
 
@@ -175,6 +176,7 @@ def _run_core_update_phases(
     result: dict[str, list[str]],
     on_progress: ProgressCallback,
     manifest_hashes: dict[str, str] | None = None,
+    ide: str | None = None,
 ) -> None:
     """Execute core update phases (framework files, config, cleanup).
 
@@ -184,28 +186,34 @@ def _run_core_update_phases(
     so genuinely user-edited agents are detected on the live update path and
     preserved (reported in ``result['modified']``) instead of being silently
     overwritten. The NEW manifest is written once, after every writer ran.
-    """
-    # PRD-CORE-262-FR05 split ``_TRW_DIRS`` into a client-neutral set plus
-    # Claude Code's own scaffold dirs. Containment is an INIT-path
-    # requirement (and only excludes an explicit codex-only selection);
-    # the update path keeps ensuring the Claude Code directories
-    # unconditionally so an existing install's hook/skill refresh cannot
-    # start failing on a missing parent.
-    from . import _CLAUDE_SCAFFOLD_DIRS, _TRW_DIRS
 
-    for rel_dir in [*_TRW_DIRS, *_CLAUDE_SCAFFOLD_DIRS]:
+    *ide* (G1, installer refinement 5.1.0) is threaded the same way, into
+    ``_update_framework_files`` → ``_update_agents`` → ``resolve_client_write_
+    targets``, so a brand-new ``--ide <client>`` selection is visible to the
+    agent-materialization phase in THIS run — it previously only registered
+    the new client in ``target_platforms`` in the later post-update phase,
+    so the first run wrote no agents for it and a second, identical run was
+    required.
+    """
+    # PRD-INFRA-192 FR09 §3: the Claude Code scaffold dirs are ensured only
+    # for a project whose recorded target_platforms (plus *ide*, if given)
+    # actually own them -- an update on a ``[opencode]`` project must not
+    # conjure ``.claude/skills``/``.claude/agents`` back into existence.
+    from ._client_ownership import update_scaffold_dirs
+
+    for rel_dir in update_scaffold_dirs(target_dir, ide):
         _ensure_dir(target_dir / rel_dir, result, on_progress)
 
     if on_progress:
         on_progress("Phase", "Updating framework files...")
-    _update_framework_files(target_dir, effective_data, result, on_progress, manifest_hashes)
+    _update_framework_files(target_dir, effective_data, result, on_progress, manifest_hashes, ide=ide)
 
     # PRD-CORE-093 FR03: Generate behavioral_protocol.md for session-start hook
     _generate_behavioral_protocol_md(target_dir, result)
 
     if on_progress:
         on_progress("Phase", "Updating configuration files...")
-    _update_mcp_config(target_dir, result, on_progress)
+    _update_mcp_config(target_dir, result, on_progress, ide=ide)
 
     if on_progress:
         on_progress("Phase", "Cleaning stale artifacts...")
@@ -277,7 +285,7 @@ def _run_post_update_phases(
             from ._claude_code_distill_channels import install_claude_code_distill_channels
 
             cc_dc = install_claude_code_distill_channels(target_dir)
-            for _key in ("preserved", "errors"):
+            for _key in ("preserved", "removed", "errors"):
                 _items = cc_dc.get(_key)
                 if isinstance(_items, list):
                     result.setdefault(_key, []).extend(_items)
@@ -313,8 +321,8 @@ def _apply_update(
     *,
     ide: str | None,
     on_progress: ProgressCallback,
-    manifest_hashes: dict[str, str] | None,
     dirty: set[str] | None,
+    reprovision: list[str] | None,
 ) -> None:
     """Run every in-surface writer against *root* and report the surface diff.
 
@@ -323,6 +331,12 @@ def _apply_update(
     come from the before/after diff, never from writer self-reports, so both
     modes answer the same question.
     """
+    # PRD-INFRA-192 FR10: resolved against *root* before any writer runs (and
+    # before the transaction even snapshots), so an unknown --reprovision path
+    # errors out with literally nothing touched.
+    if (prepared := prepare_update_manifest_state(root, reprovision, result)) is None:
+        return
+    manifest_hashes, tombstones, skill_dir_snapshot = prepared
     try:
         snapshot_root = _snapshot_transaction_paths(root)
     except OSError as exc:
@@ -341,12 +355,16 @@ def _apply_update(
     completed = False
     try:
         parked = park_surface_links(root)
-        _run_core_update_phases(root, effective_data, result, on_progress, manifest_hashes)
+        _run_core_update_phases(root, effective_data, result, on_progress, manifest_hashes, ide=ide)
         _run_post_update_phases(root, ide, result, on_progress, manifest_hashes)
         unpark_surface_links(root, snapshot_root, parked, result)
         if dirty:
             preserve_uncommitted_changes(root, snapshot_root, dirty, manifest_hashes, result)
-        _write_manifest(root, result, effective_data)
+        from ._client_ownership import update_write_targets
+
+        enforce_and_write_manifest(
+            root, result, tombstones, effective_data, update_write_targets(root, ide), skill_dir_snapshot
+        )
         if on_progress:
             on_progress("Phase", "Verifying installation...")
         _verify_installation(root, result)
@@ -394,6 +412,7 @@ def update_project(
     ide: str | None = None,
     on_progress: ProgressCallback = None,
     allow_dirty_bundle: bool = False,
+    reprovision: list[str] | None = None,
 ) -> dict[str, list[str]]:
     """Update TRW framework files in *target_dir* while preserving user config.
 
@@ -422,6 +441,8 @@ def update_project(
             for each file processed. Enables real-time progress reporting.
         allow_dirty_bundle: Project a bundled data directory that lies inside the
             target work tree even when git reports uncommitted changes in it (FR05).
+        reprovision: Repo-relative paths (or ``["all"]``) whose tombstone this run
+            should clear, so the writers recreate them (PRD-INFRA-192 FR10).
 
     Returns:
         Dict with ``updated``, ``created``, ``cleaned`` (repo-relative paths from
@@ -454,6 +475,10 @@ def update_project(
         )
         return result
 
+    if refusal := manifest_refusal(target_dir):
+        result["errors"].append(refusal)
+        return result
+
     effective_data = data_dir or _DATA_DIR
     dirty, bundle_dirty = dirty_state(target_dir, effective_data, result)
     # TRW_ALLOW_DIRTY_BUNDLE=1 is the CLI's route to the flag until the
@@ -466,50 +491,53 @@ def update_project(
         )
         return result
 
-    manifest_hashes = _manifest_content_hashes(_read_manifest(target_dir))
     external = ["pip_install"] if pip_install else []
-    external += ["git_post_commit_hook", "auto_maintenance", "context_transient_cleanup"]
-    if dry_run:
-        run_in_scratch(
-            target_dir,
-            result,
-            lambda scratch: _apply_update(
-                scratch, effective_data, result, ide=ide, on_progress=None, manifest_hashes=manifest_hashes, dirty=dirty
-            ),
-        )
-        result["would_run"] = external
-    else:
-        _apply_update(
-            target_dir,
-            effective_data,
-            result,
-            ide=ide,
-            on_progress=on_progress,
-            manifest_hashes=manifest_hashes,
-            dirty=dirty,
-        )
-        # Effects outside the managed surface run only once the transaction
-        # committed; context files are live session state rollback never covers.
-        if not result["errors"]:
-            if pip_install:
+    external += ["git_post_commit_hook", "memory_namespace_pin", "auto_maintenance", "context_transient_cleanup"]
+    with project_report_cap(target_dir):  # PRD-CORE-290-FR04: the target's configured report cap
+        if dry_run:
+            run_in_scratch(
+                target_dir,
+                result,
+                lambda scratch: _apply_update(
+                    scratch, effective_data, result, ide=ide, on_progress=None, dirty=dirty, reprovision=reprovision
+                ),
+            )
+            result["would_run"] = external
+        else:
+            _apply_update(
+                target_dir,
+                effective_data,
+                result,
+                ide=ide,
+                on_progress=on_progress,
+                dirty=dirty,
+                reprovision=reprovision,
+            )
+            # Effects outside the managed surface run only once the transaction
+            # committed; context files are live session state rollback never covers.
+            if not result["errors"]:
+                if pip_install:
+                    if on_progress:
+                        on_progress("Phase", "Reinstalling package...")
+                    _pip_install_package(target_dir, result)
+                _update_git_hooks(target_dir, result)
+                pin_empty_checkout(target_dir, result)  # PRD-CORE-280 FR06: the real store, never the scratch copy
                 if on_progress:
-                    on_progress("Phase", "Reinstalling package...")
-                _pip_install_package(target_dir, result)
-            _update_git_hooks(target_dir, result)
-            if on_progress:
-                on_progress("Phase", "Running auto-maintenance...")
-            _run_auto_maintenance(target_dir, result, on_progress=on_progress)
-            context: dict[str, list[str]] = {"cleaned": [], "errors": [], "warnings": []}
-            _cleanup_context_transients(target_dir, context)
-            result.setdefault("info", []).extend(f"removed transient: {path}" for path in context["cleaned"])
-            result["errors"].extend(context["errors"])
-            result["warnings"].extend(context["warnings"])
-            result["ran"] = external
+                    on_progress("Phase", "Running auto-maintenance...")
+                _run_auto_maintenance(target_dir, result, on_progress=on_progress)
+                context: dict[str, list[str]] = {"cleaned": [], "errors": [], "warnings": []}
+                _cleanup_context_transients(target_dir, context)
+                result.setdefault("info", []).extend(f"removed transient: {path}" for path in context["cleaned"])
+                result["errors"].extend(context["errors"])
+                result["warnings"].extend(context["warnings"])
+                result["ran"] = external
 
-    result["warnings"].append(
-        "Running Claude Code sessions use cached hooks/settings. "
-        "Restart active sessions (or run /mcp) to pick up updates."
-    )
+    targets = resolve_ide_targets(target_dir, ide_override=ide)
+    if "claude-code" in targets or not targets:
+        result["warnings"].append(
+            "Running Claude Code sessions use cached hooks/settings. "
+            "Restart active sessions (or run /mcp) to pick up updates."
+        )
 
     logger.info(
         "update_complete",

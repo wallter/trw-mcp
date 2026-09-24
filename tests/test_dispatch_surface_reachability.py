@@ -170,7 +170,7 @@ async def test_middleware_masks_the_dispatch_tools_by_default(monkeypatch: pytes
     assert not set(_DISPATCH_TOOLS) & names
     # The reported session's exact surface size, so a silent widening elsewhere
     # is visible here too.
-    assert len(names) == 15
+    assert len(names) == 14  # trw_learn_update merged into trw_learn (PRD-CORE-291)
 
 
 @pytest.mark.asyncio

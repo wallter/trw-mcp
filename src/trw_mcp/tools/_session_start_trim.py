@@ -5,12 +5,10 @@ Belongs to the ``ceremony.py`` facade. Re-exported there for back-compat.
 PRD-IMPROVE-MCP-04:
 
 - FR1 — ``trim_session_start_payload`` makes ``trw_session_start`` compact by
-  default. The full payload (entire learnings list + embed_health +
-  assertion_health + sync_health + step_durations_ms + auto_recalled) is large
-  and is returned on *every* session. This caps the learnings list to the
-  top-K most impactful, reduces the ``connection_fingerprint`` block to its
-  non-constant fields, collapses the low-signal diagnostic sub-blocks into a
-  one-line ``health_summary``. Load-bearing
+  default. The full payload (assertion_health + sync_health +
+  step_durations_ms) is large and is returned on *every* session. This reduces
+  the ``connection_fingerprint`` block to its non-constant fields and collapses
+  the low-signal diagnostic sub-blocks into a one-line ``health_summary``. Load-bearing
   fields (run/pin recovery, errors, framework_reminder, advisories) are NEVER
   dropped. ``verbose=True`` is a no-op pass-through (current full behavior).
 
@@ -34,17 +32,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-# Default cap on the learnings list in compact mode. The highest-impact
-# learnings are kept (recall already returns them in relevance order); the
-# remainder is summarized via a "N more" indicator. Chosen to keep the most
-# load-bearing context while cutting the bulk of the token cost.
-DEFAULT_TOP_K = 8
-
 # Diagnostic sub-blocks that are low-signal for resume. In compact mode they
 # are removed from the payload and folded into a one-line ``health_summary``.
 # trw:intentional these are diagnostics, not resume state — safe to summarize.
 _DIAGNOSTIC_KEYS = (
-    "embed_health",
     "assertion_health",
     "sync_health",
     "step_durations_ms",
@@ -77,30 +68,6 @@ LOAD_BEARING_KEYS = (
 # server version answered) and connection_nonce (which stdio process). The full
 # ten-field block, including the tamper digests, is preserved under verbose=True.
 _FINGERPRINT_COMPACT_FIELDS = ("build_identity", "connection_nonce")
-
-# A ``*_deferred`` block is folded in compact mode only when its keys are a
-# subset of this known advisory shape — anything richer stays untouched so a
-# block carrying real payload can never be silently summarized away.
-# PRD-CORE-257-FR04 replaced ``defer_reason`` (the legacy two-tier reason) with
-# the streak's age, its count and the two measurement states. This set MUST stay
-# a superset of every key ``writer_pressure_details`` emits — a new advisory key
-# that is not admitted here silently stops folding and returns five
-# near-identical blocks to the response (RISK-004). A test asserts the
-# superset relation rather than leaving it to inspection.
-_DEFERRED_SHAPE_KEYS = frozenset(
-    {
-        "reason",
-        "writer_pids",
-        "writer_count",
-        "peer_writer_count",
-        "threshold",
-        "deferral_age_hours",
-        "deferred_count",
-        "census_state",
-        "ledger_state",
-        "detail",
-    }
-)
 
 # Identity/provenance stamps dropped outright in compact mode — not folded into
 # health_summary, because they carry no health signal to summarize.
@@ -138,18 +105,12 @@ _INTENTIONAL_RE = re.compile(
 def _summarize_health(results: SessionStartResultDict) -> str:
     """Collapse the diagnostic sub-blocks into a single human-readable line.
 
-    Surfaces only the load-bearing signal: embed/assertion health counts and
+    Surfaces only the load-bearing signal: assertion health counts and
     the total session_start latency. Degraded advisories are NOT touched here —
     they live in their own top-level keys (pipeline_health_advisory,
-    embeddings_advisory, etc.) which compact mode preserves.
+    embeddings_coverage_ratio, etc.) which compact mode preserves.
     """
     parts: list[str] = []
-
-    embed = results.get("embed_health")
-    if isinstance(embed, dict) and embed:
-        status = embed.get("status") or embed.get("state")
-        if status:
-            parts.append(f"embed={status}")
 
     assertion = results.get("assertion_health")
     if isinstance(assertion, dict) and assertion:
@@ -174,73 +135,6 @@ def _summarize_health(results: SessionStartResultDict) -> str:
     return "; ".join(parts) + " (verbose=True for full diagnostics)"
 
 
-def _fold_deferred_blocks(results: SessionStartResultDict) -> None:
-    """Collapse repetitive ``*_deferred`` blocks into one ``deferred`` summary.
-
-    A session under writer pressure historically shipped five near-identical
-    deferral dicts, each repeating the same reason/threshold (and, before
-    2026-07-12, the full writer pid list). Compact mode folds every top-level
-    ``*_deferred`` dict whose keys match the known advisory shape into
-    ``deferred: {reason: [step, ...]}`` plus a single ``deferred_writer_count``.
-    Blocks with unrecognized keys are left in place (fail-safe). Mutates
-    *results* in place; never raises.
-    """
-    folded: dict[str, list[str]] = {}
-    writer_counts: list[int] = []
-    thresholds: list[int] = []
-    ages: list[float] = []
-    census_states: set[str] = set()
-    ledger_states: set[str] = set()
-    for key in [k for k in results if k.endswith("_deferred")]:
-        block = results.get(key)
-        if not isinstance(block, dict) or not set(block) <= _DEFERRED_SHAPE_KEYS:
-            continue
-        reason = str(block.get("reason", "unknown"))
-        folded.setdefault(reason, []).append(key.removesuffix("_deferred"))
-        count = block.get("writer_count")
-        if isinstance(count, int):
-            writer_counts.append(count)
-        threshold = block.get("threshold")
-        if isinstance(threshold, int):
-            thresholds.append(threshold)
-        age = block.get("deferral_age_hours")
-        if isinstance(age, (int, float)):
-            ages.append(float(age))
-        for state_key, sink in (("census_state", census_states), ("ledger_state", ledger_states)):
-            state = block.get(state_key)
-            if isinstance(state, str) and state:
-                sink.add(state)
-        results.pop(key, None)  # type: ignore[misc]
-    if folded:
-        results["deferred"] = {reason: sorted(steps) for reason, steps in folded.items()}
-        if writer_counts:
-            results["deferred_writer_count"] = max(writer_counts)
-        # PRD-CORE-257-FR11: the compact response is the one an agent actually
-        # reads. Stating that work was deferred without stating the bar it was
-        # deferred against, how long it has been held, or whether either
-        # measurement was trustworthy is what made a permanent skip invisible.
-        if thresholds:
-            results["deferred_threshold"] = max(thresholds)
-        if ages:
-            results["deferred_max_age_hours"] = round(max(ages), 2)
-        if census_states:
-            results["deferred_census_state"] = _worst_state(census_states, ("unreadable", "measured"))
-        if ledger_states:
-            results["deferred_ledger_state"] = _worst_state(ledger_states, ("degraded", "ok"))
-
-
-def _worst_state(seen: set[str], ranked: tuple[str, ...]) -> str:
-    """Return the least reassuring state present, so a fold cannot launder one.
-
-    Folding several blocks into one summary must never report the healthiest of
-    them: one degraded ledger read among six is still a degraded ledger.
-    """
-    for candidate in ranked:
-        if candidate in seen:
-            return candidate
-    return min(seen)
-
-
 def _compact_connection_fingerprint(results: SessionStartResultDict) -> None:
     """Reduce the FR01 connection fingerprint to its non-constant fields.
 
@@ -260,21 +154,17 @@ def trim_session_start_payload(
     results: SessionStartResultDict,
     *,
     verbose: bool,
-    top_k: int = DEFAULT_TOP_K,
 ) -> SessionStartResultDict:
     """Trim ``trw_session_start`` output to a compact payload by default.
 
     FR1. In compact mode (``verbose=False``):
 
-    - The learnings list is capped to the top-K most IMPACTFUL entries (recall
-      returns them in impact order, so slicing keeps the highest-impact items —
-      not necessarily the ones most relevant to a focused query).
-      ``learnings_count`` is set to the *kept* count and ``learnings_omitted``
-      records how many were dropped ("N more").
+    - The learnings are left as the recall step presented them: PRD-CORE-294
+      FR02 already bounded them to the stub block, so nothing is capped here.
     - The ``connection_fingerprint`` block is reduced to its two non-constant
       fields (PRD-CORE-215 FR01 requires the block, not every field).
-    - The low-signal diagnostic sub-blocks (embed_health, assertion_health,
-      sync_health, step_durations_ms) are removed and summarized into a
+    - The low-signal diagnostic sub-blocks (assertion_health, sync_health,
+      step_durations_ms) are removed and summarized into a
       one-line ``health_summary``.
     - The identity/provenance stamps in ``_COMPACT_DROP_KEYS`` (snapshot ids,
       the session override hash, the profile layer chain, the first-session
@@ -295,17 +185,6 @@ def trim_session_start_payload(
             results["compact"] = False
             return results
 
-        learnings = results.get("learnings")
-        if isinstance(learnings, list) and len(learnings) > top_k:
-            kept = learnings[:top_k]
-            omitted = len(learnings) - len(kept)
-            results["learnings"] = kept
-            results["learnings_count"] = len(kept)
-            results["learnings_omitted"] = omitted
-        elif isinstance(learnings, list):
-            results["learnings_count"] = len(learnings)
-            results["learnings_omitted"] = 0
-
         summary = _summarize_health(results)
         for key in _DIAGNOSTIC_KEYS:
             results.pop(key, None)  # type: ignore[misc]
@@ -315,8 +194,6 @@ def trim_session_start_payload(
             results.pop(key, None)  # type: ignore[misc]
 
         _compact_connection_fingerprint(results)
-
-        _fold_deferred_blocks(results)
 
         results["compact"] = True
         return results

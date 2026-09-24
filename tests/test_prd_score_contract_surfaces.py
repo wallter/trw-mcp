@@ -13,30 +13,18 @@ DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 
 READINESS_OWNERS = (
     DATA / "skills/trw-prd-ready/SKILL.md",
-    DATA / "codex/skills/trw-prd-ready/SKILL.md",
     DATA / "skills/trw-prd-groom/SKILL.md",
-    DATA / "codex/skills/trw-prd-groom/SKILL.md",
     DATA / "skills/trw-exec-plan/SKILL.md",
-    DATA / "codex/skills/trw-exec-plan/SKILL.md",
     DATA / "agents/trw-prd-groomer.md",
     DATA / "agents/trw-lead.md",
 )
 
-READINESS_ADAPTERS = (
-    DATA / "opencode/skills/trw-prd-ready/SKILL.md",
-    DATA / "opencode/commands/trw-prd-ready.md",
-)
+READINESS_ADAPTERS = (DATA / "opencode/commands/trw-prd-ready.md",)
 
-AUDIT_VARIANTS = (
-    DATA / "skills/trw-audit/SKILL.md",
-    DATA / "codex/skills/trw-audit/SKILL.md",
-    DATA / "copilot/skills/trw-audit/SKILL.md",
-)
+AUDIT_VARIANTS = (DATA / "skills/trw-audit/SKILL.md",)
 
 PRD_NEW_VARIANTS = (
     DATA / "skills/trw-prd-new/SKILL.md",
-    DATA / "codex/skills/trw-prd-new/SKILL.md",
-    DATA / "copilot/skills/trw-prd-new/SKILL.md",
     DATA / "copilot/plugin/skills/trw-prd-new/SKILL.md",
 )
 
@@ -81,15 +69,19 @@ def test_audit_records_weak_spec_quality_without_score_aborting() -> None:
 
 
 def test_prd_new_delegates_or_supplies_a_resolvable_readiness_flow() -> None:
-    """Shared/Codex delegate to ready; Copilot owns an inline flow because ready is not packaged."""
+    """Shared and Copilot-plugin trw-prd-new both delegate to trw-prd-ready.
+
+    Copilot's plugin bundle does not ship a packaged ``trw-prd-ready`` skill
+    (see ``data/copilot/plugin/skills``), but the canonical alias text already
+    covers that case generically -- "If skill invocation is unavailable but
+    the installed contract is readable, execute that contract inline" -- so
+    Copilot no longer needs a separate, hand-authored inline pipeline
+    (PRD-CORE-291-FR04: the two remaining variants are input-preserving
+    aliases of one body, checked byte-for-byte in
+    test_shared_prd_new_is_an_input_preserving_alias).
+    """
     assert "/trw-prd-ready`'s risk-scaled readiness contract" in _read(PRD_NEW_VARIANTS[0])
     assert "/trw-prd-ready`'s risk-scaled readiness contract" in _read(PRD_NEW_VARIANTS[1])
-    for path in PRD_NEW_VARIANTS[2:]:
-        content = _read(path)
-        assert "Run the readiness pipeline inline" in content
-        assert "validation_partial: false" in content
-
-    assert _read(PRD_NEW_VARIANTS[2]) == _read(PRD_NEW_VARIANTS[3])
 
 
 def test_client_mirrors_preserve_semantics_and_lifecycle_vocabulary() -> None:
@@ -136,15 +128,31 @@ def test_shared_prd_new_is_an_input_preserving_alias(paths: tuple[Path, ...]) ->
 
 
 def test_opencode_adapters_forward_to_installed_gate_owner() -> None:
-    """Static delegation guards; installer resolution is tested in bootstrap tests."""
-    skill, command = (_read(path) for path in READINESS_ADAPTERS)
-    assert "trw-prd-ready-contract.md" in skill
+    """Static delegation guards; installer resolution is tested in bootstrap tests.
+
+    OpenCode no longer forks trw-prd-ready/SKILL.md (PRD-CORE-291-FR04) -- it
+    renders the one canonical body (frontmatter-only reduction via
+    ``render_skill_md``), so the comparison basis here is that rendering, not
+    a deleted static file. The canonical body legitimately uses ``### Phase N``
+    headers (every client shares the same multi-phase pipeline now), so the
+    old "no Phase headers" guard -- a property of the deleted flat-numbered
+    fork -- no longer applies to ``skill``; it still holds for the opencode
+    *command* file, which never had phase headers of its own.
+    """
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    (command_path,) = READINESS_ADAPTERS
+    command = _read(command_path)
+    canonical = _read(DATA / "skills/trw-prd-ready/SKILL.md")
+    skill = render_skill_md(canonical, "opencode")
     for phase in ("trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
         assert f"{phase}-contract.md" in skill
-    assert "not authorize author self-review" in skill
-    assert "stop and report the missing installed path" in skill
+    # The fork's exact phrasing ("not authorize author self-review") is gone;
+    # the canonical body carries the same concept in different words.
+    assert "no inline author self-review fallback" in skill
+    assert "stop at the current gate" in skill
     assert ".opencode/skills/trw-prd-ready/SKILL.md" in command
+    assert "original `$ARGUMENTS`" in command
     for content in (skill, command):
-        assert "original `$ARGUMENTS`" in content
         assert "--embedded-plan" in content
-        assert "## Phase" not in content
+    assert "## Phase" not in command

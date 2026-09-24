@@ -7,37 +7,35 @@ the store held 1,346 entries (learning L-Rikf). The zero was the worst of the
 three, because that file is ``@``-included into every session: it told every
 agent the corpus was empty.
 
-These tests drive the real generators over a real SQLite store. The negative
-case — an unreadable store must render "not measured", never "0" — is the one
-that would have caught the original defect.
+These tests drive the real generators over the store's health block (the fake
+store; canary exclusion and namespace scoping are the store's own, tested in
+trw-memory's ``test_tools_status_health``). The negative case — an unmeasured
+store must render "not measured", never "0" — is the one that would have caught
+the original defect.
 """
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from trw_memory.models.memory import MemoryEntry
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
+from trw_mcp.state import _store_selection
 from trw_mcp.state._store_counts import StoreCounts, read_store_counts
 
 
-def _write_store(trw_dir: Path, *, local: int, synced: int, canaries: int = 0) -> None:
-    """Create a memory store holding the requested provenance mix."""
-    (trw_dir / "memory").mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(trw_dir / "memory" / "memory.db"))
-    conn.execute(
-        "CREATE TABLE memories (id TEXT PRIMARY KEY, namespace TEXT NOT NULL DEFAULT 'default', "
-        "source TEXT DEFAULT 'agent', metadata TEXT DEFAULT '{}')"
-    )
-    rows = (
-        [(f"local{i}", "default", "agent", "{}") for i in range(local)]
-        + [(f"sync{i}", "default", "team_sync", "{}") for i in range(synced)]
-        + [(f"canary{i}", "default", "agent", '{"system_canary": "true"}') for i in range(canaries)]
-    )
-    conn.executemany("INSERT INTO memories (id, namespace, source, metadata) VALUES (?, ?, ?, ?)", rows)
-    conn.commit()
-    conn.close()
+def _write_store(store: FakeMemoryStore, *, local: int, synced: int) -> None:
+    """Stock the pinned namespace with the requested provenance mix."""
+    for i in range(local):
+        store.rows[(FAKE_NAMESPACE, f"local{i}")] = MemoryEntry(id=f"local{i}", content="x", namespace=FAKE_NAMESPACE)
+    for i in range(synced):
+        store.rows[(FAKE_NAMESPACE, f"sync{i}")] = MemoryEntry(
+            id=f"sync{i}", content="x", namespace=FAKE_NAMESPACE, source="team_sync"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -45,65 +43,60 @@ def _write_store(trw_dir: Path, *, local: int, synced: int, canaries: int = 0) -
 # ---------------------------------------------------------------------------
 
 
-def test_store_counts_split_local_from_synced(tmp_path: Path) -> None:
+def test_store_counts_split_local_from_synced(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """The split is the whole point: one total for two populations is the defect."""
     trw_dir = tmp_path / ".trw"
-    _write_store(trw_dir, local=22, synced=1324)
+    _write_store(fake_memory_store, local=22, synced=1324)
 
     counts = read_store_counts(trw_dir)
 
     assert counts == StoreCounts(total=1346, local=22, synced=1324)
 
 
-def test_store_counts_exclude_system_canaries(tmp_path: Path) -> None:
-    """Framework instrumentation is not knowledge and must not inflate the inventory."""
-    trw_dir = tmp_path / ".trw"
-    _write_store(trw_dir, local=5, synced=0, canaries=10)
-
-    counts = read_store_counts(trw_dir)
-
-    assert counts is not None
-    assert counts.total == 5
+def _unpinned(_trw_dir: Path) -> None:
+    raise _store_selection.StoreUnavailableError("no project_namespace; run `trw-mcp update-project`")
 
 
-def test_store_counts_are_namespace_scoped(tmp_path: Path) -> None:
-    """A file-wide count is not this project's inventory."""
-    trw_dir = tmp_path / ".trw"
-    _write_store(trw_dir, local=3, synced=0)
-    conn = sqlite3.connect(str(trw_dir / "memory" / "memory.db"))
-    conn.execute("INSERT INTO memories (id, namespace, source, metadata) VALUES ('other', 'team:acme', 'agent', '{}')")
-    conn.commit()
-    conn.close()
-
-    counts = read_store_counts(trw_dir)
-
-    assert counts is not None
-    assert counts.total == 3
+def _unreachable(_namespace: str) -> None:
+    raise _store_selection.StoreUnavailableError("the memory daemon is unreachable")
 
 
-@pytest.mark.parametrize(
-    "prepare",
-    [
-        pytest.param(lambda d: None, id="no-store-file"),
-        pytest.param(
-            lambda d: (d / "memory").mkdir(parents=True) or (d / "memory" / "memory.db").write_bytes(b"not sqlite"),
-            id="corrupt-store",
-        ),
-    ],
-)
-def test_an_unmeasurable_store_is_none_and_never_zero(tmp_path: Path, prepare: object) -> None:
+@pytest.mark.parametrize("unmeasured", ["unpinned-checkout", "unreachable-daemon"])
+def test_an_unmeasurable_store_is_none_and_never_zero(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, unmeasured: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """``None`` and ``StoreCounts(0, 0, 0)`` are different answers, deliberately."""
+    if unmeasured == "unpinned-checkout":
+        monkeypatch.setattr(_store_selection, "selected_store", _unpinned)
+    else:
+        monkeypatch.setattr(fake_memory_store, "health", _unreachable)
+
+    assert read_store_counts(tmp_path / ".trw") is None
+
+
+def test_an_unmigrated_memory_db_is_not_this_checkouts_inventory(tmp_path: Path) -> None:
+    """An unpinned checkout's memory.db holds rows the daemon never serves: not measured (PRD-CORE-280)."""
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
     trw_dir = tmp_path / ".trw"
-    trw_dir.mkdir()
-    prepare(trw_dir)  # type: ignore[operator]
+    (trw_dir / "memory").mkdir(parents=True)
+    backend = SQLiteBackend(trw_dir / "memory" / "memory.db")
+    backend.store(MemoryEntry(id="L-1", content="an unmigrated learning"))
+    backend.close()
+    before = (trw_dir / "memory" / "memory.db").read_bytes()
 
-    assert read_store_counts(trw_dir) is None
+    def refuse_open(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("the store count opened a checkout's memory.db")
+
+    with patch("sqlite3.connect", side_effect=refuse_open):
+        assert read_store_counts(trw_dir) is None
+    assert (trw_dir / "memory" / "memory.db").read_bytes() == before
 
 
-def test_a_genuinely_empty_store_counts_zero_not_none(tmp_path: Path) -> None:
+def test_a_genuinely_empty_store_counts_zero_not_none(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """The other half of the distinction: a read store with no rows IS zero."""
     trw_dir = tmp_path / ".trw"
-    _write_store(trw_dir, local=0, synced=0)
+    _write_store(fake_memory_store, local=0, synced=0)
 
     assert read_store_counts(trw_dir) == StoreCounts(total=0, local=0, synced=0)
 
@@ -178,12 +171,14 @@ def test_a_local_only_store_does_not_print_a_meaningless_sync_split(
     assert claim == "4 learnings recorded locally in this project's store across 1 prior session"
 
 
-def test_the_store_count_is_cached_within_a_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_store_count_is_cached_within_a_turn(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """One bounded query per turn: the instruction surface renders several sections."""
     from trw_mcp.state.claude_md.sections import _memory_routing as routing
 
     trw_dir = tmp_path / ".trw"
-    _write_store(trw_dir, local=3, synced=0)
+    _write_store(fake_memory_store, local=3, synced=0)
     monkeypatch.setattr(routing._paths, "resolve_project_root", lambda: tmp_path)
 
     calls: list[Path] = []
@@ -209,7 +204,7 @@ def test_the_store_count_is_cached_within_a_turn(tmp_path: Path, monkeypatch: py
 
 
 def test_learnings_summary_analytics_block_names_its_populations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """``Total learnings: 9`` was the local counter, printed as if it were the store."""
     from trw_mcp.models.config import TRWConfig
@@ -222,7 +217,7 @@ def test_learnings_summary_analytics_block_names_its_populations(
     monkeypatch.setattr(resource_config, "list_active_learnings", lambda *a, **k: [])
 
     trw_dir = tmp_path / ".trw"
-    _write_store(trw_dir, local=22, synced=1324)
+    _write_store(fake_memory_store, local=22, synced=1324)
     (trw_dir / "context").mkdir(parents=True, exist_ok=True)
     (trw_dir / "context" / "analytics.yaml").write_text(
         "sessions_tracked: 2\ntotal_learnings: 22\navg_learnings_per_session: 0.96\n",

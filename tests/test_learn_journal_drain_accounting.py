@@ -14,7 +14,7 @@ path the pending file already exists, so a gate-rejected record was:
   ``pending_after == pending_before``.
 
 The trigger is real, not hypothetical: the gates can be STRICTER at replay time
-than at journal time (``llm_utility_filter_enabled`` flipped on, or tightened
+than at journal time (tightened
 length caps / injection patterns / noise heuristics shipped by an upgrade). The
 journal exists precisely to survive restarts and upgrades.
 
@@ -54,6 +54,8 @@ from pathlib import Path
 import pytest
 import structlog
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state import learn_journal
 
@@ -68,6 +70,14 @@ def _trw_dir(tmp_path: Path) -> Path:
     trw_dir = tmp_path / ".trw"
     (trw_dir / "learnings" / "entries").mkdir(parents=True)
     return trw_dir
+
+
+def _attach(trw_dir: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin *trw_dir* to the session daemon so the real store path (execute_learn,
+    replay_journaled_learn, run_auto_maintenance, ...) never opens an in-process
+    ``memory.db`` (PRD-CORE-280 slice e1)."""
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    attach_checkout(trw_dir, memory_daemon)
 
 
 def _dead_letter_files(trw_dir: Path) -> list[Path]:
@@ -188,6 +198,58 @@ class TestNoRecordIsRetriedForever:
         assert learn_journal.pending_count(trw_dir) == 0
         assert [p.name for p in _dead_letter_files(trw_dir)] == ["L-gated.json"]
 
+    def test_a_record_the_daemon_refuses_is_dead_lettered_on_the_first_attempt(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The daemon's schema refusal arrives as a status, so the real replay knows it is permanent.
+
+        ``confidence="verified"`` with no evidence passes the trw-mcp gates and is refused
+        by trw-memory's write path, across the daemon transport (PRD-CORE-280 e3).
+        """
+        trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
+        config = TRWConfig(embeddings_enabled=False)
+        learn_journal.journal_pending(
+            trw_dir, "L-unproven", {"summary": _SUMMARY, "detail": _DETAIL, "impact": 0.5, "confidence": "verified"}
+        )
+        replay = _real_replay(trw_dir, config)
+        calls: list[str] = []
+
+        def _counting(lid: str, payload: dict[str, object]) -> str:
+            calls.append(lid)
+            return replay(lid, payload)
+
+        result = learn_journal.drain_pending(trw_dir, _counting, limit=10, max_attempts=5)
+        learn_journal.drain_pending(trw_dir, _counting, limit=10, max_attempts=5)
+
+        assert (result.get("dead_lettered"), result.get("recovered", 0)) == (1, 0)
+        assert calls == ["L-unproven"], f"record was attempted {len(calls)} times"
+        assert [p.name for p in _dead_letter_files(trw_dir)] == ["L-unproven.json"]
+
+    def test_a_rate_limited_record_outlasts_the_retry_budget_and_lands_once_the_window_clears(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
+        """A rate limit expires, so refusals inside the window never spend the retry budget.
+
+        More sweeps than the budget allows all hit the window; the record stays pending
+        with no attempts booked, and the first sweep after the window stores it (PRD-CORE-280 e3).
+        """
+        trw_dir = _trw_dir(tmp_path)
+        config = TRWConfig(embeddings_enabled=False)
+        _journal(trw_dir, "L-limited")
+        budget = 5
+
+        for _ in range(budget + 2):
+            fake_memory_store.next_put_status = "rate_limited"
+            inside = learn_journal.drain_pending(trw_dir, _real_replay(trw_dir, config), limit=10, max_attempts=budget)
+            assert (inside.get("dead_lettered", 0), inside.get("recovered", 0)) == (0, 0)
+        assert learn_journal.pending_count(trw_dir) == 1
+        after = learn_journal.drain_pending(trw_dir, _real_replay(trw_dir, config), limit=10, max_attempts=budget)
+
+        assert (after.get("recovered"), learn_journal.pending_count(trw_dir)) == (1, 0)
+        assert fake_memory_store.get("L-limited") is not None
+        assert _dead_letter_files(trw_dir) == []
+
     def test_a_dead_lettered_record_is_never_replayed_again(self, tmp_path: Path) -> None:
         """The point of the whole fix: the second sweep has nothing to do."""
         trw_dir = _trw_dir(tmp_path)
@@ -294,9 +356,8 @@ class TestNoRecordIsRetriedForever:
     def test_retry_bookkeeping_does_not_reset_the_age_escape_hatch(self, tmp_path: Path) -> None:
         """Attempt counts are rewritten with the ORIGINAL mtime preserved.
 
-        The age hatch (PRD-INFRA-171-FR06) and the FIFO replay order are both
-        keyed on mtime; bumping it on every failed sweep would make an aged
-        record permanently young and defeat the eventual-drain guarantee.
+        The FIFO replay order is keyed on mtime; bumping it on every failed
+        sweep would send a retried record to the back of the queue.
         """
         trw_dir = _trw_dir(tmp_path)
         _journal(trw_dir, "L-aged")
@@ -307,7 +368,6 @@ class TestNoRecordIsRetriedForever:
         learn_journal.drain_pending(trw_dir, lambda *_a: "error", limit=10, max_attempts=5)
 
         assert os.stat(path).st_mtime == pytest.approx(backdated, abs=1.0)
-        assert learn_journal.aged_pending_count(trw_dir, max_age_seconds=3600.0) == 1
 
 
 class TestGatesAreNotWeakened:
@@ -325,11 +385,14 @@ class TestGatesAreNotWeakened:
         assert learn_journal.pending_count(trw_dir) == 0  # never durably recorded
         assert not _dead_letter_files(trw_dir)
 
-    def test_replay_path_rejection_is_not_weakened_into_a_store(self, tmp_path: Path) -> None:
+    def test_replay_path_rejection_is_not_weakened_into_a_store(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The gated content must still NOT become a recallable learning."""
         from trw_mcp.state.memory_adapter import list_active_learnings
 
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False)
         _journal(trw_dir, "L-gated", detail=_OVERLONG_DETAIL)
 
@@ -354,9 +417,12 @@ class TestDeadLetterIsNotLoss:
         assert record["dead_letter"]["reason"] == "deterministic_rejection:rejected"
         assert record["dead_letter"]["attempts"] == 1
 
-    def test_an_operator_can_requeue_a_dead_lettered_record(self, tmp_path: Path) -> None:
+    def test_an_operator_can_requeue_a_dead_lettered_record(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """The moved file keeps the full journal shape, so it re-arms on move-back."""
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False)
         _journal(trw_dir, "L-requeue")
         learn_journal.drain_pending(trw_dir, lambda *_a: "rejected", limit=10, max_attempts=5)
@@ -430,10 +496,15 @@ class TestCliExitContract:
         assert code == 2
 
     def test_exit_is_zero_only_when_the_journal_actually_drained(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        memory_daemon: MemoryDaemon,
     ) -> None:
         """Control: the success path still exits 0 (keeps the above non-vacuous)."""
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         _journal(trw_dir, "L-ok")
 
         code = self._invoke(trw_dir, TRWConfig(embeddings_enabled=False), monkeypatch)
@@ -464,13 +535,6 @@ class TestCliExitContract:
 # ---------------------------------------------------------------------------
 
 
-def _quiet_census(trw_dir: Path):  # type: ignore[no-untyped-def]
-    """A writer census with no peers — the unpressured branch."""
-    from trw_mcp.state.memory_pressure import take_writer_census
-
-    return take_writer_census(trw_dir, threshold=2)
-
-
 def _drain_step(trw_dir: Path, config: TRWConfig) -> dict[str, object]:
     """Run the session_start drain sub-step and return its maintenance payload."""
     from trw_mcp.tools._ceremony_maintenance_steps import _run_learn_journal_drain
@@ -480,8 +544,6 @@ def _drain_step(trw_dir: Path, config: TRWConfig) -> dict[str, object]:
         trw_dir,
         config,
         maintenance,  # type: ignore[arg-type]
-        census=_quiet_census(trw_dir),
-        defer_memory_heavy=False,
     )
     return maintenance
 
@@ -524,8 +586,11 @@ class TestBackgroundContinuation:
     budget and ``replayed_inline`` is the whole backlog.
     """
 
-    def test_budget_remainder_drains_on_a_single_flight_background_thread(self, tmp_path: Path) -> None:
+    def test_budget_remainder_drains_on_a_single_flight_background_thread(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False, learn_journal_drain_budget_ms=0)
         for i in range(6):
             _journal(trw_dir, f"L-bg{i:03d}", detail=f"{_DETAIL} number {i}")
@@ -546,8 +611,8 @@ class TestBackgroundContinuation:
         trw_dir = _trw_dir(tmp_path)
         config = TRWConfig(embeddings_enabled=False)
         with structlog.testing.capture_logs() as logs:
-            first = steps._schedule_background_drain(trw_dir, config, 1, False)
-            second = steps._schedule_background_drain(trw_dir, config, 1, False)
+            first = steps._schedule_background_drain(trw_dir, config, 1)
+            second = steps._schedule_background_drain(trw_dir, config, 1)
         assert first is True
         # Either the first thread already finished (then the second legitimately
         # starts) or it was still running and the guard refused. The property is
@@ -591,9 +656,12 @@ class TestBackgroundContinuation:
             assert field in done[0], (field, done[0])
         assert not any(_SUMMARY in str(v) or _DETAIL in str(v) for v in done[0].values()), done[0]
 
-    def test_payload_never_reports_a_deferred_record_as_replayed(self, tmp_path: Path) -> None:
+    def test_payload_never_reports_a_deferred_record_as_replayed(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """replayed_inline + deferred_to_background == the records the sweep could attempt."""
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False, learn_journal_drain_budget_ms=0, learn_journal_drain_limit=4)
         for i in range(9):
             _journal(trw_dir, f"L-cnt{i:03d}", detail=f"{_DETAIL} count {i}")
@@ -625,7 +693,7 @@ class TestBackgroundContinuation:
 
         monkeypatch.setattr(learn_journal, "drain_pending", _boom)
         with structlog.testing.capture_logs() as logs:
-            assert steps._schedule_background_drain(trw_dir, config, 1, False) is True
+            assert steps._schedule_background_drain(trw_dir, config, 1) is True
             thread = steps._DRAIN_THREAD
             assert thread is not None
             assert thread.daemon is True
@@ -666,7 +734,9 @@ class TestBackgroundContinuation:
         killed = json.loads((trw_dir / "learnings" / "pending" / f"{seen[1]}.json").read_text(encoding="utf-8"))
         assert "attempts" not in killed or killed["attempts"] == 0, killed
 
-    def test_a_concurrent_process_replaying_the_same_records_adds_no_duplicate(self, tmp_path: Path) -> None:
+    def test_a_concurrent_process_replaying_the_same_records_adds_no_duplicate(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Cross-process safety without a lock file: consume + file-existence classification.
 
         Two server processes can each schedule a continuation over the same
@@ -675,6 +745,7 @@ class TestBackgroundContinuation:
         books no recovery and writes no second row.
         """
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False, dedup_enabled=False)
         for i in range(3):
             learn_journal.journal_pending(
@@ -704,9 +775,12 @@ class TestBackgroundContinuation:
         summaries = [str(e.get("summary", "")) for e in list_active_learnings(trw_dir)]
         assert len(summaries) == len(set(summaries)), summaries
 
-    def test_pending_schema_and_dead_letter_behaviour_unchanged(self, tmp_path: Path) -> None:
+    def test_pending_schema_and_dead_letter_behaviour_unchanged(
+        self, tmp_path: Path, memory_daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """NFR04: no migration, same dead-letter reason, and no key was removed."""
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False)
         _journal(trw_dir, "L-compat01")
         record = json.loads((trw_dir / "learnings" / "pending" / "L-compat01.json").read_text(encoding="utf-8"))
@@ -802,13 +876,13 @@ class TestRecordClaims:
 
     def test_a_live_owners_claim_defers_the_record_instead_of_racing_it(self, tmp_path: Path) -> None:
         from trw_mcp.state._learn_journal_claims import claim_path_for
-        from trw_mcp.state._writer_census_identity import process_birth_epoch
+        from trw_mcp.state._process_identity import process_start_epoch
 
         trw_dir = _trw_dir(tmp_path)
         _journal(trw_dir, "L-held001")
         record = trw_dir / "learnings" / "pending" / "L-held001.json"
         claim = claim_path_for(record)
-        claim.write_text(json.dumps({"pid": os.getpid(), "epoch": process_birth_epoch(os.getpid())}))
+        claim.write_text(json.dumps({"pid": os.getpid(), "epoch": process_start_epoch(os.getpid())}))
 
         seen: list[str] = []
         result = learn_journal.drain_pending(trw_dir, lambda lid, _p: seen.append(lid) or "recorded", limit=50)
@@ -859,13 +933,8 @@ class TestRecordClaims:
             release_claim(held)
 
 
-class TestMigrationClaim:
-    """FIX130-07: 'exactly once' must hold ACROSS processes, not per process.
-
-    NON-VACUITY: remove the claim from ``run_batch_dedup_migration`` and
-    ``test_two_racing_migrations_run_the_scan_once`` records two batch_dedup
-    calls — both callers see the same absent marker.
-    """
+class TestClaimAtomicity:
+    """FIX130-07: a claim is exclusive across threads, not just across processes."""
 
     def test_a_published_claim_is_never_observed_half_written(self, tmp_path: Path) -> None:
         """The module's stated invariant, under THREADS rather than processes.
@@ -875,12 +944,10 @@ class TestMigrationClaim:
         file. The temp name was keyed on the PID alone, so two threads of one
         process shared it and the linked INODE was still being rewritten by the
         loser: the winner's claim read as illegible JSON, ``_is_stale`` called a
-        LIVE claim reclaimable, and the guarded work ran twice. That is how
-        ``test_two_racing_migrations_run_the_scan_once`` failed.
+        LIVE claim reclaimable, and the guarded work ran twice.
 
         NON-VACUITY (observed 2026-09-17): restore the pid-only temp name and
-        this reports an unreadable claim within a few rounds, and the migration
-        test above fails outright.
+        this reports an unreadable claim within a few rounds.
         """
         import json
         import os
@@ -922,74 +989,6 @@ class TestMigrationClaim:
             )
             release_claim(held[0])  # type: ignore[arg-type]
 
-    def test_two_racing_migrations_run_the_scan_once(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        import threading
-        import time as _time
-
-        from trw_mcp.state import dedup as dedup_mod
-        from trw_mcp.tools import _learn_journal_background as background
-
-        trw_dir = _trw_dir(tmp_path)
-        config = TRWConfig(embeddings_enabled=False)
-        calls: list[str] = []
-        lock = threading.Lock()
-
-        def _fake_batch(td: Path, _reader: object, writer: object, *, config: object = None) -> dict[str, object]:
-            # Scoped to THIS test's store: a background drain left over from a
-            # neighbouring test schedules its own migration against a different
-            # trw_dir, and counting it here would be a spurious second "run".
-            if td == trw_dir:
-                with lock:
-                    calls.append("ran")
-            _time.sleep(0.1)
-            (td / "learnings" / "dedup_migration.yaml").write_text("completed: true\n")
-            return {"status": "completed", "entries_scanned": 0}
-
-        monkeypatch.setattr(dedup_mod, "batch_dedup", _fake_batch)
-        start = threading.Barrier(2, timeout=30.0)
-        outcomes: list[dict[str, object]] = []
-
-        def _drive() -> None:
-            start.wait()
-            outcomes.append(background.run_batch_dedup_migration(trw_dir, config))
-
-        threads = [threading.Thread(target=_drive) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(60.0)
-            assert not thread.is_alive()
-
-        assert calls == ["ran"], f"the quadratic migration ran {len(calls)} times concurrently"
-        assert len(outcomes) == 2, outcomes
-        statuses = sorted(str(o.get("status", "")) for o in outcomes)
-        # The loser either lost the claim (contended) or won it after the winner
-        # wrote the marker and re-checked the need away (skipped). Both are
-        # truthful; what must never happen is two scans, or a second
-        # "completed" for work this caller did not do.
-        assert statuses[0] == "completed", outcomes
-        assert statuses[1] in {"contended", "skipped"}, outcomes
-
-    def test_a_skipped_migration_leaves_no_claim_behind(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.state import dedup as dedup_mod
-        from trw_mcp.state._learn_journal_claims import claim_path_for
-        from trw_mcp.tools import _learn_journal_background as background
-
-        trw_dir = _trw_dir(tmp_path)
-        config = TRWConfig(embeddings_enabled=False)
-        monkeypatch.setattr(
-            dedup_mod, "batch_dedup", lambda *_a, **_kw: {"status": "skipped", "reason": "embeddings unavailable"}
-        )
-
-        outcome = background.run_batch_dedup_migration(trw_dir, config)
-
-        marker = trw_dir / "learnings" / "dedup_migration.yaml"
-        assert outcome["status"] == "skipped", outcome
-        assert not marker.exists(), "a skipped migration must NOT be marked complete"
-        assert not claim_path_for(marker).exists(), "a skipped migration must not leave a stale claim"
-        # And the next attempt is therefore free to run.
-        assert background.run_batch_dedup_migration(trw_dir, config)["status"] == "skipped"
-
 
 class TestOverlappingSweeps:
     """FIX130-02: a remainder nobody is coming for is never reported as handled.
@@ -1017,12 +1016,12 @@ class TestOverlappingSweeps:
 
         try:
             with structlog.testing.capture_logs() as logs:
-                first = steps._schedule_background_drain(trw_dir, config, 1, False, sweep=_sweep_ctx(_blocking))
+                first = steps._schedule_background_drain(trw_dir, config, 1, sweep=_sweep_ctx(_blocking))
                 assert first is True
                 assert entered.wait(30.0), "the first worker never started"
                 held = steps._DRAIN_THREAD
                 assert held is not None and held.is_alive()
-                second = steps._schedule_background_drain(trw_dir, config, 1, False, sweep=_sweep_ctx(_blocking))
+                second = steps._schedule_background_drain(trw_dir, config, 1, sweep=_sweep_ctx(_blocking))
             # The point of the test: a SECOND thread must not exist while the
             # first is provably still inside its replay.
             assert second is False, "an overlapping schedule started a second worker"
@@ -1050,7 +1049,7 @@ class TestOverlappingSweeps:
             return "error"
 
         try:
-            assert steps._schedule_background_drain(trw_dir, config, 1, False, sweep=_sweep_ctx(_blocking)) is True
+            assert steps._schedule_background_drain(trw_dir, config, 1, sweep=_sweep_ctx(_blocking)) is True
             assert entered.wait(30.0)
             maintenance = _drain_step(trw_dir, config)
         finally:
@@ -1080,7 +1079,7 @@ class TestOverlappingSweeps:
                 _journal(trw_dir, "L-relist002")
             return "recorded"
 
-        assert steps._schedule_background_drain(trw_dir, config, 5, False, sweep=_sweep_ctx(_replay)) is True
+        assert steps._schedule_background_drain(trw_dir, config, 5, sweep=_sweep_ctx(_replay)) is True
         _join_drain_thread()
 
         assert seen == ["L-relist001", "L-relist002"], seen
@@ -1089,26 +1088,6 @@ class TestOverlappingSweeps:
 
 class TestBackgroundTruthfulness:
     """FIX130-08/09/10: the completion event and the payload state what happened."""
-
-    def test_a_skipped_migration_is_not_reported_as_run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from trw_mcp.state import dedup as dedup_mod
-        from trw_mcp.tools import _ceremony_maintenance_steps as steps
-
-        trw_dir = _trw_dir(tmp_path)
-        config = TRWConfig(embeddings_enabled=False)
-        monkeypatch.setattr(
-            dedup_mod, "batch_dedup", lambda *_a, **_kw: {"status": "skipped", "reason": "embeddings unavailable"}
-        )
-
-        with structlog.testing.capture_logs() as logs:
-            assert steps._schedule_background_drain(trw_dir, config, 0, True) is True
-            _join_drain_thread()
-
-        done = [e for e in logs if e.get("event") == "learn_journal_background_drain_completed"]
-        assert done, logs
-        assert done[0]["migration_requested"] is True, done[0]
-        assert done[0]["migration_outcome"] == "skipped", done[0]
-        assert done[0]["migration_run"] is False, "a skipped migration was reported as run"
 
     def test_missing_marker_is_not_reported_as_pending_capture_work(self, tmp_path: Path) -> None:
         import threading
@@ -1127,7 +1106,7 @@ class TestBackgroundTruthfulness:
             return "error"
 
         try:
-            assert steps._schedule_background_drain(trw_dir, config, 1, False, sweep=_sweep_ctx(_blocking)) is True
+            assert steps._schedule_background_drain(trw_dir, config, 1, sweep=_sweep_ctx(_blocking)) is True
             assert entered.wait(30.0)
             maintenance = _drain_step(trw_dir, config)
         finally:
@@ -1140,13 +1119,14 @@ class TestBackgroundTruthfulness:
         assert "migration_scheduled" not in payload, payload
 
     def test_a_failed_index_flush_retains_its_rows_and_says_so(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: MemoryDaemon
     ) -> None:
         """FIX130-10: clearing the sink first silently discarded the whole batch."""
         from trw_mcp.state.analytics import entries as entries_mod
         from trw_mcp.tools import _learn_journal_wiring as wiring
 
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False, dedup_enabled=False)
         for i in range(3):
             _journal(trw_dir, f"L-idx{i:03d}", detail=f"{_DETAIL} index {i}")
@@ -1203,12 +1183,17 @@ class TestOperatorDrainIsBatchedToo:
     """
 
     def test_a_five_record_operator_drain_writes_the_index_once(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        memory_daemon: MemoryDaemon,
     ) -> None:
         from trw_mcp.state import memory_adapter
         from trw_mcp.state.analytics import entries as entries_mod
 
         trw_dir = _trw_dir(tmp_path)
+        _attach(trw_dir, memory_daemon, monkeypatch)
         config = TRWConfig(embeddings_enabled=False, dedup_enabled=False)
         for i in range(5):
             _journal(trw_dir, f"L-cli{i:03d}", detail=f"{_DETAIL} cli {i}")

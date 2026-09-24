@@ -24,9 +24,11 @@ from trw_mcp.scoring import rank_targeted_by_utility
 from trw_mcp.scoring._decay import entry_utility
 from trw_mcp.state.memory_adapter import (
     find_entry_by_id,
+    record_surfaced,
     store_learning,
-    update_access_tracking,
 )
+
+from ._memory_store_fake import FakeMemoryStore
 
 _TODAY = date(2026, 9, 3)
 
@@ -106,13 +108,6 @@ class TestLiveRankerUsesUnifiedUtility:
 class TestUnifiedUtilityRetainsBothBehaviours:
     """FR11: the merge is a UNION. Each retained behaviour is asserted alone."""
 
-    def test_helpful_count_raises_utility_on_the_live_path(self) -> None:
-        """FR11 AC4 — the feedback term the live ranker used to ignore."""
-        helpful = _entry("L-helpful", recall_count=5, helpful_count=5)
-        unhelpful = _entry("L-unhelpful", recall_count=5, helpful_count=0)
-
-        assert entry_utility(helpful, _TODAY) > entry_utility(unhelpful, _TODAY)
-
     def test_recall_without_helpful_feedback_decays(self) -> None:
         """recall_count > 0 with helpful_count 0 decays base impact by 0.95**n."""
         recalled = _entry("L-recalled", recall_count=5)
@@ -170,21 +165,23 @@ class TestUnifiedUtilityRetainsBothBehaviours:
 class TestRecallCountIsActuallyRecorded:
     """PRD-FIX-104-FR04: the counter the feedback term reads is really written."""
 
-    def test_recall_count_accumulates_over_multiple_recalls(self, trw_dir: Path) -> None:
+    def test_recall_count_accumulates_over_multiple_recalls(
+        self, trw_dir: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         store_learning(trw_dir, "L-rfw1", "Wiring test entry", "detail here", impact=0.8)
 
         for _ in range(5):
-            update_access_tracking(trw_dir, ["L-rfw1"])
+            record_surfaced(trw_dir, ["L-rfw1"])
 
         entry = find_entry_by_id(trw_dir, "L-rfw1")
         assert entry is not None
         assert entry["recall_count"] == 5
 
-    def test_stored_entry_feeds_the_live_ranker(self, trw_dir: Path) -> None:
+    def test_stored_entry_feeds_the_live_ranker(self, trw_dir: Path, fake_memory_store: FakeMemoryStore) -> None:
         """End to end: store, recall five times, then rank through the LIVE path."""
         store_learning(trw_dir, "L-rfw2", "Decay wiring test", "detail here", impact=0.8)
         for _ in range(5):
-            update_access_tracking(trw_dir, ["L-rfw2"])
+            record_surfaced(trw_dir, ["L-rfw2"])
 
         recalled = find_entry_by_id(trw_dir, "L-rfw2")
         assert recalled is not None

@@ -57,7 +57,7 @@ make control points, testability, proof, migration/rollback where applicable,
 and completion evidence explicit. Treat score-gaming and density-chasing as
 failure modes.
 
-## Pre-Implementation Checklist (PRD-QUAL-056-FR03)
+## Pre-Implementation Checklist
 
 Before writing the plan, confirm:
 

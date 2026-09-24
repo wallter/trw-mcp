@@ -298,7 +298,7 @@ class TestFullSyncNoUnreplacedMarkers:
         target = tmp_path / "CLAUDE.md"
         target.write_text("# Test\n", encoding="utf-8")
 
-        config = TRWConfig(trw_dir=str(trw_dir), instruction_externalize="off")
+        config = TRWConfig(trw_dir=str(trw_dir))
         memory_cfg = MemoryConfig(storage_backend="yaml", storage_path=str(tmp_path / ".memory"))
         reader = FileStateReader()
         llm = MagicMock()

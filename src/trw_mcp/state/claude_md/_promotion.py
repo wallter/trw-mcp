@@ -55,35 +55,29 @@ def collect_promotable_learnings(
         return high_impact
 
     for data in all_active:
-        try:
-            impact = data.get("impact", 0.0)
-            q_obs = int(str(data.get("q_observations", 0)))
+        # PRD-CORE-293: rank by impact. The q_value branch this replaced needed
+        # outcome observations that were never recorded, so it never ran. Nothing
+        # here raises on a malformed entry: a non-numeric impact scores 0.
+        impact = data.get("impact", 0.0)
+        score = float(impact) if isinstance(impact, (int, float)) else 0.0
 
-            # Use q_value for mature entries, impact for cold-start
-            if q_obs >= config.q_cold_start_threshold:
-                score = float(str(data.get("q_value", impact)))
-            else:
-                score = float(str(impact)) if isinstance(impact, (int, float)) else 0.0
+        # Apply time decay for accurate promotion decisions
+        created_at_raw = str(data.get("created", ""))
+        if created_at_raw:
+            try:
+                from datetime import datetime as _dt
 
-            # Apply time decay for accurate promotion decisions
-            created_at_raw = str(data.get("created", ""))
-            if created_at_raw:
-                try:
-                    from datetime import datetime as _dt
+                from trw_mcp.scoring import apply_time_decay
 
-                    from trw_mcp.scoring import apply_time_decay
+                created_dt = _dt.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+                score = apply_time_decay(score, created_dt)
+            except (ValueError, ImportError):
+                logger.debug(
+                    "time_decay_apply_skipped", exc_info=True
+                )  # justified: fail-open, malformed date — use raw score
 
-                    created_dt = _dt.fromisoformat(created_at_raw.replace("Z", "+00:00"))
-                    score = apply_time_decay(score, created_dt)
-                except (ValueError, ImportError):
-                    logger.debug(
-                        "time_decay_apply_skipped", exc_info=True
-                    )  # justified: fail-open, malformed date — use raw score
-
-            if score >= config.learning_promotion_impact:
-                high_impact.append(data)
-        except (ValueError, TypeError):  # per-item error handling: skip entries with malformed fields
-            continue
+        if score >= config.learning_promotion_impact:
+            high_impact.append(data)
 
     return high_impact
 

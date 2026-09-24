@@ -114,18 +114,6 @@ class AutoProgressStepResult(_AutoProgressStepResultRequired, total=False):
     progressions: list[ProgressionItem]
 
 
-class OutcomeCorrelationStepResult(StepResultBase):
-    """Return shape of ``_step_outcome_correlation()``."""
-
-    updated: int
-
-
-class RecallOutcomeStepResult(StepResultBase):
-    """Return shape of ``_step_recall_outcome()``."""
-
-    recorded: int
-
-
 class ConsolidationStepResult(TypedDict, total=False):
     """Return shape of ``_step_consolidation()``.
 

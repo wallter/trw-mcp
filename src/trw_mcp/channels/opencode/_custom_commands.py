@@ -32,6 +32,7 @@ __all__ = [
     "get_conventions_content",
     "get_hotspots_content",
     "install_custom_commands",
+    "opencode_distill_command_contents",
 ]
 
 COMMANDS_DIR = ".opencode/commands"
@@ -170,56 +171,60 @@ _COMMANDS: dict[str, tuple[str, str]] = {
 }
 
 
+def opencode_distill_command_contents() -> dict[str, bytes]:
+    """``{repo-relative path: bytes}`` the installer writes; the manifest recorder registers the same callable."""
+    return {f"{COMMANDS_DIR}/{name}": _apply_quota(content).encode("utf-8") for name, (_, content) in _COMMANDS.items()}
+
+
 def install_custom_commands(
     repo_root: Path,
     *,
-    existing_hashes: dict[str, str] | None = None,
+    manifest_hashes: dict[str, str] | None = None,
 ) -> dict[str, dict[str, object]]:
     """Write all three custom command files under ``.opencode/commands/``.
 
-    Detects user-modified files via SHA-256 (FR14). Modified files are
-    preserved and a ``user_modified`` event is emitted to channel-events.jsonl.
-
-    Args:
-        repo_root: Repository root directory.
-        existing_hashes: Mapping of ``filename → SHA-256`` from
-            ``.trw/managed-artifacts.yaml``, or None for first install.
+    A user-edited file is preserved and a ``user_modified`` event is emitted to
+    channel-events.jsonl (FR14). *manifest_hashes* is ``content_hashes`` from
+    ``.trw/managed-artifacts.yaml`` (None on a first install); the decision is the
+    shared ``artifact_user_edited`` guard, so a file with no record that differs
+    from the bundle is preserved too.
 
     Returns:
         Mapping of ``filename → {status, sha256}`` for each command file.
     """
-    results: dict[str, dict[str, object]] = {}
-    hashes = existing_hashes or {}
+    from trw_mcp.bootstrap._managed_client_artifacts import artifact_user_edited
 
-    for filename, (channel_id, content) in _COMMANDS.items():
-        target = repo_root / COMMANDS_DIR / filename
-        final_content = _apply_quota(content)
-        content_bytes = final_content.encode("utf-8")
+    results: dict[str, dict[str, object]] = {}
+    contents = opencode_distill_command_contents()
+
+    for filename, (channel_id, _) in _COMMANDS.items():
+        key = f"{COMMANDS_DIR}/{filename}"
+        target = repo_root / key
+        content_bytes = contents[key]
+        final_content = content_bytes.decode("utf-8")
         new_sha = hashlib.sha256(content_bytes).hexdigest()
 
         try:
-            # User-edit detection (FR14)
-            if filename in hashes and target.exists():
+            if target.exists() and artifact_user_edited(target, key, content_bytes, manifest_hashes):
                 on_disk_sha = hashlib.sha256(target.read_bytes()).hexdigest()
-                if on_disk_sha != hashes[filename]:
-                    log.debug(
-                        "opencode_custom_command_user_modified",
-                        filename=filename,
+                log.debug(
+                    "opencode_custom_command_user_modified",
+                    filename=filename,
+                    channel_id=channel_id,
+                    outcome="preserved",
+                )
+                try:
+                    append_channel_event(
                         channel_id=channel_id,
-                        outcome="preserved",
+                        client="opencode",
+                        event_type="user_modified",
+                        tier=None,
+                        extra={"filename": filename},
                     )
-                    try:
-                        append_channel_event(
-                            channel_id=channel_id,
-                            client="opencode",
-                            event_type="user_modified",
-                            tier=None,
-                            extra={"filename": filename},
-                        )
-                    except Exception:  # justified: fail-open telemetry, preserve user-modified command
-                        log.debug("opencode_custom_command_event_failed", filename=filename, exc_info=True)
-                    results[filename] = {"status": "preserved", "sha256": on_disk_sha}
-                    continue
+                except Exception:  # justified: fail-open telemetry, preserve user-modified command
+                    log.debug("opencode_custom_command_event_failed", filename=filename, exc_info=True)
+                results[filename] = {"status": "preserved", "sha256": on_disk_sha}
+                continue
 
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(final_content, encoding="utf-8")

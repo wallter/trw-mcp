@@ -36,7 +36,7 @@ def _response(
     return SimpleNamespace(
         stop_reason=stop_reason,
         stop_details=stop_details,
-        content=[SimpleNamespace(text=text)],
+        content=[SimpleNamespace(type="text", text=text)],
         usage=SimpleNamespace(input_tokens=10, output_tokens=5),
     )
 
@@ -64,7 +64,7 @@ async def test_end_turn_still_returns_text() -> None:
 async def test_response_without_stop_reason_attr_is_unaffected() -> None:
     # Older SDK response fixtures without the attribute keep working.
     response = SimpleNamespace(
-        content=[SimpleNamespace(text="legacy")],
+        content=[SimpleNamespace(type="text", text="legacy")],
         usage=SimpleNamespace(input_tokens=1, output_tokens=1),
     )
     client = _wired_client(response)

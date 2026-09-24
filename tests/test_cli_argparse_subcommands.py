@@ -68,13 +68,6 @@ def test_channel_doctor_scan_parses(parser) -> None:  # type: ignore[no-untyped-
     assert ns.dry_run is True
 
 
-def test_channel_doctor_throttle_apply_parses(parser) -> None:  # type: ignore[no-untyped-def]
-    ns = parser.parse_args(["channel-doctor", "throttle", "--window-hours", "3", "--apply"])
-    assert ns.channel_doctor_command == "throttle"
-    assert ns.window_hours == 3
-    assert ns.apply is True
-
-
 def test_session_changelog_parses(parser) -> None:  # type: ignore[no-untyped-def]
     ns = parser.parse_args(["session-changelog", "/runs/abc", "--write", "--advisory"])
     assert ns.command == "session-changelog"
@@ -155,6 +148,35 @@ def test_import_learnings_parses(parser) -> None:  # type: ignore[no-untyped-def
     assert ns.target_dir == "/proj"
     assert ns.tags == "a,b"
     assert ns.dry_run is True
+
+
+def test_uninstall_ide_parses(parser) -> None:  # type: ignore[no-untyped-def]
+    """CLIENT-REMOVE (PRD-INFRA-192-FR09): one client is removed with ``uninstall --ide``."""
+    ns = parser.parse_args(["uninstall", "/proj", "--ide", "grok", "--yes"])
+    assert ns.command == "uninstall"
+    assert ns.ide == "grok"
+    assert ns.yes is True
+
+
+def test_uninstall_has_one_spelling_for_client_removal(parser) -> None:  # type: ignore[no-untyped-def]
+    """FR09 settles the CLI on ``--ide``: the earlier ``--remove-ide`` is gone, not aliased."""
+    with pytest.raises(SystemExit):
+        parser.parse_args(["uninstall", "/proj", "--remove-ide", "grok"])
+
+
+def test_uninstall_ide_has_no_all_choice(parser) -> None:  # type: ignore[no-untyped-def]
+    """ "all" is a whole-project uninstall, not a client — must not be an --ide choice."""
+    with pytest.raises(SystemExit):
+        parser.parse_args(["uninstall", "/proj", "--ide", "all"])
+
+
+def test_uninstall_ide_retired_client_gets_migration_hint(parser, capsys: pytest.CaptureFixture[str]) -> None:  # type: ignore[no-untyped-def]
+    """A retired id reuses --ide's 'retired, here's the hint' error, not argparse's bare rejection."""
+    with pytest.raises(SystemExit):
+        parser.parse_args(["uninstall", "/proj", "--ide", "aider"])
+    err = capsys.readouterr().err
+    assert "no longer a supported client" in err
+    assert "uninstall" in err
 
 
 def test_audit_parses(parser) -> None:  # type: ignore[no-untyped-def]
@@ -386,3 +408,112 @@ def test_formation_verbs_parse_without_adding_an_mcp_tool(parser) -> None:  # ty
     assert not [name for name in get_tools_sync(server) if "formation" in name], (
         "PRD-CORE-265 registers zero MCP tools: the second surface is the CLI"
     )
+
+
+def test_formation_set_status_cli_abandoned_reassigned(  # type: ignore[no-untyped-def]
+    formation_env: FormationFixture, parser, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PRD-FIX-149 FR03: the orchestrator records an outcome from the CLI, through revise().
+
+    Before this verb the only way to retire a joined member was a Python-only
+    ``revise`` call (ledger T22). ``delivered`` is refused: a delivery claim needs
+    the member's own evidence (PRD-CORE-265 FR11), and the refusal writes nothing.
+    """
+    from tests._formation_test_support import pin_session
+    from trw_mcp.formation import create, join, status
+    from trw_mcp.tools._formation_cli import run_formation
+
+    orchestrator = formation_env.orchestrator_run
+    pin_session(monkeypatch, orchestrator)
+    create(orchestrator, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+    join("release-train", "impl-2", formation_env.member_runs["impl-2"], pin_key="pin-2")
+    manifest = orchestrator / "formation.yaml"
+
+    for member_id, outcome in (("impl-1", "abandoned"), ("impl-2", "reassigned")):
+        args = parser.parse_args(
+            ["formation", "set-status", member_id, outcome, "--reason", "handoff", "--run", str(orchestrator)]
+        )
+        with pytest.raises(SystemExit) as exited:
+            run_formation(args)
+        assert exited.value.code == 0
+    board = status(run_path=orchestrator)
+    assert board is not None
+    assert {row.member_id: row.status for row in board.rows} == {"impl-1": "abandoned", "impl-2": "reassigned"}
+
+    before = manifest.read_bytes()
+    for bad in ("delivered", "joined", "bogus"):
+        args = parser.parse_args(
+            ["formation", "set-status", "impl-1", bad, "--reason", "handoff", "--run", str(orchestrator)]
+        )
+        with pytest.raises(SystemExit) as exited:
+            run_formation(args)
+        assert exited.value.code == 1
+    assert manifest.read_bytes() == before, "a refused status writes nothing"
+
+    args = parser.parse_args(
+        ["formation", "set-status", "impl-1", "abandoned", "--reason", "  ", "--run", str(orchestrator)]
+    )
+    with pytest.raises(SystemExit) as exited:
+        run_formation(args)
+    assert exited.value.code == 1
+    assert manifest.read_bytes() == before, "a refused status writes nothing"
+
+
+_FORGEABLE_VERBS = [
+    ["set-status", "impl-1", "abandoned", "--reason", "forged"],
+    ["remove-slot", "impl-2"],
+    ["pause", "--reason", "forged"],
+]
+
+
+@pytest.mark.parametrize("verb", _FORGEABLE_VERBS, ids=lambda v: v[0])
+@pytest.mark.parametrize("caller", ["member-session", "unpinned-session"])
+def test_formation_verbs_refuse_a_forged_run(  # type: ignore[no-untyped-def]
+    formation_env: FormationFixture, parser, monkeypatch: pytest.MonkeyPatch, verb: list[str], caller: str
+) -> None:
+    """T29: naming the orchestrator's run directory is not being the orchestrator.
+
+    Before this, ``--run`` WAS the authority, so any session -- a member, or one
+    with no run at all -- could retire slots or pause the formation by passing
+    the orchestrator's path. Authority is now this session's pin.
+    """
+    from tests._formation_test_support import pin_session
+    from trw_mcp.formation import create, join
+    from trw_mcp.tools._formation_cli import run_formation
+
+    orchestrator = formation_env.orchestrator_run
+    create(orchestrator, formation_env.payload(), prds_dir=None)
+    join("release-train", "impl-1", formation_env.member_runs["impl-1"], pin_key="pin-1")
+    if caller == "member-session":
+        pin_session(monkeypatch, formation_env.member_runs["impl-1"], key="member-session")
+    else:
+        monkeypatch.setenv("TRW_SESSION_ID", "a-session-with-no-pin")
+    manifest = orchestrator / "formation.yaml"
+    before = manifest.read_bytes()
+
+    args = parser.parse_args(["formation", *verb, "--run", str(orchestrator)])
+    with pytest.raises(SystemExit) as exited:
+        run_formation(args)
+
+    assert exited.value.code == 1, "a forged --run was accepted as orchestrator authority"
+    assert manifest.read_bytes() == before
+    assert not (orchestrator / "formation.pause.yaml").exists()
+
+
+def test_the_pinned_orchestrator_needs_no_run_flag(formation_env: FormationFixture, parser, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Non-vacuity for the refusal above: the pin alone authorises the real orchestrator."""
+    from tests._formation_test_support import pin_session
+    from trw_mcp.formation import create, status
+    from trw_mcp.tools._formation_cli import run_formation
+
+    orchestrator = formation_env.orchestrator_run
+    create(orchestrator, formation_env.payload(), prds_dir=None)
+    pin_session(monkeypatch, orchestrator)
+
+    with pytest.raises(SystemExit) as exited:
+        run_formation(parser.parse_args(["formation", "remove-slot", "impl-2"]))
+
+    assert exited.value.code == 0
+    board = status(run_path=orchestrator)
+    assert board is not None and [row.member_id for row in board.rows] == ["impl-1"]

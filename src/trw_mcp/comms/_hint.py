@@ -70,16 +70,42 @@ def _parent_pid(pid: int) -> int | None:
         return None
 
 
-def _parent_bound(entry: dict[str, object], caller_parent_pid: int) -> bool:
-    from trw_mcp.state._process_identity import process_start_time
+def live_client(entry: dict[str, object]) -> int | None:
+    """The pin's recorded client pid if that exact process is still alive, else None.
+
+    The shared identity prefix of every lean authority check (``_hint`` and
+    ``formation watch``): an int pid above 1 whose current start time equals the
+    recorded ``client_start``. A pid alone is recycled by the OS after the process
+    exits, so the start time is what makes it one process (PRD-INFRA-189 FR08).
+    """
+    from trw_mcp.state._process_identity import read_process_start_time
 
     client_pid = entry.get("client_pid")
     if type(client_pid) is not int or client_pid <= 1:
-        return False
-    started = process_start_time(client_pid)
+        return None
+    # Uncached on purpose: a long-running watch must see its client exit.
+    started = read_process_start_time(client_pid)
     if started is None or started != entry.get("client_start"):
-        return False  # not the client the pin store recorded (exited or pid recycled)
-    return _parent_pid(client_pid) == caller_parent_pid
+        return None  # not the client the pin store recorded (exited or pid recycled)
+    return client_pid
+
+
+def _parent_bound(entry: dict[str, object], caller_parent_pid: int) -> bool:
+    """Lane B's topology: the caller's parent (the driver) is the recorded client's parent."""
+    client_pid = live_client(entry)
+    return client_pid is not None and _parent_pid(client_pid) == caller_parent_pid
+
+
+def pending_counts(conn: sqlite3.Connection, group_id: str, member_id: str) -> tuple[int, int]:
+    """``(pending count, newest pending rowid)`` for *member_id*; ``(0, 0)`` when none."""
+    from trw_mcp.comms._envelope import MessageState
+
+    count, newest = conn.execute(
+        "SELECT COUNT(*), MAX(rowid) FROM admissions WHERE group_id=? AND recipient_member_id=? "
+        "AND state=? AND expires_at > ?",
+        (group_id, member_id, MessageState.PENDING.value, time.time()),
+    ).fetchone()
+    return int(count), int(newest or 0)
 
 
 def _lean_roots(formation_id: str, member_id: str) -> tuple[Path, Path]:
@@ -106,7 +132,6 @@ def pending_hint(
     project_root: Path | None = None,
     caller_parent_pid: int | None = None,
 ) -> PendingHint | None:
-    from trw_mcp.comms._envelope import MessageState
     from trw_mcp.comms._identity import ELIGIBLE_STATUSES, derive_group_id
     from trw_mcp.comms._store import database_path
     from trw_mcp.formation import FormationError, read_manifest, resolve_manifest_path
@@ -141,11 +166,7 @@ def pending_hint(
         version = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
         if version is None or version[0] != "4":
             return None  # a v3 mailbox gets no hint and is never touched (FR16)
-        count, newest = conn.execute(
-            "SELECT COUNT(*), MAX(rowid) FROM admissions WHERE group_id=? AND recipient_member_id=? "
-            "AND state=? AND expires_at > ?",
-            (derive_group_id(root, manifest_path), member_id, MessageState.PENDING.value, time.time()),
-        ).fetchone()
+        count, newest = pending_counts(conn, derive_group_id(root, manifest_path), member_id)
     except sqlite3.Error:
         # trw-fail-silent-allow: a locked or damaged mailbox gives no hint; nothing is written
         return None

@@ -123,11 +123,9 @@ def _shrink_is_trw_accounted(
     non-generated measurement had no backstop at all. The test is now: does the
     marker span's own byte delta account for the drop?
 
-    That keeps both shipped collapses exempt, because in both the block IS what
-    shrank — PRD-CORE-203 externalization replaces a full inline block with a
-    one-line ``@sidecar`` import, and ``_migrate_trw_content_from_agents_md``
-    removes the block entirely (FR02 names the latter explicitly as a write that
-    must not be refused). And it leaves the floor live for the case the primary
+    That keeps the shipped collapse exempt, because the block IS what shrank —
+    ``_migrate_trw_content_from_agents_md`` removes the block entirely (FR02
+    names it explicitly as a write that must not be refused). And it leaves the floor live for the case the primary
     measurement is blind to: raw non-block bytes disappearing that whitespace
     normalisation makes invisible.
 

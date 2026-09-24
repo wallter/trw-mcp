@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tests._stdio_harness import StdioServerHarness, writer_lock_pids
+from tests._stdio_harness import StdioServerHarness
 
 _FIX_130_BUDGET_FIELD = "learn_journal_drain_budget_ms"
 
@@ -131,36 +131,23 @@ def deferral_names(payload: object) -> tuple[str, ...]:
 def build_temp_project(root: Path) -> tuple[Path, Path]:
     """Create a temporary project + user dir. Never a live store.
 
-    The store carries ``learnings/dedup_migration.yaml`` and ``memory/.migrated``
-    up front: without those sentinels every open pays a one-time YAML migration
-    and the first learn pays an unbounded batch dedup, and the benchmark would
-    be measuring the sentinels rather than the handshake.
+    The store carries ``memory/.migrated`` up front: without that sentinel every
+    open pays a one-time YAML migration, and the benchmark would be measuring the
+    sentinel rather than the handshake.
 
-    ``session_start_writer_pressure_threshold`` is pinned to its ceiling for one
-    reason, stated here so it is never mistaken for convenience. Its default of
-    8 PEER writers means the N=12 arm would run under writer pressure while the
-    N=1 baseline would not: session_start would compact its response and skip
-    auto_recall and ceremony_status decoration, so the contended arm would be
-    faster because it did LESS, and comparing the two would be a tautology
-    (RISK-005). Pinning holds that confounder constant so every arm performs the
-    same work. It cannot weaken the property under test: the cold ``initialize``
-    reply is produced by the boot-deferral middleware before any census is taken.
+    PRD-CORE-280 FR01 removed the writer-pressure census and its response
+    compaction entirely: every arm now performs the same work regardless of
+    writer count, so no confounder-pinning config is needed here any more.
     """
     project = root / "project"
     user_dir = root / "userdir"
     for directory in (project / ".git", project / ".trw" / "learnings", project / ".trw" / "memory", user_dir):
         directory.mkdir(parents=True, exist_ok=True)
     (project / ".trw" / "config.yaml").write_text(
-        "framework_version: v99.9_TRW\n"
-        "meta_tune_enabled: false\n"
-        "session_start_writer_pressure_threshold: 64\n"
-        "target_platforms:\n- claude-code\n",
+        "framework_version: v99.9_TRW\nmeta_tune_enabled: false\ntarget_platforms:\n- claude-code\n",
         encoding="utf-8",
     )
     (project / ".trw" / "learnings" / "index.yaml").write_text("entries: []\n", encoding="utf-8")
-    (project / ".trw" / "learnings" / "dedup_migration.yaml").write_text(
-        "completed_at: '2026-01-01T00:00:00Z'\n", encoding="utf-8"
-    )
     (project / ".trw" / "memory" / ".migrated").write_text("migrated_at=2026-01-01T00:00:00Z", encoding="utf-8")
     return project, user_dir
 
@@ -168,22 +155,6 @@ def build_temp_project(root: Path) -> tuple[Path, Path]:
 def wal_bytes(project: Path) -> int:
     wal = project / ".trw" / "memory" / "memory.db-wal"
     return wal.stat().st_size if wal.exists() else 0
-
-
-def settle_writer_census(project: Path, expected: int, *, timeout_s: float = 10.0) -> list[int]:
-    """Poll the PRODUCTION census until it reaches *expected*, or give up and return it.
-
-    Registration happens when a server opens the memory backend, which is a few
-    milliseconds behind the ``trw_session_start`` reply that triggered it. A
-    bounded poll removes that race without ever inventing a pid: the caller
-    still asserts on whatever this returns.
-    """
-    deadline = time.monotonic() + timeout_s
-    census = list(writer_lock_pids(project / ".trw"))
-    while len(census) != expected and time.monotonic() < deadline:
-        time.sleep(0.2)
-        census = list(writer_lock_pids(project / ".trw"))
-    return census
 
 
 def run_arm(
@@ -213,27 +184,21 @@ def run_arm(
         for index in range(n_background):
             server, _ = harness.cold_initialize(f"{label}-bg-{index}")
             harness.call(server, "trw_session_start", {})
-        census = settle_writer_census(project, n_background)
-        # Fails BEFORE any timing is recorded: a census that disagrees with N
-        # means the arm never established the contention it claims to measure.
-        assert len(census) == n_background, (
-            f"{label}: writer census {census} != {n_background} warmed background servers. "
-            "Check the server stderr for writer_registry_pid_reuse_ghost: the census excludes a "
-            "lock whose /proc birth time postdates its registration epoch, and a /proc dentry that "
-            "is evicted and re-instantiated reports a fresh ctime for a process that never restarted."
-        )
+        # Fails BEFORE any timing is recorded: every warmed background server must
+        # still be alive. (The writer census that also proved each one had opened
+        # the store went with PRD-CORE-298 FR01's writer locks.)
+        census = harness.live_children()
+        assert len(census) == n_background, f"{label}: live servers {census} != {n_background} warmed"
         recorded_wal = wal_bytes(project)
         initializes: list[float] = []
         session_starts: list[float] = []
         deferral_sets: list[tuple[str, ...]] = []
         for repeat in range(repeats):
-            # CORE262-01: re-assert the census before EVERY repeat, not once
-            # before the loop -- a prior repeat's measured client that failed
-            # to reap would otherwise inflate this repeat's writer population
-            # silently.
-            pre_repeat = settle_writer_census(project, n_background, timeout_s=5.0)
+            # CORE262-01: re-assert before EVERY repeat -- a prior measured client
+            # that failed to reap would otherwise inflate this repeat's population.
+            pre_repeat = harness.live_children()
             assert len(pre_repeat) == n_background, (
-                f"{label} repeat {repeat}: writer census {pre_repeat} != {n_background} "
+                f"{label} repeat {repeat}: live servers {pre_repeat} != {n_background} "
                 "before this repeat's measured client -- a prior measured client was not reaped"
             )
             server, initialize_ms = harness.cold_initialize(f"{label}-measured-{repeat}")

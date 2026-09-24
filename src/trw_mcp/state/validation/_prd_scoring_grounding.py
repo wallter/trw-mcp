@@ -22,7 +22,7 @@ import structlog
 
 from trw_mcp.models.config import get_config
 from trw_mcp.state.validation._path_exclusions import PATH_INDEX_EXCLUDE_DIRS
-from trw_mcp.state.validation._prd_path_markers import has_trailing_planned_marker
+from trw_mcp.state.validation._prd_path_markers import has_trailing_planned_marker, yaml_planned_paths
 from trw_mcp.state.validation._prd_scoring_traceability import (
     _IMPL_REF_RE,
     _TEST_REF_RE,
@@ -52,18 +52,13 @@ def _clean_reference_token(ref: str) -> str:
 
 
 def _reference_existence_requirements(content: str) -> dict[str, bool]:
-    """Map each scoring reference to whether any occurrence requires existence.
-
-    A trailing planned marker applies only to its own occurrence. If the same
-    path appears elsewhere unmarked, that occurrence remains eligible for the
-    grounding penalty.
-    """
-    requirements: dict[str, bool] = {}
+    """Map each scoring reference to existence need; one marker exempts repeats."""
+    requirements: dict[str, bool] = dict.fromkeys(yaml_planned_paths(content), False)
     for pattern in (_IMPL_REF_RE, _TEST_REF_RE):
         for match in pattern.finditer(content):
             clean_ref = _clean_reference_token(match.group(0).strip("`"))
             if clean_ref:
-                requirements[clean_ref] = requirements.get(clean_ref, False) or not has_trailing_planned_marker(
+                requirements[clean_ref] = requirements.get(clean_ref, True) and not has_trailing_planned_marker(
                     content, match.end()
                 )
     return requirements

@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from trw_memory.models.memory import MemoryEntry
 
+from tests._memory_store_fake import FakeMemoryStore
 from tests._tools_learning_shared import (  # noqa: F401
     _CFG,
     _get_tools,
@@ -28,6 +29,22 @@ from trw_mcp.state.claude_md import (
     render_shared_learnings,
     render_template,
 )
+
+
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """No test here exercises real recall/dedup semantics -- the fake route suffices (PRD-CORE-280 e1)."""
+    return fake_memory_store
+
+
+def _unreachable_store(store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The store cannot be measured: its inventory must render as not measured, never as zero."""
+    from trw_mcp.state._store_selection import StoreUnavailableError
+
+    def _unreachable(_namespace: str) -> None:
+        raise StoreUnavailableError("the memory daemon is unreachable")
+
+    monkeypatch.setattr(store, "health", _unreachable)
 
 
 class TestClaudeMdTemplate:
@@ -94,9 +111,6 @@ class TestClaudeMdTemplate:
 
     def test_custom_template_with_extra_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Custom templates can add static content alongside placeholders."""
-        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
-        # so pin instruction_externalize="off" to keep exercising the inline path.
-        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         trw_dir = tmp_path / _CFG.trw_dir
         templates_dir = trw_dir / _CFG.templates_dir
         templates_dir.mkdir(parents=True)
@@ -172,14 +186,17 @@ class TestCeremonyRendering:
         assert "trw_checkpoint()" in result
         assert "trw_deliver()" in result
 
-    def test_render_imperative_opener_uses_analytics_counts(self, tmp_path: Path) -> None:
+    def test_render_imperative_opener_uses_analytics_counts(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """PRD-FIX-141-FR04: the opener names its population and never fabricates a zero.
 
-        With the analytics counters at 0/0 and no store on disk, the honest
+        With the analytics counters at 0/0 and the store unreachable, the honest
         answer is "not measured". The pre-FR04 opener said "0 learnings from 0
         prior sessions" — the exact sentence that shipped into every session on
         2026-09-16 over a 1,346-entry store (learning L-Rikf).
         """
+        _unreachable_store(fake_memory_store, monkeypatch)
         from trw_mcp.state.claude_md.sections._memory_routing import _analytics_cache, _store_counts_cache
 
         _write_analytics(tmp_path, sessions_tracked=0, total_learnings=0)
@@ -271,9 +288,6 @@ class TestCeremonyRendering:
 
     def test_sync_includes_ceremony_sections(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """CLAUDE.md has compact protocol; ceremony details in hook only."""
-        # This test asserts the inline CLAUDE.md rendering (carrier-independent),
-        # so pin instruction_externalize="off" to keep exercising the inline path.
-        monkeypatch.setenv("TRW_INSTRUCTION_EXTERNALIZE", "off")
         tools = _get_tools()
 
         tools["trw_learn"].fn(

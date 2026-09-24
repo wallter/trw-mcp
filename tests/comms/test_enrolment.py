@@ -21,6 +21,7 @@ from tests._formation_test_support import (  # noqa: F401  (formation_env is a f
     FormationFixture,
     formation_env,
     make_run_dir,
+    open_slot,
     write_pin,
 )
 from trw_mcp.comms import _identity
@@ -136,20 +137,8 @@ def test_orchestrator_with_an_explicit_joined_member_binds(
     manifest = _formation(
         formation_env,
         members=[
-            {
-                "member_id": "lead",
-                "client": "claude-code",
-                "role": "lead",
-                "owned_paths": ["src/lead"],
-                "open_join": True,
-            },
-            {
-                "member_id": "impl-1",
-                "client": "codex",
-                "role": "implementer",
-                "owned_paths": ["src/alpha"],
-                "open_join": True,
-            },
+            open_slot("lead", "claude-code", role="lead", owned_paths=["src/lead"]),
+            open_slot("impl-1", role="implementer", owned_paths=["src/alpha"]),
         ],
     )
     join(

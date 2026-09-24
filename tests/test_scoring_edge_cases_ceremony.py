@@ -6,7 +6,7 @@ from trw_mcp.scoring import compute_tier_ceremony_score
 
 
 class TestComputeTierCeremonyScoreRawEvents:
-    """Test compute_tier_ceremony_score with raw event type strings (not tool_invocation)."""
+    """Test compute_tier_ceremony_score with raw event type strings (not tool_call)."""
 
     def test_session_start_raw_event(self) -> None:
         """Raw 'session_start' event counts as has_recall."""
@@ -62,7 +62,7 @@ class TestComputeTierCeremonyScoreRawEvents:
     def test_unknown_tier_string_defaults_to_standard(self) -> None:
         """Unknown tier string falls back to STANDARD."""
         events: list[dict[str, object]] = [
-            {"event": "tool_invocation", "tool_name": "trw_session_start"},
+            {"event": "tool_call", "tool_name": "trw_session_start"},
         ]
         result = compute_tier_ceremony_score(events, "NONEXISTENT_TIER")
         assert result["tier"] == "STANDARD"
@@ -74,13 +74,13 @@ class TestComputeTierCeremonyScoreRawEvents:
         assert result["tier"] == "MINIMAL"
 
     def test_mixed_raw_and_tool_events(self) -> None:
-        """Both raw events and tool_invocation events are detected together."""
+        """Both raw events and tool_call events are detected together."""
         events: list[dict[str, object]] = [
             {"event": "session_start"},
-            {"event": "tool_invocation", "tool_name": "trw_init"},
+            {"event": "tool_call", "tool_name": "trw_init"},
             {"event": "checkpoint"},
-            {"event": "tool_invocation", "tool_name": "trw_build_check"},
-            {"event": "tool_invocation", "tool_name": "trw_deliver"},
+            {"event": "tool_call", "tool_name": "trw_build_check"},
+            {"event": "tool_call", "tool_name": "trw_deliver"},
         ]
         result = compute_tier_ceremony_score(events, "STANDARD")
         assert result["has_recall"] is True
@@ -90,10 +90,10 @@ class TestComputeTierCeremonyScoreRawEvents:
         assert result["has_deliver"] is True
         assert result["score"] == 68
 
-    def test_tool_invocation_trw_reflect_counts_as_deliver(self) -> None:
+    def test_tool_call_trw_reflect_counts_as_deliver(self) -> None:
         """tool_name='trw_reflect' counts as has_deliver."""
         events: list[dict[str, object]] = [
-            {"event": "tool_invocation", "tool_name": "trw_reflect"},
+            {"event": "tool_call", "tool_name": "trw_reflect"},
         ]
         result = compute_tier_ceremony_score(events, "STANDARD")
         assert result["has_deliver"] is True

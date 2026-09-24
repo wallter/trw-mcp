@@ -52,3 +52,36 @@ def _setup_project(tmp_path: Path) -> Path:
     (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
     (trw_dir / "context").mkdir(exist_ok=True)
     return tmp_path
+
+
+def _store_entry(
+    trw_dir: Path,
+    *,
+    entry_id: str = "",
+    summary: str = "Test learning",
+    impact: float = 0.8,
+    tags: list[str] | None = None,
+) -> None:
+    """Write one learning through this checkout's store (PRD-CORE-280 FR05).
+
+    Export now reads ``selected_store``, not ``learnings/entries/*.yaml`` — use
+    this (not ``_make_entry``) to seed export-side tests. ``_make_entry`` stays
+    YAML-based because ``import_learnings`` dedup still reads that directory.
+    """
+    import uuid
+
+    from trw_mcp.state._store_selection import selected_store
+
+    if not entry_id:
+        entry_id = f"L-{uuid.uuid4().hex[:8]}"
+    store, namespace = selected_store(trw_dir)
+    store.put(
+        summary,
+        namespace,
+        {
+            "entry_id": entry_id,
+            "detail": f"Detail for: {summary}",
+            "importance": impact,
+            "tags": tags or ["test"],
+        },
+    )

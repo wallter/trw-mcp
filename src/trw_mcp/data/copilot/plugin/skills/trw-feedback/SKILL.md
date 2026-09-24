@@ -22,7 +22,7 @@ This skill wraps the `trw_submit_feedback` MCP tool. The tool POSTs to
 network call, over the subject, the body, AND every metadata key and value.
 It is deliberately NOT enumerated here: this line used to carry a hand-copied
 list across nine files, and the list went stale the moment the redactor learned
-a new shape. The canonical set is `_redact_pii` in `trw_mcp/tools/submit_feedback.py`.
+a new shape. The canonical set is `redact_secrets` in `trw_mcp/telemetry/anonymizer.py`.
 
 ## Workflow
 

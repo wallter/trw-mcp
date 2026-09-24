@@ -278,42 +278,31 @@ _TRW_DIRS = [
 # created a ``.claude`` tree and then filled it with 47 files no selected
 # client loads.
 #
-# The exclusion is narrow and specific to ONE selection, not to "any client
-# that isn't claude-code": measured evidence (release rehearsal, 2026-09-04)
-# is a codex-ONLY install; RISK-008's own mitigation is "a project selecting
-# several clients keeps every one". A bare ``init-project`` and every other
-# single-client selection (cursor-ide, opencode, copilot, cursor-cli,
-# antigravity-cli) keep scaffolding ``.claude/**`` exactly as HEAD did before
-# this PRD -- only ``codex`` used alone drops it.
+# PRD-INFRA-192 FR09 (C7): ownership per-entry is now catalog-derived
+# (``_client_ownership.writes_surface``) rather than a single codex-only
+# special case, so ``.claude/hooks`` (shared with codex and copilot) is kept
+# for those clients while ``.claude/skills``/``.claude/agents`` (claude-code
+# only) are not. An EXPLICIT selection is gated per-path; a bare
+# ``init-project`` (``ide=None``) still scaffolds every entry (CORE262-13).
 _CLAUDE_SCAFFOLD_DIRS: tuple[str, ...] = (".claude/hooks", ".claude/skills", ".claude/agents")
-
-# The one resolved target set that excludes the Claude Code scaffold.
-_CODEX_ONLY = frozenset({"codex"})
-
-
-def _wants_claude_scaffold(clients: Sequence[str], *, explicit: bool = False) -> bool:
-    """False only when *clients* is codex-only AND the user asked for it explicitly.
-
-    CORE262-13: a bare/default ``init-project`` (``ide=None``) that resolves
-    through ``detect_ide`` to ``["codex"]`` -- because the target directory
-    already has a ``.codex/`` marker on disk -- is NOT a user request for
-    codex-only. Before *explicit* existed here, that auto-detected case took
-    the same suppression path as ``ide="codex"`` and silently lost HEAD's
-    default scaffold. Only an EXPLICIT ``--ide codex`` (or ``ide="codex"``)
-    selection may drop the Claude Code surfaces; every other path -- bare,
-    detected, or any set containing another client -- keeps them.
-    """
-    return not (explicit and set(clients) == _CODEX_ONLY)
 
 
 def _client_scaffold_dirs(clients: Sequence[str], *, explicit: bool = False) -> list[str]:
-    """Return Claude Code's scaffold directories, unless *clients* is EXPLICITLY codex-only."""
-    return list(_CLAUDE_SCAFFOLD_DIRS) if _wants_claude_scaffold(clients, explicit=explicit) else []
+    """Return the ``_CLAUDE_SCAFFOLD_DIRS`` entries *clients* actually own."""
+    from ._client_ownership import writes_surface
+
+    return [d for d in _CLAUDE_SCAFFOLD_DIRS if writes_surface(d, clients, explicit=explicit)]
 
 
 def _client_data_files(clients: Sequence[str], *, explicit: bool = False) -> list[tuple[str, str]]:
-    """Return Claude Code's bundled data files, unless *clients* is EXPLICITLY codex-only."""
-    return [("settings.json", ".claude/settings.json")] if _wants_claude_scaffold(clients, explicit=explicit) else []
+    """Return Claude Code's bundled data files owned by *clients*."""
+    from ._client_ownership import writes_surface
+
+    return (
+        [("settings.json", ".claude/settings.json")]
+        if writes_surface(".claude/settings.json", clients, explicit=explicit)
+        else []
+    )
 
 
 # Mapping of bundled data files to their destination paths (relative to target).

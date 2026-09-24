@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 
@@ -109,26 +110,6 @@ class TestSessionStartAutoClose:
         assert result is not None
         assert "stale_runs_closed" not in result
 
-    def test_session_start_surfaces_scheduled_embedding_backfill(self, tmp_path: Path) -> None:
-        """The public compact result preserves actionable maintenance remediation."""
-        cfg = TRWConfig()
-        scheduled = {"reason": "low_coverage", "thread_started": True}
-
-        with (
-            patch("trw_mcp.tools.ceremony.get_config", return_value=cfg),
-            patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=tmp_path / ".trw"),
-            patch("trw_mcp.tools.ceremony.find_active_run", return_value=None),
-            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=[]),
-            patch("trw_mcp.tools.ceremony._events"),
-            patch(
-                "trw_mcp.tools._ceremony_helpers.step_sanitize_and_maintain",
-                return_value={"embeddings_backfill_scheduled": scheduled},
-            ),
-        ):
-            result = self._get_session_start_fn()()
-
-        assert result["embeddings_backfill_scheduled"] == scheduled
-
 
 # ---------------------------------------------------------------------------
 # PRD-FIX-130-FR03 wiring proof: the seams are reached from the production drain
@@ -142,14 +123,17 @@ class TestSweepLevelCosts:
     restoring quota-only corpus loading must fail the zero-listing assertion.
     """
 
-    def test_sweep_does_one_index_write_without_quota_active_listing(self, tmp_path: Path, monkeypatch: object) -> None:
+    def test_sweep_does_one_index_write_without_quota_active_listing(
+        self, tmp_path: Path, monkeypatch: object, memory_daemon: MemoryDaemon
+    ) -> None:
         from trw_mcp.state import learn_journal, memory_adapter
         from trw_mcp.state.analytics import entries as entries_mod
-        from trw_mcp.state.memory_pressure import take_writer_census
         from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        attach_checkout(trw_dir, memory_daemon)
         config = TRWConfig(embeddings_enabled=False, dedup_enabled=False, learn_journal_drain_budget_ms=120_000)
         for i in range(5):
             learn_journal.journal_pending(
@@ -185,8 +169,6 @@ class TestSweepLevelCosts:
             trw_dir,
             config,
             maintenance,  # type: ignore[arg-type]
-            census=take_writer_census(trw_dir, threshold=2),
-            defer_memory_heavy=False,
         )
         thread = steps._DRAIN_THREAD
         if thread is not None:
@@ -200,7 +182,7 @@ class TestSweepLevelCosts:
         )
 
     def test_a_budget_split_sweep_still_batches_index_without_active_listing(
-        self, tmp_path: Path, monkeypatch: object
+        self, tmp_path: Path, monkeypatch: object, memory_daemon: MemoryDaemon
     ) -> None:
         """A split sweep shares the index sink and performs no quota listing.
 
@@ -209,11 +191,12 @@ class TestSweepLevelCosts:
         """
         from trw_mcp.state import learn_journal, memory_adapter
         from trw_mcp.state.analytics import entries as entries_mod
-        from trw_mcp.state.memory_pressure import take_writer_census
         from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
         trw_dir = tmp_path / ".trw"
         (trw_dir / "learnings" / "entries").mkdir(parents=True)
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))  # type: ignore[attr-defined]
+        attach_checkout(trw_dir, memory_daemon)
         # A PARTIALLY split sweep: one record inline, three on the continuation.
         # A budget of 0 would not expose the defect — the inline phase replays
         # nothing, so its (unshared) context has an empty sink and costs nothing.
@@ -262,8 +245,6 @@ class TestSweepLevelCosts:
             trw_dir,
             config,
             maintenance,  # type: ignore[arg-type]
-            census=take_writer_census(trw_dir, threshold=2),
-            defer_memory_heavy=False,
         )
         payload = maintenance["pending_learns_replayed"]
         assert isinstance(payload, dict)

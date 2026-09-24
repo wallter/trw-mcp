@@ -169,6 +169,16 @@ def render_framework_reference() -> str:
 #: offline path has no gate to evaluate: recording the command and its exit code
 #: in ``reports/`` produces the same evidence a reviewer needs, in the same place
 #: ``trw_build_check`` results are read from.
+# PRD-QUAL-143-FR01: stated once here and rendered by both the CLAUDE.md opener
+# and the AGENTS.md block, so the two carriers cannot drift apart.
+DELEGATION_RULE = (
+    "**Delegation**: delegate only for work that is genuinely independent "
+    "and parallelizable, with disjoint file ownership. Not for work you "
+    "could finish in a handful of tool calls, and not to verify your own "
+    "work. If one helper suffices, use one. Delegation is an "
+    "optimization, not a dependency.\n"
+)
+
 _OFFLINE_SUBSTITUTES = """### Troubleshooting: the MCP surface is absent
 
 If the `trw_*` tools are missing or fail (`fetch failed`, a connect timeout, an
@@ -190,6 +200,11 @@ Writes made offline are marked (`source_identity=local_cli` plus a transient
 `trw-reconcile-pending` tag) and the next successful `trw_session_start` reports
 them back, so you do not have to track them by hand.
 """
+
+
+def render_offline_substitutes() -> str:
+    """Return the offline-substitute table (PRD-CORE-247-FR02) for an instruction block."""
+    return _OFFLINE_SUBSTITUTES
 
 
 def render_closing_reminder() -> str:

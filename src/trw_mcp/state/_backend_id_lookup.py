@@ -20,6 +20,7 @@ caller can qualify the write that follows.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING
 
 import structlog
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["resolve_entry_in_backend"]
+__all__ = ["entries_with_id", "id_reader", "resolve_entry_in_backend"]
 
 
 def resolve_entry_in_backend(
@@ -64,19 +65,48 @@ def resolve_entry_in_backend(
     """
     if namespace is not None:
         return backend.get(entry_id, namespace=namespace)
-    try:
-        namespaces = sorted(backend.list_namespaces())
-    except Exception as exc:  # justified: one definite attempt, then a typed failure
-        logger.warning("namespace_enumeration_failed", entry_id=entry_id, exc_info=True)
-        entry = backend.get(entry_id, namespace=DEFAULT_NAMESPACE)
-        if entry is not None:
-            return entry
-        raise NamespaceEnumerationError(
-            f"could not enumerate namespaces ({type(exc).__name__}); "
-            f"{entry_id!r} is absent from {DEFAULT_NAMESPACE!r} but may exist elsewhere"
-        ) from exc
-    for candidate in namespaces:
-        entry = backend.get(entry_id, namespace=candidate)
-        if entry is not None:
-            return entry
-    return None
+    return next(entries_with_id(backend, entry_id), None)
+
+
+def entries_with_id(backend: StorageBackend, entry_id: str) -> Iterator[MemoryEntry]:
+    """Every row *backend* holds under *entry_id*, one per namespace, in a stable order.
+
+    The federated by-id read uses this rather than the first match, because the
+    first namespace holding an id may hold a row recall would refuse while a
+    later namespace holds one it admits.
+
+    Raises:
+        NamespaceEnumerationError: as :func:`resolve_entry_in_backend`, after the
+            unnamed namespace's row (if any) has been yielded.
+    """
+    return id_reader(backend)(entry_id)
+
+
+def id_reader(backend: StorageBackend) -> Callable[[str], Iterator[MemoryEntry]]:
+    """:func:`entries_with_id` for many ids of one store, listing its namespaces once.
+
+    A failed listing is not remembered: each id then makes its own definite
+    attempt and raises the same typed failure :func:`entries_with_id` does.
+    """
+    listed: list[str] | None = None
+
+    def rows(entry_id: str) -> Iterator[MemoryEntry]:
+        nonlocal listed
+        if listed is None:
+            try:
+                listed = sorted(backend.list_namespaces())
+            except Exception as exc:  # justified: one definite attempt, then a typed failure
+                logger.warning("namespace_enumeration_failed", entry_id=entry_id, exc_info=True)
+                entry = backend.get(entry_id, namespace=DEFAULT_NAMESPACE)
+                if entry is not None:
+                    yield entry
+                raise NamespaceEnumerationError(
+                    f"could not enumerate namespaces ({type(exc).__name__}); "
+                    f"{entry_id!r} is absent from {DEFAULT_NAMESPACE!r} but may exist elsewhere"
+                ) from exc
+        for candidate in listed:
+            entry = backend.get(entry_id, namespace=candidate)
+            if entry is not None:
+                yield entry
+
+    return rows

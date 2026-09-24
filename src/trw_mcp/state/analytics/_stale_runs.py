@@ -30,6 +30,7 @@ import structlog
 from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import RunStatus
 from trw_mcp.state._helpers import read_jsonl_resilient
+from trw_mcp.state._run_yaml_update import update_run_yaml
 from trw_mcp.state.analytics import report as _report
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -289,6 +290,29 @@ def _is_run_stale(
     return age_hours > ttl_hours
 
 
+def _close_if_stale(run_dir: Path, threshold_hours: int, now: datetime) -> dict[str, object] | None:
+    """Abandon the run under the run.yaml lock; return its closed data, or None.
+
+    Status and staleness are re-checked on the locked read: a concurrent writer
+    may have completed or refreshed the run since the caller's unlocked read.
+    """
+    closing: list[dict[str, object]] = []
+
+    def _close(fresh: dict[str, object]) -> None:
+        if str(fresh.get("status", "")) != RunStatus.ACTIVE.value:
+            return
+        if not _is_run_stale(run_dir, fresh, threshold_hours, now):
+            return
+        fresh["status"] = RunStatus.ABANDONED.value
+        fresh["abandoned_at"] = now.isoformat()
+        fresh["original_phase"] = str(fresh.get("phase", ""))
+        fresh["abandoned_reason"] = f"Stale timeout \u2014 exceeded threshold: {threshold_hours}h"
+        closing.append(fresh)
+
+    update_run_yaml(run_dir, _close)
+    return closing[0] if closing else None
+
+
 def auto_close_stale_runs(
     age_days: int | None = None,
     ttl_hours: int | None = None,
@@ -358,7 +382,6 @@ def auto_close_stale_runs(
     _save_persisted_throttle(trw_dir)
 
     reader = FileStateReader()
-    writer = FileStateWriter()
 
     if ttl_hours is not None:
         threshold_hours = ttl_hours
@@ -406,12 +429,10 @@ def auto_close_stale_runs(
                     continue
 
                 run_id = str(data.get("run_id", run_dir.name))
-                original_phase = str(data.get("phase", ""))
-                data["status"] = RunStatus.ABANDONED.value
-                data["abandoned_at"] = now.isoformat()
-                data["original_phase"] = original_phase
-                data["abandoned_reason"] = f"Stale timeout \u2014 exceeded threshold: {threshold_hours}h"
-                writer.write_yaml(run_yaml, data)
+                closed_data = _close_if_stale(run_dir, threshold_hours, now)
+                if closed_data is None:
+                    continue
+                data = closed_data
                 closed.append(run_id)
 
                 # Write archive summary

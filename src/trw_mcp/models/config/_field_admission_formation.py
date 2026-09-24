@@ -12,6 +12,7 @@ type, so it cannot create an import cycle with ``TRWConfig``.
 from __future__ import annotations
 
 from trw_mcp.models.config._field_admission_registry_types import ConfigAdmission
+from trw_mcp.models.config._field_admission_token_economy import TOKEN_ECONOMY_ADMISSIONS
 
 FORMATION_ADMISSIONS: dict[str, ConfigAdmission] = {
     "formation_ownership_enforcement": ConfigAdmission(
@@ -145,6 +146,9 @@ FORMATION_ADMISSIONS: dict[str, ConfigAdmission] = {
         ),
         budget_decision="admitted",
     ),
+    # PRD-CORE-290 (formation token economy): merged here so the registry, at its
+    # effective-LOC ceiling, needs no new import.
+    **TOKEN_ECONOMY_ADMISSIONS,
 }
 
 __all__ = ["FORMATION_ADMISSIONS"]

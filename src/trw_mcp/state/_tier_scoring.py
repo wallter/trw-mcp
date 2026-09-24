@@ -11,9 +11,10 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 
+from trw_memory.retrieval.dense import cosine_similarity
+
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.scoring import _days_since_access
-from trw_mcp.state.dedup import cosine_similarity
 
 
 def compute_importance_score(
@@ -73,7 +74,7 @@ def compute_importance_score(
     decay_rate = math.log(2) / half_life if half_life > 0 else 0.0
     recency = math.exp(-decay_rate * days)
 
-    # Importance: the entry's Bayesian-calibrated impact field
+    # Importance: the entry's impact field
     importance = float(str(entry.get("impact", 0.5)))
     importance = max(0.0, min(1.0, importance))
 

@@ -55,10 +55,6 @@ class TestTRWConfig:
         assert config.claude_md_max_lines == 500
         assert config.sub_claude_md_max_lines == 50
 
-    def test_audit_cycle_defaults(self) -> None:
-        config = TRWConfig()
-        assert config.max_audit_cycles == 3
-
     def test_aaref_quality_gates(self) -> None:
         config = TRWConfig()
         assert config.ambiguity_rate_max == 0.05
@@ -80,15 +76,12 @@ class TestTRWConfig:
         config = TRWConfig()
         assert config.parallelism_max == 20
 
-    @pytest.mark.parametrize("value", [0, 11])
-    def test_max_audit_cycles_validation(self, value: int) -> None:
-        with pytest.raises(ValidationError):
-            TRWConfig(max_audit_cycles=value)
-
     def test_config_field_validation(self) -> None:
-        """PRD-QUAL-056-FR11: audit-cycle config fields reject out-of-range values."""
-        with pytest.raises(ValidationError):
-            TRWConfig(max_audit_cycles=0)
+        """PRD-QUAL-056-FR11: audit-cycle config fields reject out-of-range values.
+
+        max_audit_cycles was removed under PRD-CORE-291 (slice 2): no
+        production reader.
+        """
         with pytest.raises(ValidationError):
             TRWConfig(audit_pattern_promotion_threshold=21)
 
@@ -100,22 +93,11 @@ class TestTRWConfig:
             "learning_prune_threshold",
             "validation_smell_false_positive_max",
             "llm_max_tokens",
+            # max_research_waves removed under PRD-CORE-291 (slice 2), together
+            # with its OrchestrationConfig mirror -- no production reader.
+            "max_research_waves",
         ):
             assert not hasattr(config, removed), f"{removed} should be removed"
-
-    def test_orc_defaults_still_exist(self) -> None:
-        """PRD-FIX-016-FR03: the ORC prompt-level field that survives keeps its default.
-
-        Five of the six ORC knobs -- min_shards_target, min_shards_floor,
-        consensus_quorum, max_child_depth and checkpoint_secs -- were retired on
-        2026-09-16 (PRD-QUAL-139-FR05) after the corrected consumer scan found no
-        reader in any corpus. Their default pins went with them: a default pin on
-        a field nothing reads asserts that a number is still the number, which is
-        the shape this suite grew to 21 entries proving. max_research_waves stays
-        because OrchestrationConfig redeclares it.
-        """
-        config = TRWConfig()
-        assert config.max_research_waves == 3
 
     def test_extra_env_vars_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """PRD-FIX-016-FR05: Removed env vars are silently dropped."""

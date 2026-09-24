@@ -27,6 +27,7 @@ import yaml
 from pydantic import ValidationError
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.models.run import (
     _STATUS_ALIASES,
     _TERMINAL_RUN_STATUSES,
@@ -364,16 +365,11 @@ def test_gate_reports_the_live_tree(tmp_path: Path) -> None:
 # ── NFR01 ───────────────────────────────────────────────────────────────
 
 
-@pytest.mark.perf
-@pytest.mark.slow
-@requires_local_timing
-def test_gate_completes_within_budget() -> None:
-    """NFR01: p95 wall time under 5 s over 5 runs on the measured corpus.
+def _skip_if_corpus_too_small() -> int:
+    """Skip, not relax, when the local ``.trw/runs`` tree is below the measured corpus.
 
-    Skipped, not relaxed, when the local ``.trw/runs`` tree is smaller than the
-    corpus the budget was measured against: five files complete in a few
-    milliseconds no matter how slow the gate is, so a pass there would assert
-    nothing about NFR01 while looking like it did.
+    Five files complete in a few milliseconds no matter how slow the gate is, so a
+    pass there would assert nothing about NFR01 while looking like it did.
     """
     scanned = _live_corpus_size()
     if scanned < _NFR01_MEASURED_CORPUS:
@@ -382,16 +378,33 @@ def test_gate_completes_within_budget() -> None:
             "the NFR01 budget was measured against; the directory is gitignored, so this "
             "is machine-local state and a smaller corpus cannot test the budget"
         )
+    return scanned
+
+
+@pytest.mark.slow
+def test_gate_completes_within_budget() -> None:
+    """The gate succeeds against the real, live ``.trw/runs`` corpus."""
+    _skip_if_corpus_too_small()
+
+    result = _invoke_gate(_REPO_ROOT)
+
+    assert result.returncode == 0
+
+
+@pytest.mark.slow
+@requires_local_timing
+def test_gate_completes_within_budget_budget() -> None:
+    """NFR01: p95 wall time under 5 s over 5 runs on the measured corpus."""
+    _skip_if_corpus_too_small()
 
     timings: list[float] = []
     for _ in range(_GATE_TIMING_RUNS):
         start = time.perf_counter()
-        result = _invoke_gate(_REPO_ROOT)
+        _invoke_gate(_REPO_ROOT)
         timings.append(time.perf_counter() - start)
-        assert result.returncode == 0
     timings.sort()
     # p95 of 5 samples is the largest sample (ceil(0.95 * 5) == 5).
-    assert timings[-1] < _GATE_BUDGET_SECONDS, f"p95={timings[-1]:.3f}s over {timings}"
+    assert_budget("gate_p95", timings[-1], _GATE_BUDGET_SECONDS, "s")
 
 
 # ── NFR02 ───────────────────────────────────────────────────────────────

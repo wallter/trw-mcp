@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 
+from trw_mcp.dispatch._client_spec_types import EFFORT_LEVELS
 from trw_mcp.dispatch._client_specs import SUPPORTED_CLIENTS
+from trw_mcp.dispatch._roles import ROLE_TABLE
 
 __all__ = ["add_dispatch_subcommand"]
 
@@ -53,13 +55,19 @@ def add_dispatch_subcommand(
     dispatch_parser.add_argument(
         "--role",
         default=None,
-        choices=["code-review", "design-audit", "architectural-audit", "adversarial-audit"],
+        choices=sorted(ROLE_TABLE),
         help="Prepend a read-only second-opinion audit role preamble to the prompt.",
     )
     dispatch_parser.add_argument(
         "--model",
         default=None,
         help="Optional model override for the child client.",
+    )
+    dispatch_parser.add_argument(
+        "--effort",
+        choices=EFFORT_LEVELS,
+        default=None,
+        help="Reasoning effort for the child; default: dispatch_default_effort, else the role's task-class row.",
     )
     dispatch_parser.add_argument(
         "--cwd",
@@ -80,6 +88,15 @@ def add_dispatch_subcommand(
         dest="output_file",
         default=None,
         help="Write the full DispatchResult JSON to this file.",
+    )
+    dispatch_parser.add_argument(
+        "--variant-of",
+        dest="variant_of",
+        default=None,
+        help=(
+            "Also write the answer next to this base document as BASE.KIND-CLIENT-rN.md "
+            "(next free round, never overwritten; kind from --role), stamped with the base's sha256."
+        ),
     )
     dispatch_parser.add_argument(
         "--no-isolate",

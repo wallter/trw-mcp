@@ -13,6 +13,20 @@ from pathlib import Path
 from typing import Any
 
 
+def member_pin_store(run_path: str) -> dict[str, dict[str, Any]] | None:
+    """Every entry of the pin store nearest *run_path*; None when unreadable or absent."""
+    for ancestor in Path(run_path).parents:
+        pins = ancestor / "runtime" / "pins.json"
+        if pins.is_file():
+            try:
+                raw = json.loads(pins.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                # trw-fail-silent-allow: an unreadable pin store proves nothing; callers fail closed on None
+                return None
+            return {str(k): v for k, v in raw.items() if isinstance(v, dict)} if isinstance(raw, dict) else None
+    return None
+
+
 def member_pin_entry(run_path: str, pin_key: str) -> dict[str, Any] | None:
     for ancestor in Path(run_path).parents:
         pins = ancestor / "runtime" / "pins.json"
@@ -26,4 +40,4 @@ def member_pin_entry(run_path: str, pin_key: str) -> dict[str, Any] | None:
     return None
 
 
-__all__ = ["member_pin_entry"]
+__all__ = ["member_pin_entry", "member_pin_store"]

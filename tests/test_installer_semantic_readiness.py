@@ -2,10 +2,8 @@
 
 Defect this pins (verified 2026-09-15): ``sentence-transformers`` and ``torch``
 were absent from a *working* TRW install. Nothing errored. ``trw_recall``
-silently fell back to keyword-only retrieval and attached a
-``retrieval_warning`` ("The semantic model was not ready when recall started
-... This response does not establish semantic coverage") that the user only
-found by reading it in passing. The install had appeared to succeed.
+silently fell back to keyword-only retrieval, and the install had appeared to
+succeed.
 
 Contract asserted here:
 

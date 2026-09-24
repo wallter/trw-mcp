@@ -1,11 +1,17 @@
-"""Pure focused startup body carry/projection; no retrieval or persistence."""
+"""Session-start rows: rank on compact scoring inputs, return full rows only on request.
+
+PRD-CORE-294 FR02. Ranking reads the same compact candidate fields it always
+has, so moving the response to stubs changes presentation, not rank (NFR01).
+Each compact row carries its full source row under a private key, which
+``full_rows`` resolves for ``verbose=True`` without a second lookup.
+"""
 
 from __future__ import annotations
 
 from trw_mcp.models.config._defaults import COMPACT_TAGS_CAP
+from trw_mcp.tools._recall_projection import strip_internal_response_fields
 
-_DETAIL_CARRY = "_session_focused_detail"
-_DETAIL_ALLOWANCE = 2048  # Unicode characters of added body, not tokens or payload bytes.
+_FULL_ROW = "_session_full_row"
 _COMPACT_CANDIDATE_FIELDS = (
     "id",
     "summary",
@@ -20,45 +26,27 @@ _COMPACT_CANDIDATE_FIELDS = (
 )
 
 
-def carry_focused_content(rows: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Keep prior compact scoring inputs, carrying body separately on each row."""
+def carry_full_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Project each row to its compact scoring inputs, carrying the full row beside them."""
     carried = []
     for source in rows:
         row = {key: source[key] for key in _COMPACT_CANDIDATE_FIELDS if key in source}
         tags = row.get("tags")
         if isinstance(tags, list):
             row["tags"] = tags[:COMPACT_TAGS_CAP]
-        body = source.get("detail")
-        row[_DETAIL_CARRY] = body if isinstance(body, str) else ""
+        row[_FULL_ROW] = source
         carried.append(row)
     return carried
 
 
-def project_focused_content(rows: list[dict[str, object]], compact_fields: tuple[str, ...]) -> list[dict[str, object]]:
-    """Project selected focused rows with fair bounded body shares; leave baseline alone."""
-    bodies = [str(row[_DETAIL_CARRY]) for row in rows if row.get(_DETAIL_CARRY)]
-    if bodies:
-        share, remainder = divmod(_DETAIL_ALLOWANCE, len(bodies))
-        allocations = [min(len(body), share + (index < remainder)) for index, body in enumerate(bodies)]
-        unused = _DETAIL_ALLOWANCE - sum(allocations)
-        for index, body in enumerate(bodies):
-            extra = min(unused, len(body) - allocations[index])
-            allocations[index] += extra
-            unused -= extra
-    else:
-        allocations = []
-    result = []
-    body_index = 0
-    for source in rows:
-        if _DETAIL_CARRY not in source:
-            result.append(source)
-            continue
-        row = {key: source[key] for key in compact_fields if key in source}
-        body = str(source[_DETAIL_CARRY])
-        if body:
-            allowance = allocations[body_index]
-            body_index += 1
-            row["detail"] = body[:allowance]
-            row["detail_truncated"] = allowance < len(body)
-        result.append(row)
-    return result
+def full_rows(ranked: list[dict[str, object]], internal_fields: frozenset[str]) -> list[dict[str, object]]:
+    """The full rows behind *ranked*, in rank order, with the ranking pass's field values on top.
+
+    Internal scoring fields are stripped exactly as ``trw_recall(ids=...)`` strips them.
+    """
+    merged = []
+    for row in ranked:
+        source = row.get(_FULL_ROW)
+        compact = {key: value for key, value in row.items() if key != _FULL_ROW}
+        merged.append({**source, **compact} if isinstance(source, dict) else compact)
+    return strip_internal_response_fields(merged, internal_fields)

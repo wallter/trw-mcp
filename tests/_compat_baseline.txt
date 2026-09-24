@@ -109,7 +109,6 @@ trw-mcp/tests/test_learning_model.py
 trw-mcp/tests/test_learn.py
 trw-mcp/tests/test_learn_update.py
 trw-mcp/tests/test_learn_update_yaml_dualwrite.py
-trw-mcp/tests/test_learn_validator.py
 trw-mcp/tests/test_llm_usage.py
 trw-mcp/tests/test_logging_config.py
 trw-mcp/tests/test_maintenance.py
@@ -121,8 +120,6 @@ trw-mcp/tests/test_memory_adapter.py
 trw-mcp/tests/test_memory_boundary.py
 trw-mcp/tests/test_memory_store.py
 trw-mcp/tests/test_middleware_ceremony.py
-trw-mcp/tests/test_middleware_compression.py
-trw-mcp/tests/test_middleware_context_budget.py
 trw-mcp/tests/test_middleware_response_optimizer.py
 trw-mcp/tests/test_migration_gate.py
 trw-mcp/tests/test_models.py

@@ -97,16 +97,18 @@ class TestLiveBuildCheckToolPath:
             static_checks_clean=True,
             test_count=5,
             scope="full",
-            run_path=str(run),
-            command_results=[
-                {"command_id": "tests", "label": "pytest", "command_class": "test", "exit_code": 0},
-                {
-                    "command_id": "static_checks",
-                    "label": "ruff+mypy",
-                    "command_class": "static",
-                    "exit_code": 0,
-                },
-            ],
+            options={
+                "run_path": str(run),
+                "command_results": [
+                    {"command_id": "tests", "label": "pytest", "command_class": "test", "exit_code": 0},
+                    {
+                        "command_id": "static_checks",
+                        "label": "ruff+mypy",
+                        "command_class": "static",
+                        "exit_code": 0,
+                    },
+                ],
+            },
         )
         assert result["tests_passed"] is True
         # The live tool call actually persisted a per-run receipt.

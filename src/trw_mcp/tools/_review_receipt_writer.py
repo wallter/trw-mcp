@@ -80,10 +80,17 @@ class ReviewReceiptWriteResult:
     #: provider actually returned cross-family findings — that handler owns
     #: ``review_family_coverage`` and this must not overwrite its answer.
     verified_cross_model: bool = False
+    #: Human-readable cause for a refusal the agent can act on (e.g. which PRD path was
+    #: expected); empty when the reason code says everything.
+    detail: str = ""
 
     @property
     def ok(self) -> bool:
         return self.state == "written" and bool(self.receipt_id)
+
+
+class GoverningPrdUnresolvedError(ValueError):
+    """A run's PRD scope names a PRD that is not (uniquely) in the project's PRD directory."""
 
 
 def _governing_files(project_root: Path, prd_ids: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
@@ -95,7 +102,12 @@ def _governing_files(project_root: Path, prd_ids: tuple[str, ...]) -> tuple[tupl
         exact = prds_dir / f"{prd_id}.md"
         matches = [exact] if exact.is_file() else sorted(prds_dir.glob(f"{prd_id}-*.md"))
         if len(matches) != 1:
-            raise ValueError(f"governing PRD {prd_id!r} did not resolve uniquely")
+            found = ", ".join(m.relative_to(project_root).as_posix() for m in matches) or "none"
+            raise GoverningPrdUnresolvedError(
+                f"governing PRD {prd_id} must resolve to exactly one file at "
+                f"{exact.relative_to(project_root).as_posix()} (or {prd_id}-*.md); found {found}. "
+                "Land the PRD in this tree, or drop it from the run's prd_scope."
+            )
         path = matches[0]
         raw = path.read_bytes()
         relative = path.relative_to(project_root).as_posix()
@@ -310,6 +322,9 @@ def record_review_receipt(
             family_downgraded_reason=downgraded_reason,
             verified_cross_model=reviewer.verified_cross_model,
         )
+    except GoverningPrdUnresolvedError as exc:
+        logger.warning("review_receipt_governing_prd_unresolved", run=str(run_path), detail=str(exc))
+        return ReviewReceiptWriteResult(reason_code="governing_prd_unresolved", detail=str(exc))
     except Exception as exc:  # justified: review persistence fails toward no evidence, never a false positive
         logger.warning("review_receipt_write_failed", run=str(run_path), error=type(exc).__name__, exc_info=True)
         return ReviewReceiptWriteResult(reason_code="review_receipt_write_failed")

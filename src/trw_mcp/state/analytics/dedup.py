@@ -430,28 +430,6 @@ def _score_learning_depth(
     return accessed / total_entries
 
 
-def _score_impact_distribution(
-    entries: list[LearningEntryDict],
-    total_entries: int,
-) -> float:
-    """Measure Q-learning activation rate across entries.
-
-    Counts entries that have at least one Q-learning observation and
-    divides by ``total_entries``.  Returns 0.0 when ``total_entries`` is zero.
-
-    Args:
-        entries: List of entry dicts, each may contain a ``q_observations`` field.
-        total_entries: Total number of entries (denominator for ratio).
-
-    Returns:
-        Q-activation rate in [0.0, 1.0].
-    """
-    if total_entries == 0:
-        return 0.0
-    q_activated = sum(1 for data in entries if int(str(data.get("q_observations", 0))) > 0)
-    return q_activated / total_entries
-
-
 def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     """Compute composite reflection quality score (0.0-1.0).
 
@@ -505,7 +483,7 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
         from trw_mcp.state.memory_adapter import count_entries, list_active_learnings
 
         total_entries = count_entries(trw_dir)
-        entries_for_metrics = list_active_learnings(trw_dir)
+        entries_for_metrics = list_active_learnings(trw_dir, purpose="maintenance")
         active_entries = len(entries_for_metrics)
         for entry_data in entries_for_metrics:
             src = str(entry_data.get("source_type", ""))
@@ -540,18 +518,14 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
     # 4. Access ratio: proportion of entries that have been accessed
     access_ratio = _score_learning_depth(cast("list[LearningEntryDict]", entries_for_metrics), total_entries)
 
-    # 5. Q-learning activation: proportion of entries with Q observations
-    q_activation_rate = _score_impact_distribution(cast("list[LearningEntryDict]", entries_for_metrics), total_entries)
-
-    # Weighted composite (reflection_freq 25%, productivity 25%,
-    # diversity 15%, access 20%, Q-activation 15%)
-    composite = (
-        0.25 * reflection_freq + 0.25 * productivity + 0.15 * diversity + 0.20 * access_ratio + 0.15 * q_activation_rate
-    )
+    # Weighted composite (reflection_freq 30%, productivity 30%, diversity 15%,
+    # access 25%). PRD-CORE-293 dropped the Q-activation term (15%): no reward
+    # writer exists, so it was a constant 0; its weight went to the two
+    # frequency terms and access.
+    composite = 0.30 * reflection_freq + 0.30 * productivity + 0.15 * diversity + 0.25 * access_ratio
 
     # Recompute raw counts for diagnostics
     accessed_entries = sum(1 for data in entries_for_metrics if int(str(data.get("access_count", 0))) > 0)
-    q_activated = sum(1 for data in entries_for_metrics if int(str(data.get("q_observations", 0))) > 0)
     unique_tags: set[str] = set()
     for entry_data in entries_for_metrics:
         tags = entry_data.get("tags", [])
@@ -566,7 +540,6 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
             "productivity": round(productivity, 3),
             "diversity": round(diversity, 3),
             "access_ratio": round(access_ratio, 3),
-            "q_activation_rate": round(q_activation_rate, 3),
         },
         "diagnostics": {
             "reflection_count": reflection_count,
@@ -574,7 +547,6 @@ def compute_reflection_quality(trw_dir: Path) -> dict[str, object]:
             "total_entries": total_entries,
             "active_entries": active_entries,
             "accessed_entries": accessed_entries,
-            "q_activated_entries": q_activated,
             "unique_tags": unique_tags_count,
             "source_types": sorted(source_types),
         },

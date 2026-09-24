@@ -40,10 +40,10 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
 _MODEL_MAP: dict[str, str] = {
     "fast": "claude-haiku-4-5-20251001",
     "balanced": "claude-sonnet-5",
-    "frontier": "claude-opus-5",
+    "frontier": "claude-opus-5-5",
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-5",
-    "opus": "claude-opus-5",
+    "opus": "claude-opus-5-5",
 }
 
 #: Output-token ceiling for a single internal augmentation call.
@@ -216,14 +216,16 @@ class LLMClient:
                 )
                 return None
 
-            if response.content:
-                return str(response.content[0].text) if hasattr(response.content[0], "text") else None
-            return None
+            # Opus 5.5 responses lead with ``thinking`` blocks, so select text
+            # blocks by type instead of reading content[0].
+            texts = [str(block.text) for block in response.content or () if getattr(block, "type", None) == "text"]
+            return "".join(texts) if texts else None
 
-        except Exception as exc:  # justified: boundary, external Anthropic API can raise arbitrary errors
+        # trw-fail-silent-allow: graceful-degrade boundary; logs and records a success=False usage row
+        except Exception as exc:
             latency_ms = (time.monotonic() - start) * 1000
             self._append_usage_record(resolved_model, 0, 0, latency_ms, success=False)
-            from trw_mcp.telemetry.anonymizer import strip_pii
+            from trw_mcp.telemetry.anonymizer import redact_secrets
 
             # A retired or mistyped model id is a 404, and folding it into the
             # generic warning makes it indistinguishable from "the SDK isn't
@@ -240,7 +242,7 @@ class LLMClient:
             else:
                 logger.warning(
                     "llm_call_failed",
-                    prompt_preview=strip_pii(prompt[:80]),
+                    prompt_preview=redact_secrets(prompt[:80]),
                     exc_info=True,
                 )
             return None
@@ -291,11 +293,11 @@ class LLMClient:
         except Exception:
             latency_ms = (time.monotonic() - start) * 1000
             self._append_usage_record(model, 0, 0, latency_ms, success=False)
-            from trw_mcp.telemetry.anonymizer import strip_pii
+            from trw_mcp.telemetry.anonymizer import redact_secrets
 
             logger.warning(
                 "ollama_llm_call_failed",
-                prompt_preview=strip_pii(prompt[:80]),
+                prompt_preview=redact_secrets(prompt[:80]),
                 exc_info=True,
             )
             return None

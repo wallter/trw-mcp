@@ -43,11 +43,6 @@ def _copilot_data_dir() -> Path:
     return _DATA_DIR / "copilot"
 
 
-def _copilot_skills_source_dir() -> Path:
-    """Return the bundled Copilot-specific skills root."""
-    return _copilot_data_dir() / "skills"
-
-
 # ---------------------------------------------------------------------------
 # Path-scoped instructions
 # ---------------------------------------------------------------------------
@@ -177,49 +172,27 @@ def generate_copilot_path_instructions(
 # ---------------------------------------------------------------------------
 
 
-def _copilot_effective_skills_source() -> Path | None:
-    """Resolve the skills source dir Copilot installs from, or ``None``.
-
-    Prefers the curated ``data/copilot/skills`` set and falls back to the shared
-    ``data/skills`` set when no Copilot-specific one ships.
-    """
-    skills_source = _copilot_skills_source_dir()
-    if skills_source.is_dir():
-        return skills_source
-    from ._utils import _DATA_DIR
-
-    fallback = _DATA_DIR / "skills"
-    return fallback if fallback.is_dir() else None
-
-
 def copilot_skill_contents() -> dict[str, bytes]:
     """Bundled ``.github/skills/**`` content, keyed by repo-relative path.
 
     Applies the same ``_validate_skill`` gate the installer does, so an invalid
     bundled skill is absent from both the install set and the manifest baseline.
     """
+    from ._client_skills import canonical_skills_dir, skill_files, skill_names
     from ._init_project import _validate_skill
-
-    skills_source = _copilot_effective_skills_source()
-    if skills_source is None:
-        return {}
+    from ._optional_skills import CONDITIONAL_SKILLS, skill_enabled
 
     contents: dict[str, bytes] = {}
-    for skill_dir in sorted(skills_source.iterdir()):
-        if not skill_dir.is_dir():
-            continue
-        is_valid, reason = _validate_skill(skill_dir)
+    for name in [*skill_names("copilot"), *(n for n in CONDITIONAL_SKILLS if skill_enabled(n))]:
+        is_valid, reason = _validate_skill(canonical_skills_dir() / name)
         if not is_valid:
-            logger.warning("copilot_skill_validation_failed", skill=skill_dir.name, reason=reason)
+            logger.warning("copilot_skill_validation_failed", skill=name, reason=reason)
             continue
-        for skill_file in sorted(skill_dir.iterdir()):
-            if not skill_file.is_file():
-                continue
-            rel_path = f"{_COPILOT_SKILLS_DIR}/{skill_dir.name}/{skill_file.name}"
-            try:
-                contents[rel_path] = skill_file.read_bytes()
-            except OSError:
-                logger.warning("copilot_skill_source_unreadable", path=str(skill_file))
+        try:
+            for filename, data in skill_files("copilot", name):
+                contents[f"{_COPILOT_SKILLS_DIR}/{name}/{filename}"] = data
+        except OSError:
+            logger.warning("copilot_skill_source_unreadable", skill=name)
     return contents
 
 
@@ -241,9 +214,14 @@ def install_copilot_skills(
     issued the same ``copy2``, so the ``force`` flag only picked a result
     bucket and every hand edit was destroyed on every update.
     """
+    from ._client_skills import canonical_skills_dir
     from ._managed_client_artifacts import artifact_user_edited
+    from ._optional_skills import retire_disabled_skills
 
     result = _new_result()
+    retire_disabled_skills(
+        target_dir / _COPILOT_SKILLS_DIR, canonical_skills_dir(), result, _COPILOT_SKILLS_DIR, client="copilot"
+    )
     contents = copilot_skill_contents()
     if not contents:
         return result

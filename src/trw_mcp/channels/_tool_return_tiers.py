@@ -15,9 +15,10 @@ Design contract
 - **T0** (copilot, free tier): presence beacon only — distill_status,
   distill_action, risk_score (scalar), tier.  No list fields.
 
-These three client tiers are NOT the manifest-quota ladder T0..T4 in
-``channels/_quota.py`` (``TIER_DOWN_LADDER``, consumed by meta-tune throttling): the
-labels collide but the concepts do not (RC-014). There is no T3 here.
+A manifest-quota ladder T0..T4 (``channels/_quota.py``'s ``TIER_DOWN_LADDER``)
+used to collide with this vocabulary under the same T0/T1/T2 labels; it was
+removed 2026-09-22 (RC-014) as dead code, so T0..T2 here is now the only tier
+vocabulary in ``channels/``.
 
 Enrichment is ADDITIVE: the base result fields are always present and
 unchanged.  Per-tier shaping appends an ``enrichment`` key to the response.
@@ -144,7 +145,7 @@ def enrich_response(
     """Return *result* with an ``enrichment`` key shaped by *client_tier*.
 
     The base result is returned unmodified when:
-    - *client_tier* is not a recognised tier string.
+    - *client_tier* has no builder (logged at WARNING).
     - Any exception occurs inside the builder.
 
     Args:
@@ -157,8 +158,9 @@ def enrich_response(
     """
     builder = _TIER_BUILDERS.get(client_tier)
     if builder is None:
-        # Unknown tier — skip enrichment silently
-        log.debug(
+        # A tier with no builder is a configuration or wiring gap, not noise:
+        # the caller asked for enrichment and silently gets none (RC-012).
+        log.warning(
             "tool_return_tier_unknown",
             client_tier=client_tier,
             outcome="skipped",

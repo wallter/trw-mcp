@@ -81,10 +81,9 @@ class CorrelationResult(BaseModel):
     "0.0%" — which reads as *we measured, and the answer is none*.
 
     This is the local idiom, not a new invention. ``_ttl.py::CheckResult``
-    carries ``ttl_unknown`` alongside ``is_stale`` for the same reason, and
-    ``_throttle.py::ThrottleVerdict`` has ``INSUFFICIENT_DATA`` as a verdict
-    distinct from ``HOLD``. This cluster had the pattern in two of three places;
-    the third is where the fabricated zero lived.
+    carries ``ttl_unknown`` alongside ``is_stale`` for the same reason. This
+    cluster had the pattern in two of three places; the third is where the
+    fabricated zero lived.
 
     ``raw_rate``/``adj_rate`` are therefore ``None`` when unmeasured, so a
     consumer cannot read a number that was never computed.

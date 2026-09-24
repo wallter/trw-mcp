@@ -130,7 +130,7 @@ class TestConfigYamlLoading:
         """Config.yaml values are loaded into singleton."""
         config_yaml = config_project / ".trw" / "config.yaml"
         config_yaml.write_text(
-            "build_check_pytest_cmd: make test\ntask_root: tasks\n",
+            "build_check_coverage_min: 70.0\ntask_root: tasks\n",
             encoding="utf-8",
         )
         # Point resolve_project_root to our tmp project
@@ -141,7 +141,7 @@ class TestConfigYamlLoading:
         _reset_config()
         try:
             cfg = get_config()
-            assert cfg.build_check_pytest_cmd == "make test"
+            assert cfg.build_check_coverage_min == 70.0
             assert cfg.task_root == "tasks"
         finally:
             _reset_config()
@@ -173,7 +173,7 @@ class TestConfigYamlLoading:
         try:
             cfg = get_config()
             assert cfg.task_root == "docs"  # default
-            assert cfg.build_check_pytest_cmd is None  # default
+            assert cfg.build_check_coverage_min == 85.0  # default
         finally:
             _reset_config()
 
@@ -277,37 +277,26 @@ class TestConfigYamlLoading:
 @pytest.mark.parametrize(
     ("field", "expected"),
     [
-        ("atdd_enabled", True),
-        ("worktree_dir", ".trees"),
-        ("commit_fr_trailer_enabled", True),
         ("compliance_review_retention_days", 365),
-        ("provenance_enabled", True),
-        ("confidence_threshold", 0.8),
-        ("test_skeleton_dir", ""),
-        ("completion_hooks_blocking", False),
-        ("self_review_blocking", False),
-        ("incremental_validation_enabled", True),
-        ("security_check_enabled", True),
         ("compact_instructions_template", ""),
-        ("pause_after_compaction", False),
+        ("self_review_blocking", False),
     ],
     ids=[
-        "atdd_enabled",
-        "worktree_dir",
-        "commit_fr_trailer_enabled",
         "compliance_review_retention_days",
-        "provenance_enabled",
-        "confidence_threshold",
-        "test_skeleton_dir",
-        "completion_hooks_blocking",
-        "self_review_blocking",
-        "incremental_validation_enabled",
-        "security_check_enabled",
         "compact_instructions_template",
-        "pause_after_compaction",
+        "self_review_blocking",
     ],
 )
 def test_config_defaults(field: str, expected: object) -> None:
-    """Verify TRWConfig field defaults (consolidated from 14 individual tests)."""
+    """Verify TRWConfig field defaults (consolidated from 14 individual tests).
+
+    atdd_enabled, worktree_dir, commit_fr_trailer_enabled, provenance_enabled,
+    confidence_threshold, test_skeleton_dir, completion_hooks_blocking,
+    incremental_validation_enabled, security_check_enabled, and
+    pause_after_compaction were removed under PRD-CORE-291 (slice 2): each had
+    no production reader and this default pin was its only reference outside
+    models/config. self_review_blocking stayed -- see its declaration comment
+    in _fields_ceremony.py for the real external consumer that kept it.
+    """
     config = TRWConfig()
     assert getattr(config, field) == expected

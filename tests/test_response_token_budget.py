@@ -28,7 +28,6 @@ measurements), not byte-exact snapshots. If your change trips one:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import cast
 
 import pytest
@@ -50,7 +49,12 @@ from trw_mcp.tools._session_start_trim import trim_session_start_payload
 # ~1038 size units (~1134 if connection_fingerprint were not reduced in compact mode).
 # The ceiling is unchanged — the fixture got more truthful, not the payload
 # bigger.
-SESSION_START_CEILING_SIZE_UNITS = 1300
+#
+# 2026-09-23 PRD-CORE-294 FR02/NFR02: session_start runs one recall and shows at
+# most three stubs, so the fixture above now carries the stub block. Measured
+# 782 size units compact (learning block 1,223 bytes); the ceiling drops from
+# 1300 to 1000.
+SESSION_START_CEILING_SIZE_UNITS = 1000
 RECALL_ENTRY_CEILING_SIZE_UNITS = 450  # per projected entry with rich content
 
 _BLOAT_GUIDANCE = (
@@ -64,46 +68,23 @@ _BLOAT_GUIDANCE = (
 
 
 def _representative_session_start_payload() -> dict[str, object]:
-    """A worst-case-ish session_start payload: pressure deferrals + full run."""
-    # PRD-CORE-257-FR04: measured against the shape the code actually emits.
-    # Leaving the old three-key block here would make the ceiling dishonest.
-    deferral = {
-        "reason": "writer_pressure",
-        "writer_count": 9,
-        "peer_writer_count": 8,
-        "threshold": 8,
-        "deferral_age_hours": 2.25,
-        "deferred_count": 6,
-        "census_state": "measured",
-        "ledger_state": "ok",
-    }
+    """A worst-case-ish session_start payload: full run + rich diagnostics."""
     return {
         "timestamp": "2026-07-12T00:00:00+00:00",
+        # PRD-CORE-294 FR02: the recall step already presented at most three stubs.
         "learnings": [
             {
                 "id": f"L-{i:08d}",
-                "summary": "A representative learning summary of realistic length "
-                "covering a gotcha discovered in a prior session" + "x" * 40,
-                "impact": 0.95,
-                "status": "active",
+                "claim": "A representative learning summary of realistic length covering a gotcha "
+                "discovered in a prior session" + "x" * 40,
+                "anchor": "trw-mcp/src/trw_mcp/tools/_session_recall_helpers.py:perform_session_recalls",
             }
-            for i in range(12)
+            for i in range(3)
         ],
-        "learnings_count": 12,
+        "learnings_count": 3,
+        "learnings_omitted": 9,
         "query": "representative focused recall query",
-        "query_matched": 13,
-        "total_available": 12,
-        "response_compacted": True,
-        "side_effects_deferred": dict(deferral),
-        "auto_upgrade_check_deferred": dict(deferral),
-        "stale_runs_deferred": dict(deferral),
-        "embeddings_backfill_deferred": dict(deferral),
-        # PRD-CORE-248 FR04 deleted wal_checkpoint_deferred (pressure now picks
-        # the mode, not whether the checkpoint runs), so the fixture names a
-        # step that can still defer.
-        "pending_learns_deferred": dict(deferral),
-        "auto_recall_deferred": {"reason": "session_start_compacted", "detail": "optional"},
-        "ceremony_status_deferred": {"reason": "session_start_compacted", "detail": "optional"},
+        "store_count": 1402,
         "run": {"active_run": None, "status": "no_active_run"},
         # Built from the live production builder rather than a copied literal:
         # the previous hard-coded copy had already drifted from the shipped
@@ -138,8 +119,7 @@ def _representative_session_start_payload() -> dict[str, object]:
         "query_advisory": (
             "Focused recall matched 0 entries: the vector index was not initialized in this "
             "process (session_start never triggers a model load), so only all-token keyword "
-            "matching ran -- a multi-word natural-language query cannot match that way. The "
-            "learnings returned are the impact-ranked baseline, NOT query matches. Call "
+            "matching ran -- a multi-word natural-language query cannot match that way. Call "
             "trw_recall(query=...) for full hybrid BM25+vector search."
         ),
         "surface_snapshot_id": "a" * 64,
@@ -147,7 +127,6 @@ def _representative_session_start_payload() -> dict[str, object]:
         "profile_layers_applied": ["defaults"],
         "profile_snapshot_id": "surf_" + "b" * 64,
         "session_override_hash": "sess_" + "c" * 64,
-        "embed_health": {"status": "ok"},
         "assertion_health": {"failing": 0, "total": 5},
         "sync_health": {"status": "ok"},
         "step_durations_ms": {"total": 900.0},
@@ -169,6 +148,22 @@ def test_session_start_compact_payload_stays_under_ceiling() -> None:
         f"compact trw_session_start payload is {size_units} four-character size units "
         f"(ceiling {SESSION_START_CEILING_SIZE_UNITS}). {_BLOAT_GUIDANCE}"
     )
+
+
+def test_session_start_learning_block_stays_under_its_byte_budget() -> None:
+    """NFR02: the learning block (stubs plus its own keys) is at most 1,500 encoded bytes."""
+    import json
+
+    from trw_mcp.tools._recall_presenter import SESSION_BYTE_BUDGET
+
+    payload = trim_session_start_payload(
+        cast("SessionStartResultDict", _representative_session_start_payload()), verbose=False
+    )
+    block_keys = ("learnings", "learnings_omitted", "query", "query_advisory", "store_count")
+    block = {key: payload[key] for key in block_keys if key in payload}  # type: ignore[literal-required]
+    size = len(json.dumps(block).encode("utf-8"))
+    assert SESSION_BYTE_BUDGET == 1_500
+    assert size <= SESSION_BYTE_BUDGET, f"session_start learning block is {size} bytes. {_BLOAT_GUIDANCE}"
 
 
 def test_session_start_fixture_includes_connection_fingerprint() -> None:
@@ -259,24 +254,9 @@ def test_recall_internal_field_stripping_is_configured() -> None:
 # driving this exact sequence. The telemetry it added (receipt keys, hint
 # exposure rows, feedback outcome rows, session observations) goes to logs only.
 _PRE_FIX144_RESPONSE_KEYS: dict[str, set[str]] = {
-    "trw_recall": {
-        "candidate_count",
-        "ceremony_status",
-        "compact",
-        "context",
-        "duplicates_collapsed",
-        "learnings",
-        "max_results",
-        "nudge_content",
-        "patterns",
-        "query",
-        "store_count",
-        "tokens_budget",
-        "tokens_truncated",
-        "tokens_used",
-        "total_available",
-        "total_matches",
-    },
+    # PRD-CORE-294 FR01 cut trw_recall to stubs within a byte budget: the eleven
+    # counter/shaping keys are gone and nothing may come back.
+    "trw_recall": {"ceremony_status", "learnings", "nudge_content", "query", "total_matches"},
     "trw_before_edit_hint": {
         "distill_action",
         "distill_hint",
@@ -288,6 +268,12 @@ _PRE_FIX144_RESPONSE_KEYS: dict[str, set[str]] = {
         "learnings",
         "learnings_count",
         "tier",
+        # PRD-CORE-294 FR04(b): this scenario's own trw_learn call above wrote
+        # a learning anchored to "app.py", so this exact before_edit_hint call
+        # now legitimately surfaces one transition-nudge line naming it — the
+        # key is conditional (only present when a candidate is selected), not
+        # unconditional bloat.
+        "transition_nudge",
     },
     "trw_build_check": {
         "build_receipt_id",
@@ -308,28 +294,35 @@ _PRE_FIX144_RESPONSE_KEYS: dict[str, set[str]] = {
         "typed_receipt_reason",
         "typed_receipt_state",
     },
-    "trw_learn_update": {"changes", "learning_id", "status"},
 }
 
 
 def test_feedback_telemetry_adds_no_response_keys(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests._memory_store_fake import FakeMemoryStore
     from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.state import _store_selection
+
+    # Pinned to "default" (not the shared fixture's FAKE_NAMESPACE): the fake's
+    # recall() only searches "default", and this test needs trw_recall to find
+    # what trw_learn just wrote (see test_tools_learning_recall_modes.py for
+    # the same workaround).
+    store = FakeMemoryStore()
+    monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, "default"))
 
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_project))
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
     server = make_test_server("learning", "before_edit_hint", "build")
-    lid = extract_tool_fn(server, "trw_learn")(
+    extract_tool_fn(server, "trw_learn")(
         summary="app.py startup must load config first", detail="app.py reads config.", impact=0.7
-    )["learning_id"]
+    )
     observed = {
         "trw_recall": set(extract_tool_fn(server, "trw_recall")(query="app.py startup")),
         "trw_before_edit_hint": set(extract_tool_fn(server, "trw_before_edit_hint")(file_path="app.py")),
         "trw_build_check": set(extract_tool_fn(server, "trw_build_check")(tests_passed=False, test_count=1)),
-        "trw_learn_update": set(extract_tool_fn(server, "trw_learn_update")(learning_id=lid, feedback="helpful")),
     }
     assert observed == _PRE_FIX144_RESPONSE_KEYS, _BLOAT_GUIDANCE
     # Non-vacuity: the telemetry really was written, just not into the responses.
     logs = tmp_project / ".trw" / "logs"
     assert (logs / "session_outcomes.jsonl").exists()
-    assert '"explicit_feedback"' in (logs / "recall_tracking.jsonl").read_text()
+    assert '"surface": "before_edit_hint"' in (logs / "recall_tracking.jsonl").read_text()

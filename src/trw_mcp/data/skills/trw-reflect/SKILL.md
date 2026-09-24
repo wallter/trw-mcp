@@ -10,7 +10,7 @@ user-invocable: true
 argument-hint: "[quick|standard|deep|action]"
 ---
 
-# Session Reflection Skill (PRD-CORE-187)
+# Session Reflection Skill
 
 Use when: a work session is winding down and you want its process lessons —
 not just its code — to compound into the next session. This skill finds what
@@ -50,7 +50,7 @@ routed item (treat `recorded-only` rows as unimplemented):
   "recurred — escalated": raise its impact one level (L→M→H) in this session's table, citing the prior ledger file by path.
 - **Routed, not implemented, no recurrence** → carry as "deferred, no new signal".
 
-Never claim recurrence without citing the prior ledger entry (NFR04).
+Never claim recurrence without citing the prior ledger entry.
 
 **Concurrent-instance check (before you treat anything as yours to route).** A
 ledger whose identity differs from yours and whose mtime falls inside this
@@ -293,7 +293,7 @@ shipped (with validation evidence), PRDs created, and a pointer to the ledger's
 - **Truthful routing**: a routed item is not a completed item — never report
   PRD-routed work as "done"; Step 0 of the next reflection holds the score.
 
-## Typed follow-through lifecycle (PRD-QUAL-120-FR06)
+## Typed follow-through lifecycle
 
 Every routed improvement uses the typed lifecycle: proposed, approved, routed,
 implementing, verified_closed, rejected. Routing an item to a PRD or backlog

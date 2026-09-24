@@ -11,7 +11,6 @@ from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 PATHS = (
     PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "skills" / "trw-commit" / "SKILL.md",
-    PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "codex" / "skills" / "trw-commit" / "SKILL.md",
     pytest.param(ROOT / ".claude" / "skills" / "trw-commit" / "SKILL.md", marks=requires_monorepo),
     pytest.param(ROOT / ".agents" / "skills" / "trw-commit" / "SKILL.md", marks=requires_monorepo),
 )
@@ -442,3 +441,13 @@ def test_fr04_valid_signature_publishes(tmp_path: Path) -> None:
 def test_commit_skill_is_discoverable(path: Path) -> None:
     assert path.is_file()
     assert "# Commit requested work" in path.read_text(encoding="utf-8")
+
+
+def test_codex_rendering_of_commit_skill_is_discoverable() -> None:
+    """Codex has no fork; it renders the canonical skill (PRD-CORE-291-FR04)."""
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical = (PACKAGE_ROOT / "src" / "trw_mcp" / "data" / "skills" / "trw-commit" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "# Commit requested work" in render_skill_md(canonical, "codex")

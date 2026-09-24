@@ -1,13 +1,10 @@
-"""Body of the FR02 background drain continuation and the FR05 migration.
+"""Body of the FR02 background drain continuation.
 
 Belongs to ``tools/_ceremony_maintenance_steps.py``, which owns the single-flight
 ``_DRAIN_THREAD`` handle and starts this body on it. Split out so the maintenance
 module stays under the 350 effective-LOC gate.
 
-Journal maintenance requests replay only; the migration callable and explicit
-``run_migration`` argument remain available for intentional maintenance.
-
-Two behaviours here are corrections the first implementation got wrong:
+One behaviour here is a correction the first implementation got wrong:
 
 * **The worker RE-LISTS** (FIX130-02). ``drain_pending`` takes a finite snapshot
   of the pending directory, so a remainder that appeared after the running
@@ -15,11 +12,6 @@ Two behaviours here are corrections the first implementation got wrong:
   stranded until another session. The worker now loops until a pass attempts
   nothing or its own count cap is spent, so an overlapping sweep's remainder is
   picked up by the flight already in the air instead of being zeroed.
-* **The migration's outcome is REPORTED, not assumed** (FIX130-08). The previous
-  completion event said ``migration_run=True`` whenever one was requested, even
-  when ``batch_dedup`` returned ``skipped`` and correctly declined to write the
-  marker. A "done" that never happened is the failure class this PRD exists to
-  remove, so the real ``BatchDedupResult`` status travels into the event.
 """
 
 from __future__ import annotations
@@ -49,10 +41,9 @@ def run_background_sweep(
     trw_dir: Path,
     config: TRWConfig,
     background_limit: int,
-    run_migration: bool,
     sweep: SweepContext | None,
 ) -> None:
-    """Drain the budget-stopped remainder, then run any owed migration.
+    """Drain the budget-stopped remainder.
 
     Never raises: a background thread that takes the server with it is a worse
     defect than an un-drained record. Emits exactly one completion event, from
@@ -61,8 +52,6 @@ def run_background_sweep(
     started = time.monotonic()
     replayed = recovered = dead_lettered = retained = contended = 0
     passes = 0
-    migration_outcome = "not_requested"
-    migration_reason = ""
     index_failed = False
     degraded = False
     try:
@@ -95,16 +84,10 @@ def run_background_sweep(
                 # retained — none of which a further pass would change.
                 if attempted == 0:
                     break
-            if run_migration:
-                result = run_batch_dedup_migration(trw_dir, config)
-                migration_outcome = str(result.get("status", "unknown"))
-                migration_reason = str(result.get("reason", ""))
         finally:
             index_failed = not context.flush()
             degraded = context.degraded()
     except Exception:  # justified: fail-open, a background thread must never take the server with it
-        if migration_outcome == "not_requested" and run_migration:
-            migration_outcome = "failed"
         _facade_logger().exception("learn_journal_background_drain_failed", trw_dir=str(trw_dir))
     finally:
         _facade_logger().info(
@@ -116,10 +99,6 @@ def run_background_sweep(
             contended=contended,
             passes=passes,
             duration_ms=round((time.monotonic() - started) * 1000, 2),
-            migration_requested=run_migration,
-            migration_outcome=migration_outcome,
-            migration_reason=migration_reason,
-            migration_run=migration_outcome == "completed",
             index_update_failed=index_failed,
             active_set_degraded=degraded,
         )
@@ -132,39 +111,4 @@ def _own_context(trw_dir: Path, config: TRWConfig) -> SweepContext:
     return make_sweep_replay(trw_dir, config)
 
 
-def run_batch_dedup_migration(trw_dir: Path, config: TRWConfig) -> dict[str, object]:
-    """Run the one-time batch dedup off the replay path, once GLOBALLY (FR05).
-
-    FIX130-07: "exactly once" was only ever process-local. Every stdio server
-    process has its own thread handle and independently stats the same absent
-    marker, so two could run the quadratic scan against the same sidecars
-    concurrently. The marker is now claimed with the same cross-process primitive
-    the per-record replay uses, and the need is RE-CHECKED after the claim is
-    held — the window between "marker absent" and "claim acquired" is exactly
-    where a peer finishes the work.
-
-    The marker is written by ``batch_dedup`` itself and ONLY on completion, so a
-    migration that was skipped, contended, or failed remains incomplete. A later
-    explicit maintenance request may retry; ordinary sweeps do not schedule it. A skipped run releases its claim in a ``finally``, so it
-    leaves nothing behind for the next process to trip over.
-    """
-    from trw_mcp.state._learn_journal_claims import acquire_claim, release_claim
-    from trw_mcp.state.dedup import batch_dedup, is_migration_needed
-
-    marker = trw_dir / config.learnings_dir / "dedup_migration.yaml"
-    claim = acquire_claim(marker)
-    if claim is None:
-        _facade_logger().info("batch_dedup_migration_contended", path=str(marker))
-        return {"status": "contended", "reason": "another process holds the migration claim"}
-    try:
-        if not is_migration_needed(trw_dir):
-            return {"status": "skipped", "reason": "migration already completed by a peer"}
-        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
-
-        result = batch_dedup(trw_dir, FileStateReader(), FileStateWriter(), config=config)
-        return dict(result)
-    finally:
-        release_claim(claim)
-
-
-__all__ = ["run_background_sweep", "run_batch_dedup_migration"]
+__all__ = ["run_background_sweep"]

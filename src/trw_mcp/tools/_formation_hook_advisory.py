@@ -39,13 +39,11 @@ _MEMBER_ENV = "TRW_FORMATION_MEMBER"
 
 
 def _pinned_run() -> Path | None:
-    """Pin-first, pin-only. Never an mtime scan — see ``check_formation_ownership``."""
+    """Pin-first, pin-only, through the one resolver the guard shares (RC-010). A hook's parent is not the client."""
     from trw_mcp.state._paths import resolve_pin_key
-    from trw_mcp.state._pin_store import get_pin_entry
+    from trw_mcp.state._paths_pin_mgmt import run_path_for_pin
 
-    entry = get_pin_entry(resolve_pin_key(None))
-    run_path = entry.get("run_path") if entry else None
-    return Path(run_path) if isinstance(run_path, str) and run_path else None
+    return run_path_for_pin(resolve_pin_key(None))
 
 
 #: Multi-target tools carry several paths rather than one; they are skipped

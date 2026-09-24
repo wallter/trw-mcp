@@ -19,16 +19,32 @@ def test_planned_marker_exempts_missing_path_in_both_validators(tmp_path: Path, 
     assert compute_grounding_penalty(content, tmp_path) == (1.0, [])
 
 
-def test_mixed_marked_and_unmarked_occurrences_still_require_existence(tmp_path: Path) -> None:
-    """One planned occurrence must not exempt a separate unmarked occurrence."""
+def test_one_marked_occurrence_exempts_repeated_path_throughout_prd(tmp_path: Path) -> None:
+    """A planned path is greenfield for the whole PRD, not just one citation."""
     content = "Create `src/missing_module.py` (planned), then modify `src/missing_module.py`."
 
     failures = _check_repo_path_references(content, tmp_path)
     penalty, hallucinated = compute_grounding_penalty(content, tmp_path)
 
-    assert [failure.rule for failure in failures] == ["repo_path_exists"]
-    assert penalty == pytest.approx(0.9)
-    assert hallucinated == ["src/missing_module.py"]
+    assert failures == []
+    assert penalty == pytest.approx(1.0)
+    assert hallucinated == []
+
+
+def test_yaml_evidence_artifact_marker_exempts_unmarked_table_reference(tmp_path: Path) -> None:
+    content = """---
+evidence_artifact: src/new_report.py (new)
+---
+| FR01 | `src/new_report.py` |
+"""
+    assert _check_repo_path_references(content, tmp_path) == []
+    assert compute_grounding_penalty(content, tmp_path) == (1.0, [])
+
+
+def test_quoted_yaml_evidence_artifact_marker_exempts_unmarked_reference(tmp_path: Path) -> None:
+    content = 'evidence_artifact: "src/new_report.py (new)"\n| FR01 | `src/new_report.py` |'
+    assert _check_repo_path_references(content, tmp_path) == []
+    assert compute_grounding_penalty(content, tmp_path) == (1.0, [])
 
 
 @pytest.mark.parametrize(

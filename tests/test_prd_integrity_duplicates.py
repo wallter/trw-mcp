@@ -45,3 +45,12 @@ def test_shared_file_paths_still_overlap(tmp_path: Path) -> None:
     assert len(warnings) == 1
     assert "PRD-CORE-002" in warnings[0]
     assert "scripts/pre-commit.sh" in warnings[0]
+
+
+def test_package_src_root_is_not_a_specific_overlap(tmp_path: Path) -> None:
+    _write_prd(tmp_path, "PRD-CORE-003", "Unrelated recall ranking", "Touches `trw-mcp/src` and `trw-memory/src`.")
+    content = "Touches `trw-mcp/src` and `trw-memory/src`."
+    warnings = _check_duplicate_candidates(
+        content, {"id": "PRD-QUAL-900", "title": "Pre-commit gates"}, tmp_path, _PRDS
+    )
+    assert warnings == []

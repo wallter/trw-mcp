@@ -1,32 +1,21 @@
-"""Targeted memory adapter connection and migration branch tests."""
+"""Targeted memory adapter embedder-singleton and status-reporting branch tests.
+
+PRD-CORE-280 slice e1: the ``TestGetBackendAutoResolve``, ``TestEmbedAndStore``
+and ``TestEnsureMigratedErrors`` classes that used to live here were deleted,
+not ported — they asserted purely on the SQLite singleton accessor / SQLite
+backend internals (auto-resolve, embed-and-store-onto-a-raw-backend,
+YAML-to-SQLite migration) that the fixture contract classifies as SQLite
+internals owned by trw-memory. ``get_embedder``/``check_embeddings_status``
+stay: neither opens ``memory.db`` nor references a banned name, so they run
+unchanged.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from trw_memory.models.memory import MemoryEntry
-
-from tests._memory_adapter_branches_support import _make_backend
-from trw_mcp.state.memory_adapter import (
-    _embed_and_store,
-    check_embeddings_status,
-    ensure_migrated,
-    get_backend,
-    get_embedder,
-    reset_embedder,
-)
-
-from ._memory_adapter_branches_support import trw_dir  # noqa: F401
-
-
-class TestGetBackendAutoResolve:
-    def test_auto_resolve_trw_dir_when_none(self, trw_dir: Path) -> None:
-        """get_backend(None) calls resolve_trw_dir() to find .trw dir."""
-        with patch("trw_mcp.state._paths.resolve_trw_dir", return_value=trw_dir):
-            backend = get_backend(None)
-            assert backend is not None
+from trw_mcp.state.memory_adapter import check_embeddings_status, get_embedder, reset_embedder
 
 
 class TestGetEmbedder:
@@ -181,110 +170,3 @@ class TestCheckEmbeddingsStatus:
             assert status["enabled"] is True
             assert status["available"] is False
             assert "sentence-transformers" in str(status["advisory"])
-
-
-class TestEmbedAndStore:
-    def test_no_embedder_returns_early(self, trw_dir: Path) -> None:
-        """When embedder is None, _embed_and_store returns immediately (line 178)."""
-        backend = _make_backend(trw_dir)
-        try:
-            with patch("trw_mcp.state._memory_connection.get_embedder", return_value=None):
-                _embed_and_store(backend, "L-test", "some text")
-        finally:
-            backend.close()
-
-    def test_embed_raises_exception(self, trw_dir: Path) -> None:
-        """When embedder.embed raises, logs and continues (lines 183-184)."""
-        backend = _make_backend(trw_dir)
-        try:
-            mock_embedder = MagicMock()
-            mock_embedder.embed.side_effect = RuntimeError("embed failed")
-            with patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ):
-                _embed_and_store(backend, "L-err", "text")
-        finally:
-            backend.close()
-
-    def test_embed_returns_none(self, trw_dir: Path) -> None:
-        """When embedder.embed returns None, upsert_vector is not called."""
-        backend = _make_backend(trw_dir)
-        try:
-            mock_embedder = MagicMock()
-            mock_embedder.embed.return_value = None
-            with patch(
-                "trw_mcp.state._memory_connection.get_embedder",
-                return_value=mock_embedder,
-            ):
-                _embed_and_store(backend, "L-none", "text")
-        finally:
-            backend.close()
-
-
-class TestEnsureMigratedErrors:
-    def test_migrate_entries_dir_raises(self, trw_dir: Path) -> None:
-        """When migrate_entries_dir raises, returns zeros (lines 221-223)."""
-        backend = _make_backend(trw_dir)
-        try:
-            with patch(
-                "trw_memory.migration.from_trw.migrate_entries_dir",
-                side_effect=RuntimeError("read failed"),
-            ):
-                result = ensure_migrated(trw_dir, backend)
-                assert result == {"migrated": 0, "skipped": 0}
-        finally:
-            backend.close()
-
-    def test_entry_with_empty_namespace_gets_default(self, trw_dir: Path) -> None:
-        """Entries with empty namespace get _NAMESPACE assigned (line 229)."""
-        backend = _make_backend(trw_dir)
-        try:
-            entry = MemoryEntry(
-                id="L-ns001",
-                content="Test",
-                detail="Detail",
-                namespace="",
-            )
-            with patch(
-                "trw_memory.migration.from_trw.migrate_entries_dir",
-                return_value=[entry],
-            ):
-                result = ensure_migrated(trw_dir, backend)
-                assert result["migrated"] == 1
-                stored = backend.get("L-ns001", namespace="default")
-                assert stored is not None
-                assert stored.namespace == "default"
-        finally:
-            backend.close()
-
-    def test_entry_store_fails_increments_skipped(self, trw_dir: Path) -> None:
-        """When backend.store raises, entry is skipped (lines 232-234)."""
-        backend = _make_backend(trw_dir)
-        try:
-            entry = MemoryEntry(
-                id="L-fail001",
-                content="Test",
-                detail="Detail",
-            )
-            original_store = backend.store
-            call_count = 0
-
-            def failing_store(e: Any) -> None:
-                nonlocal call_count
-                call_count += 1
-                raise RuntimeError("store failed")
-
-            backend.store = failing_store  # type: ignore[assignment]
-            try:
-                with patch(
-                    "trw_memory.migration.from_trw.migrate_entries_dir",
-                    return_value=[entry],
-                ):
-                    result = ensure_migrated(trw_dir, backend)
-                    assert result["skipped"] == 1
-                    assert result["migrated"] == 0
-            finally:
-                backend.store = original_store
-        finally:
-            backend.close()

@@ -2,7 +2,7 @@
 
 Phase A + Phase B + Phase C + Phase D1 exports — ChannelEntry schema,
 locking, provenance, manifest loader, conflict detection, state
-persistence, telemetry, marker-replace, the tier ladder, TTL staleness,
+persistence, telemetry, marker-replace, TTL staleness,
 cleanup actions, gitignore management, tool-return telemetry, and the
 generic instruction-segment renderer.
 
@@ -35,7 +35,6 @@ from trw_mcp.channels._manifest_loader import (
 )
 from trw_mcp.channels._manifest_models import (
     CLIENT_CORRECTION_FACTORS,
-    CLIENT_THROTTLE_THRESHOLDS,
     DEFAULT_CORRELATION_WINDOW_SECONDS,
     JOIN_KEY_FIELDS,
     MARKER_REGISTRY,
@@ -60,9 +59,6 @@ from trw_mcp.channels._provenance import (
     render_provenance_comment,
     render_provenance_frontmatter,
 )
-from trw_mcp.channels._quota import (
-    TIER_DOWN_LADDER,
-)
 from trw_mcp.channels._state import (
     ChannelState,
     read_state,
@@ -82,13 +78,11 @@ __all__ = [
     "CHANNEL_EVENT_SCHEMA_VERSION",
     "CHANNEL_EVENT_V1_REQUIRED",
     "CLIENT_CORRECTION_FACTORS",
-    "CLIENT_THROTTLE_THRESHOLDS",
     "DEFAULT_CORRELATION_WINDOW_SECONDS",
     "GITIGNORE_BEGIN",
     "GITIGNORE_END",
     "JOIN_KEY_FIELDS",
     "MARKER_REGISTRY",
-    "TIER_DOWN_LADDER",
     "VALID_EVENT_TYPES",
     "ChannelEntry",
     "ChannelLock",

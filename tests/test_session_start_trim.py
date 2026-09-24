@@ -17,7 +17,6 @@ from tests._ceremony_helpers import payload_size_units
 from trw_mcp.models.typed_dicts import SessionStartResultDict
 from trw_mcp.tools._session_start_trim import (
     _COMPACT_DROP_KEYS,
-    DEFAULT_TOP_K,
     find_intentional_marker,
     trim_session_start_payload,
 )
@@ -35,7 +34,6 @@ def _make_results(n_learnings: int) -> SessionStartResultDict:
             "errors": [],
             "success": True,
             "framework_reminder": "Read FRAMEWORK.md",
-            "embed_health": {"status": "ok", "embedded": 100, "missing": 0},
             "assertion_health": {"failing": 2, "total": 10, "passing": 8},
             "sync_health": {"status": "ok"},
             "step_durations_ms": {"recall": 12.3, "total": 42.0},
@@ -47,35 +45,16 @@ def _make_results(n_learnings: int) -> SessionStartResultDict:
 class TestCompactTrimming:
     """FR1 — default compact mode trims while preserving load-bearing fields."""
 
-    def test_compact_caps_learnings_to_top_k(self) -> None:
-        results = _make_results(20)
-        trimmed = trim_session_start_payload(results, verbose=False)
-
-        assert trimmed["compact"] is True
-        assert len(trimmed["learnings"]) == DEFAULT_TOP_K
-        assert trimmed["learnings_count"] == DEFAULT_TOP_K
-        assert trimmed["learnings_omitted"] == 20 - DEFAULT_TOP_K
-
-    def test_compact_preserves_top_k_relevance_ordering(self) -> None:
-        results = _make_results(20)
-        trimmed = trim_session_start_payload(results, verbose=False)
-        kept_ids = [e["id"] for e in trimmed["learnings"]]
-        # Recall returns relevance/impact order; the kept slice must be the
-        # highest-signal prefix, in order.
-        assert kept_ids == [f"L-{i:03d}" for i in range(DEFAULT_TOP_K)]
-
     def test_compact_summarizes_diagnostic_subblocks(self) -> None:
         results = _make_results(3)
         trimmed = trim_session_start_payload(results, verbose=False)
 
         # Diagnostic blocks removed...
-        assert "embed_health" not in trimmed
         assert "assertion_health" not in trimmed
         assert "sync_health" not in trimmed
         assert "step_durations_ms" not in trimmed
         # ...folded into a one-line summary carrying the load-bearing signal.
         summary = trimmed["health_summary"]
-        assert "embed=ok" in summary
         assert "2 failing/10" in summary
         assert "ms" in summary
 
@@ -105,8 +84,9 @@ class TestCompactTrimming:
     def test_compact_small_corpus_not_capped(self) -> None:
         results = _make_results(3)
         trimmed = trim_session_start_payload(results, verbose=False)
+        # PRD-CORE-294 FR02: the recall step bounds the block; trimming leaves it alone.
         assert len(trimmed["learnings"]) == 3
-        assert trimmed["learnings_omitted"] == 0
+        assert "learnings_omitted" not in trimmed
 
 
 class TestVerbosePassthrough:
@@ -121,7 +101,6 @@ class TestVerbosePassthrough:
     def test_verbose_keeps_diagnostic_subblocks(self) -> None:
         results = _make_results(20)
         trimmed = trim_session_start_payload(results, verbose=True)
-        assert "embed_health" in trimmed
         assert "assertion_health" in trimmed
         assert "step_durations_ms" in trimmed
         assert "health_summary" not in trimmed
@@ -210,92 +189,6 @@ class TestFindIntentionalMarker:
 
     def test_out_of_range_line_returns_none(self) -> None:
         assert find_intentional_marker("a = 1\n", 99) is None
-
-
-class TestFoldDeferredBlocks:
-    """Compact mode folds repetitive *_deferred advisory blocks (2026-07-12)."""
-
-    def _pressure_payload(self) -> dict:  # type: ignore[type-arg]
-        # PRD-CORE-257-FR04: the advisory gained the streak's age, its count and
-        # the two measurement states, and dropped the legacy ``defer_reason``.
-        # This fixture must track ``writer_pressure_details`` or the fold is
-        # being exercised against a shape the code no longer emits.
-        block = {
-            "reason": "writer_pressure",
-            "writer_count": 9,
-            "peer_writer_count": 8,
-            "threshold": 8,
-            "deferral_age_hours": 1.5,
-            "deferred_count": 3,
-            "census_state": "measured",
-            "ledger_state": "ok",
-        }
-        return {
-            "learnings": [],
-            "run": {"active_run": None},
-            "errors": [],
-            "success": True,
-            "side_effects_deferred": dict(block),
-            "auto_upgrade_check_deferred": dict(block),
-            "stale_runs_deferred": dict(block),
-            "embeddings_backfill_deferred": dict(block),
-            # PRD-CORE-248 FR04 deleted wal_checkpoint_deferred; the fold is
-            # generic over any *_deferred key, so this uses a step that still
-            # defers rather than pinning the shape of one that cannot.
-            "pending_learns_deferred": dict(block),
-            "auto_recall_deferred": {"reason": "session_start_compacted", "detail": "optional"},
-        }
-
-    def test_compact_folds_deferral_blocks(self) -> None:
-        result = trim_session_start_payload(self._pressure_payload(), verbose=False)
-
-        assert "side_effects_deferred" not in result
-        assert "pending_learns_deferred" not in result
-        assert result["deferred"]["writer_pressure"] == [
-            "auto_upgrade_check",
-            "embeddings_backfill",
-            "pending_learns",
-            "side_effects",
-            "stale_runs",
-        ]
-        assert result["deferred"]["session_start_compacted"] == ["auto_recall"]
-        assert result["deferred_writer_count"] == 9
-        # FR11: the compact response keeps the bar the work was deferred against
-        # and how long it has been held, instead of stating only that it was.
-        assert result["deferred_threshold"] == 8
-        assert result["deferred_max_age_hours"] == 1.5
-        assert result["deferred_census_state"] == "measured"
-        assert result["deferred_ledger_state"] == "ok"
-
-    def test_verbose_keeps_individual_blocks(self) -> None:
-        result = trim_session_start_payload(self._pressure_payload(), verbose=True)
-
-        assert "deferred" not in result
-        assert result["side_effects_deferred"]["reason"] == "writer_pressure"
-
-    def test_unrecognized_block_shape_is_not_folded(self) -> None:
-        payload = self._pressure_payload()
-        payload["custom_deferred"] = {"reason": "writer_pressure", "payload": {"x": 1}}
-        result = trim_session_start_payload(payload, verbose=False)
-
-        assert result["custom_deferred"] == {"reason": "writer_pressure", "payload": {"x": 1}}
-        assert "custom" not in result["deferred"]["writer_pressure"]
-
-    def test_fold_reports_the_worst_age_and_the_least_reassuring_states(self) -> None:
-        """Folding must never launder a degraded read into the healthiest one."""
-        payload = self._pressure_payload()
-        older = dict(payload["side_effects_deferred"])
-        older.update({"deferral_age_hours": 5.75, "ledger_state": "degraded", "census_state": "unreadable"})
-        payload["side_effects_deferred"] = older
-        result = trim_session_start_payload(payload, verbose=False)
-
-        assert result["deferred_max_age_hours"] == 5.75
-        assert result["deferred_ledger_state"] == "degraded"
-        assert result["deferred_census_state"] == "unreadable"
-
-    def test_no_deferred_blocks_no_summary_key(self) -> None:
-        result = trim_session_start_payload({"learnings": [], "run": {}, "errors": [], "success": True}, verbose=False)
-        assert "deferred" not in result
 
 
 class TestCompactDropKeys:

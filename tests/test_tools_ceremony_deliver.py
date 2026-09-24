@@ -146,14 +146,6 @@ class TestDeliverPartialFailure:
                 "trw_mcp.tools._deferred_delivery._step_publish_learnings",
                 return_value={"status": "skipped"},
             ),
-            patch(
-                "trw_mcp.tools._deferred_delivery._step_outcome_correlation",
-                return_value={"status": "skipped"},
-            ),
-            patch(
-                "trw_mcp.tools._deferred_delivery._step_recall_outcome",
-                return_value={"status": "skipped"},
-            ),
             patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value={"status": "skipped"}),
             patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value={"status": "skipped"}),
             patch(
@@ -251,10 +243,9 @@ class TestDeliverPartialFailure:
             patch("trw_mcp.tools._deferred_delivery._step_auto_prune", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_consolidation", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_tier_sweep", return_value=noop),
+            patch("trw_mcp.tools._deferred_delivery._step_memory_decay", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_auto_progress", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_publish_learnings", return_value=noop),
-            patch("trw_mcp.tools._deferred_delivery._step_outcome_correlation", return_value=noop),
-            patch("trw_mcp.tools._deferred_delivery._step_recall_outcome", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_telemetry", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_batch_send", return_value=noop),
             patch("trw_mcp.tools._deferred_delivery._step_trust_increment", return_value=noop),

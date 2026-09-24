@@ -16,11 +16,6 @@ from typing import Literal
 
 from pydantic import Field
 
-from trw_mcp.models.config._defaults import (
-    DEFAULT_BUILD_CHECK_TIMEOUT_SECS,
-    DEFAULT_MUTATION_TIMEOUT_SECS,
-)
-
 
 class _BuildFields:
     """Build domain mixin — mixed into _TRWConfigFields via MI."""
@@ -34,7 +29,6 @@ class _BuildFields:
     # -- Build verification --
 
     build_check_enabled: bool = True
-    build_check_timeout_secs: int = DEFAULT_BUILD_CHECK_TIMEOUT_SECS
     build_check_coverage_min: float = 85.0
     build_gate_enforcement: Literal["strict", "lenient", "off"] = "lenient"
     # PRD-CORE-184-FR03 + PRD-CORE-246-FR03: evidence-keyed deliver gate mode.
@@ -110,9 +104,6 @@ class _BuildFields:
     # PRD-CORE-255-FR01: hours a typed ReviewReceipt stays positive evidence, from
     # completed_at; independent of the CORE-205 binding, fail-closed when unreadable.
     review_verdict_ttl_hours: int = Field(default=24, ge=1, le=8760)
-    build_check_pytest_args: str = ""
-    build_check_mypy_args: str = "--strict"
-    build_check_pytest_cmd: str | None = None
     # build_freshness_window_secs (PRD-FIX-077-FR05's deliver-gate freshness
     # window) was removed 2026-09-16 under PRD-QUAL-139-FR05: no consumer, no
     # test, PRD-FIX-077 still draft -- the hook parses its own bound.
@@ -171,28 +162,23 @@ class _BuildFields:
     deferred_batch_max_seconds: int = 300
     deferred_lock_stale_seconds: int = 600
 
-    # -- Quality gates (mutation, cross-model, multi-agent, API fuzz) --
+    # -- Quality gates (cross-model, multi-agent) --
 
-    mutation_enabled: bool = False
-    mutation_threshold: float = 0.50
-    mutation_threshold_critical: float = 0.70
-    mutation_threshold_experimental: float = 0.30
-    mutation_critical_paths: tuple[str, ...] = ("tools/", "state/", "models/")
-    mutation_experimental_paths: tuple[str, ...] = ("scratch/",)
-    mutation_timeout_secs: int = DEFAULT_MUTATION_TIMEOUT_SECS
+    # The mutation_* fields (mutation_enabled, mutation_threshold,
+    # mutation_threshold_critical, mutation_threshold_experimental,
+    # mutation_critical_paths, mutation_experimental_paths,
+    # mutation_timeout_secs) and the api_fuzz_* fields (api_fuzz_base_url,
+    # api_fuzz_level, api_fuzz_timeout_secs) were removed under PRD-CORE-291
+    # (slice 2): no mutation-testing or API-fuzz subsystem in trw_mcp ever
+    # read them -- same shape as the PRD-QUAL-110-FR03 dependency-audit flags
+    # removed below this comment previously. TRWConfig sets ``extra="ignore"``,
+    # so an old config that still carries a removed key loads gracefully
+    # rather than erroring (RISK-003).
     cross_model_review_enabled: bool = False
     # PRD-CORE-270-FR02: dispatch CLIENT id, not a model. "" = no reviewer.
     cross_model_provider: str = ""
     cross_model_review_timeout_secs: int = 30
     review_confidence_threshold: int = 80
-    # PRD-QUAL-110-FR03: the dependency-audit config flags were removed — they
-    # advertised a gate with NO implementation anywhere in the package source
-    # (the only references were dead, non-collecting test files). TRWConfig sets
-    # ``extra="ignore"``, so an old config that still carries the removed key
-    # loads gracefully rather than erroring (RISK-003).
-    api_fuzz_base_url: str = "http://localhost:8000"
-    api_fuzz_level: str = "strict"
-    api_fuzz_timeout_secs: int = 120
 
     # -- LLM augmentation --
 

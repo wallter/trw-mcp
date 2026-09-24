@@ -7,7 +7,6 @@ Extracted from ceremony.py for single-responsibility.
 from __future__ import annotations
 
 import dataclasses
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -22,7 +21,6 @@ from trw_mcp.state._call_context import build_call_context as _build_call_contex
 from trw_mcp.state._helpers import read_jsonl_resilient
 from trw_mcp.state._paths import (
     find_active_run,
-    resolve_pin_key,
     resolve_project_root,
 )
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
@@ -30,7 +28,6 @@ from trw_mcp.state.pre_compact_marker import write_pre_compact_marker
 from trw_mcp.tools._checkpoint_obligations import (
     compute_pending_ceremony as _compute_pending_ceremony,
 )
-from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 
@@ -178,7 +175,14 @@ def _resolve_formation_line(run_dir: Path) -> str:
         return f"unresolved — {exc}"
     if context is None:
         return "none active"
-    who = context.member_id or "orchestrator"
+    # PRD-FIX-149 review R5: an orchestrator that also self-registered a slot
+    # (T22's shape) now resolves a non-None member_id (_own_slot), so
+    # ``member_id or "orchestrator"`` would silently start printing the slot's
+    # id instead of "orchestrator" for that one case while every other
+    # orchestrator run kept printing "orchestrator" -- an incidental,
+    # surprising divergence keyed on self-registration rather than on the
+    # role this line is meant to name. Label on ``is_orchestrator`` directly.
+    who = "orchestrator" if context.is_orchestrator else (context.member_id or "unknown member")
     return f"{context.manifest.formation_id} (this run: {who}); manifest {context.manifest_path}"
 
 
@@ -267,9 +271,8 @@ def _write_compact_state(
     ceremony_state: dict[str, object],
     directive: str = "",
     context_anchor: str = "",
-    owner_pin_key: str = "",
 ) -> None:
-    """Write pre_compact_state.json with enhanced checkpoint metadata.
+    """Write this session's pre-compaction marker with enhanced checkpoint metadata.
 
     PRD-CORE-165 FR-01: ``directive`` + ``context_anchor`` are caller-supplied
     (they live in the harness conversation, not trw state, so they cannot be
@@ -277,12 +280,8 @@ def _write_compact_state(
     recovery readback can surface them; the run-derived in-flight position
     (``last_checkpoint`` + ``last_5_events``) is already persisted unconditionally.
 
-    PRD-CORE-258-FR10: ``owner_pin_key`` names the session that compacted, so
-    only that session is armed by this marker and only it may clear it. It is a
-    PIN KEY, not a FastMCP ``session_id`` — the pin key is the one identifier the
-    MCP server and a shell hook can both observe. An empty value writes no owner
-    field at all, which keeps the fail-safe blanket behaviour an ownerless
-    marker has always had.
+    The marker is written to THIS session's path, so only this session is
+    armed by it and only it clears it.
     """
     _evt_text = events_path.read_text().strip() if events_path.exists() else ""
     # run_dir + events let the obligation consequences be resolved against the
@@ -311,12 +310,6 @@ def _write_compact_state(
         state_data["directive"] = directive
     if context_anchor:
         state_data["context_anchor"] = context_anchor
-    if owner_pin_key:
-        state_data["owner_pin_key"] = owner_pin_key
-        # Diagnostic ONLY, and deliberately never consulted by the arming
-        # decision: the PreCompact hook runs in a process unrelated to the
-        # server, so a pid comparison could never match on that path.
-        state_data["owner_pid"] = os.getpid()
     # PRD-CORE-258-FR04: the marker's path and shape have exactly one owner.
     write_pre_compact_marker(state_data, trw_dir=project_root / ".trw")
 
@@ -343,7 +336,7 @@ def _write_compact_instructions(
             "- TRW formation: {formation}\n"
             "- Failing tests: {failing_tests}\n"
             "DO NOT summarize run artifacts — reference their file paths only.\n"
-            "Reference .trw/context/pre_compact_state.json for full state.\n"
+            "Reference this session's marker under .trw/context/pre_compact/ for full state.\n"
             "\n"
             "CEREMONY OBLIGATIONS (complete these before session ends):\n"
             "{ceremony_pending}"
@@ -371,7 +364,6 @@ def register_checkpoint_tools(server: FastMCP) -> None:
     """Register checkpoint tools on the MCP server."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_pre_compact_checkpoint(
         directive: str = "",
         context_anchor: str = "",
@@ -427,7 +419,6 @@ def register_checkpoint_tools(server: FastMCP) -> None:
                 ceremony_state,
                 directive=directive,
                 context_anchor=context_anchor,
-                owner_pin_key=resolve_pin_key(ctx),
             )
             instructions_path = _write_compact_instructions(
                 cfg,

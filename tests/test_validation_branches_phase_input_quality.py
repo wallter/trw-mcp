@@ -158,14 +158,15 @@ class TestValidatePrdQualityV2ExceptionBranches:
         assert result.risk_scaled is True
 
     def test_all_dimensions_zero_when_max_possible_zero(self) -> None:
+        # validation_smell_weight, validation_readability_weight, and
+        # validation_ears_weight were removed under PRD-CORE-291 (slice 2):
+        # they never affected total_score (documented permanently-0 advisory
+        # tunables), so omitting them here changes nothing about this test.
         config = TRWConfig(
             validation_density_weight=0.0,
             validation_structure_weight=0.0,
             validation_implementation_readiness_weight=0.0,
             validation_traceability_weight=0.0,
-            validation_smell_weight=0.0,
-            validation_readability_weight=0.0,
-            validation_ears_weight=0.0,
             risk_scaling_enabled=False,
         )
         result = validate_prd_quality_v2(_MINIMAL_PRD_CONTENT, config=config)

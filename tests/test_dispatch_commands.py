@@ -174,11 +174,13 @@ def test_agy_read_only_adds_sandbox_writes_adds_skip_permissions() -> None:
     assert "--sandbox" not in rw
 
 
-def test_opencode_read_only_adds_nothing_writes_adds_skip_permissions() -> None:
+def test_opencode_read_only_adds_nothing_writes_adds_auto() -> None:
+    # opencode's write grant is `--auto`; it has no `--dangerously-skip-permissions`.
     ro = build_command(_req("opencode"))
-    assert "--dangerously-skip-permissions" not in ro
+    assert "--auto" not in ro
     rw = build_command(_req("opencode", read_only=False))
-    assert "--dangerously-skip-permissions" in rw
+    assert "--auto" in rw
+    assert "--dangerously-skip-permissions" not in rw
 
 
 @pytest.mark.parametrize("client", list(SUPPORTED_CLIENTS))
@@ -186,7 +188,7 @@ def test_read_only_true_never_emits_a_write_bypass_flag(client: str) -> None:
     # The core invariant: no write/permission-bypass flag for ANY client when
     # read_only is True.
     argv = build_command(_req(client))
-    bypass = {"--dangerously-skip-permissions", "acceptEdits", "workspace-write"}
+    bypass = {"--dangerously-skip-permissions", "--auto", "acceptEdits", "workspace-write"}
     assert not (bypass & set(argv))
 
 

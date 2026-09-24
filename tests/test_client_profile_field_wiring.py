@@ -94,6 +94,8 @@ def _module_readers(tree: ast.AST, fields: frozenset[str]) -> set[str]:
     found: set[str] = set()
     dynamic_base = False
     dynamic_literals: set[str] = set()
+    write_targets_dispatch = False
+    iterates_precedence = False
     for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in fields and _base_is_profile_holder(node.value):
             found.add(node.attr)
@@ -114,10 +116,26 @@ def _module_readers(tree: ast.AST, fields: frozenset[str]) -> set[str]:
                     and isinstance(node.args[1].value, str)
                 ):
                     dynamic_literals.add(node.args[1].value)
+                elif "target" in ast.unparse(node.args[0]).lower():
+                    # PRD-QUAL-143-FR05: an unresolved flag name (a loop
+                    # variable, not a literal) dispatched off a write-targets
+                    # holder -- the only declared source of such flags is
+                    # ``WriteTargets.PRECEDENCE`` itself. Narrowly scoped to
+                    # "target" bases so a generic ``profile`` getattr
+                    # elsewhere isn't mistaken for reading every write-target
+                    # flag.
+                    write_targets_dispatch = True
+        elif isinstance(node, ast.Attribute) and node.attr == "PRECEDENCE":
+            iterates_precedence = True
         elif isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in fields:
             dynamic_literals.add(node.value)
     if dynamic_base:
         found |= dynamic_literals & fields
+    if write_targets_dispatch and iterates_precedence:
+        # Credit only a module that dispatches off a write-targets holder AND
+        # names ``PRECEDENCE``: an unrelated ``getattr(targets, name)`` must
+        # not satisfy the ratchet for every precedence flag.
+        found |= {flag for flag, _label in WriteTargets.PRECEDENCE} & fields
     return found
 
 
@@ -166,7 +184,6 @@ _UNREAD_WAIVERS: dict[str, str] = {
 #: Fields whose only readers are the doc-rendering package. The generated
 #: matrix column exists; the behavior it implies does not.
 _DOC_PROJECTION_WAIVERS: dict[str, str] = {
-    "learning_recall_enabled": "matrix 'Recall' column; no recall path branches on it",
     "mcp_instructions_enabled": "matrix 'MCP Instructions' column; no renderer branches on it",
     "cursor_rules": "_write_target_label only; the cursor writer is dispatched by client id",
     "copilot_instructions": "_write_target_label only; the copilot writer is dispatched by client id",
@@ -207,8 +224,12 @@ def test_opencode_doc_names_every_bundled_command_and_skill() -> None:
     skill the framework told its agents to use. This compares the doc's named
     set against the bundled directories in both directions.
     """
+    from trw_mcp.bootstrap._client_skills import skill_names
+
     on_disk_commands = {path.stem for path in (_OPENCODE_DATA / "commands").glob("*.md")}
-    on_disk_skills = {path.name for path in (_OPENCODE_DATA / "skills").iterdir() if (path / "SKILL.md").is_file()}
+    # opencode no longer forks the skill tree (PRD-CORE-291-FR04); its shipped
+    # membership is derived the same way the installer computes it.
+    on_disk_skills = set(skill_names("opencode"))
     assert on_disk_commands, "no bundled opencode commands found; data path moved?"
     assert on_disk_skills, "no bundled opencode skills found; data path moved?"
 
@@ -262,3 +283,8 @@ def test_declared_surface_flags_are_not_doc_projections_only() -> None:
         f"  newly doc-only (the matrix declares it; nothing enforces it): {sorted(doc_only - set(_DOC_PROJECTION_WAIVERS))}\n"
         f"  stale waiver (now has a behavioral reader): {sorted(set(_DOC_PROJECTION_WAIVERS) - doc_only)}"
     )
+
+
+def test_write_target_precedence_names_only_declared_flags() -> None:
+    # A typo'd flag in PRECEDENCE would ``getattr`` to False forever instead of failing.
+    assert {flag for flag, _label in WriteTargets.PRECEDENCE} <= set(WriteTargets.model_fields)

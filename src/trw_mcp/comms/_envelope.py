@@ -33,7 +33,12 @@ TERMINAL_MESSAGE_STATES = frozenset({MessageState.ACKED.value, MessageState.EXPI
 MILESTONE_FACTS = ("admitted", "fetch_prepared", MessageState.ACKED.value, MessageState.EXPIRED.value)
 KINDS = frozenset({"request", "reply", "status"})
 DELIVERY_CLASSES = frozenset({"on_demand", "interrupt", "on_idle"})
-MEMBER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+#: The member-id grammar, in ONE place (ledger RC-003). It was spelled out
+#: identically here, in _peers_page and inside _scope's shard-key regex, so a
+#: grammar change needed three synchronized edits. The SOURCE is exported
+#: because _scope embeds it in a larger pattern and cannot use the compiled one.
+MEMBER_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}"
+MEMBER_ID = re.compile(MEMBER_ID_PATTERN)
 
 
 class AdmissionError(ValueError):

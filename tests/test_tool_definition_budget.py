@@ -140,9 +140,9 @@ pytestmark = pytest.mark.unit
 # unusable without it. Authorised by the program lead (board seq 145).
 #
 # 2026-09-19: trw-jev slice 1 (PRD-CORE-288 decision-backend design)
-# adds ONE new opt-in tool, trw_decision (2 required params: questions, state;
+# adds ONE new opt-in tool, trw_assess (2 required params: questions, state;
 # a Context param does not enter the schema), gated off by default via
-# decision_enabled. Measured at 662 chars (374 prose + 288 signature floor for
+# assess_enabled. Measured at 662 chars (374 prose + 288 signature floor for
 # the two params) after trimming the docstring to the minimum "Use when"/
 # "Output:" pair the structural gate requires. Baseline on the shared working
 # tree (other sessions' uncommitted definitions, same caveat as 2026-09-18) was
@@ -160,11 +160,21 @@ pytestmark = pytest.mark.unit
 # Raised by 100 to 40,200 for exactly that enum growth; the definition's prose
 # is owned by the root compact-wrapper change and is not lengthened here.
 #
-# 2026-09-19 (merge of the two entries above): trw_decision plus the three
+# 2026-09-19 (merge of the two entries above): trw_assess plus the three
 # trw_peers enum values measure 40,832 across 52 tools together. Set to 40,900:
 # exactly the two measured growths, nothing else.
-FULL_SURFACE_CEILING_CHARS: Final[int] = 40_900
-CORE_PRESET_CEILING_CHARS: Final[int] = 15_200
+#
+# 2026-09-22 (6.0.0, lead): ratcheted DOWN. The J1 docstring trim freed 1,240 chars and the
+# two held lane-A branches landed on it; measured 39,688 across 52 tools. The unsigned +700
+# trw_assess bump above is withdrawn. Set to 39,800 (112 headroom). Lower it again as
+# PRD-CORE-291 removes surface; never raise it without a measured, reviewed reason.
+#
+# 2026-09-22 (PRD-CORE-291 slices 1-2): ratcheted DOWN again. trw_learn_update merged
+# into trw_learn; trw_recall, trw_build_check and trw_review moved their rarely-set
+# parameters into one `options` argument. Measured 36,843 across 51 tools (core preset
+# 13,274 across 12). Set to 36,900 / 13,300: the measurement plus under 60 chars.
+FULL_SURFACE_CEILING_CHARS: Final[int] = 36_900
+CORE_PRESET_CEILING_CHARS: Final[int] = 13_300
 
 # A tool definition has two independently-governed halves, and conflating them
 # produces an untunable test:
@@ -222,7 +232,10 @@ PER_TOOL_SIGNATURE_CEILING_CHARS: Final[int] = 1_000
 # regrowth without asserting a target the code does not meet. Closing the
 # 634-char gap is real remaining work, tracked in the PRD, not papered over by
 # a ceiling that would red-light the branch.
-AGGREGATE_SIGNATURE_CEILING_CHARS: Final[int] = 17_800
+#
+# 2026-09-22 (PRD-CORE-291): the options collapses took the measured floor to 16,956.
+# Ratcheted to 17,000.
+AGGREGATE_SIGNATURE_CEILING_CHARS: Final[int] = 17_000
 
 # Parameter PROSE far larger than the tool's own description means the tool
 # documents knobs nobody turns. Applied only to tools whose description is
@@ -461,6 +474,57 @@ async def test_definitions_omit_internal_implementation_vocabulary() -> None:
     assert not leaks, (
         "Tool descriptions leak internal vocabulary (result TypedDict names / "
         "PRD ids) that callers cannot act on: "
+        + "; ".join(f"{n}: {', '.join(v)}" for n, v in sorted(leaks.items()))
+        + f"\n\n{_BLOAT_GUIDANCE}"
+    )
+
+
+def test_skill_and_agent_bodies_omit_internal_implementation_vocabulary() -> None:
+    """PRD-CORE-291-FR07/FR08: the same vocabulary scan, extended to the bundled
+    skill and agent corpus.
+
+    ``test_definitions_omit_internal_implementation_vocabulary`` above only
+    scans ``await mcp._list_tools()`` -- it never looked at
+    ``trw-mcp/src/trw_mcp/data/skills`` or ``trw-mcp/src/trw_mcp/data/agents``,
+    where an audit measured 58 PRD-id and 22 hardcoded-date instances, plus 10
+    "you will be graded"-style grader-vocabulary phrases. Every one of those is
+    maintainer/ceremony vocabulary a rendered skill or agent body pays for on
+    every session without telling the reader anything actionable -- the same
+    class of leak the tool scan already forbids.
+
+    A hardcoded date or PRD id inside a Python *source comment* (not the
+    rendered .md body) is out of scope -- it costs no caller anything, since
+    skill/agent bodies are .md files with no comment syntax, this carve-out
+    does not exempt anything currently in the corpus.
+    """
+    import re
+
+    from tests._test_bundle_asset_support import _PKG_DATA
+
+    typed_dict = re.compile(r"\b\w+ResultDict\b")
+    prd_id = re.compile(r"\bPRD-[A-Z]+-\d+\b|\b(?:FR|NFR|OQ|UF)-?\d{2,}\b")
+    hardcoded_date = re.compile(r"\b20\d{2}-\d{2}-\d{2}\b")
+    grader_phrase = re.compile(r"\byou (?:will|will be|are) (?:be )?graded\b|\bgraded on\b", re.IGNORECASE)
+
+    leaks: dict[str, list[str]] = {}
+    for directory in (_PKG_DATA / "skills", _PKG_DATA / "agents"):
+        for path in sorted(directory.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            found = sorted(
+                {
+                    *typed_dict.findall(text),
+                    *prd_id.findall(text),
+                    *hardcoded_date.findall(text),
+                    *grader_phrase.findall(text),
+                }
+            )
+            if found:
+                leaks[str(path.relative_to(_PKG_DATA))] = found
+
+    assert not leaks, (
+        "Bundled skill/agent bodies leak internal vocabulary (result TypedDict "
+        "names, PRD/FR ids, hardcoded dates, or grader-style phrasing) that "
+        "readers cannot act on: "
         + "; ".join(f"{n}: {', '.join(v)}" for n, v in sorted(leaks.items()))
         + f"\n\n{_BLOAT_GUIDANCE}"
     )

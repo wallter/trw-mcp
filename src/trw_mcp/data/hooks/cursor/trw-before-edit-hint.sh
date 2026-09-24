@@ -59,20 +59,10 @@ _payload=$(cat 2>/dev/null) || _allow_and_exit
 _file_path=""
 _tool_name=""
 
-if command -v jq >/dev/null 2>&1; then
-    _tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
-    _file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // .tool_input.path // .tool_input.target_file // empty' 2>/dev/null) || true
-else
-    # grep/sed fallback — match the first file_path / path / target_file key.
-    _tool_name=$(printf '%s' "$_payload" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tool_name"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    _file_path=$(printf '%s' "$_payload" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"file_path"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    if [ -z "$_file_path" ]; then
-        _file_path=$(printf '%s' "$_payload" | grep -o '"path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"path"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    fi
-    if [ -z "$_file_path" ]; then
-        _file_path=$(printf '%s' "$_payload" | grep -o '"target_file"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"target_file"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-    fi
-fi
+# jq only (T29): the hint is advisory, so a jq-less host simply allows.
+command -v jq >/dev/null 2>&1 || _allow_and_exit
+_tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
+_file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // .tool_input.path // .tool_input.target_file // empty' 2>/dev/null) || true
 
 # --- Skip 1: shared opt-in gate (FR-6) => plain allow no-op ---
 if ! _get_cc03_enabled; then

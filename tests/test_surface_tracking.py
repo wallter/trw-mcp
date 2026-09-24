@@ -371,12 +371,22 @@ class TestSurfaceEventTypedDict:
 
 
 def test_before_edit_rows_hold_no_content_or_absolute_paths(
-    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """PRD-FIX-144 NFR04: ids and repo-relative paths only -- no content, no absolute paths."""
+    from tests._memory_store_fake import FakeMemoryStore
     from tests.conftest import extract_tool_fn, make_test_server
+    from trw_mcp.state import _store_selection
     from trw_mcp.tools._before_edit_hint_core import compute_before_edit_hint
 
+    # FakeMemoryStore.recall() only searches the "default" namespace (a known fixture
+    # quirk -- the `fake_memory_store` fixture pins writes to "project:test", which
+    # recall() never sees), so pin selected_store to "default" directly here instead
+    # of using that fixture, keeping this test's writes and reads aligned.
+    store = FakeMemoryStore()
+    monkeypatch.setattr(_store_selection, "selected_store", lambda _trw_dir: (store, "default"))
     monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
     monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")

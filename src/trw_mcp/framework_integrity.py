@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -216,10 +215,8 @@ def repair_framework_runtime(
     aaref_source: str,
     framework_version: str,
     aaref_version: str,
-    trw_mcp_version: str | None = None,
     registry_digest: str | None = None,
     failure_after_promotions: int | None = None,
-    additional_artifacts: Mapping[Path, bytes] | None = None,
 ) -> FrameworkIntegrityReport:
     """Explicitly regenerate managed bodies/stamp and update existing pins.
 
@@ -230,7 +227,7 @@ def repair_framework_runtime(
     stamp records ``registry_digest`` plus per-body digests so the deployed
     generation is byte-bound (PRD-INFRA-164 FR04).
 
-    Only the canon bodies and compiled projections are receipt-bound. The
+    Only the canon bodies are receipt-bound. The
     project config and the human ``VERSION.yaml`` stamp are deployed in the same
     atomic generation but stay unbound, because writers outside this deployer own
     their bytes: the standalone installer persists ``target_platforms`` into
@@ -245,8 +242,6 @@ def repair_framework_runtime(
         _FRAMEWORK_RUNTIME_PATH: framework_source.encode("utf-8"),
         _AAREF_RUNTIME_PATH: aaref_source.encode("utf-8"),
     }
-    if additional_artifacts:
-        artifacts.update(additional_artifacts)
     mutable_artifacts: dict[Path, bytes] = {}
 
     config_path = target / _CONFIG_PATH
@@ -262,13 +257,16 @@ def repair_framework_runtime(
 
     version_path = target / _VERSION_PATH
     version_text = version_path.read_text(encoding="utf-8") if version_path.is_file() else ""
+    # PRD-INFRA-192 FR12: strip any stale trw_mcp_version/trw_memory_version
+    # stamp so an older deployment's package-version lines never survive a repair —
+    # the manifest's ``packages`` map is now the one record of resolved versions.
+    for stale_field in ("trw_mcp_version", "trw_memory_version"):
+        version_text = re.sub(rf"^{stale_field}:.*\n?", "", version_text, flags=re.MULTILINE)
     for field, value in (
         ("framework_version", framework_version),
         ("aaref_version", aaref_version),
     ):
         version_text = _replace_or_append_scalar(version_text, field, value)
-    if trw_mcp_version is not None:
-        version_text = _replace_or_append_scalar(version_text, "trw_mcp_version", trw_mcp_version)
     if registry_digest is not None:
         version_text = _replace_or_append_scalar(version_text, "registry_digest", registry_digest)
         version_text = _replace_or_append_scalar(version_text, "framework_digest", _sha256(framework_source))

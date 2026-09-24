@@ -6,8 +6,8 @@ Provides client-profile detection and transport resolution when
 TRW_CLIENT_PROFILE=opencode is set.  Default tier is T2 per audit fix P1-11
 (NOT T3 which consumed ~2.5% per call).
 
-T3 is available as explicit opt-in via ``opencode.tool_return_enrichment_tier: T3``
-in ``.trw/config.yaml``.
+There is no T3 builder and no config field that selects one; an unbuilt tier
+reaching ``enrich_response`` is logged at WARNING and returned unenriched.
 
 Transport resolution uses TRW_CLIENT_PROFILE + TRW_MCP_TRANSPORT env vars
 (P0-13 audit fix — ctx.session_id is NOT used for client discrimination).

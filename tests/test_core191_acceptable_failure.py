@@ -70,15 +70,23 @@ class TestSchemaSurfaces:
         assert "`review_verdict` carries an explicit `acceptable-failure` label" not in lifecycle
 
     def test_delivery_skills_expose_three_gate_paths(self) -> None:
+        from trw_mcp.bootstrap._client_skills import render_skill_md
+
         data = Path(__file__).parents[1] / "src" / "trw_mcp" / "data"
-        for relative in (
-            "skills/trw-deliver/SKILL.md",
-            "codex/skills/trw-deliver/SKILL.md",
-            "copilot/skills/trw-deliver/SKILL.md",
-            "copilot/plugin/skills/trw-deliver/SKILL.md",
-            "opencode/skills/trw-deliver/SKILL.md",
-        ):
-            content = (data / relative).read_text(encoding="utf-8")
+        canonical = (data / "skills" / "trw-deliver" / "SKILL.md").read_text(encoding="utf-8")
+        # codex/copilot/opencode no longer ship SKILL.md forks
+        # (PRD-CORE-291-FR04); render from the one canonical body.
+        variants = {
+            "skills/trw-deliver/SKILL.md": canonical,
+            "codex/skills/trw-deliver/SKILL.md": render_skill_md(canonical, "codex"),
+            "copilot/skills/trw-deliver/SKILL.md": render_skill_md(canonical, "copilot"),
+            "opencode/skills/trw-deliver/SKILL.md": render_skill_md(canonical, "opencode"),
+            # A separate hand-maintained plugin package -- read as-is.
+            "copilot/plugin/skills/trw-deliver/SKILL.md": (
+                data / "copilot/plugin/skills/trw-deliver/SKILL.md"
+            ).read_text(encoding="utf-8"),
+        }
+        for relative, content in variants.items():
             assert "Deliver gate — no fourth path" in content, relative
             assert "passing `trw_build_check`" in content, relative
             assert "allow_unverified=true" in content, relative

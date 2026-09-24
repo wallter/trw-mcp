@@ -17,6 +17,7 @@ from trw_mcp.comms._endpoints import touch
 from trw_mcp.comms._envelope import AdmissionError, DeliveryClass, Envelope, MessageKind
 from trw_mcp.comms._identity import IdentityError, resolve_authority_snapshot
 from trw_mcp.comms._notify import notify
+from trw_mcp.comms._pause_state import send_refusal
 from trw_mcp.comms._scope import parse as parse_scope
 from trw_mcp.comms._store import StoreError
 
@@ -55,6 +56,10 @@ def send_once(
         facade._CALL_BINDING.set(snapshot.binding)
         if not snapshot.all_terminal:
             snapshot.assert_eligible()
+            # Enforced pause (lead 957a6567): checked before the transaction, so never counted.
+            paused = send_refusal(snapshot, recipient_member_id, kind)
+            if paused is not None:
+                return facade._refused(paused)
         result: dict[str, Any] = {}
         with (
             facade._operation(snapshot, config) as (conn, now, _closed),

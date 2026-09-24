@@ -58,8 +58,8 @@ APPLICATION_LOG_MARKER = "/logs/"
 #: evidence, which is exactly the claim FR05 exists to stop people making silently.
 NON_DELIVERY_CALLERS: frozenset[str] = frozenset(
     {
-        # The log_tool_call decorator's own per-invocation audit. It wraps EVERY
-        # tool, so it is harness machinery around the deliver, not a deliver effect.
+        # The tool-call wrapper's own per-invocation run-log row (telemetry/_tool_call_local.py).
+        # It wraps EVERY tool, so it is harness machinery around the deliver, not a deliver effect.
         "_write_tool_event",
         # Recall access bookkeeping the nudge engine commits while resolving pool
         # content. It is a read path shared by every tool; the mutation belongs to

@@ -22,6 +22,11 @@ from ._file_ops import (
 logger = structlog.get_logger(__name__)
 
 
+#: Keys TRW owns on ``mcpServers.trw`` and overwrites on every run; ``url`` so a leftover
+#: HTTP entry cannot sit beside stdio ``command``. Everything else stays with the user.
+_TRW_MANAGED_SERVER_KEYS: frozenset[str] = frozenset({"command", "args", "url"})
+
+
 def _resolve_trw_mcp_command() -> tuple[str, list[str]]:
     """Resolve the ``trw-mcp`` command and args for the antigravity entry.
 
@@ -240,6 +245,12 @@ def generate_antigravity_mcp_config(
     # No "trust" key: agy's own schema (vendor doc + `agy mcp add` output) is
     # command/args/env/disabled only — a key it does not read is dead weight.
     trw_entry: dict[str, object] = {"command": cmd, "args": args}
+    # TRW owns command/args (and a leftover url); the user's env, cwd and disabled flag
+    # survive, as they do for codex and grok. This file is machine-global, so dropping a
+    # user's env here broke every project on the machine.
+    previous = mcp_servers.get("trw")
+    if isinstance(previous, dict):
+        trw_entry = {**{k: v for k, v in previous.items() if k not in _TRW_MANAGED_SERVER_KEYS}, **trw_entry}
 
     # Idempotent write
     new_payload = dict(existing)

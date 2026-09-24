@@ -110,6 +110,11 @@ _pin_store_cache_ts: float = 0.0
 #: Source file mtime associated with the cached snapshot.
 _pin_store_cache_mtime_ns: int | None = None
 
+#: Store path the snapshot was read from. The cache is keyed on (path, mtime):
+#: two project roots whose pins.json share an mtime (overlayfs quantizes
+#: timestamps) must not serve each other's snapshot inside the TTL (T17).
+_pin_store_cache_path: Path | None = None
+
 
 # --- Path helpers ------------------------------------------------------------
 
@@ -143,10 +148,11 @@ def invalidate_pin_store_cache() -> None:
     tests and cross-module callers (e.g. boot-sweep code in Wave 4) can
     flush the cache explicitly when they know the disk state has changed.
     """
-    global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_ts
+    global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_path, _pin_store_cache_ts
     _pin_store_cache = None
     _pin_store_cache_ts = 0.0
     _pin_store_cache_mtime_ns = None
+    _pin_store_cache_path = None
 
 
 # --- Filesystem helpers ------------------------------------------------------
@@ -227,6 +233,15 @@ def _apply_eviction_passes(
     return survivors
 
 
+def _prime_cache(snapshot: dict[str, dict[str, Any]], pins_path: Path, mtime_ns: int | None) -> None:
+    """Record *snapshot* as the cached read of *pins_path* at *mtime_ns*."""
+    global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_path, _pin_store_cache_ts
+    _pin_store_cache = snapshot
+    _pin_store_cache_ts = time.monotonic()
+    _pin_store_cache_mtime_ns = mtime_ns
+    _pin_store_cache_path = pins_path
+
+
 def load_pin_store() -> dict[str, dict[str, Any]]:
     """Return the current pin store, honoring the 1-second read cache.
 
@@ -234,10 +249,12 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
     at WARN level and returns ``{}``.  Each load applies the malformed,
     stale-path and TTL-expiry evictions before caching.
     """
-    global _pin_store_cache, _pin_store_cache_mtime_ns, _pin_store_cache_ts
-
     pins_path = pin_store_path()
-    if _pin_store_cache is not None and (time.monotonic() - _pin_store_cache_ts < PIN_STORE_CACHE_TTL_SECONDS):
+    if (
+        _pin_store_cache is not None
+        and pins_path == _pin_store_cache_path
+        and time.monotonic() - _pin_store_cache_ts < PIN_STORE_CACHE_TTL_SECONDS
+    ):
         try:
             current_mtime_ns = pins_path.stat().st_mtime_ns if pins_path.exists() else None
         except OSError:
@@ -246,9 +263,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
             return dict(_pin_store_cache)
 
     if not pins_path.exists():
-        _pin_store_cache = {}
-        _pin_store_cache_ts = time.monotonic()
-        _pin_store_cache_mtime_ns = None
+        _prime_cache({}, pins_path, None)
         return {}
 
     try:
@@ -266,9 +281,7 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
             error=type(exc).__name__,
             detail=str(exc),
         )
-        _pin_store_cache = {}
-        _pin_store_cache_ts = time.monotonic()
-        _pin_store_cache_mtime_ns = _safe_mtime_ns(pins_path)
+        _prime_cache({}, pins_path, _safe_mtime_ns(pins_path))
         return {}
 
     if not isinstance(raw, dict):
@@ -278,18 +291,14 @@ def load_pin_store() -> dict[str, dict[str, Any]]:
             error="root_not_dict",
             root_type=type(raw).__name__,
         )
-        _pin_store_cache = {}
-        _pin_store_cache_ts = time.monotonic()
-        _pin_store_cache_mtime_ns = _safe_mtime_ns(pins_path)
+        _prime_cache({}, pins_path, _safe_mtime_ns(pins_path))
         return {}
 
     # The json module can only produce str keys for root dicts, but cast
     # to satisfy mypy --strict (raw is typed as object via json.load).
     typed = cast("dict[str, dict[str, Any]]", raw)
     survivors = _apply_eviction_passes(typed)
-    _pin_store_cache = survivors
-    _pin_store_cache_ts = time.monotonic()
-    _pin_store_cache_mtime_ns = _safe_mtime_ns(pins_path)
+    _prime_cache(survivors, pins_path, _safe_mtime_ns(pins_path))
     return dict(survivors)
 
 
@@ -428,10 +437,7 @@ def _pin_store_file_lock() -> Iterator[None]:
 def _write_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
     """Write while both the process and file locks are already held."""
     _atomic_write_json(pin_store_path(), store)
-    global _pin_store_cache, _pin_store_cache_ts, _pin_store_cache_mtime_ns
-    _pin_store_cache = None
-    _pin_store_cache_ts = 0.0
-    _pin_store_cache_mtime_ns = None
+    invalidate_pin_store_cache()
 
 
 def _save_pin_store_locked(store: dict[str, dict[str, Any]]) -> None:
@@ -454,10 +460,7 @@ def _load_pin_store_uncached() -> dict[str, dict[str, Any]]:
     want the authoritative current state, not a possibly-stale cached
     snapshot from another thread's pre-invalidation moment.
     """
-    global _pin_store_cache, _pin_store_cache_ts, _pin_store_cache_mtime_ns
-    _pin_store_cache = None
-    _pin_store_cache_ts = 0.0
-    _pin_store_cache_mtime_ns = None
+    invalidate_pin_store_cache()
     return load_pin_store()
 
 

@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state import learn_journal
 from trw_mcp.tools._ceremony_helpers import run_auto_maintenance
@@ -60,7 +61,9 @@ def _boom(*_a: object, **_k: object) -> object:
 class TestDurability:
     """The non-negotiable invariant: an accepted learning is never silently lost."""
 
-    def test_interrupted_dedup_is_recovered_by_session_start_drain(self, tmp_path: Path) -> None:
+    def test_interrupted_dedup_is_recovered_by_session_start_drain(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """A learning whose call dies mid-dedup still lands, via the real drain.
 
         Phase 1 injects a dedup that raises (the process is killed before the
@@ -85,7 +88,9 @@ class TestDurability:
         assert learn_journal.pending_count(trw_dir) == 0
         assert _active_with_summary(trw_dir, _S) == 1
 
-    def test_byte_identical_relearn_collapses_and_consumes_journal(self, tmp_path: Path) -> None:
+    def test_byte_identical_relearn_collapses_and_consumes_journal(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """Exact-content dedup still collapses byte-identical re-learns.
 
         The journal must not resurrect the "one summary 92x" pathology: a second
@@ -105,7 +110,7 @@ class TestDurability:
 
         assert _active_with_summary(trw_dir, _S) == 1  # exactly one row
 
-    def test_replay_after_store_does_not_duplicate(self, tmp_path: Path) -> None:
+    def test_replay_after_store_does_not_duplicate(self, tmp_path: Path, fake_memory_store: FakeMemoryStore) -> None:
         """A record whose store completed but consume did not replays exactly once.
 
         Simulates a kill in the tiny window AFTER the DB write but BEFORE the
@@ -129,7 +134,9 @@ class TestDurability:
         assert learn_journal.pending_count(trw_dir) == 0
         assert _active_with_summary(trw_dir, _S) == 1
 
-    def test_store_error_retains_journal_then_recovers(self, tmp_path: Path) -> None:
+    def test_store_error_retains_journal_then_recovers(
+        self, tmp_path: Path, fake_memory_store: FakeMemoryStore
+    ) -> None:
         """A store ERROR retains the pending record; the next real drain recovers it.
 
         Phase 1 injects a store that returns ``status="error"`` (mirrors a
@@ -258,7 +265,9 @@ class TestJournalModule:
 class TestCliDrainRemainsUnbounded:
     """An operator-invoked drain is not a hot path and keeps its old semantics."""
 
-    def test_cli_drain_remains_unbounded(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cli_drain_remains_unbounded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_memory_store: FakeMemoryStore
+    ) -> None:
         import argparse
 
         from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS

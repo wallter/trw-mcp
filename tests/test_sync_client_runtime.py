@@ -13,22 +13,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastmcp import FastMCP
-from trw_memory.models.memory import MemoryEntry
-from trw_memory.storage.sqlite_backend import SQLiteBackend
-from trw_memory.sync.delta import DeltaTracker
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from tests._test_sync_client_support import _acquired_lock, _make_config
 from trw_mcp.sync.push import PushResult
 
 
-def test_get_dirty_entries_does_not_skip_low_seq_unsynced_updates(tmp_path) -> None:
+def test_get_dirty_entries_does_not_skip_low_seq_unsynced_updates(fake_memory_store: FakeMemoryStore, tmp_path) -> None:
     """Dirty discovery relies on unsynced state, not a global push watermark."""
     from trw_mcp.sync.client import BackendSyncClient
 
-    backend = SQLiteBackend(tmp_path / "memory.db")
-    backend.store(MemoryEntry(id="L-low", content="initial"))
-    DeltaTracker.mark_synced(["L-low"], backend, namespace="default")
-    backend.update("L-low", content="updated", namespace="default")
+    fake_memory_store.put("initial", FAKE_NAMESPACE, {"entry_id": "L-low"})
+    fake_memory_store.mark_synced(FAKE_NAMESPACE, [fake_memory_store.rows[(FAKE_NAMESPACE, "L-low")]])
+    # Re-write the same row: sync_seq bumps past what mark_synced last recorded.
+    fake_memory_store.put("updated", FAKE_NAMESPACE, {"entry_id": "L-low"})
 
     with patch("trw_mcp.sync.client.resolve_sync_client_id", return_value="sync-client-1"):
         client = BackendSyncClient(_make_config(), tmp_path)
@@ -36,11 +35,9 @@ def test_get_dirty_entries_does_not_skip_low_seq_unsynced_updates(tmp_path) -> N
     client._coordinator = MagicMock()
     client._coordinator.get_last_push_seq.return_value = 99
 
-    with patch("trw_mcp.state._memory_connection.get_backend", return_value=backend):
-        dirty = client._get_dirty_entries()
+    dirty = client._get_dirty_entries()
 
     assert [entry.id for entry in dirty] == ["L-low"]
-    backend.close()
 
 
 @pytest.mark.asyncio

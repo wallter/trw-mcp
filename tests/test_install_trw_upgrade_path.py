@@ -44,17 +44,20 @@ _CURRENT_STATUS: dict[str, object] = {
         "packages": {"trw-mcp": "2.0.1"},
         "framework_protocol_version": "v99.9_TRW",
         "installed_asset_version": "v99.9_TRW",
-        "installed_asset_trw_mcp_version": "2.0.1",
         "installed_asset_present": True,
+        # PRD-INFRA-192 FR12: package drift is reported via the
+        # installed-vs-manifest comparison, not a VERSION.yaml stamp.
+        "installed_packages": {"trw-mcp": "2.0.1", "trw-memory": "0.8.3"},
+        "manifest_packages": {"trw-mcp": "2.0.1", "trw-memory": "0.8.3"},
     },
     "mismatches": [],
 }
 
 
-def _status(**version_overrides: object) -> dict[str, object]:
+def _status(mismatches: list[str] | None = None, **version_overrides: object) -> dict[str, object]:
     versions = dict(_CURRENT_STATUS["versions"])  # type: ignore[arg-type]
     versions.update(version_overrides)
-    return {"versions": versions, "mismatches": []}
+    return {"versions": versions, "mismatches": mismatches or []}
 
 
 @pytest.fixture(scope="module")
@@ -87,7 +90,7 @@ def _drive_upgrade(
 
     monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
     monkeypatch.setattr(installer, "_version_status_payload", lambda *_a, **_k: status)
-    monkeypatch.setattr(installer, "run_with_progress", lambda _ui, _label, cmd: run_calls.append(cmd) or True)
+    monkeypatch.setattr(installer, "run_with_progress", lambda _ui, _label, cmd, **_k: run_calls.append(cmd) or True)
 
     installer.phase_project_setup(ui, 3, 4, sys.executable, target, True)
     return run_calls, ui
@@ -111,7 +114,7 @@ class TestDeployedFrameworkStaleness:
         monkeypatch.setattr(
             installer,
             "_version_status_payload",
-            lambda *_a, **_k: _status(installed_asset_trw_mcp_version="1.0.5"),
+            lambda *_a, **_k: _status(mismatches=["trw_mcp_installed_vs_manifest"]),
         )
 
         assert installer._deployed_framework_is_stale(tmp_path, sys.executable) is True
@@ -183,7 +186,7 @@ class TestUpgradeRunsUpdateProject:
         target = _prior_install(tmp_path, ["claude-code", "codex"])
 
         run_calls, _ui = _drive_upgrade(
-            installer, monkeypatch, target, _status(installed_asset_trw_mcp_version="1.0.5")
+            installer, monkeypatch, target, _status(mismatches=["trw_mcp_installed_vs_manifest"])
         )
 
         assert run_calls == [
@@ -245,7 +248,9 @@ class TestUpgradeRunsUpdateProject:
         """
         target = _prior_install(tmp_path, [])
 
-        run_calls, ui = _drive_upgrade(installer, monkeypatch, target, _status(installed_asset_trw_mcp_version="1.0.5"))
+        run_calls, ui = _drive_upgrade(
+            installer, monkeypatch, target, _status(mismatches=["trw_mcp_installed_vs_manifest"])
+        )
 
         assert run_calls == [], "no client recorded ⇒ nothing is scaffolded"
         warnings = [str(call.args[0]) for call in ui.step_warn.call_args_list]
@@ -283,7 +288,6 @@ class TestTargetPlatformsUnion:
 
         monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
         monkeypatch.setattr(installer, "run_with_progress", lambda *_a, **_k: True)
-        monkeypatch.setattr(installer, "_provision_user_scope", lambda _c: False)
         monkeypatch.setattr(installer, "_detect_installed_clis", list)
         monkeypatch.setattr(installer, "_detect_project_ides", lambda _p: [])
 
@@ -303,7 +307,6 @@ class TestTargetPlatformsUnion:
 
         monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: ["trw-mcp"])
         monkeypatch.setattr(installer, "run_with_progress", lambda *_a, **_k: True)
-        monkeypatch.setattr(installer, "_provision_user_scope", lambda _c: False)
         monkeypatch.setattr(installer, "_detect_installed_clis", list)
         monkeypatch.setattr(installer, "_detect_project_ides", lambda _p: [])
 
@@ -369,8 +372,8 @@ class TestAgainstTheRealVersionStatusCli:
     """Everything above stubs ``version-status``. This test does not.
 
     The hand-written ``_CURRENT_STATUS`` fixture asserts a payload shape — that
-    a current project reports ``mismatches: []`` and stamps
-    ``installed_asset_trw_mcp_version``. If the real CLI ever emitted something
+    a current project reports ``mismatches: []`` and its ``manifest_packages``
+    matches ``installed_packages``. If the real CLI ever emitted something
     else (an always-present ``live_process_currentness_*`` entry, say), every
     stubbed test above would keep passing while the installer decided the
     opposite thing in production. This drives the real binary against a real
@@ -381,8 +384,14 @@ class TestAgainstTheRealVersionStatusCli:
         project = tmp_path / "user-project"
         frameworks = project / ".trw" / "frameworks"
         frameworks.mkdir(parents=True, exist_ok=True)
-        (frameworks / "VERSION.yaml").write_text(
-            f"framework_version: {framework}\ntrw_mcp_version: {mcp_version}\n", encoding="utf-8"
+        (frameworks / "VERSION.yaml").write_text(f"framework_version: {framework}\n", encoding="utf-8")
+        # PRD-INFRA-192 FR12: package drift is recorded in the manifest's
+        # ``packages`` map, not a VERSION.yaml stamp.
+        import importlib.metadata
+
+        memory = importlib.metadata.version("trw-memory")
+        (project / ".trw" / "managed-artifacts.yaml").write_text(
+            f"packages:\n  trw-mcp: {mcp_version!r}\n  trw-memory: {memory!r}\n", encoding="utf-8"
         )
         return project
 
@@ -420,3 +429,36 @@ class TestAgainstTheRealVersionStatusCli:
         bare.mkdir()
 
         assert installer._deployed_framework_is_stale(bare, sys.executable) is True
+
+
+class TestARefusedUpdateStopsTheInstaller:
+    """Codex review of 14ae6dd34: after update-project refused, the installer went on
+    to rewrite config.yaml and VERSION.yaml. Drives the real CLI (this checkout's
+    source) against an installed project whose manifest is corrupt."""
+
+    def test_no_project_byte_changes_and_the_remedy_is_shown(
+        self, installer: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import trw_mcp
+        from trw_mcp.bootstrap import init_project
+
+        project = tmp_path / "project"
+        (project / ".git").mkdir(parents=True)
+        assert not init_project(project, ide="claude-code")["errors"]
+        (project / ".trw" / "managed-artifacts.yaml").write_text("content_hashes: [\n", encoding="utf-8")
+        before = {p: p.read_bytes() for p in project.rglob("*") if p.is_file()}
+
+        monkeypatch.setenv("PYTHONPATH", str(Path(trw_mcp.__file__).parents[1]))
+        monkeypatch.setattr(installer, "find_trw_cmd", lambda *_a, **_k: [sys.executable, "-m", "trw_mcp.server"])
+        ui = MagicMock()
+        ui.interactive = True
+
+        with pytest.raises(SystemExit) as exc:
+            installer.phase_project_setup(ui, 3, 4, sys.executable, project, False, ide=["claude-code"])
+
+        assert exc.value.code == 1
+        shown = " ".join(str(call.args[0]) for call in ui.error.call_args_list)
+        assert "refusing to update" in shown
+        assert "trw-mcp uninstall --keep-memory" in shown
+        after = {p: p.read_bytes() for p in project.rglob("*") if p.is_file()}
+        assert after == before

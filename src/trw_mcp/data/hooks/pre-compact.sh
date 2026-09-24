@@ -1,6 +1,7 @@
 #!/bin/sh
 # PRD-INFRA-002-FR05: PreCompact hook — state snapshot.
-# Saves active run state to .trw/context/pre_compact_state.json
+# Saves this session's run state to its pre-compaction marker
+# (pre_compact_state_file in lib-trw.sh)
 # before context compaction so it can be recovered afterwards.
 # Fail-open: any error silently exits 0.
 set -e
@@ -22,10 +23,12 @@ _injected_file="$_context_dir/injected_learning_ids.txt"
 
 # Determine trigger type from stdin
 _payload=$(cat) || exit 0
-_trigger="unknown"
-if command -v jq >/dev/null 2>&1; then
-  _trigger=$(printf '%s' "$_payload" | jq -r '.source // "unknown"' 2>/dev/null) || true
-fi
+# PreCompact names it "trigger" (manual|auto); "source" is kept for clients that
+# send that key. jq-only (PRD-FIX-149 FR06): without jq both reads below return
+# empty and _trigger falls through to "unknown" -- never a guessed value.
+_trigger=$(_json_str_field "$_payload" trigger) || _trigger=""
+[ -n "$_trigger" ] || _trigger=$(_json_str_field "$_payload" source) || _trigger=""
+[ -n "$_trigger" ] || _trigger="unknown"
 
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 
@@ -42,13 +45,7 @@ _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 # middleware/ceremony.py keys on existence), and both readers already degrade
 # correctly on an empty run_path ("No active run found in pre-compaction
 # snapshot"). Skipping the write would disarm recovery entirely.
-_session_id=""
-if command -v jq >/dev/null 2>&1; then
-  _session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
-fi
-if [ -z "$_session_id" ]; then
-  _session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-fi
+_session_id=$(_json_str_field "$_payload" session_id) || _session_id=""
 _session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""
 
 _run_dir=""
@@ -56,11 +53,16 @@ _ownership="unowned"
 if [ -n "$_session_id" ]; then
   _run_dir=$(resolve_owned_run "$_session_id" 2>/dev/null) || _run_dir=""
   [ -n "$_run_dir" ] && _ownership="owned"
-else
-  # Identity unknown — legacy newest-wins, correct for a single-instance install.
-  _ownership="identity-unknown"
-  _run_dir=$(find_active_run) || _run_dir=""
 fi
+# PRD-FIX-149 review R4: when identity is unresolvable (no TRW_SESSION_ID and
+# either no jq or no session_id in the payload), this is NOT distinguishable
+# from "N instances live, none identified" -- the exact shape PRD-FIX-118
+# exists to refuse. The removed ``else`` branch used to call find_active_run()
+# here ("legacy newest-wins, correct for a single-instance install"), which
+# reintroduced that cross-instance resume bug: a genuinely unowned session got
+# handed WHICHEVER run was newest, and this snapshot is what post-compact.sh
+# and session-start.sh replay back as "RECOVERED RUN". _run_dir/_ownership
+# above already default to empty/"unowned" for exactly this case.
 
 _run_path=""
 _phase=""
@@ -112,8 +114,9 @@ if [ -n "$_run_dir" ]; then
   fi
 fi
 
-# Write state snapshot
-_state_file="$_context_dir/pre_compact_state.json"
+# Write state snapshot -- to THIS session's marker, never a shared one.
+_state_file=$(pre_compact_state_file "$_project_root" 2>/dev/null) || exit 0
+mkdir -p "${_state_file%/*}" 2>/dev/null || exit 0
 if command -v jq >/dev/null 2>&1; then
   jq -n \
     --arg ts "$_ts" \
@@ -135,6 +138,10 @@ else
     > "$_state_file" 2>/dev/null
 fi
 
-log_hook_execution "PreCompact" "$_trigger" "0"
+# PRD-FIX-149 FR06: one explicit diagnostic when jq was unavailable to read the
+# trigger/session_id fields above -- never a silently degraded event.
+_le_detail=""
+command -v jq >/dev/null 2>&1 || _le_detail="jq_unavailable=1"
+log_hook_execution "PreCompact" "$_trigger" "0" "$_le_detail"
 
 exit 0

@@ -3,8 +3,8 @@
 The reproduced incident: a fresh ``curl … | bash`` into a directory that is not
 (yet) a git repo wrote ``.trw/config.yaml`` + ``.mcp.json`` but SKIPPED the
 framework-body deploy (init-project step 9), leaving
-``.trw/frameworks/{FRAMEWORK-CORE.md, AARE-F-CORE.md, AARE-F-REFERENCE.md,
-VERSION.yaml, DEPLOYMENT.json}`` missing while every pre-release check passed
+``.trw/frameworks/{FRAMEWORK.md, AARE-F-FRAMEWORK.md, VERSION.yaml,
+DEPLOYMENT.json}`` missing while every pre-release check passed
 green.
 
 These tests lock the post-FR06 behavior at the ``init_project`` seam (the only
@@ -31,11 +31,10 @@ from trw_mcp.bootstrap import init_project
 from trw_mcp.models.config import get_config
 from trw_mcp.server._doctor_framework_integrity import check_framework_integrity
 
-# The five framework bodies whose absence was the reproduced silent half-install.
+# The four framework bodies whose absence was the reproduced silent half-install.
 _FRAMEWORK_BODIES = (
-    "FRAMEWORK-CORE.md",
-    "AARE-F-CORE.md",
-    "AARE-F-REFERENCE.md",
+    "FRAMEWORK.md",
+    "AARE-F-FRAMEWORK.md",
     "VERSION.yaml",
     "DEPLOYMENT.json",
 )
@@ -109,9 +108,9 @@ def test_non_git_deploy_is_idempotent(tmp_path: Path) -> None:
     target = tmp_path / "scratch"
     target.mkdir()
 
-    # VERSION.yaml + DEPLOYMENT.json carry a fresh timestamp each run; the three
-    # compiled markdown bodies are the content and must be byte-stable.
-    stable_bodies = ("FRAMEWORK-CORE.md", "AARE-F-CORE.md", "AARE-F-REFERENCE.md")
+    # VERSION.yaml + DEPLOYMENT.json carry a fresh timestamp each run; the two
+    # canon bodies are the content and must be byte-stable.
+    stable_bodies = ("FRAMEWORK.md", "AARE-F-FRAMEWORK.md")
 
     init_project(target)
     first = {body: (target / ".trw" / "frameworks" / body).read_bytes() for body in stable_bodies}

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.meta_tune.boot_checks import (
     audit_defaults,
     resolve_kill_switch_path,
@@ -193,7 +194,6 @@ def test_resolve_kill_switch_path_raises_without_anchor(tmp_path: Path, monkeypa
         )
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_validate_defaults_is_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """NFR-10: ≤2s wall-clock."""
@@ -218,4 +218,4 @@ def test_validate_defaults_is_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     start = time.monotonic()
     validate_defaults(cfg, repo_root=repo_root)
     elapsed = time.monotonic() - start
-    assert elapsed < 2.0
+    assert_budget("validate_defaults", elapsed, 2.0, "s")

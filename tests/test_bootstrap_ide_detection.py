@@ -129,29 +129,3 @@ class TestIDEDetection:
         monkeypatch.setattr("trw_mcp.bootstrap._utils.shutil.which", lambda _cmd: None)
         result = detect_installed_clis()
         assert result == []
-
-
-class TestEnforcementVariant:
-    """FR09: A/B test infrastructure for ceremony enforcement variants."""
-
-    def test_fr09_default_baseline(self) -> None:
-        """Default enforcement_variant is 'baseline'."""
-        from trw_mcp.models.config import TRWConfig
-
-        config = TRWConfig()
-        assert config.enforcement_variant == "baseline"
-
-    def test_fr09_variant_configurable(self) -> None:
-        """enforcement_variant accepts valid values."""
-        from trw_mcp.models.config import TRWConfig
-
-        config = TRWConfig(enforcement_variant="nudge")
-        assert config.enforcement_variant == "nudge"
-
-    def test_fr09_all_valid_variants(self) -> None:
-        """enforcement_variant accepts all documented variant values."""
-        from trw_mcp.models.config import TRWConfig
-
-        for variant in ("baseline", "nudge", "nudge-only", "mcp-only", "none"):
-            config = TRWConfig(enforcement_variant=variant)
-            assert config.enforcement_variant == variant

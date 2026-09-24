@@ -128,3 +128,41 @@ def test_the_refusal_registry_is_the_one_source_for_buckets_and_identity() -> No
     assert _refusals.persisted_bucket("sender_rate_limit") == "sender_rate_limit"
     assert _refusals.IDENTITY_REASONS == {"no_formation", "no_matching_member", "worktree_record_unbound"}
     assert _refusals.detail("never-heard-of-it") == _refusals.GENERIC_DETAIL
+
+
+def test_the_guidance_memory_is_bounded_and_evicts_oldest_first(config: Any) -> None:
+    """Ledger N10: an unbounded cache keyed by caller-supplied identity is a leak.
+
+    Eviction costs the evicted caller one repeated guidance block and nothing
+    else, which is why oldest-first is safe for a dedup hint.
+    """
+    from trw_mcp.comms import _guidance
+
+    _guidance._reset_for_test()
+    for index in range(_guidance._LAST_MAX_KEYS + 10):
+        _guidance.finish({"status": "ok"}, key=f"pin-{index}", action="list", config=config, observed="enrolled")
+    assert len(_guidance._LAST) == _guidance._LAST_MAX_KEYS
+    assert "pin-0" not in _guidance._LAST, "the oldest key is evicted first"
+    assert f"pin-{_guidance._LAST_MAX_KEYS + 9}" in _guidance._LAST
+
+    # The evicted caller is taught again; the retained one is not.
+    revisit = _guidance.finish({"status": "ok"}, key="pin-0", action="list", config=config, observed="enrolled")
+    assert "guidance" in revisit
+    retained = _guidance.finish(
+        {"status": "ok"}, key=f"pin-{_guidance._LAST_MAX_KEYS + 9}", action="list", config=config, observed="enrolled"
+    )
+    assert "guidance" not in retained and "state" not in retained
+
+
+def test_a_busy_key_is_not_evicted_by_newer_quiet_ones(config: Any) -> None:
+    """move_to_end on write: recency, not insertion order, decides who survives."""
+    from trw_mcp.comms import _guidance
+
+    _guidance._reset_for_test()
+    _guidance.finish({"status": "ok"}, key="busy", action="list", config=config, observed="enrolled")
+    for index in range(_guidance._LAST_MAX_KEYS):
+        # The busy caller changes state each round, so it keeps writing.
+        state = "joined" if index % 2 else "enrolled"
+        _guidance.finish({"status": "ok"}, key="busy", action="list", config=config, observed=state)
+        _guidance.finish({"status": "ok"}, key=f"quiet-{index}", action="list", config=config, observed="enrolled")
+    assert "busy" in _guidance._LAST

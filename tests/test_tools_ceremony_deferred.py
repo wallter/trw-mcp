@@ -144,8 +144,6 @@ class TestRunDeferredSteps:
             "_do_index_sync",
             "_step_auto_progress",
             "_step_publish_learnings",
-            "_step_outcome_correlation",
-            "_step_recall_outcome",
             "_step_telemetry",
             "_step_batch_send",
             "_step_trust_increment",
@@ -185,8 +183,6 @@ class TestLaunchDeferred:
             "_do_index_sync",
             "_step_auto_progress",
             "_step_publish_learnings",
-            "_step_outcome_correlation",
-            "_step_recall_outcome",
             "_step_telemetry",
             "_step_batch_send",
             "_step_trust_increment",
@@ -330,122 +326,24 @@ class TestDeferredAtexitJoin:
 
 
 class TestMemoryDecayStep:
-    """PRD-CORE-244 FR09 — importance decay has a production caller AND a
-    predicate that can match rows.
+    """PRD-CORE-244 FR09 — importance decay has a production caller.
 
-    Both halves are load-bearing. ``memory_decay_pass`` was hardened, locked,
-    batched and tested with ZERO production callers, while its sibling
-    ``apply_importance_boost`` WAS wired — so importance could rise and
-    structurally never fell. And its predicate required ``cross_validated = 1``,
-    re-measured at 0 of 9,366 rows, so wiring it alone would have produced a step
-    that reported success while decaying nothing.
+    PRD-CORE-280 slice e (batch 23b): the four tests that drove
+    ``_step_memory_decay`` against a directly-seeded ``get_backend`` were
+    DELETED. ``_step_memory_decay`` now calls ``selected_store(trw_dir)`` and
+    reads ``store.maintain(namespace)["passes"]["decay"]`` -- the decay pass
+    itself runs INSIDE the memory daemon's own process (``FakeMemoryStore``'s
+    ``maintain()`` deliberately returns a fixed no-op result: "the fake has no
+    importance to decay"), so neither a fake store nor this process can
+    exercise the real predicate/batch-size/cutoff-day logic; a
+    ``daemon_checkout`` round trip would only prove the daemon's own
+    ``memory_decay_pass`` works, which trw-memory's ``test_graph_decay.py``
+    already covers directly and more thoroughly (batch clamping, floor-at-zero,
+    the ``cross_validated`` predicate change, 50k-row memory bound). What
+    remains trw-mcp's own claim -- that a real deferred-delivery pass reaches
+    the step at all -- is ``test_decay_is_wired_into_the_deferred_roster``
+    below, which asserts on the production step table and needs no store.
     """
-
-    @staticmethod
-    def _store_aged(trw_dir: Path, entry_id: str, *, days_old: int, importance: float = 0.8) -> None:
-        from datetime import datetime, timedelta, timezone
-
-        from trw_memory.models.memory import MemoryEntry
-
-        from trw_mcp.state.memory_adapter import get_backend
-
-        aged = datetime.now(timezone.utc) - timedelta(days=days_old)
-        get_backend(trw_dir).store(
-            MemoryEntry(
-                id=entry_id,
-                content=f"content for {entry_id}",
-                created_at=aged,
-                updated_at=aged,
-                last_accessed_at=aged,
-                importance=importance,
-            )
-        )
-
-    @staticmethod
-    def _importance(trw_dir: Path, entry_id: str) -> float:
-        from trw_mcp.state.memory_adapter import get_backend
-
-        entry = get_backend(trw_dir).get(entry_id, namespace="default")
-        assert entry is not None
-        return float(entry.importance)
-
-    @pytest.fixture()
-    def trw_dir(self, tmp_path: Path) -> Path:
-        d = tmp_path / ".trw"
-        (d / "memory").mkdir(parents=True)
-        (d / "learnings" / "entries").mkdir(parents=True)
-        return d
-
-    def test_decay_step_runs_and_lowers_importance(self, trw_dir: Path) -> None:
-        """The step executes and the number of rows decayed is > 0."""
-        from trw_mcp.models.config import get_config
-        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
-
-        cfg = get_config()
-        self._store_aged(trw_dir, "L-aged", days_old=cfg.memory_decay_cutoff_days + 30)
-        before = self._importance(trw_dir, "L-aged")
-
-        result = _step_memory_decay(trw_dir)
-
-        assert result["status"] == "success"
-        assert int(result["processed"]) > 0
-        assert self._importance(trw_dir, "L-aged") < before
-
-    def test_a_recently_used_entry_is_not_decayed(self, trw_dir: Path) -> None:
-        """Decay is a function of DISUSE — the cutoff must actually discriminate."""
-        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
-
-        self._store_aged(trw_dir, "L-fresh", days_old=1)
-        before = self._importance(trw_dir, "L-fresh")
-
-        result = _step_memory_decay(trw_dir)
-
-        assert int(result["processed"]) == 0
-        assert self._importance(trw_dir, "L-fresh") == before
-
-    def test_predicate_no_longer_requires_cross_validated(self, trw_dir: Path) -> None:
-        """FR09 half two: an aged entry with cross_validated=0 IS decayed.
-
-        This is the test that fails against the pre-change predicate. Nothing in
-        the corpus sets cross_validated (0 of 9,366 rows), so the old
-        ``cross_validated = 1`` conjunct made the whole sweep a guaranteed no-op.
-        """
-        from trw_memory._graph_decay import _DECAY_PREDICATE
-
-        from trw_mcp.models.config import get_config
-        from trw_mcp.state.memory_adapter import get_backend
-        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
-
-        assert "cross_validated" not in _DECAY_PREDICATE
-
-        cfg = get_config()
-        self._store_aged(trw_dir, "L-uncross", days_old=cfg.memory_decay_cutoff_days + 30)
-        backend = get_backend(trw_dir)
-        row = backend._conn.execute("SELECT cross_validated FROM memories WHERE id = ?", ("L-uncross",)).fetchone()
-        assert row[0] in (0, None), "fixture must be an entry nothing cross-validated"
-
-        assert int(_step_memory_decay(trw_dir)["processed"]) == 1
-
-    def test_decay_step_respects_configured_batch_size(
-        self,
-        trw_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """The batch bound comes from typed config, not a literal parameter default."""
-        from trw_mcp.models.config import TRWConfig, get_config
-        from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
-
-        cfg = get_config()
-        for index in range(3):
-            self._store_aged(trw_dir, f"L-batch{index}", days_old=cfg.memory_decay_cutoff_days + 30)
-
-        bounded = TRWConfig(memory_decay_batch_size=2)
-        monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: bounded)
-
-        result = _step_memory_decay(trw_dir)
-
-        assert int(result["processed"]) == 2
-        assert int(result["remaining"]) == 1
 
     def test_decay_is_wired_into_the_deferred_roster(self) -> None:
         """FR09 half one: a real production call site, not a library function."""
@@ -457,3 +355,17 @@ class TestMemoryDecayStep:
         # decayed in the same pass.
         assert DEFERRED_STEPS.index("memory_decay") > DEFERRED_STEPS.index("tier_sweep")
         assert DEFERRED_STEP_EFFECT_IDS["memory_decay"] == "D25"
+
+
+def test_a_failed_maintenance_pass_is_an_error_even_when_decay_succeeds(
+    tmp_path: Path, fake_memory_store: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon's maintain runs several passes; any failed one surfaces, by name."""
+    from trw_mcp.tools._deferred_steps_memory import _step_memory_decay
+
+    passes = {"decay": {"status": "ok", "processed": 2, "remaining": 0}, "consolidation": {"status": "error"}}
+    monkeypatch.setattr(fake_memory_store, "maintain", lambda _namespace: {"status": "error", "passes": passes})
+
+    result = _step_memory_decay(tmp_path / ".trw")
+
+    assert (result["status"], result["reason"]) == ("error", "failed passes: consolidation")

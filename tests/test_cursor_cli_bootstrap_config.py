@@ -38,12 +38,14 @@ class TestCliConfigFresh:
         for token in _DEFAULT_DENY:
             assert token in config["permissions"]["deny"], f"Missing deny token: {token}"
 
-    def test_has_note_key(self, tmp_path: Path) -> None:
+    def test_emits_only_the_permissions_key(self, tmp_path: Path) -> None:
+        """cursor-agent validates cli.json against a closed schema; an extra top-level key
+        (the old ``_note`` documentation string) made it refuse to start. Regression for that."""
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config
 
         generate_cursor_cli_config(tmp_path)
         config = _read_cli_json(tmp_path)
-        assert "_note" in config
+        assert set(config) == {"permissions"}
 
     def test_tty_reminder_in_info(self, tmp_path: Path) -> None:
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_config

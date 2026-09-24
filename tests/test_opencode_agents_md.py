@@ -58,7 +58,7 @@ def test_public_sync_writes_opencode_agents_md_without_claude_literal(tmp_path) 
     content = owned.read_text(encoding="utf-8")
     assert "Claude Code" not in content
     hook_env = (tmp_path / ".trw" / "runtime" / "hook-env.sh").read_text(encoding="utf-8")
-    assert "HOOKS_ENABLED=false" in hook_env
+    assert "hooks_enabled: false" in (tmp_path / ".trw" / "config.yaml").read_text(encoding="utf-8")
     assert "NUDGE_ENABLED=false" in hook_env
 
 
@@ -69,7 +69,7 @@ def test_auto_detected_opencode_sync_writes_light_hook_policy(tmp_path) -> None:
     _run_sync(tmp_path, client="auto")
 
     hook_env = (tmp_path / ".trw" / "runtime" / "hook-env.sh").read_text(encoding="utf-8")
-    assert "HOOKS_ENABLED=false" in hook_env
+    assert "hooks_enabled: false" in (tmp_path / ".trw" / "config.yaml").read_text(encoding="utf-8")
     assert "NUDGE_ENABLED=false" in hook_env
     assert "TRW_CLIENT_DISPLAY_NAME=OpenCode" in hook_env
 

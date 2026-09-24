@@ -23,7 +23,9 @@ import json
 import os
 import subprocess
 import sys
+from itertools import product
 from pathlib import Path
+from typing import get_args
 
 import pytest
 import tomllib
@@ -36,20 +38,21 @@ def _stable_mcp_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("trw_mcp.dispatch._posture.uuid.uuid4", lambda: SimpleNamespace(hex="test"))
 
 
+from tests._dispatch_host import unconfined_off_darwin
 from trw_mcp.dispatch import _run_job
 from trw_mcp.dispatch._client_spec_types import ClientSpec, ClientVerification
-from trw_mcp.dispatch._client_specs import _SPEC_BY_ID, client_spec_for
+from trw_mcp.dispatch._client_specs import _SPEC_BY_ID, SUPPORTED_CLIENTS, client_spec_for
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._env import build_runner_env, build_subprocess_env
 from trw_mcp.dispatch._posture import (
     ReviewerPostureError,
     mcp_server_launcher,
     render_reviewer_argv,
-    reviewer_posture_enforced,
 )
 from trw_mcp.dispatch._resolve import DispatchResolutionError, resolve_dispatch_request
+from trw_mcp.dispatch._roles import ROLE_TABLE, apply_role
 from trw_mcp.dispatch._runner import dispatch
-from trw_mcp.dispatch._types import DispatchRequest
+from trw_mcp.dispatch._types import DispatchPosture, DispatchRequest
 from trw_mcp.models.surface_packs import REVIEWER_TOOLS, reviewer_tools_toml_array
 
 # Tokens that would give a reviewer the ability to write or to approve its own
@@ -348,10 +351,50 @@ def test_a_json_payload_is_not_mistaken_for_a_placeholder() -> None:
     assert spec.supports_reviewer_posture is True
 
 
-def test_supported_clients_agree_with_reviewer_posture_enforced() -> None:
-    for client_id, spec in _SPEC_BY_ID.items():
-        assert reviewer_posture_enforced(client_id, "reviewer") is spec.supports_reviewer_posture
-        assert reviewer_posture_enforced(client_id, "default") is False
+def _expected_outcome(client: str, posture: str) -> str:
+    """The outcome a (client, posture) pair must have, read from spec fields only."""
+    spec = client_spec_for(client)
+    if posture == "reviewer":
+        return "enforced" if spec.supports_reviewer_posture else "refused"
+    if posture == "isolated-review":
+        return "isolated" if spec.isolated_review is not None and spec.host_confinement else "refused"
+    return "default"
+
+
+@pytest.mark.parametrize(
+    ("client", "role", "posture"),
+    list(product(SUPPORTED_CLIENTS, ROLE_TABLE, get_args(DispatchPosture))),
+)
+def test_every_client_role_posture_triple(
+    monkeypatch: pytest.MonkeyPatch, sentinel: tuple[Path, Path], client: str, role: str, posture: str
+) -> None:
+    """PRD-CORE-297-FR06: no hand-listed pairs; the registry decides every expectation."""
+    from trw_mcp.dispatch import _posture
+
+    monkeypatch.setattr(_posture, "confinement_prefix", lambda: ["sandbox-exec", "-p", "(version 1)"])
+    monkeypatch.setattr(
+        "trw_mcp.dispatch._host_confinement.confinement_prefix", lambda writable=None: ["env"]
+    )  # admits; lets the sentinel write
+    _use_sentinel(monkeypatch, sentinel[0], client)
+    expected = _expected_outcome(client, posture)
+    req = DispatchRequest(
+        client=client,  # type: ignore[arg-type]
+        prompt=apply_role(role, "review this"),
+        timeout_s=60,
+        read_only=True,
+        posture=posture,  # type: ignore[arg-type]
+    )
+    result = dispatch(req)
+    refused = "reviewer posture refused" in result.raw_stderr
+    assert refused is (expected == "refused"), result.raw_stderr
+    assert result.posture_enforced is (expected == "enforced")
+    assert (result.isolation == "snapshot-write-confined") is (expected == "isolated")
+    assert sentinel[1].exists() is (expected != "refused"), "a refusal never spawns; an admission always does"
+    if expected != "refused":
+        assert result.exit_code == 0, result.raw_stderr
+    if expected == "refused":
+        with pytest.raises(ReviewerPostureError):
+            _posture.verify_reviewer_posture(client, posture, read_only=True)
 
 
 # ── no process is started for a refused posture (sentinel binary) ───────────
@@ -421,6 +464,7 @@ def test_an_unsupported_client_is_refused_before_any_process_starts(
 ) -> None:
     script, marker = sentinel
     _use_sentinel(monkeypatch, script, client="agy")
+    unconfined_off_darwin(monkeypatch)
     result = dispatch(_req("agy", posture="reviewer", timeout_s=60))
     assert not marker.exists()
     assert result.exit_code == -1

@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 # Public-mirror guard: this test asserts a MONOREPO invariant (repo-root
 # scripts/ + .claude/ layout) absent from the standalone trw-mcp PyPI/GitHub
@@ -140,15 +141,25 @@ def test_extra_keys_do_not_crash() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_ten_thousand_entries_stays_fast() -> None:
+    """10k-seam parse yields all valid entries.
+
+    The <1s parse-time budget is a host-resource measurement, moved to
+    ``test_ten_thousand_entries_stays_fast_budget`` (``requires_local_timing``,
+    skipped on CI). This test keeps the deterministic count assertion gating.
+    """
+    seams = [_seam(target_prd=f"PRD-{i}") for i in range(10_000)]
+    valid, warns = parse_seam_entries({"seams": seams}, today=_TODAY)
+    assert len(valid) == 10_000
+
+
+@requires_local_timing
+def test_ten_thousand_entries_stays_fast_budget() -> None:
     seams = [_seam(target_prd=f"PRD-{i}") for i in range(10_000)]
     start = time.monotonic()
-    valid, warns = parse_seam_entries({"seams": seams}, today=_TODAY)
+    parse_seam_entries({"seams": seams}, today=_TODAY)
     elapsed = time.monotonic() - start
-    assert elapsed < 1.0, f"10k-seam parse took {elapsed:.3f}s (>1s perf bound)"
-    assert len(valid) == 10_000
+    assert_budget("prd_wiring_10k_seam_parse", elapsed, 1.0, "s")
 
 
 def test_check_wiring_gate_tolerates_hostile_seams() -> None:

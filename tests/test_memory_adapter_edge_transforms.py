@@ -51,8 +51,6 @@ class TestMemoryToLearningDict:
             "updated_at": datetime(2026, 1, 16, 12, 0, 0, tzinfo=timezone.utc),
             "access_count": 5,
             "last_accessed_at": datetime(2026, 1, 17, 12, 0, 0, tzinfo=timezone.utc),
-            "q_value": 0.75,
-            "q_observations": 3,
             "recurrence": 2,
             "metadata": {"shard_id": "shard-A"},
         }
@@ -101,15 +99,13 @@ class TestMemoryToLearningDict:
             "created",
             "updated",
             "access_count",
-            # PRD-FIX-104: production has emitted these three feedback/recall
-            # fields in full mode since commit 4f9b2d256. expected_keys was
+            # PRD-FIX-104: production has emitted this feedback/recall
+            # field in full mode since commit 4f9b2d256. expected_keys was
             # stale (PRD-IMPROVE-MCP-02 FR2) — kept asserting the FULL set.
+            # PRD-CORE-293 removed q_value/q_observations/helpful_count/
+            # unhelpful_count (Q-learning/feedback fields, never populated).
             "recall_count",
-            "helpful_count",
-            "unhelpful_count",
             "last_accessed_at",
-            "q_value",
-            "q_observations",
             "recurrence",
             "shard_id",
             "outcome_history",

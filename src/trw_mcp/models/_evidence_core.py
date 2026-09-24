@@ -220,10 +220,6 @@ class RunOwnedScope(BaseModel):
         """Required paths plus caller-proposed additive paths, deduped + sorted."""
         return tuple(sorted(set(self.required_paths) | set(self.proposed_paths)))
 
-    def caller_cannot_shrink(self, proposed_required: tuple[str, ...]) -> bool:
-        """True iff every server-required path is still present in a caller proposal."""
-        return set(self.required_paths).issubset(set(proposed_required))
-
 
 class ReceiptValidationResult(BaseModel):
     """Closed-domain validation outcome consumed by every gate reader (FR03).

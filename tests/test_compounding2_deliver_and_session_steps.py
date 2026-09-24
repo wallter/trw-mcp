@@ -8,17 +8,16 @@
 
 from __future__ import annotations
 
-import sqlite3
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
 import pytest
-from trw_memory.models.config import MemoryConfig
 from trw_memory.models.memory import MemoryEntry
-from trw_memory.retrieval.tag_derivation import derive_tag_neighbours
 
-from trw_mcp.state.memory_adapter import get_backend, store_learning
+from tests._memory_fixtures import FAKE_NAMESPACE, DaemonCheckout
+from tests._memory_store_fake import FakeMemoryStore
+from trw_mcp.state._store_counts import store_health
+from trw_mcp.state.memory_adapter import store_learning
 from trw_mcp.tools._ceremony_deliver_steps import step_knowledge_sync
 from trw_mcp.tools._ceremony_session_start_steps import step_graph_health
 
@@ -31,25 +30,12 @@ def trw_dir(tmp_path: Path) -> Path:
     return d
 
 
-def _wipe_edges(trw_dir: Path) -> None:
-    """Ensure memory_graph_edges is empty for the graph-empty advisory tests."""
-    backend = get_backend(trw_dir)
-    conn = backend._conn
-    assert isinstance(conn, sqlite3.Connection)
-    conn.execute("DELETE FROM memory_graph_edges")
-    conn.commit()
-
-
-def _count_edges(trw_dir: Path) -> int:
-    backend = get_backend(trw_dir)
-    conn = backend._conn
-    assert isinstance(conn, sqlite3.Connection)
-    return int(conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0])
-
-
 class TestStepKnowledgeSyncFR03:
-    def test_below_threshold_reports_not_met_fail_open(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_below_threshold_reports_not_met_fail_open(
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Below threshold → knowledge_sync present with threshold_met False."""
+        trw_dir = daemon_checkout.trw_dir
         # Capture the real config BEFORE patching, then override the threshold.
         high_threshold_cfg = _config_with_threshold(50)
         monkeypatch.setattr(
@@ -81,8 +67,11 @@ class TestStepKnowledgeSyncFR03:
         assert sync.get("status") == "failed"
         assert "sync exploded" in str(sync.get("error", ""))
 
-    def test_threshold_met_populates_knowledge_dir(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_threshold_met_populates_knowledge_dir(
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Threshold met → execute_knowledge_sync runs (non-dry-run)."""
+        trw_dir = daemon_checkout.trw_dir
         low_threshold_cfg = _config_with_threshold(2)
         monkeypatch.setattr(
             "trw_mcp.models.config.get_config",
@@ -103,42 +92,38 @@ class TestStepKnowledgeSyncFR03:
 class TestStepKnowledgeSyncGraphBackfillF5:
     """F5 suggestion 2: opportunistic time-boxed graph backfill on deliver."""
 
-    def test_deliver_backfills_ungraphed_corpus(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Entries stored without edges get graphed on deliver (singleton conn).
+    def test_deliver_backfills_ungraphed_corpus(
+        self, trw_dir: Path, fake_memory_store: FakeMemoryStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deliver runs one time-boxed backfill page over the checkout's store and reports it.
 
-        The corpus is joined by consolidation lineage rather than shared tags:
-        PRD-CORE-245 FR07 derives tag co-occurrence from ``memory_tags`` at query
-        time and materialises nothing, so tag overlap is no longer an edge a
-        backfill can build.
+        That a page builds the edges a corpus never got (consolidation lineage;
+        PRD-CORE-245 FR07 derives tag relations at query time) is trw-memory's
+        ``test_graph_backfill_page``.
         """
         cfg = _config_with_threshold(2)
         monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
-        # backend.store is the durable write WITHOUT the store path's graph
-        # enrichment — the historical un-graphed state the backfill exists for.
-        backend = get_backend(trw_dir)
-        base = datetime(2026, 9, 3, tzinfo=timezone.utc)
-        backend.store(MemoryEntry(id="L-bk-1", content="alpha topic note", created_at=base, updated_at=base))
-        backend.store(
-            MemoryEntry(
-                id="L-bk-2",
-                content="beta topic detail",
-                created_at=base + timedelta(minutes=1),
-                updated_at=base + timedelta(minutes=1),
-                consolidated_from=["L-bk-1"],
+        for entry_id in ("L-bk-1", "L-bk-2"):
+            fake_memory_store.rows[(FAKE_NAMESPACE, entry_id)] = MemoryEntry(
+                id=entry_id, content=f"{entry_id} topic note", namespace=FAKE_NAMESPACE
             )
-        )
-        assert _count_edges(trw_dir) == 0
 
         results: dict[str, object] = {}
         step_knowledge_sync(trw_dir, cast("dict", results))  # type: ignore[arg-type]
 
         backfill = cast("dict[str, int]", results["graph_backfill"])
         assert backfill["processed"] == 2
-        assert backfill["edges_built"] == 1
-        assert _count_edges(trw_dir) == 1
+        ((_name, (namespace, _after, _limit, deadline)),) = [
+            call for call in fake_memory_store.calls if call[0] == "graph_backfill"
+        ]
+        assert namespace == FAKE_NAMESPACE
+        assert deadline is not None, "deliver time-boxes the backfill"
 
-    def test_deliver_backfill_disabled_by_config(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_deliver_backfill_disabled_by_config(
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """deliver_graph_backfill_enabled=False skips the backfill entirely."""
+        trw_dir = daemon_checkout.trw_dir
         cfg = _config_with_threshold(50).model_copy(  # type: ignore[attr-defined]
             update={"deliver_graph_backfill_enabled": False}
         )
@@ -150,8 +135,9 @@ class TestStepKnowledgeSyncGraphBackfillF5:
 
         assert "graph_backfill" not in results
 
-    def test_deliver_backfill_fail_open(self, trw_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_deliver_backfill_fail_open(self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch) -> None:
         """A backfill exception must not fail the deliver step."""
+        trw_dir = daemon_checkout.trw_dir
         cfg = _config_with_threshold(50)
         monkeypatch.setattr("trw_mcp.models.config.get_config", lambda: cfg)
         store_learning(trw_dir, "L-bf-x", "delta note", "z")
@@ -169,13 +155,15 @@ class TestStepKnowledgeSyncGraphBackfillF5:
 
 
 class TestStepGraphHealthFR04:
-    def test_empty_graph_many_memories_emits_advisory(self, trw_dir: Path) -> None:
-        """>10 memories + 0 edges → advisory dict returned."""
-        words = _distinct_words()
-        for i, w in enumerate(words):
-            # Distinct content (avoids semantic dedup) + unique tags (no edges).
+    """End to end through the daemon: the advisory reads the store's own ``health`` block."""
+
+    def test_empty_graph_many_memories_emits_advisory(self, daemon_checkout: DaemonCheckout) -> None:
+        """>10 memories + no relation → advisory dict returned."""
+        trw_dir = daemon_checkout.trw_dir
+        for i, w in enumerate(_distinct_words()):
+            # Distinct content (avoids semantic dedup) + unique tags (no derived relation).
             store_learning(trw_dir, f"L-gh-{i}", f"{w} subject {i}", f"{w} body {i}", tags=[f"uniq{i}"])
-        _wipe_edges(trw_dir)
+        assert store_health(trw_dir)["edges"] == 0, "precondition: nothing materialised an edge"
 
         advisory = step_graph_health(trw_dir)
 
@@ -190,15 +178,15 @@ class TestStepGraphHealthFR04:
         assert "knowledge graph dead" in str(advisory["advisory"])
         assert "trw_deliver" in str(advisory["advisory"])
 
-    def test_small_corpus_no_advisory(self, trw_dir: Path) -> None:
+    def test_small_corpus_no_advisory(self, daemon_checkout: DaemonCheckout) -> None:
         """<=10 memories → no advisory even if graph is empty."""
+        trw_dir = daemon_checkout.trw_dir
         for i, w in enumerate(_distinct_words()[:3]):
             store_learning(trw_dir, f"L-sm-{i}", f"{w} subject {i}", f"{w} body {i}", tags=[f"u{i}"])
-        _wipe_edges(trw_dir)
 
         assert step_graph_health(trw_dir) is None
 
-    def test_populated_graph_no_advisory(self, trw_dir: Path) -> None:
+    def test_populated_graph_no_advisory(self, daemon_checkout: DaemonCheckout) -> None:
         """A DERIVED tag relation is a populated graph → no advisory (CORE-245 FR07).
 
         This is the case the old probe got wrong. Entries related purely by
@@ -207,22 +195,12 @@ class TestStepGraphHealthFR04:
         counted edges called this healthy corpus empty and would have said so on
         every session for the rest of the project's life.
         """
-        words = _distinct_words()
-        for i, w in enumerate(words):
+        trw_dir = daemon_checkout.trw_dir
+        for i, w in enumerate(_distinct_words()):
             store_learning(trw_dir, f"L-pop-{i}", f"{w} shared subject {i}", f"{w} body {i}", tags=["shared", "topic"])
-
-        backend = get_backend(trw_dir)
-        conn = backend._conn
-        assert isinstance(conn, sqlite3.Connection)
-        edge_count = conn.execute("SELECT COUNT(*) FROM memory_graph_edges").fetchone()[0]
-        assert edge_count == 0, "precondition: tag co-occurrence must materialise no edge"
-        neighbours = derive_tag_neighbours(
-            conn,
-            "L-pop-0",
-            namespace="default",
-            config=MemoryConfig(storage_path=str(trw_dir / "memory")),
-        )
-        assert neighbours, "precondition: shared-tag stores must be derivable as neighbours"
+        health = store_health(trw_dir)
+        assert health["edges"] == 0, "precondition: tag co-occurrence must materialise no edge"
+        assert health["has_relations"], "precondition: shared-tag entries derive a relation"
 
         assert step_graph_health(trw_dir) is None
 

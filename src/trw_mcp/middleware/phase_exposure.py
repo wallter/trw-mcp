@@ -15,7 +15,7 @@ a warning.
 Composition: this middleware sits AFTER ``MCPSecurityMiddleware`` (so the
 public allowlist filter already applied — we compose, not bypass) and AFTER
 ``CeremonyMiddleware`` (session state resolved first), BEFORE
-``ContextBudgetMiddleware`` (FR08 relative ordering).
+``ResponseOptimizerMiddleware`` (FR08 relative ordering).
 """
 
 from __future__ import annotations

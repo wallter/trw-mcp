@@ -23,10 +23,10 @@ beside the store, so it survives the process restarts a stdio server does
 constantly; an absent or unreadable timestamp means "due", which makes the first
 run on any existing store checkpoint once rather than inheriting an unknown age.
 
-**What mode may run** — decided by the live-writer set, never by config. Two or
-more live writers means ``PASSIVE``, which never resets the WAL and is safe with
-any number of concurrent connections. Exactly one live writer, and it is this
-process, permits ``TRUNCATE``.
+**What mode may run** — ``PASSIVE`` only, which never resets the WAL and is safe
+with any number of concurrent connections. ``TRUNCATE`` needed this process to be
+the certified sole live writer; PRD-CORE-298 FR01 deleted the writer locks that
+certified it, because the daemon is the one writer.
 
 **How cheap a no-op evaluation is** — NFR01 requires one ``stat`` call and zero
 SQLite connections when nothing is due. The trigger therefore reads the WAL size
@@ -35,12 +35,11 @@ after :func:`evaluate_wal_trigger` says the checkpoint is due.
 
 What is deliberately NOT here: writer pressure never cancels the checkpoint.
 That cancel-or-run decision (PRD-INFRA-171 FR06 fixed the same defect for the
-journal drain and left this one behind) is gone; pressure changes the mode.
+journal drain and left this one behind) is gone.
 """
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +64,6 @@ __all__ = [
     "record_effective_checkpoint",
     "record_reset_checkpoint",
     "resolve_wal_paths",
-    "sole_live_writer",
 ]
 
 #: Sidecar holding the epoch seconds of the last checkpoint that RAN without
@@ -260,60 +258,3 @@ def evaluate_wal_trigger(trw_dir: Path, config: TRWConfig, *, now: float | None 
     else:
         reason = "not_due"
     return WalTrigger(due=over_size or over_age, reason=reason, wal_size_bytes=wal_size, age_seconds=age)
-
-
-def sole_live_writer(trw_dir: Path, db_path: Path) -> bool:
-    """Whether THIS process is the only live writer of *db_path*.
-
-    Derived only from observed evidence (NFR03): the writer-registry lock files,
-    which already exclude dead PIDs, plus the PRD-CORE-253 daemon discovery
-    record. A live daemon serving this exact store is another writer, so a
-    trw-mcp process may not certify sole ownership of a daemon-owned store even
-    when the registry happens to be empty.
-
-    Fail-closed: any error answers ``False``, which costs a PASSIVE checkpoint
-    and never a resetting one.
-    """
-    try:
-        from trw_mcp.models.config import get_config
-        from trw_mcp.state.memory_pressure import live_memory_writer_pids
-
-        # Pass the TTL. With pin_ttl_hours=None, _measure_writers returns before
-        # the heartbeat filter runs at all, so a registered-but-wedged process
-        # counts as a live writer forever and this function answers False for
-        # good -- meaning TRUNCATE is never even REQUESTED, on an engine where
-        # it would otherwise be permitted. This is the decision path; the doctor
-        # row is only the observation of it, and a fix that reached the row and
-        # not this function left the two disagreeing about the same fact.
-        if live_memory_writer_pids(trw_dir, pin_ttl_hours=get_config().pin_ttl_hours) != [os.getpid()]:
-            return False
-        return not _daemon_owns(db_path)
-    except Exception:  # justified: fail-closed, an unproven claim must not permit a WAL reset
-        logger.debug("sole_writer_check_failed", exc_info=True)
-        return False
-
-
-def _daemon_owns(db_path: Path) -> bool:
-    """Whether a PRD-CORE-253 memory daemon may serve the store at *db_path*.
-
-    ``DiscoveryInvalid`` (unreadable, malformed, or schema-mismatched record)
-    is not "no daemon" -- it is evidence of nothing, and this decision gates
-    whether *this* process may TRUNCATE the WAL. Folding an untrusted record
-    into "absent" would let a process reset a WAL a live daemon still holds
-    open, so an invalid record fails CLOSED: assume a daemon may own the
-    store, and do not checkpoint from here.
-    """
-    try:
-        from trw_memory.daemon import DaemonInfo, DaemonPaths, DiscoveryInvalid, read_discovery_result
-
-        paths = DaemonPaths.resolve(create=False)
-        if paths.store.resolve(strict=False) != db_path.resolve(strict=False):
-            return False
-        result = read_discovery_result(paths)
-        if isinstance(result, DiscoveryInvalid):
-            logger.warning("daemon_record_invalid", path=str(result.path), reason=result.reason)
-            return True
-        return isinstance(result, DaemonInfo) and result.is_live(paths.lock)
-    except Exception:  # justified: fail-closed toward "a daemon may own this"
-        logger.debug("daemon_ownership_check_failed", exc_info=True)
-        return True

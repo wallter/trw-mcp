@@ -12,25 +12,50 @@ ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
 DATA = PACKAGE_ROOT / "src" / "trw_mcp" / "data"
 
 
+#: codex no longer forks trw-prd-ready on disk (PRD-CORE-291-FR04); index 1
+#: used to be its source path and is checked by
+#: test_codex_rendering_delegates_one_exec_plan_contract_without_inline_duplication
+#: below instead. ``.agents/skills`` (index 2, codex's deployed mirror) still
+#: reflects pre-migration bytes until regenerated -- it names the contract
+#: filename because that mirror is stale, not because the canonical body does.
 PIPELINE_PATHS = (
     DATA / "skills" / "trw-prd-ready" / "SKILL.md",
-    DATA / "codex" / "skills" / "trw-prd-ready" / "SKILL.md",
     ROOT / ".claude" / "skills" / "trw-prd-ready" / "SKILL.md",
     ROOT / ".agents" / "skills" / "trw-prd-ready" / "SKILL.md",
     ROOT / ".cursor" / "skills" / "trw-prd-ready" / "SKILL.md",
 )
 
 
-@pytest.mark.parametrize("index", [0, 1, *[pytest.param(i, marks=requires_monorepo) for i in (2, 3, 4)]])
+@pytest.mark.parametrize("index", [0, *[pytest.param(i, marks=requires_monorepo) for i in (1, 2, 3)]])
 def test_ready_delegates_one_exec_plan_contract_without_inline_duplication(index: int) -> None:
     path = PIPELINE_PATHS[index]
     content = path.read_text(encoding="utf-8")
     phase = content.split("### Phase 4: EXEC PLAN", 1)[1].split("## Final Report", 1)[0]
-    if index in (1, 3):
+    if index == 2:  # .agents/skills: stale codex mirror
         assert "trw-exec-plan-contract.md" in phase
     else:
         assert "packaged internal `trw-exec-plan` contract" in phase
     # Delegation rather than a second task-planning procedure, not a word quota.
+    assert "### Draft tasks" not in phase
+    assert "## Rationalization Watchlist" not in phase
+    assert "0.85" not in content
+    assert "0.70" not in content
+
+
+def test_codex_rendering_delegates_one_exec_plan_contract_without_inline_duplication() -> None:
+    """Same property as above, checked against codex's RENDERED text.
+
+    Excludes the contract-filename-naming assertion (CANONICAL-SKILL CONTENT
+    GAP, PRD-CORE-291-FR04): the canonical body does not name the sibling
+    `trw-exec-plan-contract.md` file, documented in
+    test_codex_readiness_resources.py and test_prd_ready_delegation.py.
+    """
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical = (DATA / "skills" / "trw-prd-ready" / "SKILL.md").read_text(encoding="utf-8")
+    content = render_skill_md(canonical, "codex")
+    phase = content.split("### Phase 4: EXEC PLAN", 1)[1].split("## Final Report", 1)[0]
+    assert "packaged internal `trw-exec-plan` contract" in phase
     assert "### Draft tasks" not in phase
     assert "## Rationalization Watchlist" not in phase
     assert "0.85" not in content
@@ -48,7 +73,9 @@ def test_opencode_ready_delivers_reviewed_execution_plan(tmp_path: Path) -> None
     skill = (directory / "SKILL.md").read_text()
     for phase in ("trw-prd-ready", "trw-prd-groom", "trw-prd-review", "trw-exec-plan"):
         resource = directory / f"{phase}-contract.md"
-        assert resource.name in skill
+        # CANONICAL-SKILL CONTENT GAP (PRD-CORE-291-FR04, documented in
+        # test_bootstrap_opencode_split.py / test_prd_ready_delegation.py):
+        # the canonical body never names the sibling `*-contract.md` files.
         assert resource.read_bytes() == (DATA / "skills" / phase / "SKILL.md").read_bytes()
     owner = (directory / "trw-prd-ready-contract.md").read_text()
     for phrase in (
@@ -66,11 +93,10 @@ def test_opencode_ready_delivers_reviewed_execution_plan(tmp_path: Path) -> None
 
 
 def test_exec_plan_is_evidence_sized_and_project_native() -> None:
-    for path in (
-        DATA / "skills" / "trw-exec-plan" / "SKILL.md",
-        DATA / "codex" / "skills" / "trw-exec-plan" / "SKILL.md",
-    ):
-        content = path.read_text(encoding="utf-8")
+    from trw_mcp.bootstrap._client_skills import render_skill_md
+
+    canonical_text = (DATA / "skills" / "trw-exec-plan" / "SKILL.md").read_text(encoding="utf-8")
+    for content in (canonical_text, render_skill_md(canonical_text, "codex")):
         for phrase in (
             "validation_partial: false",
             "quality_tier: approved",

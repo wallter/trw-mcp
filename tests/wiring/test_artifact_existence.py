@@ -37,7 +37,6 @@ channels:
     surface: instruction_file_segment
     telemetry_tag: synthetic-never-fired
     file: CLAUDE.md
-    tier_default: T2
     status: active
     write_strategy: MARKER_REPLACE
     markers:
@@ -123,7 +122,6 @@ channels:
     surface: instruction_file_segment
     telemetry_tag: synthetic-rendered
     file: CLAUDE.md
-    tier_default: T2
     status: active
     write_strategy: MARKER_REPLACE
     markers:
@@ -134,7 +132,6 @@ channels:
     surface: instruction_file_segment
     telemetry_tag: synthetic-unrendered
     file: CLAUDE.md
-    tier_default: T2
     status: active
     write_strategy: MARKER_REPLACE
     markers:

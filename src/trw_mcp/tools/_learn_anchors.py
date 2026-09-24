@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
 from trw_mcp.tools._learn_anchor_sources import (
     git_diff_line_ranges,
     learning_mentions,
@@ -115,7 +114,7 @@ def resolve_learn_anchors(
     try:
         from trw_memory.lifecycle.anchor_validation import compute_anchor_validity
 
-        anchor_validity = compute_anchor_validity(anchors, str(project_root), learning_id=learning_id)
+        anchor_validity = compute_anchor_validity(anchors, str(project_root))
     except Exception:  # justified: fail-open, validity computation is best-effort
         logger.debug("anchor_validity_computation_skipped", exc_info=True)
 
@@ -137,11 +136,12 @@ def reverify_entry_anchors(trw_dir: Path, project_root: Path, learning_id: str) 
     """
     try:
         from trw_memory.lifecycle.anchor_validation import compute_anchor_validity
+        from trw_memory.lifecycle.correction import LearningPatch
 
-        from trw_mcp.state.memory_adapter import get_backend
+        from trw_mcp.state._store_selection import selected_store
 
-        backend = get_backend(trw_dir)
-        entry = resolve_entry_in_backend(backend, learning_id)
+        store, _namespace = selected_store(trw_dir)
+        entry = store.get(learning_id)
         anchors = list(getattr(entry, "anchors", []) or []) if entry is not None else []
         if entry is None or not anchors:
             return None
@@ -149,12 +149,11 @@ def reverify_entry_anchors(trw_dir: Path, project_root: Path, learning_id: str) 
         validity = compute_anchor_validity(
             [a.model_dump() if hasattr(a, "model_dump") else a for a in anchors],
             str(project_root),
-            learning_id=learning_id,
         )
-        backend.update(learning_id, namespace=entry.namespace, anchor_validity=validity)
+        store.correct(learning_id, LearningPatch(anchor_validity=validity))
         logger.info("anchor_validity_reverified", entry_id=learning_id, anchor_validity=validity)
         return validity
-    except Exception:  # justified: fail-open, re-verification must not block the update
+    except Exception:  # trw-fail-silent-allow: fail-open, re-verification must not block the update
         logger.debug("anchor_reverification_skipped", entry_id=learning_id, exc_info=True)
         return None
 

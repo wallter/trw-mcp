@@ -35,9 +35,6 @@ from trw_mcp.server._doctor_instruction_gate import (
 from trw_mcp.server._doctor_instruction_gate import (
     _instruction_surfaces as _instruction_surfaces,
 )
-from trw_mcp.server._doctor_instruction_gate import (
-    classify_carrier_state as classify_carrier_state,
-)
 
 # FR-07: re-exported so callers/tests can assert doctor consumes the canonical
 # deliver-gate phrase rather than a hardcoded copy — never duplicate the value.
@@ -213,16 +210,8 @@ def _check_profile(_target: Path, config: TRWConfig) -> CheckResult:
 
 # ── FR-07: instruction-file presence + deliver-gate statement ────────────────
 # Heavy lifting lives in the ``_doctor_instruction_gate`` sibling (marker
-# resolution, carrier-state classification, single-source-pointer detection);
+# resolution, single-source-pointer detection);
 # these are the thin CheckResult-wrapping callers the catalogue dispatches to.
-
-
-def _check_instruction_carrier_state(target: Path, _config: TRWConfig) -> CheckResult:
-    """Report per-surface carrier state so a stale install is visible (FR07)."""
-    from trw_mcp.server._doctor_instruction_gate import carrier_state_report
-
-    status, message = carrier_state_report(target)
-    return CheckResult("instruction_carrier", cast("DoctorStatus", status), message)
 
 
 def _check_instruction_gate(target: Path, _config: TRWConfig) -> CheckResult:
@@ -270,44 +259,17 @@ def _check_framework_integrity(target: Path, config: TRWConfig) -> CheckResult:
 # ── FR-09: memory backend health (read-only) ─────────────────────────────────
 
 
-def _probe_memory_backend(db_path: Path) -> tuple[int, bool]:
-    """Open the SQLite backend read-only and return ``(entry_count, vectors_ok)``.
-
-    Patchable seam. Opens an EXISTING store only; the caller guards on file
-    existence so this never creates a store.
-    """
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
-
-    backend = SQLiteBackend(db_path, recovery_policy="empty_ok")
-    try:
-        count = backend.count()
-        vectors_ok = bool(backend.vec_available)
-    finally:
-        close = getattr(backend, "close", None)
-        if callable(close):
-            close()
-    return count, vectors_ok
-
-
 def _check_memory_backend(target: Path, _config: TRWConfig) -> CheckResult:
-    db_path = target / ".trw" / "memory" / "memory.db"
-    if not db_path.exists():
-        return CheckResult(
-            "memory_backend",
-            "WARN",
-            "no memory store yet (created on first trw_session_start / trw_learn).",
-        )
-    count, vectors_ok = _probe_memory_backend(db_path)
-    if not vectors_ok:
-        return CheckResult(
-            "memory_backend",
-            "WARN",
-            f"memory store healthy ({count} entries) but sqlite-vec unavailable — "
-            "vector search degraded. The installer bundles this by default; if it "
-            "is missing here, run: pip install 'trw-mcp[vectors]' (or 'trw-memory[vectors]' "
-            "in a standalone trw-memory install), then reconnect the MCP client.",
-        )
-    return CheckResult("memory_backend", "PASS", f"memory store healthy ({count} entries, vectors ok).")
+    """PRD-CORE-280 FR05: the row resolves through ``selected_store``, never a raw backend.
+
+    Delegates to the ``_doctor_memory_store`` sibling (kept out of this file for
+    the module-size gate, the same reason ``_check_memory_wal`` and
+    ``_check_memory_daemon`` do below).
+    """
+    from trw_mcp.server._doctor_memory_store import memory_backend_row
+
+    status, message = memory_backend_row(target)
+    return CheckResult("memory_backend", cast("DoctorStatus", status), message)
 
 
 # ── PRD-CORE-248-FR06: WAL size, live writers, last-checkpoint age ───────────
@@ -346,47 +308,6 @@ def _check_memory_daemon(_target: Path, _config: TRWConfig) -> CheckResult:
 
     status, message = memory_daemon_row()
     return CheckResult("memory_daemon", cast("DoctorStatus", status), message)
-
-
-# ── PRD-FIX-131 follow-up: operator visibility for hot worker threads ────────
-
-
-def _check_thread_hotspots(target: Path, config: TRWConfig) -> CheckResult:
-    """Report the hottest thread's CPU share on each live trw-mcp server process.
-
-    Delegates to the ``_doctor_thread_hotspots`` sibling (kept out of this file
-    for the eLOC gate). Read-only ``/proc`` census; it never sends a signal
-    itself — an operator runs the WARN's named ``kill -USR1 <pid>`` remedy.
-    SKIPs (never PASSes) on non-Linux or when ``/proc`` is unreadable, since
-    those platforms make the census genuinely unmeasured rather than clean.
-    """
-    from trw_mcp.server._doctor_thread_hotspots import thread_hotspot_row
-
-    status, message = thread_hotspot_row(
-        target,
-        share_threshold=config.doctor_thread_hotspot_share,
-        min_seconds=float(config.doctor_thread_hotspot_min_seconds),
-        is_linux=sys.platform.startswith("linux"),
-    )
-    return CheckResult("thread_hotspots", cast("DoctorStatus", status), message)
-
-
-# ── PRD-CORE-277-FR09: live writers older than the installed distribution ────
-
-
-def _check_predating_writers(target: Path, _config: TRWConfig) -> CheckResult:
-    """Name running server processes whose writer registration predates this install.
-
-    Delegates to the ``_doctor_predating_writers`` sibling (kept out of this file
-    for the eLOC gate). It REPORTS: after an in-place upgrade the previous
-    sessions keep writing the same store, and detection is not permission to kill
-    another session's process. SKIPs when the install receipt is unreadable,
-    because an unmeasured check must not render as PASS.
-    """
-    from trw_mcp.server._doctor_predating_writers import predating_writers_row
-
-    status, message = predating_writers_row(target / ".trw")
-    return CheckResult("predating_writers", cast("DoctorStatus", status), message)
 
 
 # ── PRD-SEC-014-FR04: embedding cache state + egress posture ─────────────────
@@ -538,6 +459,28 @@ def _check_foreign_client_paths(target: Path, _config: TRWConfig) -> CheckResult
     return CheckResult("foreign_client_paths", *foreign_client_paths_row(target))
 
 
+def _check_jev(target: Path, config: TRWConfig) -> CheckResult:
+    from trw_mcp.server._doctor_jev import jev_row
+
+    status, message = jev_row(target, config)
+    return CheckResult("jev", cast("DoctorStatus", status), message)
+
+
+# ── PRD-FIX-149-FR07: doctor cannot silently disagree with version-status ────
+
+
+def _check_version_status_compatible(target: Path, _config: TRWConfig) -> CheckResult:
+    """WARN when ``collect_version_status()`` reports ``compatible: false``.
+
+    Delegates to the ``_doctor_version_status`` sibling (kept out of this file
+    for the eLOC gate); it reads the same layer ``version-status`` itself does,
+    so the two cannot disagree.
+    """
+    from trw_mcp.server._doctor_version_status import version_status_row
+
+    return CheckResult("version_status", *version_status_row(target))
+
+
 # ── Catalogue + orchestration ────────────────────────────────────────────────
 
 _CheckFn = Callable[[Path, TRWConfig], CheckResult]
@@ -551,7 +494,6 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("mcp_import", "_check_mcp_import"),
     ("profile", "_check_profile"),
     ("instruction_surface", "_check_instruction_gate"),
-    ("instruction_carrier", "_check_instruction_carrier_state"),
     ("trw_dir", "_check_trw_dir"),
     ("framework_integrity", "_check_framework_integrity"),
     # PRD-CORE-248 FR06: memory_wal runs BEFORE memory_backend. The backend
@@ -561,8 +503,6 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     ("memory_wal", "_check_memory_wal"),
     ("memory_backend", "_check_memory_backend"),
     ("memory_daemon", "_check_memory_daemon"),
-    ("thread_hotspots", "_check_thread_hotspots"),
-    ("predating_writers", "_check_predating_writers"),
     ("embedding_egress", "_check_embedding_egress"),
     ("backend_connectivity", "_check_backend_connectivity"),
     ("installer_flag_advisory", "_check_installer_flag_advisory"),
@@ -577,6 +517,9 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     # PRD-INFRA-189 FR02/FR05: appended after it for the same reason.
     ("gnu_timeout", "_check_gnu_timeout"),
     ("foreign_client_paths", "_check_foreign_client_paths"),
+    # PRD-FIX-149 FR07: appended last for the same reason as the two rows above.
+    ("version_status", "_check_version_status_compatible"),
+    ("jev", "_check_jev"),
 )
 
 

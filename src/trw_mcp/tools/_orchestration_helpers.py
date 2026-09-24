@@ -10,7 +10,6 @@ symbols from this module.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -127,34 +126,6 @@ def _scan_init_artifacts(
         logger.warning("artifact_scan_failed", run_id=run_id, exc_info=True)
 
 
-def _stamp_run_canon_fingerprints(run_root: Path, framework_version: str) -> None:
-    """Record the init-time deployed-canon + live-process fingerprints (PRD-INFRA-164 FR08).
-
-    Written to ``meta/canon_fingerprints.yaml`` so run currentness can later
-    distinguish current/stale/unknown. Fail-open: a stamping failure must never
-    block run init — a run without a stamp is read as legacy/unknown, never as
-    current.
-    """
-    from trw_mcp.tools._orchestration_phase import (
-        current_deployed_canon_fingerprint,
-        current_live_process_fingerprint,
-    )
-
-    try:
-        writer = FileStateWriter()
-        writer.write_yaml(
-            run_root / "meta" / "canon_fingerprints.yaml",
-            {
-                "deployed_canon_fingerprint": current_deployed_canon_fingerprint(),
-                "live_process_fingerprint": current_live_process_fingerprint(),
-                "framework_version": framework_version,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-    except Exception:  # justified: fail-open, currentness stamp must not block run init
-        logger.debug("run_canon_fingerprint_stamp_skipped", exc_info=True)
-
-
 def _log_init_events(
     events_jsonl_path: Path,
     *,
@@ -165,20 +136,12 @@ def _log_init_events(
     rationale: str,
     recall_policy: str,
 ) -> None:
-    """Log the run_init, task_type_detected, and session_start boundary events for trw_init.
-
-    Also stamps the run's init-time canon fingerprints (PRD-INFRA-164 FR08); the
-    run_root is derived from the events path (``<run_root>/meta/events.jsonl``).
-    """
+    """Log the run_init, task_type_detected, and session_start boundary events for trw_init."""
     _events.log_event(
         events_jsonl_path,
         "run_init",
         {"task": task_name, "framework": framework_version},
     )
-
-    # PRD-INFRA-164-FR08: stamp deployed-canon + live-process fingerprints so run
-    # currentness is current/stale/unknown rather than a bare framework string.
-    _stamp_run_canon_fingerprints(events_jsonl_path.parent.parent, framework_version)
 
     # PRD-CORE-184-FR05: observability — emit a task_type_detected event so
     # eval campaigns can stratify by task type without parsing run.yaml.
@@ -233,20 +196,6 @@ def _get_bundled_file(filename: str, subdir: str = "") -> str | None:
     return None
 
 
-def _get_package_version() -> str:
-    """Get the trw-mcp package version from importlib.metadata.
-
-    Returns:
-        Package version string, or "unknown" if not installed.
-    """
-    try:
-        from importlib.metadata import version as pkg_version
-
-        return pkg_version("trw-mcp")
-    except Exception:  # justified: import-guard, package may not be installed in editable mode
-        return "unknown"
-
-
 def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     """Deploy bundled frameworks to .trw/frameworks/ as read-only references.
 
@@ -271,27 +220,17 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
     version_path = frameworks_dir / "VERSION.yaml"
     current_fw_version = config.framework_version
     current_aaref_version = config.aaref_version
-    current_pkg_version = _get_package_version()
 
     framework_source = _get_bundled_file("framework.md") or ""
     aaref_source = _get_bundled_file("aaref.md") or ""
     registry = load_registry(bundled_manifest_bytes())
-    compiled_artifacts: dict[Path, bytes] = {}
-    for canon in registry.compiled_canons:
-        core = _get_bundled_file(Path(canon.compact_core).name)
-        reference = _get_bundled_file(Path(canon.reference).name)
-        if core is None or reference is None:
-            raise FileNotFoundError(f"compiled canon resource missing: {canon.id}")
-        compiled_artifacts[Path(canon.runtime_compact_core)] = core.encode("utf-8")
-        compiled_artifacts[Path(canon.runtime_reference)] = reference.encode("utf-8")
 
-    # Skip only when the receipt, body bytes, version stamp, and pins agree.
+    # Skip only when the receipt, body bytes, and pins agree.
     if reader.exists(version_path):
         existing = reader.read_yaml(version_path)
         existing_versions = (
             str(existing.get("framework_version", "")),
             str(existing.get("aaref_version", "")),
-            str(existing.get("trw_mcp_version", "")),
         )
         integrity = inspect_framework_runtime(
             trw_dir.parent,
@@ -301,7 +240,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
             aaref_version=current_aaref_version,
             registry_digest=registry.digest,
         )
-        if existing_versions == (current_fw_version, current_aaref_version, current_pkg_version) and integrity.ok:
+        if existing_versions == (current_fw_version, current_aaref_version) and integrity.ok:
             return {"status": "up_to_date", "framework_version": current_fw_version}
 
         # Version mismatch — log upgrade event
@@ -313,8 +252,6 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
                 "new_framework": current_fw_version,
                 "old_aaref": existing_versions[1],
                 "new_aaref": current_aaref_version,
-                "old_pkg": existing_versions[2],
-                "new_pkg": current_pkg_version,
             },
         )
 
@@ -324,9 +261,7 @@ def _deploy_frameworks(trw_dir: Path) -> dict[str, str]:
         aaref_source=aaref_source,
         framework_version=current_fw_version,
         aaref_version=current_aaref_version,
-        trw_mcp_version=current_pkg_version,
         registry_digest=registry.digest,
-        additional_artifacts=compiled_artifacts,
     )
 
     logger.info(

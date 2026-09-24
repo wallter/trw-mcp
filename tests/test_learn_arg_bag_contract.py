@@ -75,7 +75,11 @@ async def _served_text(tool_name: str) -> str:
     ("tool_name", "bag_model", "bag_param"),
     [
         ("trw_learn", LearnMetadata, "metadata"),
-        ("trw_learn_update", LearnUpdateFields, "fields"),
+        # PRD-CORE-291 merged the standalone trw_learn_update tool into
+        # trw_learn's update mode (learning_id set); both bags are now
+        # served from trw_learn's own description, under the same
+        # "metadata" parameter name.
+        ("trw_learn", LearnUpdateFields, "metadata"),
     ],
 )
 async def test_every_accepted_bag_key_appears_in_what_the_client_receives(
@@ -101,17 +105,19 @@ async def test_every_accepted_bag_key_appears_in_what_the_client_receives(
     )
 
 
-@pytest.mark.parametrize("tool_name", ["trw_learn", "trw_learn_update"])
+@pytest.mark.parametrize("tool_name", ["trw_learn"])
 async def test_the_client_is_told_that_unknown_bag_keys_are_rejected(
     tool_name: str,
 ) -> None:
     """The served text warns that the bag is strict.
 
     Without this, a caller reasonably assumes extras are ignored and discovers
-    otherwise only when a whole learning is refused.
+    otherwise only when a whole learning is refused. One tool now (PRD-CORE-291
+    merged trw_learn_update into trw_learn's update mode), so one metadata
+    warning covers both bags.
     """
     served = await _served_text(tool_name)
-    assert "unknown keys are rejected" in served, (
+    assert "unknown keys rejected" in served, (
         f"{tool_name} must state that unknown bag keys are rejected — a caller "
         f"who expects lenient extras will be surprised by a refused write. "
         f"Served text was: {served!r}"
@@ -132,9 +138,9 @@ def test_unknown_metadata_key_is_rejected_and_the_error_names_the_accepted_set()
 
 
 def test_unknown_update_field_is_rejected_with_the_update_error_shape() -> None:
-    """``trw_learn_update`` rejects in its own documented shape, not trw_learn's.
+    """``trw_learn``'s update mode rejects in its own documented shape, not create mode's.
 
-    The two tools have different published output contracts; unifying them here
+    The two modes have different published output contracts; unifying them here
     would silently break every caller that branches on the result.
     """
     values, rejection = parse_learn_update_fields({"protection_teir": "high"})
@@ -149,6 +155,7 @@ def test_unknown_update_field_is_rejected_with_the_update_error_shape() -> None:
 def test_a_valid_bag_round_trips_every_accepted_key() -> None:
     """Every documented key is actually settable — the list is not aspirational."""
     payload: dict[str, object] = {
+        "source_type": "human",
         "source_identity": "impl-agent",
         "client_profile": "claude-code",
         "model_id": "opus-5",

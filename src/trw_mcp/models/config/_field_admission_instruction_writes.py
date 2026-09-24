@@ -74,9 +74,9 @@ INSTRUCTION_WRITE_ADMISSIONS: dict[str, ConfigAdmission] = {
             "artifacts and are covered by the bundled .trw/.gitignore rule this PRD adds."
         ),
         interaction_analysis=(
-            "Resolved relative to the project root and containment-checked with is_path_within "
-            "before any copy; an escaping value REFUSES the write (fail-closed) rather than "
-            "degrading, unlike instruction_external_filename which falls back to inline."
+            "Resolved relative to the project root and containment-checked "
+            "(resolve().is_relative_to) before any copy; an escaping value REFUSES the "
+            "write (fail-closed) rather than degrading."
         ),
         deprecation_plan="Retain; operators relocating .trw need the backup directory to follow.",
         docs_pointer=_DOCS,

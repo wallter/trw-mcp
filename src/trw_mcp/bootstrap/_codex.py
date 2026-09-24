@@ -9,7 +9,6 @@ Generates and smart-merges repo-scoped Codex artifacts:
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 from typing import cast
@@ -112,6 +111,12 @@ _TRW_MANAGED_SERVER_KEYS: frozenset[str] = frozenset(
     {"command", "args", "url", "enabled", "enabled_tools", "disabled_tools", "tools"}
 )
 
+#: The operator's own environment the server reads for the trw_assess backend (enablement, key, endpoint,
+#: model). Codex passes an MCP server only an allow-list of variables, so without ``env_vars`` an operator's
+#: ``TRW_JEV_ENABLED=false`` never reaches the server and cannot switch the backend off. Forwarding passes
+#: along only what the operator set themselves; it never sets a value. Added to the user's own list.
+_TRW_FORWARDED_ENV: tuple[str, ...] = ("OPENROUTER_API_KEY", "TRW_JEV_BASE_URL", "TRW_JEV_ENABLED", "TRW_JEV_MODEL")
+
 
 __all__ = [
     "BootstrapFileResult",
@@ -155,18 +160,6 @@ def _codex_instruction_path() -> str:
     from trw_mcp.models.config._profiles import resolve_client_profile
 
     return resolve_client_profile("codex").write_targets.instruction_path
-
-
-def _codex_data_dir() -> Path:
-    """Return the bundled Codex-specific data root."""
-    from ._utils import _DATA_DIR
-
-    return _DATA_DIR / "codex"
-
-
-def _codex_skills_source_dir() -> Path:
-    """Return the bundled Codex-specific skills root."""
-    return _codex_data_dir() / "skills"
 
 
 def _trw_mcp_server_entry(target_dir: Path | None = None) -> CodexMcpServerEntry:
@@ -286,12 +279,9 @@ def _trw_mcp_tool_approvals(existing_server: CodexMcpServerEntry) -> dict[str, C
 
 def _skill_paths() -> list[str]:
     """Return repo-local skill paths for Codex config."""
-    skills_dir = _codex_skills_source_dir()
-    return [
-        f".agents/skills/{skill_dir.name}"
-        for skill_dir in sorted(skills_dir.iterdir())
-        if skill_dir.is_dir() and skill_dir.name not in _READINESS_PHASES
-    ]
+    from ._client_skills import skill_names
+
+    return [f".agents/skills/{name}" for name in skill_names("codex") if name not in _READINESS_PHASES]
 
 
 def _normalize_skill_path(path: str) -> str:
@@ -346,6 +336,9 @@ def merge_codex_config(existing: CodexConfigDict, *, target_dir: Path | None = N
     for key, value in existing_trw_server.items():
         if key not in _TRW_MANAGED_SERVER_KEYS:
             trw_server[key] = value  # type: ignore[literal-required]
+    user_env_vars = existing_trw_server.get("env_vars")
+    kept_env_vars = list(user_env_vars) if isinstance(user_env_vars, list) else []
+    trw_server["env_vars"] = kept_env_vars + [n for n in _TRW_FORWARDED_ENV if n not in kept_env_vars]
     trw_server["enabled_tools"] = _trw_mcp_enabled_tools(existing_trw_server)
     disabled_tools = _trw_mcp_disabled_tools(existing_trw_server)
     if disabled_tools:
@@ -456,11 +449,18 @@ def install_codex_skills(
     from ._init_project import _validate_skill
 
     result: BootstrapFileResult = cast("BootstrapFileResult", _new_result())
-    skills_source = _codex_skills_source_dir()
     dest_root = target_dir / _CODEX_SKILLS_DIR
     dest_root.mkdir(parents=True, exist_ok=True)
 
-    for skill_dir in sorted(skills_source.iterdir()):
+    from ._client_skills import canonical_skills_dir, skill_files, skill_names
+    from ._optional_skills import CONDITIONAL_SKILLS, retire_disabled_skills, skill_enabled
+
+    canonical = canonical_skills_dir()
+    retire_disabled_skills(
+        dest_root, canonical, cast("dict[str, list[str]]", result), _CODEX_SKILLS_DIR, client="codex"
+    )
+    names = [*skill_names("codex"), *(name for name in CONDITIONAL_SKILLS if skill_enabled(name))]
+    for skill_dir in (canonical / name for name in names):
         if not skill_dir.is_dir():
             continue
         is_valid, reason = _validate_skill(skill_dir)
@@ -474,30 +474,26 @@ def install_codex_skills(
             legacy = f"{_CODEX_SKILLS_DIR}/{skill_dir.name}/SKILL.md"
             result["preserved"].append(legacy)
             logger.warning("codex_legacy_phase_skill_preserved", path=legacy)
-        dest_name = "trw-prd-ready" if internal_phase else skill_dir.name
+        if internal_phase:
+            continue  # written as trw-prd-ready/<phase>-contract.md by skill_files("codex", "trw-prd-ready")
+        dest_name = skill_dir.name
         dest_skill = dest_root / dest_name
         dest_skill.mkdir(parents=True, exist_ok=True)
-        for skill_file in sorted(skill_dir.iterdir()):
-            if not skill_file.is_file():
-                continue
-            if internal_phase and skill_file.name != "SKILL.md":
-                continue
-            filename = f"{skill_dir.name}-contract.md" if internal_phase else skill_file.name
+        for filename, incoming in skill_files("codex", skill_dir.name):
             dest = dest_skill / filename
             rel_path = f"{_CODEX_SKILLS_DIR}/{dest_name}/{filename}"
             try:
                 existed = dest.exists()
                 if existed and not force:
-                    incoming = skill_file.read_bytes()
                     if _codex_user_edited(dest, rel_path, incoming, manifest_hashes):
                         result["preserved"].append(rel_path)
                         continue
                     if dest.read_bytes() == incoming:
                         result["preserved"].append(rel_path)
                         continue
-                shutil.copy2(skill_file, dest)
+                dest.write_bytes(incoming)
                 _record_write(cast("dict[str, list[str]]", result), rel_path, existed=existed)
             except OSError as exc:
-                result["errors"].append(f"Failed to copy {skill_file} -> {dest}: {exc}")
+                result["errors"].append(f"Failed to write {dest}: {exc}")
 
     return result

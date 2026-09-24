@@ -156,7 +156,7 @@ def _make_mock_anthropic(
         (mock_anthropic, mock_async_client)
     """
     mock_response = MagicMock()
-    mock_response.content = [MagicMock(text=response_text)]
+    mock_response.content = [MagicMock(type="text", text=response_text)]
     mock_response.usage = MagicMock(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
@@ -458,7 +458,7 @@ class TestLLMClientEdgeCases:
 
         log_path = tmp_path / "usage.jsonl"
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="response")]
+        mock_response.content = [MagicMock(type="text", text="response")]
         usage_mock = MagicMock()
         usage_mock.input_tokens = "not-a-number"  # will raise ValueError
         usage_mock.output_tokens = None  # will raise TypeError
@@ -487,7 +487,7 @@ class TestLLMClientEdgeCases:
 
         log_path = tmp_path / "usage.jsonl"
         mock_response = MagicMock(spec=["content"])  # no 'usage' attribute
-        mock_response.content = [MagicMock(text="no-usage-response")]
+        mock_response.content = [MagicMock(type="text", text="no-usage-response")]
 
         mock_async_client = MagicMock()
         mock_async_client.messages.create = AsyncMock(return_value=mock_response)

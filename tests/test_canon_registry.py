@@ -13,6 +13,7 @@ import time
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.canons import registry as reg
 from trw_mcp.canons._errors import CanonErrorCode, CanonRegistryError
 from trw_mcp.canons._loader import SUPPORTED_SCHEMA_VERSION, parse_registry
@@ -133,20 +134,10 @@ def test_registry_views_are_complete_and_have_no_independent_consumer_lists() ->
     assert (".trw/frameworks/FRAMEWORK.md") in {dest for _, dest in inst}
     runtime_only = managed_install_view(registry, InstallRole.RUNTIME)
     assert ("framework.md", ".trw/frameworks/FRAMEWORK.md") in runtime_only
-    compiled = registry.compiled_canon("framework")
-    assert compiled.runtime_compact_core == ".trw/frameworks/FRAMEWORK-CORE.md"
-    assert compiled.runtime_reference == ".trw/frameworks/FRAMEWORK-REFERENCE.md"
-    assert compiled.runtime_combined == ".trw/frameworks/FRAMEWORK.md"
+    # S4: one installed document per canon, no compiled view beside it.
+    assert {dest for _, dest in runtime_only} == {".trw/frameworks/FRAMEWORK.md", ".trw/frameworks/AARE-F-FRAMEWORK.md"}
     tmpl = template_artifact(registry)
     assert tmpl.kind is ArtifactKind.TEMPLATE
-
-
-def test_compiled_combined_runtime_path_must_match_artifact_runtime_authority() -> None:
-    data = _canonical_manifest()
-    data["compiled_canons"][0]["runtime_combined"] = ".trw/frameworks/UNDECLARED.md"  # type: ignore[index]
-    with pytest.raises(CanonRegistryError, match="runtime_combined") as exc:
-        parse_registry(json.dumps(data).encode("utf-8"))
-    assert exc.value.code is CanonErrorCode.MALFORMED_VALUE
 
 
 def test_template_is_a_registry_record_bound_to_real_bundled_bytes() -> None:
@@ -198,7 +189,6 @@ def test_authority_layers_have_independent_truth_tables() -> None:
     data = _canonical_manifest()
     for art in data["artifacts"]:  # type: ignore[union-attr]
         art["install_targets"] = []
-    data["compiled_canons"] = []
     dropped = parse_registry(json.dumps(data).encode("utf-8"))
     assert {v.id for v in source_view(dropped)} == src_ids
     assert runtime_view(dropped) == ()
@@ -248,9 +238,22 @@ def test_registry_core_is_standard_library_only_and_deterministic() -> None:
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_registry_resolution_is_bounded_and_cache_key_is_content_bound() -> None:
+    reg.clear_cache()
+    raw = reg.bundled_manifest_bytes()
+    # Cache hit returns the identical object.
+    a = reg.load_registry(raw)
+    b = reg.load_registry(raw)
+    assert a is b
+    # A mutated manifest is a different cache key (does not return stale object).
+    mutated = _mutate(policy="changed policy text")
+    c = reg.load_registry(mutated)
+    assert c is not a
+    assert c.digest != a.digest
+
+
+@requires_local_timing
+def test_registry_resolution_is_bounded_and_cache_key_is_content_bound_budget() -> None:
     reg.clear_cache()
     raw = reg.bundled_manifest_bytes()
     durations: list[float] = []
@@ -261,14 +264,4 @@ def test_registry_resolution_is_bounded_and_cache_key_is_content_bound() -> None
         durations.append((time.perf_counter() - start) * 1000.0)
     durations.sort()
     p95 = durations[94]
-    assert p95 <= 50.0, f"p95 {p95:.2f}ms exceeds 50ms budget"
-    # Cache hit returns the identical object.
-    reg.clear_cache()
-    a = reg.load_registry(raw)
-    b = reg.load_registry(raw)
-    assert a is b
-    # A mutated manifest is a different cache key (does not return stale object).
-    mutated = _mutate(policy="changed policy text")
-    c = reg.load_registry(mutated)
-    assert c is not a
-    assert c.digest != a.digest
+    assert_budget("registry_resolution_p95", p95, 50.0, "ms")

@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 from time import perf_counter
 from unittest.mock import MagicMock, patch
 
-import pytest
+from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 
 
 def _make_entry(
@@ -204,7 +205,7 @@ def test_intel_boost_logs_structured_summary_once_per_scoring_call() -> None:
     assert kwargs["matches_count"] == 2
 
 
-@pytest.mark.perf
+@requires_local_timing
 def test_intel_boost_adds_under_one_ms_overhead_per_100_entries() -> None:
     """The hot-path boost adds only dict-lookup overhead once cache data is loaded."""
     from trw_mcp.scoring._recall import RecallContext, rank_targeted_by_utility
@@ -237,4 +238,4 @@ def test_intel_boost_adds_under_one_ms_overhead_per_100_entries() -> None:
     boosted_duration = perf_counter() - started_at
 
     overhead_ms = max((boosted_duration - baseline_duration) * 1000 / iterations, 0.0)
-    assert overhead_ms < 1.0
+    assert_budget("intel_boost_overhead_per_100_entries", overhead_ms, 1.0, "ms")

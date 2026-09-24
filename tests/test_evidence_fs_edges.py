@@ -41,10 +41,16 @@ def test_open_errors_have_nonpositive_public_results(
     def failed_open(*_args: object, **_kwargs: object) -> int:
         raise error
 
-    monkeypatch.setattr(fs, "_safe_read_supported", lambda: True)
-    monkeypatch.setattr(os, "open", failed_open)
-    with pytest.raises(binding.StableReadError, match=f"^{reason}$"):
-        binding.read_content_entry(tmp_path, "file")
+    # Scoped to a `with` block (not the function-scoped `monkeypatch` fixture's own
+    # teardown): an autouse fixture's teardown can call _evidence_fs.read_entry ->
+    # _Traversal -> os.open for this same tmp_path after this test function returns
+    # but before monkeypatch's own finalizer runs, so the global os.open patch must
+    # be undone before this test body exits, not left for fixture teardown ordering.
+    with monkeypatch.context() as m:
+        m.setattr(fs, "_safe_read_supported", lambda: True)
+        m.setattr(os, "open", failed_open)
+        with pytest.raises(binding.StableReadError, match=f"^{reason}$"):
+            binding.read_content_entry(tmp_path, "file")
 
 
 @pytest.mark.parametrize("target", [".", "nested/.."])

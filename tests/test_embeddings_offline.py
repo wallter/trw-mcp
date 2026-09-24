@@ -1,11 +1,11 @@
 """PRD-QUAL-110-FR04: disclosed + gated embeddings HF download.
 
 With ``embeddings_enabled=True`` the first model load triggers a
-huggingface.co download of the configured retrieval model. The warmup path now:
+huggingface.co download of the configured retrieval model. That load:
 
-  * honors an offline switch (``TRW_OFFLINE`` master switch and/or
-    ``HF_HUB_OFFLINE``) that suppresses the background download, and
-  * emits a first-run log line disclosing the huggingface.co egress.
+  * discloses the huggingface.co egress in a log line before it starts, and
+  * claims no egress when an offline switch (``TRW_OFFLINE`` and/or
+    ``HF_HUB_OFFLINE``) makes trw-memory load from the local cache only.
 """
 
 from __future__ import annotations
@@ -25,68 +25,63 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("TRW_OFFLINE", raising=False)
     monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     _memory_connection.reset_embedder()
-    # Force the warmup guard to see embeddings as enabled and not yet checked.
+    # The embedder load sees embeddings enabled and not yet checked.
     monkeypatch.setattr(
         "trw_mcp.models.config.get_config",
-        lambda: SimpleNamespace(embeddings_enabled=True, retrieval_embedding_model="configured/test-model"),
+        lambda: SimpleNamespace(
+            embeddings_enabled=True, retrieval_embedding_model="configured/test-model", retrieval_embedding_dim=384
+        ),
     )
     _memory_connection._embedder_checked = False
     yield
     _memory_connection.reset_embedder()
 
 
-def test_offline_switch_suppresses_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """TRW_OFFLINE=1 must short-circuit warmup — no download thread started."""
-    monkeypatch.setenv("TRW_OFFLINE", "1")
-    started: list[bool] = []
-    monkeypatch.setattr(
-        _memory_connection.threading,
-        "Thread",
-        lambda *a, **k: (started.append(True), SimpleNamespace(start=lambda: None, is_alive=lambda: False))[1],
-    )
-    result = _memory_connection._schedule_embedder_warmup()
-    assert result is False
-    assert started == []
+class _StubProvider:
+    """Stands in for trw-memory's provider: records the load and what was logged before it."""
+
+    built: list[str] = []
+    logged_before_build: list[object] = []
+    logs: list[dict[str, object]] = []
+
+    def __init__(self, *, model_name: str, dim: int) -> None:
+        _StubProvider.built.append(model_name)
+        _StubProvider.logged_before_build = [entry.get("event") for entry in _StubProvider.logs]
+
+    def available(self) -> bool:
+        return False
+
+    def unavailable_reason(self) -> str:
+        return "stub"
 
 
-def test_hf_hub_offline_suppresses_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
-    """HF_HUB_OFFLINE=1 also suppresses the warmup download."""
-    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
-    started: list[bool] = []
-    monkeypatch.setattr(
-        _memory_connection.threading,
-        "Thread",
-        lambda *a, **k: (started.append(True), SimpleNamespace(start=lambda: None, is_alive=lambda: False))[1],
-    )
-    result = _memory_connection._schedule_embedder_warmup()
-    assert result is False
-    assert started == []
-
-
-def test_warmup_discloses_egress_when_online(monkeypatch: pytest.MonkeyPatch) -> None:
-    """When NOT offline, scheduling warmup discloses the huggingface.co egress."""
-    started: list[bool] = []
-
-    class _FakeThread:
-        def __init__(self, *a: object, **k: object) -> None:
-            started.append(True)
-
-        def start(self) -> None:
-            pass
-
-        def is_alive(self) -> bool:
-            return False
-
-    monkeypatch.setattr(_memory_connection.threading, "Thread", _FakeThread)
+def _load_with_stub(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    _StubProvider.built = []
+    monkeypatch.setattr("trw_memory.embeddings.local.LocalEmbeddingProvider", _StubProvider)
     with capture_logs() as logs:
-        result = _memory_connection._schedule_embedder_warmup()
-    assert result is True
-    assert started == [True]
-    events = {e.get("event") for e in logs}
-    assert "embedder_download_disclosure" in events
+        _StubProvider.logs = logs
+        _memory_connection.get_embedder()
+    assert _StubProvider.built == ["configured/test-model"]
+    return logs
+
+
+@pytest.mark.parametrize("switch", ["TRW_OFFLINE", "HF_HUB_OFFLINE"])
+def test_an_offline_switch_leaves_no_egress_to_disclose(monkeypatch: pytest.MonkeyPatch, switch: str) -> None:
+    """Offline, trw-memory loads from the cache only, so the load claims no download."""
+    monkeypatch.setenv(switch, "1")
+
+    logs = _load_with_stub(monkeypatch)
+
+    assert "embedder_download_disclosure" not in {e.get("event") for e in logs}
+
+
+def test_the_first_load_discloses_its_egress_before_loading(monkeypatch: pytest.MonkeyPatch) -> None:
+    logs = _load_with_stub(monkeypatch)
+
+    assert "embedder_download_disclosure" in _StubProvider.logged_before_build, "disclosed after the load began"
     disclosure = next(e for e in logs if e.get("event") == "embedder_download_disclosure")
     assert "huggingface" in str(disclosure).lower()
-    # The disclosure names the model the warm-up will actually load, not a constant.
+    # The disclosure names the model the load will actually fetch, not a constant.
     assert disclosure["model"] == "configured/test-model"
 
 

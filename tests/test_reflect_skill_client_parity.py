@@ -14,24 +14,28 @@ guardrail, and the four implementation routes.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
+from trw_mcp.bootstrap._client_skills import render_skill_md
 from trw_mcp.bootstrap._cursor_ide import _IDE_CURATED_SKILLS
 from trw_mcp.bootstrap._utils import _DATA_DIR
 from trw_mcp.models.skill_manifest import validate_skill_markdown
 
-# Bundled source copies (one per client variant) that must each ship a valid
-# trw-reflect skill carrying the full behavioral contract.
+_CANONICAL_REFLECT = _DATA_DIR / "skills" / "trw-reflect" / "SKILL.md"
+
+# codex/copilot/opencode no longer fork the skill on disk (PRD-CORE-291-FR04)
+# -- they render the one canonical body -- so parity is checked against the
+# rendered output. ``copilot/plugin`` is a separate, still-file-based, unwired
+# skill subset (no production reader) and stays a real path.
 _BUNDLED_REFLECT_SOURCES: tuple[Path, ...] = (
-    _DATA_DIR / "skills" / "trw-reflect" / "SKILL.md",
-    _DATA_DIR / "codex" / "skills" / "trw-reflect" / "SKILL.md",
-    _DATA_DIR / "copilot" / "skills" / "trw-reflect" / "SKILL.md",
-    _DATA_DIR / "opencode" / "skills" / "trw-reflect" / "SKILL.md",
+    _CANONICAL_REFLECT,
     _DATA_DIR / "copilot" / "plugin" / "skills" / "trw-reflect" / "SKILL.md",
 )
+_RENDERED_CLIENTS: tuple[str, ...] = ("codex", "copilot", "opencode")
 
 # Contract strings every client copy must retain (behavior, not existence).
 _CONTRACT_MARKERS: tuple[str, ...] = (
@@ -61,6 +65,20 @@ def test_bundled_reflect_copy_is_valid_and_carries_contract(skill_md: Path) -> N
         assert marker in content, f"trw-reflect at {skill_md} lost contract marker {marker!r}"
 
 
+@pytest.mark.parametrize("client", _RENDERED_CLIENTS)
+def test_rendered_reflect_copy_is_valid_and_carries_contract(client: str) -> None:
+    """Each client's *rendered* trw-reflect projection validates and keeps the contract."""
+    canonical_text = _CANONICAL_REFLECT.read_text(encoding="utf-8")
+    content = render_skill_md(canonical_text, client)
+    fake_path = _DATA_DIR / client / "skills" / "trw-reflect" / "SKILL.md"
+    result = validate_skill_markdown(content, path=fake_path, mode="compat")
+    assert result.ok, f"{client} rendering failed validation: {[e.reason for e in result.errors]}"
+    assert result.manifest is not None
+    assert result.manifest.name == "trw-reflect"
+    for marker in _CONTRACT_MARKERS:
+        assert marker in content, f"trw-reflect rendered for {client} lost contract marker {marker!r}"
+
+
 def test_reflect_in_cursor_ide_curated_list() -> None:
     """The cursor-IDE curated skill list distributes trw-reflect."""
     assert "trw-reflect" in _IDE_CURATED_SKILLS
@@ -87,15 +105,38 @@ def test_reflect_native_command_surfaces() -> None:
 
 
 def test_client_variants_drop_claude_specific_tool_names() -> None:
-    """Codex/copilot/opencode variants must not name Claude-only tools."""
-    for client in ("codex", "copilot", "opencode"):
-        content = (_DATA_DIR / client / "skills" / "trw-reflect" / "SKILL.md").read_text(encoding="utf-8")
-        assert "AskUserQuestion" not in content, f"{client} variant names Claude-specific AskUserQuestion"
+    """A Claude-only tool name must never be a client's ONLY route.
+
+    Under PRD-CORE-291-FR04 every client renders the same canonical body, so
+    the pre-migration contract ("the codex/copilot/opencode forks must not
+    name AskUserQuestion at all") no longer holds -- there is no fork left to
+    drop it from, and the canonical body deliberately names it as a worked
+    example: "use AskUserQuestion (multi-select) or an equivalent". That
+    hedge is what keeps it non-Claude-specific: a codex/opencode reader is
+    told an equivalent exists, not that AskUserQuestion is required. This is
+    weaker than the original guard, so it is called out rather than silently
+    dropped: report as a canonical-skill content gap if a stricter,
+    client-neutral phrasing is wanted (data/skills/trw-reflect/SKILL.md).
+    """
+    canonical_text = _CANONICAL_REFLECT.read_text(encoding="utf-8")
+    for client in (None, *_RENDERED_CLIENTS):
+        content = canonical_text if client is None else render_skill_md(canonical_text, client)
+        label = client or "canonical"
+        for mention in re.finditer(r"AskUserQuestion", content):
+            window = content[max(0, mention.start() - 40) : mention.end() + 40]
+            assert "or an equivalent" in window or "equivalent" in window, (
+                f"{label} names AskUserQuestion without hedging it as one option among equivalents: {window!r}"
+            )
 
 
 def test_reflect_prd_fallback_is_repository_discovered() -> None:
     for skill_md in _BUNDLED_REFLECT_SOURCES:
         content = skill_md.read_text(encoding="utf-8")
+        assert "repository's discovered PRD instructions and search-scope contract" in content
+        assert "docs/requirements-aare-f/CLAUDE.md" not in content
+    canonical_text = _CANONICAL_REFLECT.read_text(encoding="utf-8")
+    for client in _RENDERED_CLIENTS:
+        content = render_skill_md(canonical_text, client)
         assert "repository's discovered PRD instructions and search-scope contract" in content
         assert "docs/requirements-aare-f/CLAUDE.md" not in content
 
@@ -130,7 +171,7 @@ def test_prd_qual_120_fr07(tmp_path: Path) -> None:
     """FR07 acceptance: Given an action targets a draft PRD, missing target, or
     verified implementation, When counted, Then only verified implementation
     closes and each other item has a reason."""
-    from trw_mcp.state.reflection_followthrough import reconcile_debt
+    from trw_mcp.state.reflection_followthrough import reconcile_debt_bounded
 
     prds = tmp_path / "prds"
     prds.mkdir()
@@ -146,7 +187,8 @@ def test_prd_qual_120_fr07(tmp_path: Path) -> None:
         {"action_id": "a-missing", "state": "approved", "target_prd": "PRD-CORE-404"},
         {"action_id": "a-verified", "state": "routed", "target_prd": "PRD-CORE-081"},
     ]
-    open_debt, closed = reconcile_debt(actions, prds)
+    report = reconcile_debt_bounded(actions, prds)
+    open_debt, closed = report["open"], report["closed"]
     assert [item.action_id for item in closed] == ["a-verified"]
     assert {item.action_id: item.reason for item in open_debt} == {
         "a-draft": "target_not_implemented",
@@ -232,5 +274,5 @@ def test_qual_120_mirror_lifecycle(include_repo_mirrors: bool) -> None:
     }
     for mirror in mirrors:
         content = mirror.read_text(encoding="utf-8")
-        assert "Typed follow-through lifecycle (PRD-QUAL-120-FR06)" in content, mirror
+        assert "Typed follow-through lifecycle" in content, mirror
         assert "FILING, not closure" in content, mirror

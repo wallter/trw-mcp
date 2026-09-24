@@ -47,9 +47,9 @@ from trw_mcp.models.surface_packs import (
     STANDARD_TASK_PACKS as _STANDARD_TASK_PACKS,
 )
 
-# -- Build / mutation --
-DEFAULT_BUILD_CHECK_TIMEOUT_SECS: int = 300
-DEFAULT_MUTATION_TIMEOUT_SECS: int = 300
+# -- Build --
+# DEFAULT_MUTATION_TIMEOUT_SECS removed under PRD-CORE-291 (slice 2) with the
+# mutation_timeout_secs field it fed: no mutation-testing subsystem read it.
 
 # -- Learning storage --
 DEFAULT_LEARNING_MAX_ENTRIES: int = 500
@@ -130,14 +130,10 @@ DEFAULT_RECALL_INTERNAL_FIELDS: frozenset[str] = frozenset(
         "access_count",
         "anchor_validity",
         "combined_score",
-        "helpful_count",
         "last_accessed_at",
         "outcome_history",
-        "q_observations",
-        "q_value",
         "recall_count",
         "recurrence",
         "session_count",
-        "unhelpful_count",
     }
 )

@@ -82,7 +82,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=8),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             result = execute_knowledge_sync(trw_dir, config)
 
@@ -100,7 +100,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             execute_knowledge_sync(trw_dir, config)
 
@@ -118,7 +118,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             result = execute_knowledge_sync(trw_dir, config)
 
@@ -140,7 +140,7 @@ class TestExecuteKnowledgeSync:
         assert not (trw_dir / "knowledge").exists()
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             execute_knowledge_sync(trw_dir, config)
         assert (trw_dir / "knowledge").exists()
@@ -153,7 +153,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             result1 = execute_knowledge_sync(trw_dir, config)
             result2 = execute_knowledge_sync(trw_dir, config)
@@ -169,7 +169,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             execute_knowledge_sync(trw_dir, config)
 
@@ -182,7 +182,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             execute_knowledge_sync(trw_dir, config)
 
@@ -196,7 +196,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             result = execute_knowledge_sync(trw_dir, config)
 
@@ -211,7 +211,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
         ):
             result = execute_knowledge_sync(trw_dir, config)
 
@@ -226,7 +226,7 @@ class TestExecuteKnowledgeSync:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
             patch(
                 "trw_mcp.state.knowledge_topology.render_topic_document",
                 side_effect=RuntimeError("Render explosion"),
@@ -269,7 +269,7 @@ class TestAtomicWriteDoubleFault:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
             patch.object(Path, "replace", fail_on_tmp_replace),
             patch.object(Path, "unlink", fail_on_tmp_unlink),
         ):
@@ -292,7 +292,7 @@ class TestAtomicWriteDoubleFault:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=6),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
             patch.object(Path, "replace", fail_on_tmp_replace),
         ):
             result = execute_knowledge_sync(trw_dir, config)
@@ -314,7 +314,7 @@ class TestExecuteSyncClustersJsonWriteFailure:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
             patch(
                 "trw_mcp.state.knowledge_topology.tempfile.mkstemp",
                 side_effect=OSError("no space left on device"),
@@ -335,7 +335,7 @@ class TestExecuteSyncClustersJsonWriteFailure:
 
         with (
             patch("trw_mcp.state.knowledge_topology.count_entries", return_value=5),
-            patch("trw_mcp.state.knowledge_topology.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(mock_backend, "default")),
             patch(
                 "trw_mcp.state.knowledge_topology.tempfile.mkstemp",
                 side_effect=OSError("disk full"),

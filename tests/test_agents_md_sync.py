@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,91 +11,6 @@ from tests._test_agents_md_support import _patched_learning_env
 from tests.conftest import get_tools_sync
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.tools.learning import register_learning_tools
-
-
-class TestSyncInstructionFileIfNeeded:
-    """Unit tests for _sync_instruction_file_if_needed."""
-
-    def test_returns_false_when_instruction_path_is_none(self, tmp_project: Path) -> None:
-        """No instruction_path → (False, None) returned, no files created."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        synced, path = _sync_instruction_file_if_needed(None, tmp_project, "claude-code")
-
-        assert synced is False
-        assert path is None
-
-    def test_returns_false_when_instruction_path_is_empty(self, tmp_project: Path) -> None:
-        """Empty string instruction_path → (False, None) returned."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        synced, path = _sync_instruction_file_if_needed("", tmp_project, "claude-code")
-
-        assert synced is False
-        assert path is None
-
-    def test_codex_instruction_file_created(self, tmp_project: Path) -> None:
-        """codex client with .codex/INSTRUCTIONS.md path → file is created."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        synced, path = _sync_instruction_file_if_needed(".codex/INSTRUCTIONS.md", tmp_project, "codex")
-
-        assert synced is True
-        assert path is not None
-        instructions_file = tmp_project / ".codex" / "INSTRUCTIONS.md"
-        assert instructions_file.exists()
-        content = instructions_file.read_text(encoding="utf-8")
-        assert "trw_session_start" in content or "TRW" in content
-
-    def test_opencode_instruction_file_created_generic(self, tmp_project: Path) -> None:
-        """opencode client with .opencode/INSTRUCTIONS.md path → file is created (generic model)."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        synced, path = _sync_instruction_file_if_needed(".opencode/INSTRUCTIONS.md", tmp_project, "opencode")
-
-        assert synced is True
-        assert path is not None
-        instructions_file = tmp_project / ".opencode" / "INSTRUCTIONS.md"
-        assert instructions_file.exists()
-        content = instructions_file.read_text(encoding="utf-8")
-        assert "trw_session_start" in content or "TRW" in content
-
-    def test_opencode_instruction_uses_model_family_from_opencode_json(self, tmp_project: Path) -> None:
-        """opencode sync reads model family from opencode.json and generates correct content."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        (tmp_project / "opencode.json").write_text(json.dumps({"model": "gpt-4o"}), encoding="utf-8")
-
-        synced, path = _sync_instruction_file_if_needed(".opencode/INSTRUCTIONS.md", tmp_project, "opencode")
-
-        assert synced is True
-        assert path is not None
-        instructions_file = tmp_project / ".opencode" / "INSTRUCTIONS.md"
-        assert instructions_file.exists()
-        content = instructions_file.read_text(encoding="utf-8")
-        assert "# TRW Instructions" in content
-        assert "project-native" in content
-        assert "GPT" not in content
-
-    def test_codex_path_inferred_from_instruction_path_for_auto_client(self, tmp_project: Path) -> None:
-        """auto client with .codex/ instruction_path → generates codex instructions."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        synced, path = _sync_instruction_file_if_needed(".codex/INSTRUCTIONS.md", tmp_project, "auto")
-
-        assert synced is True
-        assert path is not None
-        assert (tmp_project / ".codex" / "INSTRUCTIONS.md").exists()
-
-    def test_opencode_path_inferred_from_instruction_path_for_all_client(self, tmp_project: Path) -> None:
-        """all client with .opencode/ instruction_path → generates opencode instructions."""
-        from trw_mcp.state.claude_md._agents_md import _sync_instruction_file_if_needed
-
-        synced, path = _sync_instruction_file_if_needed(".opencode/INSTRUCTIONS.md", tmp_project, "all")
-
-        assert synced is True
-        assert path is not None
-        assert (tmp_project / ".opencode" / "INSTRUCTIONS.md").exists()
 
 
 class TestSyncIncludesInstructionFile:

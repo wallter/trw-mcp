@@ -125,12 +125,6 @@ def test_compute_multiple_channels(tmp_path: Path) -> None:
     assert "B" in ids
 
 
-def test_compute_throttle_status_populated(tmp_path: Path) -> None:
-    log = _write_events(tmp_path, [_push()])
-    report = compute_channel_stats(log)
-    assert report.channels[0].throttle_status != ""
-
-
 def test_compute_channels_sorted(tmp_path: Path) -> None:
     events = [
         _push(channel_id="Z-ch", client="claude-code"),

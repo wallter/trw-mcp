@@ -112,11 +112,14 @@ def _assert_not_displaced(key: tuple[str, str, str, str], row: sqlite3.Row | Non
     Named and separate so a test can disable exactly this rule and watch the
     displaced process regain the endpoint -- the ping-pong it exists to prevent.
     """
-    if key in _DISPLACED:
-        raise EndpointError(EndpointRefusal.FENCED, DISPLACED_RECOVERY)
-    if row is not None and mine is not None and str(row["incarnation"]) != mine:
+    if _is_displaced(key, row, mine):
         _DISPLACED.add(key)
         raise EndpointError(EndpointRefusal.FENCED, DISPLACED_RECOVERY)
+
+
+def _is_displaced(key: tuple[str, str, str, str], row: sqlite3.Row | None, mine: str | None) -> bool:
+    """Already fenced, or another incarnation now holds the endpoint this process owned (ledger RC-004)."""
+    return key in _DISPLACED or (row is not None and mine is not None and str(row["incarnation"]) != mine)
 
 
 def _current(
@@ -156,10 +159,12 @@ def enroll(
 ) -> tuple[Endpoint, str]:
     """Renew this process's endpoint, or take it over as a process that never held it."""
     row, mine = _current(conn, binding, require_row=False)
-    renewing = row is not None and mine is not None and str(row["incarnation"]) == mine
-    incarnation = mine if renewing and mine is not None else secrets.token_hex(16)
+    # _current already refused any other incarnation (RC-004), so a row plus our own
+    # incarnation IS a renewal; nothing here decides ownership a second time.
+    renewing = row is not None and mine is not None
+    incarnation = mine if mine is not None and renewing else secrets.token_hex(16)
     expires = now + float(lease_ttl_seconds)
-    enrolled_at = float(row["enrolled_at"]) if renewing and row is not None else now
+    enrolled_at = float(row["enrolled_at"]) if row is not None and renewing else now
     generation = 1 if row is None else int(row["generation"]) + (0 if renewing else 1)
     conn.execute(
         "INSERT INTO endpoints(group_id, member_id, incarnation, session_id, run_path, "
@@ -193,6 +198,14 @@ def enroll(
     ), incarnation
 
 
+def _held(conn: sqlite3.Connection, binding: CallerBinding) -> tuple[sqlite3.Row, str]:
+    """The row and incarnation of an endpoint THIS process holds; one holding none is told to enroll."""
+    row, mine = _current(conn, binding, require_row=True)
+    if row is None or mine is None:
+        raise EndpointError(EndpointRefusal.FENCED, "this process holds no endpoint for this member; enroll first")
+    return row, mine
+
+
 def heartbeat(
     conn: sqlite3.Connection,
     binding: CallerBinding,
@@ -201,10 +214,7 @@ def heartbeat(
     lease_ttl_seconds: int,
 ) -> Endpoint:
     """Renew this process's own endpoint; a process that holds none is told to enroll."""
-    row, mine = _current(conn, binding, require_row=True)
-    assert row is not None  # noqa: S101 - require_row
-    if mine is None:
-        raise EndpointError(EndpointRefusal.FENCED, "this process holds no endpoint for this member; enroll first")
+    row, _mine = _held(conn, binding)
     expires = _renew(conn, binding, now, lease_ttl_seconds)
     return Endpoint(
         group_id=binding.group_id,
@@ -258,10 +268,7 @@ def receiver_incarnation(
     Runs under the operation's write lock, so the incarnation it returns cannot be
     displaced before the caller acts on it. An expired lease is NOT a refusal.
     """
-    row, mine = _current(conn, binding, require_row=True)
-    assert row is not None  # noqa: S101 - require_row
-    if mine is None:
-        raise EndpointError(EndpointRefusal.FENCED, "this process holds no endpoint for this member; enroll first")
+    _row, mine = _held(conn, binding)
     if renew:  # FR11: retries inside a bounded wait never renew; only the ordinary attempt does
         _renew(conn, binding, now, lease_ttl_seconds)
     return mine
@@ -284,7 +291,7 @@ def touch(
         key = _ownership_key(binding)
         row = _fetch_row(conn, binding.group_id, binding.member_id)
         mine = _PROCESS_INCARNATIONS.get(key)
-        if key not in _DISPLACED and row is not None and mine is not None and str(row["incarnation"]) == mine:
+        if row is not None and mine is not None and not _is_displaced(key, row, mine):
             _renew(conn, binding, now, lease_ttl_seconds)
         return
     row, mine = _current(conn, binding, require_row=False)

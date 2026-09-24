@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import structlog
 from fastmcp import FastMCP
-from trw_memory.graph import MAX_TRAVERSAL_DEPTH, VALID_EDGE_TYPES, graph_query
-from trw_memory.models.memory import MemoryStatus
+from trw_memory.graph import MAX_TRAVERSAL_DEPTH, VALID_EDGE_TYPES
 from typing_extensions import TypedDict
 
-from trw_mcp.exceptions import NamespaceEnumerationError
-from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
-from trw_mcp.state.memory_adapter import get_backend
+from trw_mcp.state import _store_selection
+from trw_mcp.state._paths import resolve_trw_dir
+from trw_mcp.state._store_selection import StoreUnavailableError
 
 logger = structlog.get_logger(__name__)
 
@@ -71,10 +70,10 @@ def graph_related(
     if not 1 <= limit <= _MAX_RELATED_LIMIT:
         raise ValueError(f"limit must be between 1 and {_MAX_RELATED_LIMIT}")
 
-    backend = get_backend()
+    store, _ = _store_selection.selected_store(resolve_trw_dir())
     try:
-        root = resolve_entry_in_backend(backend, normalized_id)
-    except NamespaceEnumerationError as exc:
+        root = store.get(normalized_id)
+    except StoreUnavailableError as exc:
         logger.warning("graph_related_lookup_unavailable", learning_id=normalized_id, exc_info=True)
         return {
             "learning_id": normalized_id,
@@ -94,31 +93,19 @@ def graph_related(
             "truncated": False,
         }
 
-    nodes = graph_query(
-        backend._conn,
-        [normalized_id],
-        depth=depth,
-        edge_types=edge_types,
-        namespace=root.namespace,
-        max_nodes=limit + 1,
-    )
-    truncated = len(nodes) > limit
-    related: list[GraphRelatedItem] = []
-    for node in nodes[:limit]:
-        entry = backend.get(str(node["id"]), namespace=root.namespace)
-        if entry is None or entry.status != MemoryStatus.ACTIVE:
-            continue
-        related.append(
-            {
-                "id": entry.id,
-                "summary": entry.content,
-                "importance": entry.importance,
-                "tags": entry.tags,
-                "edge_type": str(node["edge_type"]),
-                "weight": float(node["weight"]),
-                "depth": int(node["depth"]),
-            }
-        )
+    rows, truncated = store.graph_related(root.namespace, normalized_id, depth, edge_types, limit)
+    related: list[GraphRelatedItem] = [
+        {
+            "id": str(row["id"]),
+            "summary": str(row["content"]),
+            "importance": float(row["importance"]),
+            "tags": list(row["tags"]),
+            "edge_type": str(row["edge_type"]),
+            "weight": float(row["weight"]),
+            "depth": int(row["depth"]),
+        }
+        for row in rows
+    ]
     return {
         "learning_id": normalized_id,
         "namespace": root.namespace,

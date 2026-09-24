@@ -42,7 +42,6 @@ def test_sandbox_result_dataclass_shape() -> None:
     assert r.timed_out is False
 
 
-@pytest.mark.perf
 def test_sandbox_timeout_via_signal_alarm(tmp_path: Path) -> None:
     """FR-2 — wall-clock timeout enforced; timed_out=True, wall_ms < 2000."""
     result = run_sandboxed(

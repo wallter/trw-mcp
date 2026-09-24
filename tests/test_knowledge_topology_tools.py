@@ -78,10 +78,7 @@ class TestRecallTopicFilter:
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
-            patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.learning.collect_context", return_value={}),
             patch("trw_mcp.tools.learning.get_config", return_value=TRWConfig()),
         ):
             clusters_data = json.loads((trw_dir / "knowledge" / "clusters.json").read_text(encoding="utf-8"))
@@ -161,16 +158,13 @@ class TestRecallTopicFilter:
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
-            patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.learning.collect_context", return_value={}),
         ):
-            result = tool.fn(query="*", topic="pydantic")
+            result = tool.fn(query="*", options={"topic": "pydantic"})
 
         returned_ids = {str(entry.get("id", "")) for entry in result["learnings"]}
         assert "L-999" not in returned_ids
-        assert result["topic_filter_ignored"] is False
+        assert "topic_filter_warning" not in result
 
     def test_topic_filter_nonexistent_sets_ignored_flag(self, tmp_path: Path) -> None:
         trw_dir = tmp_path / ".trw"
@@ -188,15 +182,12 @@ class TestRecallTopicFilter:
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
-            patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.learning.collect_context", return_value={}),
             patch("trw_memory.sync.fetch_shared_memories", return_value=SharedFetchResult([], "ok", 0, 0)),
         ):
-            result = tool.fn(query="*", topic="nonexistent_topic")
+            result = tool.fn(query="*", options={"topic": "nonexistent_topic"})
 
-        assert result["topic_filter_ignored"] is True
+        assert "topic_filter_warning" in result
         assert len(result["learnings"]) == len(all_entries)
 
     def test_topic_filter_no_clusters_file_sets_ignored_flag(self, tmp_path: Path) -> None:
@@ -214,14 +205,11 @@ class TestRecallTopicFilter:
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
-            patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.learning.collect_context", return_value={}),
         ):
-            result = tool.fn(query="*", topic="pydantic")
+            result = tool.fn(query="*", options={"topic": "pydantic"})
 
-        assert result["topic_filter_ignored"] is True
+        assert "topic_filter_warning" in result
 
     def test_topic_none_no_filter_ignored_flag_false(self, tmp_path: Path) -> None:
         trw_dir = tmp_path / ".trw"
@@ -238,15 +226,12 @@ class TestRecallTopicFilter:
 
         with (
             patch("trw_mcp.tools.learning.adapter_recall", return_value=all_entries),
-            patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=trw_dir),
-            patch("trw_mcp.tools.learning.collect_context", return_value={}),
         ):
-            result = tool.fn(query="*", topic=None)
+            result = tool.fn(query="*", options={"topic": None})
 
         # topic not requested -> advisory fields are omitted from the response
-        assert "topic_filter_ignored" not in result
+        assert "topic_filter_warning" not in result
 
 
 class TestKnowledgeTopologyConfig:

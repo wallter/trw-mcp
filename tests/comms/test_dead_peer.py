@@ -14,10 +14,12 @@ caller cannot name one.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastmcp import FastMCP
@@ -199,3 +201,60 @@ def test_the_displacement_guard_is_load_bearing(
     monkeypatch.setattr(_endpoints, "_assert_not_displaced", lambda *a, **k: None)
     _endpoints._DISPLACED.clear()
     assert call_peers(comms_server, "heartbeat")["status"] == "ok"  # unguarded: the fence is gone
+
+
+def _lease(fixture: FormationFixture) -> tuple[str, float]:
+    conn = sqlite3.connect(_db(fixture))
+    try:
+        row = conn.execute("SELECT incarnation, lease_expires_at FROM endpoints WHERE member_id='impl-1'").fetchone()
+        return str(row[0]), float(row[1])
+    finally:
+        conn.close()
+
+
+def _inbox_status(server: FastMCP) -> dict[str, Any]:
+    payload = asyncio.run(server.call_tool("trw_inbox", {"action": "status"})).structured_content
+    assert isinstance(payload, dict)
+    return payload
+
+
+def test_a_displaced_process_reading_status_renews_nothing_and_is_not_fenced_by_it(
+    comms_server: FastMCP, enrolled: FormationFixture
+) -> None:
+    """Ledger RC-004: body-free status is not an owning operation. A displaced process
+    that asks for status must not renew the endpoint its replacement now holds, and the
+    status read alone must not mark it displaced; the next owning operation does."""
+    with other_process():
+        assert call_peers(comms_server, "enroll")["status"] == "ok"
+    replacement = _lease(enrolled)
+    advance_group_clock(enrolled, 30)
+
+    assert _inbox_status(comms_server)["status"] == "ok"
+
+    assert _lease(enrolled) == replacement, "status renewed an endpoint this process no longer holds"
+    assert not _endpoints._DISPLACED, "a status read marked the process displaced"
+    assert call_peers(comms_server, "heartbeat")["reason"] == "endpoint_replaced_by_newer_incarnation"
+    assert len(_endpoints._DISPLACED) == 1
+
+
+@pytest.mark.parametrize("action", ["heartbeat", "fetch"])
+def test_a_process_holding_no_incarnation_is_told_to_enroll_and_renews_nothing(
+    action: str, comms_server: FastMCP, enrolled: FormationFixture
+) -> None:
+    """Ledger RC-004 ``_held``: an endpoint row exists but THIS process holds no incarnation
+    for it (a restart that has not re-enrolled). Both owning paths refuse it and renew nothing,
+    and holding nothing is not recorded as a displacement, so a later enroll still works."""
+    before = _lease(enrolled)
+    advance_group_clock(enrolled, 30)
+    _endpoints._PROCESS_INCARNATIONS.clear()
+
+    if action == "heartbeat":
+        payload = call_peers(comms_server, "heartbeat")
+    else:
+        payload = asyncio.run(comms_server.call_tool("trw_inbox", {"action": "fetch"})).structured_content
+
+    assert payload["status"] == "refused", payload
+    assert payload["reason"] == "endpoint_replaced_by_newer_incarnation", payload
+    assert _lease(enrolled) == before
+    assert not _endpoints._DISPLACED, "holding nothing is not being displaced"
+    assert call_peers(comms_server, "enroll")["status"] == "ok"

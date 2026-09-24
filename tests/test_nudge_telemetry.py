@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
+from trw_mcp.state._ceremony_state_model import PoolCooldown
 from trw_mcp.state._nudge_state import (
     CeremonyState,
     record_nudge_shown,
@@ -330,7 +331,9 @@ class TestStructlogNudgeTelemetry:
             session_started=True,
             phase="implement",
             tool_call_counter=1,
-            pool_cooldown_until={"workflow": 100, "learnings": 100, "ceremony": 100, "context": 100},
+            pool_cooldowns={
+                pool: PoolCooldown(until_counter=100) for pool in ("workflow", "learnings", "ceremony", "context")
+            },
         )
         weights = NudgePoolWeights(workflow=25, learnings=25, ceremony=25, context=25)
 
@@ -413,7 +416,7 @@ class TestStructlogNudgeTelemetry:
         from trw_mcp.models.config._client_profile import NudgePoolWeights
         from trw_mcp.state._nudge_rules import _select_nudge_pool
 
-        state = CeremonyState(tool_call_counter=1, pool_cooldown_until={"workflow": 100})
+        state = CeremonyState(tool_call_counter=1, pool_cooldowns={"workflow": PoolCooldown(until_counter=100)})
         weights = NudgePoolWeights(workflow=100, learnings=0, ceremony=0, context=0)
         with (
             patch("trw_mcp.models.config.get_config", return_value=TRWConfig(nudge_density="low")),

@@ -54,7 +54,16 @@ _commands = hc._commands
 #: one is a deliberate edit; a silent collapse is not. The client and hook
 #: floors are shared with their derivation modules rather than restated.
 _MIN_CLIENTS = MINIMUM_ACTIVE_CLIENTS
-_MIN_BUNDLED_AGENTS = 11
+_MIN_BUNDLED_AGENTS = 8  # PRD-CORE-291-FR05: 11 -> 8
+
+# N21 (2026-09-19 grok audit): every check in this module is pure derived-registry
+# logic over static bundled data (no tmp_path, no multi-tool interaction) -- the
+# same profile as the sibling test_client_registry_derivation.py, which already
+# carries this marker. Left unmarked, this whole module defaulted to
+# ``integration`` and 5 of 7 registry-totality reds found in that audit were
+# invisible to ``make test-fast`` / ``-m unit``, so the fast dev loop reported a
+# near-green tree while the client registry was actually broken.
+pytestmark = pytest.mark.unit
 
 
 def _clients() -> list[str]:
@@ -166,16 +175,14 @@ class TestHookCarrierParity:
         assert not missing, f"{carrier} registers script(s) that are not bundled: {missing}"
 
     def test_the_carriers_agree_on_which_hooks_are_wired(self) -> None:
-        """Per-carrier parity, with the one asymmetry stated as a decision.
+        """Per-carrier parity, with no exemptions.
 
-        ``validate-prd-write.sh`` is registered ONLY by the plugin, on an
-        unscoped ``Write|Edit`` matcher, and it exits 2 for any path outside
-        PRDs / run dirs / agent memory. Registering it in ``settings.json``
-        would deny ordinary source edits for every install, so the asymmetry is
-        deliberate -- and named here so it stays a reviewed decision rather
-        than drift. Everything else must be wired identically.
+        The rule is that a bundled hook ships only when it is registered, or sourced
+        by a registered hook. ``validate-prd-write.sh`` used to be the one stated
+        asymmetry (plugin-only, on an unscoped ``Write|Edit`` matcher that denied
+        ordinary source edits); it was deleted rather than exempted, so every hook
+        must now be wired identically by every carrier of its bundle.
         """
-        deliberate = {"validate-prd-write.sh"}
         groups: dict[str, dict[str, set[str]]] = {}
         for carrier in _hook_carriers():
             groups.setdefault(_carrier_group(carrier), {})[str(carrier.relative_to(_DATA_DIR))] = _registered_in(
@@ -189,30 +196,14 @@ class TestHookCarrierParity:
             union: set[str] = set()
             for registered in by_carrier.values():
                 union |= registered
-            expected = union - deliberate
-            assert expected, f"bundle {group!r} yielded no comparable hooks — the assertion would be vacuous"
+            assert union, f"bundle {group!r} yielded no comparable hooks — the assertion would be vacuous"
             for name, registered in by_carrier.items():
-                gap = sorted(expected - registered)
+                gap = sorted(union - registered)
                 assert not gap, (
                     f"{name} does not register hook(s) another carrier of the same bundle does: {gap}. "
-                    "TRW ships the script to these users and it never fires. Register it here, "
-                    "or record the asymmetry as a decision in this test."
+                    "TRW ships the script to these users and it never fires. Register it in every carrier, "
+                    "or stop shipping it."
                 )
-
-    def test_the_deliberate_asymmetry_is_still_real(self) -> None:
-        """Non-vacuity partner for the exemption above.
-
-        If ``validate-prd-write.sh`` ever becomes registered by every carrier
-        (or stops shipping), the exemption is stale and must be dropped rather
-        than left as a permanent hole in the parity check.
-        """
-        carriers = _hook_carriers()
-        registering = [c for c in carriers if "validate-prd-write.sh" in _registered_in(c)]
-        assert "validate-prd-write.sh" in _bundled_hooks(), "the exempted hook no longer ships — drop the exemption"
-        assert 0 < len(registering) < len(carriers), (
-            "validate-prd-write.sh is no longer asymmetric — remove it from the exemption set "
-            f"({len(registering)} of {len(carriers)} carriers register it)"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -315,3 +306,40 @@ class TestInstructionPromiseParity:
         assert f"`{expected}`" in text
         if not profile.tool_namespace_prefix:
             assert "mcp_trw_" not in text, "a namespace this profile does not declare is asserted to its agents"
+
+
+class TestFastLoopSeesRegistryTotality:
+    """N21: ``-m unit`` (``make test-fast``) must actually select this module.
+
+    Marking the module ``unit`` is not itself proof the fast loop runs it --
+    ``conftest.py``'s ``pytest_collection_modifyitems`` only *skips* auto-tiering
+    when a test already carries an ``unit``/``integration``/``e2e`` marker, so a
+    misspelled or module-scoped-only marker could still leave items deselected.
+    This spawns the real collection pytest performs and asserts registry-totality
+    tests are among the selected items -- the same command ``make test-fast`` runs.
+    """
+
+    def test_registry_totality_checks_are_selected_by_the_fast_loop(self) -> None:
+        import subprocess
+        import sys
+
+        tests_dir = Path(__file__).resolve().parent
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                str(Path(__file__).name),
+                "-m",
+                "unit",
+                "--collect-only",
+                "-q",
+            ],
+            capture_output=True,
+            text=True,
+            cwd=tests_dir,
+            timeout=60,
+        )
+        assert "test_client_set_is_complete" in result.stdout, result.stdout
+        assert "test_the_two_client_registries_agree" in result.stdout, result.stdout
+        assert "no tests ran" not in result.stdout, result.stdout

@@ -1,4 +1,4 @@
-"""``trw-mcp doctor`` row for WAL size, live writers and checkpoint age (PRD-CORE-248 FR06).
+"""``trw-mcp doctor`` row for WAL size and checkpoint age (PRD-CORE-248 FR06).
 
 Kept out of ``_subcommands_doctor.py`` (already close to the module-size gate) as
 a sibling, the same shape ``_doctor_memory_daemon`` and ``_doctor_embedding_egress``
@@ -8,8 +8,7 @@ The check **opens no SQLite connection**, unlike the neighbouring
 ``memory_backend`` row which probes the backend. A diagnostic that adds a writer
 to a contended store is self-defeating: the whole subject of this row is
 concurrency pressure, and measuring it must not add to it. Everything reported
-here comes from ``stat`` on the WAL file, the writer-registry lock files, and the
-checkpoint-timestamp sidecar.
+here comes from ``stat`` on the WAL file and the checkpoint-timestamp sidecars.
 
 Status mapping, and the reason it never FAILs: a large WAL is a health signal,
 not a broken store. It is ``WARN`` only when BOTH the size threshold is exceeded
@@ -122,7 +121,6 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
         last_effective_checkpoint_age_seconds,
         last_reset_checkpoint_age_seconds,
     )
-    from trw_mcp.state.memory_pressure import live_memory_writer_pids
 
     trw_dir = target / ".trw"
     db_path = trw_dir / "memory" / "memory.db"
@@ -133,14 +131,6 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
     except OSError:
         wal_bytes = 0
     wal_mib = wal_bytes / _MIB
-    # Pass the TTL: with pin_ttl_hours=None the heartbeat filter is skipped
-    # entirely and a live-but-wedged process keeps inflating "N live writer(s)"
-    # forever. An earlier version of this comment claimed "every pressure
-    # consumer already passes it"; that was false -- _wal_triggers.sole_live_writer,
-    # the function that gates whether TRUNCATE may even be requested, did not,
-    # so the fix had reached the observation and not the decision. Both pass it
-    # now, which is what keeps this row and that gate counting the same writers.
-    writers = live_memory_writer_pids(trw_dir, pin_ttl_hours=config.pin_ttl_hours)
     attempt_age = last_checkpoint_age_seconds(db_path)
     effective_age = last_effective_checkpoint_age_seconds(db_path)
     reset_age = last_reset_checkpoint_age_seconds(db_path)
@@ -196,7 +186,7 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
         f"WAL {wal_mib:.1f} MiB (checkpoint due at {config.wal_checkpoint_threshold_mb} MiB; "
         f"journal_size_limit asks SQLite to trim it toward 64 MiB when it next resets, "
         f"which is a request, not a hard cap on an active WAL), "
-        f"{len(writers)} live writer(s), last checkpoint attempt {_age_text(attempt_age)} ago, "
+        f"last checkpoint attempt {_age_text(attempt_age)} ago, "
         f"last checkpoint that CLEARED THE BACKLOG {_age_text(effective_age)} ago, "
         f"last checkpoint that RESET the WAL {_age_text(reset_age)} ago."
     )
@@ -209,11 +199,10 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
         # not cause a frame backlog -- PASSIVE writes frames back fine -- so
         # leading with the engine remedy on a `behind` store tells an operator
         # to do something that will not clear it.
-        if behind and len(writers) <= 1:
+        if behind:
             message += (
-                " Frames are being left behind with a single live writer, so suspect a reader"
-                " holding a snapshot: check wal_checkpoint_complete events for"
-                ' truncate_state="busy" or backlog_cleared=false.'
+                " Frames are being left behind by PASSIVE checkpoints, so suspect a reader"
+                " holding a snapshot: check wal_checkpoint_complete events for backlog_cleared=false."
             )
         elif not reset_safe:
             message += f" Cause: SQLite {sqlite_version()} -- {WAL_RESET_UNSAFE_REMEDY}."
@@ -230,33 +219,18 @@ def memory_wal_row(target: Path, config: TRWConfig) -> tuple[str, str]:
                     + ", ".join(_INTERPRETER_CANDIDATES)
                     + ") qualified on this PATH."
                 )
-        elif len(writers) > 1:
-            # Name the cause that actually applies here. The engine-capable
-            # branch below used to be the only one, and it sent an operator
-            # hunting a busy=1 that CANNOT occur with peers present: with more
-            # than one live writer no process certifies sole ownership, so a
-            # resetting checkpoint is never requested, the run is PASSIVE, and a
-            # healthy PASSIVE returns busy=0. Advice pointing at evidence that
-            # structurally cannot appear is worse than no advice.
-            message += (
-                f" Cause: {len(writers)} live writers, so no process can certify sole ownership"
-                " and a resetting checkpoint is never requested. SQLite reclaims the file when"
-                " the last server holding the store exits cleanly."
-            )
         else:
-            # NOT "check for busy=1": on the sole-writer path a busy TRUNCATE is
-            # retried as PASSIVE on the same connection and the retry's busy=0
-            # OVERWRITES it, so the field this used to name reads 0 on exactly
-            # the store this branch describes. Name the fields that do vary.
+            # trw-mcp never requests a resetting checkpoint any more: the writer
+            # locks that certified a sole writer went with PRD-CORE-298 FR01, since
+            # the daemon is the one writer. So name the way out, not a busy=1.
             message += (
-                " The engine can reset the WAL and this is the only live writer, so suspect a"
-                " reader holding a snapshot: check wal_checkpoint_complete events for"
-                ' truncate_state="busy" or backlog_cleared=false.'
+                " Cause: trw-mcp checkpoints a project store PASSIVE only, so SQLite reclaims the"
+                " file when the last server holding it exits cleanly; `trw-mcp memory migrate"
+                " --to user` moves the store under the daemon."
             )
     logger.debug(
         "doctor_memory_wal",
         wal_bytes=wal_bytes,
-        writers=len(writers),
         attempt_age=attempt_age,
         effective_age=effective_age,
         wal_reset_safe=reset_safe,

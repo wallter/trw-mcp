@@ -27,6 +27,19 @@ So an entry expires only when its creator PID is **not** live **and** its
 resolved toward retention (NFR02): an absent, non-string, or unparseable
 heartbeat is "not provably expired" and the entry stays. Losing a live pin is
 worse than keeping a dead one.
+
+What this means for a MANAGED restart (ledger N11)
+--------------------------------------------------
+A managed peer's driver relaunches its child in a NEW process, so the recorded
+creator PID is dead when the child comes back. Downtime longer than
+``pin_ttl_hours`` ends the membership: the relaunched child finds no pin and its
+formation row reads stale rather than silently rebinding to another run. Shorter
+downtime resumes on the same pin, and the resuming server re-stamps the entry
+with its own PID AT BOOT (``_paths_pin_mgmt.claim_resumed_pin``; a lookup never
+re-stamps, so an offline CLI cannot extend a dead server's TTL); without that the
+dead predecessor's PID left the heartbeat alone deciding, and a live server
+lost its pin one TTL into the session. Pinned by
+tests/test_pin_store_ttl_eviction.py.
 """
 
 from __future__ import annotations
@@ -36,7 +49,7 @@ from typing import Any
 
 import structlog
 
-from trw_mcp.state.memory_pressure import _parse_heartbeat_ts, _pid_is_alive
+from trw_mcp.state._process_identity import parse_heartbeat_ts, pid_is_alive
 
 logger = structlog.get_logger(__name__)
 
@@ -64,7 +77,7 @@ def resolve_pin_ttl_hours() -> int:
 
 def heartbeat_age_hours(entry: dict[str, Any], *, now: datetime | None = None) -> float | None:
     """Age in hours of *entry*'s ``last_heartbeat_ts``, or None when unparseable."""
-    parsed = _parse_heartbeat_ts(entry.get("last_heartbeat_ts"))
+    parsed = parse_heartbeat_ts(entry.get("last_heartbeat_ts"))
     if parsed is None:
         return None
     reference = now or datetime.now(timezone.utc)
@@ -94,7 +107,7 @@ def pin_entry_is_expired(
     if age is None or age <= float(pin_ttl_hours):
         return False, age
     pid = entry.get("pid")
-    if not isinstance(pid, int) or _pid_is_alive(pid):
+    if not isinstance(pid, int) or pid_is_alive(pid):
         # Not an int -> no evidence the creator is gone; alive -> the session is.
         return False, age
     return True, age

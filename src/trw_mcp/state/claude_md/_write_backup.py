@@ -39,20 +39,16 @@ def resolve_backup_dir(project_root: Path, backup_dir: str) -> Path:
     """Resolve *backup_dir* under *project_root*, refusing any escape.
 
     ``instruction_backup_dir`` is operator-overridable, so a value like
-    ``../../tmp/x`` would otherwise let TRW write outside the project. Unlike
-    the PRD-CORE-203 sidecar — which degrades to inline on an escaping path —
-    an escaping backup directory REFUSES the write, because the backup is the
-    only thing standing between a bad candidate and unrecoverable user content.
+    ``../../tmp/x`` would otherwise let TRW write outside the project. An
+    escaping backup directory REFUSES the write, because the backup is the only
+    thing standing between a bad candidate and unrecoverable user content.
 
     Raises:
         BackupRefused: when the resolved directory escapes *project_root*.
     """
-    # Lazy import: ``_instruction_carrier`` reaches back into this package, and
-    # importing it at module scope would close a cycle through ``_write_guard``.
-    from trw_mcp.state.claude_md._instruction_carrier import is_path_within
-
     candidate = project_root / backup_dir
-    if not is_path_within(project_root, candidate):
+    # ``resolve()`` normalizes ``..`` so containment holds for not-yet-existing paths.
+    if not candidate.resolve().is_relative_to(project_root.resolve()):
         raise BackupRefused(
             "backup_path_escape",
             f"instruction_backup_dir {backup_dir!r} resolves outside the project root {project_root}",

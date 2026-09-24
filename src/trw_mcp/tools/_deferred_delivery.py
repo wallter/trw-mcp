@@ -51,9 +51,7 @@ from trw_mcp.tools._deferred_steps_learning import (
     _step_auto_progress as _step_auto_progress,
     _step_collect_rework_metrics as _step_collect_rework_metrics,
     _step_delivery_metrics as _step_delivery_metrics,
-    _step_outcome_correlation as _step_outcome_correlation,
     _step_publish_learnings as _step_publish_learnings,
-    _step_recall_outcome as _step_recall_outcome,
     _step_trust_increment as _step_trust_increment,
 )
 from trw_mcp.tools._deferred_steps_memory import (
@@ -95,8 +93,6 @@ DEFERRED_STEPS: tuple[str, ...] = (
     "index_sync",
     "auto_progress",
     "publish_learnings",
-    "outcome_correlation",
-    "recall_outcome",
     "telemetry",
     "batch_send",
     "trust_increment",
@@ -262,8 +258,6 @@ def _run_deferred_steps(
         "index_sync": lambda: _do_index_sync(),
         "auto_progress": lambda: _step_auto_progress(resolved_run),
         "publish_learnings": lambda: _step_publish_learnings(),
-        "outcome_correlation": lambda: _step_outcome_correlation(),
-        "recall_outcome": lambda: _step_recall_outcome(resolved_run),
         "telemetry": lambda: _step_telemetry(resolved_run),
         "batch_send": lambda: _step_batch_send(),
         "trust_increment": lambda: _step_trust_increment(resolved_run),
@@ -460,12 +454,6 @@ def _launch_deferred(
     finish their current SQLite write, and ``trw_deliver`` is the
     last-pass contract.
     """
-    # Lazy import: avoid pulling the build-tools package into the
-    # _deferred_delivery import graph at module-load time.
-    from trw_mcp.tools._q_learning_state import join_q_learning_worker
-
-    join_q_learning_worker(timeout=30.0)
-
     with _ds._deferred_lock:
         if _ds._deferred_thread is not None and _ds._deferred_thread.is_alive():
             logger.info("deferred_launch_skipped", reason="thread_still_alive")

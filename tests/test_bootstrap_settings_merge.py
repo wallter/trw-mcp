@@ -81,15 +81,18 @@ def test_existing_non_utf8_does_not_raise_or_leak(tmp_path: Path, caplog) -> Non
     dest = tmp_path / "proj" / ".claude" / "settings.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     # Invalid UTF-8 bytes wrapped around a secret-looking marker.
-    dest.write_bytes(b"\xff\xfe" + _SECRET.encode("utf-8") + b"\xff")
+    before = b"\xff\xfe" + _SECRET.encode("utf-8") + b"\xff"
+    dest.write_bytes(before)
     result = _new_result()
 
     with caplog.at_level(logging.DEBUG):
         _merge_settings_json(src, dest, result)  # must not raise
 
-    # Recovered by copying the valid bundled template.
-    recovered = json.loads(dest.read_text(encoding="utf-8"))
-    assert recovered["env"]["TRW_NEW_FLAG"] == "1"
+    # PRD-INFRA-192 FR10 (P1-c): TRW cannot prove these bytes are its own, so
+    # it must leave them untouched rather than replace them with the bundled
+    # template, and report the problem via result["errors"].
+    assert dest.read_bytes() == before
+    assert any("settings.json" in e for e in result["errors"]), result["errors"]
     # No secret marker leaked into logs or results.
     blob = caplog.text + json.dumps(result)
     assert _SECRET not in blob
@@ -98,20 +101,22 @@ def test_existing_non_utf8_does_not_raise_or_leak(tmp_path: Path, caplog) -> Non
 def test_existing_top_level_non_object_does_not_raise(tmp_path: Path) -> None:
     src = _bundled(tmp_path)
     dest = tmp_path / "proj" / ".claude" / "settings.json"
-    _write(dest, json.dumps(["not", "an", "object"]))
+    before = json.dumps(["not", "an", "object"])
+    _write(dest, before)
     result = _new_result()
 
     _merge_settings_json(src, dest, result)  # must not raise
 
-    recovered = json.loads(dest.read_text(encoding="utf-8"))
-    assert isinstance(recovered, dict)
-    assert recovered["env"]["TRW_NEW_FLAG"] == "1"
+    # A non-object document is not TRW's to overwrite either — left untouched.
+    assert dest.read_text(encoding="utf-8") == before
+    assert any("settings.json" in e for e in result["errors"]), result["errors"]
 
 
 def test_existing_malformed_json_fallback_is_content_free(tmp_path: Path, caplog) -> None:
     src = _bundled(tmp_path)
     dest = tmp_path / "proj" / ".claude" / "settings.json"
-    _write(dest, '{"env": {"ENABLE_TOOL_SEARCH": "' + _SECRET + '"')  # truncated JSON
+    before = '{"env": {"ENABLE_TOOL_SEARCH": "' + _SECRET + '"'  # truncated JSON
+    _write(dest, before)
     result = _new_result()
 
     with caplog.at_level(logging.DEBUG):
@@ -119,8 +124,10 @@ def test_existing_malformed_json_fallback_is_content_free(tmp_path: Path, caplog
 
     blob = caplog.text + json.dumps(result)
     assert _SECRET not in blob
-    # Recovered to a valid document.
-    json.loads(dest.read_text(encoding="utf-8"))
+    # Left as-is rather than replaced — the malformed document is preserved
+    # byte-for-byte and the caller is told via result["errors"].
+    assert dest.read_text(encoding="utf-8") == before
+    assert any("settings.json" in e for e in result["errors"]), result["errors"]
 
 
 # ── bundled-side corruption ─────────────────────────────────────────────────

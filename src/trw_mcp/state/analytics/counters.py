@@ -280,7 +280,7 @@ def update_analytics_extended(
     """Update analytics.yaml with extended metrics (PRD-QUAL-012-FR02/FR03).
 
     Populates previously dead fields: reflections_completed, success_rate,
-    q_learning_activations, high_impact_learnings.
+    high_impact_learnings. (PRD-CORE-293 removed q_learning_activations.)
 
     Args:
         trw_dir: Path to .trw directory.
@@ -288,18 +288,15 @@ def update_analytics_extended(
         is_reflection: Whether this call is from a reflection event.
         is_success: Whether this is a successful outcome.
     """
-    # FR03: Q-learning activations (scan entries for q_observations > 0).
+    # FR03: high-impact count.
     # Read-only scan of the learning store — computed BEFORE the analytics lock
     # so it doesn't extend the RMW critical section (it does not depend on data).
-    q_activations = 0
     high_impact = 0
     try:
         from trw_mcp.state.memory_adapter import list_active_learnings
 
-        all_active = list_active_learnings(trw_dir)
+        all_active = list_active_learnings(trw_dir, purpose="maintenance")
         for entry_data in all_active:
-            if int(str(entry_data.get("q_observations", 0))) > 0:
-                q_activations += 1
             if float(str(entry_data.get("impact", 0.5))) >= 0.7:
                 high_impact += 1
     except Exception:  # justified: boundary, ImportError + SQLite/adapter failures trigger YAML fallback
@@ -308,8 +305,6 @@ def update_analytics_extended(
         entries_dir = _ac._entries_path(trw_dir)
         if entries_dir.is_dir():
             for _path, _entry_raw in _ac._iter_entry_files(entries_dir):
-                if _ac._safe_int(_entry_raw, "q_observations") > 0:
-                    q_activations += 1
                 if _ac._safe_float(_entry_raw, "impact", 0.5) >= 0.7:
                     high_impact += 1
 
@@ -330,7 +325,6 @@ def update_analytics_extended(
         data["successful_outcomes"] = successes
         data["success_rate"] = round(successes / max(total_outcomes, 1), 3)
 
-        data["q_learning_activations"] = q_activations
         data["high_impact_learnings"] = high_impact
 
         FileStateWriter().write_yaml(analytics_path, data)

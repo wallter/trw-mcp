@@ -67,7 +67,9 @@ class TestFrameworkDeployment:
         data = reader.read_yaml(version_path)
         assert "framework_version" in data
         assert "aaref_version" in data
-        assert "trw_mcp_version" in data
+        # PRD-INFRA-192 FR12: package versions are no longer stamped
+        # into VERSION.yaml; the manifest's ``packages`` map is authoritative.
+        assert "trw_mcp_version" not in data
         assert "deployed_at" in data
         assert data["framework_version"] == FRAMEWORK_VERSION
 

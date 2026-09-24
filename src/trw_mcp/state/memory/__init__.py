@@ -6,7 +6,7 @@ compatibility; this package aggregates their public API.
 
 Usage::
 
-    from trw_mcp.state.memory import embed_text, check_duplicate, MemoryStore
+    from trw_mcp.state.memory import embed_text, dedup_verdict, MemoryStore
 """
 
 from __future__ import annotations
@@ -22,22 +22,13 @@ from trw_mcp.state.dedup import (
     DedupResult as DedupResult,
 )
 from trw_mcp.state.dedup import (
-    batch_dedup as batch_dedup,
+    dedup_verdict as dedup_verdict,
 )
 from trw_mcp.state.dedup import (
-    check_duplicate as check_duplicate,
-)
-from trw_mcp.state.dedup import (
-    is_migration_needed as is_migration_needed,
-)
-from trw_mcp.state.dedup import (
-    merge_entries as merge_entries,
+    merge_into_survivor as merge_into_survivor,
 )
 
 # --- Embedding operations ---
-from trw_mcp.state.memory_adapter import (
-    backfill_embeddings as backfill_embeddings,
-)
 from trw_mcp.state.memory_adapter import (
     check_embeddings_status as check_embeddings_status,
 )
@@ -82,6 +73,9 @@ from trw_mcp.state.memory_adapter import (
     recall_learnings as recall_learnings,
 )
 from trw_mcp.state.memory_adapter import (
+    record_surfaced as record_surfaced,
+)
+from trw_mcp.state.memory_adapter import (
     reset_backend as reset_backend,
 )
 from trw_mcp.state.memory_adapter import (
@@ -89,9 +83,6 @@ from trw_mcp.state.memory_adapter import (
 )
 from trw_mcp.state.memory_adapter import (
     store_learning as store_learning,
-)
-from trw_mcp.state.memory_adapter import (
-    update_access_tracking as update_access_tracking,
 )
 from trw_mcp.state.memory_adapter import (
     update_learning as update_learning,
@@ -103,12 +94,6 @@ from trw_mcp.state.memory_store import (
 )
 
 # --- Recall tracking & analytics ---
-from trw_mcp.state.recall_tracking import (
-    get_recall_stats as get_recall_stats,
-)
-from trw_mcp.state.recall_tracking import (
-    record_outcome as record_outcome,
-)
 from trw_mcp.state.recall_tracking import (
     record_recall as record_recall,
 )
@@ -125,13 +110,11 @@ __all__ = [
     "DedupResult",
     "MemoryStore",
     "TierManager",
-    "backfill_embeddings",
-    "batch_dedup",
-    "check_duplicate",
     "check_embeddings_status",
     "compute_importance_score",
     "consolidate_cycle",
     "count_entries",
+    "dedup_verdict",
     "embed_text",
     "embed_text_batch",
     "embedding_available",
@@ -141,17 +124,14 @@ __all__ = [
     "find_yaml_path_for_entry",
     "get_backend",
     "get_embedder",
-    "get_recall_stats",
-    "is_migration_needed",
     "list_active_learnings",
     "list_entries_by_status",
-    "merge_entries",
+    "merge_into_survivor",
     "recall_learnings",
-    "record_outcome",
     "record_recall",
+    "record_surfaced",
     "reset_backend",
     "reset_embedder",
     "store_learning",
-    "update_access_tracking",
     "update_learning",
 ]

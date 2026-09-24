@@ -17,8 +17,6 @@ channels:
   lock_file: .trw/channels/ag-02-distill-explorer-subagent.lock
   status: active
   write_strategy: FULL_REWRITE
-  tier_default: T1
-  tier_min: T1
   markers:
     start: ''
     end: ''
@@ -54,8 +52,6 @@ channels:
   lock_file: .trw/channels/ag-03-before-edit-hook.lock
   status: aspirational
   write_strategy: FULL_REWRITE
-  tier_default: T1
-  tier_min: T0
   markers:
     start: ''
     end: ''
@@ -91,8 +87,6 @@ channels:
   lock_file:
   status: active
   write_strategy: NONE
-  tier_default: T1
-  tier_min: T0
   markers:
     start: ''
     end: ''

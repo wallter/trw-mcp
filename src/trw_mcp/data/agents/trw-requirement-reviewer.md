@@ -5,8 +5,8 @@ description: >
   evidence-linked assessment after drafting or grooming. Returns category-aware
   blocking findings, actionable remediation conditions, and a READY, NEEDS WORK,
   or BLOCK verdict; it does not edit the PRD.
-model: balanced
-effort: low
+model: frontier
+effort: medium
 maxTurns: 20
 memory: project
 tools:

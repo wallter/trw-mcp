@@ -236,9 +236,15 @@ def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None
     deltas are never concatenated -- re-assembling them would double the text
     that the terminal payload already carries whole.
 
-    Degrades like every sibling: any non-JSON line, any untagged line, or a
-    stream with no terminal envelope returns the ANSI-cleaned raw text and no
-    structured payload, so a shape chosen wrongly costs nothing.
+    Degrades like every sibling ONLY when no terminal envelope is found at all:
+    a non-JSON line, an untagged line, or one that fails to parse is IGNORED and
+    scanning continues, so a single bad line (agy's own "could not write session
+    log" banner under sandbox confinement, measured live under ``--pty``) never
+    blanks out an otherwise-parseable terminal ``result`` -- the raw event log is
+    never handed back as the answer while a real terminal envelope exists in the
+    same stream. A stream that never produces a recognized terminal envelope
+    still returns the ANSI-cleaned raw text and no structured payload, so a shape
+    chosen wrongly costs nothing.
 
     A RECOGNIZED terminal envelope is the one case that does not degrade to raw
     text. If its answer field is absent, empty, whitespace-only or not a string,
@@ -250,19 +256,17 @@ def _normalize_enveloped_events(raw: str) -> tuple[str, dict[str, object] | None
     terminal: dict[str, object] | None = None
     for line in cleaned.splitlines():
         line = line.strip()
-        if not line:
+        if not line or not line.startswith("{"):
             continue
-        if not line.startswith("{"):
-            return cleaned.strip(), None
         try:
             envelope = json.loads(line)
-        except ValueError:
-            return cleaned.strip(), None
+        except ValueError:  # trw-fail-silent-allow: a non-envelope log line is skipped; raw text is still returned when no envelope parses
+            continue
         if not isinstance(envelope, dict):
-            return cleaned.strip(), None
+            continue
         name = envelope.get("event")
         if not isinstance(name, str):
-            return cleaned.strip(), None
+            continue
         if name in _TERMINAL_ENVELOPE_EVENTS:
             payload = envelope.get(name)
             if isinstance(payload, dict):
@@ -360,6 +364,20 @@ _HARD_STOP_MARKERS: tuple[str, ...] = (
     "requires approval, but approval policy is never",
 )
 
+# Provider billing/quota refusals, matched like ``_STOP_MARKERS`` (status fields,
+# or any stream of a run that produced no answer). Named apart from the auth stops
+# because the remedy differs: a caller fails over to another client rather than
+# re-authenticating. Measured 2026-09-23: codex's structured error "You've hit
+# your usage limit" and grok's exit-1 "402 Payment Required: ... usage balance
+# exhausted".
+_QUOTA_MARKERS: tuple[str, ...] = (
+    "usage limit",
+    "payment required",
+    "usage balance exhausted",
+    "insufficient_quota",
+    "quota exceeded",
+)
+
 # Structured fields that carry a client's OWN verdict on the turn. Read by name;
 # a blanket walk over structured VALUES is forbidden here because those values
 # include the answer (agy's ``response``, claude's ``result``).
@@ -382,6 +400,59 @@ _STATUS_FIELDS: tuple[str, ...] = (
 # Values of a status field that mean "the turn completed normally". Anything else
 # in a status field is treated as a stop.
 _OK_STATUS_VALUES: frozenset[str] = frozenset({"success", "ok", "completed", "complete", "done", "stop", "end_turn"})
+
+# Phrases a client's OWN answer text uses to announce a subagent handoff rather
+# than report the work itself (FEEDBACK-DELTA sub_lDW_XMo1oaNtfCI9): agy's
+# ``status`` field reported "success" beside a response that only announced the
+# handoff, so ``_structured_stop``'s named-field vocabulary never saw a stop.
+# Deliberately two-part ("delegat..."/"hand..." beside "subagent"/"sub-agent")
+# rather than a single word, to keep this from firing on an ordinary review whose
+# SUBJECT happens to discuss subagents.
+_SUBAGENT_DEFERRAL_MARKERS: tuple[str, ...] = (
+    "delegated to subagent",
+    "delegated to a subagent",
+    "delegated to sub-agent",
+    "delegated to a sub-agent",
+    "handed off to a subagent",
+    "handed off to a sub-agent",
+    "handing off to a subagent",
+    "handing off to a sub-agent",
+)
+
+# Quoted spans (backticks, straight or curly double quotes) and the length above
+# which an answer is treated as substantive rather than a bare handoff notice.
+_QUOTED_SPAN = re.compile(r"`[^`]*`|\"[^\"]*\"|\u201c[^\u201d]*\u201d")
+_HANDOFF_ONLY_MAX_CHARS = 300
+# Verdict/result content: an answer carrying any of these reports work that came
+# back, so a delegation it mentions is history, not a pending handoff.
+_RESULT_CONTENT = re.compile(
+    r"\b(verdict|findings?|returned|result|completed|no issues|pass(ed)?|block(ed)?|merge|approved?)\b"
+)
+
+
+def _structured_deferral(structured: dict[str, object] | None, text: str) -> bool:
+    """True if a client's own PARSED answer only announces a subagent handoff.
+
+    Complements ``_structured_stop``: that function reads named status fields
+    against a fixed vocabulary, so an unrecognized value (e.g. ``'delegated'``)
+    already trips a stop. The gap this closes is the case a client's CLI
+    measurably produces instead -- a recognized OK status field (agy's own
+    ``status: success``) beside answer text that says the work was merely
+    handed off and never returned. Checked only when ``structured`` is present:
+    a bare pty stream carrying the same words with no parsed payload is already
+    covered by the hard-stop markers, and gating on a parsed payload keeps this
+    from firing against ordinary prose when nothing was actually parsed.
+    """
+    if structured is None:
+        return False
+    # Handoff-only: quoted mentions are evidence, not an announcement; an answer
+    # long enough to carry findings, or carrying a verdict/result, is a completed
+    # answer that merely mentions a handoff (a review quoting this marker was
+    # misread once).
+    haystack = _QUOTED_SPAN.sub(" ", text).lower().strip()
+    if len(haystack) > _HANDOFF_ONLY_MAX_CHARS or _RESULT_CONTENT.search(haystack):
+        return False
+    return any(marker in haystack for marker in _SUBAGENT_DEFERRAL_MARKERS)
 
 
 def _structured_stop(structured: dict[str, object] | None) -> bool:
@@ -410,7 +481,8 @@ def classify_silence(
 ) -> str | None:
     """Name why a run produced no usable answer, or return ``None``.
 
-    Precedence is most-specific-first: a timeout, then a stop the child or its
+    Precedence is most-specific-first: a timeout, then a provider quota refusal
+    (``quota_exhausted``, so a caller can fail over), then a stop the child or its
     transport reported, then a bare non-zero exit, then an empty answer. The
     order matters because an expired codex credential exits 1 AND prints a 401 —
     measured 2026-09-16 — and "auth_or_content_stop" is the actionable half of
@@ -439,9 +511,15 @@ def classify_silence(
     """
     if timed_out:
         return "timed_out"
+    produced_answer = exit_code == 0 and bool(text.strip())
+    status_text = " ".join(str((structured or {}).get(field) or "") for field in _STATUS_FIELDS)
+    quota_haystack = status_text if produced_answer else f"{status_text}\n{text}\n{raw_stderr}\n{merged_stderr}"
+    if any(marker in quota_haystack.lower() for marker in _QUOTA_MARKERS):
+        return "quota_exhausted"
     if _structured_stop(structured):
         return "auth_or_content_stop"
-    produced_answer = exit_code == 0 and bool(text.strip())
+    if _structured_deferral(structured, text):
+        return "subagent_deferral"
     # A stderr marker counts only when the run produced no usable answer. codex
     # echoes the whole PROMPT to stderr, so a prompt that merely mentions
     # "credential" or "authentication" would otherwise turn a complete, exit-0

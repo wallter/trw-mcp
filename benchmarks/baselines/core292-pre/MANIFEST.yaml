@@ -1,0 +1,6 @@
+revision: b27478af5aaa99f47d936715686efac34e273e12
+seed: 7
+queries: 16
+runs_per_cell: 1
+harness: trw-mcp/benchmarks/engmem_mcp.py
+note: frozen BEFORE PRD-CORE-292 FR01/FR03; the gate compares per-query outcomes against these files

@@ -123,7 +123,6 @@ def _build_sync_result(
     hash_value: str | None = None,
     carrier_mode: str | None = None,
     pointer_skips: list[InstructionPointerSkipDict] | None = None,
-    external_path: str | None = None,
     capability_parity_drift: list[str] | None = None,
     diffs: list[InstructionDiffDict] | None = None,
     refusals: list[InstructionWriteRefusalDict] | None = None,
@@ -152,8 +151,6 @@ def _build_sync_result(
         result["carrier_mode"] = carrier_mode
     if pointer_skips is not None:
         result["pointer_skips"] = pointer_skips
-    if external_path is not None:
-        result["external_path"] = external_path
     # PRD-CORE-218-FR06: present (possibly empty) whenever AGENTS.md is written.
     if capability_parity_drift is not None:
         result["capability_parity_drift"] = capability_parity_drift
@@ -217,25 +214,18 @@ def generate_review_md(
 
     target_path = repo_root / "REVIEW.md"
 
-    # PRD-FIX-085 FR05: use named factory.
+    # PRD-FIX-085 FR05: use named factory. recall_for_review_tags already
+    # returns the impact-ranked, max_results-capped union across the tag set
+    # (L-hzMb) -- re-sorting/re-slicing here would be redundant double work
+    # with no behavior change, so this is the one owner of ranking + cap.
     from trw_mcp.state.recall_factories import recall_for_review_tags
 
-    all_learnings = recall_for_review_tags(
+    selected = recall_for_review_tags(
         trw_dir,
         tags=_REVIEW_TAGS,
         min_impact=_REVIEW_MIN_IMPACT,
         max_results=_REVIEW_MAX_LEARNINGS,
     )
-
-    # Sort by impact descending, cap at 20
-    def _impact_key(entry: dict[str, object]) -> float:
-        try:
-            return float(str(entry.get("impact", 0.0)))
-        except (ValueError, TypeError):
-            return 0.0
-
-    all_learnings.sort(key=_impact_key, reverse=True)
-    selected = all_learnings[:_REVIEW_MAX_LEARNINGS]
 
     # Build learning entries section
     if selected:
@@ -246,7 +236,10 @@ def generate_review_md(
             lines.append(f"- Flag: {summary} ({lid})")
         learning_entries = "\n".join(lines)
     else:
-        learning_entries = "<!-- No qualifying learnings (impact >= 0.7) found -->"
+        learning_entries = (
+            f"- No qualifying learnings: none tagged any of: {', '.join(_REVIEW_TAGS)}"
+            f" with impact >= {_REVIEW_MIN_IMPACT}."
+        )
 
     content = _REVIEW_TEMPLATE.replace("{learning_entries}", learning_entries)
 

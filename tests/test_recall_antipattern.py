@@ -46,15 +46,18 @@ def _patch_recall_deps(
 ) -> None:
     """Patch memory_adapter recall + access tracking at the source module.
 
-    Function-local imports in perform_session_recalls() resolve from the source
+    Function-local imports in perform_session_recalls(, verbose=True) resolve from the source
     module, so patches must target trw_mcp.state.memory_adapter.
     """
     monkeypatch.setattr(
         "trw_mcp.state.memory_adapter.recall_learnings",
         recall_fn,
     )
+    # record_surfaced (session_start=True) is orthogonal to the anti-pattern
+    # alert behaviour under test, so it's stubbed out like the other
+    # session-start side effects above.
     monkeypatch.setattr(
-        "trw_mcp.state.memory_adapter.update_access_tracking",
+        "trw_mcp.state.memory_adapter.record_surfaced",
         lambda *a, **kw: None,
     )
     monkeypatch.setattr(
@@ -91,11 +94,8 @@ class TestAntipatternAlertSurfaces:
         config = _make_config()
         reader = FileStateReader()
 
-        learnings, _, _ = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="client profile model system",
-            config=config,
-            reader=reader,
+        learnings, _ = perform_session_recalls(
+            trw_dir=tmp_path, query="client profile model system", config=config, reader=reader, verbose=True
         )
 
         # The facade learning should have the alert prefix
@@ -127,11 +127,8 @@ class TestAntipatternAlertSurfaces:
         config = _make_config()
         reader = FileStateReader()
 
-        learnings, _, _ = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="build adapter registry",
-            config=config,
-            reader=reader,
+        learnings, _ = perform_session_recalls(
+            trw_dir=tmp_path, query="build adapter registry", config=config, reader=reader, verbose=True
         )
 
         alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
@@ -156,11 +153,8 @@ class TestAntipatternAlertSurfaces:
         config = _make_config()
         reader = FileStateReader()
 
-        learnings, _, _ = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="framework plugin system",
-            config=config,
-            reader=reader,
+        learnings, _ = perform_session_recalls(
+            trw_dir=tmp_path, query="framework plugin system", config=config, reader=reader, verbose=True
         )
 
         alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
@@ -192,11 +186,8 @@ class TestAntipatternAlertSkipped:
         config = _make_config()
         reader = FileStateReader()
 
-        learnings, _, _ = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="fix typo in readme",
-            config=config,
-            reader=reader,
+        learnings, _ = perform_session_recalls(
+            trw_dir=tmp_path, query="fix typo in readme", config=config, reader=reader, verbose=True
         )
 
         alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
@@ -219,12 +210,7 @@ class TestAntipatternAlertSkipped:
         config = _make_config()
         reader = FileStateReader()
 
-        learnings, _, _ = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="*",
-            config=config,
-            reader=reader,
-        )
+        learnings, _ = perform_session_recalls(trw_dir=tmp_path, query="*", config=config, reader=reader, verbose=True)
 
         # Wildcard queries are NOT focused, so anti-pattern check skips
         alert_entries = [e for e in learnings if "ANTI-PATTERN ALERT" in str(e.get("summary", ""))]
@@ -261,11 +247,8 @@ class TestAntipatternAlertFailOpen:
         # learnings, list)` also held when the entry was swallowed, which is the
         # failure this class exists to catch: a fail-open path that quietly
         # drops the caller's data is not fail-open, it is silent loss.
-        learnings, _, _ = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="model system adapter",
-            config=config,
-            reader=reader,
+        learnings, _ = perform_session_recalls(
+            trw_dir=tmp_path, query="model system adapter", config=config, reader=reader, verbose=True
         )
         assert learnings == [
             {
@@ -298,16 +281,11 @@ class TestAntipatternAlertFailOpen:
         config = _make_config()
         reader = FileStateReader()
 
-        # Must not raise. The honest outcome is NOT "unmodified results": the
-        # focused-recall dedup loop keys on ``entry["id"]``, so an id-less entry
-        # is dropped. Pinned explicitly, together with the counter that keeps
-        # the drop visible (``query_matched`` still reports the match), so the
-        # gap between "matched" and "returned" cannot silently widen.
-        learnings, _, extras = perform_session_recalls(
-            trw_dir=tmp_path,
-            query="model system",
-            config=config,
-            reader=reader,
+        # Must not raise. PRD-CORE-294 FR02 deleted the two-recall dedup loop that
+        # used to drop an id-less entry, so the one recall's row is returned as is.
+        learnings, extras = perform_session_recalls(
+            trw_dir=tmp_path, query="model system", config=config, reader=reader, verbose=True
         )
-        assert learnings == []
-        assert extras["query_matched"] == 1
+        assert len(learnings) == 1
+        assert "id" not in learnings[0]
+        assert "query_matched" not in extras

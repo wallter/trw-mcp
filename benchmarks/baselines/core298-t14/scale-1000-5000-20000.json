@@ -1,0 +1,295 @@
+{
+ "1000": {
+  "_run": {
+   "close_failed": 0.0,
+   "rows": 1000.0,
+   "store_mb": 48.398136,
+   "wall_s": 17.83304783399217
+  },
+  "trw-daemon-tool": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 7,
+    "delta_pp": 43.75,
+    "n": 16,
+    "p": 0.015625
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 89.58333333333334,
+   "n": 16.0,
+   "p50_ms": 184.3117498792708,
+   "p95_ms": 3344.2062500398606
+  },
+  "trw-framework": {
+   "complete@10": 56.25,
+   "complete@10_ci95": [
+    33.17819560677652,
+    76.90163666481448
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 56.25,
+   "mrr": 56.25,
+   "n": 16.0,
+   "p50_ms": 68.60287487506866,
+   "p95_ms": 81.79891691543162
+  },
+  "trw-fts-first": {
+   "complete@10": 75.0,
+   "complete@10_ci95": [
+    50.50123107060135,
+    89.81809801576264
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 3,
+    "delta_pp": 18.75,
+    "n": 16,
+    "p": 0.25
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 75.0,
+   "mrr": 75.0,
+   "n": 16.0,
+   "p50_ms": 26.7489580437541,
+   "p95_ms": 31.931041041389108
+  },
+  "trw-fts-first+rerank": {
+   "complete@10": 100.0,
+   "complete@10_ci95": [
+    80.63865817272801,
+    100.0
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 7,
+    "delta_pp": 43.75,
+    "n": 16,
+    "p": 0.015625
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 100.0,
+   "mrr": 96.875,
+   "n": 16.0,
+   "p50_ms": 69.58083296194673,
+   "p95_ms": 95.7262918818742
+  }
+ },
+ "20000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 20000.0,
+   "store_mb": 595.254946,
+   "wall_s": 145.6932520829141
+  },
+  "trw-daemon-tool": {
+   "complete@10": 0.0,
+   "complete@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 0.0,
+   "mrr": 0.0,
+   "n": 16.0,
+   "p50_ms": 864.6003750618547,
+   "p95_ms": 1107.187082991004
+  },
+  "trw-framework": {
+   "complete@10": 0.0,
+   "complete@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 0.0,
+   "mrr": 0.0,
+   "n": 16.0,
+   "p50_ms": 69.02104103937745,
+   "p95_ms": 105.87508301250637
+  },
+  "trw-fts-first": {
+   "complete@10": 62.5,
+   "complete@10_ci95": [
+    38.64064709793481,
+    81.5190174452472
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 10,
+    "delta_pp": 62.5,
+    "n": 16,
+    "p": 0.001953125
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 62.5,
+   "mrr": 62.5,
+   "n": 16.0,
+   "p50_ms": 99.37704191543162,
+   "p95_ms": 124.27662499248981
+  },
+  "trw-fts-first+rerank": {
+   "complete@10": 62.5,
+   "complete@10_ci95": [
+    38.64064709793481,
+    81.5190174452472
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 10,
+    "delta_pp": 62.5,
+    "n": 16,
+    "p": 0.001953125
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 62.5,
+   "mrr": 62.5,
+   "n": 16.0,
+   "p50_ms": 144.34133400209248,
+   "p95_ms": 542.4302089959383
+  }
+ },
+ "5000": {
+  "_run": {
+   "close_error": "TimeoutError: timed out waiting for background graph updates",
+   "close_failed": 1.0,
+   "rows": 5000.0,
+   "store_mb": 189.357244,
+   "wall_s": 35.27911700005643
+  },
+  "trw-daemon-tool": {
+   "complete@10": 0.0,
+   "complete@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 0,
+    "delta_pp": 0.0,
+    "n": 16,
+    "p": 1.0
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 0.0,
+   "mrr": 0.0,
+   "n": 16.0,
+   "p50_ms": 316.6326670907438,
+   "p95_ms": 449.5590419974178
+  },
+  "trw-framework": {
+   "complete@10": 0.0,
+   "complete@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 0.0,
+   "mrr": 0.0,
+   "n": 16.0,
+   "p50_ms": 53.09070786461234,
+   "p95_ms": 85.74345801025629
+  },
+  "trw-fts-first": {
+   "complete@10": 56.25,
+   "complete@10_ci95": [
+    33.17819560677652,
+    76.90163666481448
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 9,
+    "delta_pp": 56.25,
+    "n": 16,
+    "p": 0.00390625
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 56.25,
+   "mrr": 56.25,
+   "n": 16.0,
+   "p50_ms": 68.6757080256939,
+   "p95_ms": 141.83412515558302
+  },
+  "trw-fts-first+rerank": {
+   "complete@10": 56.25,
+   "complete@10_ci95": [
+    33.17819560677652,
+    76.90163666481448
+   ],
+   "complete@10_mcnemar_vs_trw-framework": {
+    "a_only": 0,
+    "b_only": 9,
+    "delta_pp": 56.25,
+    "n": 16,
+    "p": 0.00390625
+   },
+   "forbidden@10": 0.0,
+   "forbidden@10_ci95": [
+    0.0,
+    19.361341827271993
+   ],
+   "hit@10": 56.25,
+   "mrr": 56.25,
+   "n": 16.0,
+   "p50_ms": 114.5564999897033,
+   "p95_ms": 311.6560420021415
+  }
+ }
+}

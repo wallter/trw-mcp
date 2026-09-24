@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
+from tests._formation_test_support import FormationFixture, formation_env, open_slot, write_pin  # noqa: F401
 from tests._layout import MONOREPO_ROOT, requires_local_timing, requires_monorepo
+from tests._timing import assert_budget
 from trw_mcp.models.config import get_config
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._deliver_gate_mode import (
@@ -316,9 +318,15 @@ def test_acceptable_failure_record_still_releases_a_fail_closed_block(
 # ── NFR01: cost bounds ──────────────────────────────────────────────────
 
 
-@pytest.mark.perf
-@requires_local_timing
 def test_gate_and_detection_cost_bounds() -> None:
+    """NFR01 setup sanity: the fixed description text used for the cost-bound
+    measurement (see the ``_budget`` twin) is genuinely large, not vacuously short."""
+    text = ("some description of the work that matches nothing in particular. " * 64)[:4096]
+    assert len(text) >= 4000
+
+
+@requires_local_timing
+def test_gate_and_detection_cost_bounds_budget() -> None:
     """NFR01: detection is pure string work over a bounded join, and the gate's
     addition is one integer over an already-materialised list.
 
@@ -330,7 +338,6 @@ def test_gate_and_detection_cost_bounds() -> None:
     from trw_mcp.tools._task_type_detection import detect_task_type
 
     text = ("some description of the work that matches nothing in particular. " * 64)[:4096]
-    assert len(text) >= 4000
 
     samples: list[float] = []
     for _ in range(1000):
@@ -339,7 +346,7 @@ def test_gate_and_detection_cost_bounds() -> None:
         samples.append((time.perf_counter() - start) * 1000.0)
     samples.sort()
     p99 = samples[int(0.99 * len(samples)) - 1]
-    assert p99 <= 20.0, f"detection p99 {p99:.3f} ms — PRD budget is 2 ms; 20 ms is the flake-tolerant tripwire"
+    assert_budget("detection_p99", p99, 20.0, "ms")
 
     # The gate's own addition: one integer comparison, no I/O.
     gate_samples: list[float] = []
@@ -350,7 +357,7 @@ def test_gate_and_detection_cost_bounds() -> None:
         )
         gate_samples.append((time.perf_counter() - start) * 1000.0)
     gate_samples.sort()
-    assert gate_samples[len(gate_samples) // 2] <= 5.0
+    assert_budget("gate_decision_median", gate_samples[len(gate_samples) // 2], 5.0, "ms")
 
 
 # --- PRD-CORE-265-NFR02: all four adapters, both conditions ------------------
@@ -438,3 +445,240 @@ def test_formation_adapters_fail_closed_and_distinguish_absent_from_broken(
 
     recovery = _resolve_formation_line(orchestrator)
     assert recovery.startswith("unresolved") and "formation.yaml" in recovery
+
+
+# --------------------------------------------------------------------------- #
+# PRD-FIX-149 FR01/FR02/NFR02 -- the orchestrator's own slot (ledger T22).
+#
+# Run 20260919T172832Z-bc716ad0: the lead registered ITSELF as a formation member.
+# With every peer terminal, its own trw_deliver was refused because its own slot
+# was still joined -- and only delivery could flip that slot. load() gave the
+# orchestrator member_id=None, so neither the gate nor the self-report could see
+# its slot; the only escape was a Python-only revise() call.
+# --------------------------------------------------------------------------- #
+
+
+#: The orchestrator's and impl-1's own session ids in these fixtures -- verified
+#: below by `own_slot_if_caller` (PRD-FIX-149 review R1/R8), never trusted from a
+#: caller-supplied ``run_path`` alone.
+_LEAD_SESSION = "lead-session"
+_IMPL_1_SESSION = "impl-1-session"
+_IMPL_2_SESSION = "impl-2-session"
+
+
+def _self_registered_formation(env: FormationFixture, *, retire_impl_2: bool) -> None:
+    from trw_mcp.formation import create, join, revise
+    from trw_mcp.tools._orchestration_formation import record_member_delivery
+
+    payload = env.payload()
+    payload["members"].append(
+        open_slot(
+            "lead",
+            "claude-code",
+            role="lead",
+            owned_paths=["docs/lead"],
+            test_owned_paths=["tests/test_lead.py"],
+            prd_ids=["PRD-FIX-149"],
+        )
+    )
+    create(env.orchestrator_run, payload)
+    # The orchestrator's own slot is joined under ITS OWN session's pin key,
+    # and that session's pin store entry points at the orchestrator run -- both
+    # of which a real trw_init + trw_deliver from the orchestrator's own
+    # session would produce, and both of which own_slot_if_caller checks.
+    join("release-train", "lead", env.orchestrator_run, pin_key=_LEAD_SESSION)
+    write_pin(env, _LEAD_SESSION, env.orchestrator_run)
+    join("release-train", "impl-1", env.member_runs["impl-1"], pin_key=_IMPL_1_SESSION)
+    write_pin(env, _IMPL_1_SESSION, env.member_runs["impl-1"])
+    join("release-train", "impl-2", env.member_runs["impl-2"], pin_key=_IMPL_2_SESSION)
+    write_pin(env, _IMPL_2_SESSION, env.member_runs["impl-2"])
+    # impl-1 delivers through the real FR11 path, with its OWN verified call context
+    # (PRD-FIX-149 review R8: an ordinary member's self-report is caller-verified too).
+    record_member_delivery(env.member_runs["impl-1"], {}, call_ctx=_impl_1_call_ctx())
+    if retire_impl_2:
+        revise("release-train", env.orchestrator_run, {"impl-2": {"status": "abandoned"}})
+
+
+def _lead_call_ctx() -> Any:
+    from trw_mcp.state._paths import TRWCallContext
+
+    return TRWCallContext(session_id=_LEAD_SESSION, client_hint=None, explicit=True, fastmcp_session=None)
+
+
+def _impl_1_call_ctx() -> Any:
+    from trw_mcp.state._paths import TRWCallContext
+
+    return TRWCallContext(session_id=_IMPL_1_SESSION, client_hint=None, explicit=True, fastmcp_session=None)
+
+
+def _impl_2_call_ctx() -> Any:
+    from trw_mcp.state._paths import TRWCallContext
+
+    return TRWCallContext(session_id=_IMPL_2_SESSION, client_hint=None, explicit=True, fastmcp_session=None)
+
+
+def test_formation_gate_excludes_self_registered_orchestrator_slot(formation_env: FormationFixture) -> None:
+    """Every peer terminal: the orchestrator's own joined slot must not block its own delivery."""
+    from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
+
+    _self_registered_formation(formation_env, retire_impl_2=True)
+
+    outcome = evaluate_formation_gate(formation_env.orchestrator_run, call_ctx=_lead_call_ctx())
+    assert outcome.should_block is False, outcome.message
+
+
+def test_formation_gate_still_blocks_on_genuine_peer(formation_env: FormationFixture) -> None:
+    """NFR02: excluding the caller's own slot must not excuse a peer that is still working."""
+    from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
+
+    _self_registered_formation(formation_env, retire_impl_2=False)
+
+    outcome = evaluate_formation_gate(formation_env.orchestrator_run, call_ctx=_lead_call_ctx())
+    assert outcome.should_block is True
+    assert "impl-2" in outcome.message
+    assert "lead" not in outcome.message, "the caller's own slot must not be listed as blocking it"
+
+
+def test_formation_gate_never_excludes_an_unverified_self_slot(formation_env: FormationFixture) -> None:
+    """PRD-FIX-149 review R1: with no verified call context, the structural match is untrusted."""
+    from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
+
+    _self_registered_formation(formation_env, retire_impl_2=True)
+
+    outcome = evaluate_formation_gate(formation_env.orchestrator_run)
+    assert outcome.should_block is True, "no call context proves nothing about which session is calling"
+    assert "lead" in outcome.message
+
+
+def test_formation_gate_and_self_report_refuse_a_peer_naming_the_orchestrator_run_path(
+    formation_env: FormationFixture,
+) -> None:
+    """PRD-FIX-149 review R1 (ledger): a peer calling ``trw_deliver(run_path=<orchestrator run>)``
+    must not borrow the orchestrator's own slot -- neither to skip it in the gate nor to
+    self-report delivery on the orchestrator's behalf. It is treated as an ordinary peer.
+    """
+    from trw_mcp.formation import load
+    from trw_mcp.state._paths import TRWCallContext
+    from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
+    from trw_mcp.tools._orchestration_formation import record_member_delivery
+
+    _self_registered_formation(formation_env, retire_impl_2=True)
+    orchestrator = formation_env.orchestrator_run
+
+    # A DIFFERENT session, pinned to its OWN (unrelated) run -- exactly a peer
+    # that merely NAMED the orchestrator's run_path in its own trw_deliver call.
+    peer_session = "peer-session"
+    write_pin(formation_env, peer_session, formation_env.member_runs["impl-2"])
+    peer_ctx = TRWCallContext(session_id=peer_session, client_hint=None, explicit=True, fastmcp_session=None)
+
+    outcome = evaluate_formation_gate(orchestrator, call_ctx=peer_ctx)
+    assert outcome.should_block is True, "an unverified caller must not inherit the orchestrator's own-slot exclusion"
+    assert "lead" in outcome.message
+
+    results: dict[str, object] = {}
+    record_member_delivery(orchestrator, results, call_ctx=peer_ctx)
+    assert "formation_member_delivered" not in results, "a peer must not self-report on the orchestrator's behalf"
+    events = (orchestrator / "meta" / "events.jsonl").read_text(encoding="utf-8")
+    assert "trw_deliver_complete" not in events, "a peer must not write the orchestrator's own delivery record"
+    context = load(orchestrator)
+    assert context is not None and context.manifest.member("lead").status == "joined", "unchanged by the peer's call"
+
+
+def test_orchestrator_own_delivery_writes_record_and_stamp(formation_env: FormationFixture) -> None:
+    """FR02: the delivery that passes the gate records the orchestrator's own slot, with no revise call.
+
+    Drives the two formation seams in the order trw_deliver calls them: the gate
+    (inside evaluate_delivery_gates), then record_member_delivery.
+    """
+    from trw_mcp.formation import load, status
+    from trw_mcp.tools._formation_deliver_gate import evaluate_formation_gate
+    from trw_mcp.tools._orchestration_formation import record_member_delivery
+
+    _self_registered_formation(formation_env, retire_impl_2=True)
+    orchestrator = formation_env.orchestrator_run
+    assert evaluate_formation_gate(orchestrator, call_ctx=_lead_call_ctx()).should_block is False
+
+    results: dict[str, object] = {}
+    record_member_delivery(orchestrator, results, call_ctx=_lead_call_ctx())
+
+    assert results.get("formation_member_delivered") == "lead", results
+    events = (orchestrator / "meta" / "events.jsonl").read_text(encoding="utf-8")
+    assert "trw_deliver_complete" in events, "the durable record the gate re-checks"
+    context = load(orchestrator)
+    assert context is not None
+    assert context.manifest.member("lead").status == "delivered"
+    board = status(context=context)
+    assert board is not None and board.non_terminal == [], "every slot, including its own, is now terminal"
+
+
+def test_an_ordinary_member_self_report_is_also_caller_verified(formation_env: FormationFixture) -> None:
+    """PRD-FIX-149 review R8: a peer naming an ORDINARY member's run_path must not
+    self-report on that member's behalf; only that member's own verified call context may.
+    """
+    from trw_mcp.formation import load
+    from trw_mcp.tools._orchestration_formation import record_member_delivery
+
+    _self_registered_formation(formation_env, retire_impl_2=False)
+    impl_2_run = formation_env.member_runs["impl-2"]
+
+    # A different session, pinned to its own (unrelated) run -- exactly a peer
+    # that merely named impl-2's run_path in its own trw_deliver call.
+    peer_session = "peer-session"
+    write_pin(formation_env, peer_session, formation_env.orchestrator_run)
+    from trw_mcp.state._paths import TRWCallContext
+
+    peer_ctx = TRWCallContext(session_id=peer_session, client_hint=None, explicit=True, fastmcp_session=None)
+
+    results: dict[str, object] = {}
+    record_member_delivery(impl_2_run, results, call_ctx=peer_ctx)
+    assert "formation_member_delivered" not in results, "a peer must not self-report on impl-2's behalf"
+    events = (impl_2_run / "meta" / "events.jsonl").read_text(encoding="utf-8")
+    assert "trw_deliver_complete" not in events, "a peer must not write impl-2's own delivery record"
+    context = load(impl_2_run)
+    assert context is not None and context.manifest.member("impl-2").status == "joined", "unchanged by the peer's call"
+
+    # impl-2's OWN session, correctly pinned to its OWN run, succeeds.
+    results = {}
+    record_member_delivery(impl_2_run, results, call_ctx=_impl_2_call_ctx())
+    assert results.get("formation_member_delivered") == "impl-2", results
+    context = load(impl_2_run)
+    assert context is not None and context.manifest.member("impl-2").status == "delivered"
+
+
+def test_an_orchestrator_that_did_not_join_its_formation_still_has_no_own_slot(
+    formation_env: FormationFixture,
+) -> None:
+    """The common case is unchanged: no self-registered slot means member_id stays None."""
+    from trw_mcp.formation import create, load
+
+    create(formation_env.orchestrator_run, formation_env.payload())
+    context = load(formation_env.orchestrator_run)
+    assert context is not None and context.is_orchestrator and context.member_id is None
+
+
+def test_two_members_sharing_a_run_path_resolve_no_self_slot_at_all(formation_env: FormationFixture) -> None:
+    """Safety acceptance: an ambiguous self path fails closed, never picks either slot.
+
+    A manifest should never carry two members pointing at the same run_path --
+    ``join`` itself refuses to rebind a run once recorded -- but ``_own_slot``
+    is the exclusion the gate trusts, so it must not GUESS when it sees one
+    anyway (a corrupt or hand-edited manifest). It resolves to no self slot,
+    which means the gate's FR01 exclusion does not fire for either identity
+    and both stay ordinary, blockable, non-terminal members.
+    """
+    from trw_mcp.formation._manifest import FormationManifest, FormationMember
+    from trw_mcp.formation._store import _own_slot
+
+    orchestrator = formation_env.orchestrator_run
+    manifest = FormationManifest(
+        formation_id="release-train",
+        created_utc="2026-01-01T00:00:00Z",
+        updated_utc="2026-01-01T00:00:00Z",
+        orchestrator_run_path=str(orchestrator),
+        members=[
+            FormationMember(member_id="lead", client="claude-code", run_path=str(orchestrator)),
+            FormationMember(member_id="ghost", client="codex", run_path=str(orchestrator)),
+        ],
+    )
+
+    assert _own_slot(manifest, orchestrator) is None

@@ -23,7 +23,7 @@ from trw_mcp.models.config import get_config
 from trw_mcp.models.typed_dicts import PublishResult
 from trw_mcp.state._paths import resolve_trw_dir
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.telemetry.anonymizer import anonymize_installation_id, strip_pii
+from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_secrets
 from trw_mcp.telemetry.embeddings import embed as _platform_embed
 from trw_mcp.telemetry.retention import rotate_and_compress
 
@@ -256,8 +256,8 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                     continue
 
                 # Anonymize content
-                summary = strip_pii(str(data.get("summary", "")))
-                detail = strip_pii(str(data.get("detail", "")))
+                summary = redact_secrets(str(data.get("summary", "")))
+                detail = redact_secrets(str(data.get("detail", "")))
 
                 # Generate embedding
                 embed_text = f"{summary} {detail}".strip()
@@ -270,7 +270,8 @@ def publish_learnings(min_impact: float = 0.5, *, force: bool = False) -> Publis
                 payload: _LearningPayload = {
                     "summary": summary,
                     "detail": detail,
-                    "tags": [str(t) for t in tags],
+                    # Tags are free text from trw_learn, so they leave the box only redacted.
+                    "tags": [redact_secrets(str(t)) for t in tags],
                     "impact": impact,
                     "embedding": embedding,
                     "source_project": source_project,

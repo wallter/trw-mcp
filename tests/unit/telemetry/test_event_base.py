@@ -12,6 +12,8 @@ from trw_mcp.telemetry.event_base import (
     CeremonyEvent,
     ContractEvent,
     DefaultResolutionError,
+    DispatchPolicyEvent,
+    DispatchUsageEvent,
     H1ObserveModeWarning,
     HPOCeremonyComplianceEvent,
     HPOSessionEndEvent,
@@ -45,6 +47,8 @@ ALL_SUBCLASSES: list[type[HPOTelemetryEvent]] = [
     H1ObserveModeWarning,
     SurfaceRegistered,
     ProbeEvent,
+    DispatchUsageEvent,
+    DispatchPolicyEvent,
 ]
 
 

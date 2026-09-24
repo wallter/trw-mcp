@@ -22,14 +22,17 @@ from __future__ import annotations
 
 import functools
 import inspect
+import json
 import os
-import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol, cast
 
 import structlog
+
+# Re-exported for _tool_call_run, which looks them up here so a monkeypatch on this facade reaches it.
+from trw_mcp.state import _learn_stage_timing as _learn_stage_timing
 
 # PRD-CORE-215 FR04: re-export the ceremony-tool execution inventory public
 # surface (facade). Kept as a plain grouped import + ``__all__`` membership so
@@ -44,13 +47,17 @@ from trw_mcp.telemetry._ceremony_tool_manifest import (
     ceremony_tool_names,
     ceremony_tool_spec,
 )
-from trw_mcp.telemetry._tool_call_emit import ToolCallEmitContext, emit_tool_call_event
+from trw_mcp.telemetry._tool_call_emit import ToolCallEmitContext as ToolCallEmitContext
+from trw_mcp.telemetry._tool_call_emit import emit_tool_call_event as emit_tool_call_event
+from trw_mcp.telemetry._tool_call_local import bind_trace_ids as bind_trace_ids
+from trw_mcp.telemetry._tool_call_local import unbind_trace_ids as unbind_trace_ids
 from trw_mcp.telemetry._tool_call_pricing import _pricing_version as _pricing_version
 from trw_mcp.telemetry._tool_call_pricing import _usd_cost_estimate as _usd_cost_estimate
 from trw_mcp.telemetry._tool_call_pricing import clear_pricing_cache as clear_pricing_cache
 from trw_mcp.telemetry.constants import EventType, Status
 from trw_mcp.telemetry.event_base import ToolCallEvent
-from trw_mcp.telemetry.trace_context import build_tool_trace_fields, new_trace_event_id
+from trw_mcp.telemetry.trace_context import build_tool_trace_fields
+from trw_mcp.telemetry.trace_context import new_trace_event_id as new_trace_event_id
 
 logger = structlog.get_logger(__name__)
 
@@ -68,8 +75,7 @@ def _mark_tool_call_wrapped(fn: Callable[..., object]) -> Callable[..., object]:
 def _pipeline_projection(event: ToolCallEvent) -> dict[str, object]:
     """Flatten a :class:`ToolCallEvent` into the pipeline/backend projection.
 
-    Mirrors the flat ``event_data`` shape the older ``@log_tool_call`` path
-    enqueues (``tools/telemetry.py::_write_tool_event``): top-level keys that
+    The one uploaded row per tool call (PRD-FIX-150): top-level keys that
     line up with the backend's ``MAPPED_FIELDS`` (``tool_name``,
     ``duration_ms``, ``status``, ``event_type``, ``session_id``, ``run_id``,
     ``error_type``) so they land in ``telemetry_events`` columns rather than
@@ -100,9 +106,8 @@ def _pipeline_projection(event: ToolCallEvent) -> dict[str, object]:
 def _enqueue_to_pipeline(event_data: dict[str, object]) -> None:
     """Enqueue a flat tool event to the telemetry pipeline. Fail-open.
 
-    Mirrors ``tools/telemetry.py::_enqueue_to_pipeline`` so events emitted via
-    the unified ``wrap_tool`` path reach the backend (the senders read the
-    pipeline's ``pipeline-events.jsonl``, never the unified events file).
+    The only per-call enqueue, so a tool call is counted once at the backend (the
+    senders read the pipeline's ``pipeline-events.jsonl``, never the unified events file).
     """
     try:
         from trw_mcp.telemetry.pipeline import TelemetryPipeline
@@ -123,15 +128,23 @@ def _bind_call_args(fn: Callable[..., object], *args: object, **kwargs: object) 
 
 
 def _extract_ctx(fn: Callable[..., object], *args: object, **kwargs: object) -> object | None:
-    """Return the bound FastMCP context-like arg when present."""
+    """Return an explicit context, or FastMCP's active request for ctx-less tools."""
     try:
         bound = inspect.signature(fn).bind_partial(*args, **kwargs)
     except (TypeError, ValueError):
-        return kwargs.get("ctx") or kwargs.get("context")
-    for name in ("ctx", "context"):
-        if name in bound.arguments:
-            return cast("object | None", bound.arguments[name])
-    return None
+        explicit = kwargs.get("ctx") or kwargs.get("context")
+        if explicit is not None:
+            return explicit
+    else:
+        for name in ("ctx", "context"):
+            if name in bound.arguments:
+                return cast("object | None", bound.arguments[name])
+    try:
+        from fastmcp.server.dependencies import get_context
+
+        return get_context()
+    except RuntimeError:  # trw-fail-silent-allow: direct Python calls have no active request
+        return None
 
 
 def _build_call_context(ctx: object | None) -> object | None:
@@ -165,10 +178,23 @@ def _resolve_session_id(fn: Callable[..., object], *args: object, **kwargs: obje
         return str(os.environ.get("TRW_SESSION_ID", ""))
 
 
+def _options_mapping(raw: object) -> dict[str, object]:
+    """A tool's ``options`` argument as a mapping (it may arrive as a JSON string)."""
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except ValueError:  # trw-fail-silent-allow: a malformed options string names no run; the tool rejects it itself
+            return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 def _resolve_run_dir(fn: Callable[..., object], *args: object, **kwargs: object) -> Path | None:
     """Resolve the active run directory from explicit args, pin store, or ctx."""
     bound_args = _bind_call_args(fn, *args, **kwargs)
     explicit_run = bound_args.get("run_path")
+    if explicit_run is None:
+        # PRD-CORE-291-FR03: trw_build_check and trw_review carry run_path in options.
+        explicit_run = _options_mapping(bound_args.get("options")).get("run_path")
     if isinstance(explicit_run, str) and explicit_run.strip():
         return Path(explicit_run).expanduser().resolve()
 
@@ -249,6 +275,7 @@ def build_tool_call_event(
     input_data: object | None = None,
     output_data: object | None = None,
     task_profile_hash: str = "",
+    event_id: str | None = None,
 ) -> ToolCallEvent:
     """Assemble a :class:`ToolCallEvent` for a completed tool invocation.
 
@@ -263,7 +290,7 @@ def build_tool_call_event(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
-    event_id = new_trace_event_id()
+    event_id = event_id or new_trace_event_id()
     trace_fields = build_tool_trace_fields(
         tool_name=tool,
         event_id=event_id,
@@ -296,6 +323,20 @@ def build_tool_call_event(
     )
 
 
+def _serialized_bytes(result: object) -> int | None:
+    """What the response costs on the wire, in UTF-8 bytes; None when it cannot be measured.
+
+    An awaitable is not the response (its value arrives later), so it is not
+    measured; the ledger then reports the call as unmeasured, never as zero.
+    """
+    if inspect.isawaitable(result):
+        return None
+    try:
+        return len(json.dumps(result, default=str).encode("utf-8"))
+    except Exception:  # trw-fail-silent-allow: unmeasurable (even a raising __str__) is reported as absent, not zero
+        return None
+
+
 def wrap_tool(
     fn: Callable[..., object],
     *,
@@ -321,57 +362,50 @@ def wrap_tool(
             pinned. When both resolvers return None, the event is still
             constructed for test observability but not written.
     """
+    from trw_mcp.telemetry._tool_call_run import _CallTelemetry, _Resolvers
+
     recorded_name: str = tool_name or str(getattr(fn, "__name__", "unknown_tool"))
+    resolvers = _Resolvers(session_id_resolver, run_dir_resolver, fallback_dir_resolver, security_consult)
+
+    # The one per-call producer (PRD-FIX-150): trace ids for the call's logs, learn-stage timing,
+    # the unified event, the run-log row, the OTEL span and one pipeline row. An async tool gets an
+    # async wrapper, so the outcome and output hash are recorded after the coroutine has run.
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: object, **kwargs: object) -> object:
+            call = _CallTelemetry(recorded_name, fn, args, kwargs, resolvers)
+            try:
+                call.before_run()
+                result = await fn(*args, **kwargs)
+            except BaseException as exc:
+                call.failed(exc)
+                raise
+            else:
+                call.succeeded(result)
+                return result
+            finally:
+                call.finish()
+
+        return _mark_tool_call_wrapped(async_wrapper)
 
     @functools.wraps(fn)
     def wrapper(*args: object, **kwargs: object) -> object:
-        start = time.monotonic()
-        start_ts = datetime.now(tz=timezone.utc)
-        outcome = "success"
-        error_class: str | None = None
-        emit_event = True
+        call = _CallTelemetry(recorded_name, fn, args, kwargs, resolvers)
         try:
-            if recorded_name == "trw_session_start":
-                from trw_mcp.telemetry.boot_audit import run_boot_audit
-
-                run_boot_audit()
-            return fn(*args, **kwargs)
+            call.before_run()
+            result = fn(*args, **kwargs)
         except BaseException as exc:
-            outcome = "error"
-            error_class = exc.__class__.__name__
-            if recorded_name == "trw_session_start" and error_class == "DefaultResolutionError":
-                emit_event = False
+            call.failed(exc)
+            call.finish()
             raise
-        finally:
-            if not emit_event:
-                logger.debug("tool_call_event_suppressed", tool=recorded_name, reason=error_class or "")
-            else:
-                end_ts = datetime.now(tz=timezone.utc)
-                emit_tool_call_event(
-                    ToolCallEmitContext(
-                        recorded_name=recorded_name,
-                        fn=fn,
-                        args=args,
-                        kwargs=kwargs,
-                        start=start,
-                        start_ts=start_ts,
-                        end_ts=end_ts,
-                        outcome=outcome,
-                        error_class=error_class,
-                        session_id_resolver=session_id_resolver,
-                        run_dir_resolver=run_dir_resolver,
-                        fallback_dir_resolver=fallback_dir_resolver,
-                        security_consult=security_consult,
-                        bind_call_args=_bind_call_args,
-                        build_tool_call_event=build_tool_call_event,
-                        enqueue_to_pipeline=_enqueue_to_pipeline,
-                        pipeline_projection=_pipeline_projection,
-                        resolve_fallback_dir=_resolve_fallback_dir,
-                        resolve_run_dir=_resolve_run_dir,
-                        resolve_session_id=_resolve_session_id,
-                        resolve_surface_snapshot_id=_resolve_surface_snapshot_id,
-                    )
-                )
+        if inspect.isawaitable(result):
+            # A sync callable that returns an awaitable (a partial over an async function, say):
+            # record it once it resolves, not now.
+            return call.finish_after(result)
+        call.succeeded(result)
+        call.finish()
+        return result
 
     return _mark_tool_call_wrapped(wrapper)
 

@@ -11,7 +11,6 @@ tier (default when not in _UNIT_FILES).
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 from contextlib import AbstractContextManager, nullcontext
 from datetime import datetime, timedelta, timezone
@@ -20,8 +19,12 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from trw_memory.models.memory import MemoryEntry
 
+from tests._memory_fixtures import FAKE_NAMESPACE
+from tests._memory_store_fake import FakeMemoryStore
 from tests._structlog_capture import captured_structlog  # noqa: F401
+from trw_mcp.state._store_selection import selected_store as _REAL_SELECTED_STORE
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,64 +53,33 @@ def _days_ago(days: float) -> float:
     return time.time() - (days * 86400)
 
 
-def _make_memory_db(
-    trw_dir: Path,
+@pytest.fixture(autouse=True)
+def _pinned(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """Every checkout here is pinned to the fake store, so the store-reading probes measure."""
+    return fake_memory_store
+
+
+def _stock_store(
+    store: FakeMemoryStore,
     *,
     corpus: int = 0,
     vec: int = 0,
     max_recall: int = 0,
     edges: int = 0,
     shared_tags: bool = False,
-) -> Path:
-    """Create a minimal memory.db with the required tables.
+) -> None:
+    """Stock the fake store's namespace with what ``memory_status``'s health block measures.
 
-    ``memories`` carries ``namespace``/``updated_at`` and ``memory_tags`` exists
-    because ``probe_graph_edges`` reads both: PRD-CORE-245 FR07 moved tag
-    co-occurrence out of ``memory_graph_edges`` and into that index, so the
-    probe's health verdict is no longer answerable from the edge table alone.
-    ``shared_tags`` gives every entry the same two tags, i.e. a corpus whose
-    only relations are derived ones.
+    ``shared_tags`` gives every entry the same two tags: a corpus whose only
+    relations are derived ones (PRD-CORE-245 FR07).
     """
-    db_path = trw_dir / "memory" / "memory.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memories ("
-        "id TEXT PRIMARY KEY, recall_count INTEGER DEFAULT 0, "
-        "namespace TEXT DEFAULT 'default', updated_at TEXT DEFAULT '')"
-    )
-    conn.execute("CREATE TABLE IF NOT EXISTS vec_memories (id TEXT PRIMARY KEY)")
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memory_graph_edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)"
-    )
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS memory_tags "
-        "(namespace TEXT NOT NULL, tag TEXT NOT NULL, entry_id TEXT NOT NULL, PRIMARY KEY (namespace, tag, entry_id))"
-    )
-    # Insert corpus entries
     for i in range(corpus):
-        recall = max_recall if i == 0 and max_recall > 0 else 0
-        conn.execute(
-            "INSERT INTO memories (id, recall_count, namespace, updated_at) VALUES (?, ?, 'default', ?)",
-            (f"m{i}", recall, f"2026-09-03T00:00:{i:02d}+00:00"),
-        )
-        if shared_tags:
-            for tag in ("alpha", "beta"):
-                conn.execute(
-                    "INSERT INTO memory_tags (namespace, tag, entry_id) VALUES ('default', ?, ?)",
-                    (tag, f"m{i}"),
-                )
-    # Insert vec entries
-    for i in range(vec):
-        conn.execute("INSERT INTO vec_memories (id) VALUES (?)", (f"m{i}",))
-    # Insert edges
-    for i in range(edges):
-        conn.execute(
-            "INSERT INTO memory_graph_edges (source_id, target_id) VALUES (?, ?)",
-            (f"m{i}", f"m{i + 1}"),
-        )
-    conn.commit()
-    conn.close()
-    return db_path
+        tags = ["alpha", "beta"] if shared_tags else [f"t{i}"]
+        recall = max_recall if i == 0 else 0
+        entry = MemoryEntry(id=f"m{i}", content=f"entry {i}", namespace=FAKE_NAMESPACE, tags=tags, recall_count=recall)
+        store.rows[(FAKE_NAMESPACE, entry.id)] = entry
+    store.stored_vectors.update({f"m{i}": [1.0] for i in range(vec)})
+    store.edges[FAKE_NAMESPACE] = edges
 
 
 def _make_bandit_file(trw_dir: Path) -> Path:
@@ -200,12 +172,12 @@ def test_probe_sync_push_corrupt_json(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_probe_graph_edges_degraded(tmp_path: Path) -> None:
+def test_probe_graph_edges_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """0 edges, corpus >= 100 => degraded=True."""
     from trw_mcp.tools._pipeline_health import probe_graph_edges
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=150, edges=0)
+    _stock_store(fake_memory_store, corpus=150, edges=0)
 
     result = probe_graph_edges(trw_dir)
 
@@ -215,19 +187,19 @@ def test_probe_graph_edges_degraded(tmp_path: Path) -> None:
     assert result["advisory"] != ""
 
 
-def test_probe_graph_edges_empty_corpus_suppressed(tmp_path: Path) -> None:
+def test_probe_graph_edges_empty_corpus_suppressed(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """0 edges, corpus < 100 => degraded=False (suppress for small corpora)."""
     from trw_mcp.tools._pipeline_health import probe_graph_edges
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=10, edges=0)
+    _stock_store(fake_memory_store, corpus=10, edges=0)
 
     result = probe_graph_edges(trw_dir)
 
     assert result["degraded"] is False
 
 
-def test_probe_graph_edges_tag_only_corpus_is_not_degraded(tmp_path: Path) -> None:
+def test_probe_graph_edges_tag_only_corpus_is_not_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """A corpus related only by shared tags is healthy despite 0 edges (CORE-245 FR07).
 
     Tag co-occurrence materialises no edge row any more. A probe that read the
@@ -238,7 +210,7 @@ def test_probe_graph_edges_tag_only_corpus_is_not_degraded(tmp_path: Path) -> No
     from trw_mcp.tools._pipeline_health import probe_graph_edges
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=150, edges=0, shared_tags=True)
+    _stock_store(fake_memory_store, corpus=150, edges=0, shared_tags=True)
 
     result = probe_graph_edges(trw_dir)
 
@@ -247,50 +219,12 @@ def test_probe_graph_edges_tag_only_corpus_is_not_degraded(tmp_path: Path) -> No
     assert result["advisory"] == ""
 
 
-def test_probe_graph_edges_pre_schema5_store_still_reports_degraded(tmp_path: Path) -> None:
-    """A store with no memory_tags index has no derived half to consult.
-
-    The derived lookup degrades to "no relation" rather than raising, so the
-    materialised answer stands alone exactly as it did before PRD-CORE-245 FR07.
-    Letting it raise instead would take the whole probe through its fail-open
-    wrapper and report an empty graph as healthy.
-
-    ``memories`` carries ``namespace``/``updated_at`` because a real pre-schema-5
-    store does: schema 5 made ``namespace`` NOT NULL and re-keyed the table, but
-    the column predates it (``_schema_v5.py`` reads
-    ``COALESCE(namespace, 'default')`` off the OLD table to take its census).
-    The earlier two-column fixture was not a store any migration path produces,
-    and it made a missing-column error look like the missing-``memory_tags``
-    case this test is actually about.
-    """
-    from trw_mcp.tools._pipeline_health import probe_graph_edges
-
-    trw_dir = _make_trw_dir(tmp_path)
-    db_path = trw_dir / "memory" / "memory.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE memories (id TEXT PRIMARY KEY, namespace TEXT DEFAULT 'default', "
-        "updated_at TEXT, recall_count INTEGER DEFAULT 0)"
-    )
-    conn.execute("CREATE TABLE memory_graph_edges (id INTEGER PRIMARY KEY, source_id TEXT, target_id TEXT)")
-    for i in range(150):
-        conn.execute("INSERT INTO memories (id, updated_at) VALUES (?, ?)", (f"m{i}", "2026-01-01"))
-    conn.commit()
-    conn.close()
-
-    result = probe_graph_edges(trw_dir)
-
-    assert result["degraded"] is True
-    assert result["measured"] is True, "the store WAS read; only its derived half was absent"
-    assert result["corpus_count"] == 150
-
-
-def test_probe_graph_edges_healthy(tmp_path: Path) -> None:
+def test_probe_graph_edges_healthy(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """50 edges, 150 entries => not degraded."""
     from trw_mcp.tools._pipeline_health import probe_graph_edges
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=150, edges=50)
+    _stock_store(fake_memory_store, corpus=150, edges=50)
 
     result = probe_graph_edges(trw_dir)
 
@@ -298,16 +232,16 @@ def test_probe_graph_edges_healthy(tmp_path: Path) -> None:
     assert result["edge_count"] == 50
 
 
-def test_probe_graph_edges_no_db(tmp_path: Path) -> None:
-    """Missing memory.db => fail-open, degraded=False."""
+def test_probe_graph_edges_empty_store(tmp_path: Path) -> None:
+    """A pinned store with no entries is a measured empty corpus, not a degraded one."""
     from trw_mcp.tools._pipeline_health import probe_graph_edges
 
     trw_dir = _make_trw_dir(tmp_path)
-    # No DB file
 
     result = probe_graph_edges(trw_dir)
 
     assert result["degraded"] is False
+    assert result["measured"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -315,18 +249,15 @@ def test_probe_graph_edges_no_db(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_probe_embedding_coverage_degraded(tmp_path: Path) -> None:
+def test_probe_embedding_coverage_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """vec_count/total < 0.10 => degraded=True."""
     from trw_mcp.tools._pipeline_health import probe_embedding_coverage
 
     trw_dir = _make_trw_dir(tmp_path)
     # 3.6% coverage: 27 vec out of 750 total (simulating the real-world case)
-    _make_memory_db(trw_dir, corpus=750, vec=27)
+    _stock_store(fake_memory_store, corpus=750, vec=27)
 
-    # The fixture uses ordinary SQL tables: exercise real counting, not optional
-    # extension loading. The unavailable-extension boundary has its own test.
-    with patch("trw_mcp.tools._pipeline_health._load_sqlite_vec", return_value=None):
-        result = probe_embedding_coverage(trw_dir)
+    result = probe_embedding_coverage(trw_dir)
 
     assert result["measured"] is True
     assert result["degraded"] is True
@@ -334,23 +265,22 @@ def test_probe_embedding_coverage_degraded(tmp_path: Path) -> None:
     assert result["advisory"] != ""
 
 
-def test_probe_embedding_coverage_healthy(tmp_path: Path) -> None:
+def test_probe_embedding_coverage_healthy(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """95% coverage => not degraded."""
     from trw_mcp.tools._pipeline_health import probe_embedding_coverage
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=100, vec=95)
+    _stock_store(fake_memory_store, corpus=100, vec=95)
 
-    with patch("trw_mcp.tools._pipeline_health._load_sqlite_vec", return_value=None):
-        result = probe_embedding_coverage(trw_dir)
+    result = probe_embedding_coverage(trw_dir)
 
     assert result["measured"] is True
     assert result["coverage_ratio"] == 0.95
     assert result["degraded"] is False
 
 
-def test_probe_embedding_coverage_no_db(tmp_path: Path) -> None:
-    """Missing memory.db => fail-open, degraded=False."""
+def test_probe_embedding_coverage_empty_store(tmp_path: Path) -> None:
+    """A pinned store with no entries is a measured empty corpus, not a degraded one."""
     from trw_mcp.tools._pipeline_health import probe_embedding_coverage
 
     trw_dir = _make_trw_dir(tmp_path)
@@ -358,23 +288,94 @@ def test_probe_embedding_coverage_no_db(tmp_path: Path) -> None:
     result = probe_embedding_coverage(trw_dir)
 
     assert result["degraded"] is False
+    assert result["measured"] is True
 
 
-def test_probe_embedding_coverage_sqlite_vec_unavailable(tmp_path: Path) -> None:
-    """When sqlite_vec fails to load => fail-open, advisory='sqlite_vec_unavailable'."""
+def test_probe_embedding_coverage_store_without_vectors(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
+    """A store that keeps no vectors never computed a ratio: not measured, never a zero."""
     from trw_mcp.tools._pipeline_health import probe_embedding_coverage
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=100, vec=50)
+    _stock_store(fake_memory_store, corpus=100)
+    measured = fake_memory_store.health(FAKE_NAMESPACE)
+    fake_memory_store.health = lambda _namespace: {**measured, "embedded": None}  # type: ignore[method-assign]
 
-    # Patch sqlite_vec to simulate unavailability
-    with patch("trw_mcp.tools._pipeline_health._load_sqlite_vec", side_effect=Exception("not installed")):
-        result = probe_embedding_coverage(trw_dir)
+    result = probe_embedding_coverage(trw_dir)
 
     assert result["degraded"] is False
-    assert "sqlite_vec" in result.get("advisory", "")
     assert result["measured"] is False
+    assert "store_keeps_no_vectors" in result["advisory"]
     assert result["coverage_ratio"] is None
+
+
+def _unmigrated_store(trw_dir: Path) -> Path:
+    """A real checkout memory.db holding a learning: ``holds_rows`` would open it to word its error."""
+    from trw_memory.storage.sqlite_backend import SQLiteBackend
+
+    db = trw_dir / "memory" / "memory.db"
+    backend = SQLiteBackend(db)
+    backend.store(MemoryEntry(id="L-unmigrated", content="an unmigrated learning"))
+    backend.close()
+    return db
+
+
+def _real_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undo the autouse fake: the checkout goes through the real, unpinned selection path."""
+    from trw_mcp.state import _store_selection
+
+    monkeypatch.setattr(_store_selection, "selected_store", _REAL_SELECTED_STORE)
+
+
+def _refuse_open(*_args: object, **_kwargs: object) -> None:
+    raise AssertionError("a pipeline-health probe opened a store")
+
+
+@pytest.mark.parametrize("pinned", [True, False], ids=["pinned", "unpinned"])
+def test_no_probe_opens_the_checkout_memory_db(tmp_path: Path, pinned: bool, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Session-start health and ``trw_pipeline_health`` never open a checkout's store (PRD-CORE-280).
+
+    ``probe_embedding_coverage`` used to open ``.trw/memory/memory.db`` with a
+    WRITABLE ``sqlite3.connect``, and an unpinned checkout's selection read it to
+    word its error. An unmigrated file must stay byte-identical, with nothing
+    beside it, whether or not the checkout is pinned.
+    """
+    from trw_mcp.tools._pipeline_health import step_pipeline_health
+
+    trw_dir = _make_trw_dir(tmp_path)
+    store = _unmigrated_store(trw_dir)
+    before = store.read_bytes()
+    if not pinned:
+        _real_selection(monkeypatch)
+
+    with patch("sqlite3.connect", side_effect=_refuse_open):
+        result = step_pipeline_health(trw_dir)
+
+    assert store.read_bytes() == before
+    assert sorted(p.name for p in store.parent.iterdir()) == ["memory.db"]
+    for probe in ("graph_edges", "embedding_coverage", "recall_feedback"):
+        assert "AssertionError" not in str(result[probe].get("advisory", "")), probe
+        assert result[probe]["measured"] is pinned, probe
+
+
+@pytest.mark.parametrize("probe_name", ["graph_edges", "embedding_coverage", "recall_feedback"])
+def test_an_unpinned_checkout_is_not_measured(tmp_path: Path, probe_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No probe reads a checkout's memory.db: an unpinned checkout has no store to measure (PRD-CORE-280).
+
+    Its memory.db still holds rows (it has not been migrated), which the old
+    probes counted as this project's corpus.
+    """
+    from trw_mcp.tools import _pipeline_health as ph
+
+    trw_dir = _make_trw_dir(tmp_path)
+    _unmigrated_store(trw_dir)
+    _real_selection(monkeypatch)
+
+    with patch("sqlite3.connect", side_effect=_refuse_open):
+        result = getattr(ph, f"probe_{probe_name}")(trw_dir)
+
+    assert result["measured"] is False
+    assert result["degraded"] is False
+    assert "StoreUnavailableError" in result["advisory"]
 
 
 # ---------------------------------------------------------------------------
@@ -382,12 +383,12 @@ def test_probe_embedding_coverage_sqlite_vec_unavailable(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_probe_recall_feedback_all_zero(tmp_path: Path) -> None:
+def test_probe_recall_feedback_all_zero(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """MAX(recall_count)=0, corpus >= 100 => degraded=True."""
     from trw_mcp.tools._pipeline_health import probe_recall_feedback
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=150, max_recall=0)
+    _stock_store(fake_memory_store, corpus=150, max_recall=0)
 
     result = probe_recall_feedback(trw_dir)
 
@@ -396,24 +397,24 @@ def test_probe_recall_feedback_all_zero(tmp_path: Path) -> None:
     assert result["advisory"] != ""
 
 
-def test_probe_recall_feedback_small_corpus_suppressed(tmp_path: Path) -> None:
+def test_probe_recall_feedback_small_corpus_suppressed(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """MAX(recall_count)=0, corpus < 100 => degraded=False (suppressed)."""
     from trw_mcp.tools._pipeline_health import probe_recall_feedback
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=10, max_recall=0)
+    _stock_store(fake_memory_store, corpus=10, max_recall=0)
 
     result = probe_recall_feedback(trw_dir)
 
     assert result["degraded"] is False
 
 
-def test_probe_recall_feedback_healthy(tmp_path: Path) -> None:
+def test_probe_recall_feedback_healthy(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """MAX(recall_count)=42 => not degraded."""
     from trw_mcp.tools._pipeline_health import probe_recall_feedback
 
     trw_dir = _make_trw_dir(tmp_path)
-    _make_memory_db(trw_dir, corpus=150, max_recall=42)
+    _stock_store(fake_memory_store, corpus=150, max_recall=42)
 
     result = probe_recall_feedback(trw_dir)
 
@@ -421,8 +422,8 @@ def test_probe_recall_feedback_healthy(tmp_path: Path) -> None:
     assert result.get("max_recall_count") == 42
 
 
-def test_probe_recall_feedback_no_db(tmp_path: Path) -> None:
-    """Missing memory.db => fail-open, degraded=False."""
+def test_probe_recall_feedback_empty_store(tmp_path: Path) -> None:
+    """A pinned store with no entries is a measured empty corpus, not a degraded one."""
     from trw_mcp.tools._pipeline_health import probe_recall_feedback
 
     trw_dir = _make_trw_dir(tmp_path)
@@ -430,6 +431,7 @@ def test_probe_recall_feedback_no_db(tmp_path: Path) -> None:
     result = probe_recall_feedback(trw_dir)
 
     assert result["degraded"] is False
+    assert result["measured"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -555,13 +557,13 @@ def test_probe_bandit_custom_stale_threshold(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_step_pipeline_health_all_healthy(tmp_path: Path) -> None:
+def test_step_pipeline_health_all_healthy(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """All five probes healthy => degraded=False, advisory empty."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=50, vec=48, max_recall=10, edges=20)
+    _stock_store(fake_memory_store, corpus=50, vec=48, max_recall=10, edges=20)
     _make_bandit_file(trw_dir)
 
     recent_mtime = _days_ago(1)
@@ -578,13 +580,13 @@ def test_step_pipeline_health_all_healthy(tmp_path: Path) -> None:
     assert "bandit_state" in result
 
 
-def test_step_pipeline_health_all_degraded(tmp_path: Path) -> None:
+def test_step_pipeline_health_all_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """All 5 probes degraded => degraded=True, advisory non-empty listing all signals."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 15, "last_push_at": _iso_ago(48)})
-    _make_memory_db(trw_dir, corpus=150, vec=5, max_recall=0, edges=0)
+    _stock_store(fake_memory_store, corpus=150, vec=5, max_recall=0, edges=0)
     # bandit stale 51 days
     _make_bandit_file(trw_dir)
 
@@ -599,14 +601,14 @@ def test_step_pipeline_health_all_degraded(tmp_path: Path) -> None:
     assert "sync_push" in advisory or "sync" in advisory
 
 
-def test_step_pipeline_health_partial_degraded(tmp_path: Path) -> None:
+def test_step_pipeline_health_partial_degraded(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Only sync_push degraded => degraded=True, advisory mentions sync_push."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 11, "last_push_at": _iso_ago(0.5)})
     # Healthy: small corpus so graph/recall don't trigger; recent bandit
-    _make_memory_db(trw_dir, corpus=50, vec=48, max_recall=10, edges=20)
+    _stock_store(fake_memory_store, corpus=50, vec=48, max_recall=10, edges=20)
     _make_bandit_file(trw_dir)
 
     recent_mtime = _days_ago(1)
@@ -618,13 +620,13 @@ def test_step_pipeline_health_partial_degraded(tmp_path: Path) -> None:
     assert "sync_push" in advisory or "sync" in advisory
 
 
-def test_step_pipeline_health_one_probe_raises(tmp_path: Path) -> None:
+def test_step_pipeline_health_one_probe_raises(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """One probe raises => others still run, aggregator returns result."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=50, max_recall=10, edges=20)
+    _stock_store(fake_memory_store, corpus=50, max_recall=10, edges=20)
     _make_bandit_file(trw_dir)
 
     # Make probe_graph_edges raise
@@ -675,13 +677,13 @@ def test_step_pipeline_health_all_probes_raise(tmp_path: Path) -> None:
         assert result[key].get("degraded") is False
 
 
-def test_step_pipeline_health_advisory_ends_with_tool_hint(tmp_path: Path) -> None:
+def test_step_pipeline_health_advisory_ends_with_tool_hint(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
     """Advisory when degraded must end with hint to call trw_pipeline_health()."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 15, "last_push_at": _iso_ago(48)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
 
     result = step_pipeline_health(trw_dir)
 
@@ -690,27 +692,19 @@ def test_step_pipeline_health_advisory_ends_with_tool_hint(tmp_path: Path) -> No
         assert "trw_pipeline_health" in advisory
 
 
-def test_pipeline_health_probe_no_write(tmp_path: Path) -> None:
-    """No probe writes to memory.db — verify file mtime unchanged."""
+def test_pipeline_health_probe_no_write(fake_memory_store: FakeMemoryStore, tmp_path: Path) -> None:
+    """The probes only measure: the one store call they make is ``health``."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    db_path = _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
     _make_bandit_file(trw_dir)
 
-    import os
-
-    mtime_before = os.path.getmtime(str(db_path))
-    time.sleep(0.02)  # ensure clock advances
-
-    recent_mtime = _days_ago(1)
-    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=recent_mtime):
+    with patch("trw_mcp.tools._pipeline_health.os.path.getmtime", return_value=_days_ago(1)):
         step_pipeline_health(trw_dir)
 
-    mtime_after = os.path.getmtime(str(db_path))
-    # DB file must not have been modified
-    assert mtime_after == pytest.approx(mtime_before, abs=0.01)
+    assert {name for name, _ in fake_memory_store.calls} == {"health"}
 
 
 # ---------------------------------------------------------------------------
@@ -795,13 +789,15 @@ def test_trw_pipeline_health_tool_crash_reports_measured_false(tmp_path: Path) -
         assert result[key]["measured"] is False, key
 
 
-def test_trw_pipeline_health_tool_returns_dict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_trw_pipeline_health_tool_returns_dict(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """trw_pipeline_health tool returns a dict with all five signal keys."""
     from trw_mcp.tools._pipeline_health import step_pipeline_health
 
     trw_dir = _make_trw_dir(tmp_path)
     _write_sync_state(trw_dir, {"consecutive_failures": 0, "last_push_at": _iso_ago(0.5)})
-    _make_memory_db(trw_dir, corpus=10)
+    _stock_store(fake_memory_store, corpus=10)
     _make_bandit_file(trw_dir)
 
     recent_mtime = _days_ago(1)
@@ -938,8 +934,8 @@ def _inject_inside_probe(ph: Any, probe_name: str, trw_dir: Path) -> AbstractCon
     with a correction"). The four swallows FR03 names are the probes' OWN
     handlers, and only an injection below the probe boundary reaches them.
 
-    The injections are the failures the PRD names, not synthetic ones: a locked
-    database for the three that open a connection, a state file that is not
+    The injections are the failures the PRD names, not synthetic ones: an unreachable
+    daemon for the three that read the store, a state file that is not
     valid UTF-8 for the one that reads text, and an unreadable config for the
     one that resolves its threshold before reading anything.
     """
@@ -948,11 +944,15 @@ def _inject_inside_probe(ph: Any, probe_name: str, trw_dir: Path) -> AbstractCon
         return nullcontext()
     if probe_name == "bandit_state":
         return patch.object(ph, "_bandit_probe_config", side_effect=RuntimeError("config unreadable"))
-    return patch.object(ph.sqlite3, "connect", side_effect=sqlite3.OperationalError("database is locked"))
+    from trw_mcp.state._store_selection import StoreUnavailableError
+
+    return patch.object(ph, "store_health", side_effect=StoreUnavailableError("the memory daemon is unreachable"))
 
 
 @pytest.mark.parametrize("probe_name", _ALL_PROBES)
-def test_a_probes_own_handler_reports_not_measured(tmp_path: Path, probe_name: str, monkeypatch) -> None:
+def test_a_probes_own_handler_reports_not_measured(
+    fake_memory_store: FakeMemoryStore, tmp_path: Path, probe_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """PRD-CORE-263-FR03 — the injection lands below the probe boundary.
 
     Attribution: restoring any one probe's ``return safe_default`` crash branch
@@ -963,14 +963,9 @@ def test_a_probes_own_handler_reports_not_measured(tmp_path: Path, probe_name: s
     """
     from trw_mcp.tools import _pipeline_health as ph
 
-    if probe_name == "embedding_coverage":
-        # Reach the connection failure below this probe, independent of whether
-        # the optional extension happens to be installed on the test host.
-        monkeypatch.setattr(ph, "_load_sqlite_vec", lambda _conn: None)
     trw_dir = _healthy_trw_dir(tmp_path)
-    # A real store, so the three connection-opening probes actually REACH their
-    # connection instead of short-circuiting on a missing file.
-    _make_memory_db(trw_dir, corpus=10, vec=10, max_recall=5, edges=40, shared_tags=True)
+    # A stocked store, so the three store-reading probes measure healthily first.
+    _stock_store(fake_memory_store, corpus=10, vec=10, max_recall=5, edges=40, shared_tags=True)
     healthy = ph.step_pipeline_health(trw_dir)[probe_name]
     assert healthy["measured"] is True, "fixture precondition: the probe measures healthily first"
 

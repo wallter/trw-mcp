@@ -36,6 +36,7 @@ def _stable_mcp_id(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("trw_mcp.dispatch._posture.uuid.uuid4", lambda: SimpleNamespace(hex="test"))
 
 
+from tests._dispatch_host import unconfined_off_darwin
 from trw_mcp.dispatch._client_specs import CLIENT_SPECS, client_spec_for
 from trw_mcp.dispatch._commands import build_command
 from trw_mcp.dispatch._env import build_runner_env, build_subprocess_env
@@ -221,6 +222,7 @@ def test_the_runner_refuses_a_request_built_by_another_path(monkeypatch: pytest.
         raise AssertionError("a child was spawned for a refused request")
 
     monkeypatch.setattr(_runner.subprocess, "Popen", _explode)
+    unconfined_off_darwin(monkeypatch)
     result = _runner.dispatch(req)
 
     assert result.exit_code == -1

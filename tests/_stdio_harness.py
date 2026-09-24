@@ -35,7 +35,7 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,7 +64,6 @@ _KILL_GRACE_S = 5.0
 _REQUIRED_MODULE_SPECS: tuple[str, ...] = (
     "trw_mcp.server",
     "trw_mcp.server.__main__",
-    "trw_mcp.state.memory_pressure",
 )
 
 # CORE262-09: checked by ACTUALLY importing the module and resolving the class,
@@ -346,69 +345,9 @@ class StdioServerHarness:
         if pid_is_live(server.pid):
             raise ChildLeak(f"{server.label}: pid {server.pid} still alive after reap_one; errors={errors}")
         if server.pid in self._spawned_pids:
-            errors.extend(self._prune_writer_lock_for(server.pid))
             self._spawned_pids.remove(server.pid)
         if errors:
             raise HarnessError("; ".join(errors))
-
-    def writers_dir(self) -> Path:
-        """The writer-lock registry directory for this harness's store.
-
-        Matches ``trw_memory.storage._writer_registry.WriterRegistry``'s own
-        naming (``db_path.parent / f"{db_path.name}.writers"``) rather than an
-        independently-typed literal, so a rename there and here cannot drift
-        apart silently. There is currently no PUBLIC production accessor for
-        this directory (only the pid-level census at
-        ``trw_mcp.state.memory_pressure.live_memory_writer_pids``, which this
-        harness already uses via :func:`writer_lock_pids`); this is the single
-        place in the test tree that assembles the path, so a future production
-        accessor has exactly one call site to redirect.
-        """
-        return self.project_root / ".trw" / "memory" / "memory.db.writers"
-
-    def _prune_writer_lock_for(self, pid: int) -> list[str]:
-        """Unlink one dead child's lock file and PROVE it is gone (CORE262-04).
-
-        Failures are collected and returned rather than swallowed: a lock file
-        that fails to unlink, or that is still present after ``unlink()``
-        reports success, is a physical leak the writer CENSUS cannot see --
-        ``live_memory_writer_pids`` (``trw_mcp.state.memory_pressure``)
-        excludes any lock whose pid fails its liveness check, so a stale-but-
-        undeleted lock reads as "no writer" even though the file is still on
-        disk and a later PID reuse could resurrect it as a ghost writer.
-        Verifying physical removal is the only way to catch this leak.
-        """
-        lock_path = self.writers_dir() / f"{pid}.lock"
-        try:
-            lock_path.unlink(missing_ok=True)
-        except OSError as exc:
-            return [f"unlink {lock_path} failed: {type(exc).__name__}: {exc}"]
-        if lock_path.exists():
-            return [f"{lock_path} still present after unlink() reported success"]
-        return []
-
-    def _prune_our_writer_locks(self) -> list[str]:
-        """Unlink the writer locks of the children we just killed.
-
-        ``trw-memory``'s ``WriterRegistry`` removes its lock from an ``atexit``
-        handler, and CPython does not run ``atexit`` on SIGTERM or SIGKILL --
-        so every child this harness reaps leaves its ``<pid>.lock`` behind. Left
-        in place across arms those files accumulate, and a dead pid the kernel
-        later RECYCLES makes a stale lock read as a live writer, silently
-        inflating the next arm's census past the writer-pressure threshold. Only
-        locks for pids this harness spawned, and only after they are proven
-        dead, are removed: this restores what a graceful exit would have left,
-        it does not touch a peer's registry entry.
-        """
-        writers_dir = self.writers_dir()
-        if not writers_dir.is_dir():
-            return []
-        errors: list[str] = []
-        for pid in self._spawned_pids:
-            if pid_is_live(pid):
-                continue
-            errors.extend(self._prune_writer_lock_for(pid))
-        return errors
 
     def teardown(self) -> None:
         """Terminate every child, escalate to SIGKILL, then prove nothing survives.
@@ -424,10 +363,6 @@ class StdioServerHarness:
         for server in reversed(self._children):
             errors.extend(self._stop(server))
         leaked = self.live_children()
-        # CORE262-04: collected, not suppressed -- a failed or incomplete
-        # unlink is a physical leak the census-based leak check below cannot
-        # detect on its own.
-        errors.extend(self._prune_our_writer_locks())
         self._children.clear()
         if leaked:
             raise ChildLeak(f"{len(leaked)} spawned child(ren) still alive after teardown: {leaked}; errors={errors}")
@@ -462,15 +397,3 @@ class StdioServerHarness:
         except Exception as exc:  # justified: collected; the leak check below is authoritative
             errors.append(f"{server.label}: wait after SIGKILL failed ({type(exc).__name__}: {exc})")
         return errors
-
-
-def writer_lock_pids(trw_dir: Path) -> Sequence[int]:
-    """Writer census through the PRODUCTION resolver, never a hardcoded glob.
-
-    Going through ``live_memory_writer_pids`` is deliberate: it is the same
-    function the doctor row uses, so a store relocation (PRD-CORE-253) makes the
-    central assertion FAIL loudly instead of quietly becoming a no-op.
-    """
-    from trw_mcp.state.memory_pressure import live_memory_writer_pids
-
-    return live_memory_writer_pids(trw_dir)

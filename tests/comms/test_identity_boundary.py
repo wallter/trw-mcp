@@ -18,6 +18,7 @@ import pytest
 import yaml
 from fastmcp import FastMCP
 
+from tests._formation_test_support import open_slot
 from trw_mcp import formation
 from trw_mcp.comms import _identity
 from trw_mcp.models import config as config_module
@@ -66,7 +67,7 @@ def scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Scene:
     context = build_call_context(None)
     formation.create(
         owner,
-        {"formation_id": "diagnostic", "members": [{"member_id": "lead", "client": "codex", "open_join": True}]},
+        {"formation_id": "diagnostic", "members": [open_slot("lead")]},
         trw_dir=root / ".trw",
         prds_dir=root / "prds",
     )

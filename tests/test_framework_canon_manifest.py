@@ -2,343 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
-import re
 from pathlib import Path
 
 import pytest
-
-from trw_mcp.canons._compiler import SpanDest
-
-# A span marker line is compiler bookkeeping: present in the authoring source,
-# stripped from every rendered view. Excluded when counting source coverage.
-_MARKER_RE = re.compile(r"^<!--\s*trw:span\b")
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST = _REPO_ROOT / "trw-mcp/src/trw_mcp/data/framework_canons.json"
 
 if not (_REPO_ROOT / "scripts").is_dir():
     pytest.skip("monorepo-only canon mirror manifest", allow_module_level=True)
-
-
-# --------------------------------------------------------------------------- #
-# PRD-CORE-207 — compiled compact-core / reference / combined generation       #
-# --------------------------------------------------------------------------- #
-
-
-def _registry():
-    from trw_mcp.canons.registry import bundled_manifest_bytes, clear_cache, load_registry
-
-    clear_cache()
-    return load_registry(bundled_manifest_bytes())
-
-
-def _sha(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _config_default_framework_version(ceremony_src: str) -> str:
-    """The framework version declared by the TRWConfig default, read not assumed."""
-    match = re.search(r'framework_version:\s*str\s*=\s*"([^"]+)"', ceremony_src)
-    assert match, "TRWConfig declares no framework_version default"
-    return match.group(1)
-
-
-def _canon_header_framework_version() -> str:
-    """The framework version stamped in the compiled canon header."""
-    header = (_REPO_ROOT / "trw-mcp/src/trw_mcp/data/framework.md").read_text(encoding="utf-8")
-    match = re.search(r"\b(v\d+(?:\.\d+)*_TRW)\b", header)
-    assert match, "compiled canon carries no version stamp"
-    return match.group(1)
-
-
-def test_migration_inventory_covers_every_frozen_canon_span() -> None:
-    """FR01: complete, non-overlapping, unique-ID span coverage + frozen digest."""
-    from trw_mcp.canons.registry import all_families, compile_canon, covered_families
-
-    registry = _registry()
-    assert {c.id for c in registry.compiled_canons} == {"framework", "aaref"}
-    for compiled in registry.compiled_canons:
-        source = (_REPO_ROOT / compiled.authoring_source).read_text(encoding="utf-8")
-        baseline = (_REPO_ROOT / compiled.combined).read_text(encoding="utf-8")
-        result = compile_canon(compiled.id, source, source_basename="x.md")
-
-        # Frozen baseline digest binds source -> baseline (no drift).
-        assert _sha(result.combined) == compiled.frozen_baseline_digest
-        assert result.combined == baseline
-
-        # Unique stable IDs.
-        ids = [s.id for s in result.spans]
-        assert len(ids) == len(set(ids)), "duplicate obligation id"
-
-        # 100% non-blank source coverage: every non-blank source line is owned by
-        # exactly one span (spans are contiguous, markers are the only added lines).
-        span_nonblank = sum(len(s.nonblank) for s in result.spans)
-        source_nonblank = sum(1 for line in source.split("\n") if line.strip() and not _MARKER_RE.match(line.strip()))
-        assert span_nonblank == source_nonblank
-
-        # The combined view accounts for every span EXCEPT core_stub bodies, which
-        # exist only in the compact core (they stand in for reference detail the
-        # core omits). Comparing spans against the baseline directly would silently
-        # forbid core_stub spans — the mechanism the compiler ships for exactly this.
-        combined_nonblank = sum(len(s.nonblank) for s in result.spans if s.dest is not SpanDest.CORE_STUB)
-        baseline_nonblank = sum(1 for line in baseline.split("\n") if line.strip())
-        assert combined_nonblank == baseline_nonblank
-
-        # Inventory is machine-readable with source + generated-output digests.
-        inv = result.inventory
-        assert inv["span_count"] == len(result.spans)
-        assert inv["source_digest_combined"] == _sha(result.combined)
-        assert inv["core_digest"] == _sha(result.core)
-        assert inv["reference_digest"] == _sha(result.reference)
-        assert len(inv["obligations"]) == len(result.spans)  # type: ignore[arg-type]
-
-        # Every load-bearing invariant family maps to >=1 present core obligation.
-        assert covered_families(compiled.id, result.core) == all_families(compiled.id)
-
-
-def test_core_stub_spans_reach_only_the_compact_core() -> None:
-    """A ``core_stub`` body appears in the core and in no other view.
-
-    The dest shipped as an unused enum value until the compact core was found to
-    advertise formations it did not define. It is now the sanctioned way for the
-    core to name reference-only material, so its routing is pinned here: a stub
-    that leaked into ``combined`` would break the frozen baseline, and one that
-    leaked into ``reference`` would duplicate the detail it points at.
-    """
-    from trw_mcp.canons.registry import compile_canon
-
-    stubs_seen = 0
-    for compiled in _registry().compiled_canons:
-        source = (_REPO_ROOT / compiled.authoring_source).read_text(encoding="utf-8")
-        result = compile_canon(compiled.id, source, source_basename="x.md")
-        for span in result.spans:
-            if span.dest is not SpanDest.CORE_STUB:
-                continue
-            stubs_seen += 1
-            body = "\n".join(span.body).strip()
-            assert body in result.core, f"{span.id}: core_stub body missing from the compact core"
-            assert body not in result.combined, f"{span.id}: core_stub body leaked into combined"
-            assert body not in result.reference, f"{span.id}: core_stub body leaked into reference"
-
-    assert stubs_seen, "no core_stub span present — this test would silently pass on any routing"
-
-
-def test_canon_compiler_is_deterministic_and_fail_closed() -> None:
-    """FR02: two builds are byte-identical; malformed sources fail closed."""
-    from trw_mcp.canons.registry import CanonRegistryError, compile_canon
-
-    registry = _registry()
-    for compiled in registry.compiled_canons:
-        source = (_REPO_ROOT / compiled.authoring_source).read_text(encoding="utf-8")
-        a = compile_canon(compiled.id, source, source_basename="x.md")
-        b = compile_canon(compiled.id, source, source_basename="x.md")
-        assert (a.core, a.reference, a.combined, a.inventory) == (
-            b.core,
-            b.reference,
-            b.combined,
-            b.inventory,
-        )
-
-    good = "<!-- trw:span id=a dest=both class=normative -->\nv1\n"
-    # Malformed marker (missing dest) -> fail closed.
-    with pytest.raises(CanonRegistryError):
-        compile_canon("t", "<!-- trw:span id=a class=normative -->\nv1\n")
-    # Duplicate id.
-    with pytest.raises(CanonRegistryError):
-        compile_canon("t", good + "<!-- trw:span id=a dest=core class=normative -->\nx\n")
-    # Unknown enum value.
-    with pytest.raises(CanonRegistryError):
-        compile_canon("t", "<!-- trw:span id=a dest=nowhere class=normative -->\nx\n")
-    # Non-blank content before the first marker.
-    with pytest.raises(CanonRegistryError):
-        compile_canon("t", "leading text\n<!-- trw:span id=a dest=core class=normative -->\nx\n")
-    # Reference-only normative obligation (self-sufficiency, FR03 boundary).
-    with pytest.raises(CanonRegistryError):
-        compile_canon("t", "<!-- trw:span id=a dest=reference class=normative -->\nx\n")
-
-
-def test_reference_and_combined_documents_are_generated_outputs() -> None:
-    """FR04: combined == composition == baseline; hand edits fail parity."""
-    from trw_mcp.canons.registry import check_generation, compile_canon
-
-    registry = _registry()
-    for compiled in registry.compiled_canons:
-        source = (_REPO_ROOT / compiled.authoring_source).read_text(encoding="utf-8")
-        result = compile_canon(compiled.id, source, source_basename=compiled.authoring_source.rsplit("/", 1)[-1])
-        # Combined is the deterministic composition and equals the legacy file.
-        assert result.combined == (_REPO_ROOT / compiled.combined).read_text(encoding="utf-8")
-        # Generated core + reference declare their source and regen command (FR04).
-        for text in (result.core, result.reference):
-            assert compiled.authoring_source.rsplit("/", 1)[-1] in text
-            assert "compile-framework-canons.py --write" in text
-        # On-disk generated files match the compiled bytes.
-        assert (_REPO_ROOT / compiled.compact_core).read_text(encoding="utf-8") == result.core
-        assert (_REPO_ROOT / compiled.reference).read_text(encoding="utf-8") == result.reference
-
-    # A hand edit to a generated output is caught by the read-only parity check.
-    assert check_generation(_REPO_ROOT, registry) == []
-
-
-def test_reference_hand_edit_fails_parity(tmp_path: Path) -> None:
-    """FR04/FR05: a seeded generated-output drift fails with source + regen command."""
-    from trw_mcp.canons.registry import check_generation
-
-    registry = _registry()
-    compiled = registry.compiled_canon("framework")
-    # Build an isolated repo tree mirroring the managed paths.
-    for rel in (
-        compiled.authoring_source,
-        compiled.combined,
-        compiled.compact_core,
-        compiled.reference,
-        compiled.obligation_inventory,
-    ):
-        dest = tmp_path / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes((_REPO_ROOT / rel).read_bytes())
-    # Clean tree passes.
-    assert [e for e in check_generation(tmp_path, registry) if e.startswith("framework")] == []
-    # Corrupt one generated output byte.
-    core = tmp_path / compiled.compact_core
-    core.write_text(core.read_text(encoding="utf-8") + "HAND EDIT\n", encoding="utf-8")
-    errors = [e for e in check_generation(tmp_path, registry) if e.startswith("framework")]
-    assert errors
-    joined = "\n".join(errors)
-    assert compiled.authoring_source in joined
-    assert "--write" in joined
-
-
-def test_max_core_ratio_ignores_stale_on_disk_combined(tmp_path: Path) -> None:
-    """NFR04: the ratio denominator is the fresh compile, never the disk file.
-
-    Reading ``compiled.combined`` from disk made the verdict depend on whether
-    a prior ``--write`` had run for an otherwise unchanged source: a smaller
-    stale file inflates the ratio (false failure), a larger one deflates it
-    (false pass). Both numerator and denominator must come from the same
-    in-memory compile so the verdict is a pure function of the source text.
-    """
-    from trw_mcp.canons.registry import compile_registry_canon
-
-    registry = _registry()
-    compiled = registry.compiled_canon("framework")
-    for rel in (compiled.authoring_source, compiled.combined):
-        dest = tmp_path / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes((_REPO_ROOT / rel).read_bytes())
-
-    # Unmodified tree: baseline pass (proves the fixture itself is sound).
-    compile_registry_canon(tmp_path, compiled)
-
-    # Stale on-disk combined: shrink it (a completed edit shipped a bigger
-    # source with a new dest=core span but a prior generation was never
-    # regenerated). The source (and thus frozen_baseline_digest and the fresh
-    # compile) is untouched, so the verdict MUST be identical to the pass above.
-    combined_path = tmp_path / compiled.combined
-    stale = combined_path.read_text(encoding="utf-8")[:200]
-    combined_path.write_text(stale, encoding="utf-8")
-    compile_registry_canon(tmp_path, compiled)  # must still pass -- disk state is irrelevant
-
-    # Inflated on-disk combined would falsely deflate the ratio under the old
-    # (disk-reading) implementation; assert it has zero effect on the verdict.
-    combined_path.write_text(stale + ("padding\n" * 5000), encoding="utf-8")
-    compile_registry_canon(tmp_path, compiled)  # still must pass
-
-
-def test_manifest_v2_covers_all_compiled_outputs_and_mirrors() -> None:
-    """FR05: schema v2 declares each compiled output once; duplicates/undeclared fail."""
-    from trw_mcp.canons.registry import CanonRegistryError, parse_registry
-
-    registry = _registry()
-    assert registry.schema_version == 2
-
-    # Every compiled generated output is declared exactly once (no duplicate role).
-    all_outputs: list[str] = []
-    for compiled in registry.compiled_canons:
-        all_outputs.extend([compiled.compact_core, compiled.reference, compiled.obligation_inventory])
-    assert len(all_outputs) == len(set(all_outputs))
-
-    # The legacy combined filename stays a manifest-declared artifact authoring source.
-    artifact_sources = {a.authoring_source for a in registry.artifacts}
-    for compiled in registry.compiled_canons:
-        assert compiled.combined in artifact_sources
-
-    # A duplicate generated output across compiled canons fails the strict parser.
-    raw = json.loads(_MANIFEST.read_text(encoding="utf-8"))
-    raw["compiled_canons"][1]["compact_core"] = raw["compiled_canons"][0]["compact_core"]
-    with pytest.raises(CanonRegistryError):
-        parse_registry(json.dumps(raw).encode("utf-8"))
-
-    # An unknown compiled field fails closed.
-    raw2 = json.loads(_MANIFEST.read_text(encoding="utf-8"))
-    raw2["compiled_canons"][0]["surprise"] = "x"
-    with pytest.raises(CanonRegistryError):
-        parse_registry(json.dumps(raw2).encode("utf-8"))
-
-
-def test_canon_compiler_is_environment_deterministic() -> None:
-    """NFR02: no timestamp / host path / CRLF / locale drift enters outputs."""
-    from trw_mcp.canons.registry import compile_canon
-
-    registry = _registry()
-    for compiled in registry.compiled_canons:
-        source = (_REPO_ROOT / compiled.authoring_source).read_text(encoding="utf-8")
-        r1 = compile_canon(compiled.id, source, source_basename="x.md")
-        # CRLF-normalized source produces byte-identical output (NFR02 line endings).
-        r2 = compile_canon(compiled.id, source.replace("\n", "\r\n"), source_basename="x.md")
-        assert r1.core == r2.core and r1.reference == r2.reference and r1.combined == r2.combined
-        for text in (r1.core, r1.reference):
-            assert "\r" not in text
-            assert "/home/" not in text and str(_REPO_ROOT) not in text
-
-
-def test_compact_canon_promotion_is_atomic_and_fail_closed() -> None:
-    """FR09: any missing gate blocks promotion with no version/default drift."""
-    from trw_mcp.canons.registry import PROMOTION_GATES, evaluate_promotion_gates
-
-    all_green = dict.fromkeys(PROMOTION_GATES, True)
-    assert evaluate_promotion_gates(all_green).promote is True
-
-    for missing in PROMOTION_GATES:
-        gates = dict(all_green)
-        gates[missing] = False
-        decision = evaluate_promotion_gates(gates)
-        assert decision.promote is False
-        assert missing in decision.blocking
-
-    # An empty gate map blocks everything (absence never promotes).
-    assert evaluate_promotion_gates({}).promote is False
-
-    # A promoted version default MUST be backed by an authorizing override record.
-    # This originally pinned the literal prior version, which made any movement a
-    # failure and left no representable way to record an operator-authorized
-    # promotion over unmet gates (CONSTITUTION §1.a path (c)). The control is
-    # unchanged in force -- a promoted default with no matching record on disk still
-    # fails -- but the exception is now expressible, auditable, and required to be
-    # written down rather than achieved by editing this test.
-    ceremony = (_REPO_ROOT / "trw-mcp/src/trw_mcp/models/config/_fields_ceremony.py").read_text(encoding="utf-8")
-    declared = _config_default_framework_version(ceremony)
-    assert declared == _canon_header_framework_version(), (
-        f"config default {declared} disagrees with the canon header; check-aaref-sync.py owns this binding"
-    )
-
-    authorizing = [
-        p
-        for p in sorted((_REPO_ROOT / ".trw/overrides").glob("*.yaml"))
-        if "gate_type: framework_version_promotion" in p.read_text(encoding="utf-8")
-    ]
-    assert authorizing, (
-        f"config default carries {declared} with no framework_version_promotion "
-        "override in .trw/overrides/ — an unauthorized promotion"
-    )
-    for record in authorizing:
-        text = record.read_text(encoding="utf-8")
-        # An override that claims the gates passed is not an override, it is a false
-        # receipt. It must name what was unmet and who authorized shipping anyway.
-        assert "gates_unmet:" in text, f"{record.name}: override names no unmet gate"
-        assert "authorized_by: operator" in text, f"{record.name}: no operator authorization"
-        assert "gate_status_at_override:" in text, f"{record.name}: no recorded gate status"
 
 
 def test_manifest_names_one_authoring_source_and_all_tracked_mirrors() -> None:
@@ -352,6 +25,7 @@ def test_manifest_names_one_authoring_source_and_all_tracked_mirrors() -> None:
         "trw-mcp/FRAMEWORK.md",
     }
     assert specs["aaref"]["authoring_source"] == "trw-mcp/src/trw_mcp/data/aaref.md"
+    assert "compiled_canons" not in raw, "S4: each canon is one hand-edited document, not compiled views"
     assert set(specs["aaref"]["tracked_mirrors"]) == {
         "AARE-F-FRAMEWORK.md",
         ".trw/frameworks/AARE-F-FRAMEWORK.md",
@@ -417,8 +91,8 @@ def test_nested_monorepo_instructions_resolve_parent_protocol() -> None:
     assert "Agent " + "Teams" not in instructions
 
 
-def test_promoted_runtime_instruction_surfaces_load_compact_core() -> None:
-    """FR09: current generated runtime guidance selects the compact path."""
+def test_runtime_instruction_surfaces_point_at_the_one_framework_document() -> None:
+    """S4: the compact core view is gone; guidance names FRAMEWORK.md sections."""
     surfaces = (
         "trw-mcp/src/trw_mcp/data/messages/messages.yaml",
         "trw-mcp/src/trw_mcp/data/hooks/session-start.sh",
@@ -428,5 +102,5 @@ def test_promoted_runtime_instruction_surfaces_load_compact_core() -> None:
     )
     for relative in surfaces:
         text = (_REPO_ROOT / relative).read_text(encoding="utf-8")
-        assert ".trw/frameworks/FRAMEWORK-CORE.md" in text, relative
-        assert ".trw/frameworks/FRAMEWORK.md" not in text, relative
+        assert ".trw/frameworks/FRAMEWORK.md" in text, relative
+        assert "FRAMEWORK-CORE" not in text, relative

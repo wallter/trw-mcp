@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from trw_mcp.bootstrap._client_skills import render_skill_md
 from trw_mcp.bootstrap._codex import _CODEX_SKILLS_DIR, install_codex_skills
 from trw_mcp.bootstrap._copilot import _COPILOT_SKILLS_DIR, install_copilot_skills
 from trw_mcp.bootstrap._cursor_ide import _IDE_CURATED_SKILLS
@@ -15,12 +16,20 @@ from ._copilot_test_support import fake_git_repo  # noqa: F401
 
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
 SKILL = DATA / "skills" / "trw-delegate" / "SKILL.md"
+#: codex/copilot/opencode no longer fork this skill on disk (PRD-CORE-291-FR04)
+#: -- they render the canonical body -- so "variants" are (rendered content,
+#: label) pairs; ``copilot/plugin`` is a separate, still file-based, unwired
+#: skill subset (no production reader) and stays a real path.
+_CANONICAL_TEXT = SKILL.read_text(encoding="utf-8")
 VARIANTS = (
-    SKILL,
-    DATA / "codex" / "skills" / "trw-delegate" / "SKILL.md",
-    DATA / "copilot" / "skills" / "trw-delegate" / "SKILL.md",
-    DATA / "opencode" / "skills" / "trw-delegate" / "SKILL.md",
-    DATA / "copilot" / "plugin" / "skills" / "trw-delegate" / "SKILL.md",
+    ("canonical", _CANONICAL_TEXT),
+    ("codex", render_skill_md(_CANONICAL_TEXT, "codex")),
+    ("copilot", render_skill_md(_CANONICAL_TEXT, "copilot")),
+    ("opencode", render_skill_md(_CANONICAL_TEXT, "opencode")),
+    (
+        "copilot-plugin",
+        (DATA / "copilot" / "plugin" / "skills" / "trw-delegate" / "SKILL.md").read_text(encoding="utf-8"),
+    ),
 )
 
 
@@ -55,10 +64,10 @@ def test_delegate_keeps_runtime_details_out_of_durable_policy() -> None:
         assert stale_detail not in content
 
 
-@pytest.mark.parametrize("variant", VARIANTS)
-def test_delegate_variants_share_one_client_neutral_contract(variant: Path) -> None:
-    content = variant.read_text(encoding="utf-8")
-    canonical_body = SKILL.read_text(encoding="utf-8").split("---", 2)[2]
+@pytest.mark.parametrize("variant", VARIANTS, ids=lambda v: v[0])
+def test_delegate_variants_share_one_client_neutral_contract(variant: tuple[str, str]) -> None:
+    _label, content = variant
+    canonical_body = _CANONICAL_TEXT.split("---", 2)[2]
     assert content.split("---", 2)[2] == canonical_body
     assert "context: fork" not in content
     assert "agent: general-purpose" not in content

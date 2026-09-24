@@ -80,9 +80,6 @@ class TRWConfig(_TRWConfigFields):
         nudge_variant: str | None = None
         nudge_density: Literal["low", "medium", "high"] | None = None
         pricing_table_path: str = ""
-        session_start_defer_under_writer_pressure: bool = True
-        session_start_writer_pressure_threshold: int = 8
-        session_start_max_deferral_hours: int = 6
 
     # -- Meta-Tune Safety (PRD-HPO-SAFE-001 FR-7) --
     # Nested sub-config (not projected from flat fields) because the meta-
@@ -160,7 +157,9 @@ class TRWConfig(_TRWConfigFields):
     @cached_property
     def dispatch(self) -> DispatchConfig:
         """Cross-client dispatch (``trw-mcp dispatch``) operator-default sub-config."""
-        return self._sub_config(DispatchConfig)
+        projected = self._sub_config(DispatchConfig)
+        operator_set = frozenset(name for name in self.model_fields_set if name.startswith("dispatch_"))
+        return projected.model_copy(update={"operator_set": operator_set})
 
     @cached_property
     def telemetry_settings(self) -> TelemetryConfig:

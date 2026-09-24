@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from tests._formation_test_support import formation_env  # noqa: F401
+from tests.comms.test_policy import SendScene, scene  # noqa: F401
 from trw_mcp.comms import _paging
 from trw_mcp.comms._envelope import MESSAGE_STATES, MILESTONE_FACTS, TERMINAL_MESSAGE_STATES, MessageState
 from trw_mcp.formation import CandidateState, FormationError, announce_candidate, set_candidate_state
@@ -16,6 +20,32 @@ def test_message_states_are_one_closed_vocabulary() -> None:
     assert MESSAGE_STATES == {"pending", "acked", "expired"}
     assert TERMINAL_MESSAGE_STATES == MESSAGE_STATES - {MessageState.PENDING.value}
     assert set(MILESTONE_FACTS) >= TERMINAL_MESSAGE_STATES, "every terminal state has its milestone fact"
+
+
+def _inbox(scene: SendScene, **arguments: Any) -> dict[str, Any]:
+    result = asyncio.run(scene.server.call_tool("trw_inbox", arguments))
+    assert isinstance(result.structured_content, dict)
+    return result.structured_content
+
+
+def test_a_message_leaves_pending_exactly_once_and_never_moves_between_terminal_states(scene: SendScene) -> None:
+    """pending -> acked and pending -> expired are the only moves. Expiry skips an acked
+    row, and an expired row cannot be acknowledged: the whole batch is refused unchanged."""
+    acked = scene.send("to-ack")["receipt"]["message_id"]
+    lapsing = scene.send("to-expire")["receipt"]["message_id"]
+    scene.actor("impl-2")
+    assert _inbox(scene, action="ack", message_ids=[acked])["status"] == "ok"
+    scene.rows("UPDATE groups SET group_time = group_time + 10000000")
+
+    assert _inbox(scene, action="status")["status"] == "ok"  # any operation runs expiry
+    states = dict(scene.rows("SELECT message_id, state FROM admissions"))
+    assert states == {acked: MessageState.ACKED.value, lapsing: MessageState.EXPIRED.value}
+
+    refused = _inbox(scene, action="ack", message_ids=[lapsing])
+    assert refused["reason"] == "ack_not_authorized", refused
+    assert dict(scene.rows("SELECT message_id, state FROM admissions")) == states
+    facts = scene.rows("SELECT message_id, fact FROM milestones WHERE fact IN ('acked', 'expired') ORDER BY fact")
+    assert facts == [(acked, "acked"), (lapsing, "expired")], "one terminal fact per message"
 
 
 def _candidate(tmp_path: Path) -> str:

@@ -131,17 +131,6 @@ class TestContentBindingNormalizesPortableRepoPaths:
 
 
 class TestRunOwnedScope:
-    def test_caller_cannot_shrink_required(self) -> None:
-        scope = RunOwnedScope(
-            scope_id="s1",
-            scope_digest=compute_scope_digest("s1", "proj", ("src/a.py", "src/b.py")),
-            project_identity="proj",
-            required_paths=("src/a.py", "src/b.py"),
-        )
-        # A caller proposal that drops src/b.py does NOT cover required scope.
-        assert scope.caller_cannot_shrink(("src/a.py", "src/b.py")) is True
-        assert scope.caller_cannot_shrink(("src/a.py",)) is False
-
     def test_effective_paths_union_additive_only(self) -> None:
         scope = RunOwnedScope(
             scope_id="s1",

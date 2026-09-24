@@ -66,7 +66,8 @@ class _TelemetryFields:
     # -- OTEL --
 
     otel_enabled: bool = False
-    otel_endpoint: str = ""
+    # otel_endpoint removed under PRD-CORE-291 (slice 2): no production
+    # reader, only a test pinning the default.
     # PRD-INFRA-145: span/attribute vocabulary. 'legacy' (default) keeps the
     # current tool.*/trw.* shape byte-identical so existing dashboards never
     # break; 'gen_ai' emits OpenTelemetry GenAI semantic-convention spans.

@@ -18,7 +18,6 @@ on this module by the test-suite (e.g. ``_build_yaml_path_index``,
 
 from __future__ import annotations
 
-import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -30,9 +29,6 @@ import structlog
 from trw_mcp.scoring._io_entries import (
     _load_entries_from_dir as _load_entries_from_dir,
 )
-from trw_mcp.scoring._io_entries import (
-    _write_pending_entries as _write_pending_entries,
-)
 from trw_mcp.scoring._io_recall_jsonl import (
     _read_recall_tracking_jsonl as _read_recall_tracking_jsonl,
 )
@@ -42,27 +38,10 @@ from trw_mcp.scoring._io_recall_jsonl import (
 from trw_mcp.scoring._io_recall_jsonl import (
     _warn_recall_tracking_skip as _warn_recall_tracking_skip,
 )
-from trw_mcp.scoring._io_sqlite_sync import (
-    Q_LEARNING_BATCH_CHUNK_SIZE as Q_LEARNING_BATCH_CHUNK_SIZE,
-)
-from trw_mcp.scoring._io_sqlite_sync import (
-    _batch_sync_to_sqlite as _batch_sync_to_sqlite,
-)
-from trw_mcp.scoring._io_sqlite_sync import (
-    _sync_chunk as _sync_chunk,
-)
-from trw_mcp.scoring._io_sqlite_sync import (
-    _sync_to_sqlite as _sync_to_sqlite,
-)
 from trw_mcp.scoring._yaml_id_index import _build_yaml_path_index as _build_yaml_path_index
 from trw_mcp.scoring._yaml_id_index import _read_learning_id as _read_learning_id
 
 logger = structlog.get_logger(__name__)
-
-# Type alias for the pending-update tuple used by process_outcome.
-# (learning_id, yaml_path, entry_data, q_new, q_observations, outcome_history)
-_PendingUpdate = tuple[str, Path | None, dict[str, object], float, int, list[object]]
-
 
 # In-memory YAML path index: learning_id -> yaml_path.
 # Rebuilt on TTL expiry to replace repeated O(N) scans with O(1) lookups.
@@ -172,14 +151,9 @@ def _safe_mtime(path: Path) -> float | None:
 
 
 def _resolve_scoring_config() -> _ScoringConfig:
-    """Resolve scoring config, honoring patched correlation-module hooks in tests."""
+    """Resolve the scoring config (patch ``trw_mcp.scoring._utils.get_config`` in tests)."""
     from trw_mcp.scoring._utils import get_config
 
-    correlation_mod = sys.modules.get("trw_mcp.scoring._correlation")
-    if correlation_mod is not None:
-        patched_get_config = getattr(correlation_mod, "get_config", None)
-        if callable(patched_get_config):
-            return cast("_ScoringConfig", patched_get_config())
     return cast("_ScoringConfig", get_config())
 
 
@@ -336,14 +310,8 @@ def _find_session_start_ts(trw_dir: Path) -> datetime | None:
 
 
 __all__ = [
-    "Q_LEARNING_BATCH_CHUNK_SIZE",
-    "_PendingUpdate",
-    "_batch_sync_to_sqlite",
     "_default_lookup_entry",
     "_find_session_start_ts",
     "_load_entries_from_dir",
     "_read_recall_tracking_jsonl",
-    "_sync_chunk",
-    "_sync_to_sqlite",
-    "_write_pending_entries",
 ]

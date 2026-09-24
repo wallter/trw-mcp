@@ -9,7 +9,7 @@ taxonomy with frozen, validated Pydantic models.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
@@ -105,6 +105,18 @@ class WriteTargets(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    # PRD-QUAL-143-FR05 (R2-013, R2-023): the doc-facing write-target label
+    # is first-match-wins over these flags, declared once here so
+    # ``client_profiles/catalog.py`` iterates it instead of encoding its own
+    # if/elif chain. ``DEFAULT_LABEL`` is the fallback when no flag matches.
+    PRECEDENCE: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("cursor_rules", ".cursor/rules/"),
+        ("copilot_instructions", ".github/copilot-instructions.md"),
+        ("claude_md", "CLAUDE.md"),
+        ("antigravitycli_md", "ANTIGRAVITY.md"),
+    )
+    DEFAULT_LABEL: ClassVar[str] = "AGENTS.md"
+
     claude_md: bool = False
     agents_md: bool = False
     # ``agents_md_primary`` was removed 2026-07-28 (PRD-QUAL-131-FR06): zero
@@ -189,7 +201,6 @@ class ClientProfile(BaseModel):
     # density unset so TRWConfig.effective_nudge_density falls back through
     # to the module default. No profile opts in by default today.
     nudge_density: Literal["low", "medium", "high"] | None = None
-    learning_recall_enabled: bool = True
     mcp_instructions_enabled: bool = True
     skills_enabled: bool = True
 
@@ -212,31 +223,6 @@ class ClientProfile(BaseModel):
     # claude-code exposes MCP tools under ``mcp__{server}__{tool}`` — set to
     # ``"mcp__trw__"`` for claude-code; bare names for all other clients.
     tool_namespace_prefix: str = ""
-
-    # -- In-file import capability (PRD-CORE-203 FR01) --
-    # Whether this client's instruction file supports an in-file import
-    # directive that recursively embeds another file into context.
-    # How this client resolves an in-file include, which decides whether the TRW
-    # block can be externalized to ``.trw/INSTRUCTIONS.md`` or must stay inline.
-    #
-    #   ``"at_path"``  -> Claude Code's ``@path`` syntax. Resolves relative to the
-    #                     FILE CONTAINING the import (not the repo root — a
-    #                     long-standing error in this comment, corrected
-    #                     2026-07-28), recursive to 4 hops (not 5), and accepts
-    #                     ``~``/absolute paths.
-    #   ``"at_path_repo_relative"``
-    #                  -> GitHub Copilot CLI's ``@relpath``. Same in-file shape,
-    #                     but the reference MUST stay inside the repository:
-    #                     absolute and ``~``-rooted paths are rejected, and it is
-    #                     NOT expanded inside ``*.instructions.md``. Modelled
-    #                     distinctly rather than folded into ``at_path`` because
-    #                     emitting a ``~``-rooted import for Copilot would simply
-    #                     not load (PRD-CORE-240-FR03).
-    #   ``"none"``     -> no in-file import. opencode and codex name the file in
-    #                     their own config instead; cursor-cli, cursor-ide and
-    #                     antigravity-cli have no working mechanism at all and
-    #                     keep the block inline (see INCLUDE_INCAPABLE_CLIENTS).
-    instruction_import_syntax: Literal["none", "at_path", "at_path_repo_relative"] = "none"
 
     @computed_field  # type: ignore[prop-decorator]  # Pydantic v2 supports @computed_field on @property; the decorator-order lint is a known Pyright limitation.
     @property

@@ -32,6 +32,8 @@ logger = structlog.get_logger(__name__)
 #    teammate's credential-less clone to take the proprietary path, whose
 #    missing-key precondition then aborted their whole PUBLIC install
 #    (PRD-INFRA-126 FR05).
+#  - ``runtime/memory-token`` — the checkout's daemon grant token, minted by
+#    init-project and update-project (PRD-CORE-280 FR06).
 #
 #: A new entry here must ALSO be added to the bundled ``data/gitignore.txt``
 #: (fresh installs deploy that file; this list is the brownfield half).
@@ -44,6 +46,10 @@ _REQUIRED_RULES: tuple[tuple[str, str], ...] = (
     (
         "proprietary-installed.json",
         "# Your proprietary-entitlement record — a local install fact, never track it (PRD-INFRA-126).",
+    ),
+    (
+        "runtime/memory-token",
+        "# Secret: this checkout's memory daemon grant (mode 0600) — never track it (PRD-CORE-280).",
     ),
 )
 

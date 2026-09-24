@@ -34,7 +34,7 @@ def _make_client(
 def _make_response(*texts: str) -> MagicMock:
     """Build a mock Anthropic response with text content blocks."""
     response = MagicMock()
-    response.content = [MagicMock(text=t) for t in texts]
+    response.content = [MagicMock(type="text", text=t) for t in texts]
     return response
 
 
@@ -139,7 +139,7 @@ class TestModelAliasResolution:
     def test_opus_alias(self) -> None:
         # PRD-QUAL-072 FR01 bumped 4-6 -> 4-7 (2026-04-23); bumped again to
         # the Claude 5 generation (2026-07-26).
-        assert _resolve_model("opus") == "claude-opus-5"
+        assert _resolve_model("opus") == "claude-opus-5-5"
 
     def test_custom_model_passthrough(self) -> None:
         assert _resolve_model("claude-custom-123") == "claude-custom-123"
@@ -204,7 +204,7 @@ class TestAsk:
         await client.ask("test", model="opus")
 
         call_kwargs = mock_async_client.messages.create.call_args[1]
-        assert call_kwargs["model"] == "claude-opus-5"
+        assert call_kwargs["model"] == "claude-opus-5-5"
 
     @pytest.mark.asyncio
     async def test_ask_returns_none_on_empty_content(self) -> None:
@@ -220,6 +220,30 @@ class TestAsk:
         """ask() returns None when the API call raises an exception."""
         ac = MagicMock()
         ac.messages.create = AsyncMock(side_effect=RuntimeError("API error"))
+        assert await _make_client(ac).ask("test") is None
+
+    @pytest.mark.asyncio
+    async def test_ask_skips_leading_thinking_blocks(self) -> None:
+        """Opus 5.5 responses lead with thinking blocks; ask() reads text blocks by type."""
+        ac = MagicMock()
+        mock_response = MagicMock()
+        mock_response.stop_reason = "end_turn"
+        mock_response.content = [
+            MagicMock(type="thinking", thinking="", signature="sig"),
+            MagicMock(type="text", text="the "),
+            MagicMock(type="text", text="answer"),
+        ]
+        ac.messages.create = AsyncMock(return_value=mock_response)
+        assert await _make_client(ac).ask("test") == "the answer"
+
+    @pytest.mark.asyncio
+    async def test_ask_returns_none_when_only_thinking(self) -> None:
+        """A response carrying no text block yields None, never a thinking block's repr."""
+        ac = MagicMock()
+        mock_response = MagicMock()
+        mock_response.stop_reason = "end_turn"
+        mock_response.content = [MagicMock(type="thinking", thinking="", signature="sig")]
+        ac.messages.create = AsyncMock(return_value=mock_response)
         assert await _make_client(ac).ask("test") is None
 
     @pytest.mark.asyncio
@@ -245,11 +269,11 @@ class TestCapabilityAliasCurrency:
     passthrough guarantee is unchanged and still covered below.
     """
 
-    def test_frontier_aliases_resolve_to_opus_5(self) -> None:
+    def test_frontier_aliases_resolve_to_opus_5_5(self) -> None:
         from trw_mcp.clients.llm import _MODEL_MAP
 
-        assert _MODEL_MAP["opus"] == "claude-opus-5"
-        assert _MODEL_MAP["frontier"] == "claude-opus-5"
+        assert _MODEL_MAP["opus"] == "claude-opus-5-5"
+        assert _MODEL_MAP["frontier"] == "claude-opus-5-5"
 
     def test_balanced_aliases_resolve_to_sonnet_5(self) -> None:
         from trw_mcp.clients.llm import _MODEL_MAP
@@ -371,6 +395,44 @@ class TestRequestShape:
 
         call_kwargs = mock_async_client.messages.create.call_args[1]
         assert "output_config" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_no_rejected_shapes_reach_the_api(self) -> None:
+        """PRD-CORE-289 FR03: no request this client builds may contain
+        ``budget_tokens``, a disabled ``thinking`` block, or a forced
+        ``tool_choice`` — Opus 5.5 rejects all three. Guards against
+        reintroduction of any of these keys into the ``kwargs`` construction.
+        """
+        mock_async_client, client = _make_wired_client("Response")
+
+        await client.ask("test", model="opus")
+
+        call_kwargs = mock_async_client.messages.create.call_args[1]
+        assert "budget_tokens" not in call_kwargs
+        assert "thinking" not in call_kwargs
+        assert "tool_choice" not in call_kwargs
+
+
+class TestFailurePreviewRedaction:
+    """R2-014: a failed call must not leak a secret through prompt_preview."""
+
+    @pytest.mark.asyncio
+    async def test_failed_call_prompt_preview_redacts_secret(self) -> None:
+        import structlog.testing
+
+        token = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+        ac = MagicMock()
+        ac.messages.create = AsyncMock(side_effect=RuntimeError("boom"))
+        client = _make_client(ac)
+
+        with structlog.testing.capture_logs() as logs:
+            assert await client.ask(f"Bearer {token} caused an error") is None
+
+        failure_events = [entry for entry in logs if entry.get("event") == "llm_call_failed"]
+        assert failure_events
+        preview = str(failure_events[0]["prompt_preview"])
+        assert token not in preview
 
 
 # ---------------------------------------------------------------------------

@@ -3,11 +3,12 @@
 Belongs to the ``state/otel_wrapper.py`` facade. Re-exported there for the
 ``gen_ai`` semconv branch. This module owns the FR08 mapping contract
 (legacy ``trw.*`` attribute keys -> ``gen_ai.*`` registry keys) and the
-attribute-construction helpers for tool, agent, and workflow spans.
+attribute-construction helpers for the ``execute_tool`` span.
 
 Spellings verified 2026-06-14 against the live OpenTelemetry GenAI semantic
 conventions (open-telemetry/semantic-conventions-genai @ main):
-  - span op ``execute_tool`` / ``invoke_agent`` / ``invoke_workflow``
+  - span op ``execute_tool`` (``invoke_agent`` / ``invoke_workflow`` had no
+    emission site and were removed in 6.0.0; the mapping keys below remain)
   - ``gen_ai.operation.name`` (Required), ``gen_ai.tool.name`` (Required),
     ``gen_ai.agent.{id,name,version}``, ``gen_ai.conversation.id``,
     ``gen_ai.provider.name``, ``error.type`` (Stable),
@@ -28,14 +29,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # -- Span names (FR01/FR04/FR05) --
 
 SPAN_EXECUTE_TOOL = "gen_ai.execute_tool"
-SPAN_INVOKE_AGENT = "gen_ai.invoke_agent"
-SPAN_INVOKE_WORKFLOW = "gen_ai.invoke_workflow"
 
 # -- gen_ai.operation.name values (Required attr, FR01/FR04/FR05) --
 
 OP_EXECUTE_TOOL = "execute_tool"
-OP_INVOKE_AGENT = "invoke_agent"
-OP_INVOKE_WORKFLOW = "invoke_workflow"
 
 # -- Attribute registry keys (FR08 mapping contract) --
 
@@ -56,8 +53,8 @@ ATTR_OUTPUT_MESSAGES = "gen_ai.output.messages"
 TRW_EXT_PREFIX = "trw."
 
 # FR08: authoritative caller-attribute-key -> gen_ai registry-key mapping.
-# Keys are the bare attribute names supplied by callers (e.g. via
-# tools/telemetry.py); values are the GenAI registry attribute keys. Any
+# Keys are the bare attribute names supplied by callers (e.g. the tool-call
+# wrapper, telemetry/_tool_call_local.py); values are the GenAI registry attribute keys. Any
 # caller key absent from this table falls back to ``trw.{key}`` (FR03).
 GEN_AI_ATTR_MAP: dict[str, str] = {
     "agent_id": ATTR_AGENT_ID,
@@ -118,24 +115,6 @@ def set_tool_attributes(
     """Set gen_ai.execute_tool span attributes (FR01/FR03)."""
     span.set_attribute(ATTR_OPERATION_NAME, OP_EXECUTE_TOOL)
     span.set_attribute(ATTR_TOOL_NAME, tool_name)
-    set_mapped_attributes(span, attributes)
-
-
-def set_agent_attributes(
-    span: _Span,
-    attributes: dict[str, object] | None,
-) -> None:
-    """Set gen_ai.invoke_agent span attributes (FR04)."""
-    span.set_attribute(ATTR_OPERATION_NAME, OP_INVOKE_AGENT)
-    set_mapped_attributes(span, attributes)
-
-
-def set_workflow_attributes(
-    span: _Span,
-    attributes: dict[str, object] | None,
-) -> None:
-    """Set gen_ai.invoke_workflow span attributes (FR05)."""
-    span.set_attribute(ATTR_OPERATION_NAME, OP_INVOKE_WORKFLOW)
     set_mapped_attributes(span, attributes)
 
 

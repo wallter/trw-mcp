@@ -48,11 +48,16 @@ class TestAgentsMdFresh:
         assert "Ceremony content here" in block
 
     def test_cursor_cli_header(self, tmp_path: Path) -> None:
+        """The header is client-neutral: this writer merges into the SAME
+        shared ``<!-- trw:start -->`` block every AGENTS.md/CLAUDE.md writer
+        uses, so it must not name one specific client (PRD-CORE-243-FR06/FR08;
+        trw-mcp 6.0.0 framework-docs consolidation, S3)."""
         from trw_mcp.bootstrap._cursor_cli import generate_cursor_cli_agents_md
 
         generate_cursor_cli_agents_md(tmp_path, "Content")
         content = (tmp_path / "AGENTS.md").read_text()
-        assert "cursor-cli" in content
+        assert "# TRW Ceremony Protocol" in content
+        assert "cursor-cli" not in content
 
 
 class TestAgentsMdSentinelMerge:

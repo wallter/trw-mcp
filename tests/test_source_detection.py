@@ -69,6 +69,33 @@ class TestDetectModelIdFilesystem:
         with patch.dict("os.environ", {}, clear=True):
             assert detect_model_id(cwd=tmp_path) == ""
 
+    def test_opencode_config_ignored_for_other_client(self, tmp_path: Path) -> None:
+        """A repo's opencode.json must NOT be guessed as the model for a
+        different client (PRD-CORE-099 truthfulness fix): Claude Code sets
+        no model env var, so without this guard every learning it writes in
+        a repo carrying opencode.json gets mislabeled with opencode's model.
+        """
+        config = {"model": "vllm/qwen3-coder-next"}
+        (tmp_path / "opencode.json").write_text(json.dumps(config))
+        with patch.dict("os.environ", {}, clear=True):
+            assert detect_model_id(cwd=tmp_path, client_profile="claude-code") == ""
+            # Auto-detected client_profile (no env signals, opencode.json present)
+            # resolves to "opencode" via filesystem markers, so the guess is
+            # legitimate only when the client actually IS opencode.
+            assert detect_model_id(cwd=tmp_path) == "qwen3-coder-next"
+
+    def test_opencode_config_used_for_opencode_client(self, tmp_path: Path) -> None:
+        config = {"model": "vllm/qwen3-coder-next"}
+        (tmp_path / "opencode.json").write_text(json.dumps(config))
+        with patch.dict("os.environ", {}, clear=True):
+            assert detect_model_id(cwd=tmp_path, client_profile="opencode") == "qwen3-coder-next"
+
+    def test_explicit_model_env_wins_over_client_and_config(self, tmp_path: Path) -> None:
+        config = {"model": "vllm/qwen3-coder-next"}
+        (tmp_path / "opencode.json").write_text(json.dumps(config))
+        with patch.dict("os.environ", {"CLAUDE_MODEL": "claude-opus-4-7"}, clear=True):
+            assert detect_model_id(cwd=tmp_path, client_profile="opencode") == "claude-opus-4-7"
+
 
 # ---------------------------------------------------------------------------
 # _parse_opencode_model — edge cases

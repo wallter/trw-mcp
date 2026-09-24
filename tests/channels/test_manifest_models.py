@@ -7,7 +7,6 @@ from pydantic import ValidationError
 
 from trw_mcp.channels._manifest_models import (
     CLIENT_CORRECTION_FACTORS,
-    CLIENT_THROTTLE_THRESHOLDS,
     DEFAULT_CORRELATION_WINDOW_SECONDS,
     JOIN_KEY_FIELDS,
     MARKER_REGISTRY,
@@ -98,7 +97,6 @@ def test_channel_entry_minimal() -> None:
     )
     assert entry.id == "test"
     assert entry.status == "active"
-    assert entry.tier_default == "T2"
 
 
 def test_channel_entry_all_required_fields() -> None:
@@ -121,8 +119,6 @@ def test_channel_entry_all_required_fields() -> None:
         lock_file=".trw/channels/cc-01.lock",
         status="active",
         write_strategy="MARKER_REPLACE",
-        tier_default="T2",
-        tier_min="T0",
         markers={"start": "<!-- trw:start -->", "end": "<!-- trw:end -->"},
         ttl_commits=10,
         ttl_days=7,
@@ -233,14 +229,6 @@ def test_client_correction_factors() -> None:
     for client, factor in CLIENT_CORRECTION_FACTORS.items():
         adjusted = min(1.0 / factor, 1.0)
         assert 0.0 < adjusted <= 1.0, f"Bad factor for {client}"
-
-
-def test_client_throttle_thresholds() -> None:
-    assert CLIENT_THROTTLE_THRESHOLDS["claude-code"] == (0.25, 3)
-    assert CLIENT_THROTTLE_THRESHOLDS["copilot"] == (0.15, 5)
-    for client, (threshold, window) in CLIENT_THROTTLE_THRESHOLDS.items():
-        assert 0.0 < threshold < 1.0, f"Bad threshold for {client}"
-        assert window > 0, f"Bad window for {client}"
 
 
 def test_marker_registry_not_empty() -> None:

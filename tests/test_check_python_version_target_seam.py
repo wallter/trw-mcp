@@ -17,6 +17,7 @@ package) — same pattern as ``test_phase_install_downgrade_guard.py``.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +97,32 @@ def test_target_below_min_version_falls_back(
     old_python.chmod(0o755)
     monkeypatch.setenv("TRW_TARGET_PYTHON", str(old_python))
     assert installer.check_python_version(installer.UI()) == sys.executable
+
+
+def test_bare_path_resolvable_name_is_honored(
+    installer: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """I5 (installer refinement 5.1.0): a bare PATH-resolvable name (a
+    persisted ``TRW_TARGET_PYTHON=python3`` from a prior install's saved
+    settings) must resolve via PATH, not be rejected by a raw is_file() check
+    that only ever passes for an absolute path.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_python = bin_dir / "python3-shim"
+    fake_python.write_text(
+        '#!/usr/bin/env bash\nif [ "$1" = "-c" ]; then echo "3.12"; fi\n',
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("TRW_TARGET_PYTHON", "python3-shim")
+
+    resolved = installer.check_python_version(installer.UI())
+
+    assert resolved == str(fake_python)
+    captured = capsys.readouterr()
+    assert "not an executable file" not in captured.err + captured.out
 
 
 def test_target_equal_to_sys_executable_takes_the_fast_path(

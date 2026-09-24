@@ -65,8 +65,6 @@ DEFERRED_STEP_EFFECT_IDS: dict[str, str] = {
     "index_sync": "D04",
     "auto_progress": "D06",
     "publish_learnings": "D07",
-    "outcome_correlation": "D09",
-    "recall_outcome": "D10",
     "telemetry": "D12",
     "batch_send": "D14",
     "trust_increment": "D16",

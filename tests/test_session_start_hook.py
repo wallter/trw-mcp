@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests._auto_recall_hook_harness import _HOOK_PATHS as _UPS_HOOK_PATHS
-from tests._layout import PACKAGE_ROOT, requires_monorepo
+from tests._layout import PACKAGE_ROOT, requires_jq, requires_monorepo
 
 _ROOT = Path(__file__).resolve().parent.parent
 #: Every live copy of the hook (a formerly-vendored third mirror was deleted
@@ -71,6 +71,7 @@ def test_session_start_hook_copies_stay_in_sync() -> None:
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
+@requires_jq
 def test_session_start_hook_clears_phase_and_injected_state_for_all_sources(tmp_path: Path, hook_path: Path) -> None:
     for source in ("startup", "resume", "compact", "clear"):
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / source, hook_path)
@@ -97,6 +98,7 @@ def test_session_start_hook_clears_phase_and_injected_state_for_all_sources(tmp_
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
+@requires_jq
 def test_session_start_hook_compact_guides_to_session_start(tmp_path: Path, hook_path: Path) -> None:
     project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "compact-guidance", hook_path)
 
@@ -133,6 +135,7 @@ def _run_hook(local_hook: Path, project_root: Path, source: str) -> str:
 
 
 @pytest.mark.parametrize("source_hook", _HOOK_CASES)
+@requires_jq
 def test_delegation_guidance_preserves_required_independent_review(tmp_path: Path, source_hook: Path) -> None:
     """The emitted convenience advice must not forbid the framework's review."""
     for source in ("startup", "clear"):
@@ -162,6 +165,7 @@ _MID_SESSION_EMISSION_CEILING_BYTES = {"resume": 1200, "compact": 1800, "clear":
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
+@requires_jq
 def test_protocol_not_re_emitted_when_instruction_file_carries_it(tmp_path: Path, hook_path: Path) -> None:
     """resume/compact/clear must not restate a protocol already in the system prompt."""
     for source in ("resume", "compact", "clear"):
@@ -187,6 +191,7 @@ def test_protocol_not_re_emitted_when_instruction_file_carries_it(tmp_path: Path
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
+@requires_jq
 def test_protocol_still_emitted_when_no_instruction_file_carries_it(tmp_path: Path, hook_path: Path) -> None:
     """The nudge is deduplicated, not removed: bare harnesses still get the protocol."""
     for source in ("resume", "compact", "clear"):
@@ -222,16 +227,15 @@ def test_mid_session_emissions_stay_within_byte_budget(tmp_path: Path, hook_path
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
+@requires_jq
 def test_compact_framework_directive_is_honest_about_cost(tmp_path: Path, hook_path: Path) -> None:
     """The framework directive must state a MEASURED cost, never a remembered one.
 
-    History: the compact branch claimed a full FRAMEWORK-CORE.md re-read costs
-    ~500 tokens when it was ~8k, and the startup branch then claimed "~385 lines
-    / ~8k tokens" when the file measured 393 lines and 35,073 characters.
-    PRD-CORE-247-FR07 replaced both estimates with the measured figures and made
-    the directive phase-scoped, so the assertion moved with them — the invariant
-    ("the stated cost equals the measured cost") is unchanged, the numbers are
-    the current measurement.
+    History: the compact branch claimed a full re-read cost ~500 tokens when it
+    was ~8k; the startup branch then claimed "~385 lines / ~8k tokens", and later
+    "35,073 characters" after the document had grown past it. S4 stopped stating a
+    size at all: the directive names the phase's FRAMEWORK.md sections, and
+    test_core_247_framework_read_budget measures them against the document.
     """
     project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "compact-honesty", hook_path)
 
@@ -240,11 +244,12 @@ def test_compact_framework_directive_is_honest_about_cost(tmp_path: Path, hook_p
     assert "~500 tokens" not in stdout, "restated the 17x-understated re-read cost"
     assert "~8k tokens" not in stdout, "restated the superseded whole-document estimate"
     assert "~385 lines" not in stdout, "restated the superseded line count"
-    assert "35,073" in stdout, "dropped the measured whole-document size"
+    assert "35,073" not in stdout, "restated a stale whole-document size"
     assert "EXECUTION MODEL SUMMARY" in stdout, "dropped the targeted-reload guidance"
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
+@requires_jq
 def test_instruction_file_that_merely_mentions_trw_still_gets_the_protocol(tmp_path: Path, hook_path: Path) -> None:
     """A prose mention is not a protocol block.
 
@@ -284,18 +289,12 @@ def test_instruction_file_that_merely_mentions_trw_still_gets_the_protocol(tmp_p
         for path in _UPS_HOOK_PATHS
     ],
 )
-def test_injected_ids_are_written_even_under_writer_pressure(tmp_path: Path, ups_hook: Path) -> None:
-    """PRD-CORE-263-FR06 — end to end: pressured recall, then a real hook read.
+def test_injected_ids_are_written_from_session_recall(tmp_path: Path, ups_hook: Path) -> None:
+    """PRD-CORE-263-FR06 — end to end: recall, then a real hook read.
 
-    Under writer pressure ``perform_session_recalls`` returns a
-    ``side_effects_deferred`` advisory. The injected-ids write used to be gated
-    on that advisory, so the state file went stale and the auto-injection hook
-    re-injected learnings the session had just surfaced — spending the context
-    budget the deferral existed to protect. The write touches no SQLite
-    connection, so pressure was never a reason to skip it.
-
-    Attribution: restoring the ``if "side_effects_deferred" not in extra`` guard
-    turns the first assertion red, and the hook then re-injects ``L-real-id``.
+    The injected-ids write touches no SQLite connection and must never be
+    gated on any other recall advisory, so the auto-injection hook does not
+    re-inject learnings this session already surfaced.
     """
     from unittest.mock import patch
 
@@ -318,26 +317,20 @@ def test_injected_ids_are_written_even_under_writer_pressure(tmp_path: Path, ups
         file_stem="2026-04-10-structlog-gotcha",
     )
 
-    # A recall that returned learnings AND reported deferred side effects —
-    # i.e. writer pressure engaged.
-    pressured = (
+    recalled = (
         [{"id": "L-real-id", "summary": _MATCHING_SUMMARY}],
-        [],
-        {"side_effects_deferred": {"reason": "writer_pressure"}, "response_compacted": True},
+        {},
     )
     results: dict[str, object] = {}
     with (
         patch("trw_mcp.tools.ceremony.resolve_trw_dir", return_value=trw_dir),
-        patch("trw_mcp.tools._ceremony_helpers.perform_session_recalls", return_value=pressured),
+        patch("trw_mcp.tools._ceremony_helpers.perform_session_recalls", return_value=recalled),
     ):
         steps.step_recall_learnings("", TRWConfig(), results, [])  # type: ignore[arg-type]
 
     state_file = trw_dir / "context" / "injected_learning_ids.txt"
-    assert state_file.is_file(), "the injected-ids write must not be gated on writer pressure"
+    assert state_file.is_file(), "the injected-ids write must always run"
     assert state_file.read_text(encoding="utf-8").split() == ["L-real-id"]
-    # The deferral advisory itself is untouched — this PRD does not change
-    # the pressure decision, only what happens after it (Non-Goal 2).
-    assert results["side_effects_deferred"] == {"reason": "writer_pressure"}
 
     # A subsequent REAL hook read injects none of them.
     env = os.environ.copy()

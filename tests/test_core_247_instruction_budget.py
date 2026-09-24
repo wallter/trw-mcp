@@ -64,15 +64,17 @@ _BASELINE_BLOCK_CHARS = {
 # an agent obeying it literally was still refused (worker-1's review). 92
 # characters per surface is the price of an instruction that is sufficient as
 # well as accurate.
+# PRD-CORE-291-FR03 (+13 on the light-mode blocks): trw_recall's include_tiers moved
+# into options, so memory-routing now spells options={"include_tiers": ["project"]}.
 _MEASURED_BLOCK_CHARS = {
     "claude-code": 6374,
     "cursor-ide": 6374,
     "copilot": 6374,
     "antigravity-cli": 6374,
     "grok": 6374,
-    "codex": 8723,
-    "cursor-cli": 7636,
-    "opencode": 7636,
+    "codex": 8736,
+    "cursor-cli": 7649,
+    "opencode": 7649,
 }
 _FULL_MODE = ("claude-code", "cursor-ide", "copilot", "antigravity-cli", "grok")
 _LIGHT_MODE = ("codex", "cursor-cli", "opencode")

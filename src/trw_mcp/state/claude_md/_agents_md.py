@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from trw_mcp.models.config import TRWConfig
+from trw_mcp.state._recall_gate import learnings_injection_allowed
 from trw_mcp.state.analytics.entries import mark_promoted
 from trw_mcp.state.claude_md._agents_md_size_gate import SizeGateMode
 from trw_mcp.state.claude_md._agents_md_size_gate import (
@@ -33,18 +34,10 @@ from trw_mcp.state.claude_md._instruction_clients import is_instruction_sync_cli
 # Surface-claim + orphan-cleanup helpers live in _orphan_strip (350-eLOC gate).
 # Re-exported so `from ._agents_md import ...` keeps working for the carrier,
 # bootstrap, and the test modules that import through this facade.
-from trw_mcp.state.claude_md._orphan_strip import (
-    _any_client_writes_agents_md as _any_client_writes_agents_md,
-)
-from trw_mcp.state.claude_md._orphan_strip import (
-    _any_client_writes_claude_md as _any_client_writes_claude_md,
-)
-from trw_mcp.state.claude_md._orphan_strip import (
-    _strip_trw_section as _strip_trw_section,
-)
-from trw_mcp.state.claude_md._orphan_strip import (
-    strip_orphaned_claude_md_block as strip_orphaned_claude_md_block,
-)
+from trw_mcp.state.claude_md._orphan_strip import _any_client_writes_agents_md as _any_client_writes_agents_md
+from trw_mcp.state.claude_md._orphan_strip import _any_client_writes_claude_md as _any_client_writes_claude_md
+from trw_mcp.state.claude_md._orphan_strip import _strip_trw_section as _strip_trw_section
+from trw_mcp.state.claude_md._orphan_strip import strip_orphaned_claude_md_block as strip_orphaned_claude_md_block
 from trw_mcp.state.claude_md._parser import (
     TRW_AUTO_COMMENT,
     TRW_MARKER_END,
@@ -238,6 +231,8 @@ def _inject_learnings_to_agents(
     recall_fn: RecallFn | None = None,
 ) -> str:
     """Build learning injection string for AGENTS.md or return empty string on error."""
+    if not learnings_injection_allowed(config, "passive"):
+        return ""
     _recall = recall_fn if recall_fn is not None else _default_recall
     try:
         learning_entries = _recall(
@@ -397,23 +392,6 @@ def _resolve_instruction_target(
         if instruction_path == profile_target.instruction_path:
             return profile_target
     return None
-
-
-def _sync_instruction_file_if_needed(
-    instruction_path: str | None,
-    project_root: Path,
-    client: str,
-    *,
-    force: bool = False,
-) -> tuple[bool, str | None]:
-    """Backward-compatible single-target instruction sync helper."""
-    if not instruction_path:
-        return False, None
-
-    target = _resolve_instruction_target(instruction_path, client)
-    if target is None:
-        return False, None
-    return _sync_instruction_file_target(target, project_root, force=force)
 
 
 def _sync_instruction_targets(

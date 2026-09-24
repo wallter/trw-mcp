@@ -29,7 +29,7 @@ from trw_mcp.state._pin_store import (
     remove_pin_entry,
     upsert_pin_entry,
 )
-from trw_mcp.state._process_identity import process_start_time
+from trw_mcp.state._process_identity import pid_is_alive, process_start_time
 
 if TYPE_CHECKING:
     from trw_mcp.state._paths import TRWCallContext
@@ -118,15 +118,64 @@ def get_pinned_run(
     """
     from trw_mcp.state._paths import _resolve_session_id
 
-    sid = _resolve_session_id(context, session_id)
-    entry = get_pin_entry(sid) or _adopt_client_sibling_pin(sid)
+    return run_path_for_pin(_resolve_session_id(context, session_id), adopt_sibling=True)
+
+
+def run_path_for_pin(pin_key: str, *, adopt_sibling: bool = False) -> Path | None:
+    """The run *pin_key* is pinned to, or ``None``. PIN-FIRST AND PIN-ONLY (ledger RC-010).
+
+    The one low-level resolver behind both enforcement surfaces: the MCP comms
+    path (through :func:`get_pinned_run`, which resolves the key from a FastMCP
+    context first) and ``scripts/check_formation_ownership.py`` (which has no
+    context and resolves the key itself). They used to reach the pin store by
+    two different call chains with nothing pinning them to the same answer.
+
+    No mtime scan, ever: guessing a run would attribute a commit to whichever
+    run was touched most recently, which is how a concurrent agent's identity
+    gets borrowed.
+
+    A lookup never refreshes a pin's TTL: re-stamping a resumed pin is the server's
+    explicit :func:`claim_resumed_pin`, done at boot. *adopt_sibling* carries a pin
+    across a client reconnect (PRD-INFRA-189 FR08) and is passed only by
+    :func:`get_pinned_run`; a git hook's parent is git, so it would match nothing.
+    """
+    entry = get_pin_entry(pin_key) or (_adopt_client_sibling_pin(pin_key) if adopt_sibling else None)
     if entry is None:
         return None
-    _note_if_superseded(sid, entry)
+    _note_if_superseded(pin_key, entry)
     run_path = entry.get("run_path")
     if isinstance(run_path, str) and run_path:
         return Path(run_path)
     return None
+
+
+def claim_resumed_pin(pin_key: str) -> None:
+    """Server boot only: claim the creator PID of a pin this server resumed from a dead one (ledger N11).
+
+    A managed restart relaunches the server in a new process under the same pin
+    key. Until something re-stamps the entry it names the dead predecessor, TTL
+    expiry falls back to the heartbeat alone, and only ``trw_heartbeat`` or a
+    session start refreshes that -- so a live, working server lost its pin once
+    the TTL passed. A live creator (an older server kept beside a new one after
+    ``/mcp``) is never re-stamped. Compare-and-swap on ``pid`` under the store
+    lock; client lineage (``client_pid``/``client_start``) does not move, because
+    reconnect adoption and the watch judge it.
+
+    Explicit and never reached by a lookup, so an offline CLI or hook resolving a
+    pin cannot stamp its short-lived PID and extend a dead server's TTL.
+    """
+    entry = get_pin_entry(pin_key)
+    pid = None if entry is None else entry.get("pid")
+    if entry is None or pid == os.getpid() or (isinstance(pid, int) and pid_is_alive(pid)):
+        return
+    with _pin_store_threading_lock, _pin_store_file_lock():
+        store = _load_pin_store_uncached()
+        current = store.get(pin_key)
+        if not isinstance(current, dict) or current.get("pid") != pid:
+            return
+        store[pin_key] = {**current, "pid": os.getpid(), "last_heartbeat_ts": _iso_now()}
+        _write_pin_store_locked(store)
+    logger.info("pin_restamped_on_resume", pin_key=pin_key, previous_pid=pid)
 
 
 def _adopt_client_sibling_pin(pin_key: str) -> dict[str, Any] | None:

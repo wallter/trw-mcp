@@ -269,15 +269,22 @@ def test_row5_malformed_pin_entry_does_not_block_pruning_of_others(
             (bin_dir / tool).symlink_to(resolved)
         env["PATH"] = str(bin_dir)
 
-    result = subprocess.run(
-        ["sh", str(root / ".claude" / "hooks" / "session-start.sh")],
-        input=json.dumps({"source": "startup", "session_id": "sweeper"}),
-        text=True,
-        capture_output=True,
-        cwd=root,
-        env=env,
-        check=False,
-    )
+    if force_no_jq:
+        # T29: with no jq the hook cannot read "source":"startup" from stdin (no shell
+        # JSON parser), so the startup sweep is driven through the library it calls,
+        # which still exercises _trw_pin_rows's python3 path.
+        command = [
+            "sh",
+            "-c",
+            '. "$1"; trw_degraded_sweep_markers sweeper',
+            "sweep",
+            str(root / ".claude" / "hooks" / "lib-trw.sh"),
+        ]
+        stdin = ""
+    else:
+        command = ["sh", str(root / ".claude" / "hooks" / "session-start.sh")]
+        stdin = json.dumps({"source": "startup", "session_id": "sweeper"})
+    result = subprocess.run(command, input=stdin, text=True, capture_output=True, cwd=root, env=env, check=False)
     assert result.returncode == 0
     assert not _epoch_marker(root, "gone").exists(), (
         f"[{label}] a malformed pins.json entry (a non-dict VALUE) blocked pruning of an "
@@ -414,7 +421,7 @@ def test_row9_no_jq_fallback_does_not_false_positive_on_payload_text(tmp_path: P
     _run(root, "session-start.sh", {"source": "startup", "session_id": "r9"})
     # A single line that is INVALID JSON: a writer bug (or a torn/partial
     # flush) left an unescaped quote inside the "command" argument, so the
-    # embedded text "event": "tool_invocation", "tool_name": "trw_checkpoint"
+    # embedded text "event": "tool_call", "tool_name": "trw_checkpoint"
     # appears on the raw line with real, unescaped double quotes -- exactly
     # what a properly-escaped JSON string value can never produce (escaping
     # would leave `\"`, which the awk pattern below does not match, as
@@ -423,9 +430,9 @@ def test_row9_no_jq_fallback_does_not_false_positive_on_payload_text(tmp_path: P
     # rejects this line outright; the unanchored `awk` regex does not care
     # whether the line parses at all.
     hostile_line = (
-        '{"event": "tool_invocation", "tool_name": "Bash", "success": true, '
+        '{"event": "tool_call", "tool_name": "Bash", "success": true, '
         f'"ts": "{_iso(now)}", '
-        '"args": {"command": "echo "event": "tool_invocation", "tool_name": "trw_checkpoint", '
+        '"args": {"command": "echo "event": "tool_call", "tool_name": "trw_checkpoint", '
         '"ts": "9999-01-01T00:00:00""}}'
     )
     with pytest.raises(json.JSONDecodeError):
@@ -462,6 +469,8 @@ def test_row9_no_jq_fallback_does_not_false_positive_on_payload_text(tmp_path: P
         (bin_dir / tool).symlink_to(resolved)
     env = _env(root)
     env["PATH"] = str(bin_dir)
+    # T29: without jq the stdin session_id is unreadable; the env id is the jq-free channel.
+    env["TRW_SESSION_ID"] = "r9"
 
     result = subprocess.run(
         ["sh", str(root / ".claude" / "hooks" / "user-prompt-submit.sh")],

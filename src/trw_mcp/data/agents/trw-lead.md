@@ -6,7 +6,7 @@ description: >
   research, implementation, testing, and review. Adapts to available harness
   capabilities and falls back to safe sequential coordination.
   Does not write production code.
-effort: high
+effort: medium
 model: frontier
 maxTurns: 200
 memory: project
@@ -26,7 +26,6 @@ tools:
   - mcp__trw__trw_checkpoint
   - mcp__trw__trw_deliver
   - mcp__trw__trw_learn
-  - mcp__trw__trw_learn_update
   - mcp__trw__trw_recall
   - mcp__trw__trw_instructions_sync
   - mcp__trw__trw_build_check

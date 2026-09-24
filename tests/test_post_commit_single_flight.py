@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.tools import _post_commit as pc
 
 
@@ -299,9 +300,7 @@ def unarmed_timer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pc.signal, "getitimer", lambda _which: (0.0, 0.0))
 
 
-@pytest.mark.perf
-@requires_local_timing
-def test_the_sweep_stops_at_its_budget(repo: Path, monkeypatch: pytest.MonkeyPatch, unarmed_timer: None) -> None:
+def _run_sweep_against_a_slow_pass(repo: Path, monkeypatch: pytest.MonkeyPatch) -> pc.PostCommitReceipt:
     monkeypatch.setenv(pc.BUDGET_ENV_VAR, "0.2")
     started: list[float] = []
 
@@ -312,13 +311,22 @@ def test_the_sweep_stops_at_its_budget(repo: Path, monkeypatch: pytest.MonkeyPat
             time.sleep(0.01)
 
     monkeypatch.setattr(pc, "_run_pass", _slow)
+    return pc.run_post_commit(repo)
 
-    receipt = pc.run_post_commit(repo)
+
+def test_the_sweep_stops_at_its_budget(repo: Path, monkeypatch: pytest.MonkeyPatch, unarmed_timer: None) -> None:
+    receipt = _run_sweep_against_a_slow_pass(repo, monkeypatch)
 
     assert receipt.bounded_stop is True
-    assert receipt.duration_ms >= 200
-    assert receipt.duration_ms < 9_000, "the budget must actually cut the sweep short"
     assert not _lock(repo).exists()
+
+
+@requires_local_timing
+def test_the_sweep_stops_at_its_budget_budget(repo: Path, monkeypatch: pytest.MonkeyPatch, unarmed_timer: None) -> None:
+    receipt = _run_sweep_against_a_slow_pass(repo, monkeypatch)
+
+    assert_budget("post_commit_sweep_duration_floor", receipt.duration_ms, 200, "ms", at_least=True)
+    assert_budget("post_commit_sweep_duration_ceiling", receipt.duration_ms, 9_000, "ms")
 
 
 def test_the_deadline_is_not_swallowed_by_a_broad_except(

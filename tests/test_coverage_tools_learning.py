@@ -75,7 +75,8 @@ class TestLearningExceptionPaths:
         quota.assert_not_called()
 
     def test_trw_learn_update_write_failure(self, tmp_path: Path) -> None:
-        tool = self._register_and_get("trw_learn_update")
+        """PRD-CORE-291 merged trw_learn_update into trw_learn's update mode."""
+        tool = self._register_and_get("trw_learn")
 
         with (
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=tmp_path / ".trw"),
@@ -142,10 +143,6 @@ class TestLearningRecallTrackingException:
         with (
             patch("trw_mcp.tools.learning.resolve_trw_dir", return_value=tmp_path / ".trw"),
             patch("trw_mcp.tools.learning.adapter_recall", return_value=[{"id": "L-001", "summary": "test"}]),
-            patch("trw_mcp.tools.learning.adapter_update_access"),
-            patch("trw_mcp.tools.learning.search_patterns", return_value=[]),
-            patch("trw_mcp.tools.learning.rank_targeted_by_utility", return_value=[{"id": "L-001", "summary": "test"}]),
-            patch("trw_mcp.tools.learning.collect_context", return_value={}),
             patch.dict(
                 "sys.modules",
                 {"trw_mcp.state.recall_tracking": MagicMock(record_recall=mock_record_recall)},

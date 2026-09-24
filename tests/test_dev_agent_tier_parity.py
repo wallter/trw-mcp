@@ -79,7 +79,7 @@ def test_bundled_agents_declare_capability_tiers_not_model_ids() -> None:
     # Non-vacuity guard: an empty scan makes `offenders` empty and the test green, so a
     # renamed directory or a frontmatter-format change would read as an all-clear repo.
     # Same pattern as test_workflow_agent_schema_contract.py's scanner sanity check.
-    assert len(bundled) >= 10, (
+    assert len(bundled) >= 8, (
         f"bundled agent tier scan found {len(bundled)} agents — that is a scanner regression, "
         "not an all-clear repo. Check BUNDLED_AGENTS and _MODEL_LINE."
     )

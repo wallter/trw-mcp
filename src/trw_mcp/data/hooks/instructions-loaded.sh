@@ -23,17 +23,10 @@ _file_path=""
 _load_reason=""
 _ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)" || _ts="unknown"
 
+# jq only (T29): without it the row below records "(jq unavailable)" instead.
 if command -v jq >/dev/null 2>&1; then
   _file_path=$(printf '%s' "$_payload" | jq -r '.file_path // .path // empty' 2>/dev/null) || true
   _load_reason=$(printf '%s' "$_payload" | jq -r '.load_reason // .reason // empty' 2>/dev/null) || true
-else
-  # grep/sed fallback — avoid unescaped user input
-  _file_path=$(printf '%s' "$_payload" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
-    | sed 's/.*"file_path"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-  [ -z "$_file_path" ] && _file_path=$(printf '%s' "$_payload" | grep -o '"path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
-    | sed 's/.*"path"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-  _load_reason=$(printf '%s' "$_payload" | grep -o '"load_reason"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
-    | sed 's/.*"load_reason"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
 fi
 
 # Ensure telemetry directory exists

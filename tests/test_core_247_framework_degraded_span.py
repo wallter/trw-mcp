@@ -1,15 +1,11 @@
 """PRD-CORE-247-FR06: the framework canon states what RIGID means offline.
 
-The compiled core is asserted, never the authoring source: an edit to
-``framework.source.md`` that was never compiled would leave every consumer
-reading the previous generation, and the compiled file is what
-``.trw/frameworks/FRAMEWORK-CORE.md`` is deployed from.
+Asserted against ``framework.md``, the one document deployed as
+``.trw/frameworks/FRAMEWORK.md`` (S4 retired the compiled core view).
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -23,15 +19,14 @@ if not (_REPO / "scripts").is_dir():
         allow_module_level=True,
     )
 
-_SOURCE = _ROOT / "src" / "trw_mcp" / "data" / "framework.source.md"
-_CORE = _ROOT / "src" / "trw_mcp" / "data" / "framework-core.md"
+_CORE = _ROOT / "src" / "trw_mcp" / "data" / "framework.md"
 _SECTION_HEADING = "## WHEN THE TRANSPORT IS DOWN"
 
 
 def test_compiled_core_carries_the_transport_down_section() -> None:
-    """FR06 acceptance: the section is in the compiled core, and it says three things."""
+    """FR06 acceptance: the section is in FRAMEWORK.md, and it says three things."""
     core = _CORE.read_text(encoding="utf-8")
-    assert _SECTION_HEADING in core, "the transport-down section is missing from the compiled core"
+    assert _SECTION_HEADING in core, "the transport-down section is missing from FRAMEWORK.md"
 
     body = core.split(_SECTION_HEADING, 1)[1].split("\n## ", 1)[0]
 
@@ -51,40 +46,10 @@ def test_compiled_core_carries_the_transport_down_section() -> None:
     assert "trw_session_start" in body
 
 
-def test_the_section_is_authored_as_a_marked_span_in_the_source() -> None:
-    """FR06: authored with the marker syntax, so the compiler owns the placement.
-
-    A hand-edit to the compiled file would be reverted by the next ``--write``
-    and would hard-fail ``check_generation`` against the frozen baseline digest,
-    with neither failure naming the real cause.
-    """
-    source = _SOURCE.read_text(encoding="utf-8")
-    assert "<!-- trw:span id=fw-transport-down dest=core class=normative -->" in source
-    assert _SECTION_HEADING in source
-
-
-def test_compile_check_reports_no_drift() -> None:
-    """FR06 acceptance: ``compile-framework-canons.py --check`` exits 0.
-
-    Guards the whole chain the source edit had to clear: the frozen baseline
-    digest was re-frozen, the compact core stayed under ``max_core_ratio``, every
-    required normative anchor survived, and the generated outputs on disk match a
-    fresh compile.
-    """
-    result = subprocess.run(
-        [sys.executable, str(_REPO / "scripts" / "compile-framework-canons.py"), "--check"],
-        capture_output=True,
-        text=True,
-        cwd=_REPO,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
-
-
 def test_the_deliver_gate_is_stated_in_full_exactly_once_in_the_core() -> None:
     """FR09 acceptance for the framework carrier.
 
-    The three-path gate was stated in full twice in the compiled core. The
+    The three-path gate was stated in full twice in FRAMEWORK.md. The
     EXECUTION MODEL SUMMARY statement is the one that stays; the copy inside the
     rigid-tool list is now a pointer to it. Exactly once, never zero.
     """
@@ -96,7 +61,7 @@ def test_the_deliver_gate_is_stated_in_full_exactly_once_in_the_core() -> None:
     full_statements = core.count("(3) an authorized operator")
     assert "Deliver gate (no fourth path)" in core, "the carrier must never end up gate-less"
     assert full_statements == 1, (
-        f"the three-path gate is stated in full {full_statements} times in the compiled core; "
+        f"the three-path gate is stated in full {full_statements} times in FRAMEWORK.md; "
         "the invariant is exactly one full statement per carrier, pointers elsewhere"
     )
     # The rigid-tool list keeps a pointer, so a reader who lands there is not

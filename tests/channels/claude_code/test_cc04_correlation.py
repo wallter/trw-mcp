@@ -56,6 +56,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._layout import requires_jq
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -200,6 +202,7 @@ class TestHintFileKeyedByToolUseId:
         data = json.loads((hints_dir / f"{tool_use_id}.json").read_text(encoding="utf-8"))
         assert data["file_path"] == file_path
 
+    @requires_jq
     def test_shell_hook_always_leaves_a_well_formed_correlation_record(self, tmp_path: Path) -> None:
         """FR33/FR29: the hook never leaves CC-04 correlation without a record.
 
@@ -305,6 +308,7 @@ class TestExceptionIsNotTelemeteredAsATimeout:
         assert result.returncode == 0  # FR26: never blocking
         assert self._status(project, tool_use_id) == "exception_fallback"
 
+    @requires_jq
     def test_genuine_timeout_still_records_timeout(self, tmp_path: Path) -> None:
         """Non-vacuity control: a real 2.5s overrun must still read ``timeout_fallback``.
 

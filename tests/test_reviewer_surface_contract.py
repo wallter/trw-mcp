@@ -51,8 +51,9 @@ _WRITE_CLASS: frozenset[str] = frozenset(
     {
         "trw_session_start",
         "trw_status",
+        # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode
+        # (learning_id set); it is no longer a separate registered tool.
         "trw_learn",
-        "trw_learn_update",
         "trw_checkpoint",
         "trw_init",
         "trw_adopt_run",

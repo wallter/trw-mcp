@@ -51,17 +51,18 @@ from typing import Any
 
 import structlog
 
+from trw_mcp.exceptions import StateError
 from trw_mcp.models.run import RunStatus, is_terminal_status
 from trw_mcp.state._paths import iter_run_dirs
 from trw_mcp.state._run_gc_io import (
     _append_event_best_effort,
-    _dump_run_yaml_atomic,
     _load_run_yaml,
     _prefilter_protected,
 )
 from trw_mcp.state._run_gc_io import (
     _prefilter_status as _prefilter_status,
 )
+from trw_mcp.state._run_yaml_update import update_run_yaml
 
 logger = structlog.get_logger(__name__)
 
@@ -70,6 +71,20 @@ __all__ = [
     "compute_last_activity",
     "sweep_stale_runs",
 ]
+
+
+def _abandon_under_lock(run_dir: Path) -> bool:
+    """Mark the run abandoned only if it is still active and unprotected under the lock."""
+    landed: list[bool] = []
+
+    def _abandon(data: dict[str, object]) -> None:
+        still_active = str(data.get("status", "")).strip().lower() == RunStatus.ACTIVE.value
+        if still_active and data.get("protected") is not True:
+            data["status"] = RunStatus.ABANDONED.value
+            landed.append(True)
+
+    update_run_yaml(run_dir, _abandon)
+    return bool(landed)
 
 
 @dataclass(frozen=True)
@@ -305,9 +320,9 @@ def sweep_stale_runs(
         # Abandon path.
         # Re-read authoritative state at the mutation boundary. A concurrent
         # delivery or heartbeat may have changed the lifecycle decision since
-        # the scan-time prefilter. This deliberately narrows (but cannot fully
-        # eliminate) the compare-to-replace window without a repository-wide
-        # shared lock protocol for every run.yaml and heartbeat writer.
+        # the scan-time prefilter. The write itself re-checks status and
+        # protection under the shared run.yaml lock (_abandon_under_lock); a
+        # heartbeat refresh after this read is not locked and can still lose.
         data = _load_run_yaml(run_yaml_path)
         if data is None:
             runs_skipped_malformed += 1
@@ -348,10 +363,9 @@ def sweep_stale_runs(
                 run_path=str(run_dir),
             )
             continue
-        data["status"] = RunStatus.ABANDONED.value
         try:
-            _dump_run_yaml_atomic(run_yaml_path, data)
-        except OSError as exc:
+            landed = _abandon_under_lock(run_dir)
+        except (OSError, StateError) as exc:
             # Write failure — best-effort: log, count, and keep going on
             # the next run.  Do NOT add to abandoned_ids since the mutation
             # did not land.
@@ -366,6 +380,13 @@ def sweep_stale_runs(
                 detail=str(exc),
                 reason="yaml_write_failed",
             )
+            continue
+        if not landed:
+            # A writer holding the run.yaml lock completed or protected the run
+            # after the final read above: its state wins, nothing is abandoned.
+            abandoned_ids.pop()
+            runs_abandoned -= 1
+            runs_skipped_terminal += 1
             continue
 
         events_path = run_dir / "meta" / "events.jsonl"

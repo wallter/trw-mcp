@@ -78,9 +78,14 @@ def count_session_changed_files(
         from trw_mcp.tools._delivery_event_checks import (
             _count_file_modified_current_session,
             _project_root_from_run,
+            change_evidence_unknown,
         )
 
-        return _count_file_modified_current_session(events, _project_root_from_run(run_path), session_id)
+        repo_root = _project_root_from_run(run_path)
+        if change_evidence_unknown(repo_root):
+            logger.warning("deliver_gate_change_count_uncomputable", outcome="fail_closed", reason="jq_unavailable")
+            return None
+        return _count_file_modified_current_session(events, repo_root, session_id)
     except Exception:  # justified: fail-CLOSED, an uncomputable count blocks (FR03/NFR02)
         logger.warning("deliver_gate_change_count_uncomputable", outcome="fail_closed", exc_info=True)
         return None

@@ -9,16 +9,14 @@ as a task-graph executor or agent runtime; a ``formation launch`` verb would
 cross that line, and adding one is a vision decision, not a refactor.
 
 THE FACADE. Everything outside this package imports from here and never from a
-private sibling; a boundary test asserts the import direction. Nine verbs, of
-which the six read/derive verbs are the declared interface —
-:func:`load`, :func:`validate`, :func:`join`, :func:`owner_of`, :func:`brief`,
-:func:`status`. Three more exist because FR03, FR05, and FR11 each mandate a
-distinct WRITE that none of the six can express: :func:`create` (allocate a
-formation), :func:`revise` (orchestrator-authenticated membership mutation), and
-:func:`mark_member_delivered` (a member self-reporting its own completion).
-Collapsing them into one parameterised verb would trade three explicit
-authorisation contracts for one bag, which is the opposite of what FR05 asks
-for.
+private sibling; a boundary test asserts the import direction. Read/derive
+entrypoints include :func:`load`, :func:`validate`, :func:`owner_of`,
+:func:`brief`, :func:`status`, and :func:`stall_scan`. Explicit writes
+include :func:`create`, :func:`join`, :func:`revise`, and
+:func:`mark_member_delivered`; collapsing their distinct authorisation contracts
+into one parameterised verb would trade clarity for a bag. The scoped
+``begin_call``/``start_call``/``clear_call`` seam lets the existing tool-call
+wrapper record durable stall episodes without crossing a private import.
 
 FAIL-CLOSED, AND THE DISTINCTION THAT CARRIES IT (NFR02). Every verb answers
 ``None`` for "no formation is active" and raises :class:`FormationError` for
@@ -35,7 +33,6 @@ from pathlib import Path
 import structlog
 
 from trw_mcp.formation._admission import revoke_run_stamp as revoke_run_stamp
-from trw_mcp.formation._brief import render_brief
 from trw_mcp.formation._candidates import CANDIDATE_CAP as CANDIDATE_CAP
 from trw_mcp.formation._candidates import LIVE_STATES as LIVE_CANDIDATE_STATES
 from trw_mcp.formation._candidates import Candidate as Candidate
@@ -48,7 +45,6 @@ from trw_mcp.formation._candidates import live_candidates as live_candidates
 from trw_mcp.formation._candidates import set_state as set_candidate_state
 from trw_mcp.formation._coordination import CoordinationRoot as CoordinationRoot
 from trw_mcp.formation._coordination import WorktreeRecord as WorktreeRecord
-from trw_mcp.formation._coordination import authority_roots as authority_roots
 from trw_mcp.formation._coordination import bootstrap_root as bootstrap_root
 from trw_mcp.formation._coordination import linked_worktree as linked_worktree
 from trw_mcp.formation._coordination import own_root as own_root
@@ -75,27 +71,50 @@ from trw_mcp.formation._manifest import (
 from trw_mcp.formation._manifest import (
     FormationMemberStatus as FormationMemberStatus,
 )
+from trw_mcp.formation._merge_queue import MergeItem as MergeItem
+from trw_mcp.formation._merge_queue import MergeQueueError as MergeQueueError
+from trw_mcp.formation._merge_queue import enqueue as merge_enqueue
+from trw_mcp.formation._merge_queue import list_items as merge_list
+from trw_mcp.formation._merge_queue import run_one as merge_run_one
 from trw_mcp.formation._ownership import Ownership as Ownership
 from trw_mcp.formation._ownership import declaration_covers as declaration_covers
-from trw_mcp.formation._ownership import owner_of as _owner_of
 from trw_mcp.formation._ownership import owner_of as owner_of_manifest
 from trw_mcp.formation._ownership import relative_to_root as relative_to_root
+from trw_mcp.formation._pause import PauseError as PauseError
+from trw_mcp.formation._pause import PauseRecord as PauseRecord
+from trw_mcp.formation._pause import ack as _ack_pause
+from trw_mcp.formation._pause import orchestrator_run_of as orchestrator_run_of
+from trw_mcp.formation._pause import pause as _pause
+from trw_mcp.formation._pause import read_pause as read_pause
+from trw_mcp.formation._pause import resume as _resume
+from trw_mcp.formation._pause import roll_call as pause_roll_call
 from trw_mcp.formation._slots import add_slots as _add_slots
 from trw_mcp.formation._slots import remove_slot as _remove_slot
+from trw_mcp.formation._stall import StallFinding as StallFinding
+from trw_mcp.formation._stall import begin_call as begin_call
+from trw_mcp.formation._stall import clear_call as clear_call
+from trw_mcp.formation._stall import stall_scan as stall_scan
+from trw_mcp.formation._stall import start_call as start_call
 from trw_mcp.formation._status import MemberRow as MemberRow
-from trw_mcp.formation._status import member_rows, non_terminal_members
 from trw_mcp.formation._store import (
     MANIFEST_FILENAME as MANIFEST_FILENAME,
 )
 from trw_mcp.formation._store import (
     FormationContext as FormationContext,
 )
+from trw_mcp.formation._store import canonical_path as canonical_path
 from trw_mcp.formation._store import manifest_path_for_run as manifest_path_for_run
+from trw_mcp.formation._store import own_slot_if_caller as own_slot_if_caller
 from trw_mcp.formation._store import read_manifest as read_manifest
 from trw_mcp.formation._store import registered_formations as registered_formations
 from trw_mcp.formation._store import resolve_active
 from trw_mcp.formation._store import resolve_manifest_path as resolve_manifest_path
 from trw_mcp.formation._store import stamped_ids as stamped_ids
+from trw_mcp.formation._usage import formation_usage, member_usage
+from trw_mcp.formation._views import FormationStatus as FormationStatus
+from trw_mcp.formation._views import brief as brief
+from trw_mcp.formation._views import owner_of as owner_of
+from trw_mcp.formation._views import status as status
 
 logger = structlog.get_logger(__name__)
 
@@ -117,38 +136,59 @@ __all__ = [
     "FormationSettings",
     "FormationStatus",
     "MemberRow",
+    "MergeItem",
+    "MergeQueueError",
     "Ownership",
+    "PauseError",
+    "PauseRecord",
+    "StallFinding",
     "WorktreeRecord",
+    "ack_pause",
     "add_slots",
     "announce_candidate",
-    "authority_roots",
+    "begin_call",
     "bootstrap_root",
     "brief",
     "candidate",
     "candidate_for",
+    "canonical_path",
+    "clear_call",
     "create",
     "declaration_covers",
+    "formation_usage",
     "join",
     "linked_worktree",
     "live_candidates",
     "load",
     "manifest_path_for_run",
     "mark_member_delivered",
+    "member_usage",
+    "merge_enqueue",
+    "merge_list",
+    "merge_run_one",
+    "orchestrator_run_of",
     "own_root",
+    "own_slot_if_caller",
     "owner_of",
     "owner_of_manifest",
+    "pause",
+    "pause_roll_call",
     "read_manifest",
+    "read_pause",
     "record_worktree_member",
     "registered_formations",
     "relative_to_root",
     "remove_slot",
     "resolve_manifest_path",
+    "resume",
     "revise",
     "revoke_run_stamp",
     "set_candidate_state",
     "settings",
     "shared_authority_root",
+    "stall_scan",
     "stamped_ids",
+    "start_call",
     "status",
     "validate",
     "worktree_record",
@@ -165,17 +205,6 @@ class FormationSettings:
     status_member_limit: int
     lock_timeout_seconds: float
     pin_ttl_hours: int
-
-
-@dataclass(frozen=True)
-class FormationStatus:
-    """The derived board: one row per member, plus the gate's waiting list."""
-
-    formation_id: str
-    manifest_path: str
-    revision: int
-    rows: list[MemberRow]
-    non_terminal: list[tuple[str, str]]
 
 
 def settings() -> FormationSettings:
@@ -331,6 +360,46 @@ def remove_slot(
     )
 
 
+def pause(
+    formation_id: str,
+    caller_run_path: Path | None,
+    reason: str,
+    *,
+    until_utc: str | None = None,
+    trw_dir: Path | None = None,
+) -> PauseRecord:
+    """Pause the formation (orchestrator only; PAUSE-RESUME-DESIGN rev 2)."""
+    return _pause(
+        trw_dir=trw_dir or _trw_dir(),
+        formation_id=formation_id,
+        caller_run_path=caller_run_path,
+        reason=reason,
+        until_utc=until_utc,
+        lock_timeout_seconds=settings().lock_timeout_seconds,
+    )
+
+
+def resume(formation_id: str, caller_run_path: Path | None, *, trw_dir: Path | None = None) -> str:
+    """End the active pause (orchestrator only); returns its pause_id."""
+    return _resume(
+        trw_dir=trw_dir or _trw_dir(),
+        formation_id=formation_id,
+        caller_run_path=caller_run_path,
+        lock_timeout_seconds=settings().lock_timeout_seconds,
+    )
+
+
+def ack_pause(manifest_path: Path, member_id: str, member_run_path: Path, pause_id: str) -> bool:
+    """Record a bound member's own ack of *pause_id*; False when already recorded."""
+    return _ack_pause(
+        manifest_path=manifest_path,
+        member_id=member_id,
+        member_run_path=member_run_path,
+        pause_id=pause_id,
+        lock_timeout_seconds=settings().lock_timeout_seconds,
+    )
+
+
 def mark_member_delivered(run_path: Path, *, trw_dir: Path | None = None) -> FormationManifest | None:
     """A member self-reports its own delivery (FR11). ``None`` when not a member."""
     resolved_trw_dir = trw_dir or _trw_dir()
@@ -343,58 +412,4 @@ def mark_member_delivered(run_path: Path, *, trw_dir: Path | None = None) -> For
         member_id=context.member_id,
         run_path=run_path,
         lock_timeout_seconds=settings().lock_timeout_seconds,
-    )
-
-
-def owner_of(
-    path: str,
-    *,
-    run_path: Path | None = None,
-    context: FormationContext | None = None,
-    project_root: Path | None = None,
-    trw_dir: Path | None = None,
-) -> Ownership | None:
-    """Owning member of *path*, or ``None`` when no formation is active (FR09/FR10)."""
-    resolved = context if context is not None else load(run_path, trw_dir=trw_dir)
-    if resolved is None:
-        return None
-    return _owner_of(resolved.manifest, path, project_root or _project_root())
-
-
-def brief(
-    member_id: str,
-    *,
-    run_path: Path | None = None,
-    context: FormationContext | None = None,
-    project_root: Path | None = None,
-    trw_dir: Path | None = None,
-) -> str:
-    """Render *member_id*'s brief from the manifest (FR06)."""
-    resolved = context if context is not None else load(run_path, trw_dir=trw_dir)
-    if resolved is None:
-        raise FormationError("no formation is active for this run; nothing to brief")
-    return render_brief(resolved.manifest, member_id, project_root=project_root or _project_root())
-
-
-def status(
-    *,
-    run_path: Path | None = None,
-    context: FormationContext | None = None,
-    trw_dir: Path | None = None,
-) -> FormationStatus | None:
-    """Read-only member roll-up, or ``None`` when no formation is active (FR07)."""
-    resolved = context if context is not None else load(run_path, trw_dir=trw_dir)
-    if resolved is None:
-        return None
-    knobs = settings()
-    return FormationStatus(
-        formation_id=resolved.manifest.formation_id,
-        manifest_path=str(resolved.manifest_path),
-        revision=resolved.manifest.revision,
-        rows=member_rows(
-            resolved.manifest,
-            member_limit=knobs.status_member_limit,
-            pin_ttl_hours=knobs.pin_ttl_hours,
-        ),
-        non_terminal=non_terminal_members(resolved.manifest),
     )

@@ -35,7 +35,7 @@ def test_perform_session_recalls_propagates_canary_tamper(
         raise CanaryTamperError("recall halted after canary tamper")
 
     monkeypatch.setattr(
-        "trw_mcp.state.recall_factories.recall_baseline_high_impact",
+        "trw_mcp.state.recall_factories.recall_session_start",
         _raise_tamper,
     )
 
@@ -155,8 +155,5 @@ def test_direct_recall_propagates_canary_tamper(
             tmp_path,
             TRWConfig(),
             _adapter_recall=_raise_tamper,
-            _adapter_update_access=lambda *_args, **_kwargs: None,
-            _search_patterns=lambda *_args, **_kwargs: [],
             _rank_by_utility=lambda entries, *_args, **_kwargs: entries,
-            _collect_context=lambda *_args, **_kwargs: {},
         )

@@ -20,6 +20,7 @@ its env, cwd or tool filters through Codex's recursive configuration merge.
 
 from __future__ import annotations
 
+from trw_mcp.dispatch._client_spec_types import EFFORT_LEVELS, ClientSpec
 from trw_mcp.dispatch._client_specs import (
     SUPPORTED_CLIENTS,
     UnknownClientError,
@@ -39,6 +40,26 @@ class UnsupportedClientError(ValueError):
     """Raised for a client id outside :data:`SUPPORTED_CLIENTS`."""
 
 
+def _client_effort(spec: ClientSpec, req: DispatchRequest) -> str | None:
+    """The effort value to put on *spec*'s command line, or ``None`` to pass nothing.
+
+    Nothing is passed when the request carries no effort, when the client documents
+    no effort flag, or when the explicit model is a Haiku model: Haiku accepts no
+    effort parameter at all, so sending one is an error rather than a no-op. A level
+    the client does not accept is CLAMPED DOWN to the strongest level it does accept
+    (``xhigh`` on a ``low|medium|high`` client runs at ``high``) -- the same clamp
+    TRW's effort adapter applies, and never upward, so a request is not silently
+    made more expensive than it asked for.
+    """
+    if req.effort is None or spec.effort_flag is None:
+        return None
+    if req.model and "haiku" in req.model.lower():
+        return None
+    ceiling = EFFORT_LEVELS.index(req.effort)
+    supported = [level for level in spec.effort_levels if EFFORT_LEVELS.index(level) <= ceiling]
+    return supported[-1] if supported else None
+
+
 def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     """Build the exact argv for *req*.
 
@@ -48,7 +69,10 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
         base_argv always_argv structured_output_argv
         (reviewer_argv_template | trw_access_argv_template | [isolation_argv])
         (read_only_argv | allow_writes_argv) [model_flag MODEL]
-        [cwd_flag CWD] *extra_args (prompt_flag PROMPT | PROMPT)
+        [effort_flag EFFORT] [cwd_flag CWD] *extra_args (prompt_flag PROMPT | PROMPT)
+
+    ``EFFORT`` is :func:`_client_effort`'s client-specific value for the request's
+    portable effort; a client with no documented flag gets none.
 
     ``read_only`` selects between two fragments rather than adding one, which is
     why an empty ``read_only_argv`` is a posture and not a gap: for a client that
@@ -61,7 +85,9 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
     same (request, confined) pair produces the same default-posture argv, which is what
     the recorded baselines in ``tests/fixtures/dispatch_argv_baseline.json``
     pin. The runner computes it (``_confine.confinement_prefix``); nothing else
-    may pass True.
+    may pass True, and the runner REFUSES a read-only run for a host-confinement
+    client when no wrapper exists (that client's bare read-only flag denies reads,
+    and its read-enabling flag is safe only inside the wrapper).
 
     ``posture='reviewer'`` selects the rendered reviewer template INSTEAD of
     ``isolation_argv``, never in addition to it: both fragments configure the
@@ -114,6 +140,11 @@ def build_command(req: DispatchRequest, *, confined: bool = False) -> list[str]:
         argv += spec.allow_writes_argv
     if spec.model_flag is not None and req.model:
         argv += [spec.model_flag, req.model]
+    effort = _client_effort(spec, req)
+    if effort is not None and spec.effort_flag is not None:
+        argv += [spec.effort_flag, effort]
+    if spec.max_turns_flag is not None and req.max_turns is not None:
+        argv += [spec.max_turns_flag, str(req.max_turns)]
     if spec.cwd_flag is not None and req.cwd is not None:
         argv += [spec.cwd_flag, str(req.cwd)]
     argv += list(req.extra_args)

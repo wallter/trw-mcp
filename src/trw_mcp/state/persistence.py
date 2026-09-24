@@ -184,7 +184,7 @@ class FileStateReader:
 
         Raises:
             StateError: If the file cannot be read, or (``strict=True`` only) a
-                line fails to parse as JSON.
+                line fails to parse as JSON or parses to something other than an object.
         """
         checked_path = self._check_contained(path)
         if not checked_path.exists():
@@ -208,6 +208,10 @@ class FileStateReader:
                             continue
                         if isinstance(record, dict):
                             records.append(record)
+                        elif strict:
+                            # A row that is valid JSON but not an object is as unreadable as a
+                            # malformed one: skipping it left the earlier rows deciding (PRD-FIX-151).
+                            raise StateError(f"JSONL line {line_num} is not an object", path=str(checked_path))
                         else:
                             logger.warning(
                                 "jsonl_non_dict_line",

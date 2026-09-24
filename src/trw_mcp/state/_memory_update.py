@@ -1,4 +1,4 @@
-"""Memory adapter — ``update_learning`` field-mapping logic.
+"""Memory adapter — ``update_learning`` over the checkout's store and trw-memory's correction.
 
 Belongs to the ``memory_adapter.py`` facade. Re-exported there for back-compat.
 
@@ -7,171 +7,34 @@ Extracted as DIST-243 batch 59 to keep the parent module under the 350-LOC gate.
 
 from __future__ import annotations
 
-import hashlib
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import structlog
 
 from trw_mcp.exceptions import NamespaceEnumerationError
-from trw_mcp.state._backend_id_lookup import resolve_entry_in_backend
-from trw_mcp.state._memory_lookups import get_backend
-
-if TYPE_CHECKING:
-    from trw_memory.models.memory import MemoryEntry
-    from trw_memory.storage.sqlite_backend import SQLiteBackend
+from trw_mcp.state import _store_selection
 
 logger = structlog.get_logger(__name__)
 
 
-def _resolve_owning_backend(trw_dir: Path, learning_id: str) -> tuple[SQLiteBackend, MemoryEntry | None]:
-    """Locate the backend that owns ``learning_id`` and return it with the entry.
+def update_learning(trw_dir: Path, learning_id: str, **fields: object) -> dict[str, str]:
+    """Correct a learning by id in whichever namespace owns it (PRD-CORE-294 FR03, PRD-CORE-280 FR01).
 
-    PRD-CORE-185: ``update_learning`` historically queried ONLY the project
-    backend, so a portable (user-tier) learning -- stored in the box-wide user
-    store by ``store_learning``'s ``is_user_write`` dispatch -- returned
-    ``not_found`` and could never be updated. This mirrors that dispatch on the
-    read side: try the project backend first (unchanged behavior, byte-identical
-    when the entry lives there) and, only on a miss AND when a user-scope store
-    is present, fall back to the user backend so user-tier entries are
-    updatable. Returns ``(backend, entry)`` for whichever store owns the entry,
-    or ``(project_backend, None)`` when neither has it.
+    The checkout's store finds the owning namespace (project first, then the
+    user store when one is present -- PRD-CORE-185) and applies the patch.
+    Validation, patch semantics, the verified-promotion gate, supersession and
+    the tier-mirror refresh live in ``trw_memory.lifecycle.correction.apply_correction``,
+    which ``memory_update`` also calls. Return shape matches trw_learn's update
+    mode: ``{"learning_id", "changes", "status"}`` or ``{"error", "status"}``.
     """
-    project_backend = get_backend(trw_dir)
-    existing = resolve_entry_in_backend(project_backend, learning_id)
-    if existing is not None:
-        return project_backend, existing
+    from trw_memory.lifecycle.correction import parse_patch
 
-    # Project miss: consult the user store only when one is actually present,
-    # so project-only installs keep the original single-backend behavior and
-    # never provision a user store just to answer an update.
-    from trw_mcp.state._tier_routing import user_scope_present
-
-    if not user_scope_present():
-        return project_backend, None
-
-    from trw_mcp.state._user_tier import get_user_backend
-
-    user_backend = get_user_backend()
-    user_entry = resolve_entry_in_backend(user_backend, learning_id)
-    if user_entry is not None:
-        return user_backend, user_entry
-    return project_backend, None
-
-
-_VALID_STATUSES = {"active", "resolved", "obsolete", "obsolete_poisoned"}
-_VALID_TYPES = {"incident", "pattern", "convention", "hypothesis", "workaround"}
-# Mirror the enum sets the trw_learn_update tool validates against
-# (tools/learning.py). Validated here too so any internal caller of the state
-# facade -- not just the MCP tool -- cannot persist an invalid value.
-_VALID_CONFIDENCES = {"unverified", "low", "medium", "high", "verified"}
-_VALID_PROTECTION_TIERS = {"critical", "high", "normal", "low", "protected", "permanent"}
-_VALID_FEEDBACK = {"helpful", "unhelpful"}
-
-
-def _reject_unverifiable_promotion(
-    existing: MemoryEntry,
-    pending_fields: dict[str, object],
-) -> dict[str, str] | None:
-    """Refuse an unsubstantiated promotion to ``verified`` (PRD-CORE-244-FR02).
-
-    Returns an error dict, or ``None`` when the write may proceed.
-
-    The rule itself is NOT reimplemented here: this projects the post-update
-    entry and hands it to ``trw_memory.security.poisoning.reject_unsubstantiated_verified``,
-    the same function ``validate_entry_payload`` calls on the store path. A copy
-    would be free to drift, and a substantiation rule that means two different
-    things on two surfaces is worse than one that is merely strict.
-
-    ``SchemaValidationError`` is converted to the error dict this module returns
-    everywhere else — ``update_learning`` is a JSON-RPC boundary that reports
-    failures as values, and raising here would change its contract for every
-    caller.
-    """
-    from trw_memory.exceptions import SchemaValidationError
-    from trw_memory.models.config import MemoryConfig
-    from trw_memory.models.memory import Confidence
-    from trw_memory.security.poisoning import reject_unsubstantiated_verified
-
-    # Only a promotion needs a basis. Demoting, or leaving confidence alone, is
-    # not a new claim and never requires substantiation.
-    if str(pending_fields.get("confidence", "")) != Confidence.VERIFIED.value:
-        return None
-
-    # Project the entry as it will exist AFTER this update. Both keys matter:
-    # ``confidence`` because the gate short-circuits on anything that is not
-    # verified (projecting only the assertions would make it a silent no-op),
-    # and ``assertions`` so a basis supplied by the same call counts.
-    projected = existing.model_copy(
-        update={
-            "confidence": Confidence.VERIFIED,
-            "assertions": pending_fields.get("assertions", existing.assertions),
-        }
-    )
-    # The threshold lives on MemoryConfig (the store pipeline reads it from
-    # ctx.config), not on TRWConfig, so it is resolved from the same settings
-    # source the store gate uses rather than duplicated on the trw-mcp side.
-    min_items = int(MemoryConfig().min_evidence_items_for_verified)
+    patch = parse_patch(fields)
+    if isinstance(patch, dict):
+        return patch
+    store, _ = _store_selection.selected_store(trw_dir)
     try:
-        reject_unsubstantiated_verified(projected, min_items=min_items)
-    except SchemaValidationError as exc:
-        logger.warning(
-            "unsubstantiated_verified_update_rejected",
-            learning_id=existing.id,
-            reason=exc.reason,
-            required_items=min_items,
-        )
-        return {
-            "error": str(exc),
-            "status": "invalid",
-            "reason": exc.reason,
-        }
-    return None
-
-
-def update_learning(
-    trw_dir: Path,
-    learning_id: str,
-    *,
-    status: str | None = None,
-    detail: str | None = None,
-    impact: float | None = None,
-    summary: str | None = None,
-    type: str | None = None,
-    nudge_line: str | None = None,
-    expires: str | None = None,
-    confidence: str | None = None,
-    task_type: str | None = None,
-    domain: list[str] | None = None,
-    phase_origin: str | None = None,
-    phase_affinity: list[str] | None = None,
-    team_origin: str | None = None,
-    protection_tier: str | None = None,
-    tags: list[str] | None = None,
-    supersedes: str | None = None,
-    assertions: list[dict[str, object]] | None = None,
-    feedback: str | None = None,
-) -> dict[str, str]:
-    """Update a learning entry in SQLite.
-
-    Return shape matches ``trw_learn_update`` output:
-    ``{"learning_id", "changes", "status"}``.
-
-    PRD-CORE-194 FR04 (OQ4 resolution): when ``supersedes`` names a prior record
-    id, this update is an explicit correction/replacement — close the PRIOR
-    record's validity window (set its ``invalid_from`` = now + ``invalidated_by``
-    = ``learning_id``, the updating record) and retain it (never delete). The
-    supersession branch fires ONLY on an explicit ``supersedes=`` argument, never
-    on a routine field edit.
-    """
-    if feedback is not None and feedback not in _VALID_FEEDBACK:
-        return {
-            "error": f"Invalid feedback '{feedback}'. Must be one of: {_VALID_FEEDBACK}",
-            "status": "invalid",
-        }
-    try:
-        backend, existing = _resolve_owning_backend(trw_dir, learning_id)
+        return store.correct(learning_id, patch)
     except NamespaceEnumerationError as exc:
         # "we could not look everywhere" is not "it is not there". Reporting it
         # as not_found would tell the agent its learning is gone and invite a
@@ -181,146 +44,17 @@ def update_learning(
             "error": f"Could not determine whether {learning_id} exists: {exc}",
             "status": "lookup_unavailable",
         }
-    if existing is None:
-        return {"error": f"Learning {learning_id} not found", "status": "not_found"}
 
-    fields: dict[str, object] = {}
-    changes: list[str] = []
 
-    if status is not None:
-        if status not in _VALID_STATUSES:
-            return {
-                "error": f"Invalid status '{status}'. Must be one of: {_VALID_STATUSES}",
-                "status": "invalid",
-            }
-        fields["status"] = status
-        changes.append(f"status→{status}")
-    if detail is not None:
-        fields["detail"] = detail
-        changes.append("detail updated")
-    if summary is not None:
-        fields["content"] = summary
-        changes.append("summary updated")
-    if impact is not None:
-        if not 0.0 <= impact <= 1.0:
-            return {"error": f"Impact must be 0.0-1.0, got {impact}", "status": "invalid"}
-        fields["importance"] = impact
-        changes.append(f"impact→{impact}")
-    if type is not None:
-        if type not in _VALID_TYPES:
-            return {
-                "error": f"Invalid type '{type}'. Must be one of: {_VALID_TYPES}",
-                "status": "invalid",
-            }
-        fields["type"] = type
-        changes.append(f"type→{type}")
-    if nudge_line is not None:
-        fields["nudge_line"] = nudge_line
-        changes.append("nudge_line updated")
-    if expires is not None:
-        fields["expires"] = expires
-        changes.append("expires updated")
-    if confidence is not None:
-        if confidence not in _VALID_CONFIDENCES:
-            return {
-                "error": f"Invalid confidence '{confidence}'. Must be one of: {_VALID_CONFIDENCES}",
-                "status": "invalid",
-            }
-        fields["confidence"] = confidence
-        changes.append(f"confidence→{confidence}")
-    if task_type is not None:
-        fields["task_type"] = task_type
-        changes.append(f"task_type→{task_type}")
-    if domain is not None:
-        fields["domain"] = domain
-        changes.append("domain updated")
-    if phase_origin is not None:
-        fields["phase_origin"] = phase_origin
-        changes.append(f"phase_origin→{phase_origin}" if phase_origin else "phase_origin cleared")
-    if phase_affinity is not None:
-        fields["phase_affinity"] = phase_affinity
-        changes.append("phase_affinity updated")
-    if team_origin is not None:
-        fields["team_origin"] = team_origin
-        changes.append(f"team_origin→{team_origin}" if team_origin else "team_origin cleared")
-    if protection_tier is not None:
-        if protection_tier not in _VALID_PROTECTION_TIERS:
-            return {
-                "error": (f"Invalid protection_tier '{protection_tier}'. Must be one of: {_VALID_PROTECTION_TIERS}"),
-                "status": "invalid",
-            }
-        fields["protection_tier"] = protection_tier
-        changes.append(f"protection_tier→{protection_tier}")
-    if tags is not None:
-        fields["tags"] = tags
-        changes.append("tags updated")
-    if assertions is not None:
-        from trw_memory.models.memory import Assertion
+def stored_tags(trw_dir: Path, learning_id: str) -> list[str] | None:
+    """The tag set the owning store now holds for ``learning_id``, or None when it has no such row.
 
-        fields["assertions"] = [Assertion.model_validate(assertion, strict=False) for assertion in assertions]
-        changes.append("assertions updated")
+    A ``tags_add`` merges inside the store's transaction, so only the store knows the
+    resulting set; the YAML backup copies it from here rather than guessing.
 
-    if summary is not None or detail is not None:
-        new_content = summary if summary is not None else existing.content
-        new_detail = detail if detail is not None else existing.detail
-        if existing.metadata.get("provenance_content_hash") or existing.metadata.get("content_hash"):
-            new_metadata = dict(existing.metadata)
-            new_metadata["provenance_content_hash"] = hashlib.sha256(f"{new_content}{new_detail}".encode()).hexdigest()
-            fields["metadata"] = new_metadata
-
-    # PRD-CORE-244-FR02 on the UPDATE surface. ``update_learning`` edits an
-    # existing row through ``backend.update()`` and therefore never re-enters the
-    # store pipeline where ``_stage_validate_payload`` lives — so before this
-    # check, ``trw_learn_update(fields={"confidence": "verified"})`` promoted an
-    # evidence-less entry to verified, reopening on the update path exactly the
-    # hole the store gate closes.
-    #
-    # Placed here, AFTER every field is collected, for two reasons: the entry it
-    # must judge is the POST-update one (a call may be supplying the assertions
-    # that substantiate the claim in the same breath as the promotion), and a
-    # refusal must precede BOTH target writes and supersession of the prior
-    # record (PRD-FIX-134). This is validation ordering, not cross-store atomicity.
-    refusal = _reject_unverifiable_promotion(existing, fields)
-    if refusal is not None:
-        return refusal
-
-    # PRD-CORE-194 FR04: explicit supersession. Close the PRIOR record's window
-    # (it is replaced BY this learning_id). Resolve the prior through the same
-    # owning-backend dispatch so a user-tier prior is also closeable. A missing
-    # or already-closed prior is a safe no-op (the primary edit still applies).
-    if supersedes is not None and supersedes != learning_id:
-        prior_backend, prior = _resolve_owning_backend(trw_dir, supersedes)
-        if prior is None:
-            logger.info("supersession_prior_not_found", supersedes=supersedes, by=learning_id)
-        elif prior.invalid_from is not None:
-            logger.info("supersession_prior_already_closed", supersedes=supersedes)
-        else:
-            now = datetime.now(timezone.utc)
-            prior_backend.update(supersedes, namespace=prior.namespace, invalid_from=now, invalidated_by=learning_id)
-            changes.append(f"supersedes→{supersedes}")
-            logger.info("supersession_window_closed", prior=supersedes, by=learning_id)
-
-    if feedback is not None:
-        # Keep the read and increment inside the backend's serialized write
-        # transaction. A bare get()+update() pair loses votes when concurrent
-        # callers read the same old counter.
-        with backend.transaction():
-            current = resolve_entry_in_backend(backend, learning_id)
-            if current is None:
-                return {"error": f"Learning {learning_id} not found", "status": "not_found"}
-            counter = "helpful_count" if feedback == "helpful" else "unhelpful_count"
-            fields[counter] = getattr(current, counter) + 1
-            backend.update(learning_id, namespace=current.namespace, **fields)
-        changes.append(f"feedback→{feedback}")
-    elif fields:
-        backend.update(learning_id, namespace=existing.namespace, **fields)
-
-    if not changes:
-        return {"learning_id": learning_id, "status": "no_changes"}
-
-    logger.info("memory_update_learning", learning_id=learning_id, changes=changes)
-    return {
-        "learning_id": learning_id,
-        "changes": ", ".join(changes),
-        "status": "updated",
-    }
+    Raises:
+        NamespaceEnumerationError: the stores could not be searched.
+    """
+    store, _ = _store_selection.selected_store(trw_dir)
+    entry = store.get(learning_id)
+    return None if entry is None else list(entry.tags)

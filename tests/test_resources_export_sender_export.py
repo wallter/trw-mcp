@@ -1,11 +1,21 @@
 from __future__ import annotations
 
 import os
-import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from tests._resources_export_sender_support import _make_entry, _setup_project, _writer
+import pytest
+
+from tests._memory_store_fake import FakeMemoryStore
+from tests._resources_export_sender_support import _setup_project, _writer
+from tests._test_export_support import _store_entry
+
+
+@pytest.fixture(autouse=True)
+def _route_memory(fake_memory_store: FakeMemoryStore) -> FakeMemoryStore:
+    """Export reads ``selected_store``; the fake is this checkout's store (PRD-CORE-280 e1)."""
+    return fake_memory_store
 
 
 class TestLoadProjectConfig:
@@ -20,8 +30,7 @@ class TestLoadProjectConfig:
             trw_dir / "config.yaml",
             {"framework_version": "v99.0_CUSTOM"},
         )
-        entries_dir = trw_dir / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Entry with custom config")
+        _store_entry(trw_dir, summary="Entry with custom config")
 
         result = export_data(project, "learnings")
         assert result["status"] == "ok"
@@ -31,61 +40,28 @@ class TestLoadProjectConfig:
 
 
 class TestCollectLearningsEdgeCases:
-    """Lines 50, 55, 58-59, 66-68 — _collect_learnings edge cases."""
+    """Lines 50, 55, 58-59, 66-68 — _collect_learnings edge cases (PRD-CORE-280 FR05: reads the store, not YAML).
 
-    def test_entries_not_a_directory_returns_empty(self, tmp_path: Path) -> None:
-        from trw_mcp.export import export_data
-
-        project = _setup_project(tmp_path)
-        entries_path = project / ".trw" / "learnings" / "entries"
-        shutil.rmtree(entries_path)
-        entries_path.write_text("not a directory", encoding="utf-8")
-
-        result = export_data(project, "learnings")
-        assert result["status"] == "ok"
-        learnings = result.get("learnings")
-        assert isinstance(learnings, list)
-        assert len(learnings) == 0
-
-    def test_index_yaml_skipped(self, tmp_path: Path) -> None:
-        from trw_mcp.export import export_data
-
-        project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _writer.write_yaml(
-            entries_dir / "index.yaml",
-            {"id": "INDEX", "summary": "Index entry", "impact": 0.9},
-        )
-        _make_entry(entries_dir, summary="Real entry")
-
-        result = export_data(project, "learnings")
-        learnings = result.get("learnings")
-        assert isinstance(learnings, list)
-        assert len(learnings) == 1
-        assert learnings[0]["summary"] == "Real entry"
-
-    def test_unreadable_entry_silently_skipped(self, tmp_path: Path) -> None:
-        from trw_mcp.export import export_data
-
-        project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Good entry")
-        bad_file = entries_dir / "2026-02-21-bad.yaml"
-        bad_file.write_text("!!python/object:os.system [rm -rf /]", encoding="utf-8")
-
-        result = export_data(project, "learnings")
-        learnings = result.get("learnings")
-        assert isinstance(learnings, list)
-        assert len(learnings) == 1
-        assert learnings[0]["summary"] == "Good entry"
+    ``test_entries_not_a_directory_returns_empty`` and ``test_unreadable_entry_silently_skipped``
+    pinned the retired YAML reader's directory/parse-error handling; ``_collect_learnings`` no
+    longer touches ``learnings/entries/`` at all, so those behaviours are gone. The store-empty
+    case has a direct equivalent in ``test_export_internals.py::TestCollectLearnings::test_returns_empty_when_store_is_empty``.
+    """
 
     def test_since_filter_excludes_older_entries(self, tmp_path: Path) -> None:
         from trw_mcp.export import export_data
+        from trw_mcp.state._store_selection import selected_store
 
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Old entry", created="2026-01-01T00:00:00Z")
-        _make_entry(entries_dir, summary="New entry", created="2026-02-15T00:00:00Z")
+        trw_dir = project / ".trw"
+        _store_entry(trw_dir, summary="Old entry", entry_id="L-old")
+        _store_entry(trw_dir, summary="New entry", entry_id="L-new")
+        store, namespace = selected_store(trw_dir)
+        old_entry = store.get("L-old")
+        assert old_entry is not None
+        store.apply_synced(
+            namespace, old_entry.model_copy(update={"created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)})
+        )
 
         result = export_data(project, "learnings", since="2026-02-01")
         learnings = result.get("learnings")
@@ -95,10 +71,17 @@ class TestCollectLearningsEdgeCases:
 
     def test_since_filter_includes_entries_on_boundary(self, tmp_path: Path) -> None:
         from trw_mcp.export import export_data
+        from trw_mcp.state._store_selection import selected_store
 
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Boundary entry", created="2026-02-01T00:00:00Z")
+        trw_dir = project / ".trw"
+        _store_entry(trw_dir, summary="Boundary entry", entry_id="L-boundary")
+        store, namespace = selected_store(trw_dir)
+        entry = store.get("L-boundary")
+        assert entry is not None
+        store.apply_synced(
+            namespace, entry.model_copy(update={"created_at": datetime(2026, 2, 1, tzinfo=timezone.utc)})
+        )
 
         result = export_data(project, "learnings", since="2026-02-01")
         learnings = result.get("learnings")
@@ -237,8 +220,7 @@ class TestExportAllScope:
         from trw_mcp.export import export_data
 
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="Combined test")
+        _store_entry(project / ".trw", summary="Combined test")
 
         with (
             patch("trw_mcp.export.scan_all_runs", return_value={"runs": []}),
@@ -255,8 +237,7 @@ class TestExportAllScope:
         from trw_mcp.export import export_data
 
         project = _setup_project(tmp_path)
-        entries_dir = project / ".trw" / "learnings" / "entries"
-        _make_entry(entries_dir, summary="CSV scope test")
+        _store_entry(project / ".trw", summary="CSV scope test")
 
         with (
             patch("trw_mcp.export.scan_all_runs", return_value={"runs": []}),

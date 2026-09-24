@@ -35,6 +35,7 @@ import pytest
 
 from tests._layout import requires_local_timing
 from tests._structlog_capture import captured_structlog  # noqa: F401 -- pytest fixture
+from tests._timing import assert_budget
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.state.claude_md import (
     TRW_MARKER_END,
@@ -674,8 +675,9 @@ class TestWriterTotality:
             # added a `codex_only` guard above this call (an explicit
             # codex-only selection skips this branch and the whole write
             # entirely, never a new write path); the branch shape and
-            # rationale above are otherwise unchanged.
-            "bootstrap/_init_project.py:371 (target_dir / 'CLAUDE.md')",
+            # rationale above are otherwise unchanged. PRD-INFRA-192 FR09/FR10
+            # drift 366->375: the ownership-gated .mcp.json merge and tombstone detection.
+            "bootstrap/_init_project.py:375 (target_dir / 'CLAUDE.md')",
             # `_strip_orphaned_block` only ever removes the TRW-marked region
             # (`_strip_trw_section`) and rewrites `remaining` verbatim -- it is a
             # narrow heal/strip operation, never a content REPLACEMENT, and is
@@ -708,6 +710,22 @@ class TestWriterTotality:
             # directly instead, by `test_instruction_carrier.py::TestHealPointer`.
             "state/claude_md/_orphan_strip.py:190 (project_root / 'AGENTS.md')",
             "state/claude_md/_orphan_strip.py:213 (project_root / 'CLAUDE.md')",
+            # `withdraw_managed_learnings` removes only the `## Key Learnings`
+            # sub-block bounded inside the TRW markers -- a narrow,
+            # marker-scoped strip, never a content REPLACEMENT -- so it is
+            # structurally identical to `_orphan_strip._strip_orphaned_block`
+            # above and cannot route through `guarded_instruction_write` for
+            # the same reason: that seam refuses any write that shrinks the
+            # file without `force=True`, and this call's whole point is a
+            # legitimate, bounded shrink when recall is switched off. Writes
+            # via `FileStateWriter`, the same seam `_strip_orphaned_block`/
+            # `heal_pointer` use, so a write failure raises `StateError`
+            # rather than disappearing; its caller
+            # (`_ceremony_step_table._ss_recall_withdraw`) runs inside the
+            # session-start step driver's blanket `except Exception` (one
+            # step must not block session start), so the failure is fail-open
+            # and logged, not silently swallowed twice.
+            "state/claude_md/_withdraw.py:49 (project_root / 'AGENTS.md')",
         }
     )
 
@@ -1055,9 +1073,25 @@ class TestPerformance:
     """NFR01: bounded overhead and at most one extra read."""
 
     @pytest.mark.parametrize("baseline_first", [False, True])
+    def test_guard_overhead_under_budget(self, tmp_path: Path, baseline_first: bool) -> None:
+        """The guarded and bypassed-baseline arms write identical content.
+
+        The timing half (the overhead delta budget) lives in the ``_budget``
+        twin below; this stays gating so a CI-skipped budget test never drops
+        the content-parity proof.
+        """
+        from tests._instruction_write_performance import measure_sync
+
+        measurements = {}
+        for bypass in (baseline_first, not baseline_first):
+            arm = "baseline" if bypass else "guarded"
+            measurements[arm] = measure_sync(tmp_path / arm, bypass_guard=bypass)
+        assert measurements["guarded"].contents == measurements["baseline"].contents
+
+    @pytest.mark.parametrize("baseline_first", [False, True])
     @requires_local_timing
-    def test_guard_overhead_under_budget(self, tmp_path: Path, baseline_first: bool, record_property) -> None:
-        from tests._instruction_write_performance import assert_guard_budget, measure_sync
+    def test_guard_overhead_under_budget_budget(self, tmp_path: Path, baseline_first: bool, record_property) -> None:
+        from tests._instruction_write_performance import measure_sync
 
         measurements = {}
         for bypass in (baseline_first, not baseline_first):
@@ -1071,7 +1105,10 @@ class TestPerformance:
                 for arm, value in measurements.items()
             },
         )
-        assert_guard_budget(measurements["guarded"], measurements["baseline"])
+        guarded, baseline = measurements["guarded"], measurements["baseline"]
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            delta = guarded.target_ms[name] - baseline.target_ms[name]
+            assert_budget(f"guard_overhead_{name}", delta, 50.0, "ms")
 
     def test_guard_budget_detects_guard_only_config_cost(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from tests._instruction_write_performance import assert_guard_budget, measure_sync

@@ -6,21 +6,28 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.state._paths import TRWCallContext, resolve_pin_key, touch_heartbeat
 from trw_mcp.state._run_gc import sweep_stale_runs
-
-pytestmark = pytest.mark.perf
 
 
 def _p95(samples: list[float]) -> float:
     return sorted(samples)[round(0.95 * (len(samples) - 1))]
 
 
+def test_pin_resolution_and_heartbeat_meet_hot_path_slos() -> None:
+    context = TRWCallContext(
+        session_id="performance-session",
+        client_hint=None,
+        explicit=False,
+        fastmcp_session=None,
+    )
+    assert resolve_pin_key(context, explicit=None) == "performance-session"
+
+
 @requires_local_timing
-def test_pin_resolution_and_heartbeat_meet_hot_path_slos(tmp_path: Path) -> None:
+def test_pin_resolution_and_heartbeat_meet_hot_path_slos_budget(tmp_path: Path) -> None:
     context = TRWCallContext(
         session_id="performance-session",
         client_hint=None,
@@ -30,7 +37,7 @@ def test_pin_resolution_and_heartbeat_meet_hot_path_slos(tmp_path: Path) -> None
     pin_samples: list[float] = []
     for _ in range(1000):
         started = time.perf_counter()
-        assert resolve_pin_key(context, explicit=None) == "performance-session"
+        resolve_pin_key(context, explicit=None)
         pin_samples.append((time.perf_counter() - started) * 1000)
 
     run_dir = tmp_path / "run"
@@ -42,12 +49,11 @@ def test_pin_resolution_and_heartbeat_meet_hot_path_slos(tmp_path: Path) -> None
             touch_heartbeat(context=context)
             heartbeat_samples.append((time.perf_counter() - started) * 1000)
 
-    assert _p95(pin_samples) <= 2.0
-    assert _p95(heartbeat_samples) <= 5.0
+    assert_budget("pin_resolution_p95", _p95(pin_samples), 2.0, "ms")
+    assert_budget("heartbeat_p95", _p95(heartbeat_samples), 5.0, "ms")
 
 
-@requires_local_timing
-def test_typical_dry_run_stale_sweep_completes_under_200ms(tmp_path: Path) -> None:
+def _make_stale_runs(tmp_path: Path) -> Path:
     runs_root = tmp_path / "runs"
     for index in range(50):
         run_dir = runs_root / f"task-{index}" / f"20200101T000000Z-{index:08d}" / "meta"
@@ -56,9 +62,29 @@ def test_typical_dry_run_stale_sweep_completes_under_200ms(tmp_path: Path) -> No
             f"run_id: run-{index}\ntask: task-{index}\nstatus: active\nphase: implement\n",
             encoding="utf-8",
         )
+    return runs_root
+
+
+def test_typical_dry_run_stale_sweep_completes_under_200ms(tmp_path: Path) -> None:
+    runs_root = _make_stale_runs(tmp_path)
+
+    report = sweep_stale_runs(
+        runs_root,
+        staleness_hours=48,
+        grace_hours=4,
+        pinned_paths=(),
+        dry_run=True,
+    )
+
+    assert report.runs_scanned == 50
+
+
+@requires_local_timing
+def test_typical_dry_run_stale_sweep_completes_under_200ms_budget(tmp_path: Path) -> None:
+    runs_root = _make_stale_runs(tmp_path)
 
     started = time.perf_counter()
-    report = sweep_stale_runs(
+    sweep_stale_runs(
         runs_root,
         staleness_hours=48,
         grace_hours=4,
@@ -67,5 +93,4 @@ def test_typical_dry_run_stale_sweep_completes_under_200ms(tmp_path: Path) -> No
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
 
-    assert report.runs_scanned == 50
-    assert elapsed_ms < 200.0
+    assert_budget("stale_sweep_wall_time", elapsed_ms, 200.0, "ms")

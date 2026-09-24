@@ -5,16 +5,12 @@ from __future__ import annotations
 
 def _default_config(
     *,
-    source_package: str = "",
-    test_path: str = "",
     runs_root: str = ".trw/runs",
     target_platforms: list[str] | None = None,
 ) -> str:
     """Generate default ``.trw/config.yaml``.
 
     Args:
-        source_package: If set, adds ``source_package_name`` field.
-        test_path: If set, adds ``tests_relative_path`` field.
         runs_root: Base directory for run artifacts (relative to project root).
         target_platforms: Platforms to sync instruction files for.
             e.g. ``["claude-code", "opencode"]``. Defaults to ``["claude-code"]``.
@@ -41,10 +37,6 @@ def _default_config(
         "claude_md_max_lines: 500",
         f"framework_version: {config.framework_version}",
     ]
-    if source_package:
-        lines.append(f"source_package_name: {source_package}")
-    if test_path:
-        lines.append(f"tests_relative_path: {test_path}")
 
     # Target platforms -- controls which instruction files are written
     # (client instruction file, AGENTS.md, .cursorrules, etc.) during deliver/sync.
@@ -88,9 +80,7 @@ def _minimal_claude_md() -> str:
     written out here. This template is a hand-maintained copy of the protocol,
     and the copy had drifted: it omitted the gate entirely, so a freshly
     installed claude-code project had no deliver-gate statement in its
-    instruction surface — inline before externalization, and in the
-    ``.trw/INSTRUCTIONS.md`` sidecar after it, since the sidecar is built from
-    this block. `trw-mcp doctor` reported the FAIL correctly; nothing had
+    instruction surface. `trw-mcp doctor` reported the FAIL correctly; nothing had
     reconciled the two.
     """
     from trw_mcp.state.claude_md.sections._tool_lifecycle import render_deliver_gate_statement
@@ -133,12 +123,12 @@ This file provides guidance to AI coding clients when working with code in this 
 
 TRW tools help you build effectively and preserve your work across sessions:
 - **Start**: call `trw_session_start()` to load prior learnings and recover any active run
-- **Start**: read `.trw/frameworks/FRAMEWORK-CORE.md` — it defines the methodology your tools implement
+- **Start**: read the EXECUTION MODEL SUMMARY and your phase's sections of `.trw/frameworks/FRAMEWORK.md` — it defines the methodology your tools implement
 - Preserve material unfinished work with a checkpoint or durable native handoff and a next-read pointer. Nothing material to preserve: do not manufacture artifacts. Use trw_deliver only for completed-work acceptance under unchanged delivery gates; recorded learnings already persist.
 
 ### Framework Reference
 
-**Read `.trw/frameworks/FRAMEWORK-CORE.md` at session start** — it defines the methodology your tools implement.
+**Read your phase's sections of `.trw/frameworks/FRAMEWORK.md` at session start** (EXECUTION MODEL SUMMARY first) — it defines the methodology your tools implement.
 
 The framework covers: 6-phase execution model with exit criteria per phase, formation selection for parallel work, quality gates with rubric scoring, phase reversion rules, adaptive planning, anti-skip safeguards, and portable coordination protocol. Re-read after context compaction and at phase transitions. Without it, tools work but methodology is missing — you'll pass tool checks while skipping the process that prevents rework.
 

@@ -111,53 +111,6 @@ class TestIndexSyncCoverage:
         assert "1 deprecated" in result
 
 
-class TestRecallTrackingExceptionPath:
-    """Lines 66-68: record_outcome exception path."""
-
-    def test_record_outcome_exception_returns_false(self, tmp_path: Path) -> None:
-        """Lines 66-68: exception during record_outcome returns False."""
-        from trw_mcp.state import recall_tracking
-
-        with patch("trw_mcp.state.recall_tracking.resolve_trw_dir") as mock_resolve:
-            mock_resolve.side_effect = RuntimeError("trw dir not found")
-            result = recall_tracking.record_outcome("L-abc123", "positive")
-
-        assert result is False
-
-    def test_record_outcome_creates_the_missing_log(self, tmp_path: Path) -> None:
-        """PRD-FIX-144 FR03: explicit feedback creates the log when absent, so a
-        first-ever feedback call is recorded rather than dropped (it used to
-        return False here)."""
-        from trw_mcp.state import recall_tracking
-
-        with patch("trw_mcp.state.recall_tracking.resolve_trw_dir") as mock_resolve:
-            mock_resolve.return_value = tmp_path / ".trw"
-            result = recall_tracking.record_outcome("L-abc123", "positive")
-
-        assert result is True
-        rows = (tmp_path / ".trw" / "logs" / "recall_tracking.jsonl").read_text(encoding="utf-8")
-        assert '"outcome": "positive"' in rows
-
-    def test_record_outcome_append_failure_returns_false(self, tmp_path: Path) -> None:
-        """A failing append is fail-open: False, no raise. PRD-FIX-144 replaced
-        FileStateWriter here with the locked _append_rows helper, so the patch
-        target moved."""
-        from trw_mcp.state import recall_tracking
-
-        trw_dir = tmp_path / ".trw"
-        logs_dir = trw_dir / "logs"
-        logs_dir.mkdir(parents=True)
-        (logs_dir / "recall_tracking.jsonl").write_text("", encoding="utf-8")
-
-        with patch("trw_mcp.state.recall_tracking.resolve_trw_dir") as mock_resolve:
-            mock_resolve.return_value = trw_dir
-            with patch("trw_mcp.state.recall_tracking._append_rows") as mock_append:
-                mock_append.side_effect = OSError("write failed")
-                result = recall_tracking.record_outcome("L-abc123", "neutral")
-
-        assert result is False
-
-
 class TestPathsCoverage:
     """Lines 58, 172: _find_latest_run_dir and detect_current_phase."""
 

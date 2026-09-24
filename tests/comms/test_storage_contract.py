@@ -22,6 +22,7 @@ import pytest
 
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from tests.comms.conftest import joined_member
 from trw_mcp.comms import _schema, _store, _upgrade
 from trw_mcp.formation import load
@@ -111,8 +112,10 @@ def _stop(process: Any) -> None:
     assert not process.is_alive(), "child survived bounded termination"
 
 
-@requires_local_timing
-def test_separate_process_exclusive_lock_respects_20ms(tmp_path: Path) -> None:
+def _contended_connect_attempt(tmp_path: Path) -> dict[str, Any]:
+    """Hold an exclusive lock in a child process, then attempt a contended
+    connect from this process. Returns every fact the two twins below assert
+    on, without asserting anything itself."""
     manifest = tmp_path / "formation.yaml"
     with _store.connect(manifest, busy_timeout_ms=100):
         pass
@@ -120,23 +123,48 @@ def test_separate_process_exclusive_lock_respects_20ms(tmp_path: Path) -> None:
     ready, release = context.Event(), context.Event()
     child = context.Process(target=_hold_exclusive, args=(str(_store.database_path(manifest)), ready, release))
     child.start()
+    ready_reached = ready.wait(2)
+    opened = False
+    refusal = None
+    retryable = None
     try:
-        assert ready.wait(2), "lock holder never reached BEGIN EXCLUSIVE"
         started = time.monotonic()
-        with pytest.raises(_store.StoreError) as caught:
+        try:
             with _store.connect(manifest, busy_timeout_ms=20):
-                pytest.fail("read/write mailbox opened despite exclusive lock")
+                opened = True
+        except _store.StoreError as caught:
+            refusal = caught.refusal
+            retryable = caught.retryable
         elapsed = time.monotonic() - started
         print(f"configured_busy_timeout_ms=20 observed_refusal_seconds={elapsed:.6f}")
-        assert caught.value.refusal is _store.StoreRefusal.CONTENDED
-        assert caught.value.retryable
-        # Scheduling allowance, explicitly not a 20ms real-time guarantee. This
-        # detects the observed stdlib-default 5s regression without flaky 20ms timing.
-        assert elapsed < 0.5
     finally:
         release.set()
         _stop(child)
-    assert child.exitcode == 0
+    return {
+        "ready_reached": ready_reached,
+        "opened": opened,
+        "refusal": refusal,
+        "retryable": retryable,
+        "elapsed": elapsed,
+        "exitcode": child.exitcode,
+    }
+
+
+def test_separate_process_exclusive_lock_respects_20ms(tmp_path: Path) -> None:
+    result = _contended_connect_attempt(tmp_path)
+    assert result["ready_reached"], "lock holder never reached BEGIN EXCLUSIVE"
+    assert not result["opened"], "read/write mailbox opened despite exclusive lock"
+    assert result["refusal"] is _store.StoreRefusal.CONTENDED
+    assert result["retryable"]
+    assert result["exitcode"] == 0
+
+
+@requires_local_timing
+def test_separate_process_exclusive_lock_respects_20ms_budget(tmp_path: Path) -> None:
+    result = _contended_connect_attempt(tmp_path)
+    # Scheduling allowance, explicitly not a 20ms real-time guarantee. This
+    # detects the observed stdlib-default 5s regression without flaky 20ms timing.
+    assert_budget("contended_connect_refusal", result["elapsed"], 0.5, "s")
 
 
 def _first_open(manifest: str, barrier: Any, results: Any) -> None:

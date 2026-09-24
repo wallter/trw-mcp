@@ -17,7 +17,18 @@ from typing import Any
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from tests.conftest import extract_tool_fn, make_test_server
+
+#: PRD-CORE-280 slice e (batch 23b): ``_run_learn_journal_drain``'s replay now
+#: DOES go through ``_store_selection.selected_store`` (via ``store_learning``),
+#: so the drain-latency fixtures route through ``fake_memory_store`` (instant,
+#: in-memory) instead of a real daemon -- the daemon's ~230ms/write RPC cost
+#: would blow every ms budget these NFR tests assert, for reasons that have
+#: nothing to do with the drain logic under test. ``_fixture_trw_dir`` seeds
+#: the synthetic corpus directly into the fake store's ``rows`` dict (bypassing
+#: even the fake's ``.put()`` call overhead) since the row COUNT, not the write
+#: path, is what makes the O(rows) vs O(records) difference measurable.
 
 
 def _get_session_start_fn() -> Any:
@@ -54,8 +65,6 @@ def test_session_start_emits_step_durations_ms(
         "telemetry",
         "counter",
         "sanitize_maintain",
-        "phase_recall",
-        "embed_health",
         "assertion_health",
         "finalize",
         "total",
@@ -104,7 +113,6 @@ def test_session_start_total_is_at_least_sum_of_named_steps(
             "telemetry",
             "counter",
             "sanitize_maintain",
-            "phase_recall",
         )
         if k in durations
     )
@@ -162,22 +170,11 @@ def test_finalize_and_payload_trim_are_included_in_latency(
     assert float(durations["total"]) >= float(durations["finalize"]) + 25.0
 
 
-@pytest.mark.perf
-@requires_local_timing
-def test_session_start_warm_p95_under_5_seconds(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """SLO regression test: warm trw_session_start p95 < 5000 ms.
+def _collect_warm_session_start_samples() -> list[float]:
+    """Call session_start 10 times and return the "warm" (calls 2-10) totals.
 
-    Calls session_start 10 times; asserts the p95 of calls 2-10 is under
-    5 s. Calls 2-10 are "warm" because call 1 paid embedder cold-load
-    and any one-time maintenance. This is the durable defense against
-    the regression class that ate 2026-05-03.
-
-    The threshold is intentionally generous (5 s) -- in steady state the
-    measured value is ~1 s. The test fires on regressions that push the
-    warm budget into the danger zone.
+    Call 1 is excluded because it pays embedder cold-load and any one-time
+    maintenance.
     """
     fn = _get_session_start_fn()
 
@@ -190,15 +187,38 @@ def test_session_start_warm_p95_under_5_seconds(
         if "total" in durations:
             call_total_ms.append(float(durations["total"]))
 
-    # Use calls 2..10 as warm. Sort and pick p95.
-    warm = sorted(call_total_ms[1:])
+    return sorted(call_total_ms[1:])
+
+
+def test_session_start_warm_p95_under_5_seconds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup sanity: enough warm samples are collected for a p95 measurement.
+
+    The actual SLO regression check (p95 < 5000 ms) is the ``_budget`` twin
+    below — this is the durable defense against the regression class that ate
+    2026-05-03, minus the host-resource threshold.
+    """
+    warm = _collect_warm_session_start_samples()
     assert len(warm) >= 5, f"need at least 5 warm samples; got {len(warm)}"
+
+
+@requires_local_timing
+def test_session_start_warm_p95_under_5_seconds_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SLO regression test: warm trw_session_start p95 < 5000 ms.
+
+    The threshold is intentionally generous (5 s) -- in steady state the
+    measured value is ~1 s. The test fires on regressions that push the
+    warm budget into the danger zone.
+    """
+    warm = _collect_warm_session_start_samples()
     p95_index = max(0, int(0.95 * len(warm)) - 1)
     p95 = warm[p95_index]
-    assert p95 < 5000.0, (
-        f"warm p95 trw_session_start latency = {p95:.1f} ms (cap 5000). "
-        f"Recent regression suspected. All warm samples: {warm}"
-    )
+    assert_budget("session_start_warm_p95", p95, 5000.0, "ms")
 
 
 # ---------------------------------------------------------------------------
@@ -212,32 +232,55 @@ _FIXTURE_ROWS = 2000
 _BUDGET_MS = 250
 
 
-def _fixture_trw_dir(root: Path, rows: int = _FIXTURE_ROWS) -> Path:
+@pytest.fixture()
+def fake_store_router(monkeypatch: pytest.MonkeyPatch) -> dict[Path, Any]:
+    """One ``FakeMemoryStore`` per distinct ``trw_dir``, keyed on identity.
+
+    The shared ``fake_memory_store`` fixture routes every ``trw_dir`` to the
+    SAME store instance, which would collapse this file's several
+    independent per-arm fixture directories (k0, k1-a, k5, k50, ...) into one
+    shared corpus and one shared pending-id namespace -- exactly the
+    cross-arm contamination the K-in-{0,5,50} backlog arms must not have.
+    """
+    from tests._memory_fixtures import FAKE_NAMESPACE
+    from tests._memory_store_fake import FakeMemoryStore
+    from trw_mcp.state import _store_selection
+
+    stores: dict[Path, Any] = {}
+
+    def _select(trw_dir: Path) -> tuple[Any, str]:
+        return stores.setdefault(trw_dir, FakeMemoryStore()), FAKE_NAMESPACE
+
+    monkeypatch.setattr(_store_selection, "selected_store", _select)
+    return stores
+
+
+def _fixture_trw_dir(root: Path, stores: dict[Path, Any], rows: int = _FIXTURE_ROWS) -> Path:
     """A synthetic store of a few thousand active rows.
 
     The row count is the point: the per-record active-set materialization FR03
     removes is O(rows), so a store this size makes the difference between
     per-record and per-sweep work measurable without any artificial sleep.
+    Seeded directly into the fake's ``rows`` dict, bypassing even the fake's
+    ``.put()`` call overhead, since row COUNT is what is under test.
     """
     from trw_memory.models.memory import MemoryEntry
 
-    from trw_mcp.state.memory_adapter import get_backend
+    from tests._memory_fixtures import FAKE_NAMESPACE
+    from tests._memory_store_fake import FakeMemoryStore
 
     trw_dir = root / ".trw"
     (trw_dir / "learnings" / "entries").mkdir(parents=True)
-    backend = get_backend(trw_dir)
-    backend.store_many(
-        [
-            MemoryEntry(
-                id=f"L-fix{i:05d}",
-                content=f"synthetic fixture row number {i} for the bounded drain latency test",
-                detail=f"detail body for synthetic fixture row {i}",
-                namespace="default",
-                importance=0.5,
-            )
-            for i in range(rows)
-        ]
-    )
+    store = stores.setdefault(trw_dir, FakeMemoryStore())
+    for i in range(rows):
+        entry = MemoryEntry(
+            id=f"L-fix{i:05d}",
+            content=f"synthetic fixture row number {i} for the bounded drain latency test",
+            detail=f"detail body for synthetic fixture row {i}",
+            namespace=FAKE_NAMESPACE,
+            importance=0.5,
+        )
+        store.rows[(FAKE_NAMESPACE, entry.id)] = entry
     return trw_dir
 
 
@@ -263,7 +306,6 @@ def _seed_pending(trw_dir: Path, count: int) -> list[str]:
 def _run_drain(trw_dir: Path, budget_ms: int) -> tuple[float, dict[str, Any]]:
     """Run the inline drain step and return (elapsed_ms, maintenance payload)."""
     from trw_mcp.models.config import TRWConfig
-    from trw_mcp.state.memory_pressure import take_writer_census
     from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
     config = TRWConfig(
@@ -277,8 +319,6 @@ def _run_drain(trw_dir: Path, budget_ms: int) -> tuple[float, dict[str, Any]]:
         trw_dir,
         config,
         maintenance,
-        census=take_writer_census(trw_dir, threshold=2),
-        defer_memory_heavy=False,
     )
     return (time.monotonic() - started) * 1000.0, maintenance
 
@@ -294,15 +334,13 @@ def _join_background(timeout: float = 120.0) -> None:
     steps._DRAIN_THREAD = None
 
 
-@pytest.mark.perf
-@pytest.mark.timeout(600)
-@requires_local_timing
-def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Path) -> None:
-    """The bound holds at K in {0, 5, 50} and its spread does not grow with K.
+def _run_pending_backlog_arms(tmp_path: Path, stores: dict[Path, Any]) -> dict[str, Any]:
+    """Run the K in {0, 5, 50} backlog arms once; return every measured value
+    and every correctness fact, without asserting on any of them.
 
-    REVERT CHECK: this test is why the FR01 budget condition exists. Remove the
-    elapsed-time break in ``state/learn_journal.drain_pending`` and the K=50 arm
-    replays all fifty records inline, blowing the bound by an order of magnitude.
+    Shared by the correctness twin and the ``_budget`` timing twin below, so
+    each repeats this exact setup and operation rather than splitting a
+    single run's results across two tests.
     """
     from trw_mcp.state import learn_journal
     from trw_mcp.tools import _ceremony_maintenance_steps as steps
@@ -310,9 +348,8 @@ def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Pat
     steps._DRAIN_THREAD = None
 
     # Zero-pending overhead on this fixture, measured rather than assumed.
-    baseline_dir = _fixture_trw_dir(tmp_path / "k0")
+    baseline_dir = _fixture_trw_dir(tmp_path / "k0", stores)
     baseline_ms, baseline_payload = _run_drain(baseline_dir, _BUDGET_MS)
-    assert "pending_learns_replayed" not in baseline_payload, baseline_payload
     _join_background()
 
     # One record's replay on the same fixture, with a budget that cannot bite.
@@ -332,32 +369,68 @@ def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Pat
     # while keeping every term honest. It cannot rescue the defect this test
     # exists to catch: remove the elapsed-time break and K=50 replays all fifty
     # records inline, an order of magnitude over any per-record margin.
+    one_record_pending_counts: list[int] = []
+
     def _measure_one_record(label: str) -> float:
-        one_dir = _fixture_trw_dir(tmp_path / f"k1-{label}")
+        one_dir = _fixture_trw_dir(tmp_path / f"k1-{label}", stores)
         _seed_pending(one_dir, 1)
         sample_ms, _ = _run_drain(one_dir, 120_000)
         _join_background()
-        assert learn_journal.pending_count(one_dir) == 0
+        one_record_pending_counts.append(learn_journal.pending_count(one_dir))
         return sample_ms
 
     one_record_ms = max(_measure_one_record("a"), _measure_one_record("b"))
     measured: dict[int, float] = {0: baseline_ms}
+    bounds: dict[int, float] = {}
+    payloads: dict[int, dict[str, Any]] = {}
+    pending_left_by_k: dict[int, int] = {}
+    unaccounted_by_k: dict[int, list[str]] = {}
 
     for k in (5, 50):
         one_record_ms = max(one_record_ms, _measure_one_record(f"pre{k}"))
-        bound_ms = baseline_ms + _BUDGET_MS + one_record_ms
+        bounds[k] = baseline_ms + _BUDGET_MS + one_record_ms
 
-        trw_dir = _fixture_trw_dir(tmp_path / f"k{k}")
+        trw_dir = _fixture_trw_dir(tmp_path / f"k{k}", stores)
         ids = _seed_pending(trw_dir, k)
         elapsed_ms, maintenance = _run_drain(trw_dir, _BUDGET_MS)
         measured[k] = elapsed_ms
+        payloads[k] = maintenance["pending_learns_replayed"]
 
-        assert elapsed_ms <= bound_ms, (
-            f"K={k} inline drain took {elapsed_ms:.0f} ms, bound is {bound_ms:.0f} ms "
-            f"(baseline {baseline_ms:.0f} + budget {_BUDGET_MS} + one record {one_record_ms:.0f})"
-        )
+        _join_background()
+        pending_left_by_k[k] = learn_journal.pending_count(trw_dir)
 
-        payload = maintenance["pending_learns_replayed"]
+        from trw_mcp.state.memory_adapter import list_active_learnings
+
+        stored = {str(e.get("id", "")) for e in list_active_learnings(trw_dir)}
+        unaccounted_by_k[k] = [lid for lid in ids if lid not in stored]
+
+    return {
+        "baseline_ms": baseline_ms,
+        "baseline_payload": baseline_payload,
+        "one_record_ms": one_record_ms,
+        "one_record_pending_counts": one_record_pending_counts,
+        "measured": measured,
+        "bounds": bounds,
+        "payloads": payloads,
+        "pending_left_by_k": pending_left_by_k,
+        "unaccounted_by_k": unaccounted_by_k,
+    }
+
+
+@pytest.mark.timeout(600)
+def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Path, fake_store_router: dict) -> None:
+    """FIX130-11 correctness twin: exact ID/count accounting across K in {0, 5, 50}.
+
+    The wall-time bound itself (why the FR01 budget condition exists) is
+    asserted by the ``_budget`` twin below.
+    """
+    run = _run_pending_backlog_arms(tmp_path, fake_store_router)
+
+    assert "pending_learns_replayed" not in run["baseline_payload"], run["baseline_payload"]
+    assert all(count == 0 for count in run["one_record_pending_counts"]), run["one_record_pending_counts"]
+
+    for k in (5, 50):
+        payload = run["payloads"][k]
         inline = int(payload["replayed_inline"])
         background = int(payload["deferred_to_background"])
         # Exact accounting, not a tautology (FIX130-11): the two counts partition
@@ -371,29 +444,47 @@ def test_drain_wall_time_is_bounded_independent_of_pending_backlog(tmp_path: Pat
             assert inline < k, f"the {_BUDGET_MS} ms budget did not bite at K=50: {payload}"
             assert payload.get("budget_exhausted") is True, payload
 
-        _join_background()
-        assert learn_journal.pending_count(trw_dir) == 0, "records were lost by being deferred"
-
-        from trw_mcp.state.memory_adapter import list_active_learnings
-
-        stored = {str(e.get("id", "")) for e in list_active_learnings(trw_dir)}
-        unaccounted = [lid for lid in ids if lid not in stored]
-        assert not unaccounted, f"K={k} left ids unaccounted for: {unaccounted}"
-
-    # The property a count limit cannot deliver: 10x the backlog is not 10x the
-    # inline time. Allow one budget-plus-one-record of slack for measurement noise.
-    slack = _BUDGET_MS + one_record_ms
-    assert measured[50] <= measured[5] + slack, measured
+        assert run["pending_left_by_k"][k] == 0, "records were lost by being deferred"
+        assert not run["unaccounted_by_k"][k], f"K={k} left ids unaccounted for: {run['unaccounted_by_k'][k]}"
 
 
 @pytest.mark.timeout(600)
-def test_zero_budget_defers_all_fifty_and_still_consumes_them(tmp_path: Path) -> None:
+@requires_local_timing
+def test_drain_wall_time_is_bounded_independent_of_pending_backlog_budget(
+    tmp_path: Path, fake_store_router: dict
+) -> None:
+    """The bound holds at K in {0, 5, 50} and its spread does not grow with K.
+
+    REVERT CHECK: this test is why the FR01 budget condition exists. Remove the
+    elapsed-time break in ``state/learn_journal.drain_pending`` and the K=50 arm
+    replays all fifty records inline, blowing the bound by an order of magnitude.
+    """
+    run = _run_pending_backlog_arms(tmp_path, fake_store_router)
+    measured = run["measured"]
+    bounds = run["bounds"]
+
+    for k in (5, 50):
+        assert_budget(
+            f"drain_wall_time_k{k}",
+            measured[k],
+            bounds[k],
+            "ms",
+        )
+
+    # The property a count limit cannot deliver: 10x the backlog is not 10x the
+    # inline time. Allow one budget-plus-one-record of slack for measurement noise.
+    slack = _BUDGET_MS + run["one_record_ms"]
+    assert_budget("drain_wall_time_k50_vs_k5", measured[50], measured[5] + slack, "ms")
+
+
+@pytest.mark.timeout(600)
+def test_zero_budget_defers_all_fifty_and_still_consumes_them(tmp_path: Path, fake_store_router: dict) -> None:
     """FR04 negative arm: budget 0 at K=50 yields 0 inline / 50 background, all consumed."""
     from trw_mcp.state import learn_journal
     from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
     steps._DRAIN_THREAD = None
-    trw_dir = _fixture_trw_dir(tmp_path / "k50zero")
+    trw_dir = _fixture_trw_dir(tmp_path / "k50zero", fake_store_router)
     ids = _seed_pending(trw_dir, 50)
 
     elapsed_ms, maintenance = _run_drain(trw_dir, 0)
@@ -413,7 +504,7 @@ def test_zero_budget_defers_all_fifty_and_still_consumes_them(tmp_path: Path) ->
     assert elapsed_ms >= 0.0
 
 
-def test_zero_pending_drain_adds_no_io(tmp_path: Path) -> None:
+def test_zero_pending_drain_adds_no_io(tmp_path: Path, fake_store_router: dict) -> None:
     """NFR01: an empty pending directory costs no extra file or database I/O.
 
     The pending-record iterator is the only I/O the drain step performs before
@@ -422,12 +513,10 @@ def test_zero_pending_drain_adds_no_io(tmp_path: Path) -> None:
     """
     from trw_mcp.models.config import TRWConfig
     from trw_mcp.state import learn_journal
-    from trw_mcp.state.memory_pressure import take_writer_census
     from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
-    trw_dir = _fixture_trw_dir(tmp_path / "noio", rows=10)
+    trw_dir = _fixture_trw_dir(tmp_path / "noio", fake_store_router, rows=10)
     config = TRWConfig(embeddings_enabled=False, dedup_enabled=False, learn_journal_drain_budget_ms=_BUDGET_MS)
-    census = take_writer_census(trw_dir, threshold=2)
     maintenance: dict[str, Any] = {}
 
     scans: list[int] = []
@@ -450,8 +539,6 @@ def test_zero_pending_drain_adds_no_io(tmp_path: Path) -> None:
             trw_dir,
             config,
             maintenance,
-            census=census,
-            defer_memory_heavy=False,
         )
     finally:
         learn_journal.time.monotonic = real_monotonic  # type: ignore[assignment]
@@ -582,7 +669,7 @@ _MEASURED_SIZE_UNITS_PER_LEARNING = 876
 
 @pytest.mark.timeout(600)
 def test_trw_session_start_itself_drains_the_journal_and_reports_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_store_router: dict
 ) -> None:
     """FIX130-11: the bound is claimed for ``trw_session_start``, so drive THAT.
 
@@ -602,7 +689,7 @@ def test_trw_session_start_itself_drains_the_journal_and_reports_it(
     from trw_mcp.tools import _ceremony_maintenance_steps as steps
 
     steps._DRAIN_THREAD = None
-    trw_dir = _fixture_trw_dir(tmp_path / "wired", rows=50)
+    trw_dir = _fixture_trw_dir(tmp_path / "wired", fake_store_router, rows=50)
     ids = _seed_pending(trw_dir, 4)
     monkeypatch.setattr(paths_mod, "resolve_trw_dir", lambda *_a, **_kw: trw_dir)
     monkeypatch.setattr("trw_mcp.tools.ceremony.resolve_trw_dir", lambda *_a, **_kw: trw_dir, raising=False)

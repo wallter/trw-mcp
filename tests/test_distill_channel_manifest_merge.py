@@ -52,33 +52,36 @@ def test_invalid_source_does_not_mutate_target(tmp_path: Path) -> None:
     assert target.read_bytes() == before
 
 
-def test_corrupt_target_is_recovered_before_merge(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{invalid",
+        # An upgrade from a manifest written before RC-014: a custom entry plus the retired tier keys.
+        "format_version: manifest/v1\n"
+        "channels:\n"
+        "  - id: my-custom-channel\n"
+        "    client: codex\n"
+        "    surface: agents_md_segment\n"
+        "    telemetry_tag: my.custom\n"
+        "    tier_default: T2\n"
+        "    tier_min: T0\n",
+    ],
+    ids=["unparseable", "pre-rc014-manifest"],
+)
+def test_an_invalid_target_fails_loudly_and_is_never_replaced(tmp_path: Path, content: str) -> None:
+    """RC-014 review P0: recovery used to overwrite an invalid manifest with an empty one, deleting custom
+    entries on the documented update path. Now the merge raises and the file is byte-identical."""
     target = tmp_path / ".trw/channels/manifest.yaml"
     target.parent.mkdir(parents=True)
-    target.write_text("{invalid", encoding="utf-8")
+    target.write_text(content, encoding="utf-8")
+    before = target.read_bytes()
 
-    assert merge_distill_channel_manifest(tmp_path, _source(tmp_path / "source.yaml"), "test") == (1, 1)
-    assert [entry.id for entry in load(target).channels] == ["client-entry"]
-
-
-def test_corrupt_target_still_warns_and_emits_recovery_telemetry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Real corruption keeps the loud WARNING + manifest_recovered telemetry."""
-    monkeypatch.setenv("TRW_REPO_ROOT", str(tmp_path))
-    target = tmp_path / ".trw/channels/manifest.yaml"
-    target.parent.mkdir(parents=True)
-    target.write_text("{invalid", encoding="utf-8")
-
-    with structlog.testing.capture_logs() as logs:
+    with pytest.raises(ManifestValidationError, match="was left unchanged") as err:
         merge_distill_channel_manifest(tmp_path, _source(tmp_path / "source.yaml"), "test")
 
-    assert any(
-        entry.get("event") == "manifest_auto_recreated" and entry.get("log_level") == "warning" for entry in logs
-    )
-    telemetry_log = tmp_path / ".trw/telemetry/channel-events.jsonl"
-    assert telemetry_log.exists()
-    assert "manifest_recovered" in telemetry_log.read_text(encoding="utf-8")
+    assert target.read_bytes() == before
+    # The operator is told which keys and what to do (lead ruling: fail loudly, no migration code).
+    assert "tier_default and tier_min" in str(err.value) and "trw-mcp update-project" in str(err.value)
 
 
 def test_missing_target_is_created_without_warning_or_telemetry(

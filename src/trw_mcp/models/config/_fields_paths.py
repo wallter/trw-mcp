@@ -23,7 +23,6 @@ class _PathsFields:
     task_root: str = "docs"
     runs_root: str = ".trw/runs"
     trw_dir: str = ".trw"
-    worktree_dir: str = ".trees"
     learnings_dir: str = "learnings"
     entries_dir: str = "entries"
     receipts_dir: str = "receipts"
@@ -31,8 +30,9 @@ class _PathsFields:
     scripts_dir: str = "scripts"
     patterns_dir: str = "patterns"
     context_dir: str = "context"
-    scratch_dir: str = "scratch"
     events_file: str = "events.jsonl"
+    # worktree_dir and scratch_dir were removed under PRD-CORE-291 (slice 2):
+    # no production reader, only a test pinning the default.
     # checkpoints_file and test_map_filename were removed 2026-09-16 (PRD-QUAL-139-FR05): no
     # consumer under the corrected scan, no originating PRD, no test. Both keys are listed in
     # trw_mcp/data/config-retired-keys.json.
@@ -65,9 +65,10 @@ class _PathsFields:
         ),
     )
 
-    source_package_path: str = "trw-mcp/src"
-    source_package_name: str = "trw_mcp"
-    tests_relative_path: str = "trw-mcp/tests"
+    # source_package_path, source_package_name, and tests_relative_path were
+    # removed under PRD-CORE-291 (slice 2). The latter two were WRITTEN into a
+    # generated project's config.yaml by the --source-package/--test-path
+    # init-project flags (removed with them) but never read back by anything.
 
     # -- Platform & update channel --
 
@@ -127,11 +128,8 @@ class _PathsFields:
         ge=1,
         description="Time-to-live (hours) for entries in the persistent pin store before GC evicts them.",
     )
-    run_archive_hours: int = Field(
-        default=720,  # 30 days; reserved for future archive PRD
-        ge=1,
-        description="Age (hours) beyond which abandoned runs become eligible for archival (reserved for future PRD).",
-    )
+    # run_archive_hours removed under PRD-CORE-291 (slice 2): reserved for a
+    # future archive PRD that never materialized, no reader.
     cleanup_on_boot: bool = Field(
         default=True,
         description="When True, the MCP server runs the stale-pin + stale-run sweep on startup.",
@@ -158,17 +156,6 @@ class _PathsFields:
     )
 
     # -- User-space memory tier (PRD-CORE-185) --
-    # Machine-layer knobs for the machine-local user-space memory tier. The
-    # EFFECTIVE gate is presence of the user-scope store (installer-detected,
-    # FR09); ``user_tier_enabled`` is an installer-seeded machine-layer knob +
-    # emergency kill switch. Absent a user-scope store, behavior is project-only
-    # regardless of this value (NFR02). Typically set at the machine layer
-    # (``~/.trw/config.yaml``) so it applies box-wide via the FR04 cascade.
-
-    user_tier_enabled: bool = Field(
-        default=False,
-        description="Installer-seeded machine-layer knob / emergency kill switch for the user-space memory tier. Effective gate is presence of the user-scope store; absent that store behavior is project-only regardless of this value (PRD-CORE-185 NFR02).",
-    )
     recall_user_tier_cap: int = Field(
         default=5,
         ge=0,

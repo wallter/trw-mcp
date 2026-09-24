@@ -1,21 +1,21 @@
-"""Tests for merge_entries behavior."""
+"""Tests for merge_into_survivor behavior."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from trw_mcp.state.dedup import merge_entries
+from trw_mcp.state.dedup import merge_into_survivor
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
 class TestMergeEntries:
-    """Tests for the merge_entries() function.
+    """Tests for the merge_into_survivor() function.
 
     Uses make_merge_scenario from _factories to reduce per-test boilerplate.
     """
 
     def test_merge_updates_tags_as_union(self, tmp_path: Path) -> None:
-        """merge_entries unions the tag sets."""
+        """merge_into_survivor unions the tag sets."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
@@ -25,12 +25,12 @@ class TestMergeEntries:
             new_tags=["testing", "fixtures"],
             new_evidence=["file2.py"],
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
         assert set(updated["tags"]) == {"python", "testing", "fixtures"}
 
     def test_merge_updates_evidence_as_union(self, tmp_path: Path) -> None:
-        """merge_entries unions evidence lists."""
+        """merge_into_survivor unions evidence lists."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
@@ -40,12 +40,12 @@ class TestMergeEntries:
             new_impact=0.4,
             new_detail="shorter",
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
         assert set(updated["evidence"]) == {"file_a.py", "file_b.py"}
 
     def test_merge_takes_max_impact(self, tmp_path: Path) -> None:
-        """merge_entries uses max(existing.impact, new.impact)."""
+        """merge_into_survivor uses max(existing.impact, new.impact)."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
@@ -53,12 +53,12 @@ class TestMergeEntries:
             existing_impact=0.5,
             new_impact=0.8,
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
         assert float(updated["impact"]) == 0.8
 
     def test_merge_increments_recurrence(self, tmp_path: Path) -> None:
-        """merge_entries increments recurrence count."""
+        """merge_into_survivor increments recurrence count."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
@@ -66,12 +66,12 @@ class TestMergeEntries:
             existing_recurrence=2,
             new_impact=0.5,
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
         assert int(updated["recurrence"]) == 3
 
     def test_merge_adds_merged_from(self, tmp_path: Path) -> None:
-        """merge_entries appends new entry ID to merged_from."""
+        """merge_into_survivor appends new entry ID to merged_from."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
@@ -79,12 +79,12 @@ class TestMergeEntries:
             new_id="L-newmerge05",
             new_impact=0.5,
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
         assert "L-newmerge05" in updated["merged_from"]
 
     def test_merge_appends_longer_detail(self, tmp_path: Path) -> None:
-        """merge_entries appends detail when new detail is longer than existing."""
+        """merge_into_survivor appends detail when new detail is longer than existing."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
@@ -93,24 +93,24 @@ class TestMergeEntries:
             new_detail="this is a much longer and more informative detail that should be appended",
             new_impact=0.5,
         )
-        merge_entries(path, new_data, reader, writer)
+        merge_into_survivor(path, new_data, reader, writer)
         updated = reader.read_yaml(path)
         assert "this is a much longer" in str(updated["detail"])
 
     def test_merge_returns_path(self, tmp_path: Path) -> None:
-        """merge_entries returns the path of the updated entry."""
+        """merge_into_survivor returns the path of the updated entry."""
         from tests._factories import make_merge_scenario
 
         path, new_data, reader, writer = make_merge_scenario(
             tmp_path,
             new_impact=0.5,
         )
-        returned_path = merge_entries(path, new_data, reader, writer)
+        returned_path = merge_into_survivor(path, new_data, reader, writer)
         assert returned_path == path
 
 
 class TestMergeEntriesEdgeCases:
-    """Additional edge cases for merge_entries coverage."""
+    """Additional edge cases for merge_into_survivor coverage."""
 
     def test_merge_empty_existing_detail_uses_new_directly(
         self, tmp_path: Path, reader: FileStateReader, writer: FileStateWriter
@@ -146,7 +146,7 @@ class TestMergeEntriesEdgeCases:
             "impact": 0.5,
             "merged_from": [],
         }
-        merge_entries(existing_path, new_data, reader, writer)
+        merge_into_survivor(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
         # When existing detail is empty, new detail replaces it directly (no \n\n separator)
@@ -187,7 +187,7 @@ class TestMergeEntriesEdgeCases:
             "impact": 0.5,
             "merged_from": [],
         }
-        merge_entries(existing_path, new_data, reader, writer)
+        merge_into_survivor(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
         detail = str(updated["detail"])
@@ -228,7 +228,7 @@ class TestMergeEntriesEdgeCases:
             "impact": 0.5,
             "merged_from": [],
         }
-        merge_entries(existing_path, new_data, reader, writer)
+        merge_into_survivor(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
         # L-already-there should appear only once
@@ -268,7 +268,7 @@ class TestMergeEntriesEdgeCases:
             "impact": 0.5,
             "merged_from": [],
         }
-        merge_entries(existing_path, new_data, reader, writer)
+        merge_into_survivor(existing_path, new_data, reader, writer)
 
         updated = reader.read_yaml(existing_path)
         # Empty id should not be added

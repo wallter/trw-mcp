@@ -1,10 +1,23 @@
-"""Tests for trw_mcp.telemetry.anonymizer — PRD-CORE-031."""
+"""Tests for trw_mcp.telemetry.anonymizer — PRD-CORE-031, hardened under R2-014.
+
+``redact_secrets`` is the single redaction chokepoint used by telemetry,
+OTEL, the LLM client, feedback submissions, and trw_assess. These tests
+cover its own coverage surface (credentials, PII) plus idempotency and
+``redact_metadata``; wiring proof that each caller actually routes through
+it lives in ``test_telemetry_pipeline_core.py`` (enqueue), the otel tests,
+and ``test_assess_tool.py``/``test_feedback_redact.py``.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_paths, strip_pii
+from trw_mcp.telemetry.anonymizer import (
+    anonymize_installation_id,
+    redact_metadata,
+    redact_paths,
+    redact_secrets,
+)
 
 # ---------------------------------------------------------------------------
 # anonymize_installation_id
@@ -41,7 +54,7 @@ class TestAnonymizeInstallationId:
 
     def test_non_reversible_unicode(self) -> None:
         """Unicode input is handled correctly."""
-        result = anonymize_installation_id("id-\u00e9\u00e0\u00fc")
+        result = anonymize_installation_id("id-éàü")
         assert len(result) == 16
 
 
@@ -78,58 +91,123 @@ class TestRedactPaths:
 
 
 # ---------------------------------------------------------------------------
-# strip_pii
+# redact_secrets — the single redaction chokepoint (R2-014)
 # ---------------------------------------------------------------------------
 
 
-class TestStripPii:
+class TestRedactSecretsPii:
     def test_email_replaced(self) -> None:
-        """Email addresses are replaced with <email>."""
-        result = strip_pii("Contact us at support@example.com for help.")
+        result = redact_secrets("Contact us at support@example.com for help.")
         assert "support@example.com" not in result
         assert "<email>" in result
 
     def test_multiple_emails_replaced(self) -> None:
-        """All email addresses in the text are replaced."""
-        result = strip_pii("a@b.com and c@d.org")
+        result = redact_secrets("a@b.com and c@d.org")
         assert "a@b.com" not in result
         assert "c@d.org" not in result
-        assert result.count("<email>") == 2
-
-    def test_api_key_sk_prefix(self) -> None:
-        """sk- prefixed API keys are redacted."""
-        result = strip_pii("key=sk-abcdefghijklmnopqrstuvwxyz1234")
-        assert "sk-abcdefghijklmnopqrstuvwxyz1234" not in result
-        assert "<api_key>" in result
-
-    def test_api_key_token_prefix(self) -> None:
-        """token_ prefixed secrets are redacted."""
-        result = strip_pii("auth token_ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        assert "token_ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in result
-        assert "<api_key>" in result
 
     def test_non_pii_content_preserved(self) -> None:
-        """Regular text without PII is left unchanged."""
         text = "Run trw_session_start() to load prior learnings."
-        result = strip_pii(text)
-        assert result == text
-
-    def test_combined_email_and_key(self) -> None:
-        """Both email and API key in same string are both redacted."""
-        text = "user@example.com used key sk-12345678901234567890"
-        result = strip_pii(text)
-        assert "user@example.com" not in result
-        assert "sk-12345678901234567890" not in result
-        assert "<email>" in result
-        assert "<api_key>" in result
+        assert redact_secrets(text) == text
 
     def test_empty_string(self) -> None:
-        """Empty string is handled without error."""
-        result = strip_pii("")
-        assert result == ""
+        assert redact_secrets("") == ""
 
-    def test_short_key_not_redacted(self) -> None:
-        """Secrets shorter than 20 chars after prefix are NOT redacted."""
-        result = strip_pii("sk-short12345")
-        assert "<api_key>" not in result
-        assert "sk-short12345" in result
+
+class TestRedactSecretsCredentials:
+    """Coverage the weaker per-module redactors lacked before R2-014."""
+
+    def test_jwt_redacted(self) -> None:
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I3PlFUP0THsR8U"
+        result = redact_secrets(f"token was {jwt} in the request")
+        assert jwt not in result
+        assert "<REDACTED:jwt>" in result
+
+    def test_pem_private_key_block_redacted(self) -> None:
+        pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----"
+        result = redact_secrets(f"here is my key:\n{pem}\nthanks")
+        assert "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC" not in result
+        assert "<REDACTED:private_key>" in result
+
+    def test_authorization_header_bearer_redacted(self) -> None:
+        result = redact_secrets("curl -H 'Authorization: Bearer sk-abc123def456ghi789jkl'")
+        assert "sk-abc123def456ghi789jkl" not in result
+        assert "Bearer <REDACTED:authorization>" in result
+
+    def test_bare_bearer_without_header_redacted(self) -> None:
+        token = "abcdefghijklmnopqrstuvwxyz0123"
+        result = redact_secrets(f"Bearer {token}")
+        assert token not in result
+
+    def test_bearer_prose_not_redacted(self) -> None:
+        prose = "Token expiration handling failed; Bearer authentication required"
+        assert redact_secrets(prose) == prose
+
+    def test_api_key_sk_prefix_redacted(self) -> None:
+        result = redact_secrets("key=sk-abcdefghijklmnopqrstuvwxyz1234")
+        assert "sk-abcdefghijklmnopqrstuvwxyz1234" not in result
+
+    def test_env_var_token_assignment_redacted(self) -> None:
+        result = redact_secrets("auth token_ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        assert "token_ABCDEFGHIJKLMNOPQRSTUVWXYZ" not in result
+
+    def test_json_secret_value_redacted(self) -> None:
+        result = redact_secrets('{"password": "hunter2hunter2"}')
+        assert "hunter2hunter2" not in result
+        assert '"password"' in result
+
+    def test_connection_string_credentials_redacted(self) -> None:
+        result = redact_secrets("postgres://user:sup3rSecr3t@db.example.com/app")
+        assert "sup3rSecr3t" not in result
+        assert "postgres://<REDACTED:credentials>@db.example.com/app" == result
+
+    def test_idempotent(self) -> None:
+        text = (
+            "Authorization: Bearer sk-abc123def456ghi789jkl and postgres://user:pw12345678@host/db and user@example.com"
+        )
+        once = redact_secrets(text)
+        twice = redact_secrets(once)
+        assert once == twice
+
+    def test_home_dir_replaced(self, monkeypatch: object) -> None:
+        import os
+
+        result = redact_secrets(f"path is {os.path.expanduser('~')}/project/file.py")
+        assert "$HOME" in result
+
+
+class TestRedactSecretsJsonHeaders:
+    """Cross-vendor R2-014 P1: credential headers serialized as JSON are redacted by value."""
+
+    def test_header_values_are_redacted(self) -> None:
+        for key, value in (
+            ("Authorization", "Basic dXNlcjpwYXNzd29yZA=="),
+            ("authorization", "Basic c2VjcmV0"),
+            ("Proxy-Authorization", "Basic cHJveHk6cGFzcw=="),
+            ("Cookie", "sessionid=abc123"),
+            ("Set-Cookie", "sid=deadbeef; HttpOnly"),
+        ):
+            out = redact_secrets(f'{{"{key}": "{value}"}}')
+            assert value not in out, key
+            assert f'"{key}"' in out, key
+
+    def test_lookalike_keys_are_kept(self) -> None:
+        assert redact_secrets('{"author": "alice", "authorized": "yes"}') == '{"author": "alice", "authorized": "yes"}'
+
+
+class TestRedactMetadata:
+    def test_none_passthrough(self) -> None:
+        assert redact_metadata(None) is None
+
+    def test_empty_dict_passthrough(self) -> None:
+        assert redact_metadata({}) == {}
+
+    def test_value_redacted(self) -> None:
+        result = redact_metadata({"contact": "user@example.com"})
+        assert result is not None
+        assert "user@example.com" not in list(result.values())[0]
+
+    def test_key_redacted(self) -> None:
+        result = redact_metadata({"sk-abc123def456ghi789jkl": "x"})
+        assert result is not None
+        assert "sk-abc123def456ghi789jkl" not in "".join(result.keys())

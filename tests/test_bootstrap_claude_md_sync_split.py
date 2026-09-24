@@ -273,13 +273,12 @@ class TestClaudeMdSyncTimeoutFix:
 
 
 class TestSyncRunsWithoutApiKey:
-    """The CLAUDE.md carrier decision is pure file I/O and must not need auth.
+    """The CLAUDE.md sync is pure file I/O and must not need auth.
 
     Regression guard for the defect where ``_run_claude_md_sync`` returned early
     whenever ``ANTHROPIC_API_KEY`` was unset. A Claude Code *subscription* user
-    has no such key, so on that (normal) path ``update-project`` ran only the
-    carrier-unaware writer and silently reverted CLAUDE.md externalization on
-    every run, reporting success with a buried warning.
+    has no such key, so on that (normal) path ``update-project`` skipped the
+    sync entirely, reporting success with a buried warning.
 
     Nothing under ``state/claude_md/`` calls an LLM -- ``dispatch_for_profile``
     does ``del reader, llm`` and ``_build_sync_result`` hardcodes
@@ -287,20 +286,25 @@ class TestSyncRunsWithoutApiKey:
     unrelated credential.
     """
 
-    def test_sync_externalizes_claude_md_when_no_api_key_present(
+    def test_sync_runs_when_no_api_key_present(
         self,
         fake_git_repo: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """With no API key, the sync still runs and externalizes the TRW block."""
+        """With no API key, the sync still runs: a legacy sidecar import is inlined."""
         from trw_mcp.bootstrap._update_project import _run_claude_md_sync
 
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
         init_project(fake_git_repo)
         claude_md = fake_git_repo / "CLAUDE.md"
-        # init_project leaves an inline block; that is the pre-migration state.
-        assert "<!-- trw:start -->" in claude_md.read_text(encoding="utf-8")
+        # PRD-QUAL-143-FR01: a legacy install imports a sidecar; only a real sync
+        # replaces that import with the inline block and deletes the sidecar.
+        claude_md.write_text(
+            "# Project\n\n<!-- trw:start -->\n@.trw/INSTRUCTIONS.md\n<!-- trw:end -->\n", encoding="utf-8"
+        )
+        sidecar = fake_git_repo / ".trw" / "INSTRUCTIONS.md"
+        sidecar.write_text("<!-- TRW AUTO-GENERATED \u2014 do not edit. -->\nstale sidecar\n", encoding="utf-8")
 
         result: dict[str, list[str]] = {
             "updated": [],
@@ -313,16 +317,9 @@ class TestSyncRunsWithoutApiKey:
         _run_claude_md_sync(fake_git_repo, result, timeout=30)
 
         content = claude_md.read_text(encoding="utf-8")
-        import_lines = [ln for ln in content.splitlines() if ln.strip().startswith("@")]
-
-        assert import_lines, (
-            "sync must externalize the TRW block to an @-import when no API key is "
-            f"set; CLAUDE.md still carries no import directive. warnings={result['warnings']}"
-        )
-        assert import_lines[0].strip() == "@.trw/INSTRUCTIONS.md"
-        sidecar = fake_git_repo / ".trw" / "INSTRUCTIONS.md"
-        assert sidecar.exists(), "the @-import target must exist (no dangling import)"
-        assert sidecar.read_text(encoding="utf-8").strip(), "sidecar must not be empty"
+        assert "@.trw/INSTRUCTIONS.md" not in content, f"sync did not run; warnings={result['warnings']}"
+        assert "trw_session_start" in content
+        assert not sidecar.exists()
 
     def test_no_api_key_does_not_emit_a_skip_warning(
         self,

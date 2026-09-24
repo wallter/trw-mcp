@@ -11,7 +11,7 @@ class TestTierCeremonyScore:
 
     def _make_events(self, event_types: list[str]) -> list[dict[str, object]]:
         """Helper to create minimal event dicts."""
-        return [{"event": "tool_invocation", "tool_name": t} for t in event_types]
+        return [{"event": "tool_call", "tool_name": t} for t in event_types]
 
     def test_minimal_recall_and_deliver_high_score(self) -> None:
         """FR03: MINIMAL with trw_recall + trw_deliver -> score >= 80."""

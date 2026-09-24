@@ -206,97 +206,6 @@ class TestLegacyByteIdentity:
 
 
 @pytest.mark.unit
-class TestAgentAndWorkflowSpans:
-    def test_invoke_agent_span(self) -> None:
-        """FR04: emit_agent_span -> gen_ai.invoke_agent + agent attrs."""
-        from trw_mcp.state.otel_wrapper import emit_agent_span
-
-        tracer = _run_with_recording_tracer(
-            emit_agent_span,
-            {
-                "agent_id": "asst_1",
-                "agent_name": "Math Tutor",
-                "agent_version": "1.0.0",
-                "conversation_id": "conv_9",
-            },
-            config=_cfg(),
-        )
-        name, span = tracer.spans[0]
-        assert name == "gen_ai.invoke_agent"
-        assert set(span.attributes) == {
-            "gen_ai.operation.name",
-            "gen_ai.agent.id",
-            "gen_ai.agent.name",
-            "gen_ai.agent.version",
-            "gen_ai.conversation.id",
-        }
-        assert span.attributes["gen_ai.operation.name"] == "invoke_agent"
-
-    def test_invoke_agent_omits_empty_optional(self) -> None:
-        """FR04 edge: missing version/conversation are omitted, not emitted empty."""
-        from trw_mcp.state.otel_wrapper import emit_agent_span
-
-        tracer = _run_with_recording_tracer(
-            emit_agent_span,
-            {"agent_id": "asst_1", "agent_name": "Solo", "agent_version": ""},
-            config=_cfg(),
-        )
-        _, span = tracer.spans[0]
-        assert "gen_ai.agent.version" not in span.attributes
-        assert "gen_ai.conversation.id" not in span.attributes
-
-    def test_invoke_workflow_span(self) -> None:
-        """FR05: emit_workflow_span -> gen_ai.invoke_workflow."""
-        from trw_mcp.state.otel_wrapper import emit_workflow_span
-
-        tracer = _run_with_recording_tracer(
-            emit_workflow_span,
-            {"workflow_name": "rca_pipeline"},
-            config=_cfg(),
-        )
-        name, span = tracer.spans[0]
-        assert name == "gen_ai.invoke_workflow"
-        assert span.attributes["gen_ai.operation.name"] == "invoke_workflow"
-        assert span.attributes["gen_ai.workflow.name"] == "rca_pipeline"
-
-    @pytest.mark.parametrize(
-        ("emitter_name", "attributes"),
-        [
-            ("emit_agent_span", {"agent_id": "asst_1"}),
-            ("emit_workflow_span", {"workflow_name": "rca_pipeline"}),
-        ],
-    )
-    def test_invocation_error_sets_type_and_status(
-        self,
-        emitter_name: str,
-        attributes: dict[str, object],
-    ) -> None:
-        """FR06: both invocation span kinds record the error and ERROR status."""
-        from opentelemetry.trace import StatusCode
-
-        from trw_mcp.state import otel_wrapper
-
-        emitter = getattr(otel_wrapper, emitter_name)
-        tracer = _run_with_recording_tracer(
-            emitter,
-            attributes,
-            config=_cfg(),
-            error_type="TimeoutError",
-        )
-        _, span = tracer.spans[0]
-        assert span.attributes["error.type"] == "TimeoutError"
-        assert span.status == StatusCode.ERROR
-
-    def test_agent_span_noop_in_legacy_mode(self) -> None:
-        """Agent/workflow spans only emit in gen_ai mode."""
-        from trw_mcp.state.otel_wrapper import emit_agent_span, emit_workflow_span
-
-        for fn in (emit_agent_span, emit_workflow_span):
-            tracer = _run_with_recording_tracer(fn, {"agent_id": "a"}, config=_cfg(otel_semconv="legacy"))
-            assert tracer.spans == []
-
-
-@pytest.mark.unit
 class TestMessageAnonymization:
     def test_message_attrs_optin_and_anonymized(self) -> None:
         """FR07/NFR06: opt-in messages are anonymized before egress."""
@@ -316,7 +225,7 @@ class TestMessageAnonymization:
         in_val = str(span.attributes["gen_ai.input.messages"])
         out_val = str(span.attributes["gen_ai.output.messages"])
         assert "<email>" in in_val
-        assert "<api_key>" in in_val
+        assert "<REDACTED:api_key>" in in_val
         assert "a@b.com" not in in_val
         assert "sk-AAAAAAAAAAAAAAAAAAAAAAAA" not in in_val
         assert "<email>" in out_val
@@ -396,18 +305,12 @@ class TestFailOpenAndUnknown:
         assert len(warnings) == 1
 
     def test_noop_when_otel_disabled(self) -> None:
-        """No span when otel_enabled is False (all emitters)."""
-        from trw_mcp.state.otel_wrapper import (
-            emit_agent_span,
-            emit_tool_span,
-            emit_workflow_span,
-        )
+        """No span when otel_enabled is False."""
+        from trw_mcp.state.otel_wrapper import emit_tool_span
 
         cfg = _cfg(otel_enabled=False)
         with patch("trw_mcp.models.config.get_config", return_value=cfg):
             emit_tool_span("t", 1.0, {"agent_id": "a"})
-            emit_agent_span({"agent_id": "a"})
-            emit_workflow_span({"workflow_name": "w"})
 
     def test_fail_open_on_missing_otel(self) -> None:
         """NFR04: missing opentelemetry import is swallowed, no raise."""

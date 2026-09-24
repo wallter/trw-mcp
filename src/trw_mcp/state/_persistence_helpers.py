@@ -39,7 +39,7 @@ _suppress_internal_events: contextvars.ContextVar[bool] = contextvars.ContextVar
 )
 
 # Internal event types that are suppressed when _suppress_internal_events is set.
-# User-facing tool events (tool_invocation, session_start, checkpoint, etc.) are
+# User-facing tool events (tool_call, session_start, checkpoint, etc.) are
 # NOT in this list and will never be suppressed.
 INTERNAL_EVENT_TYPES: frozenset[str] = frozenset(
     {

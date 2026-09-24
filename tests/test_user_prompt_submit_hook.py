@@ -304,11 +304,11 @@ def test_phase_resolves_from_owned_run_not_recency(hook_dir: Path, tmp_path: Pat
         pytest.param(_ROOT.parent / ".claude" / "hooks", id="mirror"),
     ],
 )
-def test_unpinned_session_keeps_the_recency_fallback(hook_dir: Path, tmp_path: Path) -> None:
-    """FR11 anti-false-negative: with no pin, behaviour is exactly today's.
+def test_unpinned_session_does_not_adopt_the_newest_run(hook_dir: Path, tmp_path: Path) -> None:
+    """R2-009: an unpinned session gets "none", not whichever run sorted newest.
 
-    Hardening ownership must not silently disable the phase ladder for a session
-    that genuinely owns no run — it falls back to newest-wins, as before.
+    The newest run here is a foreign one that has delivered. Adopting it would
+    report THIS session as "done" on the strength of another instance's work.
     """
     root, _own, _foreign = build_project(
         tmp_path,
@@ -325,7 +325,8 @@ def test_unpinned_session_keeps_the_recency_fallback(hook_dir: Path, tmp_path: P
     )
 
     assert result.returncode == 0, result.stderr
-    assert _emitted_phase(root) == "done", "the recency fallback was dropped"
+    assert _emitted_phase(root) == "none", "an unpinned session adopted the newest run's phase"
+    assert "TRW [DONE]" not in result.stdout
 
 
 def test_phase_ladder_has_exactly_one_implementation() -> None:

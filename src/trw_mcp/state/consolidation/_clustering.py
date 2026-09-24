@@ -14,10 +14,10 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from trw_memory.lifecycle.consolidation import complete_linkage_cluster
 from trw_memory.lifecycle.protection import is_removal_exempt
+from trw_memory.retrieval.dense import cosine_similarity
 
 from trw_mcp.models.typed_dicts import LearningEntryDict
 from trw_mcp.state._helpers import iter_yaml_entry_files
-from trw_mcp.state.dedup import cosine_similarity
 
 if TYPE_CHECKING:
     from trw_mcp.state.persistence import FileStateReader
@@ -72,7 +72,7 @@ def _load_active_entries(
         from trw_mcp.state.memory_adapter import list_active_learnings
 
         trw_dir = entries_dir.parent.parent
-        all_active = list_active_learnings(trw_dir, limit=max_entries)
+        all_active = list_active_learnings(trw_dir, limit=max_entries, purpose="maintenance")
         for data in all_active:
             if len(entries) >= max_entries:
                 break

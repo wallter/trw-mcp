@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from trw_mcp.bootstrap._client_skills import render_skill_md
+
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
+_RENDERED_CLIENTS = ("codex", "copilot", "opencode")
 INIT_SKILLS = (
     "skills/trw-sprint-init/SKILL.md",
     "codex/skills/trw-sprint-init/SKILL.md",
@@ -17,9 +20,25 @@ FINISH_SKILLS = (
 )
 
 
+def _read(relative: str) -> str:
+    """Read *relative*, rendering codex/copilot variants from the canonical skill.
+
+    codex/copilot/opencode no longer ship SKILL.md forks (PRD-CORE-291-FR04);
+    ``render_skill_md`` only reduces frontmatter keys, so the body text these
+    assertions check is identical to the canonical source. ``copilot/plugin``
+    is a separate hand-authored package and is read as-is.
+    """
+    parts = relative.split("/")
+    if len(parts) == 4 and parts[0] in _RENDERED_CLIENTS and parts[1] == "skills" and parts[3] == "SKILL.md":
+        client, _, skill_name, _ = parts
+        canonical = (DATA / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+        return render_skill_md(canonical, client)
+    return (DATA / relative).read_text(encoding="utf-8")
+
+
 def test_sprint_init_keeps_parallelism_optional_and_portable() -> None:
     for relative in INIT_SKILLS:
-        content = (DATA / relative).read_text(encoding="utf-8")
+        content = _read(relative)
         assert "single-session sequential plan is always valid" in content, relative
         assert "active harness and project policy allow delegation" in content, relative
         assert "Do not launch helpers automatically" in content, relative
@@ -35,7 +54,7 @@ def test_sprint_init_keeps_parallelism_optional_and_portable() -> None:
 
 def test_sprint_init_does_not_infer_completion_from_identifier_counts() -> None:
     for relative in INIT_SKILLS:
-        content = (DATA / relative).read_text(encoding="utf-8")
+        content = _read(relative)
         assert "identifier existence is not proof of completion" in content, relative
         assert ">80% of identifiers" not in content, relative
         assert "coverage_threshold: null" in content, relative
@@ -53,7 +72,7 @@ def test_cursor_sprint_init_is_a_thin_contract_adapter() -> None:
 
 def test_sprint_finish_never_bypasses_prd_lifecycle() -> None:
     for relative in FINISH_SKILLS:
-        content = (DATA / relative).read_text(encoding="utf-8")
+        content = _read(relative)
         description = content.split("---", 2)[1]
         assert "updates PRD statuses" not in description, relative
         assert "validates PRD lifecycle" in description, relative
@@ -66,7 +85,7 @@ def test_sprint_finish_never_bypasses_prd_lifecycle() -> None:
 
 def test_sprint_finish_uses_observed_gates_and_safe_archive() -> None:
     for relative in FINISH_SKILLS:
-        content = (DATA / relative).read_text(encoding="utf-8")
+        content = _read(relative)
         for field in ("tests_passed", "test_count", "failure_count", "static_checks_clean", "scope"):
             assert field in content, (relative, field)
         assert "do not delete ambiguous files" in content, relative

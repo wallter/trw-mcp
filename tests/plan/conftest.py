@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from tests._formation_test_support import open_slot
+
 
 @dataclass
 class Scene:
@@ -48,8 +50,8 @@ def scene(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Scene:
         {
             "formation_id": "plan-scene",
             "members": [
-                {"member_id": "alpha", "client": "claude-code", "owned_paths": ["src/a.py"], "open_join": True},
-                {"member_id": "beta", "client": "codex", "owned_paths": ["src/b/**"], "open_join": True},
+                open_slot("alpha", "claude-code", owned_paths=["src/a.py"]),
+                open_slot("beta", owned_paths=["src/b/**"]),
             ],
         },
         trw_dir=trw,

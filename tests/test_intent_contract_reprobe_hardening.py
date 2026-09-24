@@ -235,6 +235,40 @@ def test_n8_hook_env_kill_switch_cannot_disarm_an_enrolled_control(tmp_path: Pat
 
 @pytest_skip_no_sh
 @pytest.mark.parametrize("hook", [_PRE_HOOK, _POST_HOOK])
+def test_hooks_enabled_false_leaves_an_enrolled_control_blocking(tmp_path: Path, hook: str) -> None:
+    """Lead ruling 2026-09-23: the intent guards are security enforcement, not ablation surface.
+
+    ``hooks_enabled: false`` is the one switch that silences every hook, and it
+    reaches the shell only as TRWConfig's published ``.trw/runtime/hook-flags``.
+    The guards must keep blocking under it. The unenrolled fixtures elsewhere
+    pass vacuously, so this one is enrolled, and a sibling hook proves the switch
+    was really off.
+    """
+    from trw_mcp.models.config import TRWConfig
+    from trw_mcp.state._hook_flags import write_hook_flags
+
+    project = (
+        _stale_hook_project(tmp_path, f"flags-{hook}")
+        if hook == _PRE_HOOK
+        else _hook_project(tmp_path, f"flags-{hook}")
+    )
+    assert _run_hook(project, hook).returncode == 2, "the baseline must actually enforce"
+
+    (project / ".trw" / "config.yaml").write_text("hooks_enabled: false\n", encoding="utf-8")
+    write_hook_flags(project / ".trw", TRWConfig(hooks_enabled=False))
+    lib = project / ".claude" / "hooks" / "lib-trw.sh"
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+    probe = subprocess.run(
+        ["sh", "-c", f'. "{lib}"; echo alive'], cwd=project, env=env, capture_output=True, text=True, check=False
+    )
+    assert "alive" not in probe.stdout, "non-vacuity: the published switch must silence ordinary hooks"
+
+    result = _run_hook(project, hook)
+    assert result.returncode == 2, f"hooks_enabled=false disarmed an enrolled control point\n{result.stderr}"
+
+
+@pytest_skip_no_sh
+@pytest.mark.parametrize("hook", [_PRE_HOOK, _POST_HOOK])
 def test_n8_process_environment_kill_switch_cannot_disarm_an_enrolled_control(tmp_path: Path, hook: str) -> None:
     """The same switch arriving as an exported env var rather than via hook-env.sh."""
     project = (

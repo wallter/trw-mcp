@@ -37,8 +37,7 @@ sys.modules[_SPEC.name] = _FRAGMENTS
 _SPEC.loader.exec_module(_FRAGMENTS)
 
 BUNDLED_AGENTS_DIR = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "agents"
-FRAMEWORK_SOURCE = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "framework.source.md"
-FRAMEWORK_REFERENCE = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "framework-reference.md"
+FRAMEWORK_SOURCE = REPO_ROOT / "trw-mcp" / "src" / "trw_mcp" / "data" / "framework.md"
 
 
 def _has_allowed_trw_tool(frontmatter: dict[str, Any]) -> bool:
@@ -65,7 +64,6 @@ def test_fragment_source_exists_and_nonempty() -> None:
 def test_framework_distinguishes_generic_and_trw_retry_budgets() -> None:
     """The canon must resolve attempt/retry ambiguity without weakening helpers."""
     source = FRAMEWORK_SOURCE.read_text(encoding="utf-8")
-    reference = FRAMEWORK_REFERENCE.read_text(encoding="utf-8")
     required = (
         "non-TRW operations",
         "three total attempts",
@@ -74,7 +72,6 @@ def test_framework_distinguishes_generic_and_trw_retry_budgets() -> None:
     )
     for phrase in required:
         assert phrase in source
-        assert phrase in reference
 
 
 def test_every_bundled_agent_carries_the_block() -> None:

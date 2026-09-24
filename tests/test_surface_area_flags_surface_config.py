@@ -49,14 +49,16 @@ def test_prd_core_218_nfr04() -> None:
     )
     assert set(census) == set(SURFACE_REDUCTION_TARGETS) == {"tools", "skills", "config_fields"}
 
-    # Every metric currently MISSES its target (the honest state of the world).
+    # Tools and skills still MISS their targets (the honest state of the world).
+    # config_fields reached its target in PRD-CORE-291 (48 unread fields deleted) and
+    # may sit either side of it as lanes land, so it is asserted met-or-covered only.
     assert census["tools"].current == tool_count > SURFACE_REDUCTION_TARGETS["tools"]
     assert census["skills"].current == skill_count > SURFACE_REDUCTION_TARGETS["skills"]
-    assert census["config_fields"].current == config_field_count > SURFACE_REDUCTION_TARGETS["config_fields"]
+    assert census["config_fields"].current == config_field_count
 
     for metric, status in census.items():
         # No silent pass: a missed metric is "honest" only with an active exception.
-        assert status.met is False, metric
+        assert status.met is (status.current <= status.target), metric
         assert status.exception_active is True, metric
         assert status.reported_honestly is True, metric
         # A distinct, complete exception record exists per miss.
@@ -80,4 +82,5 @@ def test_prd_core_218_nfr04() -> None:
         now=far_future,
     )
     assert all(s.exception_active is False for s in expired.values())
-    assert all(s.reported_honestly is False for s in expired.values())
+    assert all(s.reported_honestly is s.met for s in expired.values())
+    assert expired["tools"].reported_honestly is False and expired["skills"].reported_honestly is False

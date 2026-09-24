@@ -10,18 +10,41 @@ test that asserted the argument, or the result, would have passed throughout.
 from __future__ import annotations
 
 import ast
-import shutil
 from pathlib import Path
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.state._constants import LOCAL_CLI_SOURCE_IDENTITY, RECONCILE_PENDING_TAG
 
 
-def _read_row(trw_dir: Path, learning_id: str) -> object:
-    from trw_mcp.state.memory_adapter import get_backend
+@pytest.fixture
+def trw_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: MemoryDaemon) -> Path:
+    """A migrated checkout pinned to the shared session daemon.
 
-    return get_backend(trw_dir).get(learning_id, namespace="default")
+    PRD-CORE-280 slice e1: built directly (not via ``daemon_checkout``), so
+    pinned via ``attach_checkout`` per the fixture contract's "test that
+    builds its own .trw" note.
+    """
+    d = tmp_path / ".trw"
+    (d / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+    attach_checkout(d, memory_daemon)
+    from trw_mcp.models.config import reload_config
+
+    reload_config()
+    return d
+
+
+def _read_row(trw_dir: Path, learning_id: str) -> object:
+    # PRD-CORE-280 slice e1: read through the checkout's selected store
+    # (project namespace, then user:local) rather than the pre-daemon
+    # ``memory_adapter.get_backend`` — the production write/reconcile paths
+    # under test here already route through ``selected_store``.
+    from trw_mcp.state._store_selection import selected_store
+
+    store, _namespace = selected_store(trw_dir)
+    return store.get(learning_id)
 
 
 def _write_offline(trw_dir: Path, summary: str, detail: str, tags: list[str] | None = None) -> str:
@@ -48,14 +71,13 @@ def _write_online(trw_dir: Path, summary: str, detail: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_local_write_is_distinguishable_from_mcp_write(tmp_path: Path) -> None:
+def test_local_write_is_distinguishable_from_mcp_write(trw_dir: Path) -> None:
     """FR04 acceptance: the two write paths produce rows that differ.
 
     Fails before the change: ``source_identity`` read back as ``""`` and the
     reserved tag was never applied, so the offline row was byte-indistinguishable
     from the MCP-path row.
     """
-    trw_dir = tmp_path / ".trw"
     offline_id = _write_offline(trw_dir, "Offline write marker probe", "Written through the local CLI path.")
     online_id = _write_online(trw_dir, "MCP write marker probe", "Written through the trw_learn tool path.")
 
@@ -70,9 +92,8 @@ def test_local_write_is_distinguishable_from_mcp_write(tmp_path: Path) -> None:
     assert RECONCILE_PENDING_TAG not in online.tags
 
 
-def test_operator_supplied_tags_survive_beside_the_reserved_tag(tmp_path: Path) -> None:
+def test_operator_supplied_tags_survive_beside_the_reserved_tag(trw_dir: Path) -> None:
     """FR04: the marker is added, never substituted for the caller's tags."""
-    trw_dir = tmp_path / ".trw"
     learning_id = _write_offline(trw_dir, "Tagged offline write", "Detail body.", tags=["shell", "hooks"])
     row = _read_row(trw_dir, learning_id)
     assert row is not None
@@ -113,11 +134,10 @@ def test_source_type_local_cli_argument_is_gone() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_session_start_reports_then_clears_the_pending_queue(tmp_path: Path) -> None:
+def test_session_start_reports_then_clears_the_pending_queue(trw_dir: Path) -> None:
     """FR05 acceptance: first call reports N and clears; second reports 0."""
     from trw_mcp.tools._ceremony_reconcile_step import step_reconcile_local_writes
 
-    trw_dir = tmp_path / ".trw"
     ids = [
         _write_offline(trw_dir, summary, f"Body for {summary}.")
         for summary in (
@@ -153,6 +173,10 @@ def test_reconcile_failure_records_a_degradation_and_leaves_success(
     Driven through the REAL step-table driver, because that is where the
     ``success: true`` guarantee lives — asserting on the step alone would not
     prove ``trw_session_start`` survives it.
+
+    ``step_reconcile_local_writes`` is monkeypatched to raise before it ever
+    touches a store, so this test never opens or pins a checkout — it stays on
+    the plain ``tmp_path`` fixture.
     """
     from trw_mcp.models.config import get_config
     from trw_mcp.models.typed_dicts import SessionStartResultDict
@@ -181,7 +205,7 @@ def test_reconcile_failure_records_a_degradation_and_leaves_success(
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_offline_and_mcp_writes(tmp_path: Path) -> None:
+def test_concurrent_offline_and_mcp_writes(trw_dir: Path) -> None:
     """NFR04 acceptance: both rows persist, and the clear only clears what it reported.
 
     The interleaving under test is the dangerous one: a row written BETWEEN the
@@ -189,7 +213,6 @@ def test_concurrent_offline_and_mcp_writes(tmp_path: Path) -> None:
     """
     from trw_mcp.tools import _ceremony_reconcile_step as step_mod
 
-    trw_dir = tmp_path / ".trw"
     first_id = _write_offline(trw_dir, "Offline write before the query", "Detail A.")
     online_id = _write_online(trw_dir, "MCP write alongside", "Detail B.")
 
@@ -219,7 +242,7 @@ def test_concurrent_offline_and_mcp_writes(tmp_path: Path) -> None:
     assert follow_up["learning_ids"] == late_ids
 
 
-def test_a_concurrent_tag_write_survives_the_clear(tmp_path: Path) -> None:
+def test_a_concurrent_tag_write_survives_the_clear(trw_dir: Path) -> None:
     """NFR04 review follow-up: the clear must not be a lost update.
 
     ``update_learning`` REPLACES the whole tag list, so the set it is handed has
@@ -234,7 +257,6 @@ def test_a_concurrent_tag_write_survives_the_clear(tmp_path: Path) -> None:
     from trw_mcp.state.memory_adapter import update_learning
     from trw_mcp.tools import _ceremony_reconcile_step as step_mod
 
-    trw_dir = tmp_path / ".trw"
     learning_id = _write_offline(trw_dir, "Row that gains a tag mid-reconcile", "Body.", tags=["shell"])
 
     real_pending = step_mod._pending_entries
@@ -261,7 +283,7 @@ def test_a_concurrent_tag_write_survives_the_clear(tmp_path: Path) -> None:
     assert "shell" in row.tags, "the caller's original tags must survive"
 
 
-def test_a_row_already_cleared_by_another_process_counts_as_cleared(tmp_path: Path) -> None:
+def test_a_row_already_cleared_by_another_process_counts_as_cleared(trw_dir: Path) -> None:
     """NFR04: the step converges on the STATE, not on having done the write itself.
 
     Two sessions starting at once both query, both report; whichever clears
@@ -272,7 +294,6 @@ def test_a_row_already_cleared_by_another_process_counts_as_cleared(tmp_path: Pa
     from trw_mcp.state.memory_adapter import update_learning
     from trw_mcp.tools import _ceremony_reconcile_step as step_mod
 
-    trw_dir = tmp_path / ".trw"
     learning_id = _write_offline(trw_dir, "Row cleared by a racing session", "Body.")
     real_pending = step_mod._pending_entries
 
@@ -296,37 +317,14 @@ def test_a_row_already_cleared_by_another_process_counts_as_cleared(tmp_path: Pa
 # ---------------------------------------------------------------------------
 # NFR05 — forward-only and idempotent
 # ---------------------------------------------------------------------------
-
-
-def test_forward_only_and_idempotent_against_a_copied_store(tmp_path: Path) -> None:
-    """NFR05 acceptance: pre-existing rows are neither reported nor modified."""
-    from trw_mcp.tools._ceremony_reconcile_step import step_reconcile_local_writes
-
-    legacy_dir = tmp_path / "legacy" / ".trw"
-    legacy_ids = [
-        _write_online(legacy_dir, summary, f"Body for {summary}.")
-        for summary in (
-            "Tarball extraction ignores symlink members",
-            "Websocket ping interval starves the reader loop",
-            "Codegen emits duplicate protobuf oneof branches",
-        )
-    ]
-    before = {lid: (_read_row(legacy_dir, lid).tags, _read_row(legacy_dir, lid).source_identity) for lid in legacy_ids}
-
-    copied = tmp_path / "copied" / ".trw"
-    copied.parent.mkdir(parents=True, exist_ok=True)
-    from trw_mcp.state.memory_adapter import reset_backend
-
-    # Close the source connection so the copy sees a checkpointed database.
-    reset_backend()
-    shutil.copytree(legacy_dir, copied)
-
-    first = step_reconcile_local_writes(copied)
-    assert first["pending"] == 0
-    second = step_reconcile_local_writes(copied)
-    assert second == first, "repeated runs must converge to the same state"
-
-    for lid in legacy_ids:
-        row = _read_row(copied, lid)
-        assert row is not None
-        assert (row.tags, row.source_identity) == before[lid], "no pre-existing row may be modified"
+#
+# PRD-CORE-280 slice e1 (worker-1 batch 1): the original
+# ``test_forward_only_and_idempotent_against_a_copied_store`` DELETED here, not
+# ported or blocked. It asserted forward-only/idempotent behaviour by
+# ``shutil.copytree``-ing a real ``.trw`` dir's on-disk SQLite file (after
+# ``reset_backend()`` to force a checkpoint) and reopening the copy — i.e. it
+# tested SQLite-local-file copy/migration semantics directly, which is exactly
+# the "migration of the local file" SQLite-internals category the corrected
+# brief names as deletion-eligible (trw-memory owns the storage and file-copy tests;
+# there is no daemon-namespace equivalent of "copy the .trw directory and
+# reopen it").

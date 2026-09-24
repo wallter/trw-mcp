@@ -21,9 +21,6 @@ import time
 from typing import Any
 
 import httpx
-import pytest
-
-from tests._layout import requires_local_timing
 
 
 def _slow_then_concurrent_handler(delay: float) -> Any:
@@ -55,8 +52,6 @@ async def _fast_coroutine_with_external_start(start: float) -> float:
     return time.monotonic() - start
 
 
-@pytest.mark.perf
-@requires_local_timing
 async def test_pull_does_not_block_concurrent_coroutine() -> None:
     """A 1s slow pull must not stall a parallel fast coroutine for the full 1s."""
     from trw_mcp.sync.pull import SyncPuller
@@ -94,8 +89,9 @@ async def test_pull_does_not_block_concurrent_coroutine() -> None:
     # the slow pull's await. With sync httpx (pre-fix), the fast coro
     # would have been delayed the full ~1s.
     fast_elapsed = float(results[1])
-    assert fast_elapsed < 0.3, (
-        f"Fast coroutine took {fast_elapsed * 1000:.1f}ms (cap 300ms) — event loop was blocked "
+    # Half the 1 s slow handler: a blocked loop delays the fast coroutine the full 1 s (PRD-QUAL-141).
+    assert fast_elapsed < 0.5, (
+        f"Fast coroutine took {fast_elapsed * 1000:.1f}ms (cap 500ms) — event loop was blocked "
         f"by sync pull (regression to sync httpx). With AsyncClient + await, "
         f"the fast coro should complete almost immediately while the slow pull "
         f"awaits."
@@ -106,8 +102,6 @@ async def test_pull_does_not_block_concurrent_coroutine() -> None:
     )
 
 
-@pytest.mark.perf
-@requires_local_timing
 async def test_push_does_not_block_concurrent_coroutine() -> None:
     """A 1s slow push must not stall a parallel fast coroutine for the full 1s."""
     from unittest.mock import MagicMock
@@ -167,15 +161,14 @@ async def test_push_does_not_block_concurrent_coroutine() -> None:
         elapsed = time.monotonic() - start
 
     fast_elapsed = float(results[1])
-    assert fast_elapsed < 0.3, (
-        f"Fast coroutine took {fast_elapsed * 1000:.1f}ms (cap 300ms) — event loop was blocked "
+    # Half the 1 s slow handler: a blocked loop delays the fast coroutine the full 1 s (PRD-QUAL-141).
+    assert fast_elapsed < 0.5, (
+        f"Fast coroutine took {fast_elapsed * 1000:.1f}ms (cap 500ms) — event loop was blocked "
         f"by sync push. AsyncClient + await must yield."
     )
     assert elapsed >= 0.9
 
 
-@pytest.mark.perf
-@requires_local_timing
 async def test_negative_control_sync_httpx_would_block_event_loop() -> None:
     """Negative control: prove the FR04 mechanic actually catches blocking.
 

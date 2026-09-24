@@ -22,6 +22,7 @@ import trw_mcp.state.claude_md._static_sections as _facade
 from trw_mcp.state import _paths
 from trw_mcp.state.claude_md._renderer import ProtocolRenderer
 from trw_mcp.state.claude_md.sections._memory_routing import _format_learning_session_claim
+from trw_mcp.state.claude_md.sections._tool_lifecycle import DELEGATION_RULE
 
 
 def render_imperative_opener() -> str:
@@ -55,13 +56,7 @@ def render_imperative_opener() -> str:
         "After `trw_session_start()`, save progress with `trw_checkpoint()` "
         "after milestones, and close with `trw_deliver()` so your discoveries "
         "persist for future agents.\n"
-        "\n"
-        "**Delegation**: delegate only for work that is genuinely independent "
-        "and parallelizable, with disjoint file ownership. Not for work you "
-        "could finish in a handful of tool calls, and not to verify your own "
-        "work. If one helper suffices, use one. Delegation is an "
-        "optimization, not a dependency.\n"
-        "\n"
+        "\n" + DELEGATION_RULE + "\n"
     )
 
 

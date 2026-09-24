@@ -37,11 +37,9 @@ def test_compute_utility_score_bounded(
 ) -> None:
     """compute_utility_score always returns a value in [0.0, 1.0]."""
     result = compute_utility_score(
-        q_value=q_value,
         days_since_last_access=days_since_last_access,
         recurrence_count=recurrence_count,
         base_impact=base_impact,
-        q_observations=q_observations,
         access_count=access_count,
         source_type=source_type,
     )
@@ -66,18 +64,10 @@ def test_compute_utility_score_monotone_impact(
 ) -> None:
     """Higher base_impact -> higher (or equal) utility when other params are fixed."""
     low = compute_utility_score(
-        q_value=impact_low,
-        days_since_last_access=days_since_last_access,
-        recurrence_count=recurrence_count,
-        base_impact=impact_low,
-        q_observations=0,
+        days_since_last_access=days_since_last_access, recurrence_count=recurrence_count, base_impact=impact_low
     )
     high = compute_utility_score(
-        q_value=impact_high,
-        days_since_last_access=days_since_last_access,
-        recurrence_count=recurrence_count,
-        base_impact=impact_high,
-        q_observations=0,
+        days_since_last_access=days_since_last_access, recurrence_count=recurrence_count, base_impact=impact_high
     )
     assert low <= high, f"Expected utility(impact={impact_low}) <= utility(impact={impact_high}), got {low} > {high}"
 
@@ -95,11 +85,9 @@ def test_compute_utility_score_zero_impact_yields_low_utility(
 ) -> None:
     """impact=0 and q_value=0 with no access boost yields utility=0.0."""
     result = compute_utility_score(
-        q_value=0.0,
         days_since_last_access=days_since_last_access,
         recurrence_count=recurrence_count,
         base_impact=0.0,
-        q_observations=0,
         access_count=0,
         source_type="agent",
     )

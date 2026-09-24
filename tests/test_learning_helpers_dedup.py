@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tests._learning_helpers_test_support import _CFG, set_project_root  # noqa: F401
+from tests._memory_fixtures import DaemonCheckout
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 from trw_mcp.tools._learning_helpers import LearningParams, check_and_handle_dedup
 
@@ -45,7 +49,7 @@ class TestCheckAndHandleDedup:
         mock_result.similarity = 0.1
 
         with patch(
-            "trw_mcp.state.dedup.check_duplicate",
+            "trw_mcp.state.dedup.dedup_verdict",
             return_value=mock_result,
         ):
             result = check_and_handle_dedup(
@@ -77,7 +81,7 @@ class TestCheckAndHandleDedup:
         mock_result.similarity = 0.98
 
         with patch(
-            "trw_mcp.state.dedup.check_duplicate",
+            "trw_mcp.state.dedup.dedup_verdict",
             return_value=mock_result,
         ):
             result = check_and_handle_dedup(
@@ -125,11 +129,11 @@ class TestCheckAndHandleDedup:
 
         with (
             patch(
-                "trw_mcp.state.dedup.check_duplicate",
+                "trw_mcp.state.dedup.dedup_verdict",
                 return_value=mock_dedup,
             ),
             patch(
-                "trw_mcp.state.dedup.merge_entries",
+                "trw_mcp.state.dedup.merge_into_survivor",
             ) as mock_merge,
         ):
             result = check_and_handle_dedup(
@@ -188,11 +192,11 @@ class TestCheckAndHandleDedup:
 
         with (
             patch(
-                "trw_mcp.state.dedup.check_duplicate",
+                "trw_mcp.state.dedup.dedup_verdict",
                 return_value=mock_dedup,
             ),
             patch(
-                "trw_mcp.state.dedup.merge_entries",
+                "trw_mcp.state.dedup.merge_into_survivor",
             ) as mock_merge,
         ):
             result = check_and_handle_dedup(
@@ -248,11 +252,11 @@ class TestCheckAndHandleDedup:
 
         with (
             patch(
-                "trw_mcp.state.dedup.check_duplicate",
+                "trw_mcp.state.dedup.dedup_verdict",
                 return_value=mock_dedup,
             ),
             patch(
-                "trw_mcp.state.dedup.merge_entries",
+                "trw_mcp.state.dedup.merge_into_survivor",
             ) as mock_merge,
         ):
             result = check_and_handle_dedup(
@@ -304,11 +308,12 @@ class TestCheckAndHandleDedup:
         mock_dedup.action = "merge"
         mock_dedup.existing_id = "L-existing030"
         mock_dedup.similarity = 0.89
-        mock_backend = MagicMock()
+        store = FakeMemoryStore()
+        store.put("Existing learning", "default", {"entry_id": "L-existing030"})
 
         with (
-            patch("trw_mcp.state.dedup.check_duplicate", return_value=mock_dedup),
-            patch("trw_mcp.state.memory_adapter.get_backend", return_value=mock_backend),
+            patch("trw_mcp.state.dedup.dedup_verdict", return_value=mock_dedup),
+            patch("trw_mcp.state._store_selection.selected_store", return_value=(store, "default")),
             patch("trw_mcp.state._paths.resolve_trw_dir", return_value=tmp_path / ".trw"),
         ):
             result = check_and_handle_dedup(
@@ -331,14 +336,15 @@ class TestCheckAndHandleDedup:
 
         assert result is not None
         assert result["status"] == "merged"
-        update_kwargs = mock_backend.update.call_args.kwargs
-        assert update_kwargs["recurrence"] == 2
-        assert update_kwargs["importance"] == 0.8
-        assert update_kwargs["tags"] == ["existing", "new-tag"]
-        assert update_kwargs["evidence"] == ["existing-evidence", "new-evidence"]
-        assert update_kwargs["merged_from"] == ["L-test030"]
-        assert "Merged from L-test030" in update_kwargs["detail"]
-        assert len(update_kwargs["assertions"]) == 2
+        merged = store.get("L-existing030")
+        assert merged is not None
+        assert merged.recurrence == 2
+        assert merged.importance == 0.8
+        assert merged.tags == ["existing", "new-tag"]
+        assert merged.evidence == ["existing-evidence", "new-evidence"]
+        assert merged.merged_from == ["L-test030"]
+        assert "Merged from L-test030" in merged.detail
+        assert len(merged.assertions) == 2
 
     def test_fail_open_on_dedup_exception(self, tmp_path: Path) -> None:
         """When dedup check throws, returns None (proceed to store)."""
@@ -346,7 +352,7 @@ class TestCheckAndHandleDedup:
         entries_dir.mkdir(parents=True)
 
         with patch(
-            "trw_mcp.state.dedup.check_duplicate",
+            "trw_mcp.state.dedup.dedup_verdict",
             side_effect=RuntimeError("dedup boom"),
         ):
             result = check_and_handle_dedup(
@@ -415,10 +421,12 @@ class TestBoundedMergeResolution:
     opened-file count (it reads every decoy that sorts before the target).
     """
 
-    def test_merge_resolves_existing_id_without_scanning_the_corpus(self, tmp_path: Path, monkeypatch: object) -> None:
+    def test_merge_resolves_existing_id_without_scanning_the_corpus(
+        self, daemon_checkout: DaemonCheckout, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from trw_mcp.state import _paths as paths_mod
 
-        trw_dir = tmp_path / ".trw"
+        trw_dir = daemon_checkout.trw_dir
         entries_dir = trw_dir / "learnings" / "entries"
         entries_dir.mkdir(parents=True)
         monkeypatch.setattr(paths_mod, "resolve_trw_dir", lambda *_a, **_kw: trw_dir)  # type: ignore[attr-defined]
@@ -438,10 +446,10 @@ class TestBoundedMergeResolution:
         mock_dedup.existing_id = existing_id
         mock_dedup.similarity = 0.87
 
-        # The REAL merge runs. Mocking merge_entries here hid two of the three
-        # reads the bound is about (FIX130-06): merge_entries re-read the
+        # The REAL merge runs. Mocking merge_into_survivor here hid two of the three
+        # reads the bound is about (FIX130-06): merge_into_survivor re-read the
         # survivor, and _sync_merged_entry_to_backend read it again.
-        with patch("trw_mcp.state.dedup.check_duplicate", return_value=mock_dedup):
+        with patch("trw_mcp.state.dedup.dedup_verdict", return_value=mock_dedup):
             result = check_and_handle_dedup(
                 LearningParams(
                     summary="near-duplicate of the bounded merge resolution survivor",
@@ -499,8 +507,8 @@ class TestBoundedMergeResolution:
         mock_dedup.similarity = 0.87
 
         with (
-            patch("trw_mcp.state.dedup.check_duplicate", return_value=mock_dedup),
-            patch("trw_mcp.state.dedup.merge_entries") as mock_merge,
+            patch("trw_mcp.state.dedup.dedup_verdict", return_value=mock_dedup),
+            patch("trw_mcp.state.dedup.merge_into_survivor") as mock_merge,
         ):
             result = check_and_handle_dedup(
                 LearningParams(

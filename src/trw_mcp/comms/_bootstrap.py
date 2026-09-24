@@ -13,14 +13,19 @@ age.
 
 from __future__ import annotations
 
+import math
+import re
+import sqlite3
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from trw_mcp.comms._identity import IdentityError, resolve_snapshot
+from trw_mcp.comms._identity import CallerBinding, IdentityError, resolve_authority_snapshot
+from trw_mcp.comms._paging import decode_cursor, encode_cursor, fits
 from trw_mcp.formation import (
+    CANDIDATE_CAP,
     LIVE_CANDIDATE_STATES,
     TERMINAL_STATUSES,
     CandidateError,
@@ -28,10 +33,10 @@ from trw_mcp.formation import (
     CoordinationRoot,
     FormationError,
     announce_candidate,
-    authority_roots,
     bootstrap_root,
     candidate_for,
     live_candidates,
+    own_root,
     read_manifest,
     registered_formations,
     set_candidate_state,
@@ -48,14 +53,16 @@ _logger = structlog.get_logger(__name__)
 #: Bounds the discover page: a root with more open formations than this is an
 #: operator problem, and the response must stay small (tool response budget).
 DISCOVER_FORMATION_LIMIT = 16
+DISCOVER_CANDIDATE_LIMIT = CANDIDATE_CAP
 BOOTSTRAP_ACTIONS = frozenset({"announce", "withdraw", "discover"})
+_CANDIDATE_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def _refused(reason: str, detail: str) -> dict[str, Any]:
     return {"status": "refused", "reason": reason, "detail": detail}
 
 
-def bootstrap(action: str, ctx: Context | None, config: TRWConfig) -> dict[str, Any]:
+def bootstrap(action: str, ctx: Context | None, config: TRWConfig, *, cursor: str | None = None) -> dict[str, Any]:
     """Run one bootstrap action; refusals carry a closed reason and the next action."""
     call_context = build_call_context(ctx)
     run_path = get_pinned_run(context=call_context)
@@ -67,7 +74,7 @@ def bootstrap(action: str, ctx: Context | None, config: TRWConfig) -> dict[str, 
             return _announce(root, call_context.session_id, run_path, config)
         if action == "withdraw":
             return _withdraw(root, call_context.session_id, run_path)
-        return _discover(root, ctx)
+        return _discover(root, ctx, config, cursor=cursor)
     except CandidateError as exc:
         return _refused(exc.reason, "the candidate registry is full; retry after candidates expire or withdraw")
     except FormationError:
@@ -101,24 +108,65 @@ def _withdraw(root: CoordinationRoot, pin_key: str, run_path: Path) -> dict[str,
     return {"status": "ok", "state": "opted_out"}
 
 
-def _orchestrator_formation(ctx: Context | None) -> str | None:
+def _orchestrator_binding(ctx: Context | None) -> CallerBinding | None:
     """The formation this caller orchestrates, bound at the bootstrap root or at its own root.
 
     Its own root covers an orchestrator whose run lives in a linked worktree with no
     FR17 record for itself (lane C review, D3); either way it must bind under FR01.
     """
-    for candidate_root in authority_roots():
+    root = own_root()
+    try:
+        snapshot = resolve_authority_snapshot(ctx, trw_dir=root.trw_dir, project_root=root.project_root)
+        snapshot.assert_eligible()
+    except IdentityError:  # trw-fail-silent-allow: a nonmember or terminal lead sees no private candidates
+        # the authority resolver forbids own-root fallback when a shared record exists.
+        return None
+    return snapshot.binding if snapshot.binding.is_orchestrator else None
+
+
+def _lead_pending(binding: CallerBinding, now: float) -> dict[str, str | int | None]:
+    """Read only this lead's pending mailbox facts, without fetch or ACK."""
+    from trw_mcp.comms._envelope import MessageState
+    from trw_mcp.comms._store import database_path
+
+    try:
+        database = database_path(binding.manifest_path)
+        conn = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=1.0)
         try:
-            snapshot = resolve_snapshot(ctx, trw_dir=candidate_root.trw_dir, project_root=candidate_root.project_root)
-        except IdentityError:
-            # trw-fail-silent-allow: a non-member discovers formations only; candidates stay hidden
-            continue
-        if snapshot.binding.is_orchestrator:
-            return snapshot.binding.formation_id
-    return None
+            count, oldest = conn.execute(
+                "SELECT COUNT(*),MIN(admitted_at) FROM admissions "
+                "WHERE group_id=? AND recipient_member_id=? AND state=? AND expires_at>?",
+                (binding.group_id, binding.member_id, MessageState.PENDING.value, now),
+            ).fetchone()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error, TypeError, ValueError):  # trw-fail-silent-allow: unreadable mailbox is not_measured
+        return {"measurement": "not_measured"}
+    return {
+        "measurement": "measured",
+        "count": int(count),
+        "earliest_age_seconds": int(max(0, now - float(oldest))) if oldest is not None else None,
+    }
 
 
-def _discover(root: CoordinationRoot, ctx: Context | None) -> dict[str, Any]:
+def _candidate_after(cursor: str | None, binding: CallerBinding) -> tuple[float, str] | None:
+    if cursor is None:
+        return None
+    fields = decode_cursor(cursor, max_chars=512, arity=4)
+    if (
+        fields is None
+        or fields[0] != binding.group_id
+        or fields[1] != binding.member_id
+        or type(fields[2]) not in (int, float)
+        or not math.isfinite(fields[2])
+        or not isinstance(fields[3], str)
+        or _CANDIDATE_ID.fullmatch(fields[3]) is None
+    ):
+        raise ValueError("invalid_cursor")
+    return float(fields[2]), str(fields[3])
+
+
+def _discover(root: CoordinationRoot, ctx: Context | None, config: TRWConfig, *, cursor: str | None) -> dict[str, Any]:
     formations: list[dict[str, Any]] = []
     for formation_id, manifest_path in sorted(registered_formations(root.trw_dir).items()):
         try:
@@ -140,18 +188,50 @@ def _discover(root: CoordinationRoot, ctx: Context | None) -> dict[str, Any]:
         if len(formations) >= DISCOVER_FORMATION_LIMIT:
             break
     result: dict[str, Any] = {"status": "ok", "formations": formations}
-    if _orchestrator_formation(ctx) is not None:
+    binding = _orchestrator_binding(ctx)
+    if cursor is not None and binding is None:
+        return _refused("invalid_cursor", "candidate pages require an eligible orchestrator")
+    if binding is not None:
+        try:
+            after = _candidate_after(cursor, binding)
+        except ValueError:
+            return _refused("invalid_cursor", "use next_cursor from this formation's previous discover page")
         now = time.time()
-        result["candidates"] = [
-            {
+        result["lead_pending"] = _lead_pending(binding, now)
+        live = live_candidates(root.trw_dir, now)
+        remaining = sorted(
+            (c for c in live if after is None or (c.announced_at, c.candidate_id) > after),
+            key=lambda c: (c.announced_at, c.candidate_id),
+        )
+        result.update(candidates=[], candidate_total=len(live), candidates_truncated=False, next_cursor=None)
+        budget = max(0, config.comms_response_max_bytes - 1024)
+        for c in remaining[:DISCOVER_CANDIDATE_LIMIT]:
+            item = {
                 "candidate_id": c.candidate_id,
-                "client": c.client,
-                "worktree": Path(c.worktree).name if c.worktree else None,
-                "age_seconds": int(now - c.announced_at),
+                "client": c.client[:32],
+                "worktree": Path(c.worktree).name[:64] if c.worktree else None,
+                "age_seconds": int(max(0, now - c.announced_at)),
+                "state": c.state,
             }
-            for c in live_candidates(root.trw_dir, now)
-            if c.state == CandidateState.ACTIVE
-        ]
+            next_cursor = encode_cursor(binding.group_id, binding.member_id, c.announced_at, c.candidate_id)
+            proposed = {
+                **result,
+                "candidates": [*result["candidates"], item],
+                "next_cursor": next_cursor,
+                "candidates_truncated": True,
+            }
+            if not fits(proposed, budget):
+                break
+            result = proposed
+        result["candidates_truncated"] = len(result["candidates"]) < len(remaining)
+        if not result["candidates_truncated"]:
+            result["next_cursor"] = None
+        if remaining and not result["candidates"]:
+            return _refused("response_too_large", "one candidate does not fit the configured response cap")
+    # Reserve framing/guidance room added by the public trw_peers adapter.
+    budget = max(0, config.comms_response_max_bytes - 1024)
+    if not fits(result, budget):
+        return _refused("response_too_large", "formation listing exceeds the configured response cap")
     return result
 
 

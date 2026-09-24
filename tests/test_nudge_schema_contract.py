@@ -45,7 +45,7 @@ def _load_jsonl(path: Path) -> list[dict[str, object]]:
 def test_ceremony_state_fixture_parses_with_pinned_fields() -> None:
     """PRD-CORE-146 NFR03: ceremony-state.json keys MUST NOT be renamed.
 
-    Pins: nudge_counts, nudge_history, pool_nudge_counts, pool_cooldown_until,
+    Pins: nudge_counts, nudge_history, pool_nudge_counts, pool_cooldowns,
     session_started, deliver_called, tool_call_counter. The nudge_history
     entry shape pins turn_first_shown, last_shown_turn, phases_shown.
     """
@@ -54,7 +54,7 @@ def test_ceremony_state_fixture_parses_with_pinned_fields() -> None:
         "nudge_counts",
         "nudge_history",
         "pool_nudge_counts",
-        "pool_cooldown_until",
+        "pool_cooldowns",
         "session_started",
         "deliver_called",
         "tool_call_counter",
@@ -117,7 +117,7 @@ def test_ceremony_state_variants_parse_with_pinned_fields(fixture_name: str) -> 
         "nudge_counts",
         "nudge_history",
         "pool_nudge_counts",
-        "pool_cooldown_until",
+        "pool_cooldowns",
         "session_started",
         "deliver_called",
         "tool_call_counter",
@@ -145,12 +145,10 @@ def test_ceremony_state_variants_parse_with_pinned_fields(fixture_name: str) -> 
                 assert field in entry
             assert entry["last_shown_turn"] >= entry["turn_first_shown"]
     elif fixture_name == "ceremony-state.pool_cooldown_active.json":
-        cooldowns = state["pool_cooldown_until"]
+        cooldowns = state["pool_cooldowns"]
         assert isinstance(cooldowns, dict) and cooldowns, "must have active cooldowns"
-        assert "ceremony" in cooldowns and cooldowns["ceremony"] > state["tool_call_counter"]
-        ignores = state["pool_ignore_counts"]
-        assert isinstance(ignores, dict)
-        assert ignores.get("ceremony", 0) > 0
+        assert "ceremony" in cooldowns and cooldowns["ceremony"]["until_counter"] > state["tool_call_counter"]
+        assert cooldowns["ceremony"]["ignore_count"] > 0
 
 
 @pytest.mark.parametrize(

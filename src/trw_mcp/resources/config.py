@@ -16,6 +16,7 @@ from trw_mcp.exceptions import StateError
 from trw_mcp.models.config import TRWConfig, get_config
 from trw_mcp.state._origin_project import demote_unattributable
 from trw_mcp.state._paths import resolve_project_root
+from trw_mcp.state._recall_gate import learnings_injection_allowed
 from trw_mcp.state.memory_adapter import list_active_learnings
 from trw_mcp.state.persistence import FileStateReader, model_to_dict
 
@@ -154,7 +155,11 @@ def _build_learnings_summary(trw_dir: Path, config: TRWConfig) -> str:
     # then render — a summary titled "High-Impact Learnings" for THIS project
     # listed another repository's Teams-ingestion notes because the cap was spent
     # before any local row was reached (L-XIhp).
-    high_impact = demote_unattributable(list_active_learnings(trw_dir, min_impact=0.7, limit=20))[:10]
+    high_impact = (
+        demote_unattributable(list_active_learnings(trw_dir, min_impact=0.7, limit=20))[:10]
+        if learnings_injection_allowed(config, "passive")
+        else []
+    )
     if high_impact:
         lines.append("## High-Impact Learnings\n")
         for entry in high_impact:

@@ -353,8 +353,9 @@ class EventType(str, Enum):
     CHECKPOINT = "checkpoint"
     DELIVER_COMPLETE = "trw_deliver_complete"
 
-    # --- Telemetry (PRD-CORE-031) ---
-    TOOL_INVOCATION = "tool_invocation"
+    # --- Telemetry: one row per tool call, written by the tool-call wrapper (PRD-FIX-150) ---
+    TOOL_CALL = "tool_call"
+
     BUILD_CHECK_COMPLETE = "build_check_complete"
 
     # --- Compliance ---
@@ -381,6 +382,12 @@ class EventType(str, Enum):
             return EventType(event_str)
         except ValueError:
             return None
+
+
+#: Event names a reader of a run log counts as a tool call. Only ``tool_call`` is written; run logs
+#: recorded before PRD-FIX-150 hold ``tool_invocation`` rows and are never rewritten, and past runs are
+#: still re-scored from them.
+TOOL_CALL_EVENTS: frozenset[str] = frozenset({"tool_call", "tool_invocation"})
 
 
 class ComplexityClass(str, Enum):

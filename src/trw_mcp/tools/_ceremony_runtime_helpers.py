@@ -30,6 +30,7 @@ from trw_mcp.models.typed_dicts import (
     RunStatusDict,
 )
 from trw_mcp.state._no_active_run import no_active_run_remedy
+from trw_mcp.state._run_yaml_update import update_run_yaml
 from trw_mcp.state.analytics import find_success_patterns, update_analytics
 from trw_mcp.state.claude_md import execute_claude_md_sync
 from trw_mcp.state.persistence import FileEventLogger, FileStateReader, FileStateWriter
@@ -174,31 +175,22 @@ def _no_active_run_hint(candidate_runs: list[dict[str, object]]) -> str:
 
 def _mark_run_complete(run_dir: Path) -> None:
     """Mark a run as complete by updating status in run.yaml."""
-    reader = FileStateReader()
-    writer = FileStateWriter()
-    run_yaml = run_dir / "meta" / "run.yaml"
-    if not run_yaml.exists():
-        return
     try:
-        data = reader.read_yaml(run_yaml)
-        data["status"] = RunStatus.COMPLETE.value
-        writer.write_yaml(run_yaml, data)
+        update_run_yaml(run_dir, lambda data: data.update(status=RunStatus.COMPLETE.value))
     except Exception:  # justified: fail-open, marking complete is best-effort
         logger.warning("mark_run_complete_failed", exc_info=True, run_dir=str(run_dir))
 
 
 def _persist_surface_snapshot_pointer(run_dir: Path, snapshot_id: str) -> None:
     """Persist the run's surface snapshot pointer into ``run.yaml`` (FR-2)."""
-    run_yaml = run_dir / "meta" / "run.yaml"
-    if not run_yaml.exists():
-        return
-    reader = FileStateReader()
-    writer = FileStateWriter()
     try:
-        data = reader.read_yaml(run_yaml)
-        data["surface_snapshot_id"] = snapshot_id
-        data["run_surface_snapshot_path"] = "meta/run_surface_snapshot.yaml"
-        writer.write_yaml(run_yaml, data)
+        update_run_yaml(
+            run_dir,
+            lambda data: data.update(
+                surface_snapshot_id=snapshot_id,
+                run_surface_snapshot_path="meta/run_surface_snapshot.yaml",
+            ),
+        )
     except Exception:  # justified: fail-open, pointer persistence must not block session start
         logger.warning(
             "surface_snapshot_pointer_persist_failed",

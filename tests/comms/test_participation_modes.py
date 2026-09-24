@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from fastmcp import Client, FastMCP
 
-from tests._formation_test_support import FormationFixture, formation_env, make_run_dir  # noqa: F401
+from tests._formation_test_support import FormationFixture, formation_env, make_run_dir, open_slot  # noqa: F401
 from tests.comms.conftest import call_peers, enable_comms, joined_member
 from tests.comms.test_fetch_ack import invoke, transport_scene  # noqa: F401
 from tests.comms.test_policy import SendScene, scene  # noqa: F401
@@ -101,7 +101,7 @@ def three_scene(formation_env: FormationFixture, comms_server: FastMCP, monkeypa
     f = formation_env
     f.member_runs["impl-3"] = make_run_dir(f.trw_dir / "runs", "impl-3")
     payload = f.payload()
-    payload["members"].append({"member_id": "impl-3", "client": "codex", "open_join": True})
+    payload["members"].append(open_slot("impl-3"))
     formation.create(f.orchestrator_run, payload, trw_dir=f.trw_dir)
     config = enable_comms(monkeypatch)
     for member, pin in (("impl-1", "pin-a"), ("impl-2", "pin-b"), ("impl-3", "pin-c")):

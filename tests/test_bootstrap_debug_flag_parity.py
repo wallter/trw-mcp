@@ -61,10 +61,14 @@ def _all_profile_entries(*, on_path: bool) -> dict[str, Any]:
 
     resolved = "/usr/local/bin/trw-mcp" if on_path else None
     with (
+        # codex's and opencode's server entries resolve the launcher via
+        # `resolve_trw_mcp_launcher` in `_utils.py` -- neither `_codex.py` nor
+        # `_opencode.py` imports `shutil` any more (their only prior use, the
+        # deleted per-client skill-fork copy logic, was removed under
+        # PRD-CORE-291-FR04) -- so patching `_utils.shutil.which` alone covers
+        # both; patch at the real consumer site.
         patch("trw_mcp.bootstrap._utils.shutil.which", return_value=resolved),
-        patch("trw_mcp.bootstrap._codex.shutil.which", return_value=resolved),
         patch("trw_mcp.bootstrap._cursor.shutil.which", return_value=resolved),
-        patch("trw_mcp.bootstrap._opencode.shutil.which", return_value=resolved),
     ):
         ag_command, ag_args = antigravity_entry()
         entries: dict[str, Any] = {

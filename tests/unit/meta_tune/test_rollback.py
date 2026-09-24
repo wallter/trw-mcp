@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from trw_mcp.meta_tune.rollback import (
     RollbackResult,
     rollback_proposal,
@@ -155,7 +156,6 @@ def test_rollback_result_model_fields() -> None:
         )
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_rollback_completes_fast(tmp_path: Path) -> None:
     """NFR-3: rollback p95 ≤ 10s wall-clock (smoke threshold ≤1s)."""
@@ -173,7 +173,7 @@ def test_rollback_completes_fast(tmp_path: Path) -> None:
         promoted_at=datetime.now(timezone.utc),
     )
     r = rollback_proposal("p1", state_dir=state_dir, _config=cfg)
-    assert r.elapsed_ms < 1000.0
+    assert_budget("rollback_completion", r.elapsed_ms, 1000.0, "ms")
 
 
 def test_rollback_honors_max_attempts(tmp_path: Path) -> None:

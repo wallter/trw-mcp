@@ -170,35 +170,3 @@ _INSTRUCTION_SYNC_GENERATORS: dict[InstructionClientId, InstructionSyncGenerator
     "copilot": _generate_copilot_instruction_target,
     "antigravity-cli": _generate_antigravity_instruction_target,
 }
-
-
-#: Clients that keep an INLINE block because no include mechanism works for them
-#: (PRD-CORE-240-FR06). Verified against vendor primary sources 2026-07-28:
-#:
-#: - ``cursor-cli``      — nothing documented for AGENTS.md, its only carrier.
-#: - ``cursor-ide``      — ``.cursor/rules/*.mdc`` ``@file`` IS documented, but a
-#:   Cursor staff reply (forum.cursor.com/t/135663, Oct 2025) confirms it "doesn't
-#:   work yet", with no changelog fix through 2026-07-28. Building on a documented
-#:   but non-functional include ships a rule whose body resolves to nothing.
-#: - ``antigravity-cli`` — no import syntax found in any source; separately, the
-#:   ``ANTIGRAVITY.md`` filename TRW writes is itself unconfirmed against vendor
-#:   docs.
-#: - ``grok``            — AGENTS.md is its only carrier and no include syntax is
-#:   documented for it; project ``.grok/config.toml`` cannot name instruction
-#:   files either (only mcp_servers/plugins/permission), so it is not T2.
-#:
-#: This is a DECLARED EXCLUSION SET, not a comment: `tests/test_instruction_
-#: include_matrix.py` asserts it equals the set of profiles that resolve to
-#: INLINE, so a client can only be excluded by decision, never by accident.
-#:
-#: RE-CHECK TRIGGER: revisit when Cursor's changelog reports a fix for `@file`
-#: in `.mdc` rules, or when Antigravity documents an include syntax. Removing an
-#: entry requires re-verifying against that vendor's primary docs first —
-#: FRAMEWORK-CORE holds that for light clients the generated instruction file IS
-#: the protocol carrier, so a broken include costs them the protocol entirely.
-#: copilot was moved IN after its capability was re-verified: the `@relpath`
-#: syntax is documented for the Copilot CLI only, and this one profile also
-#: serves Copilot Chat in VS Code, whose docs describe no inclusion syntax
-#: for `.github/copilot-instructions.md`. Capability that varies per SURFACE
-#: must be declared at the weakest surface the profile serves.
-INCLUDE_INCAPABLE_CLIENTS: tuple[str, ...] = ("copilot", "cursor-cli", "cursor-ide", "antigravity-cli", "grok")

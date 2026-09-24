@@ -55,47 +55,25 @@ def _make_store_fn() -> Any:
     return _store
 
 
-class TestLearnUtilityFilterGate:
-    """trw-mcp-5: the LLM utility filter must be opt-in (default off)."""
+class TestLearnMakesNoLlmCall:
+    """The dormant Haiku learn gate is deleted: recording a learning never builds an LLM client."""
 
-    def _run(self, trw_dir: Path, config: TRWConfig) -> dict[str, object]:
-        return execute_learn(
-            summary="A genuinely useful learning about the build gate",
-            detail="Detail body that explains the root cause and the fix in full.",
-            trw_dir=trw_dir,
-            config=config,
-            _adapter_store=_make_noop_store,
-            _generate_learning_id=lambda: "L-util",
-            _save_learning_entry=MagicMock(return_value=trw_dir / "learnings" / "entries" / "L-util.yaml"),
-            _update_analytics=MagicMock(),
-            _list_active_learnings=MagicMock(return_value=[]),
-            _check_and_handle_dedup=MagicMock(return_value=None),
-        )
-
-    def test_filter_disabled_by_default_never_builds_llm_client(self, trw_dir: Path, config: TRWConfig) -> None:
-        """Default config must NOT instantiate LLMClient (no undisclosed API call)."""
-        assert config.llm_utility_filter_enabled is False
+    def test_learn_never_builds_an_llm_client(self, trw_dir: Path, config: TRWConfig) -> None:
         with patch("trw_mcp.clients.llm.LLMClient") as mock_client:
-            result = self._run(trw_dir, config)
+            result = execute_learn(
+                summary="A genuinely useful learning about the build gate",
+                detail="Detail body that explains the root cause and the fix in full.",
+                trw_dir=trw_dir,
+                config=config,
+                _adapter_store=_make_noop_store,
+                _generate_learning_id=lambda: "L-util",
+                _save_learning_entry=MagicMock(return_value=trw_dir / "learnings" / "entries" / "L-util.yaml"),
+                _update_analytics=MagicMock(),
+                _list_active_learnings=MagicMock(return_value=[]),
+                _check_and_handle_dedup=MagicMock(return_value=None),
+            )
         mock_client.assert_not_called()
         assert result["status"] == "recorded"
-
-    def test_filter_enabled_invokes_utility_check(self, trw_dir: Path, config: TRWConfig) -> None:
-        """When opted in, the filter path runs and a low-utility verdict rejects."""
-        object.__setattr__(config, "llm_utility_filter_enabled", True)
-        fake_llm = MagicMock()
-        fake_llm._available = True
-        with (
-            patch("trw_mcp.clients.llm.LLMClient", return_value=fake_llm),
-            patch(
-                "trw_mcp.tools._learn_validator.is_high_utility",
-                return_value=(False, "low signal"),
-            ) as mock_util,
-        ):
-            result = self._run(trw_dir, config)
-        mock_util.assert_called_once()
-        assert result["status"] == "rejected"
-        assert result["reason"] == "llm_utility_filter"
 
 
 class TestLearnWithNewFields:
@@ -347,38 +325,3 @@ class TestLearnWithNewFields:
             )
         # Should be uppercased from detect_current_phase "implement" -> "IMPLEMENT"
         assert store_fn.calls[0].get("phase_origin") == "IMPLEMENT"
-
-    @patch("trw_mcp.clients.llm.LLMClient")
-    @patch("trw_mcp.tools._learn_validator.is_high_utility")
-    def test_learn_rejects_low_utility(
-        self,
-        mock_is_high_utility: MagicMock,
-        mock_llm_client: MagicMock,
-        trw_dir: Path,
-        config: TRWConfig,
-    ) -> None:
-        """execute_learn rejects summaries if LLM utility validation fails.
-
-        The filter is opt-in (trw-mcp-5); enable it explicitly for this test.
-        """
-        object.__setattr__(config, "llm_utility_filter_enabled", True)
-        mock_is_high_utility.return_value = (False, "Too vague")
-        mock_llm_client.return_value._available = True
-        store_fn = _make_store_fn()
-
-        result = execute_learn(
-            summary="PRD-123 groomed",
-            detail="Did some work",
-            trw_dir=trw_dir,
-            config=config,
-            _adapter_store=store_fn,
-            _generate_learning_id=lambda: "L-jjjj",
-            _save_learning_entry=MagicMock(),
-            _update_analytics=MagicMock(),
-            _list_active_learnings=MagicMock(return_value=[]),
-            _check_and_handle_dedup=MagicMock(return_value=None),
-        )
-        assert result["status"] == "rejected"
-        assert result["reason"] == "llm_utility_filter"
-        assert "Too vague" in str(result.get("message", ""))
-        assert len(store_fn.calls) == 0

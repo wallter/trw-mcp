@@ -7,6 +7,7 @@ transitions counted, bulk fetch not N+1) and the NFR01 wall-clock budget
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -14,12 +15,15 @@ from typing import Any
 
 import pytest
 import structlog
+from trw_memory.lifecycle.verification_pass import run_maintain_verify
 from trw_memory.models.memory import Assertion, AssertionType, MemoryEntry
 from trw_memory.storage.sqlite_backend import SQLiteBackend
 
 from tests._layout import requires_local_timing
+from tests._memory_fixtures import DaemonCheckout
+from tests._path_isolation import set_current_root
+from tests._timing import assert_budget
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.tools._maintain_verify import run_maintain_verify
 
 #: NFR01 budget: 1000 entries-with-assertions must sweep in under 30 seconds.
 _SWEEP_ENTRY_COUNT = 1000
@@ -35,6 +39,15 @@ def project(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def backend(tmp_path: Path) -> SQLiteBackend:
+    # Every test using this fixture drives
+    # ``trw_memory.lifecycle.verification_pass.run_maintain_verify`` directly
+    # against a raw ``SQLiteBackend`` it owns -- that is trw-memory's own
+    # function under trw-memory's own backend, never through trw-mcp's
+    # ``selected_store``, so nothing here is affected by PRD-CORE-280 e3.
+    # ``test_maintain_verify_cli_is_registered_and_dispatches`` (batch 23b) no
+    # longer uses this fixture: it now drives the CLI subcommand through a real
+    # ``daemon_checkout``, matching what ``run_maintain_verify_for_project``
+    # actually calls (``selected_store``) in production.
     return SQLiteBackend(tmp_path / "store" / "memory.db")
 
 
@@ -204,22 +217,39 @@ def test_batch_limit_rejects_out_of_bounds_values() -> None:
 
 
 def test_maintain_verify_cli_is_registered_and_dispatches(
-    monkeypatch: pytest.MonkeyPatch,
-    backend: SQLiteBackend,
-    project: Path,
+    daemon_checkout: DaemonCheckout,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The sweep is reachable from the real CLI surface, not just importable."""
+    """The sweep is reachable from the real CLI surface, not just importable.
+
+    PRD-CORE-280 slice e (batch 23b): ported off ``memory_adapter.get_backend``
+    (dead patch since ``run_maintain_verify_for_project`` moved to
+    ``selected_store``) onto ``daemon_checkout``, matching the pattern in
+    ``test_learn_update_by_id.py``.
+    """
     from trw_mcp.server._cli_argparse import _build_arg_parser
     from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+    from trw_mcp.state.memory_adapter import store_learning
 
+    set_current_root(daemon_checkout.trw_dir.parent)
     config = TRWConfig()
     old = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 10)
-    _store(backend, "L-cli", [_assertion("symbol_that_was_deleted", old)])
-
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_project_root", lambda: project)
-    monkeypatch.setattr("trw_mcp.state._paths.resolve_trw_dir", lambda: project / ".trw")
-    monkeypatch.setattr("trw_mcp.state.memory_adapter.get_backend", lambda _trw_dir: backend)
+    store_learning(
+        daemon_checkout.trw_dir,
+        "L-cli",
+        "swept claim",
+        "",
+        assertions=[{"type": "grep_present", "pattern": "symbol_that_was_deleted", "target": "**/*.py"}],
+    )
+    # Backdate the assertion's first-failure clock directly on the daemon store,
+    # since store_learning/StoreRequest has no first_failed_at passthrough.
+    asyncio.run(
+        daemon_checkout.client.update(
+            "L-cli",
+            daemon_checkout.namespace,
+            {"assertions": [_assertion("symbol_that_was_deleted", old).model_dump(mode="json")]},
+        )
+    )
 
     args = _build_arg_parser().parse_args(["maintain-verify", "--json"])
     assert args.command == "maintain-verify"
@@ -231,26 +261,39 @@ def test_maintain_verify_cli_is_registered_and_dispatches(
     payload = _json.loads(capsys.readouterr().out)
     assert payload["entries_processed"] == 1
     assert payload["stale_transitions"] == 1
-    entry = backend.get("L-cli", namespace="default")
+    entry = asyncio.run(daemon_checkout.client.get("L-cli", daemon_checkout.namespace))
     assert entry is not None
-    assert entry.verification_status == "stale"
+    assert entry["entry"]["verification_status"] == "stale"
 
 
-@pytest.mark.perf
-@pytest.mark.slow
-@requires_local_timing
-def test_bulk_sweep_1000_entries(backend: SQLiteBackend, project: Path) -> None:
-    """NFR01: 1000 entries-with-assertions sweep in under 30s (measured)."""
-    config = TRWConfig()
+def _seed_bulk_sweep(backend: SQLiteBackend, config: TRWConfig) -> None:
     old = datetime.now(timezone.utc) - timedelta(days=config.assertion_stale_threshold_days + 10)
     with backend.transaction():
         for index in range(_SWEEP_ENTRY_COUNT):
             _store(backend, f"L-perf-{index}", [_assertion("symbol_that_was_deleted", old)])
 
-    started = time.monotonic()
+
+@pytest.mark.slow
+def test_bulk_sweep_1000_entries(backend: SQLiteBackend, project: Path) -> None:
+    """1000 entries-with-assertions all sweep to stale."""
+    config = TRWConfig()
+    _seed_bulk_sweep(backend, config)
+
     summary = _sweep(backend, project, config)
-    elapsed = time.monotonic() - started
 
     assert summary.entries_processed == _SWEEP_ENTRY_COUNT
     assert summary.stale_transitions == _SWEEP_ENTRY_COUNT
-    assert elapsed < _SWEEP_BUDGET_SECONDS, f"sweep took {elapsed:.1f}s (budget {_SWEEP_BUDGET_SECONDS}s)"
+
+
+@pytest.mark.slow
+@requires_local_timing
+def test_bulk_sweep_1000_entries_budget(backend: SQLiteBackend, project: Path) -> None:
+    """NFR01: 1000 entries-with-assertions sweep in under 30s (measured)."""
+    config = TRWConfig()
+    _seed_bulk_sweep(backend, config)
+
+    started = time.monotonic()
+    _sweep(backend, project, config)
+    elapsed = time.monotonic() - started
+
+    assert_budget("bulk_sweep_1000_entries", elapsed, _SWEEP_BUDGET_SECONDS, "s")

@@ -5,7 +5,7 @@ Every test here drives the REAL shipped
 stdin, exactly as a client does. Nothing re-implements its logic: a replica would
 be testing the replica.
 
-The rule the adapter enforces is stated in ``FRAMEWORK-CORE.md`` — *absence of a
+The rule the adapter enforces is stated in ``FRAMEWORK.md`` — *absence of a
 measurement is not a measurement of absence* — and its defaults were calibrated
 against live data rather than guessed. Truncation markers were harvested from
 2,418 real ``tool_result`` bodies (``more lines]`` 21 times, ``Output too large``
@@ -239,10 +239,18 @@ def test_tunables_are_typed_and_configurable(tmp_path: Path) -> None:
     assert len(_advisories(_run(root, _payload(response="")))) == 1, "emptying rule 3 disabled rule 1"
 
     # 4. max_read_bytes: a cap below the marker's offset hides rule 2.
+    #
+    # PRD-INFRA-194-FR04 interaction: hitting the read cap now ALSO fires the
+    # independent oversize signal (by design -- see
+    # test_tool_output_size_warning.py::test_payload_over_the_read_cap_still_advises_once),
+    # so this asserts what it always meant to assert -- rule 2 does not leak
+    # past the cap -- rather than "no advisory of any kind".
     root = _project(tmp_path, "tunable-bytes")
     (root / ".trw" / "config.yaml").write_text("degenerate_result_max_read_bytes: 1024\n", encoding="utf-8")
     big = _payload(response="x" * 4000 + f"[9 {_MARKER}")
-    assert _advisories(_run(root, big)) == [], "the byte cap was not applied to the read"
+    assert not any("could not look" in a for a in _advisories(_run(root, big))), (
+        "the byte cap was not applied to the read"
+    )
 
     # 5. deadline_ms: a deadline the process cannot beat means silence, never an error.
     root = _project(tmp_path, "tunable-deadline")
@@ -365,7 +373,13 @@ def test_an_oversized_byte_cap_cannot_defeat_the_read_bound(tmp_path: Path) -> N
     root = _project(tmp_path, "clamp-e2e")
     (root / ".trw" / "config.yaml").write_text("degenerate_result_max_read_bytes: 999999999\n", encoding="utf-8")
     beyond_ceiling = _payload(response="q" * (2 * 1024 * 1024) + f"[7 {_MARKER}")
-    assert _advisories(_run(root, beyond_ceiling)) == [], "an out-of-range cap let the read run past its ceiling"
+    # PRD-INFRA-194-FR04: hitting the clamped 1 MiB cap now ALSO fires the
+    # independent oversize signal (correctly -- 1 MiB is oversized by any
+    # threshold), so this asserts rule 2 specifically did not leak past the
+    # cap, not that the call produced zero advisories.
+    assert not any("could not look" in a for a in _advisories(_run(root, beyond_ceiling))), (
+        "an out-of-range cap let the read run past its ceiling"
+    )
 
 
 @pytest_skip_no_sh

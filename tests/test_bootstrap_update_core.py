@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -102,9 +103,19 @@ class TestUpdateProjectBasics:
 
     def test_reports_updated_files(self, initialized_repo: Path) -> None:
         """update_project reports exactly the files it changed, repo-relative."""
+        from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+
         framework = initialized_repo / ".trw" / "frameworks" / "FRAMEWORK.md"
         framework.write_text("stale\n", encoding="utf-8")
         hook = initialized_repo / ".claude" / "hooks" / "session-start.sh"
+        # PRD-INFRA-192 FR10: a manifest-recorded absent path is tombstoned, not
+        # recreated (test_bootstrap_tombstones.py). Dropping the record here
+        # first models a never-provisioned artifact, so this test still exercises
+        # the "created" branch it is named for.
+        manifest_path = initialized_repo / ".trw" / "managed-artifacts.yaml"
+        data = FileStateReader().read_yaml(manifest_path)
+        del data["content_hashes"]["session-start.sh"]
+        FileStateWriter().write_yaml(manifest_path, data)
         hook.unlink()
 
         result = update_project(initialized_repo)
@@ -229,9 +240,9 @@ class TestUpdateOverwritesFrameworkFiles:
         """
         from trw_mcp.bootstrap._utils import _DATA_DIR
 
-        agent_path = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        agent_path = initialized_repo / ".claude" / "agents" / "trw-lead.md"
         # Raw bundled form carries the unresolved capability tier token.
-        raw_bundled = (_DATA_DIR / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
+        raw_bundled = (_DATA_DIR / "agents" / "trw-lead.md").read_text(encoding="utf-8")
         assert "model: frontier" in raw_bundled
         agent_path.write_text(raw_bundled, encoding="utf-8")
 
@@ -309,7 +320,7 @@ class TestUpdateResolvesAgentModelTier:
 
     def test_update_resolves_frontier_to_opus(self, initialized_repo: Path) -> None:
         """After update, a bundled agent carries ``model: opus`` — never ``frontier``."""
-        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        agent = initialized_repo / ".claude" / "agents" / "trw-lead.md"
         # Fresh install already resolves; prove update KEEPS it resolved.
         assert "model: opus" in agent.read_text(encoding="utf-8")
 
@@ -330,8 +341,8 @@ class TestUpdateResolvesAgentModelTier:
         """
         from trw_mcp.bootstrap import _DATA_DIR
 
-        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
-        raw_bundled = (_DATA_DIR / "agents" / "trw-implementer.md").read_text(encoding="utf-8")
+        agent = initialized_repo / ".claude" / "agents" / "trw-lead.md"
+        raw_bundled = (_DATA_DIR / "agents" / "trw-lead.md").read_text(encoding="utf-8")
         assert "model: frontier" in raw_bundled
         # Leave the agent in the broken raw-tier state a pre-fix update produced.
         agent.write_text(raw_bundled, encoding="utf-8")
@@ -343,7 +354,7 @@ class TestUpdateResolvesAgentModelTier:
         assert "model: opus" in content
         assert "model: frontier" not in content
         # Must NOT be misclassified as a user modification.
-        assert not any("trw-implementer.md" in m for m in result.get("modified", []))
+        assert not any("trw-lead.md" in m for m in result.get("modified", []))
 
     def test_update_preserves_genuinely_user_edited_agent(self, initialized_repo: Path) -> None:
         """A genuinely user-edited agent is preserved and reported, not clobbered.
@@ -356,7 +367,7 @@ class TestUpdateResolvesAgentModelTier:
         from trw_mcp.bootstrap._template_updater import _update_framework_files
         from trw_mcp.bootstrap._version_manifest import _read_manifest
 
-        agent = initialized_repo / ".claude" / "agents" / "trw-implementer.md"
+        agent = initialized_repo / ".claude" / "agents" / "trw-lead.md"
         edited = agent.read_text(encoding="utf-8") + "\n\n<!-- user note: do not overwrite -->\n"
         agent.write_text(edited, encoding="utf-8")
 
@@ -378,7 +389,7 @@ class TestUpdateResolvesAgentModelTier:
 
         # User edit survives untouched and is reported as modified.
         assert agent.read_text(encoding="utf-8") == edited
-        assert any("trw-implementer.md" in m for m in result["modified"])
+        assert any("trw-lead.md" in m for m in result["modified"])
 
 
 @pytest.mark.unit
@@ -422,15 +433,17 @@ class TestUpdateLivePathPreservesUserEdits:
         assert "model: frontier" not in untouched
         assert not any("trw-lead.md" in m for m in result.get("modified", []))
 
-    def test_live_path_first_run_without_manifest_preserves_edit_and_heals_raw(self, initialized_repo: Path) -> None:
-        """No prior manifest: a genuine user edit is PRESERVED; a raw-tier file HEALS.
+    def test_live_path_first_run_without_manifest_refuses(self, initialized_repo: Path) -> None:
+        """No prior manifest: update_project() refuses before touching anything.
 
         Simulates the first update on a project installed before manifest support
-        existed (``_read_manifest`` returns None → ``manifest_hashes`` is None).
-        The reconciled guard (P1-7 round-2 audit) must still distinguish a genuine
-        user edit (matches no framework rendering → preserved, FR05's unconditional
-        AC) from a raw ``model: frontier`` file a pre-fix update left behind
-        (matches the raw framework rendering → self-heals to ``model: opus``).
+        existed (``_read_manifest`` returns None). Superseded behavior: this used
+        to assert the reconciled guard still distinguished a genuine user edit
+        (preserved) from a raw pre-fix ``model: frontier`` file (healed) with no
+        manifest at all. PRD-INFRA-192-NFR02 removes that fail-open degrade path —
+        without a current-schema manifest TRW cannot tell which files it owns, so
+        it refuses the whole update up front (byte-identical tree) instead of
+        guessing per-file ownership.
         """
         from trw_mcp.bootstrap._utils import _DATA_DIR
         from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE, _read_manifest
@@ -453,18 +466,23 @@ class TestUpdateLivePathPreservesUserEdits:
         assert "model: frontier" in raw_bundled
         raw_agent.write_text(raw_bundled, encoding="utf-8")
 
+        before = {
+            str(p.relative_to(initialized_repo)): p.read_bytes() for p in initialized_repo.rglob("*") if p.is_file()
+        }
+
         result = update_project(initialized_repo)
-        assert not result["errors"]
 
-        # Genuine edit preserved byte-for-byte + reported even without a manifest.
+        assert len(result["errors"]) == 1, result["errors"]
+        assert "refusing to update" in result["errors"][0]
+        assert "clean reinstall" in result["errors"][0]
+
+        # Neither the genuine edit nor the raw framework file was touched — nothing was.
         assert edited_agent.read_text(encoding="utf-8") == edited
-        assert any("trw-implementer.md" in m for m in result.get("modified", []))
-
-        # Raw-tier framework file still heals to the resolved client model.
-        healed = raw_agent.read_text(encoding="utf-8")
-        assert "model: opus" in healed
-        assert "model: frontier" not in healed
-        assert not any("trw-lead.md" in m for m in result.get("modified", []))
+        assert raw_agent.read_text(encoding="utf-8") == raw_bundled
+        after = {
+            str(p.relative_to(initialized_repo)): p.read_bytes() for p in initialized_repo.rglob("*") if p.is_file()
+        }
+        assert after == before
 
 
 class TestUpdateCreatesNewArtifacts:
@@ -518,6 +536,45 @@ class TestUpdateWarningsAndVersionCheck:
         result = update_project(initialized_repo)
         assert "warnings" in result
         assert isinstance(result["warnings"], list)
+
+
+class TestUpdateVerboseHintIsRunnable:
+    """G3 (installer refinement 5.1.0): the printed '-v' hint must actually work.
+
+    Root cause: the hint printed after ``update-project`` finishes reads (the
+    natural, wrong way) as "append -v to what you just ran" — but ``-v`` is
+    registered on the TOP-LEVEL argparse parser only
+    (``_cli_argparse.py``), not on the ``update-project`` subcommand, so
+    ``update-project . -v`` failed with ``unrecognized arguments: -v``
+    (reproduced live). The fix corrects the hint text to put ``-v`` BEFORE
+    the subcommand; this test runs that exact printed command through the
+    real CLI entry point.
+    """
+
+    def test_the_printed_hint_command_runs_and_exits_zero(self, initialized_repo: Path) -> None:
+        from trw_mcp.server._cli import main
+
+        with (
+            patch("sys.argv", ["trw-mcp", "-v", "update-project", str(initialized_repo)]),
+            pytest.raises(SystemExit) as exc,
+        ):
+            main()
+        assert exc.value.code == 0
+
+    def test_the_old_hint_shape_still_fails_to_document_why_it_moved(self, initialized_repo: Path) -> None:
+        """Negative control proving this is a real fix, not a no-op rewording:
+        the OLD (pre-fix) hint shape — ``-v`` AFTER the subcommand — still
+        does not parse, which is exactly why the hint text had to move ``-v``
+        before ``update-project`` rather than merely rephrase the same
+        command."""
+        from trw_mcp.server._cli import main
+
+        with (
+            patch("sys.argv", ["trw-mcp", "update-project", str(initialized_repo), "-v"]),
+            pytest.raises(SystemExit) as exc,
+        ):
+            main()
+        assert exc.value.code != 0
 
 
 class TestRootFrameworkMd:
@@ -657,12 +714,16 @@ class TestUpdatePreservesUserEditsWithoutManifest:
     and fails toward preservation on divergence.
     """
 
-    def test_corrupt_manifest_preserves_user_edited_hook(self, initialized_repo: Path) -> None:
-        """A user-edited hook survives update_project() even with a corrupt manifest.
+    def test_corrupt_manifest_refuses_before_touching_user_edited_hook(self, initialized_repo: Path) -> None:
+        """PRD-INFRA-192-NFR02: a corrupt manifest refuses the whole update, so a
+        user-edited hook is untouched not because the guard "preserved" it but
+        because update_project() never wrote anything at all.
 
-        The corrupt manifest degrades ``_read_manifest`` → None, so the live path
-        passes ``manifest_hashes=None``; the framework-content baseline must still
-        recognize the divergence and preserve + report the edit.
+        Superseded behavior: this used to assert the corrupt manifest degraded
+        ``_read_manifest`` to None and the live path still preserved the edit via
+        the framework-content baseline. That fail-open degrade path is removed —
+        a corrupt manifest now refuses up front (byte-identical tree), rather than
+        proceeding with a best-effort guess at ownership.
         """
         from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE
 
@@ -672,10 +733,21 @@ class TestUpdatePreservesUserEditsWithoutManifest:
         edited = hook.read_text(encoding="utf-8") + "\n# user custom line — keep me\n"
         hook.write_text(edited, encoding="utf-8")
 
+        before = {
+            str(p.relative_to(initialized_repo)): p.read_bytes() for p in initialized_repo.rglob("*") if p.is_file()
+        }
+
         result = update_project(initialized_repo)
-        assert not result["errors"]
+
+        assert len(result["errors"]) == 1, result["errors"]
+        assert "refusing to update" in result["errors"][0]
+        assert "clean reinstall" in result["errors"][0]
         assert hook.read_text(encoding="utf-8") == edited
-        assert any("session-start.sh" in m for m in result.get("modified", []))
+
+        after = {
+            str(p.relative_to(initialized_repo)): p.read_bytes() for p in initialized_repo.rglob("*") if p.is_file()
+        }
+        assert after == before
 
     def test_no_manifest_preserves_user_edited_hook_unit(self, initialized_repo: Path) -> None:
         """Focused: ``_update_hooks`` with ``manifest_hashes=None`` preserves a diverged hook."""
@@ -725,15 +797,30 @@ class TestReadManifestCorruptDegrades:
 
         assert _read_manifest(initialized_repo) is None
 
-    def test_update_project_survives_corrupt_manifest(self, initialized_repo: Path) -> None:
-        """update_project() completes without errors when the manifest is corrupt."""
+    def test_update_project_refuses_on_corrupt_manifest(self, initialized_repo: Path) -> None:
+        """PRD-INFRA-192-NFR02: update_project() refuses (not "survives") a corrupt
+        manifest. Superseded behavior: this used to assert the update completed
+        with no errors despite the corrupt manifest; that fail-open path is removed
+        — a corrupt manifest now produces exactly one refusal error naming the
+        clean-reinstall remedy, with no artifacts modified."""
         from trw_mcp.bootstrap._version_manifest import _MANIFEST_FILE
 
         manifest_path = initialized_repo / ".trw" / _MANIFEST_FILE
         manifest_path.write_text("{ unclosed: [1, 2, 3", encoding="utf-8")
 
+        before = {
+            str(p.relative_to(initialized_repo)): p.read_bytes() for p in initialized_repo.rglob("*") if p.is_file()
+        }
+
         result = update_project(initialized_repo)
-        assert not result["errors"]
+
+        assert len(result["errors"]) == 1, result["errors"]
+        assert "refusing to update" in result["errors"][0]
+        assert "clean reinstall" in result["errors"][0]
+        after = {
+            str(p.relative_to(initialized_repo)): p.read_bytes() for p in initialized_repo.rglob("*") if p.is_file()
+        }
+        assert after == before
 
 
 @pytest.mark.unit
@@ -753,55 +840,3 @@ class TestLivePathExistingAgentRelabel:
 
         assert ".claude/agents/trw-implementer.md" in result["updated"]
         assert ".claude/agents/trw-implementer.md" not in result["created"]
-
-
-class TestCompactCanonUpdateOrdering:
-    """PRD-CORE-207 FR07/NFR03: ordered compact-generation update + legacy compat."""
-
-    def _registry(self):
-        from trw_mcp.canons.registry import bundled_manifest_bytes, clear_cache, load_registry
-
-        clear_cache()
-        return load_registry(bundled_manifest_bytes())
-
-    def test_compact_canon_update_orders_artifacts_before_instruction_pointer(self) -> None:
-        """FR07: every body/stamp write precedes the single terminal pointer flip."""
-        from trw_mcp.canons.registry import compact_generation_write_plan
-
-        registry = self._registry()
-        plan = compact_generation_write_plan(registry, stamp_path=".trw/frameworks/VERSION.yaml")
-
-        kinds = [kind for kind, _path in plan]
-        # Exactly one instruction-pointer step, and it is last (fail-safe ordering).
-        assert kinds.count("instruction_pointer") == 1
-        assert kinds[-1] == "instruction_pointer"
-        pointer_idx = kinds.index("instruction_pointer")
-        # Every body / inventory / stamp write happens strictly before the flip.
-        for i, kind in enumerate(kinds):
-            if kind in {"body", "inventory", "stamp"}:
-                assert i < pointer_idx
-        # Both compact cores and both references are written before the pointer moves.
-        body_paths = {path for kind, path in plan if kind == "body"}
-        for compiled in registry.compiled_canons:
-            assert compiled.compact_core in body_paths
-            assert compiled.reference in body_paths
-            assert compiled.combined in body_paths  # legacy body still written
-
-    def test_legacy_combined_canon_paths_remain_compatible(self) -> None:
-        """NFR03: legacy combined paths stay declared outputs with a >=2 release window."""
-        from trw_mcp.canons.registry import (
-            COMBINED_COMPATIBILITY_MIN_RELEASES,
-            legacy_combined_paths,
-        )
-
-        registry = self._registry()
-        legacy = legacy_combined_paths(registry)
-        # The legacy combined filenames survive the migration (not removed).
-        assert any(p.endswith("data/framework.md") for p in legacy)
-        assert any(p.endswith("data/aaref.md") for p in legacy)
-        # Each legacy combined path is still a manifest-declared artifact source.
-        sources = {a.authoring_source for a in registry.artifacts}
-        for path in legacy:
-            assert path in sources
-        # The compatibility window is at least two minor releases (documented horizon).
-        assert COMBINED_COMPATIBILITY_MIN_RELEASES >= 2

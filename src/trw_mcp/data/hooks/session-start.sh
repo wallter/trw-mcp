@@ -14,28 +14,18 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
-# PRD-CORE-149 FR05: the generated profile policy gates the entire hook before
-# timers, stdin reads, or output. lib-trw.sh normalizes the legacy name.
-if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
-  exit 0
-fi
-
 init_hook_timer
 
 # Read stdin payload to determine source
 _payload=$(cat) || exit 0
+# jq only (T29): without it both stay empty, and one diagnostic says why.
 _source=""
 _payload_session_id=""
 if command -v jq >/dev/null 2>&1; then
   _source=$(printf '%s' "$_payload" | jq -r '.source // empty' 2>/dev/null) || true
   _payload_session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
-fi
-# Fallback: extract source via grep
-if [ -z "$_source" ]; then
-  _source=$(printf '%s' "$_payload" | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"source"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
-fi
-if [ -z "$_payload_session_id" ]; then
-  _payload_session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//') || true
+else
+  log_hook_execution "SessionStart" "unknown" "0" "jq_unavailable=1"
 fi
 
 _project_root="$(get_repo_root)" || exit 0
@@ -70,7 +60,8 @@ _emit_run_state() {
   # Sanitize before echoing into the AI context: the path originates in
   # pins.json, which is machine-written but still untrusted input to this hook.
   _own_run_rel=$(_sanitize_context_text "${_own_run#"$_project_root"/}")
-  echo "CEREMONY: Run pinned to this session: $_own_run_rel"
+  # printf, not echo: the sanitizer keeps backslashes and an XSI echo expands them.
+  printf '%s\n' "CEREMONY: Run pinned to this session: $_own_run_rel"
   echo "  Call trw_session_start() for your resolved ceremony tier, then trw_status() for phase."
 }
 
@@ -86,7 +77,7 @@ _emit_run_state() {
 # Two gates, not one. TRW_FRAMEWORK_MD_ENABLED is the operator switch. The
 # degraded-mode latch is the truthfulness gate PRD-CORE-247-FR07 adds: while
 # the MCP surface is known-absent, the document describes tools that do not
-# exist in this session, and charging an estimated 9,230 tokens for methodology
+# exist in this session, and charging the agent a framework read for methodology
 # the agent cannot apply is the exact "full instruction cost, zero capability"
 # case the submission named. A stale lib-trw.sh that predates the latch has no
 # `trw_degraded_latched`, which resolves to "emit" — the safe direction.
@@ -100,12 +91,10 @@ _framework_ref_enabled() {
 
 # --- PRD-CORE-247-FR07: phase-scoped framework read ---
 #
-# The whole document measures 35,073 characters (9,230 estimated tokens at the
-# 3.8-chars-per-token estimator used throughout PRD-CORE-247). Naming only the
-# sections the current phase needs costs at most 6,349 — the `plan` row, 18.1
-# percent of the document. Measured per section against
-# .trw/frameworks/FRAMEWORK-CORE.md: EXECUTION MODEL SUMMARY 2,242, PHASES
-# 1,824, CEREMONY TIERS 2,283, RIGID / FLEXIBLE 2,236, GATES 1,644.
+# .trw/frameworks/FRAMEWORK.md is the one installed framework document. Naming
+# only the sections the current phase needs keeps the read to a fraction of it;
+# tests/test_core_247_framework_read_budget.py measures every row against the
+# document itself, so no size figure is restated here to go stale.
 #
 # This is a documented table, not a magic constant, and it is TOTAL over every
 # value infer_phase can return (none, early, plan, implement, validate, deliver,
@@ -150,14 +139,9 @@ _framework_sections_for_phase() {
 # keeps that decision honest.
 # _own_phase: THIS session's phase, or "none".
 #
-# Deliberately NOT infer_phase. PRD-UF-047 pinned that infer_phase launders
-# recency — when the session is unpinned it falls back to find_active_run and
-# returns whichever run sorted newest project-wide, which with several instances
-# live is routinely another session's. Scoping the framework read to a foreign
-# run's phase would name the wrong sections with no signal that it had. Resolving
-# the owned run and reading its own event ladder is the same discipline
-# phase-cycle-stop.sh uses; no owned run means "none", the honest answer, whose
-# row is the broadest (EXECUTION MODEL SUMMARY + PHASES).
+# The same ownership-only resolution infer_phase does (R2-009), kept local so a
+# stub lib without infer_phase still works. No owned run means "none", the
+# honest answer, whose row is the broadest (EXECUTION MODEL SUMMARY + PHASES).
 _own_phase() {
   command -v resolve_owned_run >/dev/null 2>&1 || { printf 'none'; return; }
   command -v phase_from_events >/dev/null 2>&1 || { printf 'none'; return; }
@@ -170,12 +154,11 @@ _emit_framework_directive() {
   _efd_phase=$(_own_phase) || _efd_phase="none"
   [ -n "$_efd_phase" ] || _efd_phase="none"
   if [ "$(_framework_scope)" = "full" ]; then
-    echo "$1: Read .trw/frameworks/FRAMEWORK-CORE.md — 393 lines / 35,073 characters / ~9,230 tokens."
-    echo "  (whole-document read, selected by framework_read_scope: full)"
+    echo "$1: Read .trw/frameworks/FRAMEWORK.md — the whole document (framework_read_scope: full)."
   else
-    echo "$1: Read these .trw/frameworks/FRAMEWORK-CORE.md sections for your phase (${_efd_phase}):"
+    echo "$1: Read these .trw/frameworks/FRAMEWORK.md sections for your phase (${_efd_phase}):"
     echo "  $(_framework_sections_for_phase "$_efd_phase")"
-    echo "  At most ~6,349 characters, not the whole 35,073-character document. Re-read at each phase transition."
+    echo "  Only these sections, not the whole document. Re-read at each phase transition."
   fi
   [ "${2:-1}" = "1" ] || return 0
   echo "WHY: it defines the 6-phase execution model, per-phase exit criteria, quality gates with rubric"
@@ -300,7 +283,7 @@ case "$_source" in
     # PRD-CORE-247-FR02: RIGID names an OBLIGATION, not a tool call. Saying so
     # here is what makes the offline substitute table legible as a transfer of
     # the same obligation rather than as permission to skip it.
-    echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading FRAMEWORK-CORE.md, completion artifacts."
+    echo "RIGID (never skip): trw_session_start, trw_deliver, trw_build_check, reading your phase's FRAMEWORK.md sections, completion artifacts."
     echo "  These name OBLIGATIONS, not tool calls. If the trw_ tools are unreachable, each one transfers to"
     echo "  its 'trw-mcp local ...' equivalent (run 'trw-mcp local' for the list) — it does not lapse."
     echo ""
@@ -333,7 +316,7 @@ case "$_source" in
     _emit_protocol
     echo ""
     # Recover pre-compaction state if available
-    _state_file="$_project_root/.trw/context/pre_compact_state.json"
+    _state_file=$(pre_compact_state_file "$_project_root" 2>/dev/null) || _state_file=""
     if [ -f "$_state_file" ] && command -v jq >/dev/null 2>&1; then
       _run_path=$(jq -r '.run_path // empty' "$_state_file" 2>/dev/null) || true
       _phase=$(jq -r '.phase // empty' "$_state_file" 2>/dev/null) || true
@@ -349,9 +332,10 @@ case "$_source" in
         ''|*[!0-9]*) _event_count=0 ;;
       esac
       if [ -n "$_run_path" ]; then
-        echo "RECOVERED: Run at $_run_path"
-        [ -n "$_phase" ] && echo "RECOVERED: Phase: $_phase | Events: ${_event_count:-0}"
-        [ -n "$_last_cp" ] && echo "LAST CHECKPOINT: \"$_last_cp\""
+        # printf, not echo: an XSI echo would expand a backslash escape in these values.
+        printf '%s\n' "RECOVERED: Run at $_run_path"
+        [ -n "$_phase" ] && printf '%s\n' "RECOVERED: Phase: $_phase | Events: ${_event_count:-0}"
+        [ -n "$_last_cp" ] && printf '%s\n' "LAST CHECKPOINT: \"$_last_cp\""
       fi
     fi
     echo ""

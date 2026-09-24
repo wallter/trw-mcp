@@ -35,7 +35,7 @@ def measure_sync(
     """Measure each root write inside actual sync, with identical cold config setup."""
     (root / ".trw").mkdir(parents=True)
     (root / ".trw/config.yaml").write_text(
-        "claude_md_max_lines: 3000\nmax_auto_lines: 3000\nagents_md_enabled: true\ninstruction_externalize: 'off'\n",
+        "claude_md_max_lines: 3000\nmax_auto_lines: 3000\nagents_md_enabled: true\n",
         encoding="utf-8",
     )
     for name in _TARGETS:

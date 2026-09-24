@@ -1,183 +1,59 @@
-"""Installer-side detection of instruction-file carrier state — PRD-CORE-240-FR07.
+"""Migration behavior for the retired externalization carrier — PRD-QUAL-143-FR01.
 
-A project that installed TRW before externalization shipped is sitting on injected
-framework text and has no way to know. Detection makes that visible so `update-project`
-can convert it.
+The externalization carrier used to write the TRW block into a ``.trw``
+sidecar (``.trw/INSTRUCTIONS.md``, or ``.trw/COPILOT-INSTRUCTIONS.md`` for
+Copilot) and leave only an ``@`` import in CLAUDE.md/AGENTS.md. That carrier
+is gone — the block is inline again. What matters now is that an EXISTING
+install shaped like the old carrier converts cleanly on ``update-project``:
+the sidecar import is stripped, the block is folded back inline, the
+now-orphaned sidecar file is deleted, the user's own prose survives
+untouched, and a repeat update is a no-op.
 
-The rule that matters is what detection is allowed to READ. Three installer state
-files could each plausibly answer "has this been migrated?" and all three are wrong:
+The doctor-side ``classify_carrier_state`` / ``_check_instruction_carrier_state``
+checks this file used to cover are gone with the carrier they diagnosed; the
+instruction gate now reads the marker region directly (see
+``test_instruction_carrier.py::TestDoctorPointerReport``).
 
-- `.trw/installer-meta.yaml` is documented as history-only, "never a current runtime
-  authority" (PRD-INFRA-164 D-26)
-- `.trw/installed-version.json` is a reload nudge
-- `.trw/managed-artifacts.yaml` tracks bundled-artifact content hashes
-
-Keying off any of them reports a project as migrated because an installer once said
-so, rather than because its file actually carries an include — the same
-"we-never-checked reads as we-checked-and-it's-fine" shape the wiring-defect catalogue
-is about. Detection therefore classifies the live file.
+The orphan-strip coverage at the bottom (PRD-QUAL-131-FR06) is unrelated to
+the carrier and is retained as-is.
 """
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
-
-import pytest
-
-from trw_mcp.models.config import TRWConfig
-from trw_mcp.server._subcommands_doctor import (
-    _check_instruction_carrier_state,
-    classify_carrier_state,
-)
 
 _START = "<!-- trw:start -->"
 _END = "<!-- trw:end -->"
-_HEADER = "<!-- TRW AUTO-GENERATED — do not edit between markers -->"
 
 
-def _write(root: Path, body: str) -> Path:
-    target = root / "CLAUDE.md"
-    target.write_text(body, encoding="utf-8")
-    return target
+class TestLegacySidecarImportConvertsToInline:
+    """The FR01 migration: an old sidecar-import install folds back inline.
 
-
-class TestClassifyCarrierState:
-    def test_doctor_reports_legacy_inline_vs_migrated(self, tmp_path: Path) -> None:
-        """The FR07 headline: the two states must be distinguishable."""
-        legacy = _write(
-            tmp_path,
-            f"# Project\n\nUser prose.\n\n{_HEADER}\n{_START}\n"
-            "Call `trw_session_start()` first.\nDo NOT call `trw_deliver` unless\n"
-            f"{_END}\n",
-        )
-        assert classify_carrier_state(legacy) == "legacy_inline"
-
-        migrated = _write(
-            tmp_path,
-            f"# Project\n\nUser prose.\n\n{_HEADER}\n{_START}\n@.trw/INSTRUCTIONS.md\n{_END}\n",
-        )
-        assert classify_carrier_state(migrated) == "migrated"
-
-    def test_absent_when_no_trw_block(self, tmp_path: Path) -> None:
-        assert classify_carrier_state(_write(tmp_path, "# Project\n\nJust user prose.\n")) == "absent"
-
-    def test_absent_when_file_missing(self, tmp_path: Path) -> None:
-        assert classify_carrier_state(tmp_path / "nope.md") == "absent"
-
-    def test_malformed_region_reports_legacy_not_migrated(self, tmp_path: Path) -> None:
-        """FR07 explicitly: a half-written block must NOT read as migrated.
-
-        "We could not tell" must not resolve to the reassuring answer — that is the
-        exact failure shape this detection exists to surface.
-        """
-        half = _write(tmp_path, f"# Project\n\n{_START}\n@.trw/INSTRUCTIONS.md\n")
-
-        assert classify_carrier_state(half) != "migrated"
-
-    def test_block_with_an_import_plus_prose_is_legacy(self, tmp_path: Path) -> None:
-        """A partially-converted block is not converted."""
-        mixed = _write(
-            tmp_path,
-            f"{_START}\n@.trw/INSTRUCTIONS.md\nDo NOT call `trw_deliver` unless\n{_END}\n",
-        )
-
-        assert classify_carrier_state(mixed) == "legacy_inline"
-
-
-class TestDoctorCarrierCheck:
-    def test_legacy_only_project_warns_with_a_next_action(self, tmp_path: Path) -> None:
-        _write(
-            tmp_path,
-            f"# P\n\n{_START}\nCall `trw_session_start()` first.\n{_END}\n",
-        )
-
-        result = _check_instruction_carrier_state(tmp_path, TRWConfig())
-
-        assert result.status == "WARN"
-        assert "inline" in result.message
-        assert "update-project" in result.message, "a warning must name the next action"
-
-    def test_migrated_project_passes(self, tmp_path: Path) -> None:
-        _write(tmp_path, f"# P\n\n{_START}\n@.trw/INSTRUCTIONS.md\n{_END}\n")
-
-        result = _check_instruction_carrier_state(tmp_path, TRWConfig())
-
-        assert result.status == "PASS"
-        assert "referencing" in result.message
-
-    def test_no_surface_skips_rather_than_failing(self, tmp_path: Path) -> None:
-        result = _check_instruction_carrier_state(tmp_path, TRWConfig())
-
-        assert result.status == "SKIP"
-
-    def test_inline_is_never_a_failure(self, tmp_path: Path) -> None:
-        """Inline is CORRECT for a client that cannot resolve an include.
-
-        Failing it would train operators to ignore the check on the majority of
-        projects — a gate with a high false-positive rate and no recourse.
-        """
-        _write(tmp_path, f"# P\n\n{_START}\nCall `trw_session_start()` first.\n{_END}\n")
-
-        assert _check_instruction_carrier_state(tmp_path, TRWConfig()).status != "FAIL"
-
-
-class TestDetectionReadsTheFileNotInstallerState:
-    """FR07's binding constraint, asserted rather than described."""
-
-    @pytest.mark.parametrize(
-        "state_file",
-        [".trw/installer-meta.yaml", ".trw/installed-version.json", ".trw/managed-artifacts.yaml"],
-    )
-    def test_installer_state_files_are_not_opened(self, tmp_path: Path, state_file: str) -> None:
-        """A state file claiming otherwise must not change the verdict."""
-        _write(tmp_path, f"# P\n\n{_START}\nCall `trw_session_start()` first.\n{_END}\n")
-        path = tmp_path / state_file
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Content that would flip the answer if it were consulted.
-        path.write_text('{"migrated": true, "carrier": "import"}\n', encoding="utf-8")
-
-        assert classify_carrier_state(tmp_path / "CLAUDE.md") == "legacy_inline", (
-            f"{state_file} must not influence detection; the live file is the authority"
-        )
-
-    def test_verdict_follows_the_file_when_it_changes(self, tmp_path: Path) -> None:
-        """Convert the file and the verdict must move without any state-file update."""
-        target = _write(tmp_path, f"# P\n\n{_START}\nCall `trw_session_start()` first.\n{_END}\n")
-        assert classify_carrier_state(target) == "legacy_inline"
-
-        target.write_text(f"# P\n\n{_START}\n@.trw/INSTRUCTIONS.md\n{_END}\n", encoding="utf-8")
-
-        assert classify_carrier_state(target) == "migrated"
-
-
-class TestExistingInstallMigrates:
-    """The other half of FR07: detection must be followed by an actual conversion.
-
-    Detection that reports "legacy" forever, with no path off it, would be a
-    diagnosis without a treatment. This drives the real bootstrap path against a
-    project shaped like a pre-externalization install.
+    Drives the real bootstrap path (``init_project`` + ``update_project``)
+    against a project shaped like a pre-FR01 install: a CLAUDE.md carrying
+    only the ``@.trw/INSTRUCTIONS.md`` import inside the TRW markers, plus the
+    sidecar file itself holding the old protocol text.
     """
 
-    def test_legacy_install_converts_on_update_and_keeps_user_content(self, tmp_path: Path) -> None:
-        import subprocess
-
-        from trw_mcp.bootstrap import init_project, update_project
+    def _make_legacy_install(self, tmp_path: Path) -> tuple[Path, Path]:
+        from trw_mcp.bootstrap import init_project
 
         subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
         init_project(tmp_path, ide="claude-code")
 
-        claude_md = tmp_path / "CLAUDE.md"
-        claude_md.write_text(
-            "# My Project\n\nMy own rules. Keep these.\n\n"
-            f"{_START}\n"
-            "Call `trw_session_start()` first.\n"
-            "Do NOT call `trw_deliver` unless\n"
-            "lots of injected protocol text\n"
-            f"{_END}\n",
+        sidecar = tmp_path / ".trw" / "INSTRUCTIONS.md"
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        sidecar.write_text(
+            "<!-- TRW AUTO-GENERATED \u2014 do not edit. -->\n"
+            "Call `trw_session_start()` first.\nDo NOT call `trw_deliver` unless\n",
             encoding="utf-8",
         )
-        assert classify_carrier_state(claude_md) == "legacy_inline", "precondition"
-        assert _check_instruction_carrier_state(tmp_path, TRWConfig()).status == "WARN"
+        claude_md = tmp_path / "CLAUDE.md"
+        claude_md.write_text(
+            f"# My Project\n\nMy own rules. Keep these.\n\n{_START}\n@.trw/INSTRUCTIONS.md\n{_END}\n",
+            encoding="utf-8",
+        )
         # Committed, as a real legacy install is: update-project never rewrites
         # an UNCOMMITTED file it did not write (PRD-INFRA-190 FR04).
         subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
@@ -185,32 +61,33 @@ class TestExistingInstallMigrates:
             ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "legacy"],
             check=True,
         )
+        return claude_md, sidecar
+
+    def test_legacy_import_converts_to_inline_and_keeps_user_content(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap import update_project
+
+        claude_md, sidecar = self._make_legacy_install(tmp_path)
 
         update_project(tmp_path)
 
         after = claude_md.read_text(encoding="utf-8")
-        assert classify_carrier_state(claude_md) == "migrated"
-        assert _check_instruction_carrier_state(tmp_path, TRWConfig()).status == "PASS"
-
-        # The whole point: TRW's text leaves, the user's stays.
+        # The whole point: TRW's carrier text leaves, the user's stays.
         assert "My own rules. Keep these." in after
-        assert "lots of injected protocol text" not in after
-        assert [ln.strip() for ln in after.splitlines() if ln.strip().startswith("@")] == ["@.trw/INSTRUCTIONS.md"]
-        assert "trw_session_start" in (tmp_path / ".trw" / "INSTRUCTIONS.md").read_text(encoding="utf-8")
+        assert "@.trw/INSTRUCTIONS.md" not in after
+        assert _START in after and "trw_session_start" in after
+        assert not sidecar.exists()
+        assert sidecar.with_name("INSTRUCTIONS.md.retired").is_file(), "set aside, never deleted"
 
-    def test_migration_is_idempotent(self, tmp_path: Path) -> None:
-        import subprocess
+    def test_conversion_is_idempotent(self, tmp_path: Path) -> None:
+        from trw_mcp.bootstrap import update_project
 
-        from trw_mcp.bootstrap import init_project, update_project
-
-        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
-        init_project(tmp_path, ide="claude-code")
-        update_project(tmp_path)
-        first = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+        claude_md, _sidecar = self._make_legacy_install(tmp_path)
 
         update_project(tmp_path)
+        first = claude_md.read_text(encoding="utf-8")
+        update_project(tmp_path)
 
-        assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == first
+        assert claude_md.read_text(encoding="utf-8") == first
 
 
 class TestOrphanStripSurfaceIsClaudeMdOnly:
@@ -260,9 +137,9 @@ class TestOrphanStripSurfaceIsClaudeMdOnly:
         This is what made one of the pair removable and the other not, so it is
         asserted rather than left to the commit message.
         """
-        from pathlib import Path
+        from pathlib import Path as _Path
 
-        src = Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
+        src = _Path(__file__).resolve().parents[1] / "src" / "trw_mcp"
         callers = sorted(
             path.name
             for path in src.rglob("*.py")

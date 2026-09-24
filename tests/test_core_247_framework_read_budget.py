@@ -27,12 +27,13 @@ _HOOK_DIRS = (
     _ROOT.parent / ".claude" / "hooks",
     _ROOT / "src" / "trw_mcp" / "data" / "hooks",
 )
-_CORE = _ROOT / "src" / "trw_mcp" / "data" / "framework-core.md"
+_CORE = _ROOT / "src" / "trw_mcp" / "data" / "framework.md"
 
-#: FR07's bound: the largest phase row (`plan`) measures 6,349 characters against
-#: the 35,073-character document. Set at the PRD's stated ceiling, so a section
-#: added to a phase row has to be justified against it rather than absorbed.
-_PHASE_SCOPE_CEILING_CHARS = 6349
+#: FR07's bound: the largest phase row (`plan`) measures 7,102 characters of the
+#: 53,989-character FRAMEWORK.md (S4 moved the read from the retired compact core,
+#: where it measured 6,349). A section added to a phase row has to be justified
+#: against this rather than absorbed.
+_PHASE_SCOPE_CEILING_CHARS = 7102
 
 #: Every value ``infer_phase``/``phase_from_events`` can return. The mapping must
 #: be TOTAL over this set — an unmapped phase falling through to a whole-document
@@ -41,9 +42,9 @@ _ALL_PHASES = ("none", "early", "plan", "implement", "validate", "review", "deli
 
 
 def _section_chars(core: str, heading: str) -> int:
-    """Characters of the ``## <heading>`` section in the compiled core."""
+    """Characters of the ``## <heading>`` section in FRAMEWORK.md."""
     match = re.search(rf"(?ms)^##\s+{re.escape(heading)}\s*$.*?(?=^##\s|\Z)", core)
-    assert match is not None, f"section '{heading}' is named by the hook but absent from the compiled core"
+    assert match is not None, f"section '{heading}' is named by the hook but absent from FRAMEWORK.md"
     return len(match.group(0))
 
 
@@ -106,7 +107,7 @@ def test_framework_directive_is_gated_and_phase_scoped(tmp_path: Path, hook_dir:
     latch.write_text("", encoding="utf-8")
     for source in ("resume", "compact", "clear"):
         out = _run_session_start(degraded, source)
-        assert "FRAMEWORK-CORE.md" not in out, (
+        assert "FRAMEWORK.md" not in out, (
             f"{source} emitted a framework read directive while the surface is known-absent — "
             "that is full instruction cost for zero capability"
         )
@@ -114,9 +115,9 @@ def test_framework_directive_is_gated_and_phase_scoped(tmp_path: Path, hook_dir:
     # (b) Not degraded => a phase-scoped directive naming real sections.
     healthy = _make_project(tmp_path, hook_dir, "healthy")
     out = _run_session_start(healthy, "startup")
-    assert "FRAMEWORK-CORE.md" in out
+    assert "FRAMEWORK.md" in out
     named = _named_sections(out, core)
-    assert named, "the directive named no section of the compiled core"
+    assert named, "the directive named no section of FRAMEWORK.md"
     assert "EXECUTION MODEL SUMMARY" in named
 
     # (c) The named span measures at or under the budget.
@@ -165,18 +166,14 @@ def test_framework_read_scope_full_restores_the_whole_document_directive(tmp_pat
     root = _make_project(tmp_path, hook_dir, "fullscope")
     (root / ".trw" / "config.yaml").write_text("framework_read_scope: full\n", encoding="utf-8")
     out = _run_session_start(root, "startup")
-    assert "35,073" in out, "the full-scope directive must state the measured whole-document size"
+    assert "FRAMEWORK.md — the whole document" in out
     assert "EXECUTION MODEL SUMMARY" not in out, "full scope names the document, not a section list"
 
 
-def test_the_stale_size_claim_is_gone_from_every_copy(hook_dir: Path) -> None:
-    """FR07: the directive self-described as '~385 lines / ~8k tokens'.
-
-    The file measures 393 lines and 35,073 characters. A cost figure that is
-    remembered rather than measured is the defect; this pins the correction in
-    the shipped hook so it cannot be reintroduced by a copy-paste.
+def test_the_hook_restates_no_document_size(hook_dir: Path) -> None:
+    """FR07: a remembered size figure is the defect ('~385 lines / ~8k tokens', then
+    '35,073 characters' once the document had grown past it). The budget above is
+    measured from the document, so the hook states none.
     """
     hook = (hook_dir / "session-start.sh").read_text(encoding="utf-8")
-    assert "~385 lines" not in hook
-    assert "~8k tokens" not in hook
-    assert "35,073" in hook
+    assert not re.search(r"\d[\d,]* (characters|lines|tokens)", hook)

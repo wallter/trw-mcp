@@ -16,8 +16,9 @@ from typing import Any
 import pytest
 import yaml
 
-from tests._formation_test_support import FormationFixture, formation_env, make_run_dir  # noqa: F401
-from tests._layout import MONOREPO_ROOT, requires_monorepo
+from tests._formation_test_support import FormationFixture, formation_env, make_run_dir, open_slot  # noqa: F401
+from tests._layout import MONOREPO_ROOT, requires_local_timing, requires_monorepo
+from tests._timing import assert_budget
 from trw_mcp.agents.agent_formats import agent_format_for
 from trw_mcp.agents.tier_resolver import (
     KNOWN_CLIENTS,
@@ -107,10 +108,14 @@ def test_claude_code_output_is_byte_identical_to_the_pre_change_transform(agent_
     into a stale golden file — and it fails the moment the frontmatter step
     stops being the identity for the dialect the bundle is authored in.
     """
+    from trw_mcp.agents._report_cap import report_block
+
     source = agent_path.read_text(encoding="utf-8")
+    # PRD-CORE-290-FR04 appends the final-report block before any transform.
+    source = source.rstrip("\n") + "\n" + report_block(agent_text=source)
     pre_change = rewrite_model_line(render_agent_tool_names(source, client="claude-code"), client="claude-code")
 
-    assert materialize_agent(source, client="claude-code") == pre_change
+    assert materialize_agent(agent_path.read_text(encoding="utf-8"), client="claude-code") == pre_change
 
 
 @pytest.mark.unit
@@ -252,7 +257,7 @@ def test_antigravity_model_is_one_of_the_three_tokens_its_schema_admits() -> Non
         assert "timeout_mins" not in parsed
 
 
-@pytest.mark.perf
+@requires_local_timing
 @pytest.mark.unit
 def test_materialization_latency_budget() -> None:
     """NFR01: median wall time for one client's whole bundle, over 20 runs.
@@ -272,7 +277,7 @@ def test_materialization_latency_budget() -> None:
         durations.append(time.perf_counter() - start)
 
     median = statistics.median(durations)
-    assert median < budget_seconds, f"median {median * 1000:.1f} ms exceeds the {budget_seconds * 1000:.0f} ms budget"
+    assert_budget("materialize_bundle_median", median, budget_seconds, "s")
 
 
 # --- PRD-CORE-265-NFR05: the formation surface is client-neutral -------------
@@ -313,10 +318,7 @@ def test_formation_surface_is_client_neutral(
     profiles = sorted(_PROFILES)
     assert len(profiles) >= 7, f"expected the seven supported profiles, got {profiles}"
 
-    members = [
-        {"member_id": f"m-{client}", "client": client, "owned_paths": [f"src/{client}"], "open_join": True}
-        for client in profiles
-    ]
+    members = [open_slot(f"m-{client}", client, owned_paths=[f"src/{client}"]) for client in profiles]
     create(formation_env.orchestrator_run, formation_env.payload(members=members), prds_dir=None)
 
     runs_root = formation_env.trw_dir / "runs"

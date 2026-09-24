@@ -96,8 +96,8 @@ EFFECT_BOUNDARIES: dict[str, EffectBoundary] = {
     "D06": _own("deferred chokepoint journals the auto_progress roster step"),
     "D07": _own("deferred chokepoint journals the publish_learnings roster step"),
     "D08": _shared("D07", f"publish-hash sidecar inside publish_learnings, {_NESTED}"),
-    "D09": _own("deferred chokepoint journals the outcome_correlation roster step"),
-    "D10": _own("deferred chokepoint journals the recall_outcome roster step"),
+    # D09/D10 (outcome_correlation, recall_outcome) retired by PRD-CORE-293 --
+    # the roster steps they journaled were R10-skipped-by-design no-ops.
     "D11": _unjournaled("pipeline drain/stop is coordination, never a send proof"),
     "D12": _own("deferred chokepoint journals the telemetry roster step"),
     "D13": _shared("D12", f"session-summary append inside _step_telemetry, {_NESTED}"),

@@ -77,7 +77,7 @@ from trw_mcp.state._nudge_rules import (
     is_local_model as is_local_model,
 )
 from trw_mcp.state._nudge_rules import (
-    is_pool_in_cooldown as is_pool_in_cooldown,
+    resolve_pool_cooldown as resolve_pool_cooldown,
 )
 from trw_mcp.state._nudge_state import (
     CeremonyState as CeremonyState,
@@ -273,28 +273,6 @@ def compute_nudge_contextual(
         return compute_nudge_minimal(state)
     except Exception:  # justified: fail-open -- recall issues must not break ceremony status
         logger.debug("compute_nudge_contextual_failed", exc_info=True)
-        return compute_nudge_minimal(state)
-
-
-def compute_nudge_contextual_action(
-    state: CeremonyState,
-    trw_dir: Path,
-    context: NudgeContext | None = None,
-) -> str:
-    """Render the contextual next-step scaffold without the recall caution line."""
-
-    try:
-        content, _, _ = select_contextual_nudge_content(
-            state,
-            trw_dir,
-            context=context,
-            include_learning_caution=False,
-        )
-        if content:
-            return content
-        return compute_nudge_minimal(state)
-    except Exception:  # justified: fail-open -- recall issues must not break ceremony status
-        logger.debug("compute_nudge_contextual_action_failed", exc_info=True)
         return compute_nudge_minimal(state)
 
 

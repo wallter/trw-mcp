@@ -63,7 +63,6 @@ from trw_mcp.tools._orchestration_phase import (
 )
 from trw_mcp.tools._orchestration_status_assembly import assemble_status_result
 from trw_mcp.tools._task_profile_observability import apply_task_profile_observability
-from trw_mcp.tools.telemetry import log_tool_call
 
 logger = structlog.get_logger(__name__)
 # PRD-QUAL-042-FR01: cap trw_init ``task_name`` (a filesystem path component)
@@ -82,7 +81,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
     """Register orchestration tools on the MCP server."""
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_init(
         ctx: Context | None = None,
         task_name: str = "",
@@ -95,15 +93,14 @@ def register_orchestration_tools(server: FastMCP) -> None:
     ) -> dict[str, str]:
         """Create a run directory and register it as the active run.
 
-        Use when starting a task, sprint, or investigation that needs persistent
-        TRW state: run metadata, events, framework assets, and active-run pinning.
+        Use when starting a task, sprint, or investigation needing persistent
+        TRW state (run metadata, events, framework assets, active-run pinning).
 
         Input: task_name (required; [A-Za-z0-9][A-Za-z0-9_-]*, max 128 chars),
-        plus optional objective and prd_scope for context; complexity_hint
-        accepts EASY, STANDARD or HARD.
+        plus optional objective and prd_scope for context; complexity_hint:
+        EASY|STANDARD|HARD.
 
-        Output: run_id, run_path, trw_dir, phase, status, resolved task_type and
-        complexity class.
+        Output: run_id, run_path, trw_dir, phase, status, task_type, complexity class.
 
         Args:
             advanced: rarely-needed settings, as an object (or JSON object
@@ -252,10 +249,10 @@ def register_orchestration_tools(server: FastMCP) -> None:
             artifacts=resolved_artifacts,
             protected=protected,
         )
-        writer.write_yaml(
-            run_root / "meta" / "run.yaml",
-            model_to_dict(run_state),
-        )
+        from trw_mcp.state._run_yaml_update import complete_run_yaml
+
+        # N1: the scaffold above created run.yaml exclusively; this replaces only that record.
+        complete_run_yaml(run_root, model_to_dict(run_state))
 
         # PRD-CORE-106: Scan artifacts for knowledge requirements
         if resolved_artifacts:
@@ -362,7 +359,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         return result
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_status(
         ctx: Context | None = None,
         run_path: str | None = None,
@@ -430,7 +426,6 @@ def register_orchestration_tools(server: FastMCP) -> None:
         return result
 
     @server.tool(output_schema=None)
-    @log_tool_call
     def trw_checkpoint(
         ctx: Context | None = None,
         run_path: str | None = None,
@@ -440,12 +435,11 @@ def register_orchestration_tools(server: FastMCP) -> None:
     ) -> dict[str, object]:
         """Append a progress snapshot so work survives context compaction.
 
-        Use when you complete a milestone, or after each work batch so another
-        agent can resume. message is required — it is the resume point, and a
-        blank one writes nothing and returns recorded=false. Pass run_path when
-        your session has no pinned run: a delegated agent passes the directory
-        it was dispatched with; with no run resolvable nothing is written and
-        recorded is false.
+        Use when you complete a milestone or finish a work batch, so another
+        agent can resume. message is required (the resume point); blank
+        writes nothing (recorded=false). Pass run_path when your session has
+        no pinned run — a delegated agent uses its dispatch directory; if none
+        resolves, nothing is written.
 
         Output: recorded, status, timestamp, message metadata; reason + remedy
         when recorded is false.

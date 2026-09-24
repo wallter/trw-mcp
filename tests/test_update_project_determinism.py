@@ -65,7 +65,11 @@ _RUNTIME_PREFIXES = (
 
 def _run(target: Path, mode: str, home: Path, data_dir: Path | None = None) -> dict[str, list[str]]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("TRW_")}
-    env.update(HOME=str(home), TRW_EMBEDDINGS_ENABLED="false")
+    # Every run sees one user environment. XDG_DATA_HOME locates the memory
+    # daemon the instruction render counts from, and the function-scoped
+    # isolation fixtures point it at a new directory per test, after the
+    # module-scoped fixture settled the project under another one.
+    env.update(HOME=str(home), XDG_DATA_HOME=str(home / ".local" / "share"), TRW_EMBEDDINGS_ENABLED="false")
     proc = subprocess.run(
         [sys.executable, "-c", _RUNNER, str(target), mode, str(data_dir or "")],
         capture_output=True,

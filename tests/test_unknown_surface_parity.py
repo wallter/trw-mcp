@@ -62,8 +62,8 @@ def test_unknown_declares_the_verification_pack() -> None:
         resolution = resolve_tool_surface(case, "standard")
         assert "trw_build_check" in resolution.tools, case
         assert "trw_review" in resolution.tools, case
-        assert len(resolution.tools) == 12, (case, resolution.tools)
-        assert len(set(resolution.tools)) == 12, f"{case}: duplicated tool id in {resolution.tools}"
+        assert len(resolution.tools) == 11, (case, resolution.tools)
+        assert len(set(resolution.tools)) == 11, f"{case}: duplicated tool id in {resolution.tools}"
 
     assert STANDARD_TASK_PACKS["unknown"] == ("verification",)
     assert resolve_tool_surface("unknown", "standard").packs == ("kernel", "verification")
@@ -109,9 +109,9 @@ def test_versioned_kernel_and_manifest_preserve_feedback_contract() -> None:
     and registered public inventory remain unchanged."""
     assert kernel_digest() == KERNEL_VERSION_DIGESTS[KERNEL_VERSION]
     assert KERNEL_VERSION_DIGESTS[1] == "9997a48f81a04594b2bca455a92cdc38a2c9b7cfc9901e239c4152371d0becf7"
-    # 52 since trw-jev slice 1 added trw_decision to the new decision_support
+    # 52 since trw-jev slice 1 added trw_assess to the new assess_support
     # pack. The count is pinned so a surface addition is a visible diff here.
-    assert len(TOOL_MANIFEST) == 52
+    assert len(TOOL_MANIFEST) == 51  # trw_learn_update merged into trw_learn (PRD-CORE-291)
     assert CAPABILITY_PACKS["feedback"] == ("trw_submit_feedback",)
     # ``trw_submit_feedback`` belongs to EXACTLY the feedback pack (FR06 AC3).
     owning = [pack for pack, tools in PACK_TOOLS.items() if "trw_submit_feedback" in tools]
@@ -261,9 +261,7 @@ def test_no_source_claims_unknown_is_advisory() -> None:
     enumerated surfaces, plus the evidence-rule sentence is PRESENT in the
     authoring source (a grep-absent check alone would pass on a deleted file)."""
     surfaces = (
-        "trw-mcp/src/trw_mcp/data/framework.source.md",
         "trw-mcp/src/trw_mcp/data/framework.md",
-        "trw-mcp/src/trw_mcp/data/framework-core.md",
         "trw-mcp/src/trw_mcp/data/surfaces/tool-lifecycle.md",
         "trw-mcp/src/trw_mcp/state/claude_md/sections/_tool_lifecycle.py",
         "trw-mcp/src/trw_mcp/state/claude_md/renderers/_review_and_opencode.py",
@@ -302,18 +300,7 @@ def test_no_source_claims_unknown_is_advisory() -> None:
 
     assert not offenders, f"surfaces still asserting the superseded advisory-unknown rule: {offenders}"
 
-    # The positive half: the evidence rule is actually stated in the hand-editable
-    # canon source, so FR09 is a rewrite and not a deletion.
-    source = (PACKAGE_ROOT / "src/trw_mcp/data/framework.source.md").read_text(encoding="utf-8")
+    # The positive half: the evidence rule is actually stated in the canon, so
+    # FR09 is a rewrite and not a deletion.
+    source = (PACKAGE_ROOT / "src/trw_mcp/data/framework.md").read_text(encoding="utf-8")
     assert "an unclassified run that changed code still blocks" in source
-
-
-def test_generated_canon_views_match_their_source() -> None:
-    """FR09 AC2: the compiled views were REGENERATED, not hand-edited.
-
-    ``framework.md`` / ``framework-core.md`` are compiler output; editing them
-    directly is the recurring mistake this asserts against.
-    """
-    for rel in ("trw-mcp/src/trw_mcp/data/framework.md", "trw-mcp/src/trw_mcp/data/framework-core.md"):
-        text = (PACKAGE_ROOT / rel.removeprefix("trw-mcp/")).read_text(encoding="utf-8")
-        assert "an unclassified run that changed code still blocks" in text, rel

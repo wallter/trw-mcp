@@ -24,27 +24,29 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib-trw.sh
 . "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
 
-# PRD-CORE-149 FR05: a disabled hook must not consume stdin or append events.
-if [ "${HOOKS_ENABLED:-true}" = "false" ]; then
-  exit 0
-fi
-
 init_hook_timer
 
 # Read JSON payload from stdin
 _payload=$(cat) || exit 0
 
-# Extract file_path from tool_input — jq preferred, fallback to grep
-if command -v jq >/dev/null 2>&1; then
-  _file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || _file_path=""
-  _tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || _tool_name=""
-  _host_session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || _host_session_id=""
-else
-  # grep fallback: extract file_path value from JSON
-  _file_path=$(printf '%s' "$_payload" | grep -o '"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"file_path"[[:space:]]*:[[:space:]]*"//;s/"$//')
-  _tool_name=$(printf '%s' "$_payload" | grep -o '"tool_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"tool_name"[[:space:]]*:[[:space:]]*"//;s/"$//')
-  _host_session_id=$(printf '%s' "$_payload" | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"session_id"[[:space:]]*:[[:space:]]*"//;s/"$//')
+# jq only: no shell JSON parser (T29). Without jq this hook cannot tell which
+# tool ran, which file it touched, or whose session it was. It records exactly
+# that -- change evidence unknown -- in the checkout's session stream, and the
+# deliver gate reads the row as uncomputable (it blocks) rather than as zero.
+if ! command -v jq >/dev/null 2>&1; then
+  _unk_root="$(get_repo_root)" || exit 0
+  # A fresh checkout has no .trw/context yet; skipping the row there would read
+  # as "no changes" again, so the directory is created, not required.
+  mkdir -p "$_unk_root/.trw/context" 2>/dev/null || true
+  printf '{"ts":"%s","event":"change_evidence_unknown","reason":"jq_unavailable"}\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'unknown')" \
+    >>"$_unk_root/.trw/context/session-events.jsonl" 2>/dev/null || true
+  log_hook_execution "PostToolUse" "unknown" "0" "jq_unavailable=1"
+  exit 0
 fi
+_file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || _file_path=""
+_tool_name=$(_json_str_field "$_payload" tool_name) || _tool_name=""
+_host_session_id=$(_json_str_field "$_payload" session_id) || _host_session_id=""
 _session_id=${TRW_SESSION_ID:-}
 
 # Nothing to log if no file_path
@@ -79,7 +81,7 @@ _append_unpinned_change() {
   [ -n "$_uc_key" ] || return 0
   _uc_root="$(get_repo_root)" || return 0
   _uc_events="$_uc_root/.trw/context/session-events.jsonl"
-  [ -d "$_uc_root/.trw/context" ] || return 0
+  mkdir -p "$_uc_root/.trw/context" 2>/dev/null || return 0
   if [ -f "$_uc_events" ]; then
     _uc_size=$(wc -c <"$_uc_events" 2>/dev/null | tr -d ' ') || _uc_size=0
     case "$_uc_size" in

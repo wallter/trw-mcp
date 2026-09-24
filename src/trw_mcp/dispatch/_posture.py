@@ -57,6 +57,7 @@ import uuid
 
 from trw_mcp.dispatch._client_spec_types import REVIEWER_ARGV_PLACEHOLDERS, ClientSpec
 from trw_mcp.dispatch._client_specs import UnknownClientError, client_spec_for
+from trw_mcp.dispatch._confine import confinement_prefix
 from trw_mcp.models.surface_packs import reviewer_tools_toml_array
 
 __all__ = [
@@ -76,6 +77,7 @@ __all__ = [
 #: The one posture literal this module acts on. Named rather than repeated so a
 #: comparison cannot drift from the ``DispatchPosture`` Literal member.
 REVIEWER_POSTURE = "reviewer"
+ISOLATED_REVIEW_POSTURE = "isolated-review"
 
 #: Isolated mode excludes cwd, PYTHONPATH and user-site packages: the reviewed
 #: repository must not shadow the trusted interpreter's installed trw_mcp.
@@ -352,13 +354,15 @@ def verify_reviewer_posture(client: str, posture: str, *, read_only: bool) -> No
 
     Called from resolution (so the CLI/MCP paths refuse before a request object
     exists) AND from the runner (so a request built by any other path still
-    cannot reach ``subprocess.Popen``).
+    cannot reach ``subprocess.Popen``). ``isolated-review`` shares the writes
+    refusal, then needs an ``isolated_review`` spec, a confinable client and a
+    wrapper on this host (PRD-CORE-297-FR02).
     """
-    if posture != REVIEWER_POSTURE:
+    if posture not in (REVIEWER_POSTURE, ISOLATED_REVIEW_POSTURE):
         return
     if not read_only:
         raise ReviewerPostureError(
-            "posture='reviewer' cannot be combined with writes (allow_writes / read_only=False): "
+            f"posture={posture!r} cannot be combined with writes (allow_writes / read_only=False): "
             "the reviewer surface is a READ-ONLY bound and a writable reviewer would be able to "
             "modify the work it is reviewing. No write permission was granted."
         )
@@ -366,8 +370,21 @@ def verify_reviewer_posture(client: str, posture: str, *, read_only: bool) -> No
         spec = client_spec_for(client)
     except UnknownClientError:
         raise ReviewerPostureError(
-            f"client {client!r} has no dispatch client spec registered; reviewer posture refused."
+            f"client {client!r} has no dispatch client spec registered; {posture} posture refused."
         ) from None
+    if posture == ISOLATED_REVIEW_POSTURE:
+        missing = [
+            reason
+            for reason, held in (
+                ("its spec declares no isolated_review lane", spec.isolated_review is not None),
+                ("its spec has no host write-denial (host_confinement)", spec.host_confinement),
+                ("this host has no write-denial wrapper", bool(confinement_prefix())),
+            )
+            if not held
+        ]
+        if missing:
+            raise ReviewerPostureError(f"client {client!r} cannot run posture='isolated-review': {'; '.join(missing)}.")
+        return
     if not spec.supports_reviewer_posture:
         raise ReviewerPostureError(
             f"client {client!r} has no reviewer posture: TRW cannot place its own MCP server into "

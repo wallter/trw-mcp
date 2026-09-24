@@ -30,6 +30,7 @@ import pytest
 import yaml
 
 from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_local_timing, requires_monorepo
+from tests._timing import assert_budget
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -136,7 +137,6 @@ def test_missing_required_scan_tree_fails(tmp_path: Path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.perf
 @requires_local_timing
 def test_lint_runtime_under_2s() -> None:
     """NFR01: full frontmatter scan runs in under 2 seconds."""
@@ -144,7 +144,7 @@ def test_lint_runtime_under_2s() -> None:
     for path in _iter_scan_files():
         _extract_frontmatter(path)
     elapsed = time.perf_counter() - t0
-    assert elapsed < 2.0, f"lint scan took {elapsed:.3f}s (budget: 2.0s)"
+    assert_budget("lint_scan", elapsed, 2.0, "s")
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ from trw_mcp.formation._manifest import (
     FormationMemberStatus,
 )
 from trw_mcp.formation._store import (
+    _exclusive,
     manifest_path_for_run,
     register_formation,
     resolve_manifest_path,
@@ -71,32 +72,44 @@ def create(
     allocation time. (Cross-member duplication is refused on EVERY load by the
     model; the on-disk check is allocation-only, because a member writing the
     PRD it was allocated must not later invalidate its own manifest.)
+
+    PRD-FIX-149 review R10: the existence check and the write both happen under
+    the SAME hold of the manifest lock ``_store`` already owns for every other
+    manifest mutation -- otherwise two concurrent ``create`` calls for the same
+    orchestrator run can both pass the ``exists()`` check before either writes,
+    and the second silently clobbers the first's manifest instead of refusing.
     """
     manifest_path = manifest_path_for_run(orchestrator_run_path)
-    if manifest_path.exists():
-        raise FormationError(
-            f"a formation manifest already exists at {manifest_path}; revise it rather than overwriting it"
+    with _exclusive(manifest_path):
+        if manifest_path.exists():
+            raise FormationError(
+                f"a formation manifest already exists at {manifest_path}; revise it rather than overwriting it"
+            )
+        now = _now()
+        data = dict(payload)
+        data.setdefault("revision", 1)
+        data.setdefault("created_utc", now)
+        data.setdefault("updated_utc", now)
+        data["orchestrator_run_path"] = str(orchestrator_run_path)
+        try:
+            manifest = FormationManifest.model_validate(data)
+        except Exception as exc:
+            raise FormationError(f"formation payload is invalid: {exc}") from exc
+        if prds_dir is not None:
+            _refuse_already_allocated_prd_ids(manifest, prds_dir)
+        supplied = {str(m.get("member_id")): m for m in data.get("members", []) if isinstance(m, dict)}
+        members, admitted, released = admitted_members(
+            trw_dir,
+            None,
+            list(manifest.members),
+            formation_id=manifest.formation_id,
+            revision=manifest.revision,
+            supplied=supplied,
         )
-    now = _now()
-    data = dict(payload)
-    data.setdefault("revision", 1)
-    data.setdefault("created_utc", now)
-    data.setdefault("updated_utc", now)
-    data["orchestrator_run_path"] = str(orchestrator_run_path)
-    try:
-        manifest = FormationManifest.model_validate(data)
-    except Exception as exc:
-        raise FormationError(f"formation payload is invalid: {exc}") from exc
-    if prds_dir is not None:
-        _refuse_already_allocated_prd_ids(manifest, prds_dir)
-    supplied = {str(m.get("member_id")): m for m in data.get("members", []) if isinstance(m, dict)}
-    members, admitted, released = admitted_members(
-        trw_dir, None, list(manifest.members), revision=manifest.revision, supplied=supplied
-    )
-    manifest = manifest.model_copy(update={"members": members})
-    commit_admissions(trw_dir, manifest.formation_id, orchestrator_run_path, admitted, released)
-    write_manifest_locked(manifest_path, manifest)
-    register_formation(trw_dir, manifest.formation_id, orchestrator_run_path)
+        manifest = manifest.model_copy(update={"members": members})
+        commit_admissions(trw_dir, manifest.formation_id, orchestrator_run_path, admitted, released)
+        write_manifest_locked(manifest_path, manifest)
+        register_formation(trw_dir, manifest.formation_id, orchestrator_run_path)
     logger.info(
         "formation_created",
         formation_id=manifest.formation_id,
@@ -154,6 +167,11 @@ def join(
                 f"refusing to rebind it to {str(run_path)!r} — that would orphan the first run's evidence"
             )
         if recorded and (pin_key is None or member.pin_key in (None, pin_key)):
+            # NFR01 (PRD-FIX-149): the join that committed this slot may have died
+            # before stamping the run; the retry is what finishes it.
+            _restore_missing_stamp(
+                run_path, formation_id=formation_id, member_id=member_id, member=member, pin_key=pin_key
+            )
             return manifest
         if recorded:
             # PRD-CORE-274 FR14: the same run under a NEW pin. Only client lineage proven
@@ -212,15 +230,55 @@ def _stamp_run_record(run_path: Path, *, formation_id: str, member_id: str) -> N
     from a run (the hook, the commit boundary, ``trw_status``) can find the
     manifest without being told which one.
     """
-    from trw_mcp.state.persistence import FileStateReader, FileStateWriter
+    from trw_mcp.state._run_yaml_update import update_run_yaml
 
-    run_yaml = run_path / "meta" / "run.yaml"
-    if not run_yaml.is_file():
+    if not update_run_yaml(run_path, lambda data: data.update(formation_id=formation_id, member_id=member_id)):
         raise FormationError(f"member run {run_path} has no meta/run.yaml to stamp")
-    data = FileStateReader().read_yaml(run_yaml)
-    data["formation_id"] = formation_id
-    data["member_id"] = member_id
-    FileStateWriter().write_yaml(run_yaml, data)
+
+
+def _restore_missing_stamp(
+    run_path: Path,
+    *,
+    formation_id: str,
+    member_id: str,
+    member: FormationMember,
+    pin_key: str | None,
+) -> None:
+    """Stamp a joined run that carries NO formation stamp; never replace one.
+
+    Only the interrupted-join window leaves a run with neither ids: a live stamp
+    is already right, and a revoked one is FR18 compensation, which a retried
+    join must not undo. Decided inside the run.yaml lock, so a concurrent
+    revocation cannot slip between the check and the write.
+
+    REPAIR IS AUTHORIZED, NOT MERELY MISSING (PRD-FIX-149 review R3). The
+    caller already gates entry into this branch on the same two checks below,
+    but a repair function that trusts its caller's gating is one refactor away
+    from an unguarded resurrection: it re-derives its own authorization from
+    *member* and *pin_key* rather than assuming the idempotent branch it was
+    reached from did it correctly. A member the orchestrator has RETIRED
+    (``abandoned``/``reassigned``) or self-reported ``delivered`` is a settled
+    verdict, not a still-in-progress join a crash could have interrupted --
+    repairing its stamp would let a stale retry resurrect membership the
+    orchestrator already ended. The pin, when both this call's caller and the
+    recorded member carry one, must also agree: an unpinned or mismatched
+    retry is not proof this is the same session that joined.
+    """
+    if member.status not in (FormationMemberStatus.JOINED.value, FormationMemberStatus.ACTIVE.value):
+        raise FormationError(
+            f"member {member_id!r} is {member.status!r}, not joined or active; "
+            "a retired member's run stamp is never repaired"
+        )
+    if pin_key is not None and member.pin_key is not None and pin_key != member.pin_key:
+        raise FormationError(f"member {member_id!r} is pinned to a different session; refusing to repair its run stamp")
+    from trw_mcp.state._run_yaml_update import update_run_yaml
+
+    def _fill(data: dict[str, object]) -> None:
+        if "formation_id" not in data and "revoked_formation_id" not in data:
+            data.update(formation_id=formation_id, member_id=member_id)
+
+    if not update_run_yaml(run_path, _fill):
+        raise FormationError(f"member run {run_path} has no meta/run.yaml to repair its formation stamp")
 
 
 def revise(
@@ -245,7 +303,7 @@ def revise(
             manifest.member(member_id)
             members = [m if m.member_id != member_id else _apply(m, changes) for m in members]
         members, admitted, released = admitted_members(
-            trw_dir, manifest, members, revision=manifest.revision + 1, supplied=updates
+            trw_dir, manifest, members, formation_id=formation_id, revision=manifest.revision + 1, supplied=updates
         )
         revised = manifest.model_copy(
             update={"members": members, "revision": manifest.revision + 1, "updated_utc": _now()}

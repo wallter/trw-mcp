@@ -197,10 +197,13 @@ def test_duplicate_yaml_keys_are_rejected_not_crash() -> None:
     assert err is not None and "schema required" in err
 
 
-@pytest.mark.perf
 def test_yaml_anchor_alias_bomb_is_bounded() -> None:
-    # billion-laughs style anchor expansion. ruamel's safe loader must not blow
-    # up CPU/memory; bound with a generous timeout and assert clean rejection.
+    # Correctness deadline (PRD-QUAL-141): billion-laughs style anchor
+    # expansion. ruamel's safe loader must not blow up CPU/memory; bound with
+    # a generous timeout and assert clean rejection. Not a host-machine
+    # performance budget — the 5s bound is deliberately generous so this
+    # gates on ANY host, catching unbounded expansion rather than measuring
+    # this machine's speed.
     bomb = "\n".join(
         [
             "a: &a [x,x,x,x,x,x,x,x,x]",

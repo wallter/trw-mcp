@@ -106,7 +106,7 @@ def format_local_recall(result: dict[str, object]) -> list[str]:
     for entry in learnings:
         if not isinstance(entry, dict):
             continue
-        lines.append(f"[{entry.get('id', 'unknown')}] {entry.get('summary', '')}")
+        lines.append(f"[{entry.get('id', 'unknown')}] {entry.get('claim', '')}")
     return lines or ["No matching learnings."]
 
 

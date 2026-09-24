@@ -21,9 +21,6 @@ def _enter_standard_patches(stack: ExitStack, trw_dir: Path, entries: list[dict[
         entries = [_make_entry("L-001"), _make_entry("L-002")]
     stack.enter_context(patch("trw_mcp.tools._recall_impl.build_recall_context", return_value=None))
     stack.enter_context(patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=list(entries)))
-    stack.enter_context(patch("trw_mcp.state.memory_adapter.update_access_tracking"))
-    stack.enter_context(patch("trw_mcp.state.recall_search.search_patterns", return_value=[]))
-    stack.enter_context(patch("trw_mcp.state.recall_search.collect_context", return_value={}))
     stack.enter_context(patch("trw_mcp.tools._recall_impl._track_recall"))
     stack.enter_context(
         patch("trw_mcp.tools._recall_impl._augment_with_remote", side_effect=lambda q, m: (list(m), None))
@@ -59,7 +56,6 @@ def test_topic_filter_warning_clusters_missing(
             _rank_by_utility=lambda matches, *_a, **_kw: matches,
         )
 
-    assert result.get("topic_filter_ignored") is True
     warning = result.get("topic_filter_warning", "")
     assert warning, "topic_filter_warning must be non-empty when filter is ignored"
     assert "clusters" in warning.lower() or "missing" in warning.lower()
@@ -104,7 +100,6 @@ def test_topic_filter_warning_slug_absent(
             _rank_by_utility=lambda matches, *_a, **_kw: matches,
         )
 
-    assert result.get("topic_filter_ignored") is True
     warning = result.get("topic_filter_warning", "")
     assert warning, "topic_filter_warning must be non-empty when slug is absent"
     assert "nonexistent-slug" in warning
@@ -150,7 +145,6 @@ def test_topic_filter_no_warning_when_applied(
             _rank_by_utility=lambda matches, *_a, **_kw: matches,
         )
 
-    assert result.get("topic_filter_ignored") is False
     assert result.get("topic_filter_warning", "") == ""
 
     warning_events = [e for e in captured_structlog if e.get("event") == "topic_filter_ignored"]
@@ -190,7 +184,6 @@ def test_no_topic_no_warning_field(
             _rank_by_utility=lambda matches, *_a, **_kw: matches,
         )
 
-    assert "topic_filter_ignored" not in result
     assert "topic_filter_warning" not in result
 
     warning_events = [e for e in captured_structlog if e.get("event") == "topic_filter_ignored"]

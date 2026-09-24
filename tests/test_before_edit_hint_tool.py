@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from tests._memory_fixtures import MemoryDaemon, attach_checkout
 from trw_mcp.state._entitlements import sign_entitlement_for_dev
 from trw_mcp.tools.before_edit_hint import (
     _SCHEMA_VERSION_ACCEPTED,
@@ -587,12 +588,21 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
 
 class TestExposureRecording:
     @pytest.fixture
-    def project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    def project(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, memory_daemon: MemoryDaemon) -> Path:
         monkeypatch.setenv("TRW_PROJECT_ROOT", str(tmp_path))
         monkeypatch.setenv("TRW_EMBEDDINGS_ENABLED", "false")
         monkeypatch.setenv("TRW_DEDUP_ENABLED", "false")
         monkeypatch.delenv("TRW_SURFACE_ROLE", raising=False)
-        (tmp_path / ".trw" / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+        trw_dir = tmp_path / ".trw"
+        (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
+        # PRD-CORE-280 slice e1: this workspace is built directly (not via
+        # ``daemon_checkout``), so pin it to the shared session daemon per the
+        # fixture contract's "test that builds its own .trw" note.
+        monkeypatch.setenv("TRW_USER_DIR", str(memory_daemon.user_dir))
+        attach_checkout(trw_dir, memory_daemon)
+        from trw_mcp.models.config import reload_config
+
+        reload_config()
         return tmp_path
 
     @staticmethod
@@ -745,11 +755,18 @@ class TestExposureRecording:
         assert added <= 0.050
 
     def test_registered_tool_is_logged_and_response_unchanged(self, project: Path) -> None:
-        """FR02: trw_before_edit_hint now reaches tool telemetry via log_tool_call."""
+        """FR02: trw_before_edit_hint reaches tool telemetry through the tool-call wrapper (PRD-FIX-150)."""
         from tests.conftest import extract_tool_fn, make_test_server
+        from trw_mcp.telemetry.tool_call_timing import wrap_tool
 
-        fn = extract_tool_fn(make_test_server("before_edit_hint"), "trw_before_edit_hint")
-        assert getattr(fn, "__wrapped__", None) is not None, "tool is not wrapped by log_tool_call"
+        raw = extract_tool_fn(make_test_server("before_edit_hint"), "trw_before_edit_hint")
+        fn = wrap_tool(
+            raw,
+            tool_name="trw_before_edit_hint",
+            session_id_resolver=lambda: "s",
+            run_dir_resolver=lambda: None,
+            fallback_dir_resolver=lambda: project / ".trw" / "context",
+        )
         response = fn(file_path="app.py")
         assert set(response) >= {"file_path", "learnings", "learnings_count", "distill_status", "tier"}
         events = "".join(p.read_text() for p in (project / ".trw").rglob("*events*.jsonl"))

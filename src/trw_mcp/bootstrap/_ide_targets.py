@@ -586,7 +586,7 @@ def _update_cursor_cli_artifacts(
         # render_minimal_protocol() on that basis (state/claude_md/_agents_md).
         # This install path was passing the FULL section regardless, so a light
         # client was carrying the heavy body — 105 lines where its own profile
-        # asks for the compact one. FRAMEWORK-CORE's floor still holds: the
+        # asks for the compact one. FRAMEWORK.md's floor still holds: the
         # minimal body states the deliver gate and the rigid tool set verbatim.
         from ._cursor_cli import _cursor_cli_trw_section
 

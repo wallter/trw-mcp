@@ -30,7 +30,6 @@ def _publish(paths: DaemonPaths, pid: int) -> DaemonInfo:
     info = DaemonInfo(
         pid=pid,
         url="http://127.0.0.1:45678/mcp",
-        token="never-printed",
         started_at="2026-09-03T00:00:00+00:00",
         version="0.16.0",
     )
@@ -93,7 +92,6 @@ def test_row_reports_pid_uptime_and_store_for_a_live_daemon(user_dir: Path) -> N
     assert info.url in message
     assert "up " in message
     assert str(user_dir / "memory") in message
-    assert info.token not in message, "the token must never reach a diagnostic surface"
 
 
 def test_a_record_naming_a_dead_process_warns_with_the_remedy(user_dir: Path) -> None:
@@ -137,14 +135,14 @@ def test_a_corrupt_record_warns_naming_the_file_and_reason(user_dir: Path) -> No
 
 
 def test_the_row_never_starts_a_daemon(user_dir: Path) -> None:
-    """The whole point of a probe: no discovery file, no token, no process."""
+    """The whole point of a probe: no discovery file, no grant, no process."""
     from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
 
     memory_daemon_row()
 
     paths = DaemonPaths.resolve(create=False)
     assert not paths.discovery.exists()
-    assert not paths.token.exists()
+    assert not paths.grants.exists()
 
 
 def test_the_row_is_registered_in_the_doctor_catalogue_and_json(user_dir: Path, capsys) -> None:  # type: ignore[no-untyped-def]

@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pytest
 
 from tests._formation_test_support import FormationFixture, formation_env  # noqa: F401
+from tests._layout import requires_local_timing
+from tests._timing import assert_budget
 from tests._tools_orchestration_support import set_project_root  # noqa: F401
 from trw_mcp.exceptions import StateError as TRWStateError
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
@@ -45,34 +47,6 @@ class TestGetBundledFile:
         """_get_bundled_file with nonexistent subdir returns None."""
         result = _get_bundled_file("framework.md", subdir="nonexistent_subdir")
         assert result is None
-
-
-class TestGetPackageVersion:
-    """Lines 475-476: _get_package_version fallback when package not found."""
-
-    def test_returns_string(self) -> None:
-        """_get_package_version always returns a string."""
-        from trw_mcp.tools._orchestration_helpers import _get_package_version
-
-        result = _get_package_version()
-        assert isinstance(result, str)
-        assert len(result) > 0
-
-    def test_returns_unknown_when_package_not_installed(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """When importlib.metadata raises an exception, returns 'unknown' (lines 475-476)."""
-        import importlib.metadata as im
-
-        from trw_mcp.tools._orchestration_helpers import _get_package_version
-
-        def broken_version(distribution_name: str) -> str:
-            raise Exception("simulated failure")
-
-        monkeypatch.setattr(im, "version", broken_version)
-        result = _get_package_version()
-        assert result == "unknown"
 
 
 class TestCheckFrameworkVersionStaleness:
@@ -180,20 +154,8 @@ class TestCheckFrameworkVersionStaleness:
 # --- PRD-CORE-265-NFR01: owner_of is cheap enough for the commit boundary ----
 
 
-@pytest.mark.perf
-def test_formation_owner_of_latency_budget(formation_env: FormationFixture) -> None:
-    """NFR01. 16 members, 200 resolutions, median at or under 50 ms each.
-
-    The budget exists because FR09 runs this on EVERY scoped commit; a resolution
-    an operator can feel would make the ownership check something people disable.
-    The manifest is loaded inside the timed section (``context=None``), so the
-    number measured is the one the commit boundary actually pays, not a warmed
-    in-memory match.
-    """
-    import statistics
-    import time
-
-    from trw_mcp.formation import create, owner_of
+def _seed_owner_of_formation(formation_env: FormationFixture) -> None:
+    from trw_mcp.formation import create
 
     members = [
         {
@@ -206,12 +168,38 @@ def test_formation_owner_of_latency_budget(formation_env: FormationFixture) -> N
     ]
     create(formation_env.orchestrator_run, formation_env.payload(members=members), prds_dir=None)
 
+
+def test_formation_owner_of_latency_budget(formation_env: FormationFixture) -> None:
+    from trw_mcp.formation import owner_of
+
+    _seed_owner_of_formation(formation_env)
+
+    ownership = owner_of("src/pkg09/thing.py", run_path=formation_env.orchestrator_run)
+
+    assert ownership is not None and ownership.member_id == "impl-09"
+
+
+@requires_local_timing
+def test_formation_owner_of_latency_budget_budget(formation_env: FormationFixture) -> None:
+    """NFR01. 16 members, 200 resolutions, median at or under 50 ms each.
+
+    The budget exists because FR09 runs this on EVERY scoped commit; a resolution
+    an operator can feel would make the ownership check something people disable.
+    The manifest is loaded inside the timed section (``context=None``), so the
+    number measured is the one the commit boundary actually pays, not a warmed
+    in-memory match.
+    """
+    import statistics
+    import time
+
+    from trw_mcp.formation import owner_of
+
+    _seed_owner_of_formation(formation_env)
+
     samples: list[float] = []
     for _ in range(200):
         started = time.perf_counter()
-        ownership = owner_of("src/pkg09/thing.py", run_path=formation_env.orchestrator_run)
+        owner_of("src/pkg09/thing.py", run_path=formation_env.orchestrator_run)
         samples.append((time.perf_counter() - started) * 1000.0)
-    assert ownership is not None and ownership.member_id == "impl-09"
 
-    median_ms = statistics.median(samples)
-    assert median_ms <= 50.0, f"median owner_of resolution {median_ms:.2f} ms exceeds the 50 ms budget"
+    assert_budget("owner_of_median", statistics.median(samples), 50.0, "ms")

@@ -7,7 +7,7 @@ during Phase 1; see ``CLAUDE.md`` in this directory for editing rules.
 
 from __future__ import annotations
 
-from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_paths, strip_pii
+from trw_mcp.telemetry.anonymizer import anonymize_installation_id, redact_paths, redact_secrets
 from trw_mcp.telemetry.artifact_registry import (
     ComponentFingerprint,
     SurfaceArtifact,
@@ -126,13 +126,13 @@ __all__ = [
     "load_manifest",
     "publish_learnings",
     "redact_paths",
+    "redact_secrets",
     "resolve_surface_registry",
     "resolve_surface_snapshot",
     "resolve_unified_events_path",
     "run_boot_audit",
     "snapshot_to_yaml",
     "stamp_session",
-    "strip_pii",
     "validate_parent_within_run",
     "wrap_tool",
     "write_manifest",

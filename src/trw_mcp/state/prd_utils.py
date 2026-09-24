@@ -153,7 +153,7 @@ def extract_prd_identifier(entry: str) -> str | None:
     This is the narrow normaliser that makes the failure visible: it accepts the
     bare-ID and full-path forms and returns ``None`` for everything else, so the
     caller can report the entry as unresolved rather than silently dropping it
-    (PRD-CORE-249-FR04, the ``FRAMEWORK-CORE.md:50`` rule). Unlike
+    (PRD-CORE-249-FR04, FRAMEWORK.md's CONFIDENCE rule). Unlike
     :data:`_PRD_REF_RE` it does not require exactly three digits, because IDs
     beyond ``PRD-X-999`` are valid.
     """

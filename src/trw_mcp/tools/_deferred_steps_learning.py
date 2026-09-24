@@ -15,12 +15,11 @@ from typing import cast
 
 import structlog
 
+from trw_mcp.models.run import TOOL_CALL_EVENTS
 from trw_mcp.models.typed_dicts import (
     AutoProgressStepResult,
     IndexSyncResult,
-    OutcomeCorrelationStepResult,
     PublishLearningsResult,
-    RecallOutcomeStepResult,
     TrustIncrementResult,
 )
 
@@ -40,17 +39,6 @@ def _step_publish_learnings() -> PublishLearningsResult:
     from trw_mcp.telemetry.publisher import publish_learnings
 
     return cast("PublishLearningsResult", dict(publish_learnings()))
-
-
-def _step_outcome_correlation() -> OutcomeCorrelationStepResult:
-    """Compatibility roster entry: delivery is not per-learning usefulness evidence."""
-    # R10: preserve outcome observations, not temporal exposure-to-credit inference.
-    return {"status": "skipped", "updated": 0}
-
-
-def _step_recall_outcome(resolved_run: Path | None) -> RecallOutcomeStepResult:
-    """Compatibility roster entry; never label historical exposures successful."""
-    return {"status": "skipped", "recorded": 0}
 
 
 def _step_trust_increment(resolved_run: Path | None) -> TrustIncrementResult | None:
@@ -331,7 +319,7 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
                     velocity_tasks += 1
                 elif evt_type in ("learn", "trw_learn"):
                     learning_count += 1
-                elif evt_type == "tool_invocation":
+                elif evt_type in TOOL_CALL_EVENTS:
                     tool_name = str(evt_data.get("tool_name", ""))
                     if "trw_learn" in tool_name:
                         learning_count += 1

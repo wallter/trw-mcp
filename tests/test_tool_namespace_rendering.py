@@ -148,10 +148,7 @@ _EXPECTED_CONVERTED_AGENTS = [
     "trw-lead.md",
     "trw-prd-groomer.md",
     "trw-requirement-reviewer.md",
-    "trw-requirement-writer.md",
     "trw-researcher.md",
-    "trw-tester.md",
-    "trw-traceability-checker.md",
 ]
 
 

@@ -1,4 +1,4 @@
-"""Tests for check_duplicate edge cases and thresholds."""
+"""Tests for dedup_verdict edge cases and thresholds."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from unittest.mock import patch
 
 from tests._dedup_test_support import mock_embed, write_entry
 from trw_mcp.models.config import TRWConfig
-from trw_mcp.state.dedup import check_duplicate
+from trw_mcp.state.dedup import dedup_verdict
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 
 class TestCheckDuplicateEdgeCases:
-    """Additional edge cases for check_duplicate to reach line coverage."""
+    """Additional edge cases for dedup_verdict to reach line coverage."""
 
     def test_store_when_entries_dir_missing_after_embed(self, tmp_path: Path, reader: FileStateReader) -> None:
         """entries_dir does not exist → DedupResult('store', None, 0.0) even when embed succeeds."""
@@ -20,7 +20,7 @@ class TestCheckDuplicateEdgeCases:
         config = TRWConfig(embeddings_enabled=True)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate("some summary", "some detail", missing_dir, reader, config=config)
+            result = dedup_verdict("some summary", "some detail", missing_dir, reader, config=config)
 
         assert result.action == "store"
         assert result.existing_id is None
@@ -46,7 +46,7 @@ class TestCheckDuplicateEdgeCases:
 
         # Only write index.yaml (no real entries) so result must be 'store'
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
-            result = check_duplicate(
+            result = dedup_verdict(
                 "same summary exact match",
                 "same detail exact match",
                 entries_dir,
@@ -72,7 +72,7 @@ class TestCheckDuplicateEdgeCases:
 
         with patch("trw_mcp.state.dedup.embed", side_effect=mock_embed):
             # Should not raise — the corrupt file is skipped
-            result = check_duplicate(
+            result = dedup_verdict(
                 "completely different topic",
                 "unrelated info",
                 entries_dir,
@@ -103,7 +103,7 @@ class TestCheckDuplicateEdgeCases:
             return None
 
         with patch("trw_mcp.state.dedup.embed", side_effect=selective_none_embed):
-            result = check_duplicate("some summary", "some detail", entries_dir, reader, config=config)
+            result = dedup_verdict("some summary", "some detail", entries_dir, reader, config=config)
 
         # Existing entry embed returns None → skipped → action is 'store'
         assert result.action == "store"
@@ -145,7 +145,7 @@ class TestCheckDuplicateEdgeCases:
             return mock_embed(text)  # existing entry
 
         with patch("trw_mcp.state.dedup.embed", side_effect=boundary_embed):
-            result = check_duplicate("boundary test", "detail", entries_dir, reader, config=config)
+            result = dedup_verdict("boundary test", "detail", entries_dir, reader, config=config)
 
         # At exactly 0.95 similarity → skip (>= skip_threshold)
         assert result.action == "skip"
@@ -191,7 +191,7 @@ class TestCheckDuplicateEdgeCases:
             return mock_embed(text)
 
         with patch("trw_mcp.state.dedup.embed", side_effect=controlled_embed):
-            result = check_duplicate(
+            result = dedup_verdict(
                 "totally different new query",
                 "",  # Empty detail so text = "totally different new query "
                 entries_dir,

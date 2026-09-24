@@ -28,6 +28,7 @@ from trw_mcp.formation import (
     FormationError,
     FormationManifest,
     FormationMember,
+    canonical_path,
     load,
     manifest_path_for_run,
     resolve_manifest_path,
@@ -133,16 +134,16 @@ class CallerSnapshot:
 def _canonical(path: Path) -> Path:
     """Refuse broken resolution, preserving non-existent ordinary peer paths.
 
-    Strict resolution detects loops on Python 3.13+, whose non-strict resolver
-    no longer raises for them. Missing ordinary paths retain prior semantics.
-    Only filesystem-path resolution errors are translated, not caller logic.
+    Delegates to :func:`trw_mcp.formation.canonical_path` -- the ONE
+    canonicalizer (PRD-FIX-149 review R1), shared with
+    ``formation/_store.py``'s own-slot matching rather than a second private
+    copy of the same resolution logic -- and translates its ``FormationError``
+    into this module's own closed refusal vocabulary so every comms caller
+    keeps seeing ``IdentityError``.
     """
     try:
-        try:
-            return path.resolve(strict=True)
-        except FileNotFoundError:
-            return path.resolve()
-    except (OSError, RuntimeError, ValueError) as exc:
+        return canonical_path(path)
+    except FormationError as exc:
         raise IdentityError(IdentityRefusal.UNAVAILABLE, "formation path cannot be resolved") from exc
 
 
@@ -282,8 +283,9 @@ def resolve_snapshot(ctx: Context | None, *, trw_dir: Path, project_root: Path) 
 
     member = matched[0]
     _assert_stamp_consistent(member, formation_context.member_id)
-    # load() returns member_id=None for an owning run even if it joined as a
-    # member. Consult the actual stamp too, not only the loader's projection.
+    # For an owning run, load() derives member_id from the manifest by run path
+    # (its run.yaml is not stamped). Consult the actual stamp too, not only the
+    # loader's projection, so a stamped run is held to what it was stamped.
     actual_stamp = stamped_ids(run_path)
     if actual_stamp is not None:
         _assert_stamp_consistent(member, actual_stamp[1])

@@ -27,7 +27,7 @@ from __future__ import annotations
 import functools
 import json
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from importlib.resources import files as _pkg_files
 
 import structlog
@@ -99,6 +99,31 @@ def externally_owned_config_keys() -> dict[str, str]:
     return {str(key): str(value or "") for key, value in entries.items()}
 
 
+def _retired_detail(replacement: str) -> str:
+    return f"it was retired; use {replacement} instead" if replacement else "it was retired and has no replacement"
+
+
+def warn_retired_env_vars(environ: Mapping[str, str]) -> list[str]:
+    """Warn once per ``TRW_<KEY>`` variable whose key is in the retired table.
+
+    A retired field's env alias is dropped as silently as its YAML key. Only keys the
+    retired table names are checked: an arbitrary ``TRW_*`` variable may belong to a
+    hook or another tool. The variable name is printed and its value never is.
+    """
+    retired = retired_config_keys()
+    names = sorted(name for name in environ if name.startswith("TRW_") and name[4:].lower() in retired)
+    fresh = [name for name in names if name not in _WARNED]
+    for name in fresh:
+        _WARNED.add(name)
+        replacement = retired[name[4:].lower()]
+        logger.warning("config_env_var_retired", env_var=name, replacement=replacement or None)
+        print(
+            f"TRW: WARNING — environment variable '{name}' has no effect: {_retired_detail(replacement)}.",
+            file=sys.stderr,
+        )
+    return fresh
+
+
 def _reset_warned_keys() -> None:
     """Clear the once-per-process dedup set (tests only)."""
     _WARNED.clear()
@@ -127,10 +152,7 @@ def warn_unrecognised_config_keys(keys: Iterable[str], defined: Iterable[str]) -
     for key in unrecognised:
         _WARNED.add(key)
         if key in retired:
-            replacement = retired[key]
-            detail = (
-                f"it was retired; use {replacement} instead" if replacement else "it was retired and has no replacement"
-            )
+            detail = _retired_detail(retired[key])
         else:
             detail = "TRWConfig does not define it; check for a typo"
         logger.warning(

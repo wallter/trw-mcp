@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from tests._memory_store_fake import FakeMemoryStore
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
 _writer = FileStateWriter()
@@ -57,6 +58,7 @@ def fixture_with_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_session_start_does_not_scan_run_yamls_when_no_pin(
     fixture_with_runs: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fake_memory_store: FakeMemoryStore,
 ) -> None:
     """Fresh session_start with no pin must NOT read any run.yaml.
 
@@ -84,7 +86,7 @@ def test_session_start_does_not_scan_run_yamls_when_no_pin(
     # Run the recall step plus the run-resolution path that session_start hits.
     # If any ctx-less caller falls through to the legacy scan, it will read
     # one or more run.yaml files and the assertion below will fail.
-    learnings, _auto, _extra = perform_session_recalls(trw_dir, query="*", config=config, reader=reader)
+    learnings, _extra = perform_session_recalls(trw_dir, query="*", config=config, reader=reader, verbose=True)
 
     # Assertion: no run.yaml was parsed during the recall + resolution path.
     yaml_calls = [p for p in read_yaml_calls if p.name == "run.yaml"]
@@ -98,6 +100,7 @@ def test_session_start_does_not_scan_run_yamls_when_no_pin(
 def test_session_start_reads_only_pinned_run_yaml_when_pin_exists(
     fixture_with_runs: Path,
     monkeypatch: pytest.MonkeyPatch,
+    fake_memory_store: FakeMemoryStore,
 ) -> None:
     """When a pin exists, only the pinned run.yaml may be read (status only).
 
@@ -136,7 +139,7 @@ def test_session_start_reads_only_pinned_run_yaml_when_pin_exists(
     reader = FileStateReader()
     trw_dir2 = resolve_trw_dir()
 
-    perform_session_recalls(trw_dir2, query="*", config=config, reader=reader)
+    perform_session_recalls(trw_dir2, query="*", config=config, reader=reader, verbose=True)
 
     # Only run.yaml reads should be against the pinned run, if any.
     yaml_calls = [p for p in read_yaml_calls if p.name == "run.yaml"]

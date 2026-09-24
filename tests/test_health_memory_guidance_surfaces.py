@@ -4,11 +4,31 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from trw_mcp.bootstrap._client_skills import render_skill_md
+
 DATA = Path(__file__).resolve().parents[1] / "src" / "trw_mcp" / "data"
+_RENDERED_CLIENTS = ("codex", "copilot", "opencode")
 
 
 def _read(*relatives: str) -> list[tuple[str, str]]:
-    return [(relative, (DATA / relative).read_text(encoding="utf-8")) for relative in relatives]
+    """Read each *relative* path, rendering client variants from the canonical skill.
+
+    ``codex``/``copilot``/``opencode`` no longer ship their own SKILL.md forks
+    (PRD-CORE-291-FR04) -- every client renders from ``data/skills`` via
+    ``render_skill_md``, which only reduces frontmatter keys, so the body text
+    these tests assert on is identical to the canonical source.
+    """
+    results = []
+    for relative in relatives:
+        parts = relative.split("/")
+        if len(parts) == 4 and parts[0] in _RENDERED_CLIENTS and parts[1] == "skills" and parts[3] == "SKILL.md":
+            client, _, skill_name, _ = parts
+            canonical = (DATA / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+            content = render_skill_md(canonical, client)
+        else:
+            content = (DATA / relative).read_text(encoding="utf-8")
+        results.append((relative, content))
+    return results
 
 
 def test_framework_checks_resolve_live_state_without_fixed_memory_targets() -> None:
@@ -23,11 +43,8 @@ def test_framework_checks_resolve_live_state_without_fixed_memory_targets() -> N
         assert "build_gate_ready" in content, relative
         assert "review_gate_ready" in content, relative
         assert "deliver_gate_summary" in content, relative
-        if relative != "opencode/skills/trw-framework-check/SKILL.md":
-            assert "Do not discover runs through guessed" in content, relative
-            assert "never inspect pin files" in content, relative
-        else:
-            assert "never inspect active-pin files" in content, relative
+        assert "Do not discover runs through guessed" in content, relative
+        assert "never inspect pin files" in content, relative
     for relative, content in variants[:2]:
         assert "status itself does not return a path" in content.lower(), relative
         assert "UNKNOWN" in content, relative
@@ -75,7 +92,8 @@ def test_memory_optimization_uses_confirmed_tool_mutations_not_instruction_sync(
     )
     for relative, content in variants:
         assert "Require explicit user confirmation" in content, relative
-        assert "Prefer `trw_learn_update`" in content, relative
+        # PRD-CORE-291 merged trw_learn_update into trw_learn's update mode.
+        assert "Prefer `trw_learn(learning_id=...)`" in content, relative
         assert "do not hard-delete learning storage" in content, relative
         assert "Do not call it for that purpose" in content, relative
         assert "entries-per-domain formula" in content, relative

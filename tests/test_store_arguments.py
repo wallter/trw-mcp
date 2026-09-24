@@ -105,15 +105,6 @@ class TestSourceWhitelist:
         assert _args(source_type="not-a-real-source").source == "agent"
 
 
-class TestQValuePreseed:
-    def test_q_value_matches_the_preseed_formula(self) -> None:
-        """Q1-03: impact 0.95 pre-seeds q_value 0.725 before any observation."""
-        assert _args(impact=0.95).q_value == pytest.approx(0.725)
-
-    def test_default_impact_preseeds_the_neutral_q_value(self) -> None:
-        assert _args(impact=0.5).q_value == pytest.approx(0.5)
-
-
 class TestAnchorMarshalling:
     def test_anchor_dicts_become_anchor_objects(self) -> None:
         anchor: dict[str, object] = {

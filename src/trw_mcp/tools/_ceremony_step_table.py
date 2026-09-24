@@ -42,7 +42,6 @@ from trw_mcp.tools._ceremony_degradations import (
 from trw_mcp.tools._ceremony_reconcile_step import step_reconcile_local_writes
 from trw_mcp.tools._ceremony_session_start_steps import (
     step_assertion_health,
-    step_auto_recall_orchestrated,
     step_graph_health,
     step_pipeline_health_advisory,
     step_recall_learnings,
@@ -91,6 +90,7 @@ class SessionStartContext:
     results: SessionStartResultDict
     errors: list[str]
     step_durations_ms: dict[str, float] = field(default_factory=dict)
+    verbose: bool = False
     run_dir: Path | None = None
     call_ctx: TRWCallContext | None = None
     # mcp-x-failopen: typed fail-open degradation collector for this call. The
@@ -148,7 +148,7 @@ def run_steps(steps: Sequence[Step], sctx: SessionStartContext, facade: ModuleTy
             # ``SessionStartStepError`` on every critical entry would erase the
             # field an operator triages by. DEF-03: unwrap in a LOOP, not just
             # once — a step that calls another already-wrapping step function
-            # (e.g. ``phase_recall`` calling ``step_phase_auto_recall``) could
+            # (a step body calling another step helper that already wraps) could
             # otherwise nest two layers deep and leave ``cause`` as the INNER
             # ``SessionStartStepError`` instead of the real failure. The call
             # sites are also fixed to never double-wrap; this loop is the
@@ -176,7 +176,22 @@ def run_steps(steps: Sequence[Step], sctx: SessionStartContext, facade: ModuleTy
 
 
 def _ss_recall(sctx: SessionStartContext) -> None:
-    step_recall_learnings(sctx.query, sctx.config, sctx.results, sctx.errors)
+    step_recall_learnings(sctx.query, sctx.config, sctx.results, sctx.errors, verbose=sctx.verbose)
+
+
+def _ss_hook_flags(sctx: SessionStartContext) -> None:
+    from trw_mcp.state._hook_flags import write_hook_flags
+    from trw_mcp.tools import ceremony as _ceremony
+
+    write_hook_flags(_ceremony.resolve_trw_dir(), sctx.config)
+
+
+def _ss_recall_withdraw(sctx: SessionStartContext) -> None:
+    from trw_mcp.state.claude_md._withdraw import withdraw_managed_learnings
+    from trw_mcp.tools import ceremony as _ceremony
+
+    trw_dir = _ceremony.resolve_trw_dir()
+    withdraw_managed_learnings(trw_dir, trw_dir.parent, sctx.config)
 
 
 def _ss_run_resolve(sctx: SessionStartContext) -> None:
@@ -235,36 +250,17 @@ def _ss_counter(sctx: SessionStartContext) -> None:
 
 #: Every key ``run_auto_maintenance()`` can produce that reaches the payload.
 #:
-#: PRD-CORE-263-FR04. This list used to name 11 of the 14 keys
-#: ``AutoMaintenanceDict`` declared, and the three it omitted —
-#: ``wal_checkpoint``, ``embeddings_coverage_ratio`` and
-#: ``embedder_warmup_scheduled`` — were computed on the hot path of every
-#: session and then dropped here. The WAL checkpoint in particular is called
+#: PRD-CORE-263-FR04. This list once omitted keys ``AutoMaintenanceDict``
+#: declared — ``wal_checkpoint`` among them — which were computed on the hot path of every session and then dropped here. The WAL checkpoint in particular is called
 #: unconditionally, so the work was paid for on every session start and its
 #: outcome was unobservable.
 MAINTENANCE_PROPAGATED_KEYS: tuple[str, ...] = (
     "update_advisory",
     "auto_upgrade",
-    "auto_upgrade_check_deferred",
     "stale_runs_closed",
-    "stale_runs_deferred",
-    "embeddings_advisory",
-    "embeddings_backfill",
-    "embeddings_backfill_scheduled",
-    "embeddings_backfill_deferred",
-    "embeddings_backfill_not_performed",  # PRD-CORE-263 DEF-11
-    "embeddings_migration",
-    # PRD-CORE-263-FR04: the three that were computed and dropped.
-    "embedder_warmup_scheduled",
-    "embeddings_coverage_ratio",
+    # PRD-CORE-263-FR04: the ones that were computed and dropped.
     "wal_checkpoint",
     "pending_learns_replayed",
-    "pending_learns_deferred",
-    # PRD-CORE-257: the expired-bound list and the per-step outcome map are
-    # top-level response keys, not log-only diagnostics — FR03 requires the
-    # response to name the step whose bound fired.
-    "deferral_expired_ran",
-    "step_outcomes",
 )
 
 #: Keys the maintenance sweep produces that are DELIBERATELY not propagated.
@@ -292,16 +288,6 @@ def _ss_sanitize_maintain(sctx: SessionStartContext) -> None:
         value = maintenance.get(key)
         if value is not None:
             results[key] = value
-
-
-def _ss_phase_recall(sctx: SessionStartContext) -> None:
-    step_auto_recall_orchestrated(sctx.query, sctx.config, sctx.run_dir, sctx.results)
-
-
-def _ss_embed_health(sctx: SessionStartContext) -> None:
-    from trw_mcp.tools._ceremony_helpers import step_embed_health
-
-    sctx.results["embed_health"] = step_embed_health()
 
 
 def _ss_sync_health(sctx: SessionStartContext) -> None:
@@ -370,6 +356,12 @@ def _ss_pipeline_health(sctx: SessionStartContext) -> None:
 
 # ── The table (order is load-bearing — matches the old inline sequence) ──
 SESSION_START_STEPS: tuple[Step, ...] = (
+    # Null-arm ruling 2026-09-23. Non-critical: republishes the resolved hook
+    # switches for lib-trw.sh; a failure leaves the last published file and
+    # records a degradation.
+    Step("hook_flags", "_ss_hook_flags"),
+    # Recall off: strip learnings an earlier sync wrote to AGENTS.md/REVIEW.md.
+    Step("recall_withdraw", "_ss_recall_withdraw"),
     Step("recall", "_ss_recall", critical=True),
     Step("run_resolve", "_ss_run_resolve", critical=True),
     Step("surface_stamp", "_ss_surface_stamp", critical=True),
@@ -379,8 +371,6 @@ SESSION_START_STEPS: tuple[Step, ...] = (
     Step("first_session_marker", "_ss_first_session_marker", timed=False),
     Step("counter", "_ss_counter"),
     Step("sanitize_maintain", "_ss_sanitize_maintain"),
-    Step("phase_recall", "_ss_phase_recall", critical=True),
-    Step("embed_health", "_ss_embed_health"),
     Step("sync_health", "_ss_sync_health"),
     Step("assertion_health", "_ss_assertion_health"),
     Step("graph_health", "_ss_graph_health", timed=False),

@@ -95,11 +95,14 @@ class TestStopDrain:
 
         assert len(flush_calls) >= 1, "flush_now must be called during drain"
 
-    @pytest.mark.perf
     def test_stop_timeout_returns_within_bound(
         self, pipeline_cls: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """stop(timeout=0.5) returns within ~1.5s even if flush hangs."""
+        """stop(timeout=0.5) returns within ~1.5s even if flush hangs.
+
+        Correctness deadline (PRD-QUAL-141): proves the stop() timeout actually
+        bounds a hanging flush — not a host-machine performance budget.
+        """
         p, _ = make_configured_pipeline(
             pipeline_cls,
             tmp_path,

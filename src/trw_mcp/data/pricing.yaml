@@ -8,8 +8,9 @@
 # Rates are USD per 1K tokens, matching Anthropic's public pricing page.
 # Conventions across every row: cache_write = 1.25x input (5-minute TTL),
 # cache_read = 0.1x input -- EXCEPT the Fable/Mythos 5.1 line, whose cache
-# reads are 0.025x input. Do not assume 0.1x when adding a row; check the
-# vendor page. (Verified 2026-09-10.)
+# reads are 0.025x input, and Opus 5.5, whose cache reads are 0.05x input.
+# Do not assume 0.1x when adding a row; check the vendor page.
+# (Verified 2026-09-10; Opus 5.5 row added 2026-09-22.)
 #
 # Keys are bare model aliases. The lookup normalises the incoming id
 # before matching (telemetry/tool_call_timing.py::_usd_cost_estimate), so
@@ -21,7 +22,7 @@
 # `pricing_model_unknown` once per distinct id. Add the row rather than
 # leaving a real cost reported as free.
 
-version: "2026-09-10"
+version: "2026-09-22"
 
 models:
   # --- Frontier tier -------------------------------------------------
@@ -62,7 +63,20 @@ models:
     cache_write_per_1k: 0.0125
     cache_read_per_1k: 0.00025
 
-  # --- Opus tier ($5/$25 per MTok across the whole line) --------------
+  # --- Opus tier ($5/$25 per MTok through Opus 5; Opus 5.5 is $4/$20) --
+  # trw:intentional Released 2026-09-22 at $4 in / $20 out, cache reads 0.05x
+  # input -- neither the Opus-line $5/$25 nor the table's 0.1x convention. An
+  # explicit key is required: the `-`-boundary prefix match would otherwise
+  # resolve `claude-opus-5-5` onto `claude-opus-5` and over-report every token
+  # by 25%. cache_write follows the 1.25x convention; the source page quotes
+  # only the read rate. Source: platform.claude.com/docs/en/about-claude/models/overview
+  # and platform.claude.com/docs/en/models/opus-5-5/migration-guide
+  claude-opus-5-5:
+    input_per_1k: 0.004
+    output_per_1k: 0.020
+    cache_write_per_1k: 0.005
+    cache_read_per_1k: 0.0002
+
   claude-opus-5:
     input_per_1k: 0.005
     output_per_1k: 0.025

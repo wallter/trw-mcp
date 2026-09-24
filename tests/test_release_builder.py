@@ -23,8 +23,23 @@ TS_PACKAGE_KEY = "example-ts-client"
 TS_PACKAGE_DIR = "packages/example-ts-client"
 
 
-def _write_version_root(root: Path, *, mcp_version: str, framework_version: str) -> None:
-    """Create the version manifests needed by release status checks."""
+def _write_version_root(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mcp_version: str,
+    framework_version: str,
+    installed_mcp_version: str | None = None,
+    installed_memory_version: str = "0.8.3",
+) -> None:
+    """Create the version manifests needed by release status checks.
+
+    PRD-INFRA-192 FR12: package versions are compared against
+    ``.trw/managed-artifacts.yaml`` ``packages`` (the manifest) and the
+    interpreter's actually-installed versions (``resolved_package_versions``),
+    not a VERSION.yaml stamp. *installed_mcp_version* defaults to *mcp_version*
+    so the two sides agree unless a test is deliberately proving drift.
+    """
     (root / "trw-mcp").mkdir()
     (root / "trw-mcp" / "pyproject.toml").write_text(f'[project]\nversion = "{mcp_version}"\n')
     (root / "trw-memory").mkdir()
@@ -44,8 +59,16 @@ def _write_version_root(root: Path, *, mcp_version: str, framework_version: str)
         encoding="utf-8",
     )
     (root / ".trw" / "frameworks").mkdir(parents=True)
-    (root / ".trw" / "frameworks" / "VERSION.yaml").write_text(
-        f"framework_version: {framework_version}\ntrw_mcp_version: {mcp_version}\n"
+    (root / ".trw" / "frameworks" / "VERSION.yaml").write_text(f"framework_version: {framework_version}\n")
+    (root / ".trw" / "managed-artifacts.yaml").write_text(
+        f"packages:\n  trw-mcp: {mcp_version}\n  trw-memory: {installed_memory_version}\n"
+    )
+    monkeypatch.setattr(
+        "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+        lambda: {
+            "trw-mcp": installed_mcp_version if installed_mcp_version is not None else mcp_version,
+            "trw-memory": installed_memory_version,
+        },
     )
 
 
@@ -219,7 +242,9 @@ class TestUnifiedStatusTaxonomy:
         set_frozen_fingerprint(fp)
         try:
             monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-            _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+            _write_version_root(
+                tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version
+            )
             # A historical installer snapshot must appear in the historical section only.
             (tmp_path / ".trw" / "installer-meta.yaml").write_text(
                 "framework_version: v24.4_TRW\npackage_version: 0.1.0\nlast_updated: '2025-01-01T00:00:00Z'\n"
@@ -280,7 +305,7 @@ class TestUnifiedStatusTaxonomy:
 
         reset_frozen_fingerprint()
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
         status = collect_version_status(tmp_path)
         assert status["live_process"]["currentness"] == "unknown"
         assert status["live_process"]["present"] is False
@@ -316,7 +341,9 @@ class TestUnifiedStatusTaxonomy:
         set_frozen_fingerprint(stale)
         try:
             monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-            _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+            _write_version_root(
+                tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version
+            )
 
             status = collect_version_status(tmp_path)
 
@@ -345,34 +372,113 @@ class TestVersionStatus:
         from trw_mcp.models.config import TRWConfig
 
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
 
         status = collect_version_status(tmp_path)
 
         versions = status["versions"]
         assert isinstance(versions, dict)
         assert versions["live_server_version"] == "1.2.3"
-        assert versions["installed_asset_trw_mcp_version"] == "1.2.3"
+        assert versions["manifest_packages"]["trw-mcp"] == "1.2.3"
+        assert versions["installed_packages"]["trw-mcp"] == "1.2.3"
         assert status["compatible"] is True
         assert "package_version" in status["taxonomy"]
         assert "must_match" in status["compatibility_matrix"]
 
     def test_detects_manifest_asset_drift(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Release status fails when trw-mcp package and installed asset versions drift."""
+        """Release status fails when trw-mcp package and manifest-recorded versions drift."""
         from trw_mcp.models.config import TRWConfig
 
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
-        (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
-            f"framework_version: {TRWConfig().framework_version}\ntrw_mcp_version: 9.9.9\n"
+        _write_version_root(
+            tmp_path,
+            monkeypatch,
+            mcp_version="1.2.3",
+            framework_version=TRWConfig().framework_version,
+            installed_mcp_version="9.9.9",
         )
 
         status = collect_version_status(tmp_path)
 
         assert status["compatible"] is False
-        assert "trw_mcp_package_vs_installed_asset" in status["mismatches"]
+        assert "trw_mcp_installed_vs_manifest" in status["mismatches"]
         with pytest.raises(SystemExit):
             assert_version_status_compatible(tmp_path)
+
+    @pytest.mark.parametrize("manifest_text", [None, "version: 2\n", "packages: [1, 2]\n"])
+    def test_manifest_without_packages_is_a_mismatch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, manifest_text: str | None
+    ) -> None:
+        """An absent manifest, or one written before ``packages`` existed, reports ``manifest_packages_missing``."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        manifest = tmp_path / ".trw" / "managed-artifacts.yaml"
+        if manifest_text is None:
+            manifest.unlink()
+        else:
+            manifest.write_text(manifest_text, encoding="utf-8")
+
+        status = collect_version_status(tmp_path)
+
+        assert "manifest_packages_missing" in status["mismatches"]
+        assert status["versions"]["manifest_packages"] == {}
+        assert status["compatible"] is False
+
+    @pytest.mark.parametrize(
+        ("manifest_text", "installed", "expected"),
+        [
+            ("packages: {}\n", {"trw-mcp": "1.2.3", "trw-memory": "0.8.3"}, "trw_mcp_manifest_entry_missing"),
+            (
+                "packages:\n  trw-mcp: 1.2.3\n",
+                {"trw-mcp": "1.2.3", "trw-memory": "0.8.3"},
+                "trw_memory_manifest_entry_missing",
+            ),
+            ("packages:\n  trw-mcp: 1.2.3\n  trw-memory: 0.8.3\n", {"trw-mcp": "1.2.3"}, "trw_memory_not_installed"),
+        ],
+    )
+    def test_a_missing_required_package_on_either_side_is_a_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        manifest_text: str,
+        installed: dict[str, str],
+        expected: str,
+    ) -> None:
+        """Codex review of 14ae6dd34: comparing only when both keys exist read ``packages: {}`` as current."""
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(manifest_text, encoding="utf-8")
+        monkeypatch.setattr("trw_mcp.bootstrap._version_manifest.resolved_package_versions", lambda: installed)
+
+        status = collect_version_status(tmp_path)
+
+        assert expected in status["mismatches"]
+        assert status["compatible"] is False
+        distribution = "trw-mcp" if expected.startswith("trw_mcp") else "trw-memory"
+        assert any(distribution in error for error in status["errors"]), status["errors"]
+
+    def test_detects_trw_memory_drift_against_the_manifest(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from trw_mcp.models.config import TRWConfig
+
+        monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+            lambda: {"trw-mcp": "1.2.3", "trw-memory": "9.0.0"},
+        )
+
+        status = collect_version_status(tmp_path)
+
+        assert "trw_memory_installed_vs_manifest" in status["mismatches"]
+        assert "trw_mcp_installed_vs_manifest" not in status["mismatches"]
+        assert status["versions"]["installed_packages"]["trw-memory"] == "9.0.0"
+        assert status["versions"]["manifest_packages"]["trw-memory"] == "0.8.3"
 
     def test_collects_installed_project_status_without_monorepo_manifests(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -389,8 +495,15 @@ class TestVersionStatus:
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
         (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
         (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
-            f"framework_version: {TRWConfig().framework_version}\ntrw_mcp_version: 1.2.3\n",
+            f"framework_version: {TRWConfig().framework_version}\n",
             encoding="utf-8",
+        )
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+            "packages:\n  trw-mcp: 1.2.3\n  trw-memory: 0.8.3\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+            lambda: {"trw-mcp": "1.2.3", "trw-memory": "0.8.3"},
         )
 
         status = collect_version_status(tmp_path)
@@ -413,8 +526,15 @@ class TestVersionStatus:
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
         (tmp_path / ".trw" / "frameworks").mkdir(parents=True)
         (tmp_path / ".trw" / "frameworks" / "VERSION.yaml").write_text(
-            f"framework_version: {TRWConfig().framework_version}\ntrw_mcp_version: 9.9.9\n",
+            f"framework_version: {TRWConfig().framework_version}\n",
             encoding="utf-8",
+        )
+        (tmp_path / ".trw" / "managed-artifacts.yaml").write_text(
+            "packages:\n  trw-mcp: 9.9.9\n  trw-memory: 0.8.3\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            "trw_mcp.bootstrap._version_manifest.resolved_package_versions",
+            lambda: {"trw-mcp": "1.2.3", "trw-memory": "0.8.3"},
         )
 
         status = collect_version_status(tmp_path)
@@ -424,7 +544,7 @@ class TestVersionStatus:
             "a public install enumerated a nested monorepo sibling; a package.json "
             "package must come only from the non-shipped release-packages.yaml"
         )
-        assert status["mismatches"] == ["trw_mcp_package_vs_installed_asset"]
+        assert status["mismatches"] == ["trw_mcp_installed_vs_manifest"]
 
     def test_missing_installed_asset_manifest_is_explicit_and_fails_check(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -447,7 +567,7 @@ class TestVersionStatus:
         from trw_mcp.models.config import TRWConfig
 
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
         (tmp_path / TS_PACKAGE_DIR / "package.json").write_text("{not-json", encoding="utf-8")
 
         status = collect_version_status(tmp_path)
@@ -462,7 +582,7 @@ class TestVersionStatus:
         from trw_mcp.models.config import TRWConfig
 
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
         # The proprietary/newer package taxonomy is sourced from the monorepo-root
         # release-packages.yaml (NOT the shipped trw-mcp subtree), so the public
         # wheel enumerates no proprietary siblings. Provide it here to prove
@@ -534,7 +654,7 @@ class TestBuildReleaseHandler:
 
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr("trw_mcp.__version__", "1.2.3")
-        _write_version_root(tmp_path, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
+        _write_version_root(tmp_path, monkeypatch, mcp_version="1.2.3", framework_version=TRWConfig().framework_version)
         reset_frozen_fingerprint()
         monkeypatch.setattr(
             "trw_mcp.release_builder.build_release_bundle",

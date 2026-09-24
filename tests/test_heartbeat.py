@@ -12,8 +12,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from trw_mcp.state._paths import touch_heartbeat
 from trw_mcp.state.analytics.report import _get_last_activity_timestamp, _is_run_stale
 from trw_mcp.state.persistence import FileStateWriter
@@ -149,7 +147,6 @@ class TestTouchHeartbeat:
 class TestHeartbeatAwareStaleness:
     """FR-02: _get_last_activity_timestamp and _is_run_stale consider heartbeat mtime."""
 
-    @pytest.mark.perf
     def test_get_last_activity_uses_heartbeat(self, tmp_path: Path) -> None:
         """When heartbeat is newer than checkpoint, returns heartbeat time."""
         run_dir = _make_run_dir(tmp_path)
@@ -204,7 +201,6 @@ class TestHeartbeatAwareStaleness:
         age_hours = (datetime.now(timezone.utc) - result).total_seconds() / 3600
         assert 1.5 < age_hours < 2.5
 
-    @pytest.mark.perf
     def test_get_last_activity_heartbeat_only_no_checkpoints(self, tmp_path: Path) -> None:
         """Heartbeat alone (no checkpoints) provides activity timestamp."""
         run_dir = _make_run_dir(tmp_path)

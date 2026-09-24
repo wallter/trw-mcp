@@ -10,9 +10,8 @@ from urllib.parse import urlparse
 import structlog
 from pydantic import BaseModel
 
-from trw_mcp.state._constants import DEFAULT_NAMESPACE
 from trw_mcp.state._origin_project import ORIGIN_PROJECT_KEY, UNKNOWN_ORIGIN_PROJECT
-from trw_mcp.sync._team_entry import team_learning_to_entry
+from trw_mcp.sync._team_entry import _local_node_id, team_learning_to_entry
 from trw_mcp.sync._team_merge_result import TeamMergeResult
 from trw_mcp.sync.identity import resolve_sync_client_id
 
@@ -210,42 +209,20 @@ class SyncPuller:
             )
             return None
 
-    async def pull_team_learnings(
-        self,
-        since_seq: int,
-        *,
-        etag: str | None = None,
-        model_family: str = "",
-        trw_version: str = "",
-        client_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return only the team learning section of a pull response.
-
-        PRD-FIX-087 FR01: async — awaits pull_intel_state.
-        """
-        result = await self.pull_intel_state(
-            etag=etag,
-            since_seq=since_seq,
-            model_family=model_family,
-            trw_version=trw_version,
-            client_id=client_id,
-        )
-        if result is None or not isinstance(result.team_learnings, list):
-            return []
-        return result.team_learnings
-
     def merge_team_learnings(
         self,
         team_learnings: list[dict[str, Any]] | None,
         *,
-        namespace: str = DEFAULT_NAMESPACE,
+        namespace: str | None = None,
     ) -> TeamMergeResult:
-        """Merge pulled team learnings into *namespace* in local storage.
+        """Merge pulled team learnings into *namespace*, by default this checkout's project namespace.
 
         PRD-CORE-245 FR03: the pull target is named explicitly. A peer supplies
         the ``source_learning_id`` this path mints a local id from, so without a
         namespace predicate two peers emitting the same id into two namespaces
-        resolve to the same local row and collapse into one.
+        resolve to the same local row and collapse into one. The rows are read
+        and written through the checkout's store (PRD-CORE-298 FR01), so a
+        migrated checkout merges over the daemon.
 
         Returns a :class:`TeamMergeResult` rather than the applied count: every
         way an item can fail to land is per-item and was invisible to the caller,
@@ -258,102 +235,77 @@ class SyncPuller:
             return TeamMergeResult()
 
         try:
-            from trw_memory.exceptions import PIIBlockError, PoisoningError
-            from trw_memory.models.config import MemoryConfig
-            from trw_memory.security.runtime import prepare_entry_for_store, store_quarantined_entry
-            from trw_memory.storage._row_mapper import row_to_entry
-            from trw_memory.sync.conflict import resolve_conflict
-            from trw_memory.sync.delta import DeltaTracker
+            from trw_memory.sync.conflict import increment_clock, resolve_conflict
 
-            from trw_mcp.state._memory_connection import get_backend as _get_backend
-        except Exception:  # justified: import-guard, optional sync merge dependencies may be unavailable
-            logger.warning("sync_team_merge_import_error", event_type="sync_team_merge", outcome="error", exc_info=True)
+            from trw_mcp.state._store_selection import selected_store
+
+            store, project_namespace = selected_store(self._trw_dir)
+        except Exception:  # justified: a store that cannot be reached holds the pull cursor, never breaks sync
+            logger.warning(
+                "sync_team_merge_store_unavailable", event_type="sync_team_merge", outcome="error", exc_info=True
+            )
             return TeamMergeResult(attempted=len(team_learnings), unavailable=True)
 
+        target = namespace or project_namespace
         started_at = perf_counter()
-        inserted = 0
-        merged = 0
-        skipped_no_id = 0
-        invalid = 0
-        quarantined = 0
-        blocked = 0
-        failed = 0
-        backend = _get_backend(self._trw_dir)
-        sec_cfg = MemoryConfig(storage_path=str(self._trw_dir / "memory"))
-
-        def find_existing(source_learning_id: str) -> MemoryEntry | None:
-            """Resolve the local row this remote learning maps to, WITHIN *namespace*.
-
-            Every disjunct is namespace-qualified. Without that predicate a
-            second peer emitting the same ``source_learning_id`` into a second
-            namespace matched the first namespace's row and the merge collapsed
-            the two into one (PRD-CORE-245 P1).
-            """
-            conn = getattr(backend, "_conn", None)
-            if conn is not None:
-                row = conn.execute(
-                    "SELECT * FROM memories WHERE namespace = ? AND (remote_id = ? OR id = ? OR id = ?) LIMIT 1",
-                    (
-                        namespace,
-                        source_learning_id,
-                        self._local_team_learning_id(source_learning_id),
-                        source_learning_id,
-                    ),
-                ).fetchone()
-                if row is not None:
-                    return row_to_entry(tuple(row))
-            limit = max(backend.count(namespace=namespace), 1)
-            for candidate in backend.list_entries(namespace=namespace, limit=limit):
-                if candidate.remote_id == source_learning_id:
-                    return candidate
-            return None
-
+        counts = dict.fromkeys(
+            ("inserted", "merged", "unchanged", "skipped_no_id", "invalid", "quarantined", "blocked", "failed"), 0
+        )
         for raw_learning in team_learnings:
             source_learning_id = str(raw_learning.get("source_learning_id", "")).strip()
             if not source_learning_id:
-                skipped_no_id += 1
+                counts["skipped_no_id"] += 1
                 continue
-
-            existing = find_existing(source_learning_id)
-            local_id = existing.id if existing is not None else self._local_team_learning_id(source_learning_id)
-            remote_entry = team_learning_to_entry(self, raw_learning, local_id=local_id, namespace=namespace)
-            if remote_entry is None:
-                invalid += 1
-                continue
-
-            resolved = self._normalize_team_sync_entry(
-                resolve_conflict(existing, remote_entry) if existing is not None else remote_entry,
-                source_learning_id=source_learning_id,
-                remote_metadata=raw_learning.get("metadata"),
-                pull_seq=raw_learning.get("sync_seq"),
-            )
+            local_id = self._local_team_learning_id(source_learning_id)
             try:
-                decision = prepare_entry_for_store(resolved, backend=backend, config=sec_cfg, session_id=None)
-                if decision.quarantined:
-                    store_quarantined_entry(sec_cfg, decision.entry)
-                    quarantined += 1
-                    continue
-                backend.store(decision.entry)
-                DeltaTracker.mark_synced([resolved.id], backend, namespace=namespace)
-                if existing is None:
-                    inserted += 1
-                else:
-                    merged += 1
-            except (PoisoningError, PIIBlockError) as exc:
-                # PRD-FIX-138-FR01: a write-time security REFUSAL is a judged
-                # decision, not a store failure. Booking it as ``failed`` held
-                # the pull cursor on this item forever (see _client_cycle), and
-                # one poisoned team learning then stalled sync for the install.
-                blocked += 1
-                logger.warning(
-                    "sync_team_merge_entry_blocked",
-                    event_type="sync_team_merge",
-                    outcome="blocked",
-                    source_learning_id=source_learning_id,
-                    reason=getattr(exc, "reason", "") or type(exc).__name__,
+                # Every candidate is namespace-qualified: without that predicate a
+                # second peer emitting the same ``source_learning_id`` into a second
+                # namespace matched the first namespace's row (PRD-CORE-245 P1).
+                existing = store.find_synced(target, source_learning_id, [local_id, source_learning_id])
+                remote_entry = team_learning_to_entry(
+                    self, raw_learning, local_id=existing.id if existing is not None else local_id, namespace=target
                 )
+                if remote_entry is None:
+                    counts["invalid"] += 1
+                    continue
+                if (
+                    existing is not None
+                    and remote_entry.vector_clock
+                    and existing.vector_clock == remote_entry.vector_clock
+                ):
+                    # This revision already landed; merging it again would only append a conflict outcome.
+                    counts["unchanged"] += 1
+                    continue
+                local = existing
+                if local is not None and local.last_synced_at is None:
+                    # An unpushed local edit does not tick the clock; count it here so a
+                    # teammate's revision merges with it instead of replacing it.
+                    local = local.model_copy(
+                        update={"vector_clock": increment_clock(local.vector_clock, _local_node_id())}
+                    )
+                winner = resolve_conflict(local, remote_entry) if local is not None else remote_entry
+                if winner is local:
+                    # The local row already dominates this revision. Re-applying it would mark
+                    # an unpushed local edit synced, so the edit would never be pushed.
+                    counts["unchanged"] += 1
+                    continue
+                # Only the peer's own revision is what the server holds; a merge carries
+                # local content too, so it stays dirty for the next push.
+                remote_won = winner is remote_entry
+                if existing is not None and winner.sync_seq < existing.sync_seq:
+                    # The store writes counter + 1; a revision built from the payload starts
+                    # at 0, which would let this client's next edit of the entry push a lower
+                    # counter than it already pushed, and the backend would call it stale.
+                    winner = winner.model_copy(update={"sync_seq": existing.sync_seq})
+                resolved = self._normalize_team_sync_entry(
+                    winner,
+                    source_learning_id=source_learning_id,
+                    remote_metadata=raw_learning.get("metadata"),
+                    pull_seq=raw_learning.get("sync_seq"),
+                )
+                status, reason = store.apply_synced(target, resolved, synced=remote_won)
             except Exception:  # justified: per-item, one invalid team learning must not abort the full merge
-                failed += 1
+                counts["failed"] += 1
                 logger.warning(
                     "sync_team_merge_entry_error",
                     event_type="sync_team_merge",
@@ -361,16 +313,43 @@ class SyncPuller:
                     source_learning_id=source_learning_id,
                     exc_info=True,
                 )
+                continue
+            if status == "stored":
+                counts["inserted" if existing is None else "merged"] += 1
+            elif status in ("quarantined", "blocked"):
+                # PRD-FIX-138-FR01: a write-time security REFUSAL is a judged
+                # decision, not a store failure. Booking it as ``failed`` held
+                # the pull cursor on this item forever (see _client_cycle), and
+                # one poisoned team learning then stalled sync for the install.
+                counts[status] += 1
+                if status == "blocked":
+                    logger.warning(
+                        "sync_team_merge_entry_blocked",
+                        event_type="sync_team_merge",
+                        outcome="blocked",
+                        source_learning_id=source_learning_id,
+                        reason=reason,
+                    )
+            else:
+                counts["failed"] += 1
+                logger.warning(
+                    "sync_team_merge_entry_error",
+                    event_type="sync_team_merge",
+                    outcome=status,
+                    source_learning_id=source_learning_id,
+                    reason=reason,
+                )
 
         result = TeamMergeResult(
             attempted=len(team_learnings),
-            inserted=inserted,
-            merged=merged,
-            skipped_no_id=skipped_no_id,
-            invalid=invalid,
-            quarantined=quarantined,
-            blocked=blocked,
-            failed=failed,
+            inserted=counts["inserted"],
+            merged=counts["merged"],
+            unchanged=counts["unchanged"],
+            skipped_no_id=counts["skipped_no_id"],
+            invalid=counts["invalid"],
+            quarantined=counts["quarantined"],
+            blocked=counts["blocked"],
+            failed=counts["failed"],
         )
         emit = logger.warning if result.rejected else logger.info
         emit(

@@ -31,10 +31,6 @@ def test_step_durations_ms_present_on_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: success-path response carries ``step_durations_ms`` dict."""
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
     result = build_check_invoke()
 
     assert "step_durations_ms" in result, (
@@ -51,10 +47,6 @@ def test_step_durations_ms_has_required_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: required key set matches the locked telemetry shape."""
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
     result = build_check_invoke()
 
     durations = result["step_durations_ms"]
@@ -71,10 +63,6 @@ def test_step_durations_ms_values_non_negative(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: every recorded duration is ``>= 0.0``."""
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
     result = build_check_invoke()
 
     durations = result["step_durations_ms"]
@@ -94,10 +82,11 @@ def test_step_durations_total_is_sum_of_parts(
     but is not measured), which is the precise failure mode this
     telemetry guards against.
     """
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
+    from trw_mcp.models.config import get_config
+
+    # The server loads config at boot, so a real call never pays for it inside ``total``; the fixture
+    # calls the bare tool with a freshly reset singleton (the removed decorator used to warm it).
+    get_config()
     result = build_check_invoke()
 
     durations = result["step_durations_ms"]
@@ -118,10 +107,6 @@ def test_step_durations_total_is_max(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """FR03: ``total`` is the largest value in the dict (no step exceeds the call duration)."""
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
     result = build_check_invoke()
 
     durations = result["step_durations_ms"]
@@ -143,10 +128,6 @@ def test_step_durations_ms_mirrored_on_log_event(
     keys. The fix moves the log emission to AFTER ``_record_step("total",
     ...)`` and passes the full dict, then this test pins the contract.
     """
-    monkeypatch.setattr(
-        "trw_mcp.scoring.process_outcome_for_event",
-        lambda event_type, event_data=None, **_kw: [],
-    )
 
     with structlog.testing.capture_logs() as logs:
         result = build_check_invoke()

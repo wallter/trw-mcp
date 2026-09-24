@@ -54,7 +54,7 @@ class TestWriteVersionYaml:
         return {"created": [], "updated": [], "skipped": [], "errors": [], "preserved": []}
 
     def test_writes_all_expected_keys(self, fake_git_repo: Path) -> None:
-        """Generated VERSION.yaml contains all four expected metadata keys."""
+        """Generated VERSION.yaml contains the expected metadata keys."""
         (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
         result = self._make_init_result()
         _write_version_yaml(fake_git_repo, result)
@@ -66,8 +66,10 @@ class TestWriteVersionYaml:
         assert isinstance(data, dict)
         assert "framework_version" in data
         assert "aaref_version" in data
-        assert "trw_mcp_version" in data
         assert "deployed_at" in data
+        # PRD-INFRA-192 FR12: package versions are no longer stamped
+        # into VERSION.yaml — the manifest's ``packages`` map is authoritative.
+        assert "trw_mcp_version" not in data
 
     def test_framework_version_matches_config(self, fake_git_repo: Path) -> None:
         """framework_version in VERSION.yaml matches TRWConfig default."""
@@ -80,24 +82,41 @@ class TestWriteVersionYaml:
         assert isinstance(data, dict)
         assert data["framework_version"] == TRWConfig().framework_version
 
-    def test_trw_mcp_version_matches_metadata(self, fake_git_repo: Path) -> None:
-        """trw_mcp_version in VERSION.yaml is the version trw_mcp resolves for itself.
+    def test_resolved_package_versions_matches_importlib_metadata(self, fake_git_repo: Path) -> None:
+        """``resolved_package_versions()`` resolves trw-mcp via importlib.metadata.
 
-        That is ``trw_mcp.__version__``: the source ``pyproject.toml`` in a checkout,
-        installed metadata only for a wheel (see ``trw_mcp._resolve_version``).
-        Comparing against ``importlib.metadata`` directly failed whenever the
-        repo's editable install was older than the source tree.
+        PRD-INFRA-192 FR12: package versions moved from a VERSION.yaml
+        stamp to ``.trw/managed-artifacts.yaml`` ``packages``, resolved by this
+        helper. Comparing against ``importlib.metadata`` directly (rather than
+        ``trw_mcp.__version__``, which falls back to ``pyproject.toml`` in a
+        source checkout) proves the helper reads the INSTALLED distribution,
+        which is what an installed project actually has.
         """
-        from trw_mcp import __version__
+        import importlib.metadata
 
-        (fake_git_repo / ".trw" / "frameworks").mkdir(parents=True)
-        result = self._make_init_result()
-        _write_version_yaml(fake_git_repo, result)
+        from trw_mcp.bootstrap._version_manifest import resolved_package_versions
 
-        version_path = fake_git_repo / ".trw" / "frameworks" / "VERSION.yaml"
-        data = FileStateReader().read_yaml(version_path)
-        assert isinstance(data, dict)
-        assert data["trw_mcp_version"] == __version__
+        versions = resolved_package_versions()
+        assert versions.get("trw-mcp") == importlib.metadata.version("trw-mcp")
+
+    def test_resolved_package_versions_omits_missing_distribution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A distribution that fails to resolve is OMITTED, never recorded as ``"unknown"``."""
+        import importlib.metadata
+
+        from trw_mcp.bootstrap import _version_manifest
+
+        real_version = importlib.metadata.version
+
+        def _fake_version(name: str) -> str:
+            if name == "trw-memory":
+                raise importlib.metadata.PackageNotFoundError(name)
+            return real_version(name)
+
+        monkeypatch.setattr(importlib.metadata, "version", _fake_version)
+
+        versions = _version_manifest.resolved_package_versions()
+        assert "trw-memory" not in versions
+        assert "trw-mcp" in versions
 
     def test_deployed_at_is_valid_iso(self, fake_git_repo: Path) -> None:
         """deployed_at field parses as a valid ISO-8601 datetime without error."""

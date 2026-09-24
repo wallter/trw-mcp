@@ -14,7 +14,6 @@ Artifacts written:
   - .opencode/commands/trw-distill-hotspots.md
   - .opencode/commands/trw-distill-conventions.md
   - .opencode/agents/trw-distill-explorer.md
-  - .trw/managed-artifacts.yaml hash entries for the four new files
   - .trw/client-profile.env (TRW_CLIENT_PROFILE=opencode)
   - .trw/channels/manifest.yaml merged with six opencode ChannelEntry records
   - .gitignore entries for channel-events.jsonl and client-profile.env
@@ -29,10 +28,8 @@ describes is defect pattern P7 — the class this whole removal was about.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import structlog
-from ruamel.yaml import YAML
 
 from trw_mcp.bootstrap._distill_channel_manifest import merge_distill_channel_manifest
 from trw_mcp.channels._gitignore import add_gitignore_entry
@@ -53,41 +50,10 @@ _GITIGNORE_ENTRIES = [
     ".trw/client-profile.env",
 ]
 
-# Managed artifacts registry file
-_MANAGED_ARTIFACTS_PATH = ".trw/managed-artifacts.yaml"
-
 # Client profile env file (FR19)
 _CLIENT_PROFILE_ENV_PATH = ".trw/client-profile.env"
 _CLIENT_PROFILE_ENV_CONTENT = "TRW_CLIENT_PROFILE=opencode\n"
 _MANIFEST_DATA = Path(__file__).parent.parent / "data" / "opencode" / "channels" / "manifest-opencode.yaml"
-
-
-# ---------------------------------------------------------------------------
-# Managed-artifacts helper
-# ---------------------------------------------------------------------------
-
-
-def _load_managed_artifacts(repo_root: Path) -> dict[str, Any]:
-    """Load .trw/managed-artifacts.yaml, returning empty dict if absent."""
-    path = repo_root / _MANAGED_ARTIFACTS_PATH
-    if not path.exists():
-        return {}
-    try:
-        yaml = YAML(typ="safe")
-        result: dict[str, Any] = yaml.load(path.read_text(encoding="utf-8")) or {}
-        return result
-    except Exception:
-        return {}
-
-
-def _save_managed_artifacts(repo_root: Path, data: dict[str, Any]) -> None:
-    """Write .trw/managed-artifacts.yaml."""
-    path = repo_root / _MANAGED_ARTIFACTS_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    yaml = YAML()
-    yaml.default_flow_style = False
-    with open(path, "w", encoding="utf-8") as fh:
-        yaml.dump(data, fh)
 
 
 # ---------------------------------------------------------------------------
@@ -160,12 +126,11 @@ def install_opencode_distill_channels(
     errors: list[str] = []
     results["errors"] = errors
 
-    # 1. Load managed artifacts (for user-edit detection)
-    managed = _load_managed_artifacts(repo_root)
-    raw_cmds = managed.get("commands")
-    cmd_hashes: dict[str, str] = raw_cmds if isinstance(raw_cmds, dict) else {}
-    raw_explorer = managed.get("explorer_agent")
-    explorer_sha: str | None = str(raw_explorer) if raw_explorer is not None else None
+    # 1. The pre-run baseline for the user-edit guard. These files are recorded
+    #    by the manifest recorder registry (PRD-INFRA-192 FR12), not written here.
+    from trw_mcp.bootstrap._version_manifest import _manifest_content_hashes, _read_manifest
+
+    manifest_hashes = _manifest_content_hashes(_read_manifest(repo_root))
 
     # 2. The AGENTS.md distill segment is gone (PRD-CORE-239 FR01). opencode was
     #    the one client whose segment was invoked directly by its installer
@@ -177,8 +142,13 @@ def install_opencode_distill_channels(
     results["agents_md_segment"] = "removed_prd_core_239"
 
     # 3. Custom command files
-    cmd_results = install_custom_commands(repo_root, existing_hashes=cmd_hashes)
+    cmd_results = install_custom_commands(repo_root, manifest_hashes=manifest_hashes)
     results["custom_commands"] = {k: v["status"] for k, v in cmd_results.items()}
+    errors.extend(
+        f"opencode command {name} not written: {res.get('error')}"
+        for name, res in cmd_results.items()
+        if res["status"] == "error"
+    )
 
     # 4. Explorer agent — PRD-CORE-239: licence-gated. Third sibling of cc-05
     #    and ag-02; all three install an agent that cannot function without the
@@ -189,28 +159,20 @@ def install_opencode_distill_channels(
     from trw_mcp.bootstrap._distill_entitlement import distill_artifacts_entitled
 
     if distill_artifacts_entitled(artifact="opencode-explorer-agent", repo_root=repo_root):
-        explorer_result = install_explorer_agent(repo_root, existing_sha256=explorer_sha)
+        explorer_result = install_explorer_agent(repo_root, manifest_hashes=manifest_hashes)
         results["explorer_agent"] = explorer_result["status"]
+        if explorer_result["status"] == "error":
+            errors.append(f"opencode distill explorer agent not written: {explorer_result.get('error')}")
     else:
-        explorer_result = {"status": "skipped_unentitled"}
         results["explorer_agent"] = "skipped_unentitled"
 
-    # 5. Update managed-artifacts.yaml with new hashes
-    new_cmd_hashes: dict[str, str] = {}
-    for filename, res in cmd_results.items():
-        new_cmd_hashes[filename] = str(res.get("sha256", ""))
-    managed["commands"] = new_cmd_hashes
-    if explorer_result.get("sha256"):
-        managed["explorer_agent"] = explorer_result["sha256"]
-    _save_managed_artifacts(repo_root, managed)
-
-    # 6. Write client-profile.env (FR19)
+    # 5. Write client-profile.env (FR19)
     env_path = repo_root / _CLIENT_PROFILE_ENV_PATH
     env_path.parent.mkdir(parents=True, exist_ok=True)
     env_path.write_text(_CLIENT_PROFILE_ENV_CONTENT, encoding="utf-8")
     results["client_profile_env"] = "written"
 
-    # 7. Bootstrap channel manifest (FR27 / FR30)
+    # 6. Bootstrap channel manifest (FR27 / FR30)
     # Fail-soft: a bad manifest data file surfaces via result dict, not a raised
     # exception, so a single invalid entry does not abort the entire install
     # (matches cursor's bootstrap pattern — OC-M2 audit fix).
@@ -234,7 +196,7 @@ def install_opencode_distill_channels(
         results["manifest"] = {"status": "error", "error": str(exc)}
         errors.append(f"opencode channel manifest bootstrap failed: {exc}")
 
-    # 8. Gitignore entries (FR28)
+    # 7. Gitignore entries (FR28)
     failed_entries: list[str] = []
     for entry_str in _GITIGNORE_ENTRIES:
         try:

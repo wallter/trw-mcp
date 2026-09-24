@@ -97,7 +97,6 @@ def _apply_cli_security_overrides(config: TRWConfig, args: argparse.Namespace) -
 
 
 _THREAD_DUMP_FILENAME = "thread-dump-{pid}.txt"
-_thread_dump_handle: object | None = None  # kept alive: faulthandler writes to its fd
 
 
 def _thread_dump_path(dump_dir: Path | None) -> Path | None:
@@ -120,40 +119,45 @@ def _thread_dump_path(dump_dir: Path | None) -> Path | None:
 
 
 def _register_thread_dump_signal(dump_dir: Path | None = None) -> bool:
-    """Make ``kill -USR1 <pid>`` dump every thread's Python stack.
+    """Make ``kill -USR1 <server pid>`` append an all-thread stack dump; called on the serve path only.
 
     Operators diagnosing a wedged or CPU-bound server (observed 2026-09-05: one
     worker thread at 6,321 s of user CPU while ``trw_deliver`` hung for 1,800 s)
     cannot use ``py-spy``/``gdb`` on a box with ``ptrace_scope=1`` and no sudo.
-    ``faulthandler`` needs no ptrace and works at C level, so it fires even
-    when the event loop is stuck. The dump goes to ``.trw/logs/thread-dump-<pid>.txt``
-    when a project ``.trw`` is resolvable (stderr otherwise); the path is
-    announced on stderr at registration. Returns True when registered; False on
-    a platform without ``SIGUSR1`` or when registration fails — never raises,
-    because a diagnostic hook must not stop the server from serving.
+    The dump goes to ``.trw/logs/thread-dump-<pid>.txt`` when a project ``.trw``
+    is resolvable (stderr otherwise), and the file is opened only when the
+    signal arrives, so a server that is never signalled leaves nothing behind.
+    Returns True when registered; False on a platform without ``SIGUSR1`` or
+    when registration fails -- never raises, because a diagnostic hook must not
+    stop the server from serving.
     """
-    global _thread_dump_handle
-    import faulthandler
     import signal
     import sys as _sys
 
     signum = getattr(signal, "SIGUSR1", None)
     if signum is None:
         return False
-    target = _sys.stderr
     path = _thread_dump_path(dump_dir)
-    if path is not None:
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            _thread_dump_handle = path.open("a", encoding="utf-8")
-            target = _thread_dump_handle
-            print(f"trw-mcp: SIGUSR1 thread dumps -> {path}", file=_sys.stderr)
-        except OSError as exc:
-            print(f"trw-mcp: thread-dump file unavailable ({exc}); dumping to stderr", file=_sys.stderr)
-            target = _sys.stderr
+
+    def _dump(_signum: int, _frame: object) -> None:
+        import faulthandler
+
+        # trw:intentional a Python-level handler, so the file is opened lazily; it
+        # runs when the main thread next executes bytecode, which the event loop
+        # does even while a worker thread spins (the 2026-09-05 case).
+        if path is not None:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as handle:
+                    faulthandler.dump_traceback(handle, all_threads=True)
+                return
+            except OSError:  # trw-fail-silent-allow: an unwritable log dir falls back to the stderr dump below
+                pass
+        faulthandler.dump_traceback(_sys.stderr, all_threads=True)
+
     try:
-        faulthandler.register(signum, file=target, all_threads=True, chain=False)
-    except (RuntimeError, ValueError, AttributeError, OSError) as exc:
+        signal.signal(signum, _dump)
+    except (ValueError, OSError) as exc:
         structlog.get_logger(__name__).warning("thread_dump_signal_unavailable", reason=str(exc))
         return False
     return True
@@ -176,8 +180,6 @@ def main() -> None:
         stream=_sys.stderr,
         force=True,
     )
-
-    _register_thread_dump_signal()
 
     parser = _build_arg_parser()
     args = parser.parse_args()
@@ -232,14 +234,12 @@ def main() -> None:
     config = _apply_cli_security_overrides(get_config(), args)
     reload_config(config)
 
-    # PRD-CORE-202 FR03: register any ``--memory-db`` startup paths as additive
-    # read-only external corpora BEFORE the server starts serving recall. The
-    # flag is parsed in _cli_argparse but is inert until registered here; this is
-    # the single serve-dispatch wiring site (delivered != wired — sub_nCt6qwkie2Hm5D1P).
-    # ``None`` (flag absent) is a no-op so the NFR01 hot-path stays clean.
-    from trw_mcp.state._external_store import register_cli_memory_db_paths
+    _register_thread_dump_signal()
 
-    register_cli_memory_db_paths(getattr(args, "memory_db", None))
+    from trw_mcp.state._hook_flags import publish_hook_flags
+    from trw_mcp.state._paths import resolve_trw_dir
+
+    publish_hook_flags(resolve_trw_dir(), config)
 
     debug = args.debug or config.debug
 
@@ -285,27 +285,12 @@ def main() -> None:
     # failure MUST NOT block server startup.
     _start_boot_sequence(config, log, deferred=config.boot_gc_deferred)
 
-    # PRD-CORE-248 FR04 clause 2: the idle checkpoint sweep. A server that never
-    # runs trw_session_start used to never checkpoint at all; this named daemon
-    # thread evaluates the size-or-age trigger every
-    # wal_checkpoint_idle_interval_seconds and costs one stat when nothing is due.
-    _start_wal_sweeper(log)
+    # No WAL sweeper: the memory daemon owns the one store and its WAL, and this
+    # process never opens a checkout's memory.db (PRD-CORE-298 FR01).
 
     from trw_mcp.server._transport import resolve_and_run_transport
 
     resolve_and_run_transport(debug=debug, log=log)
-
-
-def _start_wal_sweeper(log: structlog.stdlib.BoundLogger) -> threading.Thread | None:
-    """Start the PRD-CORE-248 FR04 idle WAL-checkpoint sweeper; fail-open (NFR02)."""
-    try:
-        from trw_mcp.state._paths import resolve_trw_dir
-        from trw_mcp.state._wal_idle_sweep import start_wal_checkpoint_sweeper
-
-        return start_wal_checkpoint_sweeper(resolve_trw_dir())
-    except Exception:  # justified: NFR02 — sweeper start must never block server start
-        log.warning("wal_sweeper_start_failed", exc_info=True)
-        return None
 
 
 def _start_boot_sequence(
@@ -369,6 +354,14 @@ def _boot_sequence(
             to use.
         log: Structured logger.
     """
+    try:
+        from trw_mcp.state._paths import resolve_pin_key
+        from trw_mcp.state._paths_pin_mgmt import claim_resumed_pin
+
+        claim_resumed_pin(resolve_pin_key(None))  # ledger N11: a restarted server keeps the pin it resumes
+    except Exception:  # justified: NFR02 — a failed claim must never block server start
+        log.warning("boot_pin_claim_failed", exc_info=True)
+
     if not config.cleanup_on_boot:
         log.info("boot_gc_skipped_config", reason="cleanup_on_boot=False")
         return

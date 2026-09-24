@@ -131,20 +131,3 @@ FAMILY_POLICIES: tuple[FamilyRetentionPolicy, ...] = (
         ),
     ),
 )
-
-
-def policy_for_path(rel_path: str) -> FamilyRetentionPolicy | None:
-    """Return the family policy whose prefix owns ``rel_path`` (longest match).
-
-    ``rel_path`` is repository-relative POSIX. Returns ``None`` when no known
-    family claims the path (the caller counts these as
-    ``unregistered_in_known_families`` only when the path itself lives under a
-    family prefix — a path outside every prefix is simply not a family file).
-    """
-    best: FamilyRetentionPolicy | None = None
-    for policy in FAMILY_POLICIES:
-        prefix = policy.path_prefix.rstrip("/") + "/"
-        owns = rel_path == policy.path_prefix or rel_path.startswith(prefix)
-        if owns and (best is None or len(policy.path_prefix) > len(best.path_prefix)):
-            best = policy
-    return best

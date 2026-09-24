@@ -193,7 +193,7 @@ DEGRADED_MODE_ADMISSIONS: dict[str, ConfigAdmission] = {
             "Read only when the resolved client profile's ceremony_mode is 'full'. A "
             "light-ceremony profile renders the catalogue verbatim unconditionally, because "
             "the generated instruction file IS its only protocol carrier "
-            "(.trw/frameworks/FRAMEWORK-CORE.md, RIGID / FLEXIBLE section) — so this field "
+            "(.trw/frameworks/FRAMEWORK.md, RIGID / FLEXIBLE section) — so this field "
             "cannot strip the catalogue from a client that has no other way to learn the "
             "tool surface. The profile wins; this field only decides the full-ceremony case."
         ),

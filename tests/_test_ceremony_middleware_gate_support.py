@@ -92,22 +92,17 @@ def session_ctx() -> FakeContext:
 SEEDED_MARKER_TS = "2026-09-04T21:49:47.123456+00:00"
 
 
-def _seed_compaction_marker(tmp_path: Path, *, body: str | None = None, owner_pin_key: str = "") -> Path:
+def _seed_compaction_marker(tmp_path: Path, *, body: str | None = None) -> Path:
     """Write a pre-compaction marker under ``tmp_path/.trw``.
 
     ``body`` writes a raw document verbatim — the opt-in the one test that must
-    exercise the ``unreadable`` branch uses. ``owner_pin_key`` names the marker's
-    owner (PRD-CORE-258-FR10); the default is an OWNERLESS marker, which arms the
-    whole generation exactly as the bundled PreCompact hook's marker does.
+    exercise the ``unreadable`` branch uses. Tests run with no session identity
+    (conftest clears it), so this is the project-wide identity-less marker path.
     """
     trw_dir = tmp_path / ".trw"
     context_dir = trw_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
     if body is None:
-        document: dict[str, object] = {"timestamp": SEEDED_MARKER_TS, "trigger": "mcp_tool"}
-        if owner_pin_key:
-            document["owner_pin_key"] = owner_pin_key
-            document["owner_pid"] = 4242
-        body = json.dumps(document)
+        body = json.dumps({"timestamp": SEEDED_MARKER_TS, "trigger": "mcp_tool"})
     (context_dir / "pre_compact_state.json").write_text(body, encoding="utf-8")
     return trw_dir

@@ -9,10 +9,10 @@ memory concerns, and every one of them has to be expressed as an *argument*:
   and, in the caller, which backend the write goes to;
 * the ``metadata["tier"]`` stamp and the injection guard that goes with it;
 * the source-provenance whitelist, the assertion objects and the anchor
-  objects, whose coercion used to live in ``_learning_to_memory_entry``;
-* the Q-value pre-seed, which is trw-mcp's own reinforcement signal
-  (``scoring/_correlation.py`` is a PRD-CORE-251 section 6 "keep in trw-mcp"
-  concern).
+  objects, whose coercion used to live in ``_learning_to_memory_entry``.
+
+PRD-CORE-293: this module used to pre-seed a reward value from ``impact`` here
+for an outcome-correlation reward loop that never ran; the field is gone.
 
 This module holds no I/O and no entry construction. It is the construction
 half of ``_memory_transforms`` reduced to what it always actually was: argument
@@ -45,7 +45,6 @@ class StoreArguments:
     source: _SourceType
     assertions: list[Assertion]
     anchors: list[Anchor]
-    q_value: float
     type: MemoryType
     confidence: Confidence
     protection_tier: ProtectionTier
@@ -77,7 +76,6 @@ def build_store_arguments(
             is what makes an invalid enum a deterministic, dead-letterable
             failure instead of a silently mis-typed row.
     """
-    from trw_mcp.scoring._correlation import compute_initial_q_value
     from trw_mcp.state._tier_routing import USER_NAMESPACE, route_tier
 
     tier = route_tier(
@@ -127,7 +125,6 @@ def build_store_arguments(
         source=cast("_SourceType", source_type if source_type in VALID_SOURCES else "agent"),
         assertions=assertion_objects,
         anchors=anchor_objects,
-        q_value=compute_initial_q_value(impact),
         type=MemoryType(type) if isinstance(type, str) else type,
         confidence=Confidence(confidence) if isinstance(confidence, str) else confidence,
         protection_tier=(ProtectionTier(protection_tier) if isinstance(protection_tier, str) else protection_tier),
