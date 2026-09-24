@@ -10,37 +10,8 @@ from tests._analytics_yaml_paths_support import _setup_trw, _write_entry
 from trw_mcp.state.analytics import (
     auto_prune_excess_entries,
     mark_promoted,
-    update_analytics_extended,
 )
 from trw_mcp.state.persistence import FileStateReader
-
-
-class TestUpdateAnalyticsExtendedYamlFallback:
-    """Test YAML fallback in update_analytics_extended for q-learning scan."""
-
-    def test_yaml_fallback_counts_high_impact(self, tmp_path: Path) -> None:
-        """Lines 727-735: YAML fallback scans entries for q_observations and impact."""
-        trw_dir = _setup_trw(tmp_path)
-        entries_dir = trw_dir / "learnings" / "entries"
-
-        _write_entry(entries_dir, "q-active", q_observations=3, impact=0.5)
-        _write_entry(entries_dir, "high-impact", q_observations=0, impact=0.8)
-        _write_entry(entries_dir, "both", q_observations=2, impact=0.9)
-
-        with patch(
-            "trw_mcp.state.memory_adapter.list_active_learnings",
-            side_effect=ImportError("no sqlite"),
-        ):
-            update_analytics_extended(
-                trw_dir,
-                new_learnings_count=1,
-                is_reflection=True,
-                is_success=True,
-            )
-
-        data = FileStateReader().read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert "q_learning_activations" not in data  # PRD-CORE-293
-        assert data["high_impact_learnings"] == 2
 
 
 class TestMarkPromotedSqliteException:

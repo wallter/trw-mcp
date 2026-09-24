@@ -69,7 +69,7 @@ from _ownership_harness import (
     write_pins as _write_pins,
 )
 
-from tests._layout import requires_jq, requires_monorepo
+from tests._layout import requires_monorepo
 
 _OWNED_HOOKS = (
     "lib-trw.sh",
@@ -416,7 +416,7 @@ def test_migrated_hooks_do_not_call_recency_bound_lib_helpers(hook_dir: Path, ho
 @_HOOK_COPIES
 def test_post_tool_event_ignores_a_foreign_run(hook_dir: Path, tmp_path: Path) -> None:
     """FR03: an identified session never logs an edit into another session's run."""
-    if not shutil.which("jq"):
+    if not (shutil.which("jq") or shutil.which("python3")):
         pytest.skip("pins.json lookup requires jq or python3")
     root, own = _project(tmp_path, own_pin=False)
     _write_hook_env(root)
@@ -440,7 +440,7 @@ def test_post_tool_event_ignores_a_foreign_run(hook_dir: Path, tmp_path: Path) -
 @_HOOK_COPIES
 def test_post_tool_event_logs_into_the_owned_run(hook_dir: Path, tmp_path: Path) -> None:
     """The positive half: with a pin, the edit lands in THIS session's run."""
-    if not shutil.which("jq"):
+    if not (shutil.which("jq") or shutil.which("python3")):
         pytest.skip("pins.json lookup requires jq or python3")
     root, own = _project(tmp_path)
     _write_hook_env(root)
@@ -463,7 +463,6 @@ def test_post_tool_event_logs_into_the_owned_run(hook_dir: Path, tmp_path: Path)
 # FR04 — an unpinned session says so
 # --------------------------------------------------------------------------- #
 @_HOOK_COPIES
-@requires_jq
 def test_unpinned_emits_no_foreign_state(hook_dir: Path, tmp_path: Path) -> None:
     """FR04: no tier, phase, event count, or foreign run id for an unpinned session."""
     root, _ = _project(tmp_path, own_pin=False)
@@ -480,7 +479,6 @@ def test_unpinned_emits_no_foreign_state(hook_dir: Path, tmp_path: Path) -> None
 
 
 @_HOOK_COPIES
-@requires_jq
 def test_pinned_session_reports_its_own_run(hook_dir: Path, tmp_path: Path) -> None:
     root, _ = _project(tmp_path)
     _write_hook_env(root)
@@ -499,7 +497,6 @@ def _forged_lines(stdout: str) -> list[str]:
 
 
 @_HOOK_COPIES
-@requires_jq
 def test_pinned_run_path_backslash_escape_stays_on_one_line(hook_dir: Path, tmp_path: Path) -> None:
     """PRD-FIX-151: a literal ``\\n`` in a run path must not become a context line.
 
@@ -517,7 +514,6 @@ def test_pinned_run_path_backslash_escape_stays_on_one_line(hook_dir: Path, tmp_
     assert _forged_lines(res.stdout) == []
 
 
-@requires_jq
 @_HOOK_COPIES
 @pytest.mark.parametrize("field", ["run_path", "phase", "last_checkpoint"])
 def test_compaction_snapshot_backslash_escape_stays_on_one_line(hook_dir: Path, tmp_path: Path, field: str) -> None:
@@ -539,7 +535,6 @@ def test_compaction_snapshot_backslash_escape_stays_on_one_line(hook_dir: Path, 
 
 
 @_HOOK_COPIES
-@requires_jq
 def test_no_session_var_client_degrades(hook_dir: Path, tmp_path: Path) -> None:
     """NFR05 + FR04: a client publishing no identity takes the unpinned path.
 
@@ -565,7 +560,6 @@ def test_no_session_var_client_degrades(hook_dir: Path, tmp_path: Path) -> None:
 
 
 @_HOOK_COPIES
-@requires_jq
 def test_unpinned_resume_emits_no_foreign_state(hook_dir: Path, tmp_path: Path) -> None:
     """The second call site (resume) must degrade identically to startup."""
     root, _ = _project(tmp_path, own_pin=False)

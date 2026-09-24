@@ -269,10 +269,6 @@ nudge_variant
 otel_capture_messages
 otel_enabled
 otel_semconv
-outcome_weight_learning_rate
-outcome_weight_p0_defects
-outcome_weight_rework
-outcome_weight_velocity
 parallelism_max
 path_index_exclude_dirs
 path_index_max_files
@@ -325,9 +321,6 @@ run_staleness_grace_hours
 run_staleness_hours
 runs_root
 scoring_default_days_unused
-scoring_error_fallback_reward
-scoring_error_keywords
-scoring_recency_discount_floor
 scout_blast_radius_threshold
 scout_churn_commit_threshold
 scout_enabled

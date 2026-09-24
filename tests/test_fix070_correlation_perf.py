@@ -178,7 +178,7 @@ class TestFR02FR06ReverseIterationEarlyExit:
         _write_tracking_lines(trw_dir / "logs" / "recall_tracking.jsonl", entries)
 
         results = correlate_recalls(trw_dir, 30, scope="window")
-        ids = [lid for lid, _ in results]
+        ids = list(results)
         assert "recent-entry" in ids
         assert "old-entry" not in ids
 
@@ -200,7 +200,7 @@ class TestFR02FR06ReverseIterationEarlyExit:
         _write_tracking_lines(trw_dir / "logs" / "recall_tracking.jsonl", entries)
 
         results = correlate_recalls(trw_dir, 5, scope="window")
-        ids = [lid for lid, _ in results]
+        ids = list(results)
         # Only the 5 recent entries should be found
         assert len(ids) == 5
         for i in range(5):
@@ -232,7 +232,7 @@ class TestFR02FR06ReverseIterationEarlyExit:
         tracking.write_text("\n".join(lines) + "\n")
 
         results = correlate_recalls(trw_dir, 30, scope="window")
-        ids = [lid for lid, _ in results]
+        ids = list(results)
         assert "good-entry" in ids
 
     def test_non_utf8_file_returns_empty_not_crash(self, tmp_path: Path) -> None:

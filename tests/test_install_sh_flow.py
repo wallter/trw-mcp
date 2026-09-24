@@ -117,6 +117,9 @@ def _run_bootstrap(bootstrap: Path, tmp_path: Path) -> tuple[subprocess.Complete
         # Keep the destructive --break-system-packages rung disabled so the pipx
         # rung is the one that must fire.
         "TRW_ALLOW_SYSTEM_PYTHON": "false",
+        # The ladder is the subject; the stub pipx creates no venv interpreter
+        # for the (6.1.0, default-on) embeddings step to run in.
+        "TRW_INSTALL_EMBEDDINGS": "0",
         "TERM": "dumb",
     }
     result = subprocess.run(
@@ -132,17 +135,17 @@ def _run_bootstrap(bootstrap: Path, tmp_path: Path) -> tuple[subprocess.Complete
 
 
 @pytest.mark.parametrize(
-    "bootstrap, invokes_trw_mcp",
+    "bootstrap, invokes_trw_mcp, spec",
     [
-        pytest.param(_SERVED_BOOTSTRAP, True, id="served"),
+        pytest.param(_SERVED_BOOTSTRAP, True, "trw-mcp", id="served"),
         # The repo bootstrap's --allow-unauthenticated path stops at the
         # open-source banner without calling trw-mcp, so only the served
         # bootstrap exercises the end-to-end PATH-resolution proof (rung 3).
-        pytest.param(_REPO_BOOTSTRAP, False, id="repo"),
+        pytest.param(_REPO_BOOTSTRAP, False, "trw-mcp", id="repo"),
     ],
 )
 def test_bootstrap_pep668_uses_pipx_and_persists_path_and_succeeds(
-    bootstrap: Path, invokes_trw_mcp: bool, tmp_path: Path
+    bootstrap: Path, invokes_trw_mcp: bool, spec: str, tmp_path: Path
 ) -> None:
     if not Path("/bin/bash").exists() and not Path("/usr/bin/bash").exists():
         pytest.skip("bash unavailable")
@@ -156,9 +159,9 @@ def test_bootstrap_pep668_uses_pipx_and_persists_path_and_succeeds(
     assert "trw-mcp" in install_log
     # C05: ONE code path for absent-or-present. The `install || upgrade` form
     # re-ran `pipx upgrade trw-mcp` — the bare name — so an in-place upgrade
-    # never gained the [vectors] extra the fresh-install rung requested.
+    # never gained the extras the fresh-install rung requested.
     assert "--force" in install_log, install_log
-    assert "[vectors]" in install_log, install_log
+    assert f"install {spec} --force" in install_log, install_log
     assert not (markers / "pipx_upgrade").exists(), (markers / "pipx_upgrade").read_text(encoding="utf-8")
     assert "trw-mcp installed (pipx)" in output, output
 
@@ -180,6 +183,9 @@ def test_bootstrap_pep668_uses_pipx_and_persists_path_and_succeeds(
     # 5. Success flows on to a clean exit.
     assert result.returncode == 0, f"bootstrap did not exit cleanly.\n--- output ---\n{output}"
     assert "Open-source package installed" in output, output
+    if bootstrap == _SERVED_BOOTSTRAP:
+        # This branch never reaches install-trw.py, so it must say recall is keyword-only.
+        assert "trw-memory[embeddings]" in output, output
 
 
 # ── Regression harness for the authenticated (--api-key) path ────────────────
@@ -198,7 +204,24 @@ case "$args" in
   *'print(sys.version_info.major)'*)   echo "3" ;;
   *'print(sys.version_info.minor)'*)   echo "12" ;;
   *'-m pip install'*)                  exit 0 ;;   # pip install succeeds
+  *'holds_rows'*)                      # the migration's learnings check
+    echo "$*" > "$TRW_TEST_MARKERS/holds_probe"
+    exit "${TRW_TEST_HOLDS:-3}" ;;
+  *'memory migrate'*)                  # the migration itself, in this interpreter
+    echo "$*" > "$TRW_TEST_MARKERS/migrate_call"
+    case "${TRW_TEST_MIGRATE:-0}" in
+      0) echo "memory migrate: migrated; manifest /p/.trw/memory/migration-1.json"
+         echo "memory migrate: still running on the old store, reconnect: trw-mcp pid 7, launched by claude (pid 6): reconnect it" ;;
+      1) echo "memory migrate: the daemon refused (conflict): ns already holds different content for ['L-b']" >&2 ;;
+      2) echo "memory migrate: memory.db is open in another process; stop this checkout's other trw-mcp sessions, then retry" >&2
+         echo "memory migrate: still running against this checkout: trw-mcp pid 7, launched by claude (pid 6): reconnect it" >&2 ;;
+    esac
+    exit "${TRW_TEST_MIGRATE:-0}" ;;
   *'-m trw_mcp.server'*)               exit 1 ;;   # force PATH trw-mcp to own it
+  -)                                   # the embeddings step's heredoc
+    [ -n "${TRW_TEST_EMBED_FAIL:-}" ] && exit 1
+    cat > "$TRW_TEST_MARKERS/embed_prefetch"
+    echo "BAAI/bge-small-en-v1.5" ;;
   *)                                   exit 0 ;;
 esac
 exit 0
@@ -221,6 +244,9 @@ def _run_repo_authed(
     *,
     config_seed: str | None = None,
     init_fail: bool = False,
+    embed_fail: bool = False,
+    holds: int | None = None,
+    migrate: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     stub_bin = tmp_path / "bin"
     markers = tmp_path / "markers"
@@ -244,6 +270,14 @@ def _run_repo_authed(
     }
     if init_fail:
         env["TRW_TEST_INIT_FAIL"] = "1"
+    if embed_fail:
+        env["TRW_TEST_EMBED_FAIL"] = "1"
+    if holds is not None:  # a checkout store exists; the probe answers 0 (learnings) or 3 (none)
+        (project / ".trw" / "memory").mkdir(parents=True)
+        (project / ".trw" / "memory" / "memory.db").write_bytes(b"x")
+        env["TRW_TEST_HOLDS"] = str(holds)
+    if migrate is not None:
+        env["TRW_TEST_MIGRATE"] = str(migrate)
     result = subprocess.run(
         ["bash", str(_REPO_BOOTSTRAP), "--api-key", "trw_testkey123", *extra_args],
         cwd=str(project),
@@ -254,6 +288,82 @@ def _run_repo_authed(
         timeout=60,
     )
     return result, project
+
+
+def test_repo_default_caches_the_configured_model_in_the_install_interpreter(tmp_path: Path) -> None:
+    """6.1.0: embeddings are on by default. The owning interpreter resolves the model from the
+    project's config and loads it as the embedder does."""
+    result, project = _run_repo_authed(tmp_path, [])
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "Semantic embeddings ready (BAAI/bge-small-en-v1.5)" in output, output
+    prefetch = (tmp_path / "markers" / "embed_prefetch").read_text(encoding="utf-8")
+    assert "resolve_config_overrides" in prefetch
+    assert "SentenceTransformer(model)" in prefetch
+
+
+def test_repo_embeddings_failure_fails_the_install_loudly(tmp_path: Path) -> None:
+    result, _project = _run_repo_authed(tmp_path, [], embed_fail=True)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert "Semantic embeddings are not working" in output, output
+    assert "--no-embeddings" in output, output
+    assert "TRW Framework — ready" not in output, output
+
+
+def test_repo_no_embeddings_records_the_choice(tmp_path: Path) -> None:
+    result, project = _run_repo_authed(tmp_path, ["--no-embeddings"], config_seed="embeddings_enabled: true\n")
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert not (tmp_path / "markers" / "embed_prefetch").exists()
+    config = (project / ".trw" / "config.yaml").read_text(encoding="utf-8")
+    assert "embeddings_enabled: false" in config, config
+    assert "embeddings_enabled: true" not in config, config
+
+
+# ── 6.1.0: the checkout store moves into the user store (parity with install-trw.py) ──
+
+_MANUAL = "trw-mcp memory migrate --to user --apply --target-dir"
+
+
+def test_repo_migrates_a_store_with_learnings_and_prints_the_rollback(tmp_path: Path) -> None:
+    result, project = _run_repo_authed(tmp_path, [], holds=0, migrate=0)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    markers = tmp_path / "markers"
+    assert "trw_mcp.state._store_migration" in (markers / "holds_probe").read_text(encoding="utf-8")
+    call = (markers / "migrate_call").read_text(encoding="utf-8")
+    assert "-m trw_mcp.server memory migrate --to user --apply --target-dir" in call, call
+    assert "Undo: trw-mcp memory migrate --to user --rollback /p/.trw/memory/migration-1.json" in output, output
+    assert "launched by claude (pid 6)" in output, output
+    assert "TRW Framework — ready" in output, output
+
+
+def test_repo_nothing_to_migrate_runs_nothing(tmp_path: Path) -> None:
+    result, _project = _run_repo_authed(tmp_path, [], holds=3)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert (tmp_path / "markers" / "holds_probe").exists()
+    assert not (tmp_path / "markers" / "migrate_call").exists()
+
+
+@pytest.mark.parametrize(("code", "said"), [(1, "['L-b']"), (2, "re-run")], ids=["refused", "busy"])
+def test_repo_an_unfinished_migration_fails_the_install(tmp_path: Path, code: int, said: str) -> None:
+    result, _project = _run_repo_authed(tmp_path, [], holds=0, migrate=code)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, output
+    assert said in output, output
+    assert _MANUAL in output, output
+    assert "--force" not in output, output
+    assert "TRW Framework — ready" not in output, output
+
+
+def test_repo_no_migrate_leaves_the_store_and_prints_the_command(tmp_path: Path) -> None:
+    result, _project = _run_repo_authed(tmp_path, ["--no-migrate"], holds=0)
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert not (tmp_path / "markers" / "migrate_call").exists()
+    assert _MANUAL in output, output
 
 
 def test_repo_no_flag_keeps_prior_telemetry_optin(tmp_path: Path) -> None:

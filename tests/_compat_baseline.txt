@@ -159,7 +159,6 @@ trw-mcp/tests/test_pre_compact_hook.py
 trw-mcp/tests/test_progressive_disclosure.py
 trw-mcp/tests/test_prompts_messaging.py
 trw-mcp/tests/test_prompts.py
-trw-mcp/tests/test_propensity_log.py
 trw-mcp/tests/test_protocol_renderer.py
 trw-mcp/tests/test_proximal_reward.py
 trw-mcp/tests/test_rc_fixes.py
@@ -192,7 +191,6 @@ trw-mcp/tests/test_scoring_branches.py
 trw-mcp/tests/test_scoring_correlation_fix061_regressions.py
 trw-mcp/tests/test_scoring_correlation_fr03.py
 trw-mcp/tests/test_scoring_edge_cases.py
-trw-mcp/tests/test_scoring_intel_boost.py
 trw-mcp/tests/test_scoring_layer_boundary.py
 trw-mcp/tests/test_scoring_properties.py
 trw-mcp/tests/test_scoring.py

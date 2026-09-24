@@ -78,6 +78,7 @@ def test_resolve_version_ignores_stale_installed_metadata(monkeypatch: pytest.Mo
     assert trw_mcp._resolve_version() == _pyproject_version()
 
 
+@pytest.mark.requires_published_lock
 def test_uv_lock_version_matches_pyproject() -> None:
     """The trw-mcp package version in uv.lock tracks pyproject.toml."""
     assert _lock_package("trw-mcp")["version"] == _pyproject_version()
@@ -97,6 +98,7 @@ def _pyproject_specifier(package: str) -> str:
     raise AssertionError(f"{package} is not a declared runtime dependency")
 
 
+@pytest.mark.requires_published_lock
 def test_uv_lock_dependency_specifiers_match_pyproject() -> None:
     """uv.lock must record the SAME trw-memory floor pyproject declares.
 
@@ -257,3 +259,11 @@ def test_requirements_lock_has_no_stale_git_self_pins() -> None:
     assert not stale_pin.search(text)
     assert "-e ." in text
     assert "-e ../trw-memory" in text
+
+
+def test_the_lock_tests_wait_for_the_published_dependency() -> None:
+    """``uv lock`` can record a new trw-memory floor only once it is on PyPI, so the paired
+    pre-cut check (``release_public.py check --with-local``) deselects these two; the
+    post-publish check keeps them."""
+    for test in (test_uv_lock_version_matches_pyproject, test_uv_lock_dependency_specifiers_match_pyproject):
+        assert "requires_published_lock" in {mark.name for mark in getattr(test, "pytestmark", [])}

@@ -20,7 +20,6 @@ from trw_memory.retrieval.recall_policy import RECALL_PREFETCH_MULTIPLIER
 from trw_mcp.models.config import TRWConfig
 from trw_mcp.models.typed_dicts import RecallResultDict
 from trw_mcp.scoring._recall import RecallContext
-from trw_mcp.state.propensity_log import log_ranked_selections
 
 # PRD-CORE-146 follow-up: build_recall_context was relocated to
 # ``trw_mcp.state.recall_context`` so state/ callers no longer need an
@@ -97,7 +96,7 @@ def execute_recall(
 
     # PRD-SEC-015 round-2 audit (Row 3): trw_recall is an allowlisted reviewer
     # tool but otherwise mutates access_count/recall_count in the shared
-    # learnings store, appends propensity/surface/recall-tracking records, and
+    # learnings store, appends surface/recall-tracking records, and
     # increments the ceremony tool-call counter. Resolved ONCE and threaded
     # through every write site below rather than re-checked per site.
     from trw_mcp.state._surface_role import reviewer_role_active
@@ -301,20 +300,7 @@ def _log_recall_surface_events(
     ranked_learnings: list[dict[str, object]],
     recall_context: RecallContext | None,
 ) -> None:
-    """Emit propensity and surface telemetry for surfaced recall results."""
-    try:
-        log_ranked_selections(
-            trw_dir,
-            ranked_learnings,
-            context_phase=(recall_context.current_phase or "") if recall_context else "",
-            context_domain=sorted(recall_context.inferred_domains) if recall_context else [],
-            context_agent_type=recall_context.client_profile if recall_context else "",
-            context_task_type="recall",
-            context_files_modified=len(recall_context.modified_files) if recall_context else 0,
-        )
-    except (OSError, RuntimeError, ValueError, TypeError):
-        logger.debug("propensity_logging_failed", exc_info=True)
-
+    """Emit surface telemetry for surfaced recall results."""
     try:
         from trw_mcp.state._session_id import resolve_effective_session_id
 

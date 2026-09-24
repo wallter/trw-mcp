@@ -33,11 +33,11 @@ _tool_name=$(_json_str_field "$_payload" tool_name) || true
 case "$_tool_name" in
   *trw_deliver*) ;;
   *)
-    # Without jq, tool_name could not be read, so a genuine trw_deliver call is
+    # Without jq or python3, tool_name could not be read, so a genuine trw_deliver call is
     # indistinguishable from any other tool here. This hook never blocks either
     # way; log ONE diagnostic disclosing the gap instead of silently guessing
     # "not a deliver call" (PRD-FIX-149 FR06).
-    command -v jq >/dev/null 2>&1 || log_hook_execution "PreToolUse:deliver-gate" "unknown" "0" "jq_unavailable=1"
+    _trw_has_json_parser || log_hook_execution "PreToolUse:deliver-gate" "unknown" "0" "jq_unavailable=1"
     exit 0
     ;;
 esac
@@ -57,9 +57,9 @@ else
   _evidence="no build-status.yaml"
 fi
 
-if [ -r "$_state_file" ] && command -v jq >/dev/null 2>&1; then
-  _state_result=$(jq -r '.build_check_result // "unset"' "$_state_file" 2>/dev/null || printf 'unreadable')
-  _state_ts=$(jq -r '.last_build_check_ts // "unset"' "$_state_file" 2>/dev/null || printf 'unreadable')
+if [ -r "$_state_file" ] && _trw_has_json_parser; then
+  _state_result=$(_json_get --file "$_state_file" --default unset .build_check_result || printf 'unreadable')
+  _state_ts=$(_json_get --file "$_state_file" --default unset .last_build_check_ts || printf 'unreadable')
   _evidence="$_evidence; ceremony-state build_check_result=$_state_result at $_state_ts"
 fi
 

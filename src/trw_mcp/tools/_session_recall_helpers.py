@@ -16,7 +16,6 @@ from trw_mcp.state._recall_gate import learnings_injection_allowed
 from trw_mcp.state._session_id import resolve_effective_session_id
 from trw_mcp.state._store_counts import store_entry_count
 from trw_mcp.state.persistence import FileStateReader
-from trw_mcp.state.propensity_log import log_ranked_selections
 from trw_mcp.state.receipts import log_recall_receipt
 from trw_mcp.state.surface_tracking import log_surface_event
 
@@ -214,21 +213,6 @@ def perform_session_recalls(
         omitted = block.pop("omitted", 0)
         if isinstance(omitted, int) and omitted > 0:
             extra["learnings_omitted"] = omitted
-
-    try:
-        log_ranked_selections(
-            trw_dir,
-            shown,
-            context_task_type="session_start",
-            context_session_progress="early",
-        )
-    except (OSError, RuntimeError, ValueError, TypeError):
-        logger.warning(
-            "session_start_propensity_log_failed",
-            op="session_recall",
-            outcome="fail_open",
-            exc_info=True,
-        )
 
     recorded_ids = record_session_start_surfaces(
         trw_dir,

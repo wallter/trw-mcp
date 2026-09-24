@@ -14,8 +14,6 @@ def _make_entry(**overrides: object) -> dict[str, object]:
         "status": "active",
         "created": "2026-04-01",
         "recurrence": 1,
-        "q_value": 0.7,
-        "q_observations": 5,
         "access_count": 3,
         "source_type": "agent",
         "domain": [],

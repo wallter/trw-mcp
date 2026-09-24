@@ -21,9 +21,7 @@ _LOG_DIR = "logs"
 _SURFACE_FILE = "surface_tracking.jsonl"
 
 __all__ = [
-    "NudgeFatigueResult",
     "SurfaceEvent",
-    "check_nudge_fatigue",
     "compute_recall_pull_rate",
     "log_surface_event",
     "read_surface_events",
@@ -54,8 +52,6 @@ class SurfaceEvent(TypedDict, total=False):
     domain_match: list[str]  # Inferred domains from file context
     files_context: list[str]  # File paths that informed the surface decision
     prd_boosted: bool  # Whether boosted by PRD knowledge linkage
-    bandit_score: float  # Selection score (0.0 before bandit)
-    exploration: bool  # Exploration pick (false before bandit)
     session_id: str  # Session identifier
     # PRD-CORE-103: Metadata fields for stratified analysis
     client_profile: str  # Client profile identifier (e.g., "claude-code")
@@ -97,8 +93,6 @@ def log_surface_event(
     domain_match: list[str] | None = None,
     files_context: list[str] | None = None,
     prd_boosted: bool = False,
-    bandit_score: float = 0.0,
-    exploration: bool = False,
     session_id: str = "",
     client_profile: str = "",
     model_family: str = "",
@@ -169,8 +163,6 @@ def log_surface_event(
             "domain_match": domain_match or [],
             "files_context": files_context or [],
             "prd_boosted": prd_boosted,
-            "bandit_score": bandit_score,
-            "exploration": exploration,
             "session_id": session_id,
             "client_profile": client_profile,
             "model_family": model_family,
@@ -319,50 +311,3 @@ def _read_all_surface_events_for_session(
         if ev.get("session_id") == session_id:
             matched.append(ev)
     return matched
-
-
-class NudgeFatigueResult(TypedDict):
-    """Typed result from check_nudge_fatigue."""
-
-    recall_pull_rate: float
-    nudge_count: int
-    nudge_fatigue_warning: bool
-    sessions_analyzed: int
-
-
-def check_nudge_fatigue(
-    trw_dir: Path,
-    *,
-    threshold: float = 0.10,
-    min_sessions: int = 5,
-) -> NudgeFatigueResult:
-    """Check for nudge fatigue across recent sessions.
-
-    Returns a dict with:
-    - recall_pull_rate: float (0.0-1.0)
-    - nudge_count: int
-    - nudge_fatigue_warning: bool (True if rate < threshold for min_sessions)
-    - sessions_analyzed: int
-
-    Fail-open: returns neutral results on any error.
-    """
-    try:
-        pull_rate, nudge_count, _ = compute_recall_pull_rate(trw_dir)
-
-        # Simple heuristic: if we have enough nudges and pull rate is low, warn
-        # A more sophisticated version would track across sessions
-        warning = nudge_count >= min_sessions and pull_rate < threshold
-
-        return {
-            "recall_pull_rate": round(pull_rate, 4),
-            "nudge_count": nudge_count,
-            "nudge_fatigue_warning": warning,
-            "sessions_analyzed": 1,  # Single-session for now
-        }
-    except Exception:  # justified: fail-open, fatigue detection must not block callers
-        return {
-            "recall_pull_rate": 0.0,
-            "nudge_count": 0,
-            "nudge_fatigue_warning": False,
-            "sessions_analyzed": 0,
-        }

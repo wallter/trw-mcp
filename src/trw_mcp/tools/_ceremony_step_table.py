@@ -354,6 +354,19 @@ def _ss_pipeline_health(sctx: SessionStartContext) -> None:
     step_pipeline_health_advisory(_ceremony.resolve_trw_dir(), cast("dict[str, object]", sctx.results), sctx.config)
 
 
+def _ss_retrieval(sctx: SessionStartContext) -> None:
+    """PLAN.md §3b item 3 -- ``active``, ``keyword-only: ...`` or ``degraded: ... fix: ...``.
+
+    Always set: a healthy session pays one word for it, and an absent key could
+    not be told apart from a probe that never ran.
+    """
+    from trw_mcp.state._retrieval_capability import probe_retrieval, retrieval_summary
+
+    sctx.results["retrieval"] = retrieval_summary(
+        probe_retrieval(sctx.config.retrieval_embedding_model, embeddings_enabled=sctx.config.embeddings_enabled)
+    )
+
+
 # ── The table (order is load-bearing — matches the old inline sequence) ──
 SESSION_START_STEPS: tuple[Step, ...] = (
     # Null-arm ruling 2026-09-23. Non-critical: republishes the resolved hook
@@ -375,6 +388,9 @@ SESSION_START_STEPS: tuple[Step, ...] = (
     Step("assertion_health", "_ss_assertion_health"),
     Step("graph_health", "_ss_graph_health", timed=False),
     Step("pipeline_health", "_ss_pipeline_health"),
+    # PLAN.md §3b item 3. Non-critical: a capability probe that fails records a
+    # degradation and never blocks session start.
+    Step("retrieval", "_ss_retrieval"),
     # PRD-CORE-247-FR05. Non-critical: a reconciliation report is diagnostic, so
     # its failure records a degradation and leaves success: true.
     Step("reconcile_local_writes", "_ss_reconcile_local_writes"),

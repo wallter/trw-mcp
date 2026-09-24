@@ -95,9 +95,10 @@ def _run_memory_token(args: argparse.Namespace) -> None:
 def _run_memory_migrate(args: argparse.Namespace) -> None:
     import json
 
+    from trw_mcp.state import _checkout_servers
     from trw_mcp.state._store_migration import (
-        DaemonRunningError,
         MigrationRefusedError,
+        MigrationRetryError,
         apply_migration,
         preview_migration,
         rollback_migration,
@@ -110,11 +111,17 @@ def _run_memory_migrate(args: argparse.Namespace) -> None:
             print(f"memory migrate: rolled back; {restored} rows restored under default")
         elif args.apply:
             print(f"memory migrate: migrated; manifest {apply_migration(trw_dir)}")
+            for line in _checkout_servers.live_servers(trw_dir):
+                print(f"memory migrate: still running on the old store, reconnect: {line}")
         else:
             print(json.dumps(preview_migration(trw_dir), indent=2))
     except MigrationRefusedError as exc:
+        # Exit 2 is "stop something, then rerun": say what still runs against this checkout.
         print(f"memory migrate: {exc}", file=sys.stderr)
-        sys.exit(2 if isinstance(exc, DaemonRunningError) else 1)
+        retry = isinstance(exc, MigrationRetryError)
+        for line in _checkout_servers.live_servers(trw_dir) if retry else ():
+            print(f"memory migrate: still running against this checkout: {line}", file=sys.stderr)
+        sys.exit(2 if retry else 1)
 
 
 def run_memory(args: argparse.Namespace) -> None:

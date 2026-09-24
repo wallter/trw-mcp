@@ -30,7 +30,7 @@ import pytest
 # imports it has to precede.
 importlib.import_module("trw_mcp.tools._delivery_helpers")
 
-from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_jq, requires_monorepo
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.tools._deliver_gate_dispatch import evaluate_delivery_gates
 from trw_mcp.tools._deliver_gate_mode import (
     resolve_deliver_gate_decision,
@@ -66,7 +66,6 @@ def _project(tmp_path: Path) -> Path:
     return root
 
 
-@requires_jq
 class TestBundledHookIsDiagnosticOnly:
     """FR01 — the hook reports evidence and never decides.
 

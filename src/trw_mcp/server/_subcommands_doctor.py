@@ -329,6 +329,19 @@ def _check_embedding_egress(_target: Path, config: TRWConfig) -> CheckResult:
     return CheckResult("embedding_egress", cast("DoctorStatus", status), message)
 
 
+# ── docs/sprint-mcp7/PLAN.md §3b item 3: retrieval capability ────────────────
+
+
+def _check_retrieval(_target: Path, config: TRWConfig) -> CheckResult:
+    """Report vectors / embeddings / weights / bm25 as active, degraded or off, with the fix."""
+    from trw_mcp.state._retrieval_capability import probe_retrieval, retrieval_row
+
+    status, message = retrieval_row(
+        probe_retrieval(config.retrieval_embedding_model, embeddings_enabled=config.embeddings_enabled)
+    )
+    return CheckResult("retrieval", cast("DoctorStatus", status), message)
+
+
 # ── FR-10: optional backend probe + installer-flag advisory ──────────────────
 
 
@@ -520,6 +533,8 @@ _CHECKS: tuple[tuple[str, str], ...] = (
     # PRD-FIX-149 FR07: appended last for the same reason as the two rows above.
     ("version_status", "_check_version_status_compatible"),
     ("jev", "_check_jev"),
+    # PLAN.md §3b item 3: appended last for the same reason.
+    ("retrieval", "_check_retrieval"),
 )
 
 

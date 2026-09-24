@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -86,29 +85,3 @@ class TestPerformSessionRecalls:
         row = next(e for (_ns, eid), e in fake_memory_store.rows.items() if eid == "L-001")
         assert row.session_count == 1
         assert row.access_count == 1
-
-    def test_writes_propensity_log_for_session_start_surfaces(
-        self,
-        trw_dir: Path,
-        config: TRWConfig,
-        reader: FileStateReader,
-    ) -> None:
-        """Session-start recall writes deterministic propensity entries for surfaced learnings."""
-        mock_entries = [
-            {"id": "L-001", "summary": "Test 1", "impact": 0.8},
-            {"id": "L-002", "summary": "Test 2", "impact": 0.9},
-        ]
-
-        with (
-            patch("trw_mcp.state.memory_adapter.recall_learnings", return_value=mock_entries),
-            patch("trw_mcp.tools._session_recall_helpers.log_recall_receipt"),
-        ):
-            perform_session_recalls(trw_dir, "", config, reader)
-
-        log_path = trw_dir / "logs" / "propensity.jsonl"
-        lines = [json.loads(line) for line in log_path.read_text().strip().split("\n") if line.strip()]
-        assert [line["selected"] for line in lines] == ["L-001", "L-002"]
-        assert lines[0]["candidate_set"] == ["L-001", "L-002"]
-        assert lines[1]["candidate_set"] == ["L-002"]
-        assert lines[0]["context_task_type"] == "session_start"
-        assert lines[0]["context_session_progress"] == "early"

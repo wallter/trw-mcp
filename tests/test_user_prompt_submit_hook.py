@@ -58,8 +58,7 @@ def test_user_prompt_submit_hook_reads_prompt_field() -> None:
     for hook_path in _HOOK_PATHS:
         content = hook_path.read_text(encoding="utf-8")
 
-        assert ".prompt // empty" in content
-        assert "json.load(sys.stdin)" in content
+        assert "_json_get .prompt)" in content
         assert ".message // empty" not in content
 
 

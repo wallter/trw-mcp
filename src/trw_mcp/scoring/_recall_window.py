@@ -1,13 +1,12 @@
-"""Recall-tracking correlation policy: windowing, recency discount, early-exit.
+"""Recall-tracking correlation policy: windowing and early-exit.
 
 Belongs to the ``scoring/_correlation.py`` facade. Re-exported there (and from
 ``trw_mcp.scoring``) for back-compat.
 
 This module owns the *policy* half of outcome correlation: given the
 ``recall_tracking.jsonl`` receipt log, decide which receipts fall inside the
-correlation scope (session boundary or fixed window), compute a recency
-discount for each, and emit the ``(learning_id, discount)`` tuples that
-:func:`trw_mcp.scoring._correlation.process_outcome` consumes. The
+correlation scope (session boundary or fixed window) and emit the learning
+ids they recalled, which the retraction nudge consumes. The
 *mechanism* half -- decoding a single receipt row -- lives in the sibling
 ``_recall_receipts`` module; keeping the two apart isolates the scan/window
 policy from the row-decoding details it drives.
@@ -62,16 +61,13 @@ def correlate_recalls(
     window_minutes: int,
     *,
     scope: str = "",
-) -> list[tuple[str, float]]:
+) -> list[str]:
     """Find learning IDs from recent recall receipts within the correlation scope.
 
     PRD-CORE-026-FR04: Session-scoped correlation replaces the fixed 30-min
     window. When scope="session", correlates with ALL recall receipts since
     the last run_init/session_start event. Falls back to window-based when
     no session boundary is found.
-
-    Returns (learning_id, recency_discount) tuples. Discount ranges from
-    1.0 (just recalled) to 0.5 (at edge of window).
 
     Args:
         trw_dir: Path to .trw directory.
@@ -81,8 +77,8 @@ def correlate_recalls(
             reads from config.
 
     Returns:
-        List of (learning_id, discount) tuples. May contain duplicates
-        across receipts (caller should deduplicate).
+        List of learning IDs. May contain duplicates across receipts
+        (caller should deduplicate).
     """
     cfg_corr: TRWConfig = get_config()
     effective_scope = scope or cfg_corr.learning_outcome_correlation_scope
@@ -99,9 +95,7 @@ def correlate_recalls(
         if session_start is not None:
             cutoff_ts = session_start
 
-    # Total seconds from cutoff to now (for discount calculation)
-    total_window_secs = max((now - cutoff_ts).total_seconds(), 1.0)
-    results: list[tuple[str, float]] = []
+    results: list[str] = []
 
     # Read raw lines and iterate in reverse for early-exit optimization
     # (PRD-FIX-070-FR02/FR06). Since recall_tracking.jsonl is append-only
@@ -159,14 +153,9 @@ def correlate_recalls(
         if elapsed_secs < 0:
             continue
 
-        discount = max(
-            cfg_corr.scoring_recency_discount_floor,
-            1.0 - elapsed_secs / total_window_secs,
-        )
-
         recalled_ids = _extract_recalled_ids(record)
         if recalled_ids:
-            results.extend((lid, discount) for lid in recalled_ids)
+            results.extend(recalled_ids)
             records_in_window += 1
 
     logger.debug(
@@ -174,7 +163,7 @@ def correlate_recalls(
         total_lines=len(raw_lines),
         records_scanned=records_scanned,
         records_in_window=records_in_window,
-        unique_ids=len({lid for lid, _ in results}),
+        unique_ids=len(set(results)),
     )
 
     return results

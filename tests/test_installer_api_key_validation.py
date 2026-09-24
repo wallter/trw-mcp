@@ -249,13 +249,12 @@ def test_bootstrap_has_pipx_fallback_rung(bootstrap: Path) -> None:
 
     Wiring guard: proves the pipx rung exists in the fallback ladder. It does
     NOT execute the shell (no e2e harness in-repo), so it cannot prove runtime
-    behavior — only that the rung is present. ``$TRW_MCP_SPEC`` resolves to
-    ``trw-mcp[vectors]`` — no optional user-installed engines; sqlite-vec is
-    bundled and requested on every install path (PRD fresh-install fix).
+    behavior — only that the rung is present. ``$TRW_MCP_SPEC`` is plain
+    ``trw-mcp``: sqlite-vec is a base dependency since 6.1.0.
     """
     text = _read(bootstrap)
     assert 'pipx install "$TRW_MCP_SPEC"' in text
-    assert 'TRW_MCP_SPEC="trw-mcp[vectors]"' in text
+    assert 'TRW_MCP_SPEC="trw-mcp"' in text
     # Guard the fallback is a real command-gated rung, not just prose in --help.
     assert "command -v pipx" in text
 

@@ -6,11 +6,6 @@ PRD-CORE-098: ``trw_build_check`` is a **result reporter** — agents run
 tests via Bash and then call this tool to record the outcome for ceremony
 tracking and delivery gates.
 
-PRD-FIX-088 FR01: Q-learning outcome correlation is ALWAYS deferred to a
-dedicated background worker thread (single-flight + coalescing queue).
-Pre-fix the inline path could take >90 s on large corpora, holding the
-MCP response on the SSE stream for the entire duration.
-
 PRD-FIX-088 FR03: Per-step ``step_durations_ms`` telemetry mirrors the
 PRD-FIX-084 precedent on ``trw_session_start``.
 """
@@ -18,6 +13,7 @@ PRD-FIX-084 precedent on ``trw_session_start``.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +47,9 @@ from trw_mcp.tools.build._build_check_helpers import (
 )
 from trw_mcp.tools.build._build_check_helpers import (
     reconcile_typed_results as reconcile_typed_results,
+)
+from trw_mcp.tools.build._build_check_helpers import (
+    refuse_pass_with_skip_switches,
 )
 from trw_mcp.tools.build._core import (
     cache_build_status,
@@ -118,10 +117,9 @@ def register_build_tools(server: FastMCP) -> None:
         def _record_step(step_key: str, started_at: float) -> None:
             step_durations_ms[step_key] = round((monotonic() - started_at) * 1000.0, 2)
 
-        # PRD-FIX-088 FR01: ``tool_call_id`` is captured up-front and
-        # threaded through the bg worker so async ``q_learning_complete``
-        # and ``outcome_correlation_applied`` events correlate back to the
-        # originating call. The tool-call wrapper (telemetry/tool_call_timing.py) binds the
+        # ``tool_call_id`` is captured up-front so the ``build_check_complete``
+        # log line correlates back to the originating call. The tool-call
+        # wrapper (telemetry/tool_call_timing.py) binds the
         # call's id into structlog contextvars; we pull it from there when present
         # to keep ids consistent, otherwise mint a fresh 12-char hex.
         bound_ctx = structlog.contextvars.get_contextvars()
@@ -143,6 +141,8 @@ def register_build_tools(server: FastMCP) -> None:
                 tests_passed=tests_passed,
                 static_checks_clean=static_checks_clean,
             )
+        reported_text = [scope, *(text for r in typed_command_results or () for text in (r.label, r.limitations))]
+        refuse_pass_with_skip_switches(reported_tests_passed, os.environ, reported_text)
         config = get_config()
         if not config.build_check_enabled:
             return {

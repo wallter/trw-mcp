@@ -85,13 +85,8 @@ def rank_targeted_by_utility(
     from trw_mcp.scoring._query_relevance import query_relevance
 
     relevances = query_relevance(matches, query_tokens) if query_tokens else [1.0] * len(matches)
-    bandit_params: dict[str, float] | None = None
     boosted_entries = 0
-    intel_boosted_entries = 0
     boost_log_payload: dict[str, object] | None = None
-
-    if context is not None and context.intel_cache is not None:
-        bandit_params = context.intel_cache.get_bandit_params()
 
     for entry, relevance in zip(matches, relevances, strict=True):
         utility = entry_utility(entry, today, params=utility_params)
@@ -101,13 +96,12 @@ def rank_targeted_by_utility(
         elif assertion_penalties:
             penalty = assertion_penalties.get(str(entry.get("id", "")), 0.0)
 
-        # --- 6-factor multiplicative boosts (PRD-CORE-116-FR01, PRD-INFRA-053) ---
+        # --- multiplicative boosts (PRD-CORE-116-FR01) ---
         domain_boost = 1.0
         phase_boost = 1.0
         team_boost = 1.0
         anchor_val = safe_float(entry, "anchor_validity", 1.0) if query_tokens else 1.0
         prd_boost = 1.0
-        intel_boost = 1.0
 
         if context is not None:
             # 1. Domain match boost (1.4x)
@@ -140,16 +134,8 @@ def rank_targeted_by_utility(
                 if eid in context.prd_knowledge_ids:
                     prd_boost = 1.5
 
-            # 6. Intel boost from backend bandit params (PRD-INFRA-053)
-            if bandit_params:
-                entry_id = str(entry.get("id", ""))
-                if entry_id in bandit_params:
-                    intel_boost = max(0.5, min(2.0, float(bandit_params[entry_id])))
-
-            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, anchor_val, prd_boost, intel_boost)):
+            if any(f != 1.0 for f in (domain_boost, phase_boost, team_boost, anchor_val, prd_boost)):
                 boosted_entries += 1
-                if intel_boost != 1.0:
-                    intel_boosted_entries += 1
                 if boost_log_payload is None:
                     boost_log_payload = {
                         "entry_id": str(entry.get("id", "")),
@@ -158,14 +144,13 @@ def rank_targeted_by_utility(
                         "team_boost": team_boost,
                         "anchor_validity": anchor_val,
                         "prd_boost": prd_boost,
-                        "intel_boost": intel_boost,
                         "final_boost": round(
-                            domain_boost * phase_boost * team_boost * anchor_val * prd_boost * intel_boost,
+                            domain_boost * phase_boost * team_boost * anchor_val * prd_boost,
                             4,
                         ),
                     }
 
-        positive_boost = domain_boost * phase_boost * team_boost * prd_boost * intel_boost
+        positive_boost = domain_boost * phase_boost * team_boost * prd_boost
         if query_tokens:
             # Negative evidence qualifies primary relevance. Positive priors
             # cannot restore it or overtake a more relevant candidate.
@@ -191,7 +176,6 @@ def rank_targeted_by_utility(
         _logger.debug(
             "recall_boost_applied",
             boosted_entries=boosted_entries,
-            intel_boosted_entries=intel_boosted_entries,
             matches_count=len(matches),
             **boost_log_payload,
         )

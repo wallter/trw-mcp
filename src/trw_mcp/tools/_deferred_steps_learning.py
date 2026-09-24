@@ -15,7 +15,6 @@ from typing import cast
 
 import structlog
 
-from trw_mcp.models.run import TOOL_CALL_EVENTS
 from trw_mcp.models.typed_dicts import (
     AutoProgressStepResult,
     IndexSyncResult,
@@ -247,25 +246,10 @@ def _step_auto_progress(resolved_run: Path | None) -> AutoProgressStepResult:
 # ---------------------------------------------------------------------------
 
 
-def _read_run_events(resolved_run: Path | None) -> list[dict[str, object]]:
-    """Read events.jsonl from a resolved run directory (fail-open)."""
-    if resolved_run is None:
-        return []
-    events_path = resolved_run / "meta" / "events.jsonl"
-    if not events_path.exists():
-        return []
-    try:
-        reader = FileStateReader()
-        return reader.read_jsonl(events_path)
-    except Exception:  # justified: fail-open
-        return []
-
-
 def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str, object]:
-    """Step 12: Compute delivery metrics — rework rate, composite outcome, reward.
+    """Step 12: Compute delivery metrics — rework rate and learning exposure.
 
-    PRD-CORE-104: Produces reward signals at deliver time by aggregating
-    rework_rate, composite_outcome, learning_exposure, and normalized_reward.
+    Both feed backend attribution through the synced session metrics.
 
     Fail-open: returns partial results if individual metrics fail.
     """
@@ -292,77 +276,6 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         logger.debug("delivery_metric_rework_rate_failed", exc_info=True)
         result["rework_rate"] = {"error": "computation_failed"}
 
-    # Composite outcome score (PRD-CORE-104-FR01)
-    try:
-        from trw_mcp.scoring._correlation import compute_composite_outcome
-
-        rework_val = 0.0
-        rw = result.get("rework_rate")
-        if isinstance(rw, dict) and "rework_rate" in rw:
-            rework_val = float(rw["rework_rate"])
-
-        # PRD-CORE-104 P0: Compute all 4 inputs for composite outcome
-        p0_count = 0
-        velocity_tasks = 0
-        learning_count = 0
-        session_events: list[dict[str, object]] = []
-        try:
-            session_events = _read_run_events(resolved_run)
-            for evt in session_events:
-                evt_type = str(evt.get("event", ""))
-                evt_data = evt.get("data", {})
-                if not isinstance(evt_data, dict):
-                    evt_data = {}
-                if evt_type == "review_complete":
-                    p0_count += int(evt_data.get("critical_count", 0))
-                elif evt_type in ("phase_gate_passed", "checkpoint"):
-                    velocity_tasks += 1
-                elif evt_type in ("learn", "trw_learn"):
-                    learning_count += 1
-                elif evt_type in TOOL_CALL_EVENTS:
-                    tool_name = str(evt_data.get("tool_name", ""))
-                    if "trw_learn" in tool_name:
-                        learning_count += 1
-        except Exception:  # justified: fail-open, event scan is best-effort
-            logger.debug("delivery_metric_event_scan_failed", exc_info=True)
-
-        # Compute learning rate (learnings per hour, rough estimate)
-        session_hours = max(0.1, len(session_events) / 60.0)
-        learning_rate = learning_count / session_hours
-
-        from trw_mcp.models.config import get_config as _get_cfg
-
-        _cfg = _get_cfg()
-        composite = compute_composite_outcome(
-            rework_rate=rework_val,
-            p0_defect_count=p0_count,
-            velocity_tasks=velocity_tasks,
-            learning_rate=learning_rate,
-            weight_rework=getattr(_cfg, "outcome_weight_rework", -2.0),
-            weight_p0_defects=getattr(_cfg, "outcome_weight_p0_defects", -1.5),
-            weight_velocity=getattr(_cfg, "outcome_weight_velocity", 0.5),
-            weight_learning_rate=getattr(_cfg, "outcome_weight_learning_rate", 0.3),
-        )
-        result["composite_outcome"] = composite
-    except Exception:  # justified: fail-open
-        logger.debug("delivery_metric_composite_outcome_failed", exc_info=True)
-        result["composite_outcome"] = {"error": "computation_failed"}
-
-    # Proximal reward detection (PRD-CORE-104-FR02) — from run events
-    try:
-        from trw_mcp.scoring.proximal_reward import detect_proximal_signals, read_proximal_event_window
-
-        # UF-026: nudge_shown lives in session-events.jsonl and build/test events
-        # live in the run's meta/events.jsonl, so the adjacency scan needs both
-        # streams merged by timestamp — scanning the run alone found zero nudges.
-        signals = detect_proximal_signals(read_proximal_event_window(trw_dir, resolved_run))
-        result["proximal_signals"] = [dict(s) for s in signals]
-        # R10: temporal adjacency is an observation, not evidence that a learning
-        # caused passing tests. Keep the signals without persistent Q attribution.
-    except Exception:  # justified: fail-open
-        logger.debug("delivery_metric_proximal_signals_failed", exc_info=True)
-        result["proximal_signals"] = []
-
     # Learning exposure (recall pull rate from surface tracking).
     # PRD-CORE-144 FR02/FR04: scope to the current session and capture ids.
     try:
@@ -383,22 +296,6 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         logger.debug("delivery_metric_learning_exposure_failed", exc_info=True)
         result["learning_exposure"] = {"error": "computation_failed"}
 
-    # PRD-CORE-104 P0: Safe default for normalized_reward before computation
-    result["normalized_reward"] = 0.5
-
-    # Normalized reward (sigmoid of composite outcome)
-    try:
-        from trw_mcp.scoring._correlation import sigmoid_normalize
-
-        composite_val = result.get("composite_outcome")
-        if isinstance(composite_val, dict) and "score" in composite_val:
-            raw_score = float(composite_val["score"])
-            result["normalized_reward"] = round(sigmoid_normalize(raw_score), 4)
-        elif isinstance(composite_val, (int, float)):
-            result["normalized_reward"] = round(sigmoid_normalize(float(composite_val)), 4)
-    except Exception:  # justified: fail-open
-        logger.debug("delivery_metric_normalized_reward_failed", exc_info=True)
-
     # PRD-CORE-104 P0: Add client_profile and model_family to session metrics
     try:
         from trw_mcp.models.config import get_config
@@ -413,40 +310,5 @@ def _step_delivery_metrics(trw_dir: Path, resolved_run: Path | None) -> dict[str
         "delivery_metrics_computed",
         metrics=[k for k in result if k != "status"],
     )
-
-    # PRD-CORE-144 FR07: rollout telemetry — observable rollout of the
-    # session_id / exposure / learning_ids wiring.
-    try:
-        from trw_mcp.state._session_id import resolve_effective_session_id
-
-        sid = resolve_effective_session_id(trw_dir)
-        exposure = result.get("learning_exposure")
-        if isinstance(exposure, dict):
-            pull_rate = float(exposure.get("recall_pull_rate", 0.0) or 0.0)
-            ids_obj = exposure.get("ids")
-            ids_count = len(ids_obj) if isinstance(ids_obj, list) else 0
-        else:
-            pull_rate = 0.0
-            ids_count = 0
-        populated_pct = 1.0 if sid else 0.0
-        telemetry: dict[str, object] = {
-            "session_id_populated_pct": populated_pct,
-            "recall_pull_rate": round(pull_rate, 4),
-            "learning_ids_count": ids_count,
-        }
-        logger.info(
-            "rollout_meta_tune_linkage",
-            **telemetry,
-        )
-        if resolved_run is not None:
-            from trw_mcp.state.persistence import FileEventLogger
-
-            FileEventLogger().log_event(
-                resolved_run / "meta" / "events.jsonl",
-                "rollout_meta_tune_linkage",
-                telemetry,
-            )
-    except Exception:  # justified: fail-open, telemetry must not break deliver
-        logger.debug("rollout_meta_tune_linkage_failed", exc_info=True)
 
     return result

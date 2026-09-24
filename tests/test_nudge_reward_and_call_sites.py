@@ -1,6 +1,6 @@
-"""Missing nudge call sites + the discarded reward signal (UF-042/UF-043/UF-026).
+"""Missing nudge call sites (UF-042/UF-043).
 
-Three defects with the same shape: a mechanism that runs correctly but is not
+Two defects with the same shape: a mechanism that runs correctly but is not
 connected to anything.
 
 * **UF-042** — ``trw_build_check`` and ``trw_deliver`` never called the ceremony
@@ -10,20 +10,15 @@ connected to anything.
   unreachable, independent of ledger UF-006.
 * **UF-043** — ``trw_recall`` lost its ceremony-status injection in merge
   ``70bb84843f`` (2026-04-11), leaving ``ToolName.RECALL`` with no producer.
-* **UF-026** — ``detect_proximal_signals`` produced genuine nudge->action
-  records that were assigned to ``result["proximal_signals"]``, a reporting
-  field, and never reached ``update_q_value``.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from tests.conftest import extract_tool_fn, make_test_server
-from trw_mcp.scoring.proximal_reward import ProximalSignal
 from trw_mcp.state._ceremony_progress_state import CeremonyState, NudgeContext, write_ceremony_state
 from trw_mcp.state._ceremony_state_model import ToolName
 
@@ -225,128 +220,3 @@ def test_recall_response_carries_ceremony_status(tmp_project: Path, fake_memory_
     server = make_test_server("learning")
     result = extract_tool_fn(server, "trw_recall")(query="nudge attribution")
     assert isinstance(result.get("ceremony_status"), str)
-
-
-# ---------------------------------------------------------------------------
-# UF-026: proximal signals move a q_value
-# ---------------------------------------------------------------------------
-
-
-def _signal(learning_id: str) -> ProximalSignal:
-    return ProximalSignal(
-        learning_id=learning_id,
-        signal_type="test_rerun",
-        phase="implement",
-        turn_offset=1,
-    )
-
-
-def test_proximal_scan_needs_both_streams_merged(tmp_path: Path) -> None:
-    """UF-026 second half: neither stream alone can ever show an adjacency.
-
-    ``nudge_shown`` is only written to ``.trw/context/session-events.jsonl``;
-    ``build_check_complete`` is only written to the run's ``meta/events.jsonl``.
-    Measured on this repo before the fix: 0 ``nudge_shown`` rows in any run's
-    events.jsonl written since 2026-04, and 0 ``build_check_complete`` rows in
-    session-events.jsonl ever — so the detector returned ``[]`` in production
-    regardless of nudge volume, and bridging it to Q-learning without the merge
-    would have wired a permanently-empty signal.
-    """
-    from trw_mcp.scoring.proximal_reward import detect_proximal_signals, read_proximal_event_window
-
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "context").mkdir(parents=True)
-    run_dir = tmp_path / "run"
-    (run_dir / "meta").mkdir(parents=True)
-
-    (trw_dir / "context" / "session-events.jsonl").write_text(
-        json.dumps(
-            {
-                "ts": "2026-07-24T10:00:00+00:00",
-                "event": "nudge_shown",
-                "learning_id": "L-two-stream",
-                "data": {"learning_id": "L-two-stream", "phase": "validate"},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "meta" / "events.jsonl").write_text(
-        json.dumps({"ts": "2026-07-24T10:00:05+00:00", "event": "build_check_complete"}) + "\n",
-        encoding="utf-8",
-    )
-
-    # Each stream alone: structurally incapable of yielding a signal.
-    from trw_mcp.scoring.proximal_reward import read_recent_events
-
-    assert detect_proximal_signals(read_recent_events(trw_dir / "context" / "session-events.jsonl")) == []
-    assert detect_proximal_signals(read_recent_events(run_dir / "meta" / "events.jsonl")) == []
-
-    # Merged and time-ordered: the adjacency is visible.
-    signals = detect_proximal_signals(read_proximal_event_window(trw_dir, run_dir))
-    assert [s["learning_id"] for s in signals] == ["L-two-stream"]
-    assert signals[0]["signal_type"] == "test_rerun"
-
-
-def test_proximal_window_orders_by_timestamp_not_by_stream(tmp_path: Path) -> None:
-    """A build that PRECEDED the nudge must not be read as a response to it."""
-    from trw_mcp.scoring.proximal_reward import detect_proximal_signals, read_proximal_event_window
-
-    trw_dir = tmp_path / ".trw"
-    (trw_dir / "context").mkdir(parents=True)
-    run_dir = tmp_path / "run"
-    (run_dir / "meta").mkdir(parents=True)
-
-    (trw_dir / "context" / "session-events.jsonl").write_text(
-        json.dumps(
-            {
-                "ts": "2026-07-24T10:00:09+00:00",
-                "event": "nudge_shown",
-                "data": {"learning_id": "L-late", "phase": "validate"},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "meta" / "events.jsonl").write_text(
-        json.dumps({"ts": "2026-07-24T10:00:01+00:00", "event": "build_check_complete"}) + "\n",
-        encoding="utf-8",
-    )
-
-    window = read_proximal_event_window(trw_dir, run_dir)
-    assert [str(e.get("event")) for e in window] == ["build_check_complete", "nudge_shown"]
-    assert detect_proximal_signals(window) == []
-
-
-def test_real_nudge_then_real_build_check_produces_a_proximal_signal(tmp_project: Path) -> None:
-    """End-to-end on the production writers, not hand-written fixtures.
-
-    A real nudge emission (``append_ceremony_status_for_tool`` ->
-    ``record_nudge_shown`` -> session-events.jsonl) followed by a real
-    ``trw_build_check`` (-> ``_log_build_event`` -> run meta/events.jsonl) is the
-    exact sequence UF-026 is meant to reward. Both writers are the live ones.
-    """
-    from trw_mcp.scoring.proximal_reward import detect_proximal_signals, read_proximal_event_window
-    from trw_mcp.state._ceremony_progress_state import record_nudge_shown
-
-    trw_dir = tmp_project / ".trw"
-    (trw_dir / "context").mkdir(parents=True, exist_ok=True)
-    run_dir = tmp_project / "run"
-    (run_dir / "meta").mkdir(parents=True)
-    write_ceremony_state(trw_dir, CeremonyState(session_started=True, checkpoint_count=1, phase="validate"))
-
-    # 1. A nudge is shown (production writer, real learning id).
-    record_nudge_shown(trw_dir, "L-e2e-prox", "validate", turn=7)
-
-    # 2. The agent responds by running the build (production writer).
-    server = make_test_server("build")
-    extract_tool_fn(server, "trw_build_check")(
-        tests_passed=True,
-        static_checks_clean=True,
-        test_count=3,
-        scope="pytest tests/",
-        options={"run_path": str(run_dir)},
-    )
-
-    signals = detect_proximal_signals(read_proximal_event_window(trw_dir, run_dir))
-    assert [s["learning_id"] for s in signals] == ["L-e2e-prox"], read_proximal_event_window(trw_dir, run_dir)

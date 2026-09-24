@@ -113,7 +113,8 @@ def test_p95_latency_under_budget_budget(tmp_path: Path) -> None:
     [
         "no-jq",
         pytest.param("no-python3", marks=requires_jq),
-        pytest.param("unreadable-config", marks=requires_non_root),
+        # The advisory this case expects needs the hook's jq filter.
+        pytest.param("unreadable-config", marks=[requires_non_root, requires_jq]),
         "truncated-stdin",
         "non-json",
         "no-trw-dir",

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from tests._layout import requires_jq
 from trw_mcp.bootstrap._copilot import (
     _COPILOT_ADAPTER_INSTALL_PATH,
     _COPILOT_ADAPTER_SCRIPT_NAME,
@@ -28,6 +28,8 @@ from trw_mcp.bootstrap._copilot import (
 from trw_mcp.bootstrap._copilot_artifacts import _all_path_scoped_templates
 
 from ._copilot_test_support import fake_git_repo  # noqa: F401
+
+_BUNDLED_LIB_TRW = Path(__file__).resolve().parent.parent / "src" / "trw_mcp" / "data" / "hooks" / "lib-trw.sh"
 
 
 @pytest.mark.unit
@@ -349,7 +351,8 @@ class TestCopilotAdapterScriptBehavior:
 
     @pytest.fixture()
     def echo_tool_name_hook(self, tmp_path: Path) -> Path:
-        """A fake TRW hook that echoes $TOOL_NAME."""
+        """A fake TRW hook that echoes $TOOL_NAME, deployed beside lib-trw.sh as in .claude/hooks."""
+        shutil.copy(_BUNDLED_LIB_TRW, tmp_path / "lib-trw.sh")
         hook = tmp_path / "echo-hook.sh"
         hook.write_text('#!/bin/sh\nprintf "TOOL_NAME=%s\\n" "$TOOL_NAME"\nexit 0\n')
         hook.chmod(0o755)
@@ -363,13 +366,20 @@ class TestCopilotAdapterScriptBehavior:
             text=True,
         )
 
-    @requires_jq
-    def test_tool_name_extracted_with_jq(self, adapter: Path, echo_tool_name_hook: Path) -> None:
-        """toolName is extracted from the Copilot JSON payload (jq only since T29; empty without it)."""
+    def test_tool_name_extracted(self, adapter: Path, echo_tool_name_hook: Path) -> None:
+        """toolName is read with lib-trw.sh's _json_get (jq or python3, T29)."""
         payload = '{"toolName":"str_replace_editor","tool_input":{"path":"foo.py"}}'
         result = self._run_adapter(adapter, echo_tool_name_hook, "postToolUse", payload)
         assert result.returncode == 0
-        assert "str_replace_editor" in result.stdout
+        assert "TOOL_NAME=str_replace_editor\n" in result.stdout
+
+    def test_tool_name_is_empty_without_lib_trw(self, adapter: Path, echo_tool_name_hook: Path) -> None:
+        """No lib-trw.sh beside the hook: TOOL_NAME stays empty and the hook still runs (fail-open)."""
+        (echo_tool_name_hook.parent / "lib-trw.sh").unlink()
+        payload = '{"toolName":"str_replace_editor"}'
+        result = self._run_adapter(adapter, echo_tool_name_hook, "postToolUse", payload)
+        assert result.returncode == 0
+        assert result.stdout == "TOOL_NAME=\n"
 
     def test_pre_tool_use_allow_on_exit_0(self, adapter: Path, allow_hook: Path) -> None:
         """preToolUse emits allow JSON when hook exits 0."""

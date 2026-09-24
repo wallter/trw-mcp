@@ -29,11 +29,11 @@ init_hook_timer
 # Read JSON payload from stdin
 _payload=$(cat) || exit 0
 
-# jq only: no shell JSON parser (T29). Without jq this hook cannot tell which
+# jq or python3, never a shell JSON parser (T29). Without either this hook cannot tell which
 # tool ran, which file it touched, or whose session it was. It records exactly
 # that -- change evidence unknown -- in the checkout's session stream, and the
 # deliver gate reads the row as uncomputable (it blocks) rather than as zero.
-if ! command -v jq >/dev/null 2>&1; then
+if ! _trw_has_json_parser; then
   _unk_root="$(get_repo_root)" || exit 0
   # A fresh checkout has no .trw/context yet; skipping the row there would read
   # as "no changes" again, so the directory is created, not required.
@@ -44,7 +44,7 @@ if ! command -v jq >/dev/null 2>&1; then
   log_hook_execution "PostToolUse" "unknown" "0" "jq_unavailable=1"
   exit 0
 fi
-_file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || _file_path=""
+_file_path=$(printf '%s' "$_payload" | _json_get .tool_input.file_path) || _file_path=""
 _tool_name=$(_json_str_field "$_payload" tool_name) || _tool_name=""
 _host_session_id=$(_json_str_field "$_payload" session_id) || _host_session_id=""
 _session_id=${TRW_SESSION_ID:-}

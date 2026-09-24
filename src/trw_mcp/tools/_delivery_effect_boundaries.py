@@ -112,6 +112,5 @@ EFFECT_BOUNDARIES: dict[str, EffectBoundary] = {
     "D22": _own("journal.step('D22') wraps _persist_session_metrics, the run-yaml write it names"),
     "D23": _own("journal.step('D23') wraps _persist_deferred_results BEFORE the terminal transition"),
     "D24": _own("journal.step('D24') wraps _log_deferred_result BEFORE the terminal transition"),
-    "D26": _own("deferred chokepoint journals the delivery_metrics roster step"),
     "D25": _own("deferred chokepoint journals the memory_decay roster step"),
 }

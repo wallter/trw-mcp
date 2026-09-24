@@ -182,7 +182,7 @@ class TestIoBoundarySize:
 class TestCorrelationWindowSize:
     """Correlation facade and its recall-window policy each stay under 350 raw lines.
 
-    The recall-scan policy (windowing, recency discount, early-exit) was split
+    The recall-scan policy (windowing, early-exit) was split
     out of ``_correlation.py`` into the sibling ``_recall_window.py`` deep
     module (the policy counterpart to the ``_recall_receipts.py`` row-decoding
     mechanism). Both must remain under the 350-raw-line module size gate so the

@@ -9,8 +9,10 @@ left ~450 of them.
 
 A daemon is identified by the discovery file it publishes in its user memory
 directory, which a test always places under its own tmp tree, and at session end
-also by a working directory under the basetemp. Only a process whose command
-line is the daemon's is signalled, so a recycled pid is never hit.
+also by a working directory, ``TRW_USER_DIR`` or ``HOME`` under the basetemp: a
+daemon that stalls before publishing has no discovery file (2026-09-24, five from
+one test). Only a process whose command line is the daemon's is signalled, so a
+recycled pid is never hit.
 """
 
 from __future__ import annotations
@@ -25,12 +27,14 @@ from pathlib import Path
 _DISCOVERY_FILE = "daemon.json"
 _DAEMON_ARGV_MARK = "trw_memory.server serve"
 _GRACE_SECONDS = 5.0
+#: The variables that place a daemon's store; an auto-started daemon inherits them.
+_PLACING_VARIABLES = ("TRW_USER_DIR", "HOME")
 
 
 def _is_daemon(pid: int) -> bool:
     try:
         command = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, check=False
+            ["ps", "-ww", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, check=False
         ).stdout
     except (
         OSError
@@ -69,24 +73,46 @@ def daemon_pids_under(root: Path) -> list[int]:
     return pids
 
 
-def daemon_pids_in_cwd(root: Path) -> list[int]:
-    """Pids of live daemons whose working directory lies under *root*.
+def daemon_pids_placed_under(root: Path) -> list[int]:
+    """Pids of live daemons whose working directory, ``TRW_USER_DIR`` or ``HOME`` lies under *root*.
 
-    Catches a daemon whose discovery file is already gone (a fixture removed its
-    tmp tree first): an auto-started daemon inherits the cwd of the process that
-    started it, which for a subprocess test is the project under the basetemp.
+    Catches a daemon with no discovery file: one that stalled before publishing,
+    or whose file a fixture already removed with its tmp tree. An auto-started
+    daemon inherits the cwd and environment of the process that started it.
     """
-    listing = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, check=False).stdout
-    wanted = str(root.resolve())
+    # -ww: Linux ps cuts piped output to $COLUMNS (pytest sets it), which drops the command-line mark.
+    listing = subprocess.run(["ps", "-ww", "-axo", "pid=,command="], capture_output=True, text=True, check=False).stdout
+    wanted = root.resolve()
     pids: list[int] = []
     for line in listing.splitlines():
         pid_text, _, command = line.strip().partition(" ")
         if _DAEMON_ARGV_MARK not in command or not pid_text.isdigit():
             continue
         cwd = _cwd(int(pid_text))
-        if cwd is not None and (cwd == wanted or cwd.startswith(wanted + os.sep)):
+        places = [*_placing_environment(int(pid_text)).values(), *([cwd] if cwd is not None else [])]
+        if any(Path(place).resolve().is_relative_to(wanted) for place in places):
             pids.append(int(pid_text))
     return pids
+
+
+def _placing_environment(pid: int) -> dict[str, str]:
+    """*pid*'s ``TRW_USER_DIR`` and ``HOME``: ``/proc`` on Linux, ``ps -E`` on macOS.
+
+    ``ps -E`` appends the environment to the command line space-separated, so a
+    value containing a space is cut short there; tmp paths contain none.
+    """
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes().decode("utf-8", "replace").split("\0")
+    except OSError:  # trw-fail-silent-allow: no /proc (macOS): ps -E below
+        raw = subprocess.run(
+            ["ps", "-ww", "-E", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, check=False
+        ).stdout.split()
+    found: dict[str, str] = {}
+    for entry in raw:
+        name, sep, value = entry.partition("=")
+        if sep and name in _PLACING_VARIABLES:
+            found.setdefault(name, value)
+    return found
 
 
 def _cwd(pid: int) -> str | None:
@@ -101,16 +127,17 @@ def _cwd(pid: int) -> str | None:
     return str(Path(names[0]).resolve()) if names else None
 
 
-def reap_daemons_under(*roots: Path, wait: bool = False, by_cwd: bool = False) -> list[int]:
-    """Stop every daemon published (or, with *by_cwd*, running) under any of *roots*.
+def reap_daemons_under(*roots: Path, wait: bool = False, by_process: bool = False) -> list[int]:
+    """Stop every daemon published (or, with *by_process*, placed) under any of *roots*.
 
     SIGTERM lets the daemon remove its discovery file and lock. With *wait*, a
     daemon still alive after a grace period gets SIGKILL; a per-test reap does not
     wait, and the session-end sweep does.
     """
     pids = {pid for root in roots for pid in daemon_pids_under(root)}
-    if by_cwd:
-        pids |= {pid for root in roots for pid in daemon_pids_in_cwd(root)}
+    if by_process:
+        pids |= {pid for root in roots for pid in daemon_pids_placed_under(root)}
+    pids.discard(os.getpid())
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)

@@ -147,12 +147,7 @@ resolve_owned_run() {
   _ror_pins="$_ror_root/.trw/runtime/pins.json"
   [ -f "$_ror_pins" ] || return 1
 
-  _ror_path=""
-  if command -v jq >/dev/null 2>&1; then
-    _ror_path=$(jq -r --arg sid "$_ror_key" '.[$sid].run_path // empty' "$_ror_pins" 2>/dev/null) || _ror_path=""
-  elif command -v python3 >/dev/null 2>&1; then
-    _ror_path=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], {}).get("run_path", ""))' "$_ror_pins" "$_ror_key" 2>/dev/null) || _ror_path=""
-  fi
+  _ror_path=$(_json_get --file "$_ror_pins" --arg "$_ror_key" '.$arg.run_path') || _ror_path=""
   [ -n "$_ror_path" ] || return 1
   [ -d "$_ror_path" ] || return 1
   _ror_path=$(cd "$_ror_path" 2>/dev/null && pwd -P) || return 1
@@ -245,19 +240,145 @@ _json_escape() {
     | tr -d '\000-\010\013\014\016-\037\177'
 }
 
-# _json_str_field: Print the string value of top-level key $2 in the JSON text $1.
-# jq ONLY -- there is no printf/sed/grep shell JSON parser here (PRD-FIX-149
-# FR06, binding decision): a hand-rolled parser cannot tell an escaped quote
-# from a closing one and once silently mis-parsed nested/escaped JSON. Returns 1
-# with no output when jq is absent, rather than guessing. Called inside a
-# `$(...)` substitution (a subshell), so it cannot set a variable the caller
-# observes -- callers check `command -v jq` directly for the one diagnostic
-# they emit, not this function's exit status.
-_json_str_field() {
-  if ! command -v jq >/dev/null 2>&1; then
+# _json_get: Print what `jq -r '<P1> // <P2> // ... // <default|empty>'` prints
+# for the JSON document on stdin (or in --file FILE), using jq when it is on PATH
+# and python3's json module otherwise -- two real parsers, never a shell one
+# (PRD-FIX-149 FR06 forbids grep/sed JSON reading, which cannot tell an escaped
+# quote from a closing one).
+#
+# Usage: _json_get [--file F] [--arg V] [--default D] [--strings] PATH...
+#   PATH     a key path such as .tool_input.file_path; a `$arg` segment is the
+#            --arg value (.$arg.run_path reads pins.json[<session>].run_path).
+#            Segments are [A-Za-z0-9_]+ literals; anything else returns 2.
+#   --strings  print only a string result (jq's `| strings`).
+# The python3 path matches jq's -r output byte for byte for strings, integers,
+# booleans and containers of them: false/null fall through to the next path, a
+# path through a non-object is an error (no output, non-zero exit), empty input
+# prints nothing. Float spelling is the one known difference (jq 1.7/1.8 print
+# 1e100 as 1E+100); no hook reads a float. Returns 1 when neither parser exists.
+_json_get() {
+  _jg_file="" _jg_arg="" _jg_def="" _jg_hasdef=0 _jg_strings=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --file) _jg_file="$2"; shift 2 ;;
+      --arg) _jg_arg="$2"; shift 2 ;;
+      --default) _jg_def="$2"; _jg_hasdef=1; shift 2 ;;
+      --strings) _jg_strings=1; shift ;;
+      *) break ;;
+    esac
+  done
+  [ $# -gt 0 ] || return 2
+  for _jg_p in "$@"; do
+    case "$_jg_p" in
+      .*) ;;
+      *) return 2 ;;
+    esac
+    case "${_jg_p#.}" in
+      *[!A-Za-z0-9_.\$]* | *..* | .* | *.) return 2 ;;
+    esac
+  done
+  if command -v jq >/dev/null 2>&1; then
+    _jg_filter=""
+    for _jg_p in "$@"; do
+      _jg_expr="."
+      _jg_rest="${_jg_p#.}"
+      while [ -n "$_jg_rest" ]; do
+        _jg_seg="${_jg_rest%%.*}"
+        case "$_jg_rest" in *.*) _jg_rest="${_jg_rest#*.}" ;; *) _jg_rest="" ;; esac
+        if [ "$_jg_seg" = '$arg' ]; then
+          _jg_expr="${_jg_expr}[\$arg]"
+        else
+          _jg_expr="${_jg_expr}[\"$_jg_seg\"]"
+        fi
+      done
+      _jg_filter="${_jg_filter}${_jg_filter:+ // }${_jg_expr}"
+    done
+    if [ "$_jg_hasdef" = 1 ]; then _jg_filter="$_jg_filter // \$def"; else _jg_filter="$_jg_filter // empty"; fi
+    [ "$_jg_strings" = 1 ] && _jg_filter="($_jg_filter) | strings"
+    if [ -n "$_jg_file" ]; then
+      jq -r --arg arg "$_jg_arg" --arg def "$_jg_def" "$_jg_filter" "$_jg_file" 2>/dev/null
+    else
+      jq -r --arg arg "$_jg_arg" --arg def "$_jg_def" "$_jg_filter" 2>/dev/null
+    fi
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c "$_TRW_JSON_GET_PY" "$_jg_file" "$_jg_arg" "$_jg_hasdef" "$_jg_def" "$_jg_strings" "$@" 2>/dev/null
+  else
     return 1
   fi
-  printf '%s' "$1" | jq -r --arg k "$2" '.[$k] // empty | strings' 2>/dev/null
+}
+
+# The python3 half of _json_get. Kept free of single quotes so it can live in a
+# single-quoted shell string.
+_TRW_JSON_GET_PY='
+import json, re, sys
+path_file, arg, has_default, default, strings_only = sys.argv[1:6]
+paths = sys.argv[6:]
+try:
+    raw = open(path_file, "rb").read() if path_file else sys.stdin.buffer.read()
+    text = raw.decode("utf-8")
+except (OSError, UnicodeDecodeError):
+    sys.exit(2)
+if not text.strip():
+    sys.exit(0)
+try:
+    doc = json.loads(text)
+except ValueError:
+    sys.exit(5)
+
+def lone_high(value):
+    # jq refuses a high surrogate escape not followed by its low half; json accepts it.
+    if isinstance(value, str):
+        return re.search("[\ud800-\udbff]", value) is not None
+    if isinstance(value, dict):
+        return any(lone_high(k) or lone_high(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(lone_high(v) for v in value)
+    return False
+
+if lone_high(doc):
+    sys.exit(5)
+
+def walk(path):
+    value = doc
+    for segment in path[1:].split("."):
+        if value is None:
+            continue
+        if not isinstance(value, dict):
+            sys.exit(5)
+        value = value.get(arg if segment == "$arg" else segment)
+    return value
+
+result = None
+for path in paths:
+    value = walk(path)
+    if value is not None and value is not False:
+        result = value
+        break
+else:
+    if has_default != "1":
+        sys.exit(0)
+    result = default
+if strings_only == "1" and not isinstance(result, str):
+    sys.exit(0)
+if isinstance(result, str):
+    out = result
+elif isinstance(result, (dict, list)) and result:
+    out = json.dumps(result, ensure_ascii=False, indent=2)
+else:
+    out = json.dumps(result, ensure_ascii=False)
+out = re.sub("[\udc00-\udfff]", "\ufffd", out)  # jq prints a lone low surrogate as U+FFFD
+sys.stdout.buffer.write((out + "\n").encode("utf-8"))
+'
+
+# _trw_has_json_parser: 0 when _json_get can read JSON here (jq or python3).
+_trw_has_json_parser() {
+  command -v jq >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1
+}
+
+# _json_str_field: Print the string value of top-level key $2 in the JSON text $1
+# (jq `.[$k] // empty | strings`), with jq or python3 via _json_get.
+_json_str_field() {
+  printf '%s' "$1" | _json_get --strings ".$2"
 }
 
 # append_event: Append a JSON event line to events.jsonl.
@@ -471,9 +592,10 @@ has_recent_session_tool_deliver() {
 # pin_run_path_for: Print the run_path pinned to a given session_id, or nothing.
 # Reads .trw/runtime/pins.json (a session_id -> {run_path,...} map written by the
 # MCP pin-isolation layer) so the Stop hook can attribute enforcement to THIS
-# session's own run instead of a parallel instance's newest run. Uses jq when
-# available; without jq it returns non-zero so the caller falls back to legacy
-# behavior rather than guessing from a fragile multi-line grep.
+# session's own run instead of a parallel instance's newest run. Without a JSON
+# parser it returns non-zero so the caller falls back to legacy
+# behavior rather than guessing from a fragile multi-line grep. jq or python3,
+# via _json_get.
 # Args: $1=pins_json_path, $2=session_id.
 # Returns 0 and prints the path when resolved; 1 otherwise.
 pin_run_path_for() {
@@ -481,8 +603,7 @@ pin_run_path_for() {
   _prp_sid="$2"
   [ -f "$_prp_pins" ] || return 1
   [ -n "$_prp_sid" ] || return 1
-  command -v jq >/dev/null 2>&1 || return 1
-  _prp_val=$(jq -r --arg sid "$_prp_sid" '.[$sid].run_path // empty' "$_prp_pins" 2>/dev/null) || return 1
+  _prp_val=$(_json_get --file "$_prp_pins" --arg "$_prp_sid" '.$arg.run_path') || return 1
   [ -n "$_prp_val" ] || return 1
   printf '%s' "$_prp_val"
 }

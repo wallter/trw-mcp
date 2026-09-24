@@ -10,7 +10,9 @@ import pytest
 if TYPE_CHECKING:
     from trw_mcp.state.memory_store import MemoryStore
 
-_sqlite_vec = pytest.importorskip("sqlite_vec", reason="sqlite-vec not installed (optional [vectors] extra)")
+_sqlite_vec = pytest.importorskip(
+    "sqlite_vec", reason="sqlite-vec not installed (a base dependency: reinstall trw-mcp)"
+)
 
 
 def _make_store(tmp_path: Path, dim: int = 4) -> MemoryStore:

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests._auto_recall_hook_harness import _HOOK_PATHS as _UPS_HOOK_PATHS
-from tests._layout import PACKAGE_ROOT, requires_jq, requires_monorepo
+from tests._layout import PACKAGE_ROOT, requires_monorepo
 
 _ROOT = Path(__file__).resolve().parent.parent
 #: Every live copy of the hook (a formerly-vendored third mirror was deleted
@@ -49,10 +49,13 @@ def _copy_hook_to_temp(tmp_path: Path, source_hook: Path) -> tuple[Path, Path]:
     hook_path.chmod(0o755)
 
     lib_hook = hooks_dir / "lib-trw.sh"
+    # The shipped library beside the hook (its JSON reader included), with the
+    # repo-root lookup pinned to the fixture.
     lib_hook.write_text(
-        """#!/bin/sh
-init_hook_timer() { :; }
-get_repo_root() { printf '%s' "$TRW_PROJECT_ROOT"; }
+        f"""#!/bin/sh
+. "{source_hook.parent / "lib-trw.sh"}"
+init_hook_timer() {{ :; }}
+get_repo_root() {{ printf '%s' "$TRW_PROJECT_ROOT"; }}
 """,
         encoding="utf-8",
     )
@@ -71,7 +74,6 @@ def test_session_start_hook_copies_stay_in_sync() -> None:
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
-@requires_jq
 def test_session_start_hook_clears_phase_and_injected_state_for_all_sources(tmp_path: Path, hook_path: Path) -> None:
     for source in ("startup", "resume", "compact", "clear"):
         project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / source, hook_path)
@@ -98,7 +100,6 @@ def test_session_start_hook_clears_phase_and_injected_state_for_all_sources(tmp_
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
-@requires_jq
 def test_session_start_hook_compact_guides_to_session_start(tmp_path: Path, hook_path: Path) -> None:
     project_root, local_hook = _copy_hook_to_temp(tmp_path / hook_path.parent.name / "compact-guidance", hook_path)
 
@@ -135,7 +136,6 @@ def _run_hook(local_hook: Path, project_root: Path, source: str) -> str:
 
 
 @pytest.mark.parametrize("source_hook", _HOOK_CASES)
-@requires_jq
 def test_delegation_guidance_preserves_required_independent_review(tmp_path: Path, source_hook: Path) -> None:
     """The emitted convenience advice must not forbid the framework's review."""
     for source in ("startup", "clear"):
@@ -165,7 +165,6 @@ _MID_SESSION_EMISSION_CEILING_BYTES = {"resume": 1200, "compact": 1800, "clear":
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
-@requires_jq
 def test_protocol_not_re_emitted_when_instruction_file_carries_it(tmp_path: Path, hook_path: Path) -> None:
     """resume/compact/clear must not restate a protocol already in the system prompt."""
     for source in ("resume", "compact", "clear"):
@@ -191,7 +190,6 @@ def test_protocol_not_re_emitted_when_instruction_file_carries_it(tmp_path: Path
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
-@requires_jq
 def test_protocol_still_emitted_when_no_instruction_file_carries_it(tmp_path: Path, hook_path: Path) -> None:
     """The nudge is deduplicated, not removed: bare harnesses still get the protocol."""
     for source in ("resume", "compact", "clear"):
@@ -227,7 +225,6 @@ def test_mid_session_emissions_stay_within_byte_budget(tmp_path: Path, hook_path
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
-@requires_jq
 def test_compact_framework_directive_is_honest_about_cost(tmp_path: Path, hook_path: Path) -> None:
     """The framework directive must state a MEASURED cost, never a remembered one.
 
@@ -249,7 +246,6 @@ def test_compact_framework_directive_is_honest_about_cost(tmp_path: Path, hook_p
 
 
 @pytest.mark.parametrize("hook_path", _HOOK_CASES)
-@requires_jq
 def test_instruction_file_that_merely_mentions_trw_still_gets_the_protocol(tmp_path: Path, hook_path: Path) -> None:
     """A prose mention is not a protocol block.
 

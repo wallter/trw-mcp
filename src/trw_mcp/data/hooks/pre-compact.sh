@@ -24,8 +24,8 @@ _injected_file="$_context_dir/injected_learning_ids.txt"
 # Determine trigger type from stdin
 _payload=$(cat) || exit 0
 # PreCompact names it "trigger" (manual|auto); "source" is kept for clients that
-# send that key. jq-only (PRD-FIX-149 FR06): without jq both reads below return
-# empty and _trigger falls through to "unknown" -- never a guessed value.
+# send that key. jq or python3 (PRD-FIX-149 FR06): without either both reads
+# below return empty and _trigger falls through to "unknown" -- never a guessed value.
 _trigger=$(_json_str_field "$_payload" trigger) || _trigger=""
 [ -n "$_trigger" ] || _trigger=$(_json_str_field "$_payload" source) || _trigger=""
 [ -n "$_trigger" ] || _trigger="unknown"
@@ -55,7 +55,7 @@ if [ -n "$_session_id" ]; then
   [ -n "$_run_dir" ] && _ownership="owned"
 fi
 # PRD-FIX-149 review R4: when identity is unresolvable (no TRW_SESSION_ID and
-# either no jq or no session_id in the payload), this is NOT distinguishable
+# either no JSON parser or no session_id in the payload), this is NOT distinguishable
 # from "N instances live, none identified" -- the exact shape PRD-FIX-118
 # exists to refuse. The removed ``else`` branch used to call find_active_run()
 # here ("legacy newest-wins, correct for a single-instance install"), which
@@ -89,8 +89,8 @@ if [ -n "$_run_dir" ]; then
 
   # Get last checkpoint message
   _cp_path="${_run_dir}meta/checkpoints.jsonl"
-  if [ -f "$_cp_path" ] && command -v jq >/dev/null 2>&1; then
-    _last_checkpoint=$(tail -1 "$_cp_path" 2>/dev/null | jq -r '.message // empty' 2>/dev/null) || true
+  if [ -f "$_cp_path" ]; then
+    _last_checkpoint=$(tail -1 "$_cp_path" 2>/dev/null | _json_get .message) || true
   fi
 
   # FR02: wave_manifest — read wave status from wave_manifest.yaml or run.yaml
@@ -109,8 +109,8 @@ if [ -n "$_run_dir" ]; then
   fi
 
   # FR02: pending_decisions — open questions from last checkpoint
-  if [ -f "$_cp_path" ] && command -v jq >/dev/null 2>&1; then
-    _pending_decisions=$(tail -1 "$_cp_path" 2>/dev/null | jq -r '.pending_decisions // .open_questions // empty' 2>/dev/null) || true
+  if [ -f "$_cp_path" ]; then
+    _pending_decisions=$(tail -1 "$_cp_path" 2>/dev/null | _json_get .pending_decisions .open_questions) || true
   fi
 fi
 
@@ -138,10 +138,10 @@ else
     > "$_state_file" 2>/dev/null
 fi
 
-# PRD-FIX-149 FR06: one explicit diagnostic when jq was unavailable to read the
+# PRD-FIX-149 FR06: one explicit diagnostic when neither jq nor python3 could read the
 # trigger/session_id fields above -- never a silently degraded event.
 _le_detail=""
-command -v jq >/dev/null 2>&1 || _le_detail="jq_unavailable=1"
+_trw_has_json_parser || _le_detail="jq_unavailable=1"
 log_hook_execution "PreCompact" "$_trigger" "0" "$_le_detail"
 
 exit 0

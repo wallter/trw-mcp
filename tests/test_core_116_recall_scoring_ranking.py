@@ -22,7 +22,6 @@ class TestRankByUtilityEdgeCases:
         entry = _make_entry(
             id="L-max",
             impact=1.0,
-            q_value=1.0,
             domain=["payments"],
             phase_affinity=["VALIDATE"],
             team_origin="checkout",
@@ -43,9 +42,9 @@ class TestRankByUtilityEdgeCases:
         from trw_mcp.scoring._recall import rank_targeted_by_utility
 
         entries = [
-            _make_entry(id="L-low", impact=0.1, q_value=0.1),
-            _make_entry(id="L-high", impact=0.9, q_value=0.9),
-            _make_entry(id="L-mid", impact=0.5, q_value=0.5),
+            _make_entry(id="L-low", impact=0.1),
+            _make_entry(id="L-high", impact=0.9),
+            _make_entry(id="L-mid", impact=0.5),
         ]
 
         result = rank_targeted_by_utility(entries, query_tokens=["payments"], lambda_weight=0.3)

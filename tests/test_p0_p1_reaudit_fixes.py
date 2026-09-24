@@ -1,14 +1,12 @@
-"""Tests for P0/P1 re-audit fixes: session_metrics persistence, config weights.
+"""Tests for P0 re-audit fixes: session_metrics persistence.
 
 P0-1 (CORE-104): session_metrics written to run.yaml after delivery_metrics step.
 P0-2 (CORE-105): bandit_state.json tests removed (PRD-INFRA-054 -- meta_tune deleted).
-P1 (CORE-104): compute_composite_outcome receives config weights.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # P0-1: session_metrics persistence to run.yaml
@@ -100,58 +98,3 @@ class TestSessionMetricsPersistence:
 # was in tools/meta_tune.py which was deleted (intelligence code extracted
 # to backend in PRD-INFRA-052).
 # ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# P1: compute_composite_outcome receives config weights
-# ---------------------------------------------------------------------------
-
-
-class TestCompositeOutcomeConfigWeights:
-    """P1 (CORE-104): config weights passed to compute_composite_outcome."""
-
-    def test_config_weights_passed_to_composite(self) -> None:
-        """_step_delivery_metrics passes config weights to compute_composite_outcome."""
-        from trw_mcp.tools._deferred_steps_learning import _step_delivery_metrics
-
-        mock_cfg = MagicMock()
-        mock_cfg.client_profile.client_id = "test"
-        mock_cfg.model_family = "test"
-        mock_cfg.outcome_weight_rework = -3.0
-        mock_cfg.outcome_weight_p0_defects = -2.0
-        mock_cfg.outcome_weight_velocity = 1.0
-        mock_cfg.outcome_weight_learning_rate = 0.5
-
-        with (
-            patch(
-                "trw_mcp.models.config.get_config",
-                return_value=mock_cfg,
-            ),
-            patch(
-                "trw_mcp.scoring._correlation.compute_composite_outcome",
-                wraps=None,
-            ) as mock_composite,
-        ):
-            mock_composite.return_value = 1.0
-            _step_delivery_metrics(Path("/tmp/fake-trw"), None)
-
-            if mock_composite.called:
-                _, kwargs = mock_composite.call_args
-                assert kwargs.get("weight_rework") == -3.0
-                assert kwargs.get("weight_p0_defects") == -2.0
-                assert kwargs.get("weight_velocity") == 1.0
-                assert kwargs.get("weight_learning_rate") == 0.5
-
-    def test_config_weights_default_fallback(self) -> None:
-        """When config attributes are missing, default weights are used."""
-        from trw_mcp.scoring._correlation import compute_composite_outcome
-
-        # Default weights should produce the standard formula
-        score = compute_composite_outcome(
-            rework_rate=0.1,
-            p0_defect_count=1,
-            velocity_tasks=3.0,
-            learning_rate=2.0,
-        )
-        # Default: -2.0*0.1 + -1.5*1 + 0.5*3.0 + 0.3*2.0 = -0.2 -1.5 + 1.5 + 0.6 = 0.4
-        assert abs(score - 0.4) < 0.001

@@ -74,17 +74,23 @@ def _copy_hook_to_temp(
     hook_path.write_text(source_hook.read_text(encoding="utf-8"), encoding="utf-8")
     hook_path.chmod(0o755)
 
-    # Stub library: the phase ladder and the log sink are replaced so these
-    # tests observe the hook's OWN decisions. The fourth `detail` field is the
+    # The shipped library beside the hook (its JSON reader included), with the
+    # phase ladder and the log sink replaced so these tests observe the hook's
+    # OWN decisions. A hook a test rewrote into a staging directory has no
+    # library beside it and runs the bundled one. The fourth `detail` field is the
     # PRD-FIX-124-FR05 diagnostic; log_hook_execution's real four-argument
     # contract is asserted separately against the shipped lib-trw.sh.
+    shipped_lib = source_hook.parent / "lib-trw.sh"
+    if not shipped_lib.is_file():
+        shipped_lib = _LIB_PATHS[-1]
     lib_hook = hooks_dir / "lib-trw.sh"
     lib_hook.write_text(
-        """#!/bin/sh
-init_hook_timer() { :; }
-infer_phase() { printf '%s' "${TRW_TEST_PHASE:-implement}"; }
-get_repo_root() { printf '%s' "$TRW_PROJECT_ROOT"; }
-log_hook_execution() { printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "$4" >> "$TRW_HOOK_LOG"; }
+        f"""#!/bin/sh
+. "{shipped_lib}"
+init_hook_timer() {{ :; }}
+infer_phase() {{ printf '%s' "${{TRW_TEST_PHASE:-implement}}"; }}
+get_repo_root() {{ printf '%s' "$TRW_PROJECT_ROOT"; }}
+log_hook_execution() {{ printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "$4" >> "$TRW_HOOK_LOG"; }}
 """,
         encoding="utf-8",
     )

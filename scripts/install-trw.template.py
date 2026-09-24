@@ -9,6 +9,11 @@ Usage:
     python3 install-trw.py /path/to           # Install in specified directory
     python3 install-trw.py --upgrade          # Upgrade existing installation
     python3 install-trw.py --script --ai      # Non-interactive with AI extras
+    python3 install-trw.py --no-embeddings    # Keyword-only recall (skip embeddings + model)
+
+Embeddings (trw-memory[embeddings] plus the configured model's weights) are
+installed by default; if they are wanted and cannot be made to work, the
+install exits non-zero rather than leaving recall silently keyword-only.
     python3 install-trw.py --name myproj      # Set project name
     curl -fsSL <url> -o install-trw.py && python3 install-trw.py   # Remote fetch
 
@@ -205,6 +210,16 @@ _IDE_META: dict[str, dict[str, str]] = {
         "summary": "Native .grok MCP config and AGENTS.md ceremony; agents in .grok/agents.",
     },
 }
+
+#: The values a boolean TRW_* environment variable accepts, after strip().lower().
+ENV_TRUE = frozenset({"1", "true", "yes"})
+ENV_FALSE = frozenset({"0", "false", "no"})
+
+
+def _env_flag(name: str) -> bool | None:
+    """True or False when *name* holds a recognized boolean value, else None (unset or unrecognized)."""
+    value = os.environ.get(name, "").strip().lower()
+    return True if value in ENV_TRUE else False if value in ENV_FALSE else None
 
 
 def _visible_len(text: str) -> int:
@@ -760,8 +775,6 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
             prior["learning_sharing_enabled"] = flat["learning_sharing_enabled"].lower() == "true"
         if "embeddings_enabled" in flat:
             prior["embeddings"] = flat["embeddings_enabled"].lower() == "true"
-        if "sqlite_vec_enabled" in flat:
-            prior["sqlite_vec"] = flat["sqlite_vec_enabled"].lower() == "true"
         target_platforms: list[str] = []
         platform_urls: list[str] = []
         in_target_platforms = False
@@ -815,7 +828,10 @@ def _load_prior_config(target_dir: Path, ui: "UI | None" = None) -> dict[str, ob
                 # Defence in depth: even unexpected errors here should not
                 # block the installer. Treat as "no prior platform choice".
                 pass
-    except (OSError, UnicodeDecodeError):
+    except (
+        OSError,
+        UnicodeDecodeError,
+    ):  # trw-fail-silent-allow: an unreadable prior config is treated as a fresh install, whose defaults re-prompt
         pass
     return prior
 
@@ -829,7 +845,6 @@ def _detect_installed_extras(python: str) -> dict[str, bool]:
     """
     extras: dict[str, bool] = {}
     extras["ai"] = _run_quiet([python, "-c", "import anthropic"], timeout=10)
-    extras["sqlite_vec"] = _run_quiet([python, "-c", "import sqlite_vec"], timeout=10)
     return extras
 
 
@@ -942,24 +957,25 @@ def check_python_version(ui: UI) -> str:
 
 
 def jq_preflight(ui: UI) -> None:
-    """T15-JQ (installer refinement 5.1.0): WARN (never block) when ``jq`` is
-    absent from PATH.
+    """T15-JQ (installer refinement 5.1.0): WARN (never block) when neither
+    ``jq`` nor ``python3`` is on PATH.
 
-    The bundled hooks degrade gracefully without ``jq``: most guard with
-    ``command -v jq || exit 0`` and fail open. ``append_event()`` needs no
-    ``jq`` (PRD-FIX-149 FR06), so event logs keep every field. What does
-    degrade is reading the JSON a client passes to a hook: ``pre-compact.sh``
-    logs ``jq_unavailable=1`` instead of the trigger, and the Stop hook's pins
-    lookup can fall back to newest-wins run attribution (CHANGELOG.md Known
-    Issues), and ``post-tool-event.sh`` cannot see which file an edit touched, so
-    it records ``change_evidence_unknown`` and the deliver gate blocks on
-    uncomputable change evidence instead of counting zero. Unlike the Python version check, a missing ``jq`` never blocks
-    install (PRD-INFRA-192-FR11).
+    The bundled hooks read the JSON a client passes them with jq, or with
+    python3's json module when jq is absent (lib-trw.sh ``_json_get``).
+    ``append_event()`` needs neither (PRD-FIX-149 FR06), so event logs keep
+    every field. With no parser at all, reading the payload degrades:
+    ``pre-compact.sh`` logs ``jq_unavailable=1`` instead of the trigger, the
+    Stop hook's pins lookup can fall back to newest-wins run attribution
+    (CHANGELOG.md Known Issues), and ``post-tool-event.sh`` cannot see which
+    file an edit touched, so it records ``change_evidence_unknown`` and the
+    deliver gate blocks on uncomputable change evidence instead of counting
+    zero. Unlike the Python version check, this never blocks install
+    (PRD-INFRA-192-FR11).
     """
-    if shutil.which("jq") is not None:
+    if shutil.which("jq") is not None or shutil.which("python3") is not None:
         return
     ui.step_warn(
-        "jq not found on PATH — hooks that read a client's JSON payload run in "
+        "neither jq nor python3 found on PATH — hooks that read a client's JSON payload run in "
         "degraded mode: pre-compact logs jq_unavailable=1 instead of its trigger, "
         "the Stop hook may use newest-wins run attribution (see CHANGELOG.md Known "
         "Issues), and every file edit is logged as change_evidence_unknown, so the "
@@ -1027,7 +1043,7 @@ def index_preflight(ui: UI) -> None:
     """
     if not _INDEX_PREFLIGHT_ENABLED:
         return
-    if os.environ.get("TRW_SKIP_INDEX_PREFLIGHT", "").strip().lower() in ("1", "true", "yes"):
+    if _env_flag("TRW_SKIP_INDEX_PREFLIGHT"):
         return
 
     edge = _probe_edge()
@@ -1235,24 +1251,6 @@ def _run_python_smoke(cmd: list[str], target_dir: str = "", timeout: int = 120) 
         return False
 
 
-def verify_embeddings_runtime(python: str, target_dir: str = "") -> bool:
-    """Return True when the installed runtime can create the embedding provider."""
-    return _run_python_smoke(
-        [
-            python,
-            "-B",
-            "-c",
-            (
-                "from trw_memory.embeddings.local import LocalEmbeddingProvider; "
-                "provider = LocalEmbeddingProvider(); "
-                "raise SystemExit(0 if provider.available() else 1)"
-            ),
-        ],
-        target_dir=target_dir,
-        timeout=180,
-    )
-
-
 # ── Semantic-embeddings readiness ────────────────────────────────────
 #
 # The defect this guards against is SILENT degradation, not a crash. With
@@ -1261,34 +1259,39 @@ def verify_embeddings_runtime(python: str, target_dir: str = "") -> bool:
 # that never had semantic search looks exactly like one that does.
 #
 # Consequences for the design here:
-#   * the probe runs on EVERY invocation — fresh install, re-run and --upgrade
-#     alike — and is never gated on a marker file or on ``is_reinstall``, because
-#     an install created before this check existed can never self-heal otherwise;
+#   * embeddings are ON by default in every mode; ``--no-embeddings`` (or a
+#     prior ``embeddings_enabled: false``) is the only way to a keyword-only
+#     install, and that choice is written to the project config so ``doctor``
+#     reports it as a choice rather than a fault;
+#   * when embeddings are wanted and cannot be made to work, the install exits
+#     non-zero (after finishing setup) instead of degrading quietly;
+#   * the check runs on EVERY invocation — fresh install, re-run and --upgrade
+#     alike — so an install that predates it self-heals;
 #   * it probes the interpreter TRW will actually run under (the ``python``
 #     returned by ``phase_install_packages``, which may be a fallback venv), not
 #     this script's own ``sys.executable``;
-#   * "library missing" and "weights missing" are reported separately because the
-#     remedies differ (pip install vs. a model pre-download).
-#
-# The pinned CPU fixture below is the SAME snapshot the trw-memory CI provisions
-# in its "Provision pinned CPU embedding fixture" step
-# (trw-memory/.github/workflows/ci.yml) — identical repo_id, revision and
-# allow_patterns. Do not diverge: CI's real-model benchmark verifies exactly
-# these bytes.
-SEMANTIC_MODEL_REPO_ID = "sentence-transformers/all-MiniLM-L6-v2"
-SEMANTIC_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
-SEMANTIC_MODEL_ALLOW_PATTERNS = ("*.json", "*.txt", "*.safetensors", "1_Pooling/*")
+#   * the model is the project's configured ``retrieval_embedding_model``, read
+#     through trw-mcp's own config loader in that interpreter — never a second
+#     hard-coded name — and the probe is trw-mcp's own retrieval-capability
+#     probe, so the installer and ``trw-mcp doctor`` cannot disagree;
+#   * the weights are fetched the way the embedder loads them
+#     (``SentenceTransformer(model)``, revision ``main``), which also records
+#     the cache's ``refs/main`` — a commit-pinned ``snapshot_download`` writes no
+#     ref, so the runtime's cache-first load and an offline first embed could
+#     not find the snapshot it had just downloaded.
 
 # The extra that carries sentence-transformers + torch (trw-memory/pyproject.toml
 # [project.optional-dependencies].embeddings). Named once; every message and the
 # auto-repair path read it from here.
 SEMANTIC_EXTRA_SPEC = "trw-memory[embeddings]"
 
-# Probe outcomes.
+# Probe outcomes. DECLINED is an interactive "no" to the repair prompt, which is
+# the same choice as --no-embeddings.
 SEMANTIC_OK = "ok"
 SEMANTIC_MISSING_LIBRARY = "missing_library"
 SEMANTIC_MISSING_WEIGHTS = "missing_weights"
 SEMANTIC_UNKNOWN = "unknown"
+SEMANTIC_DECLINED = "declined"
 
 # Probe process exit codes -> outcomes. Distinct codes (not stdout parsing) so a
 # torch import banner or a HF progress line can never be mistaken for a verdict.
@@ -1296,51 +1299,48 @@ _SEMANTIC_EXIT_MISSING_LIBRARY = 10
 _SEMANTIC_EXIT_MISSING_WEIGHTS = 11
 _SEMANTIC_EXIT_UNKNOWN = 12
 
+# The one line of stdout the model resolver's verdict is read from.
+_MODEL_LINE_PREFIX = "TRW_EMBEDDING_MODEL="
 
-def _semantic_probe_source() -> str:
-    """Python source for the readiness probe, run in the TARGET interpreter.
+# Run in the TARGET interpreter with the project directory as argv[1]: the same
+# config cascade the embedder reads (project config.yaml, then TRW_* env).
+_CONFIGURED_MODEL_SOURCE = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from trw_mcp.models.config import TRWConfig\n"
+    "from trw_mcp.models.config._loader import resolve_config_overrides\n"
+    "config = TRWConfig(**resolve_config_overrides(Path(sys.argv[1]) / '.trw' / 'config.yaml'))\n"
+    f"print({_MODEL_LINE_PREFIX!r} + config.retrieval_embedding_model)\n"
+)
 
-    ``importlib.util.find_spec`` is used instead of a real import: importing
-    torch costs seconds and emits banners, and presence of the distribution is
-    exactly what "is the extra installed" means. The weights check uses
-    ``snapshot_download(local_files_only=True)``, which resolves the pinned
-    revision purely from the local HF cache and NEVER touches the network — so
-    the probe is safe in an air-gapped or offline install.
-    """
-    return (
-        "import importlib.util, sys\n"
-        "missing = [m for m in ('sentence_transformers', 'torch')"
-        " if importlib.util.find_spec(m) is None]\n"
-        "if missing:\n"
-        "    sys.stdout.write(','.join(missing))\n"
-        f"    raise SystemExit({_SEMANTIC_EXIT_MISSING_LIBRARY})\n"
-        "try:\n"
-        "    from huggingface_hub import snapshot_download\n"
-        "    from huggingface_hub.errors import LocalEntryNotFoundError\n"
-        "except Exception:\n"
-        f"    raise SystemExit({_SEMANTIC_EXIT_UNKNOWN})\n"
-        "try:\n"
-        "    snapshot_download(\n"
-        f"        repo_id={SEMANTIC_MODEL_REPO_ID!r},\n"
-        f"        revision={SEMANTIC_MODEL_REVISION!r},\n"
-        f"        allow_patterns={list(SEMANTIC_MODEL_ALLOW_PATTERNS)!r},\n"
-        "        local_files_only=True,\n"
-        "    )\n"
-        "except LocalEntryNotFoundError:\n"
-        f"    raise SystemExit({_SEMANTIC_EXIT_MISSING_WEIGHTS})\n"
-        "except Exception:\n"
-        f"    raise SystemExit({_SEMANTIC_EXIT_UNKNOWN})\n"
-        "raise SystemExit(0)\n"
-    )
+# argv[1] is the model. trw-mcp's retrieval probe: find_spec and a cache walk,
+# never a torch import, a model load or a network call.
+_SEMANTIC_PROBE_SOURCE = (
+    "import sys\n"
+    "try:\n"
+    "    from trw_mcp.state._retrieval_capability import probe_retrieval\n"
+    "    states = {c.name: c.state for c in probe_retrieval(sys.argv[1], embeddings_enabled=True)}\n"
+    "except Exception:\n"
+    f"    raise SystemExit({_SEMANTIC_EXIT_UNKNOWN})\n"
+    "if states['embeddings'] != 'active':\n"
+    f"    raise SystemExit({_SEMANTIC_EXIT_MISSING_LIBRARY})\n"
+    "if states['weights'] != 'active':\n"
+    f"    raise SystemExit({_SEMANTIC_EXIT_MISSING_WEIGHTS})\n"
+    "raise SystemExit(0)\n"
+)
+
+# argv[1] is the model: load it exactly as the embedder does, which downloads it.
+_SEMANTIC_DOWNLOAD_SOURCE = (
+    "import sys\nfrom sentence_transformers import SentenceTransformer\nSentenceTransformer(sys.argv[1])\n"
+)
 
 
-def _run_python_probe(cmd: list[str], target_dir: str = "", timeout: int = 60) -> int:
-    """Run a probe command in the target interpreter, returning its exit code.
+def _run_python_output(cmd: list[str], target_dir: str = "", timeout: int = 60) -> tuple[int, str]:
+    """Run *cmd* in the target interpreter; ``(exit code, stdout)``.
 
     Mirrors :func:`_run_python_smoke`'s environment handling (installer
-    ``--target`` dir on ``PYTHONPATH``) but preserves the exit CODE, which is how
-    the semantic probe distinguishes its outcomes. A missing interpreter or a
-    timeout is reported as "unknown", never as "missing".
+    ``--target`` dir on ``PYTHONPATH``). A missing interpreter or a timeout is
+    reported as the "unknown" exit code, never as "missing".
     """
     try:
         env = _build_pip_runtime_env(target_dir)
@@ -1354,23 +1354,41 @@ def _run_python_probe(cmd: list[str], target_dir: str = "", timeout: int = 60) -
             text=True,
             timeout=timeout,
         )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
-        return _SEMANTIC_EXIT_UNKNOWN
-    return proc.returncode
+    except (
+        FileNotFoundError,
+        OSError,
+        subprocess.TimeoutExpired,
+    ):  # trw-fail-silent-allow: the "unknown" exit code is a verdict, and an unknown semantic stack fails the install
+        return _SEMANTIC_EXIT_UNKNOWN, ""
+    return proc.returncode, proc.stdout or ""
 
 
-def probe_semantic_stack(python: str, target_dir: str = "") -> str:
-    """Return the semantic-retrieval readiness of *python*'s environment.
+def _run_python_probe(cmd: list[str], target_dir: str = "", timeout: int = 60) -> int:
+    """The exit code of :func:`_run_python_output` — how the semantic probe reports."""
+    return _run_python_output(cmd, target_dir=target_dir, timeout=timeout)[0]
+
+
+def configured_embedding_model(python: str, project_dir: Path, target_dir: str = "") -> str:
+    """The project's ``retrieval_embedding_model`` as trw-mcp in *python* resolves it; ``""`` if unknown."""
+    code, out = _run_python_output(
+        [python, "-B", "-c", _CONFIGURED_MODEL_SOURCE, str(project_dir)], target_dir=target_dir, timeout=60
+    )
+    if code != 0:
+        return ""
+    lines = [line[len(_MODEL_LINE_PREFIX) :] for line in out.splitlines() if line.startswith(_MODEL_LINE_PREFIX)]
+    return lines[-1].strip() if lines else ""
+
+
+def probe_semantic_stack(python: str, model: str, target_dir: str = "") -> str:
+    """Return the semantic-retrieval readiness of *model* in *python*'s environment.
 
     One of :data:`SEMANTIC_OK`, :data:`SEMANTIC_MISSING_LIBRARY`,
     :data:`SEMANTIC_MISSING_WEIGHTS` or :data:`SEMANTIC_UNKNOWN`. Read-only and
     offline: it installs nothing and downloads nothing.
     """
-    code = _run_python_probe(
-        [python, "-B", "-c", _semantic_probe_source()],
-        target_dir=target_dir,
-        timeout=60,
-    )
+    if not model:
+        return SEMANTIC_UNKNOWN
+    code = _run_python_probe([python, "-B", "-c", _SEMANTIC_PROBE_SOURCE, model], target_dir=target_dir, timeout=60)
     if code == 0:
         return SEMANTIC_OK
     if code == _SEMANTIC_EXIT_MISSING_LIBRARY:
@@ -1380,17 +1398,11 @@ def probe_semantic_stack(python: str, target_dir: str = "") -> str:
     return SEMANTIC_UNKNOWN
 
 
-def download_semantic_model(python: str, target_dir: str = "", timeout: int = 900) -> bool:
-    """Pre-download the pinned CPU embedding fixture into the HF cache."""
-    source = (
-        "from huggingface_hub import snapshot_download\n"
-        "snapshot_download(\n"
-        f"    repo_id={SEMANTIC_MODEL_REPO_ID!r},\n"
-        f"    revision={SEMANTIC_MODEL_REVISION!r},\n"
-        f"    allow_patterns={list(SEMANTIC_MODEL_ALLOW_PATTERNS)!r},\n"
-        ")\n"
+def download_semantic_model(python: str, model: str, target_dir: str = "", timeout: int = 900) -> bool:
+    """Cache *model* the way the embedder loads it (``SentenceTransformer(model)``, revision ``main``)."""
+    return _run_python_smoke(
+        [python, "-B", "-c", _SEMANTIC_DOWNLOAD_SOURCE, model], target_dir=target_dir, timeout=timeout
     )
-    return _run_python_smoke([python, "-B", "-c", source], target_dir=target_dir, timeout=timeout)
 
 
 def _wheel_runtime_dependencies_satisfied(wheel_path: Path) -> bool:
@@ -1886,15 +1898,12 @@ def update_config(
     api_key: str,
     telemetry_enabled: bool,
     *,
-    embeddings_enabled: bool | None = None,
-    sqlite_vec_enabled: bool | None = None,
     target_platforms: list[str] | None = None,
     rewrite_platform_urls: bool = True,
 ) -> bool:
     """Update .trw/config.yaml with installation settings.
 
-    Optional *embeddings_enabled* and *sqlite_vec_enabled* persist feature
-    flags so reinstalls skip the "Optional Features" prompts.
+    ``embeddings_enabled`` is written by :func:`persist_embeddings_choice`.
     """
     if not config_path.is_file():
         return False
@@ -1940,14 +1949,6 @@ def update_config(
             out.append(f"platform_telemetry_enabled: {val}\n")
             updated.add("platform_telemetry_enabled")
             continue
-        if s.startswith("embeddings_enabled:") and embeddings_enabled is not None:
-            out.append(f"embeddings_enabled: {'true' if embeddings_enabled else 'false'}\n")
-            updated.add("embeddings_enabled")
-            continue
-        if s.startswith("sqlite_vec_enabled:") and sqlite_vec_enabled is not None:
-            out.append(f"sqlite_vec_enabled: {'true' if sqlite_vec_enabled else 'false'}\n")
-            updated.add("sqlite_vec_enabled")
-            continue
         if s.startswith("target_platforms:") and effective_target_platforms is not None:
             out.append("target_platforms:\n")
             out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
@@ -1988,10 +1989,6 @@ def update_config(
     if rewrite_platform_urls and (api_key or telemetry_enabled) and "platform_urls_written" not in updated:
         out.append("platform_urls:\n")
         out.append(f'  - "{platform_url}"\n')
-    if embeddings_enabled and "embeddings_enabled" not in updated:
-        out.append("embeddings_enabled: true\n")
-    if sqlite_vec_enabled and "sqlite_vec_enabled" not in updated:
-        out.append("sqlite_vec_enabled: true\n")
     if effective_target_platforms and "target_platforms" not in updated:
         out.append("target_platforms:\n")
         out.extend(f'  - "{ide}"\n' for ide in effective_target_platforms)
@@ -3025,68 +3022,23 @@ def phase_extract_wheels(ui: UI, step: int, total: int, tmpdir: Path) -> tuple[P
 def phase_prompt_features(
     ui: UI,
     install_ai: bool | None,
-    install_sqlitevec: bool | None,
     prior_extras: dict[str, bool] | None = None,
-) -> tuple[bool, bool]:
-    """Prompt for optional features (interactive only). Skips if already answered.
+) -> bool:
+    """Prompt for the optional AI/LLM extras (interactive only). Skips if already answered.
 
-    When both extras are already configured (prior install or CLI flags),
-    shows a compact summary line instead of the full prompt section.
-
-    ``install_sqlitevec`` is a vestigial parameter as of the "no optional
-    user-installed engines" fix: ``main()`` now always resolves sqlite-vec's
-    on/off state to a concrete bool BEFORE calling this function (bundled +
-    on by default; see the ``TRW_INSTALL_SQLITE_VEC`` / ``--no-sqlite-vec``
-    resolution), so the ``install_sqlitevec is None`` branches below are
-    unreachable from ``main()`` — retained only so this function's own unit
-    tests can still exercise the prompt path directly.
+    Embeddings are not an extra here: they are on by default and resolved by
+    :func:`resolve_embeddings_choice` (``--no-embeddings`` opts out).
     """
-    if prior_extras is None:
-        prior_extras = {}
-
-    ai_configured = prior_extras.get("ai", False)
-    vec_configured = prior_extras.get("sqlite_vec", False)
-
-    # Both already determined via CLI flags — nothing to show
-    if install_ai is not None and install_sqlitevec is not None:
-        return bool(install_ai), bool(install_sqlitevec)
-
-    # Both from prior install — compact one-liner, no prompts
-    if ai_configured and vec_configured and install_ai is None and install_sqlitevec is None:
-        names = []
-        if ai_configured:
-            names.append("AI/LLM")
-        if vec_configured:
-            names.append("sqlite-vec")
-        print(f"  {GREEN}\u2713{NC} Extras: {', '.join(names)} (from prior install)")
-        return True, True
-
-    # Need to prompt for at least one — show the feature section
+    if install_ai is not None:
+        return bool(install_ai)
+    if (prior_extras or {}).get("ai", False):
+        print(f"  {GREEN}\u2713{NC} AI extras (from prior install)")
+        return True
     draw_divider("Optional Features")
-
-    if install_ai is None:
-        if ai_configured:
-            print(f"  {GREEN}\u2713{NC} AI extras (from prior install)")
-            install_ai = True
-        else:
-            print()
-            ui.hint("AI extras enable semantic search over your learnings")
-            ui.hint("and LLM-powered analysis of patterns across sessions.")
-            ui.doc_link("concepts")
-            install_ai = prompt_yes_no("Install AI/LLM features?")
-
-    if install_sqlitevec is None:
-        if vec_configured:
-            print(f"  {GREEN}\u2713{NC} sqlite-vec (from prior install)")
-            install_sqlitevec = True
-        else:
-            print()
-            ui.hint("sqlite-vec adds vector similarity search for faster,")
-            ui.hint("more relevant recall of past learnings and discoveries.")
-            ui.doc_link("concepts")
-            install_sqlitevec = prompt_yes_no("Install sqlite-vec for vector search?")
-
-    return bool(install_ai), bool(install_sqlitevec)
+    print()
+    ui.hint("AI extras add LLM-powered analysis of patterns across sessions.")
+    ui.doc_link("concepts")
+    return prompt_yes_no("Install AI/LLM features?")
 
 
 def _wheel_version(wheel: Path) -> str:
@@ -3408,18 +3360,21 @@ def phase_install_extras(
     total: int,
     python: str,
     install_ai: bool,
-    install_sqlitevec: bool,
     pip_target: str = "",
     offline: bool = False,
 ) -> list[str]:
-    """Install optional extras as a single step. Returns feature names."""
+    """Install the optional AI/LLM extras as a single step. Returns feature names.
+
+    Embeddings are installed by :func:`phase_semantic_readiness`, which also
+    caches the configured model and fails the install when they cannot work.
+    """
     ui.step_header(step, total, "Installing extras")
     features: list[str] = []
     if offline:
         # PRD-SEC-006-FR09: only trw-mcp + trw-memory wheels are embedded.
         # Extras resolve from PyPI, which --offline forbids — skip loudly
         # rather than let pip walk its network escalation ladder.
-        ui.step_warn("Offline mode: extras require PyPI — skipping AI/vector extras")
+        ui.step_warn("Offline mode: extras require PyPI — skipping AI extras")
         ui.step_warn("Re-run without --offline (or pre-stage a wheelhouse) to add them later")
         return features
     validated_target = validate_pip_target(pip_target)
@@ -3432,88 +3387,6 @@ def phase_install_extras(
             features.append("AI/LLM")
         else:
             ui.step_warn("AI extras failed \u2014 base TRW still works fine")
-
-        # PRD-EVAL-031: when TRW_EMBEDDINGS_AVAILABLE=1, sentence-transformers is
-        # already importable via a host-staged read-only overlay mounted at
-        # /trw-embeddings (PYTHONPATH = /trw-embeddings/site-packages is set in
-        # the container env). Skip the pip install to avoid SSD writes in the
-        # SWE-bench eval sandbox where the overlay is present.
-        if os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1":
-            ui.step_ok("Embeddings available via host overlay (PYTHONPATH=/trw-embeddings) \u2014 skipping pip install")
-            ui.start_spinner("Verifying embeddings runtime...")
-            ok = verify_embeddings_runtime(python, target_dir=validated_target)
-            ui.stop_spinner(ok, "Embeddings verified", "Embeddings runtime failed (non-fatal)")
-            if ok:
-                features.append("embeddings")
-            else:
-                ui.hint("Run: pip install trw-memory[embeddings]")
-        else:
-            ui.start_spinner("Installing sentence-transformers (embeddings)...")
-            ok = pip_install(
-                python,
-                "sentence-transformers>=2.0.0",
-                "sentence-transformers",
-                ui,
-                target_dir=validated_target,
-            )
-            if ok:
-                ui.stop_spinner(True, "Embeddings package installed")
-                ui.start_spinner("Verifying embeddings runtime...")
-                ok = verify_embeddings_runtime(python, target_dir=validated_target)
-                ui.stop_spinner(ok, "Embeddings verified", "Embeddings runtime failed (non-fatal)")
-            else:
-                ui.stop_spinner(False, "Embeddings enabled", "Embeddings install failed (non-fatal)")
-            if ok:
-                features.append("embeddings")
-            else:
-                ui.step_warn("embeddings failed \u2014 recall uses keyword-only search")
-                ui.hint("Run: pip install trw-memory[embeddings]")
-
-    if install_sqlitevec:
-        ui.start_spinner("Installing sqlite-vec...")
-        ok = pip_install(python, "sqlite-vec", "sqlite-vec", ui, target_dir=validated_target)
-        ui.stop_spinner(ok, "sqlite-vec enabled", "sqlite-vec failed (non-fatal)")
-        if ok:
-            # Smoke test: verify the installed Python can actually load the
-            # sqlite-vec extension. macOS system Python and some python.org
-            # builds ship sqlite3 compiled without SQLITE_ENABLE_LOAD_EXTENSION,
-            # which makes enable_load_extension() raise AttributeError or
-            # OperationalError. Installing the wheel in that environment is a
-            # silent trap — the user sees success here, then every trw_learn
-            # call fails with "sqlite extension error" later.
-            ui.start_spinner("Verifying sqlite-vec loads on this Python...")
-            smoke = _run_python_smoke(
-                [
-                    python,
-                    "-B",
-                    "-c",
-                    "import sqlite3, sqlite_vec; "
-                    "c = sqlite3.connect(':memory:'); "
-                    "c.enable_load_extension(True); "
-                    "sqlite_vec.load(c); "
-                    "c.enable_load_extension(False); "
-                    "c.close()",
-                ],
-                target_dir=validated_target,
-                timeout=15,
-            )
-            if smoke:
-                ui.stop_spinner(True, "sqlite-vec verified")
-                features.append("sqlite-vec")
-            else:
-                ui.stop_spinner(False, "sqlite-vec cannot load on this Python")
-                ui.step_warn("Your Python was built without SQLITE_ENABLE_LOAD_EXTENSION.")
-                ui.step_warn("TRW will run with BM25 keyword search only (vector search disabled).")
-                if sys.platform == "darwin":
-                    ui.hint("To enable vector search on macOS, install a Python with extension support:")
-                    ui.hint("  brew install python@3.12")
-                    ui.hint("  OR download from https://www.python.org/downloads/")
-                    ui.hint("Then re-run the installer with that Python.")
-                else:
-                    ui.hint("Rebuild Python with --enable-loadable-sqlite-extensions or install")
-                    ui.hint("a distribution that enables it (most pyenv/uv/conda builds do).")
-        else:
-            ui.step_warn("sqlite-vec failed \u2014 TRW works without it")
 
     return features
 
@@ -4203,7 +4076,7 @@ def _resolve_proprietary_from_marker(
         return True
     if offline:
         return False
-    if os.environ.get("TRW_WITH_PROPRIETARY", "").strip().lower() in {"0", "false", "no"}:
+    if _env_flag("TRW_WITH_PROPRIETARY") is False:
         return False
     entitled = read_proprietary_marker(target_dir)
     if not entitled:
@@ -4511,105 +4384,205 @@ def phase_semantic_readiness(
     ui: UI,
     python: str,
     *,
+    project_dir: Path,
     interactive: bool,
     pip_target: str = "",
     offline: bool = False,
 ) -> str:
-    """Check — and offer to repair — semantic retrieval, on EVERY invocation.
+    """Make semantic retrieval work, on EVERY invocation that wants embeddings.
 
-    This deliberately does not live inside :func:`phase_install_extras`: extras
-    only run when ``install_ai`` was selected, and it is precisely the install
-    that never opted in (or that predates this check) which ends up silently
-    keyword-only. Like :func:`run_install_doctor` this is an unnumbered
-    end-of-install check, so the step count stays stable.
+    Only called when embeddings are wanted (the default; see
+    :func:`resolve_embeddings_choice`). Like :func:`run_install_doctor` it is an
+    unnumbered end-of-install check, so the step count stays stable.
 
-    Non-interactive behaviour (``--script``, CI, ``curl | sh`` with no
-    controlling terminal): print the warning and the exact fix command, then
-    return. It never reads stdin and never changes the installer's exit status —
-    matching how every other optional-capability failure here is handled
-    ("extras failed — base TRW still works fine", i.e. warn, non-fatal). A
-    degraded-but-working retrieval path is not an install failure.
+    Non-interactive (``--script``, CI, ``curl | sh`` with no controlling
+    terminal): repair without asking — install the extra, then cache the model.
+    Interactive: ask first (default yes); a "no" returns :data:`SEMANTIC_DECLINED`,
+    the same choice as ``--no-embeddings``. Offline: nothing can be fetched, so a
+    gap stays a gap. Any status other than OK or DECLINED is a failed install:
+    ``main`` finishes setup and exits non-zero.
 
     Returns the FINAL status after any repair attempt.
     """
-    status = probe_semantic_stack(python, target_dir=validate_pip_target(pip_target))
+    validated_target = validate_pip_target(pip_target)
+    model = configured_embedding_model(python, project_dir, target_dir=validated_target)
+    status = probe_semantic_stack(python, model, target_dir=validated_target)
     if status == SEMANTIC_OK:
         # Idempotent: a healthy re-run prints one calm line and changes nothing.
-        ui.step_ok("Semantic retrieval ready (sentence-transformers + pinned model weights present)")
+        ui.step_ok(f"Semantic retrieval ready (sentence-transformers + {model} weights cached)")
         return status
     if status == SEMANTIC_UNKNOWN:
         ui.step_warn(
-            "Could not determine whether semantic retrieval is available in "
-            f"{python} — check it with: {python} -m pip show sentence-transformers"
+            f"Could not verify semantic retrieval in {python} (the configured model or the probe did not resolve)."
         )
+        ui.step_warn("  Check it with: trw-mcp doctor   (the 'retrieval' row names the fix)")
         return status
 
+    download_fix = (
+        f"{python} -c \"from sentence_transformers import SentenceTransformer; SentenceTransformer('{model}')\""
+    )
     if status == SEMANTIC_MISSING_LIBRARY:
         ui.step_warn("Semantic retrieval is NOT active: sentence-transformers / torch are missing.")
-        ui.step_warn(f"  Interpreter checked: {python}")
-        ui.step_warn(
-            "  What this costs: recall still works, but it degrades to keyword-only "
-            "matching — vector/semantic matches are silently unavailable."
-        )
-        fix = f"{python} -m pip install '{SEMANTIC_EXTRA_SPEC}'"
-        ui.step_warn(f"  Fix: {fix}")
+        fix = f"{python} -m pip install '{SEMANTIC_EXTRA_SPEC}'  &&  {download_fix}"
         question = f"Install the semantic-embeddings stack now ({SEMANTIC_EXTRA_SPEC}, several hundred MB with torch)?"
     else:  # SEMANTIC_MISSING_WEIGHTS
-        ui.step_warn(
-            "Semantic retrieval is NOT active: the embedding library is installed "
-            "but the model weights are not in the local cache."
-        )
-        ui.step_warn(f"  Interpreter checked: {python}")
-        ui.step_warn(
-            "  What this costs: recall still works, but it degrades to keyword-only "
-            "matching until the weights are downloaded."
-        )
-        fix = (
-            f'{python} -c "from huggingface_hub import snapshot_download; '
-            f"snapshot_download(repo_id='{SEMANTIC_MODEL_REPO_ID}', "
-            f"revision='{SEMANTIC_MODEL_REVISION}')\""
-        )
-        ui.step_warn(f"  Fix: {fix}")
-        question = f"Download the pinned embedding model now ({SEMANTIC_MODEL_REPO_ID}, ~90 MB)?"
+        ui.step_warn(f"Semantic retrieval is NOT active: the {model} weights are not in the local cache.")
+        fix = download_fix
+        question = f"Download the embedding model now ({model})?"
+    ui.step_warn(f"  Interpreter checked: {python}")
+    ui.step_warn(f"  Fix: {fix}")
 
     if offline:
-        ui.step_warn("  Offline mode: skipping the automatic repair — run the command above when online.")
+        ui.step_warn(
+            "  Offline mode: nothing can be fetched — run the fix when online, or re-run with --no-embeddings."
+        )
         return status
-    if not interactive:
-        # Piped / CI: never block on stdin. The warning above IS the output.
-        return status
+    if interactive and not prompt_yes_no(question, default="y"):
+        ui.hint("Embeddings off: recall is keyword-only (recorded as embeddings_enabled: false).")
+        return SEMANTIC_DECLINED
 
-    if not prompt_yes_no(question, default="y"):
-        ui.hint("Skipped — retrieval stays keyword-only until you run the command above.")
-        return status
-
-    validated_target = validate_pip_target(pip_target)
     if status == SEMANTIC_MISSING_LIBRARY:
         ui.start_spinner(f"Installing {SEMANTIC_EXTRA_SPEC}...")
         ok = pip_install(python, SEMANTIC_EXTRA_SPEC, SEMANTIC_EXTRA_SPEC, ui, target_dir=validated_target)
-        ui.stop_spinner(ok, "Embeddings package installed", "Embeddings install failed (non-fatal)")
+        ui.stop_spinner(ok, "Embeddings package installed", "Embeddings install failed")
         if not ok:
-            ui.step_warn(f"Still keyword-only. Run manually: {fix}")
             return status
-        status = probe_semantic_stack(python, target_dir=validated_target)
-        if status == SEMANTIC_OK:
-            ui.step_ok("Semantic retrieval ready")
-            return status
+        status = probe_semantic_stack(python, model, target_dir=validated_target)
 
     if status == SEMANTIC_MISSING_WEIGHTS:
-        ui.start_spinner("Downloading pinned embedding model...")
-        ok = download_semantic_model(python, target_dir=validated_target)
-        ui.stop_spinner(ok, "Embedding model cached", "Model download failed (non-fatal)")
+        ui.start_spinner(f"Downloading {model}...")
+        ok = download_semantic_model(python, model, target_dir=validated_target)
+        ui.stop_spinner(ok, "Embedding model cached", "Model download failed")
         if not ok:
-            ui.step_warn(f"Still keyword-only. Run manually: {fix}")
             return status
-        status = probe_semantic_stack(python, target_dir=validated_target)
+        status = probe_semantic_stack(python, model, target_dir=validated_target)
 
     if status == SEMANTIC_OK:
         ui.step_ok("Semantic retrieval ready")
-    else:
-        ui.step_warn("Semantic retrieval is still unavailable — recall remains keyword-only.")
     return status
+
+
+def resolve_embeddings_choice(flag: bool | None, prior_config: dict[str, object]) -> bool:
+    """Whether this install wants embeddings: the flag, else a prior opt-out, else on.
+
+    A prior ``embeddings_enabled: false`` is honoured on a re-run without a flag,
+    so a reinstall never silently undoes an operator's opt-out; ``--embeddings``
+    re-enables it.
+    """
+    if flag is not None:
+        return flag
+    return prior_config.get("embeddings") is not False
+
+
+def persist_embeddings_choice(config_path: Path, enabled: bool) -> None:
+    """Record the choice as ``embeddings_enabled`` so doctor reports an opt-out as a choice, not a fault."""
+    if not config_path.is_file():
+        return
+    line = f"embeddings_enabled: {'true' if enabled else 'false'}\n"
+    lines = config_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    kept = [existing for existing in lines if not existing.startswith("embeddings_enabled:")]
+    if kept and not kept[-1].endswith("\n"):
+        kept[-1] += "\n"
+    config_path.write_text("".join([*kept, line]), encoding="utf-8")
+
+
+def report_semantic_failure(ui: UI, status: str) -> None:
+    """The loud end of an install whose embeddings were wanted but do not work."""
+    ui.step_fail(f"Install incomplete: semantic retrieval is not active ({status}).")
+    ui.step_fail("  Run the fix printed above and re-run this installer,")
+    ui.step_fail("  or re-run with --no-embeddings to install keyword-only recall on purpose.")
+
+
+# ── Checkout store -> user store (PRD-CORE-280 FR03, 6.1.0) ──────────
+#
+# trw-mcp 6 reads learnings only from the user store, through the memory
+# daemon. A checkout upgraded from 5.x keeps them in .trw/memory/memory.db,
+# where nothing reads them until `trw-mcp memory migrate --to user --apply`
+# runs, so the installer runs it. The command backs the store up first and, on
+# an id the user store holds with other content, refuses and moves nothing.
+
+#: Exit code of :data:`_HOLDS_ROWS_SOURCE` when the store holds no learning.
+_HOLDS_NO_ROWS = 3
+#: ``trw-mcp memory migrate`` exits 2 on a refusal a rerun clears: another
+#: process holds the store, or the daemon answered busy or uncertain.
+_MIGRATE_RETRY = 2
+_MIGRATED_PREFIX = "memory migrate: migrated; manifest "
+
+# The same check update-project and doctor use, run in the target interpreter.
+_HOLDS_ROWS_SOURCE = (
+    "import sys\n"
+    "from pathlib import Path\n"
+    "from trw_mcp.state._store_migration import holds_rows\n"
+    f"sys.exit(0 if holds_rows(Path(sys.argv[1])) else {_HOLDS_NO_ROWS})\n"
+)
+
+
+def _run_migrate_command(cmd: list[str], cwd: Path, target_dir: str = "") -> tuple[int, str, str]:
+    """Run *cmd* from the project in the target interpreter's environment; ``(exit code, stdout, stderr)``."""
+    env = _build_pip_runtime_env(target_dir)
+    if target_dir:
+        env["PYTHONPATH"] = target_dir + os.pathsep + env.get("PYTHONPATH", "")
+    try:
+        proc = subprocess.run(  # noqa: S603 -- installer runs trw-mcp's own verb
+            cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=600
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "", f"memory migrate could not run: {exc}"
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def phase_migrate_store(
+    ui: UI, python: str, target_dir: Path, *, migrate: bool, interactive: bool, pip_target: str = ""
+) -> bool:
+    """Move the checkout store's learnings into the user store; False when the install must exit non-zero."""
+    db = target_dir / ".trw" / "memory" / "memory.db"
+    if not db.is_file():
+        return True
+    manual = f"trw-mcp memory migrate --to user --apply --target-dir {target_dir}"
+    code, _ = _run_python_output([python, "-B", "-c", _HOLDS_ROWS_SOURCE, str(db)], target_dir=pip_target)
+    if code == _HOLDS_NO_ROWS:
+        return True
+    if code != 0:
+        ui.step_fail(f"Could not tell whether {db} holds learnings trw-mcp no longer reads.")
+        ui.error(f"  Check with `trw-mcp doctor`, then move them with: {manual}")
+        return False
+    unread = f"{db} holds learnings trw-mcp 6 no longer reads"
+    if not migrate or (
+        interactive
+        and not prompt_yes_no("Move this checkout's learnings into the user store now (backed up first)?", default="y")
+    ):
+        ui.step_warn(f"{unread}; move them with: {manual}")
+        return True
+    ui.start_spinner("Moving this checkout's learnings into the user store...")
+    code, out, err = _run_migrate_command(
+        [
+            python,
+            "-B",
+            "-m",
+            "trw_mcp.server",
+            *"memory migrate --to user --apply --target-dir".split(),
+            str(target_dir),
+        ],
+        cwd=target_dir,
+        target_dir=pip_target,
+    )
+    ui.stop_spinner(code == 0, "Learnings moved into the user store", "Learnings were not moved")
+    manifest = next(
+        (line[len(_MIGRATED_PREFIX) :].strip() for line in out.splitlines() if line.startswith(_MIGRATED_PREFIX)), ""
+    )
+    for line in [line for line in (out + err).splitlines() if line.strip() and not line.startswith(_MIGRATED_PREFIX)]:
+        (ui.info if code == 0 else ui.error)(f"  {line}")
+    if code == 0:
+        ui.step_ok(f"Migration manifest: {manifest}")
+        ui.info(f"  Undo: trw-mcp memory migrate --to user --rollback {manifest} --target-dir {target_dir}")
+        return True
+    if code == _MIGRATE_RETRY:
+        ui.step_fail(f"{unread}: the move did not finish (busy or uncertain), and nothing was cut over.")
+        ui.error(f"  Stop the clients listed above, then re-run install-trw.py or: {manual}")
+    else:
+        ui.step_fail(f"{unread}: the migration refused, and nothing was moved or forced.")
+        ui.error(f"  Resolve the ids named above (see `trw-mcp doctor`), then run: {manual}")
+    return False
 
 
 def _resolve_interactive_telemetry(
@@ -4664,8 +4637,6 @@ def phase_configure(
     opt_telemetry: bool | None,
     prior_config: dict[str, object] | None = None,
     *,
-    install_ai: bool = False,
-    install_vec: bool = False,
     skip_auth: bool = False,
     target_platforms: list[str] | None = None,
 ) -> str:
@@ -4752,14 +4723,6 @@ def phase_configure(
         project_name,
         api_key,
         telemetry_enabled,
-        # PRD-EVAL-031: auto-enable embeddings when the host overlay is present
-        # (TRW_EMBEDDINGS_AVAILABLE=1) even if --install-ai was not passed.
-        # Without this, eval containers default embeddings_enabled=false and
-        # check_embeddings_status() short-circuits before attempting the import,
-        # so embed_health reports False despite sentence-transformers being
-        # importable via the overlay's PYTHONPATH.
-        embeddings_enabled=(install_ai or (os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1") or None),
-        sqlite_vec_enabled=install_vec or None,
         target_platforms=target_platforms or None,
         rewrite_platform_urls=not preserve_prior_platform_urls,
     ):
@@ -4996,17 +4959,23 @@ def main() -> None:
     parser.add_argument("--ai", dest="install_ai", action="store_true", default=None, help="Install AI/LLM extras")
     parser.add_argument("--no-ai", dest="install_ai", action="store_false", help="Skip AI extras")
     parser.add_argument(
-        "--sqlite-vec",
-        dest="install_vec",
+        "--embeddings",
+        dest="embeddings",
         action="store_true",
         default=None,
-        help="Install sqlite-vec (default: on; also set via TRW_INSTALL_SQLITE_VEC)",
+        help="Install semantic embeddings + the configured model (default: on, unless a prior install opted out)",
     )
     parser.add_argument(
-        "--no-sqlite-vec",
-        dest="install_vec",
+        "--no-embeddings",
+        dest="embeddings",
         action="store_false",
-        help="Skip sqlite-vec (vector search degrades to keyword-only; same as TRW_INSTALL_SQLITE_VEC=0)",
+        help="Skip embeddings: recall is keyword-only, recorded as embeddings_enabled: false",
+    )
+    parser.add_argument(
+        "--no-migrate",
+        dest="migrate",
+        action="store_false",
+        help="Leave a checkout store's learnings in place instead of moving them into the user store",
     )
     parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     parser.add_argument("--script", action="store_true", help="Force non-interactive mode")
@@ -5093,11 +5062,7 @@ def main() -> None:
         parser.error(str(exc))
 
     # ── Proprietary install env-var fallback + pin validation ────────
-    with_proprietary = bool(args.with_proprietary) or os.environ.get("TRW_WITH_PROPRIETARY", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    with_proprietary = bool(args.with_proprietary) or bool(_env_flag("TRW_WITH_PROPRIETARY"))
     license_key = args.license_key or os.environ.get("TRW_LICENSE_KEY", "")
     # PRD-INFRA-129 FR02 — auto-derive license from the configured
     # platform_api_key when --with-proprietary is given without an
@@ -5135,11 +5100,7 @@ def main() -> None:
     # An explicit --allow-system-python flag or TRW_ALLOW_SYSTEM_PYTHON env is
     # authoritative; otherwise it is resolved lazily (interactive prompt /
     # default-deny) inside _allow_system_python at the escalation point.
-    if args.allow_system_python or os.environ.get("TRW_ALLOW_SYSTEM_PYTHON", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }:
+    if args.allow_system_python or _env_flag("TRW_ALLOW_SYSTEM_PYTHON"):
         set_allow_system_python(True)
 
     # Mode detection. Interactive when a controlling terminal is reachable —
@@ -5148,19 +5109,9 @@ def main() -> None:
     # install must still ask which clients to configure. `--script` forces off.
     interactive = (not args.script) and (sys.stdin.isatty() or _has_controlling_tty())
 
-    # No optional user-installed engines: sqlite-vec ([vectors]) is bundled
-    # and on by default in EVERY mode (interactive or --script) unless the
-    # user explicitly opts out with --no-sqlite-vec / TRW_INSTALL_SQLITE_VEC=0
-    # — it's what makes the default `embeddings_enabled: true` config actually
-    # work instead of silently degrading to keyword-only search. AI/LLM
-    # extras (anthropic client + the sentence-transformers embeddings model,
-    # several hundred MB with torch) stay a genuine opt-in.
+    # AI/LLM extras (the anthropic client) stay a genuine opt-in. Embeddings are
+    # on by default and resolved once the prior config is known.
     install_ai = args.install_ai
-    if args.install_vec is not None:
-        install_vec = args.install_vec
-    else:
-        env_vec = os.environ.get("TRW_INSTALL_SQLITE_VEC", "").strip().lower()
-        install_vec = env_vec not in {"0", "false", "no"} if env_vec else True
     if not interactive:
         install_ai = install_ai if install_ai is not None else False
 
@@ -5240,25 +5191,14 @@ def main() -> None:
 
     # Detect already-installed extras via runtime imports
     prior_extras: dict[str, bool] = _detect_installed_extras(python) if is_reinstall else {}
-    # Also honour config-level feature flags (user's prior choice persists
-    # even if the venv was recreated or packages temporarily missing)
-    if prior_config.get("embeddings"):
-        prior_extras.setdefault("ai", True)
-    if prior_config.get("sqlite_vec"):
-        prior_extras.setdefault("sqlite_vec", True)
 
     # Feature selection (interactive: prompt now; script: already resolved)
     if interactive:
-        install_ai, install_vec = phase_prompt_features(
-            ui,
-            install_ai,
-            install_vec,
-            prior_extras=prior_extras,
-        )
+        install_ai = phase_prompt_features(ui, install_ai, prior_extras=prior_extras)
 
     install_ai = bool(install_ai)
-    install_vec = bool(install_vec)
-    has_extras = install_ai or install_vec
+    has_extras = install_ai
+    embeddings = resolve_embeddings_choice(args.embeddings, prior_config)
     has_config = interactive or args.name or resolved_api_key or bool(prior_config)
 
     # ── Step count (stable from here on) ─────────────────────────────
@@ -5308,7 +5248,6 @@ def main() -> None:
                 total,
                 python,
                 install_ai,
-                install_vec,
                 pip_target=args.pip_target,
                 offline=args.offline,
             )
@@ -5346,6 +5285,11 @@ def main() -> None:
             pip_target=args.pip_target,
         )
 
+        # After update-project: a checkout upgraded from 5.x keeps learnings nothing reads.
+        store_migrated = phase_migrate_store(
+            ui, python, target_dir, migrate=args.migrate, interactive=interactive, pip_target=args.pip_target
+        )
+
         # PRD-INFRA-170-FR06: run doctor at install end. A residual framework
         # FAIL (e.g. a deploy that silently failed) is surfaced LOUDLY here
         # instead of being hidden behind a green success banner. This runs on
@@ -5354,17 +5298,32 @@ def main() -> None:
         # broken is exactly the case a green "Upgrade complete" would hide.
         run_install_doctor(ui, python, target_dir, pip_target=args.pip_target)
 
-        # Semantic-retrieval readiness. Unconditional and marker-free: it must
-        # re-offer the fix on EVERY run, because an install predating this check
-        # has no other way to learn that its recall has always been keyword-only
-        # (the failure is silent in every tool response, not an install error).
-        phase_semantic_readiness(
-            ui,
-            python,
-            interactive=interactive,
-            pip_target=args.pip_target,
-            offline=args.offline,
-        )
+        # Semantic-retrieval readiness. Marker-free and gated only on the
+        # operator's own opt-out: it runs on EVERY run that wants embeddings,
+        # because an install predating this check has no other way to learn that
+        # its recall has always been keyword-only (the failure is silent in every
+        # tool response). A wanted-but-broken stack fails the install below.
+        semantic = SEMANTIC_OK
+        if embeddings and os.environ.get("TRW_EMBEDDINGS_AVAILABLE") == "1":
+            # PRD-EVAL-031: the host bind-mounts sentence-transformers and the
+            # weights and wires them into the MCP server's own env, not into this
+            # installer's. Installing here would duplicate several hundred MB
+            # into the eval tmpfs; `trw-mcp doctor` still checks the result.
+            ui.step_ok("Embeddings provided by the host (TRW_EMBEDDINGS_AVAILABLE=1): nothing to install here")
+        elif embeddings:
+            semantic = phase_semantic_readiness(
+                ui,
+                python,
+                project_dir=target_dir,
+                interactive=interactive,
+                pip_target=args.pip_target,
+                offline=args.offline,
+            )
+        else:
+            ui.step_ok("Embeddings off (--no-embeddings or a prior opt-out): recall is keyword-only")
+        if semantic == SEMANTIC_DECLINED:
+            embeddings = False
+        persist_embeddings_choice(target_dir / ".trw" / "config.yaml", embeddings)
 
         # Step N+1 (conditional): Configure
         platform_status = "offline"
@@ -5380,8 +5339,6 @@ def main() -> None:
                 resolved_api_key,
                 args.telemetry,
                 prior_config=prior_config,
-                install_ai=install_ai,
-                install_vec=install_vec,
                 skip_auth=getattr(args, "skip_auth", False),
                 target_platforms=selected_targets,
             )
@@ -5400,6 +5357,13 @@ def main() -> None:
             backend_results = _check_all_backends(target_dir)
             if interactive:
                 ui.stop_spinner(True, "Backend connectivity checked")
+
+        if semantic not in (SEMANTIC_OK, SEMANTIC_DECLINED):
+            # Wanted, not working: never a green banner over keyword-only recall.
+            report_semantic_failure(ui, semantic)
+            sys.exit(1)
+        if not store_migrated:
+            sys.exit(1)  # the learnings are still in a store nothing reads; the reason is printed above
 
         # PRD-SEC-004-FR04: resolve the consent state from the freshly-written
         # config so the banner reflects what was actually persisted (not the

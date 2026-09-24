@@ -56,21 +56,11 @@ from pathlib import Path
 
 import pytest
 
-from tests._layout import requires_jq
+from tests.channels.claude_code._distill_hint_support import deploy_distill_hint
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_HOOK = (
-    Path(__file__).parent.parent.parent.parent
-    / "src"
-    / "trw_mcp"
-    / "data"
-    / "claude_code"
-    / "hooks"
-    / "pre-tool-distill-hint.sh"
-)
 
 
 def _run_hook(
@@ -80,7 +70,7 @@ def _run_hook(
     timeout: int = 8,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["sh", str(_HOOK)],
+        ["sh", str(deploy_distill_hint(tmp_project))],
         input=stdin_payload,
         capture_output=True,
         text=True,
@@ -202,7 +192,6 @@ class TestHintFileKeyedByToolUseId:
         data = json.loads((hints_dir / f"{tool_use_id}.json").read_text(encoding="utf-8"))
         assert data["file_path"] == file_path
 
-    @requires_jq
     def test_shell_hook_always_leaves_a_well_formed_correlation_record(self, tmp_path: Path) -> None:
         """FR33/FR29: the hook never leaves CC-04 correlation without a record.
 
@@ -308,7 +297,6 @@ class TestExceptionIsNotTelemeteredAsATimeout:
         assert result.returncode == 0  # FR26: never blocking
         assert self._status(project, tool_use_id) == "exception_fallback"
 
-    @requires_jq
     def test_genuine_timeout_still_records_timeout(self, tmp_path: Path) -> None:
         """Non-vacuity control: a real 2.5s overrun must still read ``timeout_fallback``.
 

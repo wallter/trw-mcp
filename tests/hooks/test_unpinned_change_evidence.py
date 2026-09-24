@@ -22,7 +22,7 @@ from typing import Any, cast
 import pytest
 
 import trw_mcp.tools._delivery_helpers  # noqa: F401  (import-cycle order guard)
-from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_jq, requires_monorepo
+from tests._layout import MONOREPO_ROOT, PACKAGE_ROOT, requires_monorepo
 from trw_mcp.tools._delivery_event_checks import unpinned_session_changed_files
 
 _REPO_ROOT = MONOREPO_ROOT or PACKAGE_ROOT.parent
@@ -61,7 +61,6 @@ def _records(project_root: Path) -> list[dict[str, Any]]:
 
 
 class TestUnpinnedEditsAreRecorded:
-    @requires_jq
     def test_an_edit_with_no_pinned_run_writes_one_attributed_record(self, tmp_path: Path) -> None:
         root = _project(tmp_path)
 
@@ -83,7 +82,6 @@ class TestUnpinnedEditsAreRecorded:
         assert len(_records(root)) == 1
 
     @pytest.mark.parametrize("tool", ["Read", "Grep", "Bash"])
-    @requires_jq
     def test_a_non_editing_tool_records_nothing(self, tmp_path: Path, tool: str) -> None:
         root = _project(tmp_path)
 
@@ -97,7 +95,6 @@ class TestUnpinnedEditsAreRecorded:
 
         assert _run_hook(root, "Edit", str(root / "src" / "a.py")) == 0
 
-    @requires_jq
     def test_a_fresh_checkout_without_a_context_dir_still_records_the_edit(self, tmp_path: Path) -> None:
         """codex-a P2: a missing ``.trw/context`` must not turn an edit into zero evidence."""
         root = tmp_path / "project"
@@ -118,7 +115,6 @@ class TestUnpinnedEditsAreRecorded:
 class TestTheReaderSeesWhatTheHookWrote:
     """End-to-end: hook output -> reader -> gate, with no fixture in between."""
 
-    @requires_jq
     def test_the_reader_counts_distinct_hook_written_paths(self, tmp_path: Path) -> None:
         root = _project(tmp_path)
         for path in ("src/a.py", "src/b.py", "src/a.py"):
@@ -126,14 +122,12 @@ class TestTheReaderSeesWhatTheHookWrote:
 
         assert unpinned_session_changed_files(root / ".trw", _SESSION) == 2
 
-    @requires_jq
     def test_another_sessions_edits_are_not_counted(self, tmp_path: Path) -> None:
         root = _project(tmp_path)
         assert _run_hook(root, "Edit", str(root / "src" / "a.py")) == 0
 
         assert unpinned_session_changed_files(root / ".trw", "a-different-session") == 0
 
-    @requires_jq
     def test_an_unpinned_session_that_edited_code_is_blocked_by_trw_deliver(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

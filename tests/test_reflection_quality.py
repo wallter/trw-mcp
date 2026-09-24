@@ -5,7 +5,6 @@ Covers:
 - compute_jaccard_similarity() dedup detection
 - find_duplicate_learnings() pair identification
 - auto_prune_excess_entries() overflow handling
-- update_analytics_extended() field population
 - REVIEW gate advisory check wiring
 """
 
@@ -20,7 +19,6 @@ from trw_mcp.state.analytics import (
     compute_jaccard_similarity,
     compute_reflection_quality,
     find_duplicate_learnings,
-    update_analytics_extended,
 )
 from trw_mcp.state.persistence import FileStateReader, FileStateWriter
 
@@ -226,47 +224,3 @@ class TestAutoPruneExcess:
         _write_learning(entries, "d2", summary="duplicate summary words exactly here too")
         result = auto_prune_excess_entries(trw_dir, max_entries=3, dry_run=False)
         assert result["actions_taken"] > 0
-
-
-# --- update_analytics_extended ---
-
-
-class TestAnalyticsExtended:
-    """Extended analytics field population."""
-
-    def test_populates_reflection_count(self, trw_dir: Path) -> None:
-        update_analytics_extended(trw_dir, 2, is_reflection=True)
-        data = _reader.read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert data["reflections_completed"] == 1
-
-    def test_populates_success_rate(self, trw_dir: Path) -> None:
-        update_analytics_extended(trw_dir, 1, is_success=True)
-        update_analytics_extended(trw_dir, 0, is_success=False)
-        data = _reader.read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert data["success_rate"] == 0.5
-        assert data["total_outcomes"] == 2
-        assert data["successful_outcomes"] == 1
-
-    def test_populates_high_impact(self, trw_dir: Path) -> None:
-        entries = trw_dir / "learnings" / "entries"
-        _write_learning(entries, "a", impact=0.9)
-        _write_learning(entries, "b", impact=0.3)
-        update_analytics_extended(trw_dir, 0)
-        data = _reader.read_yaml(trw_dir / "context" / "analytics.yaml")
-        assert data["high_impact_learnings"] == 1
-
-    def test_backward_compatible_with_existing(self, trw_dir: Path) -> None:
-        # Pre-populate with existing format
-        _writer.write_yaml(
-            trw_dir / "context" / "analytics.yaml",
-            {"sessions_tracked": 10, "total_learnings": 20, "claude_md_syncs": 5},
-        )
-        update_analytics_extended(trw_dir, 3, is_reflection=True, is_success=True)
-        data = _reader.read_yaml(trw_dir / "context" / "analytics.yaml")
-        # sessions_tracked is preserved (incremented by session_start, not update_analytics_extended)
-        assert data["sessions_tracked"] == 10
-        # sessions_delivered is incremented by _update_core_counters
-        assert data["sessions_delivered"] == 1
-        assert data["total_learnings"] == 23
-        assert data["claude_md_syncs"] == 5  # untouched
-        assert data["reflections_completed"] == 1

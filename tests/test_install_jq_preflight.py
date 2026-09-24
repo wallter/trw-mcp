@@ -1,6 +1,7 @@
 """PRD-INFRA-192-FR11: the installer's jq preflight warns without blocking and tells the truth.
 
-Without jq, ``append_event`` still records tool/file/session_id: PRD-FIX-149 FR06 removed
+The hooks read JSON with jq, or python3 when jq is absent (lib-trw.sh ``_json_get``),
+so the warning fires only when neither is on PATH. Without a parser, ``append_event`` still records tool/file/session_id: PRD-FIX-149 FR06 removed
 its jq dependency. The warning must not say those fields are dropped. What does degrade:
 hook-input JSON reads, which ``pre-compact.sh`` reports as ``jq_unavailable=1``, and the
 Stop hook's pins lookup, which can fall back to newest-wins attribution, and the
@@ -48,6 +49,15 @@ def test_jq_present_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ui.warnings == []
 
 
+def test_python3_alone_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hooks fall back to python3's json module, so jq alone missing degrades nothing."""
+    installer = _load()
+    monkeypatch.setattr(installer.shutil, "which", lambda name: None if name == "jq" else f"/usr/bin/{name}")
+    ui = _RecordingUI()
+    installer.jq_preflight(ui)
+    assert ui.warnings == []
+
+
 def test_jq_absent_warns_without_the_fixed_field_drop_claim(monkeypatch: pytest.MonkeyPatch) -> None:
     installer = _load()
     monkeypatch.setattr(installer.shutil, "which", lambda name: None)
@@ -89,7 +99,9 @@ def test_the_generated_installer_continues_past_a_missing_jq(tmp_path: Path, mon
     installer = _load(builder.build_installer())
 
     real_which = installer.shutil.which
-    monkeypatch.setattr(installer.shutil, "which", lambda name, *a, **k: None if name == "jq" else real_which(name))
+    monkeypatch.setattr(
+        installer.shutil, "which", lambda name, *a, **k: None if name in {"jq", "python3"} else real_which(name)
+    )
     monkeypatch.setattr(installer, "check_python_version", lambda _ui: sys.executable)
     warnings: list[str] = []
     monkeypatch.setattr(installer.UI, "step_warn", lambda _self, msg: warnings.append(msg))

@@ -8,11 +8,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from tests._layout import requires_jq
-
 #: ``append_event`` only writes its extra fields when jq is on PATH, so the
 #: attribution asserted here is absent without it (a hook defect, tracked apart).
-pytestmark = requires_jq
 
 
 def _hook_project(tmp_path: Path) -> tuple[Path, Path, Path, Path]:

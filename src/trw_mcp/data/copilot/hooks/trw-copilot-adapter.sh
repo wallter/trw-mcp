@@ -7,7 +7,8 @@
 #
 # Protocol:
 #   1. Read the Copilot JSON payload from stdin.
-#   2. Extract the "toolName" field (jq preferred, grep/sed fallback).
+#   2. Extract the "toolName" field with _json_get from the lib-trw.sh beside
+#      the target hook (jq or python3); empty when neither is available.
 #      Export it as $TOOL_NAME so downstream TRW hooks can consume it.
 #   3. Pipe the raw JSON payload to the target TRW hook script.
 #   4. For preToolUse: translate the hook exit code into a JSON
@@ -29,8 +30,7 @@
 #   This preserves the deliver-gate's existing block/allow behavior byte-for-
 #   byte; the distill-hint is purely additive and opt-in (cc03_hook_enabled).
 #
-# This script is POSIX sh with no external dependencies beyond grep/sed
-# (jq is used when available for reliability).  It intentionally contains
+# This script is POSIX sh with no external dependencies of its own.  It intentionally contains
 # NO nested shell quoting so it can be embedded as a plain argument to
 # /bin/sh without escaping issues.
 
@@ -43,10 +43,13 @@ _event_name="${2:-}"
 # --- Read stdin payload ---
 _input=$(cat) || true
 
-# --- Extract toolName: jq only (T29); empty without it ---
+# --- Extract toolName: lib-trw.sh's _json_get, never a shell parser (T29) ---
+# The target hook's lib-trw.sh is sourced in a subshell so its top level cannot
+# trip set -e here; missing lib or parser leaves TOOL_NAME empty.
 TOOL_NAME=""
-if command -v jq >/dev/null 2>&1; then
-    TOOL_NAME=$(printf '%s' "$_input" | jq -r '.toolName // empty' 2>/dev/null) || true
+_lib="$(dirname "$_hook_path")/lib-trw.sh"
+if [ -n "$_hook_path" ] && [ -f "$_lib" ]; then
+    TOOL_NAME=$(. "$_lib" >/dev/null 2>&1 && printf '%s' "$_input" | _json_get .toolName) || TOOL_NAME=""
 fi
 export TOOL_NAME
 

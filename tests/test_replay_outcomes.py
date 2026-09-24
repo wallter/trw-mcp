@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
 
-import structlog
 from fastmcp import FastMCP
-from structlog.testing import capture_logs
 
-from trw_mcp.tools._deferred_steps_learning import _step_delivery_metrics
 from trw_mcp.tools.replay import register_replay_tools, replay_pending_outcomes
 
 _RUN_YAML = """session_metrics:
@@ -94,22 +89,3 @@ def test_replay_tool_is_registered() -> None:
     register_replay_tools(server)
     names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert "trw_replay_outcomes" in names
-
-
-def test_rollout_telemetry_is_logged_and_persisted(tmp_path: Path) -> None:
-    trw_dir = tmp_path / ".trw"
-    run_dir = trw_dir / "runs" / "task" / "run-1"
-    (run_dir / "meta").mkdir(parents=True)
-    structlog.configure(processors=[structlog.processors.JSONRenderer()])
-
-    with patch.dict("os.environ", {"TRW_SESSION_ID": "t-1"}), capture_logs() as cap:
-        _step_delivery_metrics(trw_dir, run_dir)
-
-    events = [event for event in cap if event.get("event") == "rollout_meta_tune_linkage"]
-    assert len(events) == 1
-    assert events[0]["session_id_populated_pct"] == 1.0
-    assert isinstance(events[0]["recall_pull_rate"], float)
-    assert isinstance(events[0]["learning_ids_count"], int)
-
-    persisted = [json.loads(line) for line in (run_dir / "meta" / "events.jsonl").read_text().splitlines()]
-    assert any(event["event"] == "rollout_meta_tune_linkage" for event in persisted)

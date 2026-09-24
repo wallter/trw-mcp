@@ -43,12 +43,31 @@ requires_monorepo = pytest.mark.skipif(
     MONOREPO_ROOT is None, reason="needs the monorepo checkout (public repo is the package alone)"
 )
 
-#: Some bundled hooks extract their JSON fields with ``jq`` and have no fallback,
-#: so their observable behaviour is absent on a box without it. That coupling is a
-#: defect in the hooks (tracked separately); until it is fixed the tests that pin
-#: the jq-dependent output must say so rather than fail on a jq-less machine.
+#: The hooks read JSON fields with lib-trw.sh ``_json_get`` (jq, else python3).
+#: post-tool-degenerate-result.sh alone runs a jq filter with no fallback, so the
+#: tests that pin its advisory output must say so rather than fail without jq.
 HAS_JQ: bool = shutil.which("jq") is not None
-requires_jq = pytest.mark.skipif(not HAS_JQ, reason="the bundled hook extracts its fields with jq and has no fallback")
+requires_jq = pytest.mark.skipif(
+    not HAS_JQ, reason="post-tool-degenerate-result.sh runs a jq filter and has no fallback"
+)
+
+
+def path_without(tmp_path: Path, drop: set[str], path: str | None = None) -> str:
+    """*path* (default: this process's PATH) with every executable named in *drop* hidden."""
+    parts: list[str] = []
+    for index, directory in enumerate((path if path is not None else os.environ.get("PATH", "")).split(os.pathsep)):
+        folder = Path(directory)
+        if not folder.is_dir() or not any((folder / name).exists() for name in drop):
+            parts.append(directory)
+            continue
+        shadow = tmp_path / f"shadow{index}"
+        shadow.mkdir()
+        for entry in folder.iterdir():
+            if entry.name not in drop:
+                (shadow / entry.name).symlink_to(entry)
+        parts.append(str(shadow))
+    return os.pathsep.join(parts)
+
 
 #: ``chmod 000``/read-only-directory assertions are vacuous for uid 0, which
 #: bypasses the permission bits entirely. CI runners are non-root, so these keep

@@ -29,8 +29,8 @@ _LEAKY_ENV = (
     "TRW_BACKEND_URL",
     "TRW_TARGET_PYTHON",
     "TRW_ALLOW_SYSTEM_PYTHON",
-    "TRW_INSTALL_SQLITE_VEC",
     "TRW_INSTALL_EMBEDDINGS",
+    "TRW_EMBEDDINGS_AVAILABLE",
 )
 
 
@@ -44,6 +44,7 @@ class MainRun:
             "proprietary": [],
             "project_setup": [],
             "configure": [],
+            "semantic": [],
             "warnings": [],
         }
 
@@ -70,13 +71,15 @@ def drive_main(
     extra_argv: tuple[str, ...] = (),
     env: dict[str, str] | None = None,
     project_setup: bool = False,
+    semantic: str = "ok",
 ) -> MainRun:
     """Run the real ``main()`` against *target* with all I/O phases stubbed.
 
     ``--script`` forces the non-interactive path (the ``curl … | bash`` shape).
     Raises ``SystemExit`` out to the caller — that is the exit code under test.
     ``project_setup=True`` runs the real project phase: init-project in a child
-    process of this interpreter, against *target*.
+    process of this interpreter, against *target*. The semantic-readiness
+    phase is stubbed to return *semantic* (a ``SEMANTIC_*`` value).
     """
     run = MainRun()
 
@@ -111,6 +114,7 @@ def drive_main(
     else:
         monkeypatch.setattr(installer, "phase_project_setup", _record("project_setup", ["claude-code"]))
     monkeypatch.setattr(installer, "run_install_doctor", _record("doctor", None))
+    monkeypatch.setattr(installer, "phase_semantic_readiness", _record("semantic", semantic))
     monkeypatch.setattr(installer, "phase_configure", _record("configure", "offline"))
     monkeypatch.setattr(installer, "_restart_mcp_servers", lambda *_a, **_k: None)
     monkeypatch.setattr(installer, "_check_all_backends", lambda *_a, **_k: [])

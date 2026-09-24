@@ -34,7 +34,6 @@ class TestLogSurfaceEvent:
             domain_match=["auth", "api"],
             files_context=["src/auth.py"],
             prd_boosted=True,
-            bandit_score=0.85,
             session_id="sess-001",
         )
         log_path = trw_dir / "logs" / "surface_tracking.jsonl"
@@ -45,8 +44,8 @@ class TestLogSurfaceEvent:
         assert event["phase"] == "IMPLEMENT"
         assert event["domain_match"] == ["auth", "api"]
         assert event["prd_boosted"] is True
-        assert event["bandit_score"] == 0.85
-        assert event["exploration"] is False
+        assert "bandit_score" not in event
+        assert "exploration" not in event
         assert "surfaced_at" in event
         assert event["session_id"] == "sess-001"
 
@@ -94,8 +93,6 @@ class TestLogSurfaceEvent:
         assert event["domain_match"] == []
         assert event["files_context"] == []
         assert event["prd_boosted"] is False
-        assert event["bandit_score"] == 0.0
-        assert event["exploration"] is False
         assert event["session_id"] == ""
 
     def test_fail_open_on_bad_trw_dir(self, tmp_path: Path) -> None:
@@ -282,7 +279,7 @@ class TestReadSurfaceEvents:
         assert events[2]["learning_id"] == "L-9"
 
     def test_preserves_event_types(self, tmp_path: Path) -> None:
-        """Read events preserve original types (bool, float, list)."""
+        """Read events preserve original types (bool, list)."""
         trw_dir = tmp_path / ".trw"
         trw_dir.mkdir()
         log_surface_event(
@@ -290,14 +287,12 @@ class TestReadSurfaceEvents:
             learning_id="L-typed",
             surface_type="recall",
             prd_boosted=True,
-            bandit_score=0.42,
             domain_match=["api"],
         )
         events = read_surface_events(trw_dir)
         assert len(events) == 1
         ev = events[0]
         assert isinstance(ev["prd_boosted"], bool)
-        assert isinstance(ev["bandit_score"], float)
         assert isinstance(ev["domain_match"], list)
 
     def test_fail_open_on_corrupt_jsonl(self, tmp_path: Path) -> None:
@@ -362,8 +357,6 @@ class TestSurfaceEventTypedDict:
             "domain_match": ["auth"],
             "files_context": ["src/a.py"],
             "prd_boosted": False,
-            "bandit_score": 0.0,
-            "exploration": False,
             "session_id": "s-1",
         }
         assert event["learning_id"] == "L-test"

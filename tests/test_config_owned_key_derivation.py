@@ -137,13 +137,15 @@ def test_the_scanner_does_not_collect_run_state_keys() -> None:
 def test_the_scanner_sees_the_installer_written_keys() -> None:
     """Non-vacuity control for the installer half.
 
-    ``sqlite_vec_enabled`` is the key this scanner was added for;
-    ``platform_telemetry_enabled`` is a control that IS a TRWConfig field, so it
-    proves the scanner reads real keys rather than only the exempted one.
+    The scanner was added for ``sqlite_vec_enabled``, which the installer stopped
+    writing in 6.1.0 (sqlite-vec became a base dependency); its ``owned_elsewhere``
+    entry stays for configs from older installs. ``installation_id`` (written in
+    place) and ``platform_telemetry_enabled`` (a TRWConfig field) prove the
+    scanner still reads the installer's write sites.
     """
     found = _config_keys_owned_by_the_installer()
 
-    assert "sqlite_vec_enabled" in found, "the installer write-site shape is no longer detected"
+    assert "installation_id" in found, "the installer write-site shape is no longer detected"
     assert "platform_telemetry_enabled" in found, "the installer scanner is matching too narrowly"
 
 

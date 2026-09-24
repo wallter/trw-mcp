@@ -43,8 +43,6 @@ def test_load_pending_outcomes_emits_one_payload_per_delivered_run(tmp_path: Pat
             "    ids:\n"
             "      - L-1\n"
             "      - L-2\n"
-            "  composite_outcome: 0.8\n"
-            "  normalized_reward: 0.69\n"
         ),
     )
 
@@ -61,4 +59,3 @@ def test_load_pending_outcomes_emits_one_payload_per_delivered_run(tmp_path: Pat
     assert payload["build_passed"] is True
     assert payload["files_changed"] == 5
     assert payload["propensity_data"]["source"] == "run_yaml"
-    assert payload["propensity_data"]["normalized_reward"] == 0.69

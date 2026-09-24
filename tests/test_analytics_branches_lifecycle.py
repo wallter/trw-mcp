@@ -103,8 +103,6 @@ class TestAutoPruneUtilityCandidates:
                 summary=f"Unique learning topic {i} about subject {i}",
                 status="active",
                 impact=0.1 + i * 0.05,
-                q_observations=0,
-                q_value=0.1,
                 learning_id=f"L-entry_{i:02d}",
             )
 

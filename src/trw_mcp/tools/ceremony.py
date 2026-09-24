@@ -240,6 +240,9 @@ from trw_mcp.tools._ceremony_step_table import (
     _ss_reconcile_local_writes as _ss_reconcile_local_writes,
 )
 from trw_mcp.tools._ceremony_step_table import (
+    _ss_retrieval as _ss_retrieval,
+)
+from trw_mcp.tools._ceremony_step_table import (
     _ss_run_resolve as _ss_run_resolve,
 )
 from trw_mcp.tools._ceremony_step_table import (

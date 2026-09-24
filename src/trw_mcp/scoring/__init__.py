@@ -40,25 +40,10 @@ from trw_mcp.scoring._complexity import (
     get_phase_requirements as get_phase_requirements,
 )
 from trw_mcp.scoring._correlation import (
-    EVENT_ALIASES as EVENT_ALIASES,
-)
-from trw_mcp.scoring._correlation import (
-    REWARD_MAP as REWARD_MAP,
-)
-from trw_mcp.scoring._correlation import (
     _find_session_start_ts as _find_session_start_ts,
 )
 from trw_mcp.scoring._correlation import (
-    _resolve_event_reward as _resolve_event_reward,
-)
-from trw_mcp.scoring._correlation import (
-    compute_composite_outcome as compute_composite_outcome,
-)
-from trw_mcp.scoring._correlation import (
     correlate_recalls as correlate_recalls,
-)
-from trw_mcp.scoring._correlation import (
-    sigmoid_normalize as sigmoid_normalize,
 )
 from trw_mcp.scoring._decay import (
     _days_since_access as _days_since_access,
@@ -135,9 +120,6 @@ from trw_mcp.scoring._utils import (
 from trw_mcp.scoring._utils import (
     safe_int as safe_int,
 )
-from trw_mcp.scoring.proximal_reward import (
-    detect_proximal_signals as detect_proximal_signals,
-)
 from trw_mcp.scoring.rework_rate import (
     compute_rework_rate as compute_rework_rate,
 )
@@ -162,8 +144,6 @@ def __getattr__(name: str) -> object:
 
 
 __all__ = [
-    "EVENT_ALIASES",
-    "REWARD_MAP",
     "CeremonyDepthContract",
     "DuplicateSkillFlag",
     "RecallContext",
@@ -171,7 +151,6 @@ __all__ = [
     "apply_impact_decay",
     "apply_time_decay",
     "classify_complexity",
-    "compute_composite_outcome",
     "compute_impact_distribution",
     "compute_rework_rate",
     "compute_skill_contribution",
@@ -179,7 +158,6 @@ __all__ = [
     "compute_tier_ceremony_score",
     "compute_utility_score",
     "correlate_recalls",
-    "detect_proximal_signals",
     "enforce_tier_distribution",
     "find_duplicate_skills",
     "get_ceremony_depth_contract",
@@ -188,6 +166,5 @@ __all__ = [
     "rank_targeted_by_utility",
     "safe_float",
     "safe_int",
-    "sigmoid_normalize",
     "utility_based_prune_candidates",
 ]

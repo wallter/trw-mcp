@@ -93,9 +93,6 @@ from trw_mcp.state.analytics.counters import (
     update_analytics as update_analytics,
 )
 from trw_mcp.state.analytics.counters import (
-    update_analytics_extended as update_analytics_extended,
-)
-from trw_mcp.state.analytics.counters import (
     update_analytics_sync as update_analytics_sync,
 )
 
@@ -191,7 +188,6 @@ __all__ = [
     "resync_learning_index",
     "save_learning_entry",
     "update_analytics",
-    "update_analytics_extended",
     "update_analytics_sync",
     "update_learning_index",
 ]

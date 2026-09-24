@@ -12,15 +12,13 @@ Four states, and the status mapping is the load-bearing part:
 ``running``
     PASS, with process id, uptime, endpoint and store path.
 ``no record``
-    PASS. No shipped client attaches to the daemon yet, and none starts one:
-    ``trw-mcp`` reads and writes its store directly, and the only
-    ``DaemonClient`` caller in the tree is ``trw_memory.cli_namespace``. The
-    daemon is started by hand (``trw-memory-server serve http``); client attach
-    is a planned slice (PRD-CORE-253 Slice B, deferred). "Not running" is
-    therefore the ordinary resting state of a healthy install -- reporting it as
-    WARN would make a permanent warning out of correct behaviour and train an
-    operator to ignore the row. Do not restore the earlier auto-start wording
-    unless a shipped client actually starts the daemon.
+    PASS. The daemon is started on demand: the first memory operation of a
+    ``DaemonClient`` that finds no daemon (``_attach``) launches one detached,
+    under the same interpreter (``start_daemon_detached``), and the daemon exits
+    after ``memory_daemon_idle_shutdown_seconds`` without a request. "Not
+    running" is therefore the ordinary resting state of a healthy install
+    between sessions -- reporting it as WARN would make a permanent warning out
+    of correct behaviour and train an operator to ignore the row.
 ``a record naming a dead process``
     WARN. That IS a fault: a client reads that file, tries to reach a daemon
     that is gone, and fails closed. The remedy is named.
@@ -78,9 +76,8 @@ def memory_daemon_row() -> tuple[str, str]:
     if isinstance(result, DiscoveryAbsent):
         return (
             "PASS",
-            f"no memory daemon running; nothing starts one for you — start it "
-            f"manually with: {DAEMON_START_COMMAND} (client attach is a planned "
-            f"slice). store: {paths.user_memory_dir}",
+            f"no memory daemon running; the next memory call starts one (it exits when idle), "
+            f"or start it now with: {DAEMON_START_COMMAND}. store: {paths.user_memory_dir}",
         )
     if isinstance(result, DiscoveryInvalid):
         return (

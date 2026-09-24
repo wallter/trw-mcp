@@ -29,8 +29,7 @@ def test_registered_lifecycle_keeps_exposure_and_impact_without_credit(
     tracking.write_text(json.dumps({"learning_id": "L-other", "outcome": "positive", "timestamp": 1}) + "\n")
     from trw_mcp.telemetry.tool_call_timing import wrap_tool
 
-    # Called through the production tool-call wrapper, as the MCP server calls them: the run-log rows it
-    # writes are part of the event window the proximal scan below reads.
+    # Called through the production tool-call wrapper, as the MCP server calls them.
     learn = wrap_tool(
         extract_tool_fn(make_test_server("learning"), "trw_learn"),
         tool_name="trw_learn",
@@ -83,12 +82,6 @@ def test_registered_lifecycle_keeps_exposure_and_impact_without_credit(
     observed = next(event for event in events if event["event"] == "build_check_complete")
     assert observed["tests_passed"] is passed
     assert observed["scope"] == "unrelated checks"
-
-    from trw_mcp.tools._deferred_steps_learning import _step_delivery_metrics
-
-    metrics = _step_delivery_metrics(trw_dir, run)
-    assert [signal["learning_id"] for signal in metrics["proximal_signals"]] == [lid]
-    assert "proximal_q_updates" not in metrics
 
     from trw_mcp.tools._deferred_delivery import _run_deferred_steps
 

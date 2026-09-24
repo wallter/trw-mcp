@@ -64,7 +64,7 @@ def _assert_exposure(checkout: DaemonCheckout, returned: list[dict[str, object]]
         [json.loads(line)["learning_id"] for line in receipts.read_text().splitlines()] if receipts.exists() else []
     )
     assert tracked == expected
-    assert {lid for lid, _discount in correlate_recalls(checkout.trw_dir, 5, scope="window")} == set(expected)
+    assert set(correlate_recalls(checkout.trw_dir, 5, scope="window")) == set(expected)
     for index in range(3):
         lid = f"L-exposure{index}"
         row = _get(checkout, lid, checkout.namespace)
@@ -114,7 +114,7 @@ def test_failed_response_preparation_does_not_record_exposure(
         )
     _assert_exposure(exposure_store, [])
 
-    for filename in ("surface_tracking.jsonl", "propensity.jsonl"):
+    for filename in ("surface_tracking.jsonl",):
         log_path = exposure_store.trw_dir / "logs" / filename
         assert not log_path.exists() or not log_path.read_text().strip()
 

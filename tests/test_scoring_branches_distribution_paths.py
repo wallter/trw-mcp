@@ -162,9 +162,7 @@ class TestCorrelateRecallsPath:
         results = correlate_recalls(tmp_path / ".trw", window_minutes=60)
         assert isinstance(results, list)
         assert len(results) >= 1, "Should find the record we wrote"
-        found_id, discount = results[0]
-        assert found_id == "L-test001"
-        assert 0.0 < discount <= 1.0
+        assert results[0] == "L-test001"
 
     @pytest.mark.unit
     def test_outcome_only_rows_are_ignored(self, tmp_path: Path) -> None:
@@ -194,8 +192,8 @@ class TestCorrelateRecallsPath:
 
         results = correlate_recalls(tmp_path / ".trw", window_minutes=60, scope="window")
 
-        assert any(learning_id == "L-recall001" for learning_id, _discount in results)
-        assert all(learning_id != "L-outcome001" for learning_id, _discount in results)
+        assert "L-recall001" in results
+        assert "L-outcome001" not in results
 
     @pytest.mark.unit
     def test_session_scope_uses_runs_root_not_task_root(self, tmp_path: Path) -> None:
@@ -229,4 +227,4 @@ class TestCorrelateRecallsPath:
         receipt_file.write_text("\n".join(json.dumps(record) for record in records) + "\n")
 
         results = correlate_recalls(trw_dir, window_minutes=480, scope="session")
-        assert [learning_id for learning_id, _discount in results] == ["L-new"]
+        assert results == ["L-new"]

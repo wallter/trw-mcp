@@ -325,6 +325,7 @@ def test_formation_readiness_is_registered_in_the_doctor_catalogue() -> None:
         "foreign_client_paths",
         "version_status",
         "jev",
+        "retrieval",
     ]
     assert hasattr(doctor, "_check_formation_readiness")
 

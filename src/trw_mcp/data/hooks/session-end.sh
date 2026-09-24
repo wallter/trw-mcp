@@ -37,9 +37,9 @@ _session_id="${TRW_SESSION_ID:-}"
 if [ -z "$_session_id" ] && ! [ -t 0 ]; then
   _stdin_payload=$(cat 2>/dev/null) || _stdin_payload=""
   if [ -n "$_stdin_payload" ]; then
-    # jq only (T29): without it the id stays unknown, and one diagnostic says why.
+    # jq or python3 (T29): without either the id stays unknown, and one diagnostic says why.
     _session_id=$(_json_str_field "$_stdin_payload" session_id) || _session_id=""
-    command -v jq >/dev/null 2>&1 || log_hook_execution "SessionEnd" "unknown" "0" "jq_unavailable=1"
+    _trw_has_json_parser || log_hook_execution "SessionEnd" "unknown" "0" "jq_unavailable=1"
   fi
 fi
 _session_id=$(trw_pin_key "$_session_id" 2>/dev/null) || _session_id=""

@@ -68,8 +68,6 @@ def _emit_nudge_surface_event(
             surface_type="nudge",
             phase=state.phase,
             files_context=[target_file] if target_file else [],
-            exploration=False,
-            bandit_score=1.0,
             client_profile=client_id,
             model_family=cfg.model_family or "generic",
             trw_version=cfg.framework_version,

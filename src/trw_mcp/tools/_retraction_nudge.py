@@ -33,40 +33,25 @@ __all__ = ["unretracted_contradiction_nudge", "unsettled_contradiction_ids"]
 _MAX_NAMED_ENTRIES = 5
 
 
-def _has_unsettled_contradiction(entry: dict[str, object], *, ttl_seconds: float = 0.0) -> bool:
+def _has_unsettled_contradiction(entry: dict[str, object]) -> bool:
     """True when *entry* recorded a contradiction and was never superseded.
 
-    ``ttl_seconds=0`` (the default, and what FR06's advisory uses) means "any age":
-    ``_observation`` only computes freshness when a positive TTL is supplied, so an
-    assertion that failed months ago still counts. That is right for an advisory —
-    an unsettled contradiction does not stop mattering because it got old.
-
-    A positive ``ttl_seconds`` additionally requires the failure to be FRESH, and
-    that is what FR04's reward path passes. See :func:`fresh_contradiction_ids`.
+    Any age counts: ``_observation`` only computes freshness when a positive TTL
+    is supplied, so an assertion that failed months ago still counts. That is
+    right for an advisory — an unsettled contradiction does not stop mattering
+    because it got old.
     """
     if entry.get("invalidated_by") or entry.get("invalid_from"):
         return False
     from trw_mcp.tools._stored_claim_evidence import stored_claim_evidence
 
-    evidence, failure_fraction = stored_claim_evidence(entry, ttl_seconds=ttl_seconds)
-    if failure_fraction <= 0:
-        return False
-    if ttl_seconds <= 0:
-        return True
-    assertions = evidence.get("assertions")
-    rows = assertions if isinstance(assertions, list) else []
-    return any(row.get("observation") == "failure" and row.get("freshness") == "fresh" for row in rows)
+    _evidence, failure_fraction = stored_claim_evidence(entry, ttl_seconds=0.0)
+    return failure_fraction > 0
 
 
-def unsettled_contradiction_ids(trw_dir: Path, *, ttl_seconds: float = 0.0) -> list[str]:
+def unsettled_contradiction_ids(trw_dir: Path) -> list[str]:
     """Learnings recalled this session whose stored assertions failed and that
     were never superseded.
-
-    Split out from the nudge text (2026-09-11) because this list is the durable
-    verdict and has two consumers, not one: FR06 names the entries for a human,
-    and FR04 applies the negative reward to them. Computing it twice would mean
-    two traversals that could disagree; formatting it in the same function that
-    computes it is what left FR04 with no caller at all.
 
     Fail-open: any error yields an empty list, matching the nudge's contract that
     an advisory must never raise inside the delivery gate.
@@ -87,12 +72,12 @@ def unsettled_contradiction_ids(trw_dir: Path, *, ttl_seconds: float = 0.0) -> l
 
         entries_dir = trw_dir / config.learnings_dir / config.entries_dir
         unsettled: list[str] = []
-        for learning_id in dict.fromkeys(lid for lid, _discount in correlated):
+        for learning_id in dict.fromkeys(correlated):
             _path, data = _default_lookup_entry(learning_id, trw_dir, entries_dir)
-            if data is not None and _has_unsettled_contradiction(data, ttl_seconds=ttl_seconds):
+            if data is not None and _has_unsettled_contradiction(data):
                 unsettled.append(learning_id)
         return unsettled
-    except Exception:  # trw-fail-silent-allow: fail-open by the same contract as the nudge -- neither an advisory nor a reward signal may raise inside the delivery gate; an empty list means "nothing to settle", which is the pre-FR04 behaviour
+    except Exception:  # trw-fail-silent-allow: fail-open by the same contract as the nudge -- an advisory may not raise inside the delivery gate; an empty list means "nothing to settle"
         logger.debug("unsettled_contradiction_ids_skipped", exc_info=True)
         return []
 

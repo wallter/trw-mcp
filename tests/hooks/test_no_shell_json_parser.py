@@ -3,9 +3,10 @@
 A ``grep -o '"key"[[:space:]]*:[[:space:]]*"[^"]*"' | sed ...`` pipeline reads
 the first matching pair anywhere in the payload, whatever object it sits in and
 whether the text parses at all, so its answer is a guess presented as a value.
-The hooks read JSON with jq only; with jq absent each one logs a
-``jq_unavailable=1`` diagnostic, and the edit-evidence writer records
-``change_evidence_unknown`` so the deliver gate blocks rather than counting zero.
+The hooks read JSON with jq, or python3's json module when jq is absent
+(lib-trw.sh ``_json_get``). With neither, each one logs a ``jq_unavailable=1``
+diagnostic, and the edit-evidence writer records ``change_evidence_unknown`` so
+the deliver gate blocks rather than counting zero.
 """
 
 from __future__ import annotations
@@ -44,13 +45,15 @@ def test_no_bundled_hook_parses_json_with_grep() -> None:
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
         if not line.lstrip().startswith("#") and _EXTRACTOR.search(line)
     ]
-    assert offenders == [], f"shell JSON parsers remain (read with jq instead): {offenders}"
+    assert offenders == [], f"shell JSON parsers remain (read with _json_get instead): {offenders}"
 
 
-def _jq_free_path(tmp_path: Path) -> str:
+def _jq_free_path(tmp_path: Path, *extra: str) -> str:
+    """A PATH without jq (and without python3 unless *extra* names it)."""
     bin_dir = tmp_path / "bin-nojq"
     bin_dir.mkdir()
-    for tool in ("sh", "cat", "date", "dirname", "pwd", "printf", "mkdir", "tr", "wc", "cut", "sed", "grep", "head"):
+    base = ("sh", "cat", "date", "dirname", "pwd", "printf", "mkdir", "tr", "wc", "cut", "sed", "grep", "head")
+    for tool in (*base, *extra):
         resolved = shutil.which(tool)
         if resolved is not None:
             (bin_dir / tool).symlink_to(resolved)
@@ -58,11 +61,34 @@ def _jq_free_path(tmp_path: Path) -> str:
     return str(bin_dir)
 
 
+def test_with_python3_but_no_jq_the_edit_is_recorded(tmp_path: Path) -> None:
+    """jq absent, python3 present: _json_get reads the payload, so the edit is real evidence."""
+    root = tmp_path / "project"
+    (root / ".trw" / "context").mkdir(parents=True)
+    payload = json.dumps({"tool_name": "Edit", "tool_input": {"file_path": str(root / "src/a.py")}, "session_id": "h"})
+    completed = subprocess.run(
+        ["sh", str(_DATA / "hooks" / "post-tool-event.sh")],
+        input=payload,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": _jq_free_path(tmp_path, "python3", "awk"),
+            "CLAUDE_PROJECT_DIR": str(root),
+            "TRW_SESSION_ID": "sess-1",
+        },
+        check=False,
+    )
+    assert completed.returncode == 0
+
+    rows = [json.loads(line) for line in (root / ".trw/context/session-events.jsonl").read_text().splitlines()]
+    assert [(row["event"], row["tool"], row["file"]) for row in rows] == [("file_modified", "Edit", "src/a.py")]
+
+
 @pytest.mark.parametrize("context_dir_exists", [True, False], ids=["context-present", "fresh-checkout"])
-def test_with_jq_off_path_an_edit_reaches_the_gate_as_unknown_and_blocks(
+def test_with_no_json_parser_an_edit_reaches_the_gate_as_unknown_and_blocks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, context_dir_exists: bool
 ) -> None:
-    """End to end: the REAL hook on a jq-less PATH, then the REAL delivery decision.
+    """End to end: the REAL hook with neither jq nor python3, then the REAL delivery decision.
 
     ``fresh-checkout`` has no ``.trw/context`` yet; the marker must still land there,
     or the gate reads the missing stream as zero changes.

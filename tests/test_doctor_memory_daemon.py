@@ -38,7 +38,7 @@ def _publish(paths: DaemonPaths, pid: int) -> DaemonInfo:
 
 
 def test_no_daemon_is_pass_not_warn(user_dir: Path) -> None:
-    """Nothing attaches to the daemon yet, so "not running" is healthy.
+    """The daemon starts on first memory use and exits when idle, so "not running" is healthy.
 
     Reporting it as WARN would make a permanent warning out of correct
     behaviour and train an operator to ignore the row.
@@ -52,32 +52,32 @@ def test_no_daemon_is_pass_not_warn(user_dir: Path) -> None:
     assert str(user_dir / "memory") in message
 
 
-def test_the_no_daemon_remedy_does_not_promise_an_auto_start(user_dir: Path) -> None:
-    """The row must not tell the operator a client will start the daemon for it.
+def test_the_no_daemon_row_says_the_next_memory_call_starts_one(user_dir: Path) -> None:
+    """The row and its docstring must match the client: ``DaemonClient._attach`` auto-starts the daemon.
 
-    No shipped client does: ``trw-mcp`` reads and writes its store directly, and
-    the only ``DaemonClient`` caller in the tree is ``trw_memory.cli_namespace``
-    (client attach is PRD-CORE-253 Slice B, deferred). The retired message said
-    "the next store or recall starts one", so an operator who read the row and
-    then stored a learning would believe a daemon had come up. The manual start
-    command is the whole remedy, and both the row and the module docstring that
-    explains it have to say so.
+    The retired wording ("nothing starts one for you ... client attach is a
+    planned slice") predated the client auto-start and told an operator to start
+    by hand a daemon their next ``trw_learn`` would have started anyway.
     """
+    import inspect
     import re
+
+    from trw_memory.daemon.client import DaemonClient
 
     import trw_mcp.server._doctor_memory_daemon as row_module
     from trw_mcp.server._doctor_memory_daemon import memory_daemon_row
 
     _status, message = memory_daemon_row()
 
-    assert "the next store or recall starts one" not in message
-    assert "manually" in message, "the operator must be told the start is theirs to do"
-    assert "trw-memory-server serve http" in message
+    assert "the next memory call starts one" in message
+    assert "nothing starts one" not in message
+    assert "planned slice" not in message
+    assert "trw-memory-server serve http" in message, "the manual start stays available as a remedy"
 
-    # The docstring is the other half of the same claim: a maintainer who trusts
-    # it would put the auto-start promise straight back into the message.
     docstring = re.sub(r"\s+", " ", row_module.__doc__ or "")
-    assert "a client auto-starts one on first need" not in docstring
+    assert "planned slice" not in docstring
+    # The claim holds only while the client really does start one on attach.
+    assert "start_daemon_detached" in inspect.getsource(DaemonClient._attach)
 
 
 def test_row_reports_pid_uptime_and_store_for_a_live_daemon(user_dir: Path) -> None:

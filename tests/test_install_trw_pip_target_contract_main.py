@@ -49,19 +49,18 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
     monkeypatch.setattr(module.tempfile, "mkdtemp", lambda prefix="": str(scratch_dir))
     monkeypatch.setattr(module.shutil, "rmtree", lambda path: None)
 
-    def fake_phase_install_extras(ui, step, total, python, install_ai, install_sqlitevec, pip_target="", offline=False):
+    def fake_phase_install_extras(ui, step, total, python, install_ai, pip_target="", offline=False):
         observed.update(
             {
                 "step": step,
                 "total": total,
                 "python": python,
                 "install_ai": install_ai,
-                "install_sqlitevec": install_sqlitevec,
                 "pip_target": pip_target,
                 "offline": offline,
             }
         )
-        return ["AI/LLM", "embeddings", "sqlite-vec"]
+        return ["AI/LLM"]
 
     monkeypatch.setattr(module, "phase_install_extras", fake_phase_install_extras)
     monkeypatch.setattr(
@@ -71,7 +70,7 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
             "install-trw.py",
             "--script",
             "--ai",
-            "--sqlite-vec",
+            "--no-embeddings",
             "--pip-target",
             "/tmp/trw-pip",
             str(project_dir),
@@ -85,7 +84,6 @@ def test_main_threads_pip_target_into_extras_phase_when_enabled(
         "total": 4,
         "python": sys.executable,
         "install_ai": True,
-        "install_sqlitevec": True,
         "pip_target": "/tmp/trw-pip",
         "offline": False,
     }
@@ -137,11 +135,9 @@ def test_main_threads_pip_target_into_project_setup(installer_path: Path, tmp_pa
         [
             "install-trw.py",
             "--script",
-            # No optional user-installed engines: sqlite-vec is bundled + on by
-            # default, so a no-flags --script run now threads an extras step.
-            # This test isolates the pip-target-into-project-setup contract
-            # from that default by explicitly declining extras.
-            "--no-sqlite-vec",
+            # Embeddings are on by default; this test isolates the
+            # pip-target-into-project-setup contract from the semantic phase.
+            "--no-embeddings",
             "--pip-target",
             "/tmp/trw-pip",
             str(project_dir),
@@ -211,6 +207,7 @@ def test_main_parses_multi_client_ide_argument_for_project_setup(
         [
             "install-trw.py",
             "--script",
+            "--no-embeddings",
             "--ide",
             "cursor-ide,codex,copilot",
             str(project_dir),
@@ -275,6 +272,7 @@ def test_upgrade_preserves_prior_identity_platform_urls_and_clients(
         [
             "install-trw.py",
             "--script",
+            "--no-embeddings",
             "--upgrade",
             "--skip-auth",
             str(project_dir),

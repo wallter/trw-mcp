@@ -307,8 +307,8 @@ class RunState(BaseModel):
 class EventType(str, Enum):
     """Canonical event type identifiers for the TRW event system.
 
-    All event types used in REWARD_MAP, EVENT_ALIASES, and tool
-    instrumentation must be members of this enum. This provides
+    All event types used in tool instrumentation must be members of this
+    enum. This provides
     type safety and eliminates silent failures from typos.
     """
 

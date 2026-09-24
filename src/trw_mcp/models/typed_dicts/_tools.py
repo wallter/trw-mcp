@@ -102,6 +102,9 @@ class SessionStartResultDict(TypedDict, total=False):
     # The daemon-measured share of this namespace's entries holding a vector,
     # from session start's pipeline-health probe; omitted when not measured.
     embeddings_coverage_ratio: float
+    # What recall can use on this install (state/_retrieval_capability.py):
+    # "active", "keyword-only: ..." or "degraded: <component> (...) fix: ...".
+    retrieval: str
     errors: list[str]
     success: bool
     framework_reminder: str

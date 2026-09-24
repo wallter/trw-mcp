@@ -193,96 +193,12 @@ def _extract_session_metrics(run_data: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-def _aggregate_recall_outcomes(trw_dir: Path | None) -> dict[str, dict[str, object]]:
-    """Aggregate ``recall_tracking.jsonl`` into per-learning bandit signals.
-
-    P1 broken-wiring F8 fix: ``_step_recall_outcome`` records recall events and
-    later outcome-only rows into ``.trw/logs/recall_tracking.jsonl``, but those
-    signals never reached the sync ``propensity_data`` payload, so the backend
-    IPS / bandit arm-update loop could not learn from recall feedback.
-
-    Each returned record is keyed by ``learning_id`` and shaped so the backend
-    attribution pipeline (``_normalize_propensity_entries`` /
-    ``_propensity_entry_matches_learning``) can match it per-learning:
-
-    - ``learning_id``: the matched learning ID (also the dict key).
-    - ``recall_count``: number of recall receipts (bandit-weight proxy — the
-      sweep accepts ``recall_count`` when ``selection_probability`` is absent).
-    - ``positive`` / ``negative`` / ``neutral``: outcome tallies.
-    - ``selection_probability``: derived bandit weight in (0, 1]; larger when a
-      learning is recalled more often so IPS down-weights it less. Provided so
-      the IPS path (which reads ``selection_probability``) has a real value
-      instead of falling back to the deterministic ``1.0`` default.
-
-    Fail-open: any read/parse failure yields ``{}`` so sync is never blocked.
-    """
-    if trw_dir is None:
-        return {}
-    tracking_path = trw_dir / "logs" / "recall_tracking.jsonl"
-    if not tracking_path.exists():
-        return {}
-
-    try:
-        from trw_mcp.state._helpers import read_jsonl_resilient
-
-        # Append-only log written per-recall by concurrent agents: a single torn
-        # line must drop only that row, not collapse every learning's bandit
-        # signal to {} (the strict reader's StateError did exactly that, silently
-        # starving the backend IPS / arm-update loop for the whole sync cycle).
-        records = read_jsonl_resilient(tracking_path)
-    except Exception:  # justified: fail-open, recall enrichment must not block sync
-        logger.debug("recall_outcome_aggregate_read_failed", path=str(tracking_path), exc_info=True)
-        return {}
-
-    agg: dict[str, dict[str, int]] = {}
-    for rec in records:
-        if not isinstance(rec, dict):
-            continue
-        lid = str(rec.get("learning_id", ""))
-        if not lid:
-            continue
-        bucket = agg.setdefault(lid, {"recall_count": 0, "positive": 0, "negative": 0, "neutral": 0})
-        outcome = rec.get("outcome")
-        if outcome == "positive":
-            bucket["positive"] += 1
-        elif outcome == "negative":
-            bucket["negative"] += 1
-        elif outcome == "neutral":
-            bucket["neutral"] += 1
-        elif outcome is None or outcome == "":
-            # A receipt (outcome null/absent/empty) is the only row that counts
-            # as a recall. PRD-FIX-144 FR05: an unknown outcome value used to
-            # fall into this branch and inflate recall_count.
-            bucket["recall_count"] += 1
-        else:
-            logger.debug("recall_outcome_unknown_value_ignored", learning_id=lid, outcome=str(outcome)[:32])
-
-    out: dict[str, dict[str, object]] = {}
-    for lid, bucket in agg.items():
-        recall_count = bucket["recall_count"]
-        # Bandit-weight proxy: more recalls -> higher selection_probability so the
-        # IPS estimator (weight = 1 / selection_probability) does not over-inflate
-        # frequently-surfaced learnings. Clamp into (0, 1] with a floor of 0.05.
-        selection_probability = min(1.0, max(0.05, 1.0 - 1.0 / (1.0 + float(recall_count))))
-        out[lid] = {
-            "learning_id": lid,
-            "recall_count": recall_count,
-            "positive": bucket["positive"],
-            "negative": bucket["negative"],
-            "neutral": bucket["neutral"],
-            "selection_probability": round(selection_probability, 4),
-        }
-    return out
-
-
 def _build_outcome_payload(
     *,
     run_id: str,
     run_dir: Path,
     session_metrics: dict[str, Any],
     legacy_no_ids: bool,
-    trw_dir: Path | None = None,
-    recall_outcomes: dict[str, dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Construct an OutcomeSync-shaped dict from one run's session_metrics."""
     exposure = session_metrics.get("learning_exposure") or {}
@@ -307,27 +223,8 @@ def _build_outcome_payload(
         "source": "run_yaml",
         "run_dir": str(run_dir),
     }
-    for key in ("composite_outcome", "normalized_reward"):
-        val = session_metrics.get(key)
-        if val is not None:
-            propensity_data[key] = val
     if legacy_no_ids:
         propensity_data["legacy_no_ids"] = True
-
-    # P1 F8: feed aggregated per-learning recall outcomes into propensity_data so
-    # the recall -> bandit-weight loop closes. ADDITIVE: existing composite_outcome
-    # / normalized_reward / source / run_dir keys are untouched. Only learnings the
-    # backend can attribute (those exposed this run, when ids are known) are kept;
-    # falls back to all aggregated learnings for legacy/no-ids runs.
-    if recall_outcomes is None:
-        recall_outcomes = _aggregate_recall_outcomes(trw_dir)
-    if recall_outcomes:
-        if learning_ids:
-            scoped = {lid: recall_outcomes[lid] for lid in learning_ids if lid in recall_outcomes}
-        else:
-            scoped = recall_outcomes
-        if scoped:
-            propensity_data["recall_outcomes"] = scoped
 
     payload: dict[str, object] = {
         "session_id": run_id,
@@ -372,7 +269,6 @@ def load_pending_outcomes(
 
     pending: list[PendingOutcome] = []
     ordinal = 0
-    recall_outcomes: dict[str, dict[str, object]] | None = None
     for run_dir, run_yaml in iter_run_dirs(runs_root):
         try:
             run_id = run_dir.name
@@ -414,15 +310,11 @@ def load_pending_outcomes(
                     _upgrade_marker_run_yaml_hash(marker, existing, run_yaml_hash)
                 continue  # already synced with matching hash
 
-            if recall_outcomes is None:
-                recall_outcomes = _aggregate_recall_outcomes(trw_dir)
             payload = _build_outcome_payload(
                 run_id=run_id,
                 run_dir=run_dir,
                 session_metrics=metrics,
                 legacy_no_ids=legacy_no_ids,
-                trw_dir=trw_dir,
-                recall_outcomes=recall_outcomes,
             )
             payload["idempotency_key"] = sync_hash
 

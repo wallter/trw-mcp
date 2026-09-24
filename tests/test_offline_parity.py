@@ -54,7 +54,7 @@ class TestOfflineParity:
         assert isinstance(payload["ceremony_status"], str)
 
     def test_recall_empty_cache(self, daemon_checkout: DaemonCheckout) -> None:
-        """trw_recall works via the registered tool wrapper with neutral intel_boost."""
+        """trw_recall works via the registered tool wrapper with an empty intelligence cache."""
         trw_dir = daemon_checkout.trw_dir
         (trw_dir / "learnings" / "entries").mkdir(parents=True, exist_ok=True)
         (trw_dir / "context").mkdir(exist_ok=True)

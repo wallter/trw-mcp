@@ -50,15 +50,7 @@ class _ScoringFields:
     # -- Scoring subsystem --
 
     scoring_default_days_unused: int = DEFAULT_SCORING_DEFAULT_DAYS_UNUSED
-    scoring_recency_discount_floor: float = 0.5
-    scoring_error_fallback_reward: float = -0.3
-    scoring_error_keywords: tuple[str, ...] = ("error", "fail", "exception", "crash", "timeout")
 
-    # -- Composite outcome weights (PRD-CORE-104) --
-    outcome_weight_rework: float = -2.0
-    outcome_weight_p0_defects: float = -1.5
-    outcome_weight_velocity: float = 0.5
-    outcome_weight_learning_rate: float = 0.3
     # proximal_reward_weight removed under PRD-CORE-291 (slice 2): no
     # production reader.
 

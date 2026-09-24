@@ -5,7 +5,8 @@ The only way a project moves; nothing migrates on open.
 * **Preview** (the default) writes nothing: per-namespace row counts of the
   project store, and -- when the checkout already holds a grant -- which of its
   ids the destination namespace already has (the destination wins those).
-* **Apply** needs the daemon; trw-mcp never opens the user store. Preflight
+* **Apply** goes through the daemon, starting one as every memory client does
+  when none is running; trw-mcp never opens the user store. Preflight
   refuses a pinned checkout whose project store holds no rows, a sync replay in
   progress or an unreadable sync-state, and a project store another process
   holds. Holding the store exclusively, it takes a sha256-recorded online
@@ -19,6 +20,10 @@ The only way a project moves; nothing migrates on open.
   apply: its strays merge into the pinned namespace through the checkout's
   existing grant, which must cover that namespace, and the pin is left as it is
   (PRD-CORE-280 FR06).
+* A refusal the user clears by waiting or stopping something -- another process
+  holds the project store, the daemon answered ``busy`` or ``uncertain``, or
+  the verified counts fell short -- is a :class:`MigrationRetryError`, which the
+  verb exits 2 on; any other refusal exits 1.
 * **Rollback** is the exact inverse, run with the daemon stopped: the
   namespace's every row, vector and edge is copied back under ``default`` into
   a fresh store that replaces the project store, then the pin is removed. It
@@ -46,6 +51,7 @@ from trw_mcp.state._tier_routing import USER_NAMESPACE
 __all__ = [
     "DaemonRunningError",
     "MigrationRefusedError",
+    "MigrationRetryError",
     "apply_migration",
     "preview_migration",
     "rollback_migration",
@@ -58,6 +64,10 @@ _DOCTOR = "run `trw-mcp doctor`"
 
 class MigrationRefusedError(RuntimeError):
     """A preflight or verification refusal; nothing was cut over."""
+
+
+class MigrationRetryError(MigrationRefusedError):
+    """A refusal that a rerun clears once the store is free: nothing was cut over."""
 
 
 def _store(trw_dir: Path) -> Path:
@@ -103,14 +113,19 @@ def _namespace(trw_dir: Path) -> str:
     return resolve_project_identity(trw_dir.parent).namespace
 
 
-def _daemon_paths() -> Any:
+def _daemon_paths(*, start: bool = False) -> Any:
+    """The daemon's paths when one runs, or -- with *start* -- when none does and the first call may start one.
+
+    An untrusted record is never started over: it may name a daemon still serving the store.
+    """
     from trw_memory.daemon import DaemonPaths
-    from trw_memory.daemon._discovery import DaemonInfo, read_discovery_result
+    from trw_memory.daemon._discovery import DaemonInfo, DiscoveryAbsent, read_live_discovery
 
     paths = DaemonPaths.resolve()
-    if not isinstance(read_discovery_result(paths), DaemonInfo):
-        raise MigrationRefusedError(f"the memory daemon is not attached; {_DOCTOR}, then retry")
-    return paths
+    found = read_live_discovery(paths)
+    if isinstance(found, DaemonInfo) or (start and isinstance(found, DiscoveryAbsent)):
+        return paths
+    raise MigrationRefusedError(f"the memory daemon is not attached; {_DOCTOR}, then retry")
 
 
 def holds_rows(db: Path) -> bool:
@@ -168,7 +183,7 @@ def _exclusive(db: Path) -> Iterator[sqlite3.Connection]:
         conn.execute("COMMIT")  # the exclusive locking mode keeps the lock until close
     except sqlite3.OperationalError as exc:
         conn.close()
-        raise MigrationRefusedError(
+        raise MigrationRetryError(
             f"{db} is open in another process ({exc}); stop this checkout's other trw-mcp sessions, then retry"
         ) from exc
     try:
@@ -229,8 +244,10 @@ def _client(trw_dir: Path, namespace: str, paths: Any, *, mint: bool) -> Any:
 
 def _call(coroutine: Any) -> dict[str, Any]:
     answer: dict[str, Any] = asyncio.run(coroutine)
-    if answer.get("status") != "ok":
-        raise MigrationRefusedError(f"the daemon refused: {answer.get('error')}; {_DOCTOR}")
+    status = answer.get("status")
+    if status != "ok":
+        refusal = MigrationRetryError if status in {"busy", "uncertain"} else MigrationRefusedError
+        raise refusal(f"the daemon refused ({status}): {answer.get('error')}; {_DOCTOR}")
     return answer
 
 
@@ -252,7 +269,7 @@ def preview_migration(trw_dir: Path) -> dict[str, object]:
 def apply_migration(trw_dir: Path) -> Path:
     """Move the project store through the daemon and pin the checkout; returns the manifest path."""
     pinned = _preflight(trw_dir)
-    paths = _daemon_paths()
+    paths = _daemon_paths(start=True)
     # Microseconds: a strays pass can follow its migration within the second, and must not overwrite its backup.
     namespace, stamp = pinned or _namespace(trw_dir), _now().strftime("%Y%m%dT%H%M%S%fZ")
     memory_dir = trw_dir / "memory"
@@ -279,7 +296,7 @@ def apply_migration(trw_dir: Path) -> Path:
             # Every id must land. Vectors and edges may exceed the copy's: an id the
             # destination already held keeps its own (the destination wins).
             if found["rows"] != len(rows) or found["vectors"] < vectors or found["edges"] < edges:
-                raise MigrationRefusedError(
+                raise MigrationRetryError(
                     f"the daemon holds {found} of the migrated ids, not {expected}; config.yaml and the project "
                     f"store are untouched -- rerun --apply, or {_DOCTOR}"
                 )
@@ -363,7 +380,7 @@ def _check_user_store(store: Path, manifest: dict[str, Any]) -> None:
         raise MigrationRefusedError(f"{store} is missing or is not the file --apply migrated into; {_DOCTOR}")
 
 
-class DaemonRunningError(MigrationRefusedError):
+class DaemonRunningError(MigrationRetryError):
     """A rollback was asked for while a memory daemon may still write the user store."""
 
 

@@ -158,14 +158,6 @@ _CENSUS: tuple[tuple[str, str, str, OperationStateImpact, ReplayClass, str], ...
         _PP,
         "per-decision content digest",
     ),
-    (
-        "D26",
-        "meta-tune rollout linkage event append",
-        "_step_delivery_metrics",
-        _O,
-        _KI,
-        "stable session/effect event id",
-    ),
     ("D00", "deferred lock-holder record", "_try_acquire_deferred_lock", _O, _CO, "lock/lease owner + liveness"),
     ("D01", "learning auto-prune mutations/audit", "_step_auto_prune", _O, _NR, "per-action proof"),
     ("D02", "learning consolidation mutations", "_step_consolidation", _O, _NR, "keyed actions"),
@@ -309,7 +301,8 @@ DELIVERY_EFFECT_REGISTRY: dict[str, EffectDescriptor] = _build_registry()
 #: Deferred roster IDs that FR03 requires to be represented (D01-D08 and D11-D13
 #: roster entries -- D09/D10 retired by PRD-CORE-293, the dead outcome/Q
 #: correlation and recall positive-outcome roster steps -- plus post-batch
-#: D14-D26 and the D00 coordination lock).
+#: D14-D25 and the D00 coordination lock; D26 retired with the meta-tune
+#: rollout linkage event it journaled).
 DEFERRED_ROSTER_IDS: frozenset[str] = frozenset(
     d.effect_id for d in DELIVERY_EFFECT_REGISTRY.values() if d.effect_id.startswith("D")
 )

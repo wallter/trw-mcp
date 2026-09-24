@@ -174,7 +174,7 @@ class TestCorrelateRecalls:
         )
 
         result = correlate_recalls(trw_dir, 60, scope="session")
-        ids = [learning_id for learning_id, _ in result]
+        ids = list(result)
         assert "L-session" in ids
 
     def test_empty_ts_field_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
@@ -237,13 +237,13 @@ class TestCorrelateRecalls:
         )
 
         result = correlate_recalls(trw_dir, 30)
-        ids = [learning_id for learning_id, _ in result]
+        ids = list(result)
         assert "L-valid" in ids
         assert None not in ids
         assert "" not in ids
 
-    def test_recent_receipt_produces_discount(self, tmp_path: Path, writer: FileStateWriter) -> None:
-        """Recent receipt produces a recency discount between floor and 1.0."""
+    def test_recent_receipt_is_correlated(self, tmp_path: Path, writer: FileStateWriter) -> None:
+        """A recent receipt yields its learning id."""
         from trw_mcp.scoring import correlate_recalls
 
         now_ts = datetime.now(timezone.utc).isoformat()
@@ -255,11 +255,7 @@ class TestCorrelateRecalls:
             ],
         )
 
-        result = correlate_recalls(trw_dir, 30)
-        assert len(result) == 1
-        learning_id, discount = result[0]
-        assert learning_id == "L-recent"
-        assert 0.0 < discount <= 1.0
+        assert correlate_recalls(trw_dir, 30) == ["L-recent"]
 
 
 class TestCorrelateRecallsAdvancedPaths:
@@ -289,7 +285,7 @@ class TestCorrelateRecallsAdvancedPaths:
             patch("trw_mcp.scoring._correlation._find_session_start_ts", return_value=session_start_ts),
         ):
             result = correlate_recalls(trw_dir, 30, scope="session")
-        ids = [learning_id for learning_id, _ in result]
+        ids = list(result)
         assert "L-in-session" in ids
 
     def test_future_timestamp_receipt_is_skipped(self, tmp_path: Path, writer: FileStateWriter) -> None:
@@ -310,7 +306,7 @@ class TestCorrelateRecallsAdvancedPaths:
         )
 
         result = correlate_recalls(trw_dir, 30)
-        ids = [learning_id for learning_id, _ in result]
+        ids = list(result)
         assert "L-future" not in ids
 
 
@@ -344,7 +340,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         with capture_logs() as logs:
             result = correlate_recalls(trw_dir, 30)
 
-        ids = [learning_id for learning_id, _ in result]
+        ids = list(result)
         assert "L-valid" in ids  # valid receipt not dropped by the corrupt neighbour
 
         skipped = [e for e in logs if e["event"] == "correlate_recalls.receipt_line_skipped"]
@@ -377,7 +373,7 @@ class TestCorrelateRecallsSkippedRowObservability:
         with capture_logs() as logs:
             result = correlate_recalls(trw_dir, 30)
 
-        assert "L-ok" in [learning_id for learning_id, _ in result]
+        assert "L-ok" in list(result)
         skipped = [e for e in logs if e["event"] == "correlate_recalls.receipt_line_skipped"]
         assert len(skipped) == 1
         assert skipped[0]["error_class"] == "TypeError"
@@ -460,5 +456,5 @@ class TestCorrelateRecallsSkippedRowObservability:
         with capture_logs() as logs:
             result = correlate_recalls(trw_dir, 30)
 
-        assert [learning_id for learning_id, _ in result] == ["L-clean"]
+        assert list(result) == ["L-clean"]
         assert not [e for e in logs if str(e["event"]).startswith("correlate_recalls.receipt_")]

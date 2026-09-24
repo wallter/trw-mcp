@@ -29,11 +29,11 @@ _phase=""
 _event_count=0
 _last_cp=""
 
-if [ -f "$_state_file" ] && command -v jq >/dev/null 2>&1; then
-  _run_path=$(jq -r '.run_path // empty' "$_state_file" 2>/dev/null) || true
-  _phase=$(jq -r '.phase // empty' "$_state_file" 2>/dev/null) || true
-  _event_count=$(jq -r '.events_logged // 0' "$_state_file" 2>/dev/null) || true
-  _last_cp=$(jq -r '.last_checkpoint // empty' "$_state_file" 2>/dev/null) || true
+if [ -f "$_state_file" ] && _trw_has_json_parser; then
+  _run_path=$(_json_get --file "$_state_file" .run_path) || true
+  _phase=$(_json_get --file "$_state_file" .phase) || true
+  _event_count=$(_json_get --file "$_state_file" --default 0 .events_logged) || true
+  _last_cp=$(_json_get --file "$_state_file" .last_checkpoint) || true
 fi
 
 if [ -n "$_run_path" ]; then

@@ -29,17 +29,17 @@ _project_root="$(get_repo_root)" || true
 # checkpoint) and omit ONLY the run-derived lines. Those reminders are not
 # run-scoped and are the hook's actual reason to exist, so the injection keeps
 # working; it just stops asserting foreign state (FR04).
-# jq only (T29): without it the payload id is unreadable, one diagnostic says so.
+# jq or python3 (T29): without either the payload id is unreadable, one diagnostic says so.
 _ss_session_id=$(_json_str_field "$_payload" session_id) || _ss_session_id=""
-command -v jq >/dev/null 2>&1 || log_hook_execution "SubagentStart" "unknown" "0" "jq_unavailable=1"
+_trw_has_json_parser || log_hook_execution "SubagentStart" "unknown" "0" "jq_unavailable=1"
 _ss_session_id=$(trw_pin_key "$_ss_session_id" 2>/dev/null) || _ss_session_id=""
 
 _run_dir=""
 if [ -n "$_ss_session_id" ]; then
   _run_dir=$(resolve_owned_run "$_ss_session_id" 2>/dev/null) || _run_dir=""
-elif command -v jq >/dev/null 2>&1; then
+elif _trw_has_json_parser; then
   # Identity unknown — legacy newest-wins for single-instance clients. Not on a
-  # jq-less host: there the id is unREADABLE, not absent, so any run is a guess (T29).
+  # host without a JSON parser: there the id is unREADABLE, not absent, so any run is a guess (T29).
   _run_dir=$(find_active_run) || _run_dir=""
 fi
 _phase=""

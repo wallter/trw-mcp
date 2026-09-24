@@ -18,12 +18,12 @@ init_hook_timer
 
 # Read stdin payload to determine source
 _payload=$(cat) || exit 0
-# jq only (T29): without it both stay empty, and one diagnostic says why.
+# jq or python3 (T29): without either both stay empty, and one diagnostic says why.
 _source=""
 _payload_session_id=""
-if command -v jq >/dev/null 2>&1; then
-  _source=$(printf '%s' "$_payload" | jq -r '.source // empty' 2>/dev/null) || true
-  _payload_session_id=$(printf '%s' "$_payload" | jq -r '.session_id // empty' 2>/dev/null) || true
+if _trw_has_json_parser; then
+  _source=$(printf '%s' "$_payload" | _json_get .source) || true
+  _payload_session_id=$(printf '%s' "$_payload" | _json_get .session_id) || true
 else
   log_hook_execution "SessionStart" "unknown" "0" "jq_unavailable=1"
 fi
@@ -317,11 +317,11 @@ case "$_source" in
     echo ""
     # Recover pre-compaction state if available
     _state_file=$(pre_compact_state_file "$_project_root" 2>/dev/null) || _state_file=""
-    if [ -f "$_state_file" ] && command -v jq >/dev/null 2>&1; then
-      _run_path=$(jq -r '.run_path // empty' "$_state_file" 2>/dev/null) || true
-      _phase=$(jq -r '.phase // empty' "$_state_file" 2>/dev/null) || true
-      _event_count=$(jq -r '.events_logged // 0' "$_state_file" 2>/dev/null) || true
-      _last_cp=$(jq -r '.last_checkpoint // empty' "$_state_file" 2>/dev/null) || true
+    if [ -f "$_state_file" ] && _trw_has_json_parser; then
+      _run_path=$(_json_get --file "$_state_file" .run_path) || true
+      _phase=$(_json_get --file "$_state_file" .phase) || true
+      _event_count=$(_json_get --file "$_state_file" --default 0 .events_logged) || true
+      _last_cp=$(_json_get --file "$_state_file" .last_checkpoint) || true
       # Sanitize all values read from the untrusted pre_compact_state.json before
       # echoing them into the AI context (prompt-injection / control-char defense).
       _run_path=$(_sanitize_context_text "$_run_path")

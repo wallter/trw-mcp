@@ -11,9 +11,69 @@
 > package is suitable for evaluation and dogfooding, but it does not claim a
 > production-stable API or support SLA.
 
-> Coding-agent sessions are usually stateless. TRW keeps project knowledge in `.trw/` and recalls relevant learnings when the next session starts.
+> Coding-agent sessions are usually stateless. TRW keeps each project's run state in `.trw/`, stores learnings in one memory store on your machine, and recalls relevant learnings when the next session starts.
 
-**[Quick start](#quick-start)** · **[Core tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Security and network behavior](#telemetry--network-behavior)** · **[Development](#development)**
+**[What's new in 6.0.0](#whats-new-in-600)** · **[Upgrading from 5.x](#upgrading-from-5x)** · **[Quick start](#quick-start)** · **[Core tools](#mcp-tools)** · **[Configuration](#configuration)** · **[Security and network behavior](#telemetry--network-behavior)** · **[Development](#development)**
+
+## What's new in 6.0.0
+
+trw-mcp 6.0.0 and trw-memory 3.0.0 were released together on 2026-09-24. What changes for you:
+
+- **One memory store per machine.** The memory daemon serves every checkout from one store under `~/.trw` (by default `~/.trw/memory/memory.db`). Each checkout reads and writes its own namespace (`project_namespace` in `.trw/config.yaml`) through its own grant (`.trw/runtime/memory-token`). trw-mcp no longer serves memory from, or writes to, a checkout's `.trw/memory/memory.db`.
+- **An explicit migration.** `trw-mcp memory migrate --to user` previews, `--apply` moves a checkout's existing learnings into the daemon (with a backup and a manifest), and `--rollback MANIFEST` undoes it. Nothing migrates on its own.
+- **Portable learnings go to `user:local` on every install.** There is no user-tier opt-in any more, and team sync never pushes `user:local` rows.
+- **Recall runs in the daemon.** trw-mcp no longer loads its own embedding model for recall. The first recall after the daemon starts pays the model load (about 10 s on a cold disk cache in one measurement), later recalls take about 0.25 s.
+- **Ranking no longer uses reward feedback.** trw-memory 3.0.0 removed the Q-value blend; a learning's base impact now decays with how often it has been recalled, so the same store can rank differently after the upgrade.
+- **`trw_decision` is now `trw_assess`**, with no alias. The skill is now `trw-assess` and the config key is now `assess_enabled`.
+- **`trw_learn_update` is removed.** Call `trw_learn(learning_id=...)` to update a learning.
+- **Less common tool parameters moved into `options`** on `trw_recall`, `trw_build_check` and `trw_review`.
+- **`trw_session_start` runs one recall** and returns at most three short stubs; `trw_recall(ids=[...])` fetches any stub's full row.
+- **Memory security settings are daemon-wide.** RBAC, the recall filter, canary, poisoning, trust-scoring and provenance settings come from the daemon's environment, and a trw-mcp process whose values differ is refused with the key named.
+- **Uninstall keeps `~/.trw`.** `uninstall --delete-memory` (which replaces `--user-tier`) deletes only this checkout's own namespace.
+- **`init-project --ide <client>` without Claude Code no longer writes `.mcp.json` or the Claude Code skills and agents** (Codex and Copilot still get `.claude/hooks`, which their hook commands run), and `trw-mcp sync pull --full` replays every team learning into a checkout.
+
+The full list, including every removed API, is in the [CHANGELOG](https://github.com/wallter/trw-mcp/blob/main/CHANGELOG.md).
+
+## Upgrading from 5.x
+
+Do these steps in order in each checkout.
+
+1. **Install and update the project.** Use your client's id for `--ide` (`antigravity-cli`, `claude-code`, `codex`, `copilot`, `cursor-cli`, `cursor-ide`, `grok`, `opencode`), or `--ide all`:
+
+   ```bash
+   pip install -U "trw-mcp==6.0.0" "trw-memory==3.0.0"
+   trw-mcp update-project --ide <id>    # add --dry-run to preview
+   ```
+
+   If the checkout's `.trw/memory/memory.db` holds no learnings, `update-project` pins `project_namespace` and mints the checkout's grant, and you are done with memory.
+2. **If `update-project` prints `trw-mcp memory migrate --to user --apply`, run it from the checkout.** Until you do, memory tools and `trw-mcp doctor` fail closed with that same command in the message.
+   - Without `--apply` the command only previews: row counts per namespace, and which ids the daemon already holds. It writes nothing.
+   - `--apply` needs the daemon running. It writes a backup (`.trw/memory/memory.db.pre-user-<stamp>`) and a manifest (`migration-<stamp>.json`), merges the rows into the daemon in one transaction, and checks the row, vector and edge counts before it pins `project_namespace`. `busy` means nothing changed: retry. `uncertain` means rerun it; the import is idempotent.
+   - To roll back, stop the daemon and run `trw-mcp memory migrate --to user --rollback <manifest>`. It rebuilds the project store and removes the pin. The backup is kept.
+3. **Reconnect every MCP client** (`/mcp` in Claude Code; restart the session elsewhere). A client started before the upgrade keeps running 5.x code until it restarts.
+4. **Set the memory security settings in the daemon's environment**, not per project: `rbac_enabled`, `default_role`, `namespace_roles`, `enable_recall_filter`, `recall_filter_mode`, `canary_fail_mode`, `poisoning_detection_mode`, `enable_trust_scoring`, `trust_scoring_mode` and `provenance_required` (as `MEMORY_*` variables). A per-project value that differs from the daemon's now refuses the store.
+
+Breaking changes you are likely to hit:
+
+- **Renamed or removed tools.** `trw_decision` is an unknown tool: call `trw_assess`. `trw_learn_update` is an unknown tool: call `trw_learn(learning_id=...)`. `status`, `summary`, `detail`, `impact`, `tags`, `type` and `confidence` stay top-level; `supersedes`, `reverify_anchors`, `expires` and `team_origin` go in `metadata`.
+- **The `options` mapping.** A flat name that moved is an unknown-keyword error, and an unknown `options` key is rejected with the accepted set:
+
+  | Tool | Stays top-level | Moves into `options` |
+  |------|-----------------|----------------------|
+  | `trw_recall` | `query`, `tags`, `status`, `max_results`, `ids` | `min_impact`, `topic`, `include_tiers`, `as_of`, `include_superseded` (`compact`, `ultra_compact` and `token_budget` are removed) |
+  | `trw_build_check` | `tests_passed`, `test_count`, `failure_count`, `coverage_pct`, `static_checks_clean`, `scope` | `mypy_clean`, `failures`, `run_path`, `min_coverage`, `command_results` |
+  | `trw_review` | `findings`, `mode`, `reviewer_findings`, `reviewer_identity`, `review_completed` | `run_path`, `prd_ids`, `external_receipt_path`, `adversarial_pass` |
+
+- **Removed flags.** `trw-mcp --memory-db`, `init-project --source-package` and `--test-path`, `update-project --repair-embeddings` and `--embedding-after`, and the installer's `--user-tier` / `--no-user-tier` flags and `TRW_USER_TIER`. `uninstall --user-tier` is now `uninstall --delete-memory`.
+- **Retired config keys.** A `.trw/config.yaml` that still sets one logs a retired-key warning and the value is ignored. Among them: `decision_enabled` (use `assess_enabled`), `user_tier_enabled`, `extra_read_stores`, `external_store_recall_cap`, `observation_masking`, `compact_after_turns`, `minimal_after_turns`, `hybrid_bm25_candidates`, `hybrid_vector_candidates`, `hybrid_search_candidate_pool_size`, `llm_utility_filter_enabled`, `lifecycle_use_fsrs`, `contradiction_penalty_reward` and `embeddings_auto_backfill_on_low_coverage`. The full list is [`src/trw_mcp/data/config-retired-keys.json`](src/trw_mcp/data/config-retired-keys.json).
+- **Merged agents.** `trw-tester` is now part of `trw-implementer`, `trw-requirement-writer` of `trw-prd-groomer`, and `trw-traceability-checker` of `trw-auditor`. Point custom prompts at the new names.
+- **Hooks from an older install stop seeing deliveries** because the run-log row is now `tool_call`. `update-project` refreshes them.
+- **`update-project` refuses a missing or invalid `.trw/managed-artifacts.yaml`** and changes nothing. Recover with `trw-mcp uninstall --keep-memory`, then `trw-mcp init-project`.
+- **Package versions are recorded under `packages` in `.trw/managed-artifacts.yaml`**, no longer in `.trw/frameworks/VERSION.yaml`.
+- **A `.trw/channels/manifest.yaml` entry with `tier_default` or `tier_min` fails to load.** Delete those keys, or delete the file and run `update-project`.
+- **A moved checkout needs its grant named:** `trw-mcp memory token --namespace <pinned namespace>`.
+- **Rows without a vector are found by keyword only** until a daemon-side re-embed pass exists; `trw-memory reembed` refuses while a daemon runs.
+- **The `trw-memory` CLI has no local mode.** See the [trw-memory README](https://github.com/wallter/trw-memory) for its changes.
 
 ## How it fits
 
@@ -24,7 +84,7 @@ trw-mcp is the MCP server component of [TRW (The Real Work)](https://trwframewor
 
 ## What it does
 
-trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions — patterns, gotchas, architecture decisions — and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant **accumulates captured learnings** in `.trw/` and recalls them at session start. *Whether this yields measurable task-completion lift is an open empirical question; early SWE-bench single-shot measurements (n=40/47) showed null. See the [verification docs](https://trwframework.com/docs/verification) for the current methodology and evidence posture.*
+trw-mcp is a [Model Context Protocol](https://modelcontextprotocol.io/) server that gives AI coding agents **persistent engineering memory**. It records what you learn during development sessions (patterns, gotchas, architecture decisions) and recalls relevant knowledge at the start of every new session. Over time, your AI coding assistant **accumulates captured learnings** in the memory store and recalls them at session start. *Whether this yields measurable task-completion lift is an open empirical question; early SWE-bench single-shot measurements (n=40/47) showed null. See the [verification docs](https://trwframework.com/docs/verification) for the current methodology and evidence posture.*
 
 Beyond memory, the server provides:
 
@@ -38,7 +98,7 @@ Beyond memory, the server provides:
 
 ## Quick Start
 
-Requires Python 3.10+ and a Git repository. The installer supports Claude Code, Codex, Cursor, OpenCode, Copilot, and Antigravity; use `--ide all` when a repository is shared across clients. See the [full quickstart guide](https://trwframework.com/docs/quickstart) for client-specific setup.
+Requires Python 3.10+ and a Git repository. The installer supports Claude Code, Codex, Cursor, OpenCode, Copilot, Grok, and Antigravity; use `--ide all` when a repository is shared across clients. See the [full quickstart guide](https://trwframework.com/docs/quickstart) for client-specific setup.
 
 ```bash
 # Recommended: install TRW
@@ -55,10 +115,11 @@ trw-mcp doctor .
 ### Manual / advanced install
 
 ```bash
-# Install from PyPI (the [vectors] extra bundles sqlite-vec so vector search
-# works out of the box; add [embeddings] for sentence-transformers, several
-# hundred MB with torch — opt-in given its size)
-pip install 'trw-mcp[vectors]'
+# Install from PyPI. sqlite-vec is a base dependency, so vector storage works out of the box.
+# Semantic recall also needs the embedding model: trw-memory[embeddings] pulls
+# sentence-transformers and torch (several hundred MB). install-trw.py adds it by default.
+pip install trw-mcp
+pip install 'trw-memory[embeddings]'
 
 # Or install from source
 git clone https://github.com/wallter/trw-mcp.git
@@ -67,7 +128,10 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### Supported interpreters
+### Supported platforms and interpreters
+
+**Supported platforms:** macOS arm64/x86_64, manylinux x86_64/aarch64 and Windows x86_64 -- the platforms `sqlite-vec` (a base dependency) publishes wheels for. musl Linux (Alpine) and Windows ARM are unsupported: `sqlite-vec` has no wheel or sdist there, so `pip install` fails.
+
 
 `trw-mcp` is tested on CPython 3.10 through 3.14 (this repository's own development
 interpreter is CPython 3.14.7). The interpreter's bundled SQLite matters too: the memory
@@ -90,7 +154,7 @@ trw-mcp init-project . --ide codex  # force Codex bootstrap
 trw-mcp init-project . --force      # overwrite existing files
 ```
 
-Every installation creates `.trw/` plus the Claude-compatible baseline used by the core bootstrap (`.mcp.json`, `CLAUDE.md`, and `.claude/` hooks, skills, and agent definitions). The selected client integration then adds its own instruction, MCP, hook, skill, and agent surfaces where supported. Bundled skills and agent definitions are runtime inputs to `init-project` and `update-project`, not examples that can be discarded. Managed updates preserve user-authored content where the target format supports safe merging; review `--force` before using it in a customized repository.
+Every installation creates `.trw/`, pins the checkout's memory namespace (`project_namespace`) and mints its memory grant. The Claude Code files (`.mcp.json` and `.claude/` hooks, skills, and agent definitions) are written only when `claude-code` is one of the selected clients; a bare `init-project` includes it, and `--ide codex` or `--ide copilot` also get `.claude/hooks`, which their hook commands run. Each selected client integration adds its own instruction, MCP, hook, skill, and agent surfaces where supported. Bundled skills and agent definitions are runtime inputs to `init-project` and `update-project`, not examples that can be discarded. Managed updates preserve user-authored content where the target format supports safe merging; review `--force` before using it in a customized repository.
 
 ### Configuration
 
@@ -98,9 +162,9 @@ Settings via environment variables (prefix `TRW_`) or `.trw/config.yaml`. Full r
 
 ```yaml
 # .trw/config.yaml — top settings (all optional, shown with defaults)
-embeddings_enabled: true           # Vector search on by default (install the [vectors] extra to use it)
+embeddings_enabled: true           # trw-mcp's own embedding model (learn-time dedup); needs trw-memory[embeddings]
 learning_max_entries: 500          # Max learnings before auto-pruning
-build_check_enabled: true          # Run pytest+mypy on trw_build_check
+build_check_enabled: true          # Record build/test results with trw_build_check (it runs nothing itself)
 deliver_gate_mode: "block_coding"  # Block delivery for coding/rca/eval tasks without a passing build record;
                                    # set to "advisory" to restore warn-only posture (changed 2026-06-10)
 ceremony_mode: "full"              # "full" or "light"
@@ -114,8 +178,8 @@ trw-mcp is **local-first**: with the default configuration it persists everythin
 
 | Surface | When | Default | Opt-out / control |
 |---------|------|---------|-------------------|
-| **Embedding model download** | Only when the configured embedding model (default `BAAI/bge-small-en-v1.5`) is **not** already complete in your local Hugging Face cache. A complete cached snapshot makes **zero** huggingface.co requests — the loader probes the cache first and forces `local_files_only=True` (only relevant when the `[vectors]`/`[embeddings]` extra is installed) | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the fetch and degrades to keyword-only recall; a disclosure log line is emitted before any fetch |
-| **Re-ranker model download** | Never from trw-mcp's own recall tools: `trw_recall` and `trw_session_start` rank by BM25 + dense vectors + Reciprocal Rank Fusion and do not load a cross-encoder. The re-ranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`) belongs to trw-memory's `MemoryClient.recall()` and its own network rules apply there | — | — |
+| **Embedding model download** | Only when the configured embedding model (default `BAAI/bge-small-en-v1.5`) is **not** already complete in your local Hugging Face cache. A complete cached snapshot makes **zero** huggingface.co requests: the loader probes the cache first and forces `local_files_only=True`. Only relevant when `trw-memory[embeddings]` is installed. trw-mcp loads the model on first use for learn-time dedup, recall-result dedup, consolidation and telemetry publishing; recall itself runs in the memory daemon, which loads its own copy under trw-memory's rules | `embeddings_enabled: true` | `TRW_OFFLINE=1` (or `HF_HUB_OFFLINE=1`) suppresses the fetch; populate the cache first if you want semantic recall offline. A disclosure log line is emitted before any fetch |
+| **Re-ranker model download** | Only in the memory daemon, which runs `trw_recall` and `trw_session_start` recalls with the same ranking as trw-memory's `MemoryClient.recall()`, including the cross-encoder re-ranker (`cross-encoder/ms-marco-MiniLM-L-6-v2`), and only when `trw-memory[embeddings]` is installed and the model is not cached | on when the extra is present | the same offline switches; an uncached re-ranker is skipped and recall keeps fusion order. See the [trw-memory README](https://github.com/wallter/trw-memory) |
 | **Usage telemetry** | Only if explicitly enabled | **off** (gated by `platform_telemetry_enabled`, default `false`) | leave `platform_telemetry_enabled=false`; see PRD-SEC-004 |
 | **Learning-content publishing** | Only if explicitly enabled | **off** (gated by `learning_sharing_enabled`, default `false`) | leave `learning_sharing_enabled=false`; learning content is never published off-box by default |
 
@@ -174,7 +238,7 @@ instructions.
 | `TRW_LOG_LEVEL` | Explicit log level (`DEBUG`/`INFO`/`WARNING`/`ERROR`/`CRITICAL`) | derived from `--debug` / defaults |
 | `TRW_PLATFORM_API_KEY` | Platform credential (PRD-SEC-005) — read from the environment, kept out of git-tracked config | unset |
 | `TRW_CONFIG_STRICT` | Fail **closed** on a malformed `.trw/config.yaml` instead of reverting to defaults | unset (fail-open, but loud) |
-| `MEMORY_*` | trw-memory engine knobs (see the [trw-memory README](https://github.com/wallter/trw-memory)) | per-field |
+| `MEMORY_*` | trw-memory engine knobs (see the [trw-memory README](https://github.com/wallter/trw-memory)). The memory security settings are daemon-wide: set them in the environment the daemon starts from | per-field |
 
 A malformed `.trw/config.yaml` always emits a `WARNING` (and a stderr notice) rather than being silently discarded; set `TRW_CONFIG_STRICT=1` to make the load fail closed so security overrides are never dropped unnoticed.
 
@@ -191,19 +255,21 @@ A malformed `.trw/config.yaml` always emits a `WARNING` (and a stderr notice) ra
 | `.trw/` directory permissions | `0700` | state/secret dirs are owner-only |
 | `memory.db` / secret files | `0600` | owner read/write only (consistent with `pins.json`) |
 
+Since 6.0.0 the recall-filter and poisoning-detection settings (with RBAC, canary, trust-scoring and provenance) are daemon-wide: one memory daemon serves every checkout on the machine, so set them in the environment the daemon starts from. A trw-mcp process that resolves a different value is refused and told which `MEMORY_` variable to set.
+
 ### Enterprise hardening recipe
 
 For an air-gapped or compliance-sensitive deployment:
 
 ```bash
-export TRW_OFFLINE=1            # no huggingface.co egress; keyword-only recall
+export TRW_OFFLINE=1            # no huggingface.co egress; pre-populate the model cache for semantic recall
 export TRW_CONFIG_STRICT=1      # malformed config fails closed, never silently reverts
 # Leave telemetry + learning-sharing at their secure defaults:
 #   platform_telemetry_enabled: false
 #   learning_sharing_enabled:   false
 ```
 
-Then verify: `.trw/` dirs are `0700`, `memory.db` is `0600`, and no outbound connection is attempted at `session_start`.
+Then verify: `.trw/` dirs are `0700`, the daemon's store (`~/.trw/memory/memory.db` by default) is `0600`, and no outbound connection is attempted at `session_start`.
 
 <a id="mcp-tools"></a>
 
@@ -255,8 +321,10 @@ trw-mcp check-instructions .          # Validate instruction-tool parity (exit 1
 trw-mcp audit .                       # Audit TRW configuration
 trw-mcp config-reference              # Print all TRW_ environment variables
 trw-mcp version-status                # Compare package, framework, and live-server versions
+trw-mcp memory migrate --to user      # Preview moving a checkout's old project store into the daemon (--apply to move)
+trw-mcp memory token                  # Mint this checkout's memory grant
 trw-mcp export --format json          # Export learnings
-trw-mcp uninstall .                   # Remove TRW from a project
+trw-mcp uninstall .                   # Remove TRW from a project (keeps ~/.trw)
 ```
 
 ### Headless Antigravity reviews
@@ -312,7 +380,7 @@ src/trw_mcp/
   models/             # Pydantic v2 models (config, run, learning, etc.)
   tools/              # MCP tool implementations
   state/              # State management (persistence, validation, analytics)
-  middleware/         # FastMCP middleware (ceremony, observation masking, response optimizer)
+  middleware/         # FastMCP middleware (ceremony, response optimizer)
   telemetry/          # Telemetry pipeline (models, sender, anonymizer)
   data/               # Bundled hooks, skills, agents for init-project
 ```
@@ -323,13 +391,13 @@ src/trw_mcp/
 The MCP server process crashed. In Claude Code, type `/mcp` to reconnect. For other clients, restart your CLI tool.
 
 **`trw_session_start()` returns "No learnings found"**
-This is normal on first use — learnings accumulate as you work. Call `trw_learn()` to save discoveries, then `trw_deliver()` to persist them.
+This is normal on first use: learnings accumulate as you work. Call `trw_learn()` to record a discovery; it is stored when the call returns.
 
 **stale `.trw/` state after upgrading**
-Run `trw-mcp update-project .` to migrate your project state to the latest schema. If issues persist, backup and re-initialize with `trw-mcp init-project . --force`.
+Run `trw-mcp update-project .` to migrate your project state to the latest schema. If it prints `trw-mcp memory migrate --to user --apply`, run that too (see [Upgrading from 5.x](#upgrading-from-5x)). If `update-project` refuses because `.trw/managed-artifacts.yaml` is missing or invalid, run `trw-mcp uninstall --keep-memory` and then `trw-mcp init-project`.
 
-**Embeddings not working despite `embeddings_enabled=true`**
-Vector search requires the `[vectors]` extra (sqlite-vec) — every install path (`install.sh`, `pip`, `pipx`, `uv tool`) requests it by default, so this is normally already installed. If it is missing (e.g. an old install predating the bundling fix, or `--no-sqlite-vec` was passed), run `pip install 'trw-mcp[vectors]'` and reconnect the MCP client. Without it, vector search silently degrades to keyword-only.
+**Recall is keyword-only despite `embeddings_enabled=true`**
+Semantic recall needs sqlite-vec (a base dependency since 6.1.0) and the embedding model from `trw-memory[embeddings]`, in the environment trw-mcp runs from; the memory daemon starts with the same interpreter. `trw-mcp doctor` reports which one is missing. Install `trw-memory[embeddings]` (install-trw.py does this by default since 6.1.0), stop the memory daemon (send SIGTERM to the pid in `daemon.json` beside the store) so the next call starts a fresh one, and reconnect the MCP client.
 
 ### Debugging
 

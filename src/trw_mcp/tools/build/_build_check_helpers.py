@@ -3,12 +3,15 @@
 Belongs to the ``build/_registration.py`` facade. Re-exported there for
 back-compat. Extracted so ``_registration.py`` stays under the 350 effective-LOC
 gate. These are self-contained functions with no MCP/server dependencies:
-input validation (``_require_tests_passed``) and coverage-threshold enforcement
+input validation (``_require_tests_passed``), the skip-switch refusal
+(``refuse_pass_with_skip_switches``) and coverage-threshold enforcement
 (``_finalize_build_result``).
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -19,6 +22,39 @@ _BUILD_CHECK_USAGE = (
     "trw_build_check(tests_passed=True, test_count=47, failure_count=0, coverage_pct=92.3, "
     "static_checks_clean=True, scope='pytest tests/')"
 )
+
+#: Environment switches a test suite reads to SKIP tests when set (L-0QSU: lanes
+#: reported READY with TRW_E1_ORACLE=1 and the release suite then failed 111-128
+#: tests). Derived from the suites' own skip conditions and pinned by
+#: scripts/tests/test_narrowing_switches.py; installer/eval preflight switches that
+#: tests set on purpose narrow nothing and are not listed.
+TEST_NARROWING_SWITCHES = frozenset({"TRW_E1_ORACLE", "TRW_DISTILL_SKIP_LIVE_NETWORK"})
+_ASSIGNED = re.compile(r"\b(" + "|".join(sorted(TEST_NARROWING_SWITCHES)) + r")=(\S*)")
+_OFF = frozenset({"", "0", "false", "no"})
+
+
+def _on(value: str) -> bool:
+    return value.strip().strip("'\"").lower() not in _OFF
+
+
+def active_skip_switches(environ: Mapping[str, str], reported: Iterable[str]) -> list[str]:
+    """The ``TEST_NARROWING_SWITCHES`` set in *environ* or assigned (``NAME=on``) in the *reported* text."""
+    found = {name for name in TEST_NARROWING_SWITCHES if _on(environ.get(name, ""))}
+    for text in reported:
+        found.update(m.group(1) for m in _ASSIGNED.finditer(text) if _on(m.group(2)))
+    return sorted(found)
+
+
+def refuse_pass_with_skip_switches(passed: bool, environ: Mapping[str, str], reported: Iterable[str]) -> None:
+    """A pass run under a skip switch is not READY evidence (RETRO-6.0.0 #9); a failure still records."""
+    if not passed:
+        return
+    switches = active_skip_switches(environ, reported)
+    if switches:
+        raise ValueError(
+            f"tests_passed=True refused: {', '.join(switches)} narrows the suite, so this pass is not READY "
+            "evidence (L-0QSU). Unset it, re-run the suite, and report that run."
+        )
 
 
 def reconcile_typed_results(

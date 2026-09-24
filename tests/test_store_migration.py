@@ -1,8 +1,9 @@
 """PRD-CORE-280 FR03 -- ``trw-mcp memory migrate --to user`` and its rollback, against a real daemon.
 
 Each acceptance criterion is one test: the preview writes nothing, --apply
-refuses without an attached daemon and when another process holds the project
-store, a completed apply moves rows, vectors and edges through the daemon (never
+starts an absent daemon as every memory client does but refuses an untrusted
+daemon record, refuses (exit 2, retry later) when another process holds the
+project store, a completed apply moves rows, vectors and edges through the daemon (never
 opening the user store) and pins last, a rerun after a kill before the pin
 completes without duplicates, and a rollback restores the store with the rows
 written after cutover.
@@ -11,6 +12,7 @@ written after cutover.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -31,6 +33,7 @@ from trw_mcp.models.config import reload_config
 from trw_mcp.state import _store_migration
 from trw_mcp.state._store_migration import (
     MigrationRefusedError,
+    MigrationRetryError,
     apply_migration,
     preview_migration,
     rollback_migration,
@@ -118,10 +121,47 @@ def test_the_preview_writes_nothing_and_lists_counts_and_collisions(checkout: Pa
     assert _snapshot(checkout) == before
 
 
-def test_apply_without_an_attached_daemon_names_doctor_and_changes_nothing(
+def test_apply_starts_an_absent_daemon_as_every_memory_client_does(
     checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "no-daemon"))
+    """The installer runs --apply right after an upgrade, when no daemon has started yet."""
+    from tests._memory_daemon import running_daemon
+
+    user_dir = tmp_path / "userhome"
+    monkeypatch.setenv("TRW_USER_DIR", str(user_dir))
+    reload_config()
+    started: list[DaemonPaths] = []
+    with contextlib.ExitStack() as daemons:
+
+        def _start(paths: DaemonPaths) -> None:
+            started.append(paths)
+            daemons.enter_context(running_daemon(user_dir))
+
+        monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _start)
+        manifest = apply_migration(checkout / ".trw")
+        assert _served(checkout, _namespace(checkout)) == (3, 3, 1)
+    reload_config()
+
+    assert len(started) == 1
+    assert "cutover_at" in json.loads(manifest.read_text(encoding="utf-8"))
+
+
+def _untrusted_daemon_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "userhome"))
+    discovery = DaemonPaths.resolve().discovery
+    discovery.parent.mkdir(parents=True, exist_ok=True)
+    discovery.write_text("not a daemon record", encoding="utf-8")
+
+    def _no_autostart(_paths: DaemonPaths) -> None:
+        raise AssertionError("an untrusted record must never start a second daemon")
+
+    monkeypatch.setattr("trw_memory.daemon.client.start_daemon_detached", _no_autostart)
+
+
+def test_apply_refuses_an_untrusted_daemon_record_names_doctor_and_changes_nothing(
+    checkout: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _untrusted_daemon_record(tmp_path, monkeypatch)
     before = _snapshot(checkout)
 
     with pytest.raises(MigrationRefusedError, match="trw-mcp doctor"):
@@ -144,7 +184,7 @@ def test_apply_refuses_a_project_store_another_process_holds(checkout: Path, dae
     try:
         assert holder.stdout is not None and holder.stdout.readline().strip() == "ready"
         before = _snapshot(checkout)
-        with pytest.raises(MigrationRefusedError, match="open in another process"):
+        with pytest.raises(MigrationRetryError, match="open in another process"):
             apply_migration(checkout / ".trw")
         assert _snapshot(checkout) == before
     finally:
@@ -414,7 +454,7 @@ def test_the_verb_previews_by_default_and_exits_naming_doctor_when_apply_is_refu
     from trw_mcp.server._cli_argparse import _build_arg_parser
     from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
 
-    monkeypatch.setenv("TRW_USER_DIR", str(tmp_path / "no-daemon"))
+    _untrusted_daemon_record(tmp_path, monkeypatch)
 
     def run(*argv: str) -> None:
         args = _build_arg_parser().parse_args(
@@ -428,3 +468,70 @@ def test_the_verb_previews_by_default_and_exits_naming_doctor_when_apply_is_refu
         run("--apply")
     assert exited.value.code == 1
     assert "trw-mcp doctor" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("reply", "retry"),
+    [
+        ({"status": "busy", "error": "the store is busy"}, True),
+        ({"status": "uncertain", "error": "rerun: the import is idempotent"}, True),
+        ({"status": "conflict", "error": "ns already holds different content for ['L-b']"}, False),
+    ],
+    ids=["busy", "uncertain", "conflict"],
+)
+def test_a_daemon_refusal_is_retryable_only_when_busy_or_uncertain(reply: dict[str, str], retry: bool) -> None:
+    async def _answer() -> dict[str, str]:
+        return reply
+
+    with pytest.raises(MigrationRefusedError) as refused:
+        _store_migration._call(_answer())
+
+    assert isinstance(refused.value, MigrationRetryError) is retry
+    assert reply["error"] in str(refused.value)
+
+
+def test_the_verb_exits_2_while_a_client_holds_the_store_and_names_it(
+    checkout: Path, daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit 2 is "stop something, then retry"; the lines say which clients to reconnect."""
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+    from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+
+    monkeypatch.setattr(
+        _store_migration, "_exclusive", lambda _db: (_ for _ in ()).throw(MigrationRetryError("store is open"))
+    )
+    monkeypatch.setattr(
+        "trw_mcp.state._checkout_servers.live_servers", lambda _trw: ["trw-mcp pid 7, launched by claude (pid 6)"]
+    )
+    args = _build_arg_parser().parse_args(
+        ["memory", "migrate", "--to", "user", "--target-dir", str(checkout), "--apply"]
+    )
+
+    with pytest.raises(SystemExit) as exited:
+        SUBCOMMAND_HANDLERS[args.command](args)
+
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert "store is open" in err
+    assert "trw-mcp pid 7, launched by claude (pid 6)" in err
+
+
+def test_a_completed_apply_names_the_clients_to_reconnect(
+    checkout: Path, daemon: MemoryDaemon, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from trw_mcp.server._cli_argparse import _build_arg_parser
+    from trw_mcp.server._subcommands import SUBCOMMAND_HANDLERS
+
+    monkeypatch.setattr(
+        "trw_mcp.state._checkout_servers.live_servers", lambda _trw: ["trw-mcp pid 7, launched by claude (pid 6)"]
+    )
+    args = _build_arg_parser().parse_args(
+        ["memory", "migrate", "--to", "user", "--target-dir", str(checkout), "--apply"]
+    )
+
+    SUBCOMMAND_HANDLERS[args.command](args)
+
+    out = capsys.readouterr().out
+    assert "memory migrate: migrated; manifest " in out
+    assert "reconnect" in out
+    assert "trw-mcp pid 7, launched by claude (pid 6)" in out

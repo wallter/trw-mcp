@@ -23,7 +23,6 @@ import structlog
 from trw_mcp.state._origin_project import is_verified, nudge_eligible_pool
 from trw_mcp.state.ceremony_progress import CeremonyState
 from trw_mcp.tools._ceremony_status_helpers import (
-    _cached_bandit_weight,
     _contextualize_candidates,
     _deterministic_fallback_text,
     _normalize_inferred_domains,
@@ -177,8 +176,6 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
                     learning_id=learning_id,
                     surface_type="phase_transition" if is_transition else "nudge",
                     phase=state.phase,
-                    exploration=False,
-                    bandit_score=_cached_bandit_weight(selected_learning, bandit_params),
                     client_profile=client_profile_name,
                     model_family=model_family,
                     session_id=resolve_effective_session_id(trw_dir),
@@ -199,6 +196,6 @@ def _try_learning_nudge_content(trw_dir: Path, state: CeremonyState) -> str | No
             used_cached_bandit=bool(bandit_params),
         )
         return content
-    except Exception:  # justified: fail-open, nudge generation must not block tool responses
+    except Exception:  # trw-fail-silent-allow: fail-open, an optional nudge must never block the tool response it decorates; None means no nudge line
         logger.debug("learning_nudge_content_failed", exc_info=True)
         return None

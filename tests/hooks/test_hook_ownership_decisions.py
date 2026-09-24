@@ -51,7 +51,7 @@ from _ownership_harness import (
     write_hook_env,
 )
 
-from tests._layout import HAS_JQ, requires_jq, requires_monorepo
+from tests._layout import requires_monorepo
 
 _HOOK_COPIES = pytest.mark.parametrize(
     "hook_dir",
@@ -127,10 +127,8 @@ def test_pre_compact_writes_an_empty_snapshot_when_unowned(hook_dir: Path, tmp_p
     assert FOREIGN_RUN_ID not in json.dumps(state), "foreign run leaked into the recovery snapshot"
     # The non-run-scoped duties still ran.
     assert injected.read_text(encoding="utf-8") == ""
-    # The hook reads `source` with jq and has no fallback, so the trigger is only
-    # observable where jq is installed (a hook defect, tracked apart from this).
-    if HAS_JQ:
-        assert state["trigger"] == "manual"
+    # Read with jq, or python3 without it (lib-trw.sh _json_get).
+    assert state["trigger"] == "manual"
 
 
 @_HOOK_COPIES
@@ -293,7 +291,6 @@ def test_subagent_start_omits_run_state_but_keeps_the_protocol_when_unowned(hook
 
 
 @_HOOK_COPIES
-@requires_jq
 def test_subagent_start_keeps_legacy_context_with_no_identity(hook_dir: Path, tmp_path: Path) -> None:
     root, _own, _foreign = build_project(
         tmp_path,

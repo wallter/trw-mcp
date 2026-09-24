@@ -32,18 +32,20 @@ _hook_dir="$(cd "$(dirname "$0")" && pwd)"
 # --- Read JSON payload from stdin ---
 _payload=$(cat 2>/dev/null) || exit 0
 
-# Extract fields — jq preferred, grep fallback (FR25)
+# Extract fields (FR25) with lib-trw.sh's _json_get: jq, else python3, never a
+# shell parser (T29). Deployed, lib-trw.sh sits beside this hook. The hint is
+# advisory, so a host with neither parser emits nothing.
 _tool_use_id=""
 _file_path=""
 _tool_name=""
 _agent_type=""
 
-# jq only (T29): the hint is advisory, so a jq-less host emits nothing.
-command -v jq >/dev/null 2>&1 || exit 0
-_tool_use_id=$(printf '%s' "$_payload" | jq -r '.tool_use_id // empty' 2>/dev/null) || true
-_file_path=$(printf '%s' "$_payload" | jq -r '.tool_input.file_path // empty' 2>/dev/null) || true
-_tool_name=$(printf '%s' "$_payload" | jq -r '.tool_name // empty' 2>/dev/null) || true
-_agent_type=$(printf '%s' "$_payload" | jq -r '.agent_name // empty' 2>/dev/null) || true
+. "$_hook_dir/lib-trw.sh" 2>/dev/null || exit 0
+_trw_has_json_parser || exit 0
+_tool_use_id=$(printf '%s' "$_payload" | _json_get .tool_use_id) || true
+_file_path=$(printf '%s' "$_payload" | _json_get .tool_input.file_path) || true
+_tool_name=$(printf '%s' "$_payload" | _json_get .tool_name) || true
+_agent_type=$(printf '%s' "$_payload" | _json_get .agent_name) || true
 
 # --- Skip 1: opt-in gate (FR09) ---
 if ! _get_cc03_enabled; then

@@ -30,33 +30,14 @@ init_hook_timer
 
 # FR07: Read stdin JSON and extract prompt text (replaces cat >/dev/null)
 _payload=$(cat) || exit 0
-_prompt=""
-if command -v jq >/dev/null 2>&1; then
-  _prompt=$(printf '%s' "$_payload" | jq -r '.prompt // empty' 2>/dev/null) || true
-elif command -v python3 >/dev/null 2>&1; then
-  _prompt=$(
-    printf '%s' "$_payload" | python3 -c '
-import json
-import sys
-
-try:
-    payload = json.load(sys.stdin)
-except Exception:
-    raise SystemExit(0)
-
-prompt = payload.get("prompt", "") if isinstance(payload, dict) else ""
-if isinstance(prompt, str):
-    sys.stdout.write(prompt)
-'
-  ) || true
-fi
+_prompt=$(printf '%s' "$_payload" | _json_get .prompt) || _prompt=""
 
 # PRD-FIX-124 FR11: hand infer_phase THIS session's identity so it resolves the
-# run we own instead of whichever run sorted newest project-wide. jq only (T29);
-# empty is the honest "identity unknown" state, for which infer_phase prints
-# "none" (R2-009), and a jq-less host logs one diagnostic saying so.
+# run we own instead of whichever run sorted newest project-wide. jq or python3
+# (T29); empty is the honest "identity unknown" state, for which infer_phase
+# prints "none" (R2-009), and a host with neither logs one diagnostic saying so.
 _stdin_session_id=$(_json_str_field "$_payload" session_id) || _stdin_session_id=""
-command -v jq >/dev/null 2>&1 || log_hook_execution "UserPromptSubmit" "unknown" "0" "jq_unavailable=1"
+_trw_has_json_parser || log_hook_execution "UserPromptSubmit" "unknown" "0" "jq_unavailable=1"
 
 _phase=$(infer_phase "$_stdin_session_id")
 _project_root="$(get_repo_root)" || exit 0

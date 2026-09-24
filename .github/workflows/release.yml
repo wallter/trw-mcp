@@ -53,10 +53,10 @@ jobs:
         with:
           name: dist
           path: dist/
-      - name: Install wheel with vectors extra
+      - name: Install wheel (sqlite-vec is a base dependency)
         run: |
           pip install "trw-memory @ git+https://github.com/wallter/trw-memory.git@main"
-          pip install dist/*.whl sqlite-vec
+          pip install dist/*.whl
       - name: Smoke test — SQLiteBackend store/get round-trip
         run: |
           python -c "

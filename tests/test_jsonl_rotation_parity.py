@@ -57,19 +57,6 @@ def test_recall_tracking_no_rotation_when_under_threshold(tmp_path: Path, monkey
     assert not rotated.exists()
 
 
-def test_propensity_already_rotates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """propensity_log already had rotation pre-fix; verify it still works."""
-    log_path = tmp_path / ".trw" / "logs" / "propensity.jsonl"
-    pre_size = _seed_jsonl_over_threshold(log_path)
-    assert pre_size > 10 * 1024 * 1024
-
-    from trw_mcp.state.propensity_log import _rotate_jsonl
-
-    _rotate_jsonl(log_path)
-    rotated = log_path.with_suffix(log_path.suffix + ".1")
-    assert rotated.exists()
-
-
 def test_deferred_deliver_log_rotates_when_oversized(tmp_path: Path) -> None:
     """_log_deferred_result() rotates deferred-deliver.jsonl when over 10 MB."""
     trw_dir = tmp_path / ".trw"

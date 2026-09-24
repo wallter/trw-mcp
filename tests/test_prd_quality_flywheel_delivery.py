@@ -125,7 +125,7 @@ def test_delivery_report_rework_metrics(tmp_path: Path, monkeypatch: pytest.Monk
         patch("trw_mcp.tools._deferred_delivery._step_ceremony_feedback", return_value=noop),
         patch(
             "trw_mcp.tools._deferred_delivery._step_delivery_metrics",
-            return_value={"status": "success", "normalized_reward": 0.5},
+            return_value={"status": "success"},
         ),
     ):
         _run_deferred_steps(trw_dir, run_dir, {})
@@ -262,7 +262,7 @@ def test_deliver_does_not_persist_dead_promotion_candidate_keys(
         patch("trw_mcp.tools._deferred_delivery._step_ceremony_feedback", return_value=noop),
         patch(
             "trw_mcp.tools._deferred_delivery._step_delivery_metrics",
-            return_value={"status": "success", "normalized_reward": 0.5},
+            return_value={"status": "success"},
         ),
     ):
         result = tools["trw_deliver"].fn(skip_reflect=True, skip_index_sync=True)

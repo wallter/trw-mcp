@@ -200,7 +200,6 @@ CLASSIFIED: dict[str, str] = {
     "state/claude_md/_promotion.py": "excluded: deprecated and uncalled (PRD-CORE-093)",
     "state/_tier_sweep.py": "excluded: tier maintenance, no agent output",
     "state/tiers.py": "excluded: tier maintenance, no agent output",
-    "state/analytics/counters.py": "excluded: counters",
     "state/analytics/dedup.py": "excluded: dedup metrics",
     "state/analytics/entries.py": "excluded: analytics",
     "state/consolidation/_clustering.py": "excluded: consolidation, no agent output",

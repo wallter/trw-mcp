@@ -69,12 +69,9 @@ DEFERRED_STEP_EFFECT_IDS: dict[str, str] = {
     "batch_send": "D14",
     "trust_increment": "D16",
     "ceremony_feedback": "D18",
-    # PRD-FIX-127 FR05: the input/output tracer proved this roster step is NOT
-    # pure computation — it appends a ``rollout_meta_tune_linkage`` event to the
-    # run's events.jsonl (``_deferred_steps_learning``). That append had no
-    # descriptor at all; D26 registers it, and D22 moved off this step onto the
-    # run-yaml write it is actually named for.
-    "delivery_metrics": "D26",
+    # ``delivery_metrics`` is unjournaled: it is pure computation now that the
+    # ``rollout_meta_tune_linkage`` event append (formerly D26) is gone. D22 sits
+    # on the run-yaml write the step's result feeds.
 }
 
 #: Deferred census IDs journaled OUTSIDE the roster chokepoint, at the real write

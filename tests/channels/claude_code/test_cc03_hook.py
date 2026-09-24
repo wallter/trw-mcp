@@ -21,21 +21,12 @@ from pathlib import Path
 
 import pytest
 
-from tests._layout import requires_jq
+from tests._layout import path_without
+from tests.channels.claude_code._distill_hint_support import deploy_distill_hint
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-_HOOK = (
-    Path(__file__).parent.parent.parent.parent
-    / "src"
-    / "trw_mcp"
-    / "data"
-    / "claude_code"
-    / "hooks"
-    / "pre-tool-distill-hint.sh"
-)
 
 
 def _run_hook(
@@ -46,7 +37,7 @@ def _run_hook(
 ) -> subprocess.CompletedProcess[str]:
     """Run the CC-03 hook with the given stdin payload and project dir."""
     return subprocess.run(
-        ["sh", str(_HOOK)],
+        ["sh", str(deploy_distill_hint(tmp_project))],
         input=stdin_payload,
         capture_output=True,
         text=True,
@@ -125,7 +116,7 @@ class TestNeverExitsNonZero:
 
     def test_rc0_binary_garbage(self, tmp_path: Path) -> None:
         result = subprocess.run(
-            ["sh", str(_HOOK)],
+            ["sh", str(deploy_distill_hint(tmp_path))],
             input=b"\x00\xff\xfe\xfd",
             capture_output=True,
             timeout=8,
@@ -178,13 +169,31 @@ class TestOptInGate:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    @requires_jq
     def test_enabled_produces_output_for_py_file(self, tmp_path: Path) -> None:
         """When enabled, a .py file produces at least the T0 beacon."""
         _enable_cc03(tmp_path)
         result = _run_hook(_make_pretooluse(file_path="src/app.py"), tmp_path)
         assert result.returncode == 0
         # Enabled + .py → T0 beacon at minimum (Python may not be importable)
+        assert len(result.stdout) > 0
+
+    def test_enabled_reads_the_payload_without_jq(self, tmp_path: Path) -> None:
+        """No jq: lib-trw.sh _json_get reads the payload with python3, so the hint still fires."""
+        project = tmp_path / "project"
+        project.mkdir()
+        _enable_cc03(project)
+        result = subprocess.run(
+            ["sh", str(deploy_distill_hint(project))],
+            input=_make_pretooluse(file_path="src/app.py"),
+            capture_output=True,
+            text=True,
+            timeout=8,
+            env={
+                "PATH": path_without(tmp_path, {"jq"}, "/usr/bin:/bin:/usr/local/bin"),
+                "TRW_PROJECT_DIR": str(project),
+            },
+        )
+        assert result.returncode == 0
         assert len(result.stdout) > 0
 
     def test_enabled_invalid_yaml_config_falls_back_disabled(self, tmp_path: Path) -> None:
@@ -197,7 +206,6 @@ class TestOptInGate:
         # Invalid YAML → grep finds nothing → falls back to 'false'
         assert result.stdout == ""
 
-    @requires_jq
     def test_nested_channels_cc03_hook_enabled_enables_hook(self, tmp_path: Path) -> None:
         """channels.cc03_hook_enabled: true (nested) enables the hook via shell.
 
@@ -230,7 +238,6 @@ class TestOptInGate:
         # Top-level false overrides nested true
         assert result.stdout == ""
 
-    @requires_jq
     def test_nested_channels_cc03_enabled_enables_hook(self, tmp_path: Path) -> None:
         """channels.cc03.enabled: true (alternative nested path) enables the hook."""
         trw_dir = tmp_path / ".trw"
@@ -311,21 +318,18 @@ class TestSkipConditions:
         assert result.returncode == 0
         assert result.stdout == ""
 
-    @requires_jq
     def test_non_skipped_py_extension_produces_output(self, tmp_path: Path) -> None:
         """.py files are NOT in the skip allowlist and produce a hint."""
         result = _run_hook(_make_pretooluse(file_path="src/engine.py"), tmp_path)
         assert result.returncode == 0
         assert len(result.stdout) > 0
 
-    @requires_jq
     def test_non_skipped_ts_extension_produces_output(self, tmp_path: Path) -> None:
         """.ts files are NOT in the skip allowlist and produce a hint."""
         result = _run_hook(_make_pretooluse(file_path="src/index.ts"), tmp_path)
         assert result.returncode == 0
         assert len(result.stdout) > 0
 
-    @requires_jq
     def test_non_skipped_yaml_extension_produces_output(self, tmp_path: Path) -> None:
         """.yaml files are NOT in the skip allowlist (they have blast radius)."""
         result = _run_hook(_make_pretooluse(file_path=".trw/config.yaml"), tmp_path)
@@ -432,7 +436,6 @@ class TestDebounce:
         assert r2.returncode == 0
         assert r2.stdout == "", "Second call within debounce window must be silent"
 
-    @requires_jq
     def test_different_files_not_debounced(self, tmp_path: Path) -> None:
         """Different file_paths are independent debounce entries."""
         _enable_cc03(tmp_path)
@@ -444,7 +447,6 @@ class TestDebounce:
         assert len(r1.stdout) > 0
         assert len(r2.stdout) > 0
 
-    @requires_jq
     def test_debounce_dir_created_on_first_call(self, tmp_path: Path) -> None:
         """Debounce directory is created at .trw/context/cc03-debounce."""
         _enable_cc03(tmp_path)
