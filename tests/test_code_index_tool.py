@@ -33,8 +33,9 @@ def test_trw_code_index_update_supports_force_and_path_limits(tmp_path: Path) ->
 
     assert first["stats"]["added"] == 2
     assert limited["stats"]["modified"] == 1
+    assert limited["stats"]["unchanged"] == 1  # docs.md, out of scope, is rediscovered too (B71-108)
     assert limited["stats"]["deleted"] == 0
-    assert forced["stats"]["added"] == 1
+    assert forced["stats"]["added"] == 2
     assert forced["stats"]["unchanged"] == 0
 
 

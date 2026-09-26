@@ -81,11 +81,11 @@ def test_a_scoped_update_rebuilds_every_indexed_file_from_source(tmp_path: Path)
 
     scoped = update_code_index(tmp_path, paths=["tool.py"]).chunk_stats
 
-    assert (scoped.indexed_files, scoped.failed_files) == (1, 2)
+    assert (scoped.indexed_files, scoped.failed_files) == (2, 0)  # the edited out-of-scope file too (B71-108)
     assert [hit.path for hit in lexical_search(tmp_path, query="launch_the_release_rocket").results] == ["tool.py"]
+    assert [hit.path for hit in lexical_search(tmp_path, query="kept_out_of_scope_edited").results] == ["kept.py"]
     result = update_code_index(tmp_path)
     assert [row.path for row in result.manifest.files] == ["kept.py", "tool.py"]
-    assert [hit.path for hit in lexical_search(tmp_path, query="kept_out_of_scope_edited").results] == ["kept.py"]
     default_store_path(tmp_path).unlink()
     assert update_code_index(tmp_path, paths=["tool.py"]).chunk_stats.indexed_files == 2
 

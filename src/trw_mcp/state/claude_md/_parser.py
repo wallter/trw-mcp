@@ -221,7 +221,7 @@ def merge_trw_section(
         # (which would otherwise re-clobber a pointer that carries a stale block).
         from trw_mcp.state.claude_md._instruction_carrier import pointer_skip_guard
 
-        if pointer_skip_guard(target) is not None:
+        if pointer_skip_guard(target, dry_run=dry_run) is not None:
             from trw_mcp.state.claude_md._write_guard import InstructionWriteVerdict as _Verdict
 
             return _Verdict(written=False, total_lines=len(target.read_text(encoding="utf-8").split("\n")))

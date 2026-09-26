@@ -26,6 +26,7 @@ from trw_mcp.models.typed_dicts._ceremony import (
     ReviewMdResultDict,
 )
 from trw_mcp.state.claude_md._agents_md import (
+    InstructionFileTarget,
     _determine_write_target_decision,
     _sync_agents_md_if_needed,
     _sync_instruction_targets,
@@ -86,8 +87,10 @@ def dispatch_for_profile(
             before reaching here — leaving a user's edit indistinguishable from
             TRW's own output. ``None`` lets the generators read the manifest
             themselves, which is correct for a standalone sync.
-        dry_run: Compute what each target WOULD receive, return a unified diff
-            per target, and write nothing (PRD-FIX-123-FR03).
+        dry_run: Compute what CLAUDE.md / AGENTS.md WOULD receive, return a
+            unified diff per target, and write nothing (PRD-FIX-123-FR03). The
+            per-client carriers, REVIEW.md, analytics and the hook env file
+            have no diff mode, so a dry run skips them (B71-110).
         force: Bypass the write guard's shrink floors. A call argument only —
             never a config field (PRD-FIX-123-FR02).
 
@@ -122,7 +125,26 @@ def dispatch_for_profile(
     # stale hook flags behind when instruction prose is otherwise unchanged.
     from trw_mcp.state.claude_md._hook_policy import refresh_hook_policy
 
-    refresh_hook_policy(trw_dir, project_root, config, client)
+    # B71-110: a dry run writes nothing, so it also leaves the hook env file,
+    # the per-client carriers, analytics and REVIEW.md alone.
+    if not dry_run:
+        refresh_hook_policy(trw_dir, project_root, config, client)
+
+    def _sync_carriers(targets: tuple[InstructionFileTarget, ...]) -> tuple[bool, str | None, list[str]]:
+        # The per-client generators have no diff mode: a dry run reports them
+        # as not synced instead of writing them.
+        if dry_run:
+            return False, None, []
+        return _sync_instruction_targets(project_root, targets, instruction_manifest_hashes)
+
+    def _review_md(failure_event: str) -> ReviewMdResultDict:
+        if dry_run:
+            return {"status": "skipped", "path": None, "rules_count": 0}
+        try:
+            return generate_review_md(trw_dir, repo_root=project_root)
+        except Exception:  # justified: fail-open — REVIEW.md generation must not block the sync
+            logger.warning(failure_event, exc_info=True)
+            return _review_md_failed_result("generation failed")
 
     # PRD-QUAL-143-FR01: before the cache check, so an unchanged render still
     # drops a stale ``.trw`` sidecar and every ``@`` import of it.
@@ -148,12 +170,11 @@ def dispatch_for_profile(
                 "claude_md_sync_force_bypasses_cache_hit",
                 hash=current_hash[:12],
             )
-        if not force and stored_hash is not None and stored_hash == current_hash:
+        # A dry run also skips the cache hit: it must render to report a diff.
+        if not force and not dry_run and stored_hash is not None and stored_hash == current_hash:
             decision = _determine_write_target_decision(client, config, project_root, scope)
-            instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
-                project_root,
-                decision.instruction_targets,
-                instruction_manifest_hashes,
+            instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_carriers(
+                decision.instruction_targets
             )
             logger.debug("claude_md_sync_cache_hit", hash=current_hash[:12])
             logger.info(
@@ -172,11 +193,7 @@ def dispatch_for_profile(
                 dry_run=dry_run,
             )
             del agents_verdict  # cache-hit path reports no diff/refusal payload
-            try:
-                review_result = generate_review_md(trw_dir, repo_root=project_root)
-            except Exception:  # justified: fail-open — REVIEW.md generation must not block cache-hit return
-                logger.warning("review_md_generation_failed_cache_hit", exc_info=True)
-                review_result = _review_md_failed_result("generation failed")
+            review_result = _review_md("review_md_generation_failed_cache_hit")
             # PRD-CORE-203 FR07 (P1-1): report the carrier state even on a cache
             # hit (no write happens, so this is a read-only classification of the
             # current CLAUDE.md).
@@ -241,12 +258,11 @@ def dispatch_for_profile(
                 }
             ]
 
-    update_analytics_sync(trw_dir)
+    if not dry_run:
+        update_analytics_sync(trw_dir)
 
-    instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_instruction_targets(
-        project_root,
-        decision.instruction_targets,
-        instruction_manifest_hashes,
+    instruction_file_synced, instruction_file_path, instruction_file_paths = _sync_carriers(
+        decision.instruction_targets
     )
 
     agents_md_synced, agents_md_path, agents_verdict = _sync_agents_md_if_needed(
@@ -272,12 +288,7 @@ def dispatch_for_profile(
         _write_stored_hash(trw_dir, rendered_hash)
 
     # PRD-CORE-084 FR08: Generate REVIEW.md after CLAUDE.md sync completes.
-    review_md_result: ReviewMdResultDict
-    try:
-        review_md_result = generate_review_md(trw_dir, repo_root=project_root)
-    except Exception:  # justified: fail-open — REVIEW.md failure must not block CLAUDE.md sync
-        logger.warning("review_md_generation_failed", exc_info=True)
-        review_md_result = _review_md_failed_result("generation failed")
+    review_md_result = _review_md("review_md_generation_failed")
 
     logger.info(
         "claude_md_sync_ok",

@@ -169,7 +169,7 @@ class ReflectResultDict(TypedDict):
 class _ReviewMdResultRequired(TypedDict):
     """Return shape of ``generate_review_md()``."""
 
-    status: Literal["generated", "failed"]
+    status: Literal["generated", "failed", "skipped"]  # skipped: a dry run (B71-110)
     path: str | None
     rules_count: int
 

@@ -88,8 +88,10 @@ def update_code_index(
     Raises :class:`~trw_mcp.code_index.bounds.IndexBoundExceeded` when the
     build crosses a budget, and ``ValueError`` for a scoped update over an
     unreadable manifest; the published store and manifest are then unchanged.
-    The store is always rebuilt from source: a scoped update rescans only its
-    paths, but every manifest file is chunked again from its current bytes.
+    The store is always rebuilt from source: a scoped update walks only its
+    paths, and rediscovers each out-of-scope manifest file by its path through
+    the same filters and budgets, so a changed one is refreshed and a gone or
+    ineligible one dropped (B71-108).
     """
 
     require_supported_runtime()  # before the walk: a refused build does no work and writes nothing
@@ -105,22 +107,25 @@ def update_code_index(
         # crafted one would publish the scope alone and drop the rest (rc8 pre-C12 sol review).
         raise ValueError("the code index manifest is unreadable: run `trw-mcp code index` without --paths once")
     previous_rows = {row.path: row for row in previous.files} if previous is not None else {}
+    # The manifest is the checkout's: a scoped update rediscovers its out-of-scope rows as files, never walked.
+    out_of_scope = (
+        () if scopes is None else tuple(path for path in previous_rows if not _path_is_in_scope(path, scopes))
+    )
     discovery = discover_indexable_files(
         root,
         paths=path_filters,
+        files=out_of_scope,
         max_file_bytes=max_file_bytes,
         exclude_dirs=exclude_dirs,
         include_extensions=include_extensions,
         bounds=budgets,
         deadline=deadline,
     )
-    scoped_previous = {path: row for path, row in previous_rows.items() if _path_is_in_scope(path, scopes)}
-    preserved_rows = [row for path, row in previous_rows.items() if not _path_is_in_scope(path, scopes)]
 
     now = datetime.now(timezone.utc)
     added = unchanged = modified = raced = 0
     discovery_max_bytes = min(max_file_bytes, MAX_INDEXED_FILE_BYTES)
-    discovered_rows: list[CodeIndexFileRow] = []
+    all_rows: list[CodeIndexFileRow] = []
     for file_path in discovery.files:
         deadline.check()
         try:
@@ -130,18 +135,15 @@ def update_code_index(
             raced += 1
             continue
         sha256 = hashlib.sha256(data).hexdigest()
-        previous_row = None if force else scoped_previous.get(relative_path)
+        previous_row = None if force else previous_rows.get(relative_path)
         if previous_row is None:
             added += 1
         elif previous_row.sha256 == sha256:
             unchanged += 1
         else:
             modified += 1
-        discovered_rows.append(
-            CodeIndexFileRow(path=relative_path, sha256=sha256, size_bytes=len(data), indexed_at=now)
-        )
+        all_rows.append(CodeIndexFileRow(path=relative_path, sha256=sha256, size_bytes=len(data), indexed_at=now))
 
-    all_rows = sorted([*preserved_rows, *discovered_rows], key=lambda row: row.path)
     deleted = len(previous_rows.keys() - {row.path for row in all_rows})
     stats = CodeIndexStats(
         total_files=len(all_rows),

@@ -65,13 +65,13 @@ Reconnect your MCP client afterwards (`/mcp` in Claude Code; restart the session
 <sub>Alpha release: source-available under the Business Source License 1.1, free for any use except offering a competing commercial product, converting to Apache 2.0 on 2030-03-21. The API may still change.</sub>
 
 ## What's new in 7.x
-<!-- whats-new: 7.0.0 -->
+<!-- whats-new: 7.0.1 -->
 
+- **7.0.1: previews that only preview.** `instructions sync --dry-run` writes nothing, and a scoped `trw-mcp code index --paths` update keeps edited files searchable.
 - **Fewer tools, better picks.** 51 tools became 15. In our tool-selection eval, correct first picks rose from 30% to 73% (Claude Code) and 0% to 80% (Codex).
 - **One tool for code.** `trw_code` searches a bounded index, finds symbols and gives before-edit hints. Other removed tools became modes or `trw-mcp` commands, or were deleted.
 - **Safer memory.** trw-memory 4.0.0 fixes store corruption and lost first writes from earlier releases, and a recall crash on default installs.
-- **Nothing left hanging.** A crashed memory daemon no longer strands clients, the server exits when its client dies, and `trw-mcp doctor` lists stray servers.
-- **Bounded reviewer lanes.** A dispatched reviewer's TRW tools are only `trw_recall` and `trw_code`, and it gets none of your other MCP servers or apps.
+- **Nothing left hanging, lanes bounded.** A crashed daemon no longer strands clients, the server exits with its client, and a dispatched reviewer gets only `trw_recall` and `trw_code`.
 - **No model in the MCP server.** The memory daemon embeds and dedups, and models download only via `trw-mcp models fetch` or the installer, with the embedding model pinned.
 - **Your platform key stays with trusted hosts.** A host you have not trusted at user level gets requests without it; `platform_contact_enabled: false` stops the update check and team sync.
 

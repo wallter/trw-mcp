@@ -229,8 +229,13 @@ def _inject_learnings_to_agents(
     trw_dir: Path,
     config: TRWConfig,
     recall_fn: RecallFn | None = None,
+    *,
+    dry_run: bool = False,
 ) -> str:
-    """Build learning injection string for AGENTS.md or return empty string on error."""
+    """Build learning injection string for AGENTS.md or return empty string on error.
+
+    A *dry_run* renders the same bullets but records no promotion (B71-110).
+    """
     if not learnings_injection_allowed(config, "passive"):
         return ""
     _recall = recall_fn if recall_fn is not None else _default_recall
@@ -251,7 +256,7 @@ def _inject_learnings_to_agents(
             # promoted. Skip entries without an id; never let promotion
             # bookkeeping abort the AGENTS.md injection.
             learning_id = str(entry.get("id", ""))
-            if not learning_id:
+            if not learning_id or dry_run:
                 continue
             try:
                 mark_promoted(trw_dir, learning_id)
@@ -315,7 +320,7 @@ def _sync_agents_md_if_needed(
         agents_body = render_agents_trw_section(exposed_tools=exposed)
 
     if config.agents_md_learning_injection:
-        agents_body += _inject_learnings_to_agents(trw_dir, config, recall_fn=recall_fn)
+        agents_body += _inject_learnings_to_agents(trw_dir, config, recall_fn=recall_fn, dry_run=dry_run)
 
     agents_section = f"{TRW_AUTO_COMMENT}\n{TRW_MARKER_START}\n\n{agents_body}\n{TRW_MARKER_END}\n"
     # PRD-FIX-123-FR07: measure the MERGED total, which is the quantity the

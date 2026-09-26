@@ -117,16 +117,18 @@ def heal_pointer(target: Path) -> bool:
     return True
 
 
-def pointer_skip_guard(target: Path) -> InstructionFileClassification | None:
+def pointer_skip_guard(target: Path, *, dry_run: bool = False) -> InstructionFileClassification | None:
     """Shared FR04 guard for both appenders.
 
     Classify *target*; if it is a thin single-source pointer, heal any stale
-    appended block and return the classification — the caller MUST then skip the
-    append/replace. Otherwise return ``None`` (caller proceeds normally).
+    appended block (unless *dry_run*) and return the classification — the caller
+    MUST then skip the append/replace. Otherwise return ``None`` (caller proceeds
+    normally).
     """
     classification = classify_instruction_file(target)
     if classification.kind is InstructionFileClass.POINTER:
-        heal_pointer(target)
+        if not dry_run:
+            heal_pointer(target)
         return classification
     return None
 

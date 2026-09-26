@@ -245,8 +245,12 @@ class _Walk:
                 elif entry.is_file(follow_symlinks=False):
                     self.consider_file(path, entry.stat(follow_symlinks=False).st_size)
 
-    def visit_limit(self, limit: Path) -> None:
-        """One explicit path limit, charged to the same entry cap and deadline as the walk."""
+    def visit_limit(self, limit: Path, *, file_only: bool = False) -> None:
+        """One explicit path limit, charged to the same entry cap and deadline as the walk.
+
+        A ``file_only`` limit is never walked, even if a directory replaced it; a later read opens it as a
+        regular file or skips it.
+        """
 
         self._count_entry()
         self.deadline.check()
@@ -254,7 +258,7 @@ class _Walk:
             return
         if limit.is_file():
             self.consider_file(limit, limit.stat().st_size)
-        elif limit.is_dir():
+        elif limit.is_dir() and not file_only:
             self.walk(limit)
 
 
@@ -276,6 +280,7 @@ def discover_indexable_files(
     repo_root: Path | str,
     *,
     paths: Iterable[str] | None = None,
+    files: Iterable[str] = (),
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS,
     include_extensions: frozenset[str] = DEFAULT_INCLUDE_EXTENSIONS,
@@ -285,7 +290,9 @@ def discover_indexable_files(
     """Discover files eligible for indexing with a pruning, bounded walk.
 
     Raises :class:`IndexBoundExceeded` when the walk crosses a build budget.
-    An explicit path limit inside a pruned directory yields nothing.
+    An explicit path limit inside a pruned directory yields nothing. Each of
+    *files* is considered as one file under the same filters and budgets and
+    never walked, as a directory or the root.
     """
 
     root = Path(repo_root).resolve()
@@ -303,6 +310,10 @@ def discover_indexable_files(
         walk.walk(root)
     for limit in limits:
         walk.visit_limit(limit)
+    for file_path in files:  # verbatim: the scope inputs' strip would turn a manifest row " a.py" into "a.py"
+        posix = PurePosixPath(file_path)
+        if posix.parts and not posix.is_absolute() and ".." not in posix.parts:
+            walk.visit_limit(root.joinpath(*posix.parts), file_only=True)
 
     unique = dict.fromkeys(walk.files)
     return DiscoveryResult(

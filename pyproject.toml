@@ -7,7 +7,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trw-mcp"
-version = "7.0.0"
+version = "7.0.1"
 description = "Engineering memory MCP server for Claude Code — patterns, gotchas, and project knowledge that persist across sessions"
 readme = "README.md"
 license = "BUSL-1.1"
@@ -72,7 +72,7 @@ dependencies = [
     # from this comment, which has been wrong before.
     # Do NOT lower the floor to make the lock or its parity tests pass — that
     # reinstates exactly the runtime skew the floor exists to prevent.
-    "trw-memory>=4.0.0,<5.0.0",
+    "trw-memory>=4.0.1,<5.0.0",
     "typing_extensions>=4.6.0",
 ]
 
